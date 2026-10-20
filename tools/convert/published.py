@@ -56,7 +56,8 @@ def published_activations(store) -> tuple[str, int, dict[str, int]]:
                 if isinstance(layer, dict) and isinstance(layer.get("quant_algo"), str):
                     layers[module] = activation_bits(layer["quant_algo"])
 
-    described = Path(store.path) / "hf_quant_config.json"
+    # The checkpoint's directory: the path may name one .safetensors file or its index.
+    described = Path(getattr(store, "root", store.path)) / "hf_quant_config.json"
     if described.is_file():
         try:
             data = json.loads(described.read_text(encoding="utf-8"))

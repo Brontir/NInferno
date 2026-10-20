@@ -797,7 +797,8 @@ int activation_bits(const std::string& algorithm) {
 
 PublishedActivations published_activations(const Checkpoint& base) {
     PublishedActivations out;
-    const std::filesystem::path root(base.path_string());
+    // The checkpoint's directory: --model or --source may name one .safetensors file or its index.
+    const std::filesystem::path& root = base.root();
     // ModelOpt's description: one quant_algo, or per module (a module may name a whole bank,
     // model.language_model.layers.N.mlp.experts).
     const auto modelopt = [&](const OJson& body, const char* source) {
