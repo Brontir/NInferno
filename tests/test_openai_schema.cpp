@@ -1406,6 +1406,14 @@ int test_common_objects() {
     failures += check(model["meta"]["n_embd"] == 5120 && model["meta"]["n_ctx_train"] == 262144 &&
                           model["meta"]["ftype"] == "groupwise-int",
                       "model lookup exposes the llama.cpp-compatible model meta");
+    failures += check(!list_meta.contains("published_activations"),
+                      "models list says nothing of activations a checkpoint does not describe");
+    auto described                  = metadata;
+    described.published_activations = {{16, 31000}, {8, 60}, {0, 2}};
+    const Json described_meta =
+        Json::parse(make_model_object("qwen", 7, 240000, described))["meta"]["published_activations"];
+    failures += check(described_meta == Json{{"16", 31000}, {"8", 60}, {"unknown", 2}},
+                      "model lookup gives the publisher's activation widths per matrix count");
     const Json error = Json::parse(make_error_body(
         ApiError{.status = 400, .message = "bad", .param = "messages", .code = "invalid"}));
     failures += check(error["error"]["param"] == "messages" && error["error"]["code"] == "invalid",

@@ -185,5 +185,8 @@ def tensor_source(
         return store.read_flat(name, offset + begin, offset + end)
 
     return LogicalSource(
-        shape, f"{store.path}:{name}[{offset}:{offset+prod(shape)}]", read
+        shape,
+        f"{store.path}:{name}[{offset}:{offset+prod(shape)}]",
+        read,
+        origin=((store, name),),
     )

@@ -76,7 +76,10 @@ def _slice_source(source: LogicalSource, begin: int, end: int) -> LogicalSource:
         return select_rows(source, ((begin // width, end // width),))
     shape = ((end - begin) // width, *source.shape[1:])
     return LogicalSource(
-        shape, source.label, lambda a, b: source.values(begin + a, begin + b)
+        shape,
+        source.label,
+        lambda a, b: source.values(begin + a, begin + b),
+        origin=source.origin,
     )
 
 
