@@ -1854,7 +1854,10 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
     try {
         const Checkpoint base(checkpoint);
         SourceInputs sources(base, choice.sources);
-        Model model = build_qwen3_5_model(base, {"text"}, {}, {});
+        // The components the default conversion keeps: the checkpoint's own MTP layers too.
+        std::vector<std::string> components{"text"};
+        if (base.has("mtp.fc.weight")) { components.emplace_back("mtp"); }
+        Model model = build_qwen3_5_model(base, components, {}, {});
         Recipe recipe(model);
         apply_qwen3_5_recipe(choice.recipe, model, recipe, sources);
         (void)share_tied_head(model, recipe);
