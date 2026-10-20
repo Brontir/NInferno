@@ -60,6 +60,9 @@ constexpr Gpt2Pre kGpt2Pres[] = {
     {"smaug-bpe", kLlama3Split, false, true, false, false},
     // mistralai/Ministral-3-*, Mistral Small 3.x (Tekken)
     {"tekken", kTekkenSplit, false, true, true, false},
+    // nvidia/NVIDIA-Nemotron-3*, mistral-community/pixtral-12b: the tekken Split regex with
+    // ignore_merges (llama.cpp names this vocabulary's hash "pixtral")
+    {"pixtral", kTekkenSplit, false, true, true, false},
     // microsoft/Phi-4-mini-* (o200k)
     {"gpt-4o", kGpt4oSplit, false, false, false, false},
     // meta-models/Muse-Glimmer-* (the Llama 4 vocabulary: the o200k regex, a whole pre-token in
