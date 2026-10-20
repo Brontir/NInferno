@@ -153,7 +153,7 @@ std::string first_line(const std::filesystem::path& path) {
 // (on Windows the profile's permissions apply), then renamed into place.
 std::string kept_access_key(const std::filesystem::path& path) {
     namespace fs = std::filesystem;
-    if (auto key = first_line(path); key.size() >= 16) { return key; }
+    if (auto key = first_line(path); ninferno::ui::usable_key(key)) { return key; }
     std::string key = ninferno::ui::new_access_key();
     if (key.empty()) { return key; }
     std::error_code ec;
