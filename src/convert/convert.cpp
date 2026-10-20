@@ -855,7 +855,7 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
     const auto published = published_activations(base);
     if (published.source.empty()) { return std::nullopt; }
     std::map<int, std::uint64_t> counts;
-    std::uint64_t below = 0;
+    std::uint64_t below = 0, below_int8 = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         if (recipe.selections[i].method != Method::ImportEncoded || parameter.probe_leaf.empty() ||
@@ -888,11 +888,22 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
             if (found) { break; }
         }
         ++counts[bits]; // 0: the publisher's description names no width for this matrix
+        const auto width = [](ActivationPolicy policy) {
+            return policy == ActivationPolicy::AllowA4   ? 4
+                   : policy == ActivationPolicy::AllowA8 ? 8
+                                                         : 16;
+        };
         const auto policy = recipe.policies[i].front();
-        const int allowed = policy == ActivationPolicy::AllowA4   ? 4
-                            : policy == ActivationPolicy::AllowA8 ? 8
-                                                                  : 16;
-        below += allowed < bits ? 1 : 0;
+        // --activations int8 lets every A16Only use but the head's and embedding's run A8
+        // (models::effective_policy).
+        const bool fixed = parameter.name == "text/output_head" ||
+                           parameter.name == "text/token_embedding";
+        const auto int8 = policy == ActivationPolicy::A16Only && !fixed ? ActivationPolicy::AllowA8
+                                                                       : policy;
+        if (bits > 0) {
+            below += width(policy) < bits ? 1 : 0;
+            below_int8 += width(int8) < bits ? 1 : 0;
+        }
     }
     if (counts.empty()) { return std::nullopt; }
     OJson out     = OJson::object();
@@ -900,7 +911,8 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
     for (const auto& [bits, count] : counts) {
         out[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
     }
-    out["below"] = below;
+    out["below"]      = below;
+    out["below_int8"] = below_int8;
     return out;
 }
 

@@ -588,12 +588,15 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                       (it->first == 0 ? std::string("unnamed") : std::to_string(it->first) + "-bit") +
                       " on " + std::to_string(it->second);
         }
-        const bool exact = engine.activations == ninferno::ActivationMode::Exact;
-        if (!exact && model.below_published_activations > 0) {
+        const auto below = engine.activations == ninferno::ActivationMode::Int8
+                               ? model.below_published_activations_int8
+                           : engine.activations == ninferno::ActivationMode::Fast
+                               ? model.below_published_activations
+                               : 0;
+        if (below > 0) {
             logger_->warn("activations | the publisher validated {} matrices; {} runs at least {} "
                           "of them with fewer bits (--activations exact keeps the published width)",
-                          widths, product::activation_mode_name(engine.activations),
-                          model.below_published_activations);
+                          widths, product::activation_mode_name(engine.activations), below);
         } else {
             logger_->info("activations | the publisher validated {} matrices", widths);
         }

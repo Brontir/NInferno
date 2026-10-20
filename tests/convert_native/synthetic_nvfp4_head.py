@@ -329,7 +329,7 @@ def publisher_case(work: Path, native: Path, repository: Path) -> list[str]:
         "provenance"].get("published_activations")
     if (not published or published.get("source") != "hf_quant_config.json"
             or published.get("4") != 1 or not published.get("16") or not published.get("unknown")
-            or not published.get("below")):
+            or not published.get("below") or published.get("below_int8", 0) < published["below"]):
         errors.append(f"publisher: published_activations {published}")
     plain = json.loads(Path(str(work / "default.ninferno") + ".conversion.json").read_text(
         encoding="utf-8"))["provenance"]

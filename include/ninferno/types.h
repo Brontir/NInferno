@@ -1693,7 +1693,8 @@ struct ModelMetadata {
     // The activation widths the checkpoint's publisher validated its kept matrices with (bits ->
     // matrices, 0: named nowhere; empty: not said) and how many the fast mode runs below that width.
     std::map<int, std::uint64_t> published_activations;
-    std::uint64_t below_published_activations = 0;
+    std::uint64_t below_published_activations      = 0; // under --activations fast
+    std::uint64_t below_published_activations_int8 = 0; // under --activations int8
 };
 
 struct LoadSummary {
