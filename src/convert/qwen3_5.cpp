@@ -1000,8 +1000,7 @@ void dense_bf16(Model& model, Recipe& recipe) {
 // scale tile its rows do not fill. The GDN control projections stay separate, as in every recipe.
 // A MoE model's experts follow the same rule (an expert bank the checkpoint publishes in int4 stays
 // int4); every routed expert bank and shared gate/up pair becomes one parent, as the MoE ops
-// address them (NVFP4 matrices of such a parent that end inside a scale tile share one divisor or
-// are refused: refuse_split_nvfp4_tiles).
+// address them (NVFP4 matrices of such a parent keep a divisor each).
 // (breadth's qwen3_5_published, with every kept encoding rather than NVFP4 and FP8 only.)
 void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
     std::size_t kept = 0, published = 0;
@@ -1060,7 +1059,6 @@ void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
                 const auto& name = model.parameters[i].name;
                 return has_part(name, "/moe/experts/") || has_part(name, "/moe/shared/");
             })) {
-            refuse_split_nvfp4_tiles(model, recipe, names);
             recipe.explicit_groups.push_back(names);
         }
     }

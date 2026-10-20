@@ -275,8 +275,8 @@ payload_bytes         = weight_divisor_offset + 4 * divisors
 
 `divisors` is the tensor object's member of that name, one for a plane quantized as a single
 matrix. A plane stacked from several separately quantized source matrices holds one divisor per
-source, in the order the sources are stacked; each covers `N / divisors` consecutive rows, and that
-share is a whole number of 128-row scale tiles.
+source, in the order the sources are stacked; each covers `N / divisors` consecutive rows, a share
+that may end inside a 128-row scale tile (each row is divided by its own word).
 
 The payload is a row-major E2M1 packed-code plane, zero padding to `scale_plane_offset`, a
 swizzled E4M3FN scale plane, and `divisors` little-endian FP32 weight-divisor words. Within each packed code

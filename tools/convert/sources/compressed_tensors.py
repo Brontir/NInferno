@@ -302,11 +302,9 @@ def stacked_matrix_source(
 ) -> LogicalSource:
     """Stack whole NVFP4 matrices into one plane under a single per-matrix divisor.
 
-    The artifact addresses a stacked plane's divisors in whole 128-row scale tiles, so a matrix
-    whose own row count is not a multiple of 128 cannot hold a divisor of its own. Gemma 4
-    publishes each expert's gate and up as separate 704-row matrices with separate divisors;
-    stacking the pair gives the 1408 rows the tiling needs, and one of the two divisors has to
-    give way. The survivor is the larger, because scaling block scales up toward E4M3's 448
+    Gemma 4 publishes each expert's gate and up as separate 704-row matrices with separate
+    divisors, and the Gemma 4 MoE kernels take one divisor per expert (its fused gate_up), so one
+    of the two divisors has to give way. The survivor is the larger, because scaling block scales up toward E4M3's 448
     ceiling is the direction that can be checked exactly — and is checked, in `_refold_scales`.
 
     Values are read through the same fold, so a dequantized read of this source and the encoded

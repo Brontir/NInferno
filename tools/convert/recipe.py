@@ -369,14 +369,8 @@ class Recipe:
                     "NVFP4 sources quantised against different divisors must be complete "
                     "matrices with equal row counts"
                 )
-            # Each divisor covers its source's rows, and a 128-row scale tile may not span two
-            # of them (block_scale_k16_m128x4_v1).
-            if sources[0].shape[0] % 128:
-                raise ValueError(
-                    "NVFP4 sources quantised against different divisors must each be whole "
-                    "128-row scale tiles (a tile would span two divisors), not "
-                    f"{sources[0].shape[0]} rows"
-                )
+            # Each divisor covers its source's rows (any count: the engine divides each row by
+            # its own word, so a 128-row scale tile may span two divisors).
             return len(sources)
 
         def emit(items, chosen=None):

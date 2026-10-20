@@ -26,15 +26,15 @@ MLP gate and up were quantized against divisors of their own; the embedding and 
                     not a multiple of 128): with one weight divisor over the gate/up bank it is one
                     [1536, 256] plane of one divisor, the down bank (whole tiles) one [1024, 192]
                     plane of a divisor per expert, every expert its checkpoint's values.
-  moe-split         the same with a divisor per expert matrix: no plane holds that bank losslessly,
-                    so the conversion is refused naming the bank and the reason.
+  moe-split         the same with a divisor per expert matrix: the gate/up bank is one plane of a
+                    divisor per matrix (each 192 rows, so a scale tile spans two divisors), every
+                    expert its checkpoint's values.
   qwen3_5           a Qwen3.5 checkpoint whose MLPs (text and MTP) are compressed-tensors NVFP4
                     of 320 rows, layer 0's gate and up of one divisor, the others' of two:
                     qwen3_5_published keeps every one as NVFP4 (one [640, 256] parent, or parents
                     of their own) with the checkpoint's values, where it once widened them to BF16.
-  qwen-moe-planner  qwen3_6_35b_a3b_nvfp4 stacks routed expert banks without the recipe-level
-                    check: over 192-row experts of a divisor each the planner refuses the bank's
-                    stacked parent by name, where a scale tile would span two divisors.
+  qwen-moe-planner  qwen3_6_35b_a3b_nvfp4 stacks routed expert banks of 192-row experts of a
+                    divisor each: the planner keeps one parent of a divisor per expert matrix.
   python-tail       the Python writer streams a 200-row NVFP4 matrix in 128-row blocks
                     (TensorOutput.write_codes, the last block ragged): the object is the codec's
                     encoding of the whole matrix and decodes back to its words.
@@ -328,15 +328,25 @@ def moe_cases(work: Path, native: Path, repository: Path) -> list[str]:
         errors += ss.same_values(artifact, tensors, "modelopt", pairs, "")
     print(f"moe-shared: {'ok' if not errors else 'FAILED'}", flush=True)
 
-    moe_checkpoint(work / "moe-split", split_divisors=True)
+    tensors = moe_checkpoint(work / "moe-split", split_divisors=True)
+    pairs = {f"text/layers/{layer}/mlp/experts/{e}/{role}":
+             f"model.layers.{layer}.mlp.experts.{e}.{role}_proj"
+             for layer in range(2) for e in range(EXPERTS) for role in ("gate", "up", "down")}
     split = []
     for extra in ((), ("--maintainer-quantize",)):
-        refused = convert(native, repository, work / "moe-split", work / "moe-split.ninferno", *extra)
-        if (refused.returncode == 0 or "text/layers/0/mlp/experts/0/gate" not in refused.stderr
-                or "not whole 128-row scale tiles" not in refused.stderr
-                or "different weight divisors" not in refused.stderr):
-            split.append(f"moe-split {' '.join(extra)}: expected a refusal naming the bank, got "
-                         f"rc {refused.returncode}: {refused.stderr.strip()[-600:]}")
+        out = work / f"moe-split{len(extra)}.ninferno"
+        result = convert(native, repository, work / "moe-split", out, *extra)
+        if result.returncode:
+            split.append(f"moe-split {' '.join(extra)}: conversion failed ({result.returncode}): "
+                         f"{result.stderr.strip()[-600:]}")
+            continue
+        artifact = ss.Artifact(out)
+        bank = object_of(artifact, "text/layers/0/mlp/experts/0/gate")
+        got = (bank["format"], bank["shape"], bank.get("divisors", 1))
+        if got != ("nvfp4", [EXPERTS * 2 * MOE_INTER, HIDDEN], 2 * EXPERTS):
+            split.append(f"moe-split {' '.join(extra)}: gate/up bank is {got}, expected nvfp4 "
+                         f"[{EXPERTS * 2 * MOE_INTER}, {HIDDEN}] of {2 * EXPERTS} divisors")
+        split += ss.same_values(artifact, tensors, "modelopt", pairs, "")
     print(f"moe-split: {'ok' if not split else 'FAILED'}", flush=True)
     return errors + split
 
@@ -410,15 +420,13 @@ def qwen_moe_planner_case(work: Path, native: Path, repository: Path) -> list[st
         qwen.quantized_moe(quantized, seed=48)
     finally:
         qwen.MOE_INTER = default_moe
-    refused = convert(native, repository, model, work / "qwen-moe.ninferno",
-                      "--recipe=qwen3_6_35b_a3b_nvfp4", "--components=text",
-                      f"--source=quantized={quantized}")
+    result = convert(native, repository, model, work / "qwen-moe.ninferno",
+                     "--recipe=qwen3_6_35b_a3b_nvfp4", "--components=text",
+                     f"--source=quantized={quantized}")
     errors = []
-    if (refused.returncode == 0 or "text/layers/0/moe/experts/0/" not in refused.stderr
-            or "whole 128-row scale tiles" not in refused.stderr
-            or f"not {MOE_INTER} rows" not in refused.stderr):
-        errors.append(f"qwen-moe-planner: expected the planner to refuse the bank, got rc "
-                      f"{refused.returncode}: {refused.stderr.strip()[-600:]}")
+    if result.returncode:
+        errors.append(f"qwen-moe-planner: expected one parent of a divisor per expert, got rc "
+                      f"{result.returncode}: {result.stderr.strip()[-600:]}")
     print(f"qwen-moe-planner: {'ok' if not errors else 'FAILED'}", flush=True)
     return errors
 

@@ -483,10 +483,9 @@ class _Builder:
         for expert in range(e):
             ep = p + f"experts/{expert}/"
             # Gemma 4 publishes gate and up as separate matrices with separate NVFP4 divisors,
-            # but one expert is one logical matrix here. Two reasons, and they agree: the
-            # reference implementation's own parameter is a fused `gate_up_proj [E, 2I, H]`, and
-            # a stacked plane addresses its divisors in whole 128-row scale tiles — 704 rows
-            # cannot hold a divisor, 1408 can. The pair usually shares one divisor (RedHat: every
+            # but one expert is one logical matrix here: the reference implementation's own
+            # parameter is a fused `gate_up_proj [E, 2I, H]`, and the Gemma 4 MoE kernels take
+            # one divisor per expert. The pair usually shares one divisor (RedHat: every
             # expert; NVIDIA: 3834 of 3840), and where it does not — ratios up to 1.46 — a fold
             # onto one divisor would either overflow E4M3 or round every block scale. So the
             # plane keeps gate's divisor and every code and scale untouched; its up rows come out

@@ -352,14 +352,8 @@ private:
             throw std::runtime_error("NVFP4 sources quantised against different divisors must be "
                                      "complete matrices with equal row counts");
         }
-        // Each divisor covers its source's rows, and a 128-row scale tile may not span two of
-        // them (block_scale_k16_m128x4_v1), as FP8 128x128 blocks may not span two sources.
-        if (*rows.begin() % 128) {
-            throw std::runtime_error(
-                "NVFP4 sources quantised against different divisors must each be whole 128-row "
-                "scale tiles (a tile would span two divisors), not " +
-                std::to_string(*rows.begin()) + " rows");
-        }
+        // Each divisor covers its source's rows; one may end inside a 128-row scale tile, as the
+        // scale words are per row and each row is divided by its own word.
         return sources.size();
     }
 
