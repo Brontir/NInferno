@@ -780,42 +780,55 @@ struct PublishedActivations {
 
 int activation_bits(const std::string& algorithm) {
     const auto name = ascii_lower(algorithm);
-    if (name.find("a16") != std::string::npos) { return 16; }
+    // Weight-only schemes (W4A16_NVFP4, FP8_PB_WO, INT8_WO, INT4_AWQ) keep 16-bit activations.
+    if (name.find("a16") != std::string::npos || name.ends_with("_wo") ||
+        name.starts_with("int4")) {
+        return 16;
+    }
     if (name.find("a8") != std::string::npos || name.starts_with("fp8") ||
-        name.find("int8") != std::string::npos) {
+        name.starts_with("int8")) {
         return 8;
     }
-    if (name == "nvfp4" || name.find("a4") != std::string::npos) { return 4; }
+    if (name.starts_with("nvfp4") || name.find("a4") != std::string::npos) { return 4; }
     return 0;
 }
 
 PublishedActivations published_activations(const Checkpoint& base) {
     PublishedActivations out;
     const std::filesystem::path root(base.path_string());
+    // ModelOpt's description: one quant_algo, or per module (a module may name a whole bank,
+    // model.language_model.layers.N.mlp.experts).
+    const auto modelopt = [&](const OJson& body, const char* source) {
+        out.source = source;
+        if (body.contains("quant_algo") && body.at("quant_algo").is_string()) {
+            out.all = activation_bits(body.at("quant_algo").get<std::string>());
+        }
+        if (body.contains("quantized_layers") && body.at("quantized_layers").is_object()) {
+            for (const auto& [name, layer] : body.at("quantized_layers").items()) {
+                if (layer.is_object() && layer.contains("quant_algo") &&
+                    layer.at("quant_algo").is_string()) {
+                    out.layers[name] = activation_bits(layer.at("quant_algo").get<std::string>());
+                }
+            }
+        }
+    };
     std::error_code ec;
     if (std::filesystem::is_regular_file(root / "hf_quant_config.json", ec)) {
         try {
             std::ifstream file(root / "hf_quant_config.json");
-            const auto json  = OJson::parse(file);
-            const auto& body = json.contains("quantization") ? json.at("quantization") : json;
-            out.source       = "hf_quant_config.json";
-            if (body.contains("quant_algo") && body.at("quant_algo").is_string()) {
-                out.all = activation_bits(body.at("quant_algo").get<std::string>());
-            }
-            if (body.contains("quantized_layers") && body.at("quantized_layers").is_object()) {
-                for (const auto& [name, layer] : body.at("quantized_layers").items()) {
-                    if (layer.is_object() && layer.contains("quant_algo") &&
-                        layer.at("quant_algo").is_string()) {
-                        out.layers[name] = activation_bits(layer.at("quant_algo").get<std::string>());
-                    }
-                }
-            }
+            const auto json = OJson::parse(file);
+            modelopt(json.contains("quantization") ? json.at("quantization") : json,
+                     "hf_quant_config.json");
         } catch (const std::exception&) { out = {}; }
         return out;
     }
     const auto& config = base.config();
     if (!config.contains("quantization_config")) { return out; }
     const auto& quantization = config.at("quantization_config");
+    if (quantization.is_object() && quantization.contains("quant_algo")) {
+        modelopt(quantization, "quantization_config");
+        return out;
+    }
     if (!quantization.is_object() || !quantization.contains("config_groups") ||
         !quantization.at("config_groups").is_object()) {
         return out;
@@ -849,13 +862,32 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
             recipe.policies[i].empty()) {
             continue;
         }
+        // The longest named module holding the matrix, under either text root (a recipe's leaf
+        // may name model.layers.N where the checkpoint says model.language_model.layers.N).
         int bits = published.all;
-        if (const auto it = published.layers.find(parameter.probe_leaf);
-            it != published.layers.end()) {
-            bits = it->second;
+        std::vector<std::string> names{parameter.probe_leaf};
+        for (const auto& [from, to] : {std::pair<std::string, std::string>{"model.language_model.", "model."},
+                                       {"model.", "model.language_model."}}) {
+            if (parameter.probe_leaf.starts_with(from)) {
+                names.push_back(to + parameter.probe_leaf.substr(from.size()));
+            } else if (!parameter.probe_leaf.starts_with("model.")) {
+                names.push_back(from + parameter.probe_leaf);
+            }
         }
-        if (bits == 0) { continue; }
-        ++counts[bits];
+        for (auto name : names) {
+            bool found = false;
+            while (!name.empty() && !found) {
+                if (const auto it = published.layers.find(name); it != published.layers.end()) {
+                    bits  = it->second;
+                    found = true;
+                } else {
+                    const auto dot = name.rfind('.');
+                    name           = dot == std::string::npos ? std::string() : name.substr(0, dot);
+                }
+            }
+            if (found) { break; }
+        }
+        ++counts[bits]; // 0: the publisher's description names no width for this matrix
         const auto policy = recipe.policies[i].front();
         const int allowed = policy == ActivationPolicy::AllowA4   ? 4
                             : policy == ActivationPolicy::AllowA8 ? 8
@@ -865,7 +897,9 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
     if (counts.empty()) { return std::nullopt; }
     OJson out     = OJson::object();
     out["source"] = published.source;
-    for (const auto& [bits, count] : counts) { out[std::to_string(bits)] = count; }
+    for (const auto& [bits, count] : counts) {
+        out[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
+    }
     out["below"] = below;
     return out;
 }
@@ -1588,6 +1622,10 @@ ConvertResult convert(const ConvertOptions& options) {
                 widths += (widths.empty() ? "" : ", ") + std::string(bits) + "-bit on " +
                           std::to_string(published->at(bits).get<std::uint64_t>());
             }
+        }
+        if (published->contains("unknown")) {
+            widths += (widths.empty() ? "" : ", ") + std::string("unnamed on ") +
+                      std::to_string(published->at("unknown").get<std::uint64_t>());
         }
         log("published activations (" + published->at("source").get<std::string>() + "): " +
             widths + " kept matrices; fast mode runs " +

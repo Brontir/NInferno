@@ -587,11 +587,12 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
             widths += (widths.empty() ? "" : ", ") + std::to_string(it->first) + "-bit on " +
                       std::to_string(it->second);
         }
-        const bool fast = engine.activations == ninferno::ActivationMode::Fast;
-        if (fast && model.below_published_activations > 0) {
-            logger_->warn("activations | the publisher validated {} matrices; fast runs {} of them "
-                          "with fewer bits (--activations exact keeps the published width)",
-                          widths, model.below_published_activations);
+        const bool exact = engine.activations == ninferno::ActivationMode::Exact;
+        if (!exact && model.below_published_activations > 0) {
+            logger_->warn("activations | the publisher validated {} matrices; {} runs at least {} "
+                          "of them with fewer bits (--activations exact keeps the published width)",
+                          widths, product::activation_mode_name(engine.activations),
+                          model.below_published_activations);
         } else {
             logger_->info("activations | the publisher validated {} matrices", widths);
         }

@@ -308,14 +308,18 @@ def publisher_case(work: Path, native: Path, repository: Path) -> list[str]:
     """ModelOpt's hf_quant_config.json says which activation width the publisher validated: W4A16
     everywhere but layer 1's key (NVFP4, 4-bit). provenance.published_activations counts the kept
     matrices per width and those the recorded policy lets run below it (layer 1's calibrated value
-    and query, A4 under W4A16); a checkpoint without the file records nothing."""
+    and query, A4 under W4A16); without the file, config.json's quantization_config answers."""
     import shutil
     errors: list[str] = []
     root = work / "publisher"
     shutil.copytree(work / "w4a16", root)
+    # MIXED_PRECISION as nvidia's Qwen3.6 writes it: whole modules (layer 0, layer 1's MLP) and one
+    # matrix (layer 1's key); layer 1's query, value and output are named nowhere.
     (root / "hf_quant_config.json").write_text(json.dumps({"quantization": {
-        "quant_algo": "W4A16_NVFP4",
-        "quantized_layers": {"model.layers.1.self_attn.k_proj": {"quant_algo": "NVFP4"}}}}),
+        "quant_algo": "MIXED_PRECISION",
+        "quantized_layers": {"model.layers.0": {"quant_algo": "W4A16_NVFP4"},
+                             "model.layers.1.mlp": {"quant_algo": "W4A16_NVFP4"},
+                             "model.layers.1.self_attn.k_proj": {"quant_algo": "NVFP4"}}}}),
         encoding="utf-8")
     out = work / "publisher.ninferno"
     result = convert(native, repository, root, out)
@@ -324,13 +328,15 @@ def publisher_case(work: Path, native: Path, repository: Path) -> list[str]:
     published = json.loads(Path(str(out) + ".conversion.json").read_text(encoding="utf-8"))[
         "provenance"].get("published_activations")
     if (not published or published.get("source") != "hf_quant_config.json"
-            or published.get("4") != 1 or not published.get("16") or not published.get("below")):
+            or published.get("4") != 1 or not published.get("16") or not published.get("unknown")
+            or not published.get("below")):
         errors.append(f"publisher: published_activations {published}")
     plain = json.loads(Path(str(work / "default.ninferno") + ".conversion.json").read_text(
         encoding="utf-8"))["provenance"]
-    if "published_activations" in plain:
-        errors.append(f"publisher: a checkpoint without hf_quant_config.json recorded "
-                      f"{plain['published_activations']}")
+    # Without the file, ModelOpt's config.json quantization_config (quant_algo per layer) answers.
+    if plain.get("published_activations", {}).get("source") != "quantization_config":
+        errors.append(f"publisher: without hf_quant_config.json, config.json's quantization_config "
+                      f"was not read: {plain.get('published_activations')}")
     print(f"publisher: {'ok' if not errors else 'FAILED'} {published}", flush=True)
     return errors
 
