@@ -1450,8 +1450,12 @@ void App::install(httplib::Server& server) {
                           req.get_param_value("key"))) {
         case KeyCheck::pass: break;
         case KeyCheck::pass_set_cookie:
-            res.set_header("Set-Cookie", std::string(kKeyCookie) + "=" + policy.key +
-                                             "; Path=/; HttpOnly; SameSite=Lax");
+            res.set_header("Set-Cookie",
+                           std::string(kKeyCookie) + "=" + policy.key + "; Path=/; HttpOnly; SameSite=Lax" +
+                               (forwarded_https(req.get_header_value("X-Forwarded-Proto"),
+                                                req.get_header_value("Forwarded"))
+                                    ? "; Secure"
+                                    : ""));
             if (req.method == "GET") { // the key leaves the address bar and the history
                 const bool local = req.path.size() < 2 || (req.path[1] != '/' && req.path[1] != '\\');
                 res.set_redirect(local ? req.path : std::string("/"), 303);

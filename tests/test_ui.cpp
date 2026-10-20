@@ -73,6 +73,13 @@ void test_access() {
     check(key.size() == 32 && key.find_first_not_of("0123456789abcdef") == std::string::npos,
           "key: 32 hex digits");
     check(new_access_key() != key, "key: a new one each time");
+    check(usable_key(key) && usable_key("A-b_c.d~e0123456789") && !usable_key("short-key") &&
+              !usable_key("sixteen chars;x&y#z") && !usable_key("0123456789abcdef\r"),
+          "key: URL- and cookie-safe characters only");
+    check(forwarded_https("https", "") && forwarded_https("HTTPS, http", "") &&
+              forwarded_https("", "for=1.2.3.4;proto=https") && !forwarded_https("http", "") &&
+              !forwarded_https("", ""),
+          "key: HTTPS seen through the proxy");
     check(cookie_value("a=1; ninferno_ui_key=k1; b=2", "ninferno_ui_key") == "k1", "cookie found");
     check(cookie_value("xninferno_ui_key=k1", "ninferno_ui_key").empty(), "cookie name exact");
     AccessPolicy keyed{.listen = "0.0.0.0", .port = 8090, .key = key};
@@ -820,6 +827,11 @@ void test_http() {
         check(res && res->status == 303 && res->get_header_value("Location") == "/" &&
                   res->get_header_value("Set-Cookie").find("HttpOnly") != std::string::npos,
               "key: ?key= sets the cookie and redirects");
+        auto tls = far;
+        tls.emplace("X-Forwarded-Proto", "https");
+        res = keyed_client.Get("/?key=" + keyed_options.access.key, tls);
+        check(res && res->get_header_value("Set-Cookie").find("; Secure") != std::string::npos,
+              "key: Secure behind TLS");
         res = keyed_client.Get("//evil.example/?key=" + keyed_options.access.key, far);
         check(res && res->status == 303 && res->get_header_value("Location") == "/",
               "key: no redirect off the site");

@@ -115,6 +115,23 @@ KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
     return KeyCheck::refused;
 }
 
+bool usable_key(std::string_view key) noexcept {
+    if (key.size() < 16) { return false; }
+    for (const char c : key) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                        c == '.' || c == '_' || c == '~' || c == '-';
+        if (!ok) { return false; }
+    }
+    return true;
+}
+
+bool forwarded_https(std::string_view x_forwarded_proto, std::string_view forwarded) {
+    if (ascii_lower(x_forwarded_proto.substr(0, x_forwarded_proto.find(','))) == "https") {
+        return true;
+    }
+    return ascii_lower(forwarded).find("proto=https") != std::string::npos;
+}
+
 std::string new_access_key() {
     unsigned char bytes[16];
     if (!sys::random_bytes(bytes, sizeof(bytes))) { return {}; }
