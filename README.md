@@ -105,20 +105,21 @@ cards alike, several of them in one machine too; no compiler needed. It wants NV
 newer (570 for a V100).
 
 **Windows:** download
-[NInferno-Setup.exe](https://ninferno.brontir.com/releases/latest/download/NInferno-Setup.exe) and
+[NInferno-Setup.exe](https://github.com/Brontir/NInferno/releases/latest/download/NInferno-Setup.exe) and
 run it. It needs no administrator rights, installs the native engine, and adds NInferno to the Start
 menu; it updates itself. [Windows](docs/windows.md) has the details.
 
 **Linux** (or WSL 2):
 
 ```bash
-curl -fsSL https://ninferno.brontir.com/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh
 ```
 
-The installer checks your GPUs and the download's SHA-256. To read it before running it,
-download [`install.sh`](tools/release/install.sh) and run it with `sh`. It unpacks the release into
+The installer checks your GPUs, then installs only what the release manifest names, and only with a
+valid signature of the release key it carries ([how releases are signed](tools/release/server/README.md#signing)).
+To read it before running it, download [`install.sh`](tools/release/install.sh) and run it with `sh`. It unpacks the release into
 `~/.local/share/ninferno` and links the commands into `~/.local/bin`; `NINFERNO_HOME` and
-`NINFERNO_BIN` change those, `NINFERNO_URL` names another release server, and
+`NINFERNO_BIN` change those, `NINFERNO_UPDATE_URL` names another manifest (still checked), and
 `NINFERNO_ARCHIVE=FILE` installs an archive you already have. Besides `ninferno-ui` and
 `ninferno-serve` it installs `ninferno-start`, which lists the models measured on your GPU and starts
 one at its measured settings (`--list` only lists them, `--multi` takes the setting for several

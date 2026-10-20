@@ -14,6 +14,10 @@
 //                                               at every start instead of a quiet note)
 //    "assets": {"<name>": {"url": ..., "sha256": ..., "size": ...}, ...}}
 //
+// It counts only with a valid signature of the release key (tools/release/signing.pub.pem): the
+// manifest's URL + ".sig" holds base64 of a DER ECDSA P-256 / SHA-256 signature of its exact bytes
+// (tools/release/sign.sh). An unsigned or wrongly signed manifest is treated as no answer.
+//
 // Turned off by NINFERNO_UPDATE_CHECK=0 (off, no, false) and for builds that carry no release
 // version (a source build reports "dev" or a commit): those never ask.
 
@@ -38,7 +42,15 @@ struct CheckOptions {
     std::filesystem::path cache_file;    // default_cache_file() when empty
     std::chrono::seconds max_age{24 * 3600}; // a cached answer younger than this is used as is
     std::chrono::seconds timeout{8};     // the whole request
+    std::string public_key;              // PEM; release_key() when empty
 };
+
+// The release key, PEM (tools/release/signing.pub.pem).
+[[nodiscard]] const std::string& release_key();
+// Whether `signature` (base64 of a DER ECDSA P-256 / SHA-256 signature) signs `text` under
+// `public_key` (PEM). False for anything malformed.
+[[nodiscard]] bool verify_signature(const std::string& text, const std::string& signature,
+                                    const std::string& public_key);
 
 // $NINFERNO_UPDATE_URL, else the release server's latest.json.
 [[nodiscard]] std::string default_manifest_url();
@@ -61,7 +73,7 @@ struct CheckOptions {
 
 // The answer for options.current: the cached one while younger than max_age, else the manifest
 // read now (and cached). nullopt when checks are off, the version is not a release, or the
-// manifest cannot be read (no network: nothing is said).
+// manifest cannot be read or is not signed by the key (no network: nothing is said).
 [[nodiscard]] std::optional<Release> check(const CheckOptions& options);
 
 // The one line ninferno-serve logs for a release, "" when there is nothing to say.

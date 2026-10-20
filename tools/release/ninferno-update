@@ -6,11 +6,13 @@
 #   ninferno-update --check    only say whether a newer release is out (exit 0: yes, 1: no)
 #   ninferno-update --rollback go back to the version installed before this one
 #
-# It reads the release manifest (latest.json), downloads the release's archive (one for every GPU),
-# checks its SHA-256 and installs it with the release's
-# own installer (share/ninferno/install.sh) beside the current version; `current` then points at
-# the new one. Running models keep the files they started with; the previous version stays for
-# --rollback, older ones are removed.
+# It reads the release manifest (latest.json) and acts on it only when the installed release's own
+# installer (share/ninferno/install.sh, which carries the release key) finds it signed by that key.
+# The installer then downloads the archive the signed manifest names, checks it against the SHA-256
+# the manifest gives and installs it beside the current version; `current` then points at the new
+# one. Nothing is fetched to run: a release server that is broken into can neither sign a manifest
+# nor hand this script an installer. Running models keep the files they started with; the
+# previous version stays for --rollback, older ones are removed.
 #
 # Environment: NINFERNO_UPDATE_URL (the manifest, default the release server's latest.json),
 # NINFERNO_HOME / NINFERNO_BIN as for install.sh.
@@ -54,11 +56,15 @@ fi
 command -v curl > /dev/null 2>&1 || die "curl not found"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL --max-time 30 -o "$tmp/latest.json" "$MANIFEST" || die "cannot read $MANIFEST"
+installer="$version_dir/share/ninferno/install.sh"
+[ -f "$installer" ] || die "$installer is missing: reinstall NInferno"
+curl -fsSL --max-time 30 -o "$tmp/latest.json" "$MANIFEST" &&
+  curl -fsSL --max-time 30 -o "$tmp/latest.json.sig" "$MANIFEST.sig" || die "cannot read $MANIFEST"
+sh "$installer" --verify "$tmp/latest.json" ||
+  die "$MANIFEST is not signed by the NInferno release key: nothing installed"
 latest=$(field version "$tmp/latest.json")
-base=$(field linux_base "$tmp/latest.json")
 notes=$(field notes "$tmp/latest.json")
-[ -n "$latest" ] && [ -n "$base" ] || die "$MANIFEST is not a release manifest"
+[ -n "$latest" ] || die "$MANIFEST is not a release manifest"
 
 newest=$(printf '%s\n%s\n' "${current#v}" "${latest#v}" | sort -V | tail -1)
 if [ "${current#v}" = "${latest#v}" ] || [ "$newest" != "${latest#v}" ]; then
@@ -75,10 +81,8 @@ if [ "$mode" = ask ]; then
   case $answer in [nN]*) say "Not installed."; exit 0 ;; esac
 fi
 
-installer="$version_dir/share/ninferno/install.sh"
-[ -f "$installer" ] || { curl -fsSL -o "$tmp/install.sh" "$base/install.sh" || die "cannot read $base/install.sh"; installer="$tmp/install.sh"; }
 say "Installing NInferno $latest ..."
-NINFERNO_URL=$base NINFERNO_HOME=$home sh "$installer"
+NINFERNO_MANIFEST=$tmp/latest.json NINFERNO_HOME=$home sh "$installer"
 
 # Keep the new version and the one before it (running models may still use it).
 ls -1dt "$home"/ninferno-*-linux-x86_64* 2>/dev/null | tail -n +3 | while read -r old; do

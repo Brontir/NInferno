@@ -6,8 +6,9 @@
 
 Every file of DIST_DIR that has a .sha256 beside it is listed under "assets" with its URL (BASE/
 NAME), size and SHA-256. ninferno-ui and ninferno-serve read "version", "notes" and
-"min_version" (product/update/update_check.h); ninferno-update installs from "linux_base";
-NInferno-Setup.exe takes its asset ("NInferno-Setup.exe") and the engine for the GPU from it.
+"min_version" (product/update/update_check.h); install.sh (and ninferno-update through it) takes
+the Linux archive's asset, NInferno-Setup.exe its own and the engine for the GPU. Clients act on
+the manifest only with a valid signature of the release key (sign.sh writes latest.json.sig).
 Publish the release's files under BASE first and latest.json last: a client that reads the new
 manifest finds everything it names.
 """
@@ -47,8 +48,7 @@ def main() -> int:
     if not assets:
         parser.error(f"no files with a .sha256 in {args.dist}")
     manifest = {"version": args.version, "date": datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
-                "notes": args.notes, "min_version": args.min_version, "linux_base": base,
-                "assets": assets}
+                "notes": args.notes, "min_version": args.min_version, "assets": assets}
     json.dump(manifest, sys.stdout, indent=1)
     sys.stdout.write("\n")
     return 0

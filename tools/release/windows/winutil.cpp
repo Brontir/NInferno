@@ -276,6 +276,103 @@ void http_download(const std::wstring& url, const std::wstring& path, const Prog
     }
 }
 
+namespace {
+
+// Base64 (whitespace ignored); empty when it is not base64.
+std::vector<unsigned char> base64_decode(const std::string& text) {
+    std::vector<unsigned char> out;
+    unsigned value = 0;
+    int bits = 0, padding = 0;
+    for (const char c : text) {
+        int digit = -1;
+        if (c >= 'A' && c <= 'Z') {
+            digit = c - 'A';
+        } else if (c >= 'a' && c <= 'z') {
+            digit = c - 'a' + 26;
+        } else if (c >= '0' && c <= '9') {
+            digit = c - '0' + 52;
+        } else if (c == '+') {
+            digit = 62;
+        } else if (c == '/') {
+            digit = 63;
+        } else if (c == '=') {
+            ++padding;
+            continue;
+        } else if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+            continue;
+        } else {
+            return {};
+        }
+        if (padding != 0) { return {}; } // data after the padding
+        value = (value << 6) | static_cast<unsigned>(digit);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<unsigned char>((value >> bits) & 0xff));
+        }
+    }
+    return padding > 2 ? std::vector<unsigned char>{} : out;
+}
+
+// One DER INTEGER of a P-256 signature as 32 big-endian bytes; false when it is not one.
+bool der_integer(const std::vector<unsigned char>& der, std::size_t& at, unsigned char out[32]) {
+    if (at + 2 > der.size() || der[at] != 0x02) { return false; }
+    std::size_t length = der[at + 1];
+    at += 2;
+    if (length == 0 || length > 33 || at + length > der.size()) { return false; }
+    std::size_t start = at;
+    while (length > 32 && der[start] == 0) { ++start, --length; }
+    if (length > 32) { return false; }
+    std::memset(out, 0, 32);
+    std::memcpy(out + 32 - length, der.data() + start, length);
+    at = start + length;
+    return true;
+}
+
+} // namespace
+
+bool verify_signature(const std::string& text, const std::string& signature,
+                      const std::string& spki) {
+    // A P-256 SubjectPublicKeyInfo is 91 bytes ending in 0x04 X Y.
+    const auto key = base64_decode(spki);
+    const auto der = base64_decode(signature);
+    if (key.size() != 91 || key[26] != 0x04 || der.size() < 8 || der[0] != 0x30 ||
+        static_cast<std::size_t>(der[1]) + 2 != der.size()) {
+        return false;
+    }
+    unsigned char raw[64];
+    std::size_t at = 2;
+    if (!der_integer(der, at, raw) || !der_integer(der, at, raw + 32) || at != der.size()) {
+        return false;
+    }
+
+    struct {
+        BCRYPT_ECCKEY_BLOB header;
+        unsigned char xy[64];
+    } blob{{BCRYPT_ECDSA_PUBLIC_P256_MAGIC, 32}, {}};
+
+    std::memcpy(blob.xy, key.data() + 27, 64);
+    unsigned char digest[32];
+    BCRYPT_ALG_HANDLE sha = nullptr, ecdsa = nullptr;
+    BCRYPT_HASH_HANDLE hash  = nullptr;
+    BCRYPT_KEY_HANDLE handle = nullptr;
+    bool ok =
+        BCryptOpenAlgorithmProvider(&sha, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
+        BCryptCreateHash(sha, &hash, nullptr, 0, nullptr, 0, 0) == 0 &&
+        BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(text.data())),
+                       static_cast<ULONG>(text.size()), 0) == 0 &&
+        BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0 &&
+        BCryptOpenAlgorithmProvider(&ecdsa, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) == 0 &&
+        BCryptImportKeyPair(ecdsa, nullptr, BCRYPT_ECCPUBLIC_BLOB, &handle,
+                            reinterpret_cast<PUCHAR>(&blob), sizeof(blob), 0) == 0 &&
+        BCryptVerifySignature(handle, nullptr, digest, sizeof(digest), raw, sizeof(raw), 0) == 0;
+    if (handle) { BCryptDestroyKey(handle); }
+    if (hash) { BCryptDestroyHash(hash); }
+    if (ecdsa) { BCryptCloseAlgorithmProvider(ecdsa, 0); }
+    if (sha) { BCryptCloseAlgorithmProvider(sha, 0); }
+    return ok;
+}
+
 std::string sha256_file(const std::wstring& path) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                               FILE_FLAG_SEQUENTIAL_SCAN, nullptr);

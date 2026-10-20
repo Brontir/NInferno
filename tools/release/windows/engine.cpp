@@ -23,6 +23,11 @@ namespace setup {
 namespace {
 
 constexpr const wchar_t* kManifestUrl   = L"https://ninferno.brontir.com/releases/latest.json";
+// The release key (tools/release/signing.pub.pem, its SubjectPublicKeyInfo): only a manifest it
+// signed is acted on, so a release server that is broken into cannot hand this setup a file.
+constexpr const char* kReleaseKey =
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1R5JganVYknHjhX9nN2fYLqxwe2GR9Zeg0QL/"
+    "WoCKgTm4fpmwOM4ASQ+0Av3ASV+RPHQH1rTaXBSHyWCPZokZg==";
 constexpr const wchar_t* kUninstallKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NInferno";
 constexpr const char* kRootfs           = "ninferno-wsl-rootfs.tar.gz";
 constexpr const wchar_t* kSettingsKey   = L"Software\\NInferno";
@@ -169,7 +174,11 @@ std::wstring manifest_url() {
 }
 
 Manifest read_manifest() {
-    const auto json = Json::parse(http_get(manifest_url()));
+    const std::string text = http_get(manifest_url());
+    if (!verify_signature(text, http_get(manifest_url() + L".sig"), kReleaseKey)) {
+        throw std::runtime_error("the release manifest is not signed by the NInferno release key");
+    }
+    const auto json = Json::parse(text);
     Manifest manifest;
     manifest.version     = json.str("version");
     manifest.min_version = json.str("min_version");
