@@ -74,7 +74,8 @@ def main() -> int:
     hub.repos["org/busy"]["busy_once"] = True
     ggufs = {name: blob(1536 + i, 10 + i) for i, name in enumerate(
         ["m-Q4_K_M.gguf", "m-Q8_0.gguf", "m-UD-Q4_K_XL.gguf", "mmproj-F16.gguf",
-         "m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf", "m-MTP-ONLY-Q8_0.gguf"])}
+         "m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf", "m-MTP-ONLY-Q8_0.gguf",
+         "mtp-m-Q4_0.gguf"])}
     hub.add_repo("org/gguf", ggufs)
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
@@ -237,6 +238,10 @@ def main() -> int:
         q8 = sorted(p.name for p in (work / "cache-q8" / "models--org--gguf" / "snapshots" /
                                       "c0ffee0123456789abcdef0123456789abcdef01").iterdir())
         ambiguous = fetch("org/gguf", "--quant", "Q4_K", cache="cache-q4", check=False)
+        # A sidecar named whole (a drafter's "gguf" in the registry: mtp-<model>-Q4_0) is that file.
+        fetch("org/gguf", "--quant", "mtp-m-Q4_0", cache="cache-mtp")
+        sidecar = sorted(p.name for p in (work / "cache-mtp" / "models--org--gguf" / "snapshots" /
+                                          "c0ffee0123456789abcdef0123456789abcdef01").iterdir())
         # A width: the largest model of that many bits (UD-Q4_K_XL over Q4_K_M), never the
         # MTP-only sidecar (8-bit and larger than Q8_0).
         picked = {}
@@ -248,6 +253,7 @@ def main() -> int:
              default_pick == ["m-Q8_0.gguf"]
              and q6 == ["m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf"]
              and q8 == ["m-Q8_0.gguf"]
+             and sidecar == ["mtp-m-Q4_0.gguf"]
              and picked == {"4bit": ["m-UD-Q4_K_XL.gguf"], "8-bit": ["m-Q8_0.gguf"]}
              and ambiguous.returncode != 0 and "m-UD-Q4_K_XL.gguf" in ambiguous.stderr
              and "MTP-ONLY" not in ambiguous.stderr)

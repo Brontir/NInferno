@@ -1022,6 +1022,18 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
         }
         return out;
     }
+    // A --quant that is a sidecar's whole name (a drafter: mtp-<model>-Q4_0) takes that file; a
+    // sidecar is never the model otherwise.
+    if (!options.quant.empty()) {
+        const auto want = ascii_lower(options.quant) + ".gguf";
+        for (const auto& file : listing.files) {
+            const auto name = ascii_lower(std::filesystem::path(file.path).filename().string());
+            if (name == want && gguf_auxiliary_file(name)) {
+                out.push_back(file);
+                return out;
+            }
+        }
+    }
     if (ggufs.empty()) {
         throw std::runtime_error(repo + " holds neither safetensors weights nor a GGUF model" +
                                  (options.quant.empty() ? "" : " (for --quant " + options.quant + ")"));
