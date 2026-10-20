@@ -285,9 +285,9 @@ def test_unequal_nvfp4_sources_with_different_divisors_are_refused_at_plan_time(
         recipe.prepare(device="cpu")
 
 
-def test_a_stack_of_divisors_whose_sources_end_inside_a_scale_tile_keeps_a_divisor_each():
-    """Two 192-row sources of their own divisors, grouped: one parent of two divisors, the second
-    starting inside a 128-row scale tile (each row is divided by its own word)."""
+def test_a_stack_of_divisors_whose_sources_end_inside_a_scale_tile_is_refused_at_plan_time():
+    """Two 192-row sources of their own divisors, grouped: the Python writer streams each source
+    from a 128-row tile start, so the plan is refused (the native converter writes it)."""
 
     model = Model({"text": {"config": {}}})
     for name, divisor in (("gate", 2.0), ("up", 4.0)):
@@ -297,7 +297,8 @@ def test_a_stack_of_divisors_whose_sources_end_inside_a_scale_tile_keeps_a_divis
     recipe = Recipe(model)
     recipe.assign("*", format="nvfp4", method=import_encoded)
     recipe.group(("gate", "up"))
-    recipe.prepare(device="cpu")
+    with pytest.raises(ValueError, match="whole 128-row scale tiles"):
+        recipe.prepare(device="cpu")
 
 
 def test_a_divisor_may_cover_part_of_a_scale_tile():

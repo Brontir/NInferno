@@ -221,7 +221,7 @@ Layer make_layer(const Case& c, std::uint32_t seed) {
     l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
     l.down    = make_matrix(c.down, E * H, F, seed + 3);
     if (c.split_divisors) {
-        split_divisors(l.gate_up, sets * F, seed + 12);
+        split_divisors(l.gate_up, F, seed + 12); // gate and up quantized apart
         split_divisors(l.down, H, seed + 13);
     }
     l.weights.router  = l.router.weight;
@@ -1829,7 +1829,7 @@ int main(int argc, char** argv) {
             }
             // 2a'. Published NVFP4 experts of a divisor each whose rows end inside a 128-row scale
             //      tile (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4: 1856-row up matrices
-            //      of 80 distinct divisors): relu^2 up rows 192 per expert (SwiGLU gate/up 384), down
+            //      of 80 distinct divisors): relu^2 up and SwiGLU gate, up: 192 rows each, down
             //      320 per expert; a tile spans two experts, each row divided by its own word.
             for (const auto activation : {ops::MoeActivation::Relu2, ops::MoeActivation::SwiGlu}) {
                 for (const auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8}) {

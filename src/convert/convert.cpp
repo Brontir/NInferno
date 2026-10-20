@@ -200,24 +200,11 @@ std::vector<Task> make_tasks(const Plan& plan, const std::vector<std::uint32_t>&
         case Method::ImportEncoded: {
             const auto k    = job.shape[1];
             const auto step = std::max<std::uint64_t>(128, kTaskBytes / (k / 2) / 128 * 128);
-            // A stacked plane restarts its row blocks at every source boundary: one block, one
-            // divisor.
-            std::vector<std::uint64_t> bounds;
-            if (job.divisors > 1) {
-                std::uint64_t edge = 0;
-                for (const auto& source : job.sources) {
-                    edge += source->shape()[0];
-                    bounds.push_back(edge);
-                }
-            } else {
-                bounds.push_back(job.shape[0]);
-            }
-            std::uint64_t cursor = 0;
-            for (const auto edge : bounds) {
-                for (std::uint64_t r = cursor; r < edge; r += step) {
-                    tasks.push_back({j, position, r, std::min(edge, r + step)});
-                }
-                cursor = edge;
+            // Blocks of whole 128-row scale tiles (each task swizzles its own tiles); a block may
+            // span sources of different divisors, each row keeping its source's.
+            const auto rows = job.shape[0];
+            for (std::uint64_t r = 0; r < rows; r += step) {
+                tasks.push_back({j, position, r, std::min(rows, r + step)});
             }
             break;
         }
@@ -712,25 +699,18 @@ private:
         const auto k    = job.shape[1];
         s.encoded.codes.clear();
         s.encoded.scales.clear();
-        std::optional<std::uint32_t> divisor;
-        for_rows(job, task.begin, task.end,
-                 [&](const Source& source, std::uint64_t low, std::uint64_t high, std::uint64_t) {
-                     source.encoded_rows(low, high, s.encoded, &s.log); // appends
-                     if (divisor && *divisor != s.encoded.divisor) {
-                         throw std::runtime_error(
-                             "encoded inputs cannot share one parent format/divisor");
-                     }
-                     divisor = s.encoded.divisor;
-                 });
+        // Each source's rows keep its divisor: the plane's word for the rows it covers.
         const auto rows_per_divisor = job.shape[0] / job.divisors;
-        const auto index            = task.begin / rows_per_divisor;
-        if (task.end - index * rows_per_divisor > rows_per_divisor) {
-            throw std::runtime_error(job.id +
-                                     ": a row block may not span two separately quantised sources");
-        }
-        if (!divisor || *divisor != job.divisor_words[index]) {
-            throw std::runtime_error(job.id + ": weight divisor changed between row blocks");
-        }
+        for_rows(job, task.begin, task.end,
+                 [&](const Source& source, std::uint64_t low, std::uint64_t high,
+                     std::uint64_t at) {
+                     source.encoded_rows(low, high, s.encoded, &s.log); // appends
+                     const auto index = (task.begin + at) / rows_per_divisor;
+                     if (s.encoded.divisor != job.divisor_words[index]) {
+                         throw std::runtime_error(job.id +
+                                                  ": weight divisor changed between row blocks");
+                     }
+                 });
         // Tasks start on 128-row tiles; the last one of a plane whose rows end inside a tile
         // writes that whole tile (its rows past the plane zero), which the geometry holds.
         s.swizzled.resize((rows + 127) / 128 * 128 * (k / 16));

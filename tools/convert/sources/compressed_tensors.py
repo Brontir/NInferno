@@ -304,8 +304,9 @@ def stacked_matrix_source(
 
     Gemma 4 publishes each expert's gate and up as separate 704-row matrices with separate
     divisors, and the Gemma 4 MoE kernels take one divisor per expert (its fused gate_up), so one
-    of the two divisors has to give way. The survivor is the larger, because scaling block scales up toward E4M3's 448
-    ceiling is the direction that can be checked exactly — and is checked, in `_refold_scales`.
+    of the two divisors has to give way. The survivor is the larger, because scaling block scales
+    up toward E4M3's 448 ceiling is the direction that can be checked exactly — and is checked, in
+    `_refold_scales`.
 
     Values are read through the same fold, so a dequantized read of this source and the encoded
     rows it hands the writer describe the same numbers.
