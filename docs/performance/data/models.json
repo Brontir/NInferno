@@ -52,7 +52,8 @@
    "gpt-oss",
    "20b"
   ],
-  "readme": true
+  "readme": true,
+  "native": "MXFP4"
  },
  "muse-glimmer-30b": {
   "name": "Muse Glimmer 30B",

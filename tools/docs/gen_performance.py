@@ -19,7 +19,8 @@ Inputs (docs/performance/data/):
                 (short chats, all streams together) | perplexity | acceptance | greedy_match
   gpus.json     {"<slug>": {"name", "chip", "sm", "vram_gb", "match": [nvidia-smi names]}}
   models.json   {"<slug>": {"name", "hf", "family", "params", "label": [line, line],
-                "readme": true when the project README's table shows it}}, in table order
+                "readme": true when the project README's table shows it, "native": the format its own
+                checkpoint ships in, e.g. "MXFP4"}}, in table order
 
 Rows whose engine is not "ninferno" (llama.cpp on the same weights and GPU) are references: they
 feed the summary line and the level-3 comparison, never the speed tables.
@@ -50,9 +51,13 @@ OURS = "ninferno"
 
 # --- loading ------------------------------------------------------------------------------------
 
+NATIVE = {}  # lower-case HF id -> the format its own checkpoint ships in (models.json "native")
+
+
 def load():
     gpus = json.loads((DATA / "gpus.json").read_text(encoding="utf-8"))
     models = json.loads((DATA / "models.json").read_text(encoding="utf-8"))
+    NATIVE.update({info["hf"].lower(): info["native"] for info in models.values() if info.get("native")})
     by_name = {n: g for g, info in gpus.items() for n in info["match"]}
     by_hf = {info["hf"].lower(): m for m, info in models.items()}
     by_hf.update({info["hf"].split("/")[-1].lower(): m for m, info in models.items()})
@@ -100,9 +105,40 @@ def weights(recipe, link=True):
     return f"{repo} {label}".rstrip()
 
 
+def weights_short(recipe):
+    """A narrow column's weights: the quantization, linked to its repository, the repository in the
+    title: [UD-Q4_K_XL](https://huggingface.co/unsloth/... "unsloth/Qwen3.8-27B-GGUF")."""
+    m = HUB_REPO.match(recipe)
+    if not m:
+        return f"`{quant(recipe)}`"
+    # No --quant: the publisher's own checkpoint, named by its format where models.json gives one
+    # ("native": "MXFP4" for gpt-oss). Inline code: a quant name copies whole and does not wrap.
+    label = quant(recipe) if re.search(r"--quant[\s=]+\S", recipe) else NATIVE.get(m.group(1).lower(), "original")
+    return f"[`{label}`](https://huggingface.co/{m.group(1)}{hint(m.group(1))})"
+
+
+def repos(recipes):
+    """The Hugging Face repositories of these recipes, linked, in first-seen order."""
+    seen = []
+    for r in recipes:
+        m = HUB_REPO.match(r)
+        if m and m.group(1) not in seen:
+            seen.append(m.group(1))
+    return ", ".join(f"[`{s}`](https://huggingface.co/{s})" for s in seen)
+
+
+def gpu_short(g, info, base, full=False):
+    """A GPU on one line, spaces unbreakable: the full name (full, where the table has room) or the
+    label's first line (the README matrix); the name, memory and chip in the title."""
+    shown = info["name"] if full or not info.get("label") else info["label"][0]
+    name = info["name"] if info["name"].endswith(" GB") else f"{info['name']} {info['vram_gb']} GB"
+    return (f"[{shown.replace(' ', '&nbsp;')}]({base}gpus/{g}.md"
+            f"{hint(name + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})")
+
+
 def quant(recipe):
     """The quantization alone, for the narrow columns: "UD-Q4_K_XL", or the repository name."""
-    m = re.search(r"--quant\s+(\S+)", recipe)
+    m = re.search(r"--quant[\s=]+(\S+)", recipe)
     return m.group(1) if m else recipe.split()[0].split("/")[-1]
 
 
@@ -262,10 +298,7 @@ def matrix(gpus, models, speed, base, readme_only=False):
         if not any((g, m) in speed for m in cols):
             continue
         info = gpus[g]
-        # One line: the label's first line (the memory size is in the title), its spaces unbreakable.
-        short = (info["label"][0] if info.get("label") else info["name"]).replace(" ", "&nbsp;")
-        size = "" if info["name"].endswith(" GB") else f", {info['vram_gb']} GB"
-        row = [f"[**{short}**]({base}gpus/{g}.md{hint(info['name'] + size + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})"]
+        row = [gpu_short(g, info, base).replace("[", "[**", 1).replace("](", "**](", 1)]
         for m in cols:
             row.append(cell(speed[(g, m)], f"{base}runs/{g}/{m}.md") if (g, m) in speed else "")
         lines.append("| " + " | ".join(row) + " |")
@@ -340,11 +373,11 @@ def level2_row(first, settings, link):
     s1, set1 = best_single(settings)
     sm, _ = best_multi(settings)
     pre, long = best_long(settings)
-    w = weights(set1[0]) if set1 else weights(next(iter(settings))[0])
-    multi = f"{fmt(sm['value'])} (C={sm['concurrency']})" if sm else "–"
+    w = weights_short(set1[0] if set1 else next(iter(settings))[0])
+    multi = f"{fmt(sm['value'])}<sup>{sm['concurrency']}</sup>" if sm else "–"
     return "| " + " | ".join([first, w, fmt(s1["value"] if s1 else None), multi,
                               fmt(pre["value"] if pre else None), fmt(long["value"] if long else None),
-                              f"[all settings]({link})"]) + " |"
+                              f"[details]({link})"]) + " |"
 
 
 def footer(recs):
@@ -364,26 +397,31 @@ def page_gpu(g, gpus, models, speed):
     lines = [f"# {info['name']}", "",
              f"{info['chip']}, sm_{info['sm']}, {info['vram_gb']} GB · [all GPUs and models](../README.md)", "",
              "Each model on this GPU, tokens per second, each column at its best setting: one stream, all "
-             "streams, prefill of a 24K-token prompt, one stream after it.", "",
+             "streams (superscript = concurrent streams), prefill of a 24K-token prompt, one stream after it.", "",
              "| Model | " + " | ".join(LEVEL2_HEAD) + " | |", "|---|---|" + "---:|" * 4 + "---|"]
     recs = []
     for m in sort_present(models, {k[1] for k in speed if k[0] == g}):
-        lines.append(level2_row(f"[{models[m]['name']}](../models/{m}.md)", speed[(g, m)], f"../runs/{g}/{m}.md"))
+        name = models[m]["name"].replace(" ", "&nbsp;")
+        lines.append(level2_row(f"[{name}](../models/{m}.md)", speed[(g, m)], f"../runs/{g}/{m}.md"))
         recs += [r for c in speed[(g, m)].values() for r in c.values()]
-    return "\n".join(lines + ["", footer(recs), ""])
+    measured = repos(s[0] for m in models if (g, m) in speed for s in speed[(g, m)])
+    return "\n".join(lines + ([""] + [f"Weights from {measured}."] if measured else []) + ["", footer(recs), ""])
 
 
 def page_model(m, gpus, models, speed):
     info = models[m]
+    present = sort_present(gpus, {k[0] for k in speed if k[1] == m})
     lines = [f"# {info['name']}", "",
              f"[`{info['hf']}`](https://huggingface.co/{info['hf']}) · {info['family']}, {info['params']} · "
              "[all GPUs and models](../README.md)", "",
-             "The model on each GPU, tokens per second, each column at its best setting: one stream, all "
-             "streams, prefill of a 24K-token prompt, one stream after it.", "",
+             (f"Measured with {measured}. " if (measured := repos(s[0] for g in present for s in speed[(g, m)]))
+              else "") + "Fine-tunes and other checkpoints of the same architecture run the same way.", "",
+             "Tokens per second, each column at its best setting: one stream, all streams (superscript = "
+             "concurrent streams), prefill of a 24K-token prompt, one stream after it.", "",
              "| GPU | " + " | ".join(LEVEL2_HEAD) + " | |", "|---|---|" + "---:|" * 4 + "---|"]
     recs = []
-    for g in sort_present(gpus, {k[0] for k in speed if k[1] == m}):
-        lines.append(level2_row(f"[{gpus[g]['name']}](../gpus/{g}.md)", speed[(g, m)], f"../runs/{g}/{m}.md"))
+    for g in present:
+        lines.append(level2_row(gpu_short(g, gpus[g], "../", full=True), speed[(g, m)], f"../runs/{g}/{m}.md"))
         recs += [r for c in speed[(g, m)].values() for r in c.values()]
     return "\n".join(lines + ["", footer(recs), ""])
 
