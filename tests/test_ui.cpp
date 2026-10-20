@@ -103,6 +103,8 @@ void test_access() {
     check(keyed_check("10.0.0.2", "box:8090", false, "", bearer, "") == KeyCheck::pass, "bearer");
     check(keyed_check("10.0.0.2", "box:8090", false, "", "BEARER " + key, "") == KeyCheck::pass,
           "bearer: the scheme in any case");
+    check(keyed_check("10.0.0.2", "box:8090", false, "", "Bearer   " + key, "") == KeyCheck::pass,
+          "bearer: several spaces before the credential");
     check(keyed_check("10.0.0.2", "box:8090", false, "", "", key) == KeyCheck::pass_set_cookie,
           "?key= sets it");
     check(keyed_check("10.0.0.2", "box:8090", false, "ninferno_ui_key=x", "Bearer x", "x") ==

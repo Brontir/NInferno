@@ -107,9 +107,10 @@ KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
     }
     if (same_secret(cookie_value(cookie_header, kKeyCookie), policy.key)) { return KeyCheck::pass; }
     constexpr std::string_view bearer = "bearer "; // the scheme's name is case-insensitive
-    if (ascii_lower(authorization.substr(0, bearer.size())) == bearer &&
-        same_secret(authorization.substr(bearer.size()), policy.key)) {
-        return KeyCheck::pass;
+    if (ascii_lower(authorization.substr(0, bearer.size())) == bearer) {
+        auto credential = authorization.substr(bearer.size());
+        while (!credential.empty() && credential.front() == ' ') { credential.remove_prefix(1); }
+        if (same_secret(credential, policy.key)) { return KeyCheck::pass; }
     }
     if (same_secret(query_key, policy.key)) { return KeyCheck::pass_set_cookie; }
     return KeyCheck::refused;
