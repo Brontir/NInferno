@@ -218,12 +218,6 @@ def sort_present(order, present):
     return [k for k in order if k in present]
 
 
-def cell_text(settings):
-    """"one stream / all streams", the concurrency of the latter as a superscript: 58.9 / 140<sup>8</sup>."""
-    s1, _ = best_single(settings)
-    sm, _ = best_multi(settings)
-    multi = f"{fmt(sm['value'])}<sup>{sm['concurrency']}</sup>" if sm else "–"
-    return f"{fmt(s1['value'] if s1 else None)} / {multi}"
 
 
 def hint(text):
@@ -231,16 +225,21 @@ def hint(text):
     return ' "' + text.replace('"', "'") + '"'
 
 
-def cell_hint(settings):
-    """What a matrix cell's two numbers were measured with, for its link title."""
+def cell(settings, url):
+    """A matrix cell: "one stream / all streams", each number its own link to the run with its own
+    title (what it was measured with), the slash plain text and the concurrency of the latter a
+    superscript: [58.9] / [140<sup>8</sup>]."""
     parts = []
     for name, (rec, s) in (("one stream", best_single(settings)), ("all streams", best_multi(settings))):
         if rec is None:
+            parts.append("–")
             continue
         users = f" at {rec['concurrency']} streams" if name == "all streams" else ""
         spec = "no speculation" if s[1] == "off" else s[1]
-        parts.append(f"{name}: {fmt(rec['value'])} tok/s{users}, {quant(s[0])}, {spec}, measured {day(rec)}")
-    return "; ".join(parts)
+        title = f"{name}: {fmt(rec['value'])} tok/s{users}, {quant(s[0])}, {spec}, measured {day(rec)}"
+        number = fmt(rec["value"]) + (f"<sup>{rec['concurrency']}</sup>" if name == "all streams" else "")
+        parts.append(f"[{number}]({url}{hint(title)})")
+    return " / ".join(parts)
 
 
 def label(info):
@@ -263,11 +262,12 @@ def matrix(gpus, models, speed, base, readme_only=False):
         if not any((g, m) in speed for m in cols):
             continue
         info = gpus[g]
-        row = [f"[**{label(info)}**]({base}gpus/{g}.md"
-               f"{hint(info['chip'] + ', sm_' + str(info['sm']) + ', ' + str(info['vram_gb']) + ' GB')})"]
+        # One line: the label's first line (the memory size is in the title), its spaces unbreakable.
+        short = (info["label"][0] if info.get("label") else info["name"]).replace(" ", "&nbsp;")
+        size = "" if info["name"].endswith(" GB") else f", {info['vram_gb']} GB"
+        row = [f"[**{short}**]({base}gpus/{g}.md{hint(info['name'] + size + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})"]
         for m in cols:
-            row.append(f"[{cell_text(speed[(g, m)])}]({base}runs/{g}/{m}.md{hint(cell_hint(speed[(g, m)]))})"
-                       if (g, m) in speed else "")
+            row.append(cell(speed[(g, m)], f"{base}runs/{g}/{m}.md") if (g, m) in speed else "")
         lines.append("| " + " | ".join(row) + " |")
     return lines, cols
 
