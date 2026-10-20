@@ -524,7 +524,8 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // The verify widths the vector kernel takes by rule. Decode (T = 1) keeps R8 and the dense tuner:
 // on the RTX 2080 Ti the vector kernel lost decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won
 // C4 by 10 %. Its integer dot products grow with the width on the CUDA cores while the register
-// MMA's do not, so from five tokens the register MMA takes the call: in the dense tuner's timings
+// MMA's do not, so with tensor mma.sync the register MMA takes the call from five tokens: in the
+// dense tuner's timings
 // of eight cards the vector kernel was within 4 % of the best route at T = 2..4 and behind it at
 // T = 8 on all of them, the most where a card has the least compute per byte of bandwidth
 // (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
@@ -535,9 +536,9 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
 std::int32_t vec_rule_max_tokens() {
-    try {
-        return device_class().features.mma_tensor ? kVecRuleMaxTokens : vec_max_tokens();
-    } catch (const std::exception&) { return kVecRuleMaxTokens; }
+    // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
+    const std::int32_t widest = vec_max_tokens();
+    return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
