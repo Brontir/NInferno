@@ -307,8 +307,9 @@ def dense_cases(work: Path, native: Path, repository: Path) -> list[str]:
 def publisher_case(work: Path, native: Path, repository: Path) -> list[str]:
     """ModelOpt's hf_quant_config.json says which activation width the publisher validated: W4A16
     everywhere but layer 1's key (NVFP4, 4-bit). provenance.published_activations counts the kept
-    matrices per width and those the recorded policy lets run below it (layer 1's calibrated value
-    and query, A4 under W4A16); without the file, config.json's quantization_config answers."""
+    matrices per width and those the recorded policy lets run below it (layer 0's and layer 1's
+    MLP calibrated matrices, A4 under W4A16; layer 1's unnamed query, value and output count as
+    unknown); without the file, config.json's quantization_config answers."""
     import shutil
     errors: list[str] = []
     root = work / "publisher"

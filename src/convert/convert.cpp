@@ -781,15 +781,17 @@ struct PublishedActivations {
 int activation_bits(const std::string& algorithm) {
     const auto name = ascii_lower(algorithm);
     // Weight-only schemes (W4A16_NVFP4, FP8_PB_WO, INT8_WO, INT4_AWQ) keep 16-bit activations.
-    if (name.find("a16") != std::string::npos || name.ends_with("_wo") ||
-        name.starts_with("int4")) {
-        return 16;
-    }
+    if (name.find("a16") != std::string::npos || name.ends_with("_wo")) { return 16; }
     if (name.find("a8") != std::string::npos || name.starts_with("fp8") ||
-        name.starts_with("int8")) {
+        name.starts_with("int8") || name.starts_with("mxfp8")) {
         return 8;
     }
-    if (name.starts_with("nvfp4") || name.find("a4") != std::string::npos) { return 4; }
+    if (name.starts_with("int4")) { return 16; }
+    // ModelOpt's MXFP4 quantizes activations as the weights (W4A4), as NVFP4 does.
+    if (name.starts_with("nvfp4") || name.starts_with("mxfp4") ||
+        name.find("a4") != std::string::npos) {
+        return 4;
+    }
     return 0;
 }
 
@@ -799,6 +801,8 @@ PublishedActivations published_activations(const Checkpoint& base) {
     // ModelOpt's description: one quant_algo, or per module (a module may name a whole bank,
     // model.language_model.layers.N.mlp.experts).
     const auto modelopt = [&](const OJson& body, const char* source) {
+        // A description of the KV cache alone says nothing of the weights' activations.
+        if (!body.contains("quant_algo") && !body.contains("quantized_layers")) { return; }
         out.source = source;
         if (body.contains("quant_algo") && body.at("quant_algo").is_string()) {
             out.all = activation_bits(body.at("quant_algo").get<std::string>());
@@ -820,7 +824,8 @@ PublishedActivations published_activations(const Checkpoint& base) {
             modelopt(json.contains("quantization") ? json.at("quantization") : json,
                      "hf_quant_config.json");
         } catch (const std::exception&) { out = {}; }
-        return out;
+        // An unreadable or silent file leaves config.json's quantization_config to answer.
+        if (!out.source.empty()) { return out; }
     }
     const auto& config = base.config();
     if (!config.contains("quantization_config")) { return out; }
@@ -894,10 +899,10 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
                                                          : 16;
         };
         const auto policy = recipe.policies[i].front();
-        // --activations int8 lets every A16Only use but the head's and embedding's run A8
-        // (models::effective_policy).
-        const bool fixed = parameter.name == "text/output_head" ||
-                           parameter.name == "text/token_embedding";
+        // --activations int8 lets every A16Only use run A8 but a head's or embedding's: the
+        // engine's own test of the name (qwen3_5::Model::input).
+        const bool fixed = parameter.name.find("head") != std::string::npos ||
+                           parameter.name.find("embed") != std::string::npos;
         const auto int8 = policy == ActivationPolicy::A16Only && !fixed ? ActivationPolicy::AllowA8
                                                                        : policy;
         if (bits > 0) {
@@ -1640,8 +1645,10 @@ ConvertResult convert(const ConvertOptions& options) {
                       std::to_string(published->at("unknown").get<std::uint64_t>());
         }
         log("published activations (" + published->at("source").get<std::string>() + "): " +
-            widths + " kept matrices; fast mode runs " +
-            std::to_string(published->at("below").get<std::uint64_t>()) + " of them below that");
+            widths + " kept matrices; fast mode allows " +
+            std::to_string(published->at("below").get<std::uint64_t>()) +
+            " of them fewer bits, int8 mode " +
+            std::to_string(published->value("below_int8", std::uint64_t{0})));
     }
     ConvertResult result;
     result.model_seconds = seconds_since(begin);

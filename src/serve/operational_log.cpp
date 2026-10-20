@@ -594,8 +594,9 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                                ? model.below_published_activations
                                : 0;
         if (below > 0) {
-            logger_->warn("activations | the publisher validated {} matrices; {} runs at least {} "
-                          "of them with fewer bits (--activations exact keeps the published width)",
+            logger_->warn("activations | the publisher validated {} matrices; {} allows {} of them "
+                          "fewer bits where this card has the route (--activations exact keeps the "
+                          "published width)",
                           widths, product::activation_mode_name(engine.activations), below);
         } else {
             logger_->info("activations | the publisher validated {} matrices", widths);
