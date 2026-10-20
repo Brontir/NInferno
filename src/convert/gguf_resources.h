@@ -7,9 +7,9 @@
 //   tokenizer.json          <- tokenizer.ggml.{tokens,token_type,merges,scores}, for the
 //                              tokenizers the engine reads: "gpt2" (byte-level BPE) with the
 //                              pre-tokenizers qwen35, qwen2, llama-bpe, dbrx, smaug-bpe, tekken,
-//                              gpt-4o, smollm and refact; "gemma4" (Gemma 4: space-to-U+2581,
-//                              byte-fallback BPE); "llama" (SentencePiece BPE: merges from the
-//                              piece scores, byte fallback, U+2581 space prefix)
+//                              pixtral, gpt-4o, smollm and refact; "gemma4" (Gemma 4:
+//                              space-to-U+2581, byte-fallback BPE); "llama" (SentencePiece BPE:
+//                              merges from the piece scores, byte fallback, U+2581 space prefix)
 //   tokenizer_config.json   <- added tokens (CONTROL -> special, USER_DEFINED -> not), and the
 //                              bos/eos/pad/unk token strings
 //   generation_config.json  <- tokenizer.ggml.{bos,eos,eot,eom,padding}_token_id and

@@ -55,7 +55,7 @@ LAYERS = len(KINDS)
 
 
 def write_trunk(path: Path, with_mtp: bool, stray_nextn: bool = False,
-                padded: bool = False) -> None:
+                padded: bool = False, vocabulary: bool = False) -> None:
     rng = np.random.default_rng(7)  # the same trunk tensors with or without the MTP block
     blocks = LAYERS + (1 if with_mtp else 0)
     w = gguf.GGUFWriter(path, "nemotron_h_moe")
@@ -95,6 +95,21 @@ def write_trunk(path: Path, with_mtp: bool, stray_nextn: bool = False,
     w.add_vocab_size(VOCAB)
     if padded:
         w.add_uint32("nemotron_h_moe.moe_expert_embedding_length_padded", PADDED)
+    if vocabulary:
+        # As unsloth's NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF writes it: byte-level BPE under
+        # llama.cpp's pre "pixtral" (nvidia's tokenizer.json: the tekken Split regex,
+        # ignore_merges), add_bos_token false; the repository has no tokenizer files.
+        tokens = [f"tok{i}" for i in range(VOCAB)]
+        tokens[6], tokens[7], tokens[8] = "x", "9", "8"
+        w.add_tokenizer_model("gpt2")
+        w.add_tokenizer_pre("pixtral")
+        w.add_token_list(tokens)
+        w.add_token_types([3, 3, 3, 3] + [1] * (VOCAB - 4))
+        w.add_token_merges(["x 9", "9 8", "x 8"])
+        w.add_bos_token_id(1)
+        w.add_eos_token_id(2)
+        w.add_add_bos_token(False)
+        w.add_chat_template("{% for m in messages %}{{ m['content'] }}{% endfor %}\n")
 
     def q4(name, rows, k):
         n = rows * k // 32
@@ -277,6 +292,42 @@ def main() -> int:
             if result.returncode != want or (want and "reconvert" not in said):
                 errors.append(f"--attach-drafters {path.name}: rc {result.returncode}, expected "
                               f"{want}{' and a hint to reconvert' if want else ''}: {said[-600:]}")
+        # No tokenizer files beside the GGUF (a hub snapshot of unsloth's repository): they are
+        # rebuilt from tokenizer.ggml. Before "pixtral" was a known pre-tokenizer the conversion
+        # stopped on "cannot read <dir>/tokenizer.json".
+        gdir = work / "rebuilt"
+        gdir.mkdir()
+        write_trunk(gdir / "trunk.gguf", True, vocabulary=True)
+        out = work / "rebuilt.ninferno"
+        result = subprocess.run([str(native), f"--model={gdir / 'trunk.gguf'}", f"--out={out}", "--quiet"],
+                                cwd=repository, capture_output=True, text=True)
+        said = result.stdout + result.stderr
+        if result.returncode:
+            errors.append(f"rebuilt: conversion without tokenizer files failed: {said[-800:]}")
+        else:
+            _, objects, data, offset = directory(out)
+
+            def resource(role):
+                o = objects.get(f"resource/text/{role}")
+                return None if o is None else json.loads(
+                    data[offset + o["offset"]:offset + o["offset"] + o["bytes"]])
+
+            tokenizer, tokenizer_config = resource("tokenizer.json"), resource("tokenizer_config.json")
+            steps = (tokenizer or {}).get("pre_tokenizer", {}).get("pretokenizers", [])
+            regex = steps[0].get("pattern", {}).get("Regex") if steps else None
+            if not tokenizer or not regex or r"[\r\n/]*" not in regex or \
+                    tokenizer["model"].get("ignore_merges") is not True:
+                errors.append(f"rebuilt: tokenizer.json is not the tekken one: {str(tokenizer)[:300]}")
+            if (tokenizer_config or {}).get("add_bos_token") is not False:
+                errors.append(f"rebuilt: tokenizer_config.json {str(tokenizer_config)[:300]}, "
+                              "expected add_bos_token false")
+            # The drafter path: the trunk's own MTP block, its frontend files rebuilt as well.
+            result = subprocess.run([str(native), f"--model={gdir / 'trunk.gguf'}",
+                                     f"--out={work / 'rebuilt_drafter.ninferno'}", "--components=mtp",
+                                     "--quiet"], cwd=repository, capture_output=True, text=True)
+            if result.returncode:
+                errors.append(f"rebuilt: --components mtp without tokenizer files: "
+                              f"{(result.stdout + result.stderr)[-600:]}")
     for error in errors:
         print(error, file=sys.stderr)
     print(f"nemotron-trunk: {'ok' if not errors else 'FAILED'}", flush=True)

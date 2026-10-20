@@ -1325,6 +1325,8 @@ ConvertResult convert(const ConvertOptions& options) {
         log("gguf " + architecture + " (v" + std::to_string(gguf->version) + ", " +
             std::to_string(base.shard_count()) + " file(s)): " + listed);
         for (const auto& note : base.mapping_notes()) { log("gguf mapping: " + note); }
+        // Before the model is built: a tokenizer the metadata cannot rebuild fails there.
+        for (const auto& note : base.rebuilt_notes()) { log("gguf resources: " + note); }
         gguf_summary                 = OJson::object();
         gguf_summary["architecture"] = architecture;
         gguf_summary["version"]      = gguf->version;
@@ -1397,7 +1399,6 @@ ConvertResult convert(const ConvertOptions& options) {
                             : companion != companions.end() ? companion->second
                                                             : &base);
     }
-    for (const auto& note : base.rebuilt_notes()) { log("gguf resources: " + note); }
     for (const auto& note : model.resource_notes) { log("resource " + note); }
     // The token ranking a proposal head is restricted by: --ranking, else the default one, found
     // as the registry's rankings are (resolve_ranking: the working tree, the rankings installed

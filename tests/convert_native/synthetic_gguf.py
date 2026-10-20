@@ -322,6 +322,7 @@ GPT2_PRES = {
     "dbrx": (LLAMA3_SPLIT, False, False, False),
     "smaug-bpe": (LLAMA3_SPLIT, False, True, False),
     "tekken": (TEKKEN_SPLIT, False, True, True),
+    "pixtral": (LLAMA3_SPLIT, False, True, True),  # pixtral-12b; a nemotron_h file takes tekken's
     "gpt-4o": (GPT4O_SPLIT, False, False, False),
     "llama4": (GPT4O_SPLIT, False, True, True),
     "smollm": ("digits", False, False, False),
@@ -756,10 +757,12 @@ def llama3_inv_freq(theta, dim, factor=32.0, low=1.0, high=4.0, old=8192):
 
 
 def dense_case(work: Path, arch: str, quant: dict | None, seed: int, rebuilt: bool = False,
+               pre_tokenizer: str | None = None,
                tied: bool = True, llama3: bool = False):
     """O -> G (llama.cpp's LlamaModel / Qwen2Model / Qwen3Model / GraniteModel / Olmo2Model /
     SmolLM3Model / Mistral3Model) -> T (the inverse, from G)."""
     gguf_arch, architecture, model_type, pre, qkv_bias, qk_norm, permuted, post_norms = DENSE[arch]
+    pre = pre_tokenizer or pre
     layers = 4 if arch in ("smollm3", "olmo3", "muse") else DLAYERS  # a NoPE / full-attention 4th layer
     rng = np.random.default_rng(seed)
     gdir = work / "gguf"
@@ -2438,6 +2441,11 @@ def main() -> int:
         "mistral3-kquants": (lambda w: dense_case(w, "mistral3", {"attention": Q.Q6_K, "mlp": Q.Q4_K,
                                                                   "embedding": Q.Q8_0}, 54, rebuilt=True),
                              "dense_bf16", "text", {False}),
+        # llama.cpp's "pixtral" hash outside Nemotron (mistral-community/pixtral-12b: the Llama 3
+        # regex), no tokenizer files beside the GGUF.
+        "mistral3-pixtral-rebuilt": (lambda w: dense_case(w, "mistral3", None, 60, rebuilt=True,
+                                                          pre_tokenizer="pixtral"),
+                                     "dense_bf16", "text", set()),
         "tinyllama-spm": (lambda w: dense_case(w, "tinyllama", {"mlp": Q.Q4_K}, 55, rebuilt=True),
                           "dense_bf16", "text", {False}),
         "smollm2-q8": (lambda w: dense_case(w, "smollm2", {"attention": Q.Q8_0, "mlp": Q.Q8_0}, 56, rebuilt=True),

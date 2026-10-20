@@ -263,7 +263,8 @@ the ternary TQ1_0 and TQ2_0; Q1_0 and Q2_0.
 A GGUF without tokenizer files next to it gets them rebuilt from `tokenizer.ggml`:
 
 - byte-level BPE for the pre-tokenizers `qwen35`, `qwen2`, `llama-bpe`, `dbrx`, `smaug-bpe`,
-  `tekken`, `gpt-4o`, `llama4`, `smollm` and `refact`;
+  `tekken`, `pixtral` (the Llama 3 regex; tekken's for Nemotron 3), `gpt-4o`, `llama4`, `smollm`
+  and `refact`;
 - the Gemma 4 vocabulary;
 - SentencePiece BPE, with merges taken from the piece scores. A file whose scores are all equal no
   longer holds the merge order; it needs the Hugging Face tokenizer files.
