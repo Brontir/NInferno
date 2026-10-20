@@ -1874,12 +1874,20 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
     return std::nullopt;
 }
 
-// Whether a checkpoint directory's cache holds an artifact of `recipe` (cache.cpp's
-// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno).
+// Whether an artifact of `recipe` was converted from a checkpoint directory: cache.cpp's
+// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno, or acquire.cpp's beside a hub snapshot,
+// <repo>/ninferno/<commit>/model[.vision].<recipe>.ninferno.
 bool converted(const std::filesystem::path& checkpoint, const std::string& recipe) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
     const auto cache = checkpoint / ".ninferno-cache";
-    return std::filesystem::exists(cache / (recipe + ".ninferno")) ||
-           std::filesystem::exists(cache / ("vision." + recipe + ".ninferno"));
+    const auto hub   = checkpoint.parent_path().parent_path() / "ninferno" / checkpoint.filename();
+    for (const auto& path : {cache / (recipe + ".ninferno"), cache / ("vision." + recipe + ".ninferno"),
+                             hub / ("model." + recipe + ".ninferno"),
+                             hub / ("model.vision." + recipe + ".ninferno")}) {
+        if (fs::exists(path, ec)) { return true; }
+    }
+    return false;
 }
 
 // Whether a Hugging Face checkpoint still holds its weight files (a consumed one keeps only its
