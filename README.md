@@ -168,6 +168,29 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   list every option; the [performance pages](docs/performance/README.md) show what fits and how
   fast it runs.
 
+### 4. Manual settings
+
+`ninferno-serve` and `ninferno-start` choose every setting for the model and the GPU, and the startup
+log prints each choice. To fix one, pass its flag; the others stay automatic.
+
+| Flag | Automatic | Set it to |
+|---|---|---|
+| `--max-context N` | the model's context if it fits, else the longest that fits | a shorter context leaves memory for more requests |
+| `--max-concurrency N` | `1` | requests generated at once, `1..8` |
+| `--spec none\|mtp\|dflash\|dflash2` | measured for this model and GPU | `none` turns speculation off |
+| `--draft-tokens N` | the measured depth | draft depth, `1..15` |
+| `--spec-load L:D,...` | the measured table | from `L` requests at once, drafts at most `D` deep (`0`: none) |
+| `--kv-dtype bf16\|fp8\|int8\|nvfp4\|k8v4` | per model family | a smaller KV cache holds a longer context |
+| `--activations exact\|fast` | `fast` | `exact`: the same output whatever the load and the drafts |
+| `--device N` | `0` | the GPU |
+| `--host H` `--port N` `--api-key KEY` | `127.0.0.1:8080`, no key | `--host 0.0.0.0` with a key opens it to the network |
+
+```bash
+ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters   --max-context 32768 --max-concurrency 4 --spec dflash --draft-tokens 5 --spec-load 3:3   --kv-dtype fp8 --host 0.0.0.0 --api-key "$NINFERNO_API_KEY"
+```
+
+[Serving](docs/serving.md#important-options) lists every flag.
+
 ### Build it yourself
 
 You need Linux, a CUDA toolkit (12.8, 13.2 or 13.4; 12.8 for a V100), CMake 3.28+, a C++20 compiler and Ninja,
