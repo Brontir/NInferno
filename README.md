@@ -23,12 +23,12 @@ task. The aim: fast, cheap inference for everyone.
 - **Long context:** YaRN and LongRoPE as the checkpoint defines them (Qwen3.5/3.6 stretch their window
   with `--rope-yarn-factor`), KV cache in FP8 (NVFP4 for Qwen).
 - **Prompt cache:** a repeated prefix (system prompt, chat history, a document) is not computed
-  again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD³.
+  again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD†.
 - **API:** OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`) on one
   server, with tool calls, structured output, vision and PDF documents.
 - **Where it goes:** the [roadmap](#roadmap).
 
-<sub>³ A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
+<sub>† A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
 two months, an enterprise one in six to eight. NInferno will not offer one.</sub>
 
 ## Contents
