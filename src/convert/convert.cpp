@@ -1877,10 +1877,27 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
     return std::nullopt;
 }
 
+// Whether the report beside `artifact` records `component` among its converted components.
+bool records_component(const std::filesystem::path& artifact, const std::string& component) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    try {
+        const OJson report     = OJson::parse(stream);
+        const auto* components = member(report, "components");
+        if (components == nullptr || !components->is_array()) { return false; }
+        for (const auto& name : *components) {
+            if (name.is_string() && name.get<std::string>() == component) { return true; }
+        }
+    } catch (const std::exception&) { return false; }
+    return false;
+}
+
 // Whether an artifact of `recipe` was converted from a checkpoint directory: cache.cpp's
 // <dir>/.ninferno-cache/[vision.]<recipe>.ninferno, or acquire.cpp's beside a hub snapshot,
-// <repo>/ninferno/<commit>/model[.vision].<recipe>.ninferno.
-bool converted(const std::filesystem::path& checkpoint, const std::string& recipe) {
+// <repo>/ninferno/<commit>/model[.vision].<recipe>.ninferno; with `mtp`, one whose report
+// records the checkpoint's MTP layers among its components.
+bool converted(const std::filesystem::path& checkpoint, const std::string& recipe,
+               bool mtp = false) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const auto cache = checkpoint / ".ninferno-cache";
@@ -1888,7 +1905,7 @@ bool converted(const std::filesystem::path& checkpoint, const std::string& recip
     for (const auto& path : {cache / (recipe + ".ninferno"), cache / ("vision." + recipe + ".ninferno"),
                              hub / ("model." + recipe + ".ninferno"),
                              hub / ("model.vision." + recipe + ".ninferno")}) {
-        if (fs::exists(path, ec)) { return true; }
+        if (fs::exists(path, ec) && (!mtp || records_component(path, "mtp"))) { return true; }
     }
     return false;
 }
@@ -1901,6 +1918,14 @@ bool has_safetensors(const std::filesystem::path& checkpoint) {
         if (entry.path().extension() == ".safetensors") { return true; }
     }
     return false;
+}
+
+// Whether a checkpoint's weight files hold MTP layers, which qwen3_5_plan_error plans with.
+bool has_mtp_weights(const std::filesystem::path& checkpoint) {
+    if (!has_safetensors(checkpoint)) { return false; }
+    try {
+        return Checkpoint(checkpoint).has("mtp.fc.weight");
+    } catch (const std::exception&) { return false; }
 }
 
 } // namespace
@@ -1998,12 +2023,15 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
                     out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
                     out.sources = {};
                 }
-            } else if (!converted(checkpoint, out.recipe)) {
+            } else if (!converted(checkpoint, out.recipe) ||
+                       (!converted(checkpoint, out.recipe, true) && has_mtp_weights(checkpoint))) {
                 // Those recipes fit one layout (NVFP4 experts or MLPs, the rest BF16); another
                 // publisher's (RedHatAI: NVFP4 attention; nvidia: ModelOpt experts, FP8
                 // attention, an NVFP4 head) runs every tensor as published. A converted
                 // artifact of either recipe answers without planning (every serve start, and a
-                // consumed checkpoint, whose shards are gone).
+                // consumed checkpoint, whose shards are gone), unless it was converted without
+                // the checkpoint's MTP layers (--no-drafters): it then proves nothing about
+                // them, and a later default conversion keeps them.
                 if (converted(checkpoint, "qwen3_5_published")) {
                     out.recipe  = "qwen3_5_published";
                     out.sources = {};

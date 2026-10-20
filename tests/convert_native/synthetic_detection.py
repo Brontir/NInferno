@@ -19,6 +19,11 @@ Every conversion runs without --recipe, as a user would:
   qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: qwen3_6_35b_a3b_nvfp4 has
                          no NVFP4 source for the shared expert, so qwen3_5_published runs it as
                          published (routed NVFP4, shared BF16: the generic MoE op), with a note;
+  qwen-cached-text       NVFP4 experts with FP8 MTP attention, and a cached
+                         qwen3_6_35b_a3b_nvfp4 artifact converted without MTP (--no-drafters):
+                         the cache proves nothing about the MTP layers, so the planner runs and
+                         chooses qwen3_5_published; with MTP recorded in the cached artifact's
+                         report, its recipe answers without planning;
   gemma-bf16-layer       a Gemma 4 MoE checkpoint whose layer 1 is BF16 throughout (its experts
                          too) while layer 0 is NVFP4 and quantization_config ignores nothing: layer
                          0 imported as NVFP4, layer 1 quantized from BF16, per site;
@@ -84,6 +89,21 @@ def qwen_moe(root: Path, *, nvfp4: bool, quantization_config, bf16_shared=False)
     if quantization_config is not None:
         config["quantization_config"] = quantization_config
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+def fp8_mtp_attention(root: Path) -> None:
+    """The MTP layer's attention projections published as FP8 (channel scales)."""
+    rng = np.random.default_rng(27)
+    encode = fmt.enc_fp8("channel", "BF16")
+
+    def change(t):
+        for name in [n for n in t if n.startswith("mtp.layers.0.self_attn.")
+                     and n.endswith("_proj.weight")]:
+            n, k = t[name][1]
+            del t[name]
+            for suffix, value in encode(n, k, rng).q.items():
+                t[name[:-len(".weight")] + suffix] = value
+    rewrite_checkpoint(root, change)
 
 
 def gemma_mixed(root: Path) -> None:
@@ -337,6 +357,26 @@ def main() -> int:
                     any(format != "bf16" for format, _ in banks["shared"]):
                 errors.append(f"expected every routed bank NVFP4 kept and the shared expert BF16: {banks}")
         case("qwen-bf16-shared", errors)
+
+        root = work / "qwen-cached-text"
+        qwen_moe(root, nvfp4=True, quantization_config=ignore_only_head)
+        fp8_mtp_attention(root)
+        cached = root / ".ninferno-cache" / "qwen3_6_35b_a3b_nvfp4.ninferno"
+        cached.parent.mkdir()
+        cached.write_bytes(b"x")
+        errors = []
+        for components, want in ((["text"], "qwen3_5_published"),
+                                 (["text", "mtp"], "qwen3_6_35b_a3b_nvfp4")):
+            Path(str(cached) + ".conversion.json").write_text(json.dumps({"components": components}),
+                                                              encoding="utf-8")
+            run = convert(native, repository, root, work / "qwen-cached-text.ninferno")
+            log = run.stdout + run.stderr
+            if f"recipe {want} (chosen" not in log:
+                errors.append(f"cached {components}: expected {want}: "
+                              f"{[l for l in log.splitlines() if 'recipe' in l]}")
+            elif want == "qwen3_5_published" and run.returncode:
+                errors.append(f"cached {components}: conversion failed: {log.strip().splitlines()[-1][:300]}")
+        case("qwen-cached-text", errors)
 
         root = work / "gemma-bf16-layer"
         gemma_mixed(root)
