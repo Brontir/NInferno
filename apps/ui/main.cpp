@@ -158,7 +158,9 @@ std::string kept_access_key(const std::filesystem::path& path) {
     if (key.empty()) { return key; }
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    std::string temp = (path.parent_path() / "access-key.XXXXXX").string();
+    // create_unique takes UTF-8 (a Windows user name in Cyrillic stays intact).
+    const std::u8string name = (path.parent_path() / "access-key.XXXXXX").u8string();
+    std::string temp(name.begin(), name.end());
     const int fd     = ninferno::sys::create_unique(temp, 0);
     bool written     = false;
     if (fd >= 0) {
@@ -167,9 +169,10 @@ std::string kept_access_key(const std::filesystem::path& path) {
 #else
         ::close(fd);
 #endif
-        written = static_cast<bool>(std::ofstream(temp, std::ios::trunc) << key << '\n');
-        if (written) { fs::rename(temp, path, ec); }
-        if (!written || ec) { fs::remove(temp, ec); }
+        const fs::path made(std::u8string(temp.begin(), temp.end()));
+        written = static_cast<bool>(std::ofstream(made, std::ios::trunc) << key << '\n');
+        if (written) { fs::rename(made, path, ec); }
+        if (!written || ec) { fs::remove(made, ec); }
         written = written && first_line(path) == key;
     }
     if (!written) {
