@@ -163,6 +163,17 @@ int test_watchdog() {
                       "the window says 1, the depth's 32 rounds 2");
     depth.restart(1.5, 32, 32);
     failures += check(depth.depth_tokens_per_round() == 0.0, "a restart starts the rate afresh");
+    failures += check(!depth.observe(48, 40) && depth.depth_tokens_per_round() == 1.5,
+                      "the rate after a restart counts only its own rounds");
+
+    // The steps a trip skips: those whose trip point (margin 0.5) is above the depth's rate.
+    const std::vector<double> floors{2.6, 2.2, 1.8}; // trip points 1.8, 1.6, 1.4
+    failures +=
+        check(steps_that_cannot_pay(2.0, 0.5, floors) == 0, "a rate above them all skips none");
+    failures += check(steps_that_cannot_pay(1.7, 0.5, floors) == 1, "1.7 skips the 1.8 step");
+    failures += check(steps_that_cannot_pay(1.5, 0.5, floors) == 2, "1.5 skips two");
+    failures += check(steps_that_cannot_pay(1.2, 0.5, floors) == 3, "1.2 skips all: plain");
+    failures += check(steps_that_cannot_pay(1.2, 0.5, {}) == 0, "no steps, nothing to skip");
     return failures;
 }
 

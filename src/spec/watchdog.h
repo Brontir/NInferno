@@ -20,8 +20,10 @@
 // A trip judges a minimum (the window that fell below the trip point), so an owner that sizes the
 // next depth reads depth_tokens_per_round(), the rate over every round at the depth just judged.
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <span>
 #include <utility>
 
 namespace ninferno::spec {
@@ -39,6 +41,26 @@ struct WatchdogPolicy {
 
     [[nodiscard]] bool enabled() const noexcept { return floor_tokens_per_round > 1.0; }
 };
+
+// How many of the next step-down floors (`floors`, deepest first) a request that tripped skips:
+// the leading ones whose trip point is above `depth_rate`, the tokens per round of the depth that
+// tripped over its whole history. A shallower depth accepts at most the prefix the deeper one did,
+// so its tokens per round are at most that rate, and such a step would only trip again after its
+// own min_rounds (gpt-oss-20b DFlash on a ~24K-token prompt: 1.4..2 tokens per round at depth 7,
+// judged 16 rounds at each of depths 7, 5 and 3 before it went plain). The bound is the trip
+// point, not the floor: short-chat rows of 25..30 % acceptance at depth 7 paid at depth 5 below
+// its floor. All of them: the request goes plain.
+[[nodiscard]] inline std::size_t steps_that_cannot_pay(double depth_rate, double trip_margin,
+                                                       std::span<const double> floors) noexcept {
+    std::size_t skipped = 0;
+    while (skipped < floors.size() &&
+           depth_rate <
+               WatchdogPolicy{.floor_tokens_per_round = floors[skipped], .trip_margin = trip_margin}
+                   .trip_tokens_per_round()) {
+        ++skipped;
+    }
+    return skipped;
+}
 
 class AcceptanceWatchdog {
 public:
