@@ -93,7 +93,14 @@ target_include_directories(ninferno_ui_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # The release check: version order, manifests, the daily cache and its switches, against a
 # manifest served on loopback. No network.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 ninferno_add_test(ninferno_update_check_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_update_check.cpp"
-  LIBRARIES ninferno_product_update ninferno::httplib Threads::Threads)
+  LIBRARIES ninferno_product_update ninferno::httplib ninferno::json OpenSSL::Crypto Threads::Threads)
 target_include_directories(ninferno_update_check_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(ninferno_update_check_test PRIVATE NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+# The installer and the updater act only on a release manifest the release key signed.
+add_test(NAME ninferno_signed_install_test
+  COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/signed_install_test.sh ${PROJECT_SOURCE_DIR})
+set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77)

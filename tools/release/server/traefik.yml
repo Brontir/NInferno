@@ -1,0 +1,34 @@
+http:
+  routers:
+    ninferno-releases-web:
+      rule: Host(`ninferno.brontir.com`)
+      service: ninferno-releases
+      middlewares:
+        - redirect-to-https
+      entryPoints:
+        - web
+    ninferno-releases-websecure:
+      rule: Host(`ninferno.brontir.com`)
+      service: ninferno-releases
+      middlewares:
+        - ninferno-releases-headers
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+  middlewares:
+    ninferno-releases-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: false
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: no-referrer
+        customResponseHeaders:
+          Server: ""
+  services:
+    ninferno-releases:
+      loadBalancer:
+        servers:
+          - url: http://ninferno-releases:8080
+        passHostHeader: true

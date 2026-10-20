@@ -14,6 +14,23 @@ The files of a release: `NInferno-Setup.exe`, `install.sh`, `ninferno-wsl-rootfs
 `ninferno-linux-x86_64.tar.gz` and `ninferno-windows-x86_64.zip` (each with an engine for every GPU
 generation), each with its `.sha256`.
 
+## Signing
+
+Installers and updaters act on a manifest only with a valid signature of the release key:
+`latest.json.sig` beside `latest.json` holds base64 of the DER ECDSA P-256 / SHA-256 signature of its
+exact bytes, and every file is checked against the SHA-256 the signed manifest gives (`.sha256`
+files on the server are not trusted). The public key is `tools/release/signing.pub.pem`, built into
+`install.sh`, `ninferno-update` (through the installed `install.sh`), the release check of
+`ninferno-serve` and `ninferno-ui`, and `NInferno-Setup.exe`; `ninferno_update_check_test` checks every
+copy against it.
+
+The private key never reaches this server or the repository: `tools/release/sign.sh` signs on the
+machine that holds it. A server that is broken into can serve old or broken files, but it cannot
+sign, so no installation acts on what it serves. What it can still do is serve an older signed
+manifest: an existing installation refuses to go back (`ninferno-update` compares versions), a new
+one installs that older release. The installer itself comes from GitHub (`tools/release/install.sh`
+on master, `NInferno-Setup.exe` from the GitHub release), not from here.
+
 ## Publishing
 
 ```bash
@@ -21,12 +38,26 @@ tools/release/server/publish.sh 0.1.0 dist/ --notes https://github.com/Brontir/N
     [--min-version 0.1.2] [--host releases@ninferno.brontir.com]
 ```
 
-uploads the release's files to `/releases/v0.1.0/`, checks them there, then switches `latest.json` and the
-`releases/latest` link last (each by an atomic rename): a client that reads the new manifest finds every
-file it names. Raising `--min-version` makes older installations ask to update at every start; use
+uploads the release's files to `/releases/v0.1.0/`, checks them there, then switches `latest.json`, its
+signature and the `releases/latest` link last (each by an atomic rename): a client that reads the new
+manifest finds every file it names. Where the release key is not (a build machine), it writes
+`latest.json` and stops; signing it with `sign.sh` where the key is and putting `latest.json.sig` beside
+it lets the next run publish. Raising `--min-version` makes older installations ask to update at every start; use
 it for a broken or unsafe release only.
 
-## nginx
+## The site
 
-`nginx.conf` here is the site: static files, long caching for versioned files, no caching for the
-manifest, and `latest/download` served through the link.
+`nginx.conf` is the site: GET and HEAD of files under `/releases/` only, long caching for versioned
+files, none for the manifest and its signature, `latest/download` served through the link. It runs as
+one Docker Swarm service behind the host's Traefik (`traefik.yml`: TLS from Let's Encrypt, HSTS):
+
+```bash
+docker service create --name ninferno-releases --network dokploy-network --read-only \
+  --mount type=bind,src=/srv/ninferno,dst=/srv/ninferno,readonly \
+  --mount type=bind,src=/srv/ninferno-site/nginx.conf,dst=/etc/nginx/conf.d/default.conf,readonly \
+  --mount type=tmpfs,dst=/tmp --cap-drop ALL --limit-memory 256M --limit-cpu 2 \
+  nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+```
+
+The container runs unprivileged on a read-only file system and sees the releases read-only:
+`publish.sh` writes them over SSH as the upload user, who owns `/srv/ninferno` and nothing else.

@@ -23,7 +23,8 @@ add_library(ninferno_product_update STATIC
   update/update_check.cpp
 )
 ninferno_internal_includes(ninferno_product_update)
-target_link_libraries(ninferno_product_update PRIVATE PkgConfig::LIBCURL ninferno::json)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+target_link_libraries(ninferno_product_update PRIVATE PkgConfig::LIBCURL OpenSSL::Crypto ninferno::json)
 
 # The speculation a Qwen artifact came with (its resolved profile), as the CLI and the server run it.
 add_library(ninferno_product_speculation STATIC

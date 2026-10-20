@@ -5,11 +5,15 @@
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -20,6 +24,13 @@ namespace ninferno::update {
 namespace {
 
 constexpr const char* kManifestUrl = "https://ninferno.brontir.com/releases/latest.json";
+
+// tools/release/signing.pub.pem (a test checks this copy against it).
+constexpr const char* kReleaseKey = R"(-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1R5JganVYknHjhX9nN2fYLqxwe2G
+R9Zeg0QL/WoCKgTm4fpmwOM4ASQ+0Av3ASV+RPHQH1rTaXBSHyWCPZokZg==
+-----END PUBLIC KEY-----
+)";
 
 // "v0.2.0-rc1" -> numbers {0, 2, 0}, pre-release "rc1". False when it is not that shape.
 bool split_version(std::string version, std::vector<long>& numbers, std::string& pre) {
@@ -80,7 +91,47 @@ std::string fetch(const std::string& url, const std::string& current, std::chron
     return body;
 }
 
+// Base64 (whitespace ignored); "" when it is not base64.
+std::string base64_decode(const std::string& text) {
+    std::string clean;
+    for (const char c : text) {
+        if (!std::isspace(static_cast<unsigned char>(c))) { clean.push_back(c); }
+    }
+    if (clean.empty() || clean.size() % 4 != 0) { return ""; }
+    std::string out(clean.size() / 4 * 3, '\0');
+    const int n = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(out.data()),
+                                  reinterpret_cast<const unsigned char*>(clean.data()),
+                                  static_cast<int>(clean.size()));
+    if (n < 0) { return ""; }
+    const auto padding = static_cast<std::size_t>(clean.end()[-1] == '=') +
+                         static_cast<std::size_t>(clean.end()[-2] == '=');
+    out.resize(static_cast<std::size_t>(n) - padding);
+    return out;
+}
+
 } // namespace
+
+const std::string& release_key() {
+    static const std::string key = kReleaseKey;
+    return key;
+}
+
+bool verify_signature(const std::string& text, const std::string& signature,
+                      const std::string& public_key) {
+    const std::unique_ptr<BIO, decltype(&BIO_free)> bio(
+        BIO_new_mem_buf(public_key.data(), static_cast<int>(public_key.size())), BIO_free);
+    if (!bio) { return false; }
+    const std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key(
+        PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr), EVP_PKEY_free);
+    const std::string der = base64_decode(signature);
+    if (!key || der.empty()) { return false; }
+    const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),
+                                                                      EVP_MD_CTX_free);
+    return ctx && EVP_DigestVerifyInit(ctx.get(), nullptr, EVP_sha256(), nullptr, key.get()) == 1 &&
+           EVP_DigestVerify(ctx.get(), reinterpret_cast<const unsigned char*>(der.data()),
+                            der.size(), reinterpret_cast<const unsigned char*>(text.data()),
+                            text.size()) == 1;
+}
 
 std::string default_manifest_url() {
     const auto url = sys::env("NINFERNO_UPDATE_URL");
@@ -183,6 +234,7 @@ std::optional<Release> check(const CheckOptions& options) {
     if (!checks_enabled() || !is_release_version(options.current)) { return std::nullopt; }
     const auto url   = options.manifest_url.empty() ? default_manifest_url() : options.manifest_url;
     const auto cache = options.cache_file.empty() ? default_cache_file() : options.cache_file;
+    const auto& key  = options.public_key.empty() ? release_key() : options.public_key;
     const auto now   = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
@@ -196,11 +248,15 @@ std::optional<Release> check(const CheckOptions& options) {
         const auto* saved_url     = field("url");
         const auto* saved_checked = field("checked");
         const auto* saved_text    = field("manifest");
+        const auto* saved_sig     = field("signature");
+        // The cache is checked like the server's answer: only a signed manifest counts.
         if (saved_url != nullptr && saved_url->is_string() &&
             saved_url->get<std::string>() == url && saved_checked != nullptr &&
             saved_checked->is_number_integer() &&
             now - saved_checked->get<std::int64_t>() < options.max_age.count() &&
-            saved_text != nullptr && saved_text->is_string()) {
+            saved_text != nullptr && saved_text->is_string() && saved_sig != nullptr &&
+            saved_sig->is_string() &&
+            verify_signature(saved_text->get<std::string>(), saved_sig->get<std::string>(), key)) {
             try {
                 return parse_manifest(saved_text->get<std::string>(), options.current);
             } catch (const std::exception&) {
@@ -209,15 +265,19 @@ std::optional<Release> check(const CheckOptions& options) {
         }
     }
     try {
-        const auto text    = fetch(url, options.current, options.timeout);
+        const auto text      = fetch(url, options.current, options.timeout);
+        const auto signature = fetch(url + ".sig", options.current, options.timeout);
+        if (!verify_signature(text, signature, key)) { return std::nullopt; }
         const auto release = parse_manifest(text, options.current);
         if (!cache.empty()) {
             // Best effort: a cache that cannot be written only means asking the server again.
             try {
                 create_parent_directories(cache);
-                write_file_atomic(
-                    cache,
-                    nlohmann::json{{"url", url}, {"checked", now}, {"manifest", text}}.dump());
+                write_file_atomic(cache, nlohmann::json{{"url", url},
+                                                        {"checked", now},
+                                                        {"manifest", text},
+                                                        {"signature", signature}}
+                                             .dump());
             } catch (const std::exception&) {}
         }
         return release;

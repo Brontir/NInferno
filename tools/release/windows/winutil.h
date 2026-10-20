@@ -47,6 +47,11 @@ std::string http_get(const std::wstring& url, std::size_t max_bytes = 4u << 20);
 void http_download(const std::wstring& url, const std::wstring& path, const Progress& progress);
 // Lower-case hex SHA-256 of a file.
 std::string sha256_file(const std::wstring& path);
+// Whether `signature` (base64 of a DER ECDSA P-256 / SHA-256 signature, tools/release/sign.sh)
+// signs `text` under the P-256 public key `spki` (base64 of its SubjectPublicKeyInfo). False for
+// anything malformed.
+bool verify_signature(const std::string& text, const std::string& signature,
+                      const std::string& spki);
 
 // A JSON value: just enough for the release manifest.
 struct Json {
