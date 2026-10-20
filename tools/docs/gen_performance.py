@@ -262,8 +262,10 @@ def matrix(gpus, models, speed, base, readme_only=False):
         if not any((g, m) in speed for m in cols):
             continue
         info = gpus[g]
-        row = [f"[**{label(info)}**]({base}gpus/{g}.md"
-               f"{hint(info['chip'] + ', sm_' + str(info['sm']) + ', ' + str(info['vram_gb']) + ' GB')})"]
+        # One line: the label's first line (the memory size is in the title), its spaces unbreakable.
+        short = (info["label"][0] if info.get("label") else info["name"]).replace(" ", "&nbsp;")
+        size = "" if info["name"].endswith(" GB") else f", {info['vram_gb']} GB"
+        row = [f"[**{short}**]({base}gpus/{g}.md{hint(info['name'] + size + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})"]
         for m in cols:
             row.append(cell(speed[(g, m)], f"{base}runs/{g}/{m}.md") if (g, m) in speed else "")
         lines.append("| " + " | ".join(row) + " |")
