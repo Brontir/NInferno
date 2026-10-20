@@ -83,7 +83,9 @@ struct MoeWeights {
     /// The shared expert's projections run on the generic projection path under this policy (the
     /// artifact's, where both of them allow it).
     LinearPolicy shared_policy = LinearPolicy::A16Only;
-    /// The routed experts' policy (the artifact's, where both banks allow it). Under AllowA8 a
+    /// The routed experts' policy (the artifact's, where both banks allow it: AllowA4 where both
+    /// allow A4, which an NVFP4 bank keeps on A16 where the build has W4A4 kernels, sm_120a, and
+    /// otherwise reads as AllowA8; prepare_moe_weights). Under AllowA8 a
     /// codebook bank (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S) may compute a decode call (T <= 4,
     /// as the dense R8) with the activation quantized to int8 per 32 values (the generic path's
     /// R8 arithmetic), on the GPU classes whose default route lists it. A prefill call of at most

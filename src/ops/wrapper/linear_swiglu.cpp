@@ -176,11 +176,14 @@ void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, L
         detail::q4a8_swiglu_launch(x, gate_up_weight, out, ws, stream);
         return;
     }
+    // An NVFP4 prefill call the generic W4A8 takes (owned_prefill_w4a8) leaves the plan, which has
+    // no 8-bit form.
     const bool registered =
         shape_plan_runs(gate_up_weight.qtype, gate_up_weight.n, gate_up_weight.k, policy) &&
         (gate_up_weight.layout != QuantLayout::RowSplit ||
          gate_up_weight.padded_shape[1] == gate_up_weight.k) &&
-        !prefill_a8 && !detail::generic::volta_tiled_route(gate_up_weight, policy, t);
+        !prefill_a8 && !detail::generic::owned_prefill_w4a8(gate_up_weight, policy, t) &&
+        !detail::generic::volta_tiled_route(gate_up_weight, policy, t);
     if (!registered && detail::generic::supports(gate_up_weight)) {
         if (t <= 0 || x.ne[0] != gate_up_weight.k || out.ne[0] * 2 != gate_up_weight.n ||
             out.ne[1] != t) {

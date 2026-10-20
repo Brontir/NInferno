@@ -261,10 +261,13 @@ bool allows_w4a4(const Weight& w, LinearPolicy policy) {
 }
 
 // W4A8: a format with a W4A8 codec, a K of whole tiles (w4a8_k_admits), 16-byte code rows, A8
-// allowed.
+// allowed. An NVFP4 weight that W4A4 takes where this build has its kernels is not W4A8's: four-bit
+// activations stay the route of the weights recorded for them, W4A8 the one of those whose policy
+// allows eight bits only (a W4A16 checkpoint under --activations int8) or that carry no activation
+// divisor.
 bool allows_w4a8(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
-           aligned_to(w.qdata, 16);
+           aligned_to(w.qdata, 16) && !(w4a4_schedule_count() > 0 && allows_w4a4(w, policy));
 }
 
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
@@ -1479,11 +1482,13 @@ bool w4a8_supports(QType qtype) {
     case QType::GGML_IQ1_S:
     case QType::GGML_IQ1_M:
         return true;
-    // NINFERNO-SPECIAL(arch:no-fp4-mma): without the native NVFP4 kernels (sm_89 / sm_86 builds)
-    // NVFP4 weights otherwise take the BF16 register MMA on the FP32-accumulate tier; the int8
-    // tier multiplies the doubled E2M1 codes exactly (W4a8Nvfp4). sm_120a keeps W4A4.
+    // NINFERNO-SPECIAL(arch:no-fp4-mma): the int8 tier multiplies the doubled E2M1 codes exactly
+    // (W4a8Nvfp4) on every build. Without the native NVFP4 kernels (sm_89 / sm_86 builds) it is
+    // the A8 route of every NVFP4 weight; with them (sm_120a) W4A4 keeps the weights it takes
+    // (allows_w4a8), and W4A8 runs the prefill of those whose policy allows A8 but not A4, which
+    // the BF16 register MMA ran before.
     case QType::NVFP4:
-        return !kNativeNvfp4;
+        return true;
     default:
         return false;
     }
@@ -1687,6 +1692,16 @@ bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tok
            r8_call(weight, policy, tokens);
 }
 
+bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
+    return tokens >= 17 && weight.qtype == QType::NVFP4 && supports(weight) &&
+           allows_w4a8(weight, policy);
+}
+
+bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy) {
+    return qtype == QType::NVFP4 && allows_a8(policy) &&
+           !(w4a4_schedule_count() > 0 && allows_a4(policy));
+}
+
 namespace {
 // Q4/Q5/Q6 G64 weights take int8 activations at prefill wherever the route admits W4A8 (the
 // artifact's A16Only uses included) on the cards where they pay (qx_prefill_a8_pays);
@@ -1721,6 +1736,12 @@ LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy) {
 
 std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,
                                       std::int32_t max_tokens) {
+    // NVFP4 under a policy with A8 and without W4A4 (owned_prefill_w4a8): the W4A8 planes of its
+    // calls of 17 tokens or more, which the shape's own plan does not run.
+    if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
+        if (max_tokens < 17) return 0;
+        return workspace_capacity_bytes(problem, nullptr, std::max(min_tokens, 17), max_tokens);
+    }
     const LinearPolicy a8_policy = prefill_a8_policy(problem.qtype, problem.policy);
     if (!prefill_a8_format(problem.qtype) || !allows_a8(a8_policy) ||
         max_tokens < kQ8PrefillA8Tokens) {

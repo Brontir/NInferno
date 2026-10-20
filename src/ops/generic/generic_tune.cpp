@@ -454,10 +454,10 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
     tuned.prefill      = {};
     tuned.prefill_base = {};
     for (const std::int32_t t : kPrefillBandTokens) entry["prefill"][std::to_string(t)] = nullptr;
-    // NVFP4 prefill takes its own invariant routes before any band, but for W4A8: the A8 prefill
-    // of a build without the native NVFP4 kernels.
+    // NVFP4 prefill takes its own invariant routes (A16) or W4A4 before any band, but for W4A8: the
+    // A8 prefill of a weight W4A4 does not take (every NVFP4 weight without the native NVFP4
+    // kernels; with them, a policy that allows A8 but not A4). Only those bands are timed.
     const bool nvfp4 = weight.qtype == QType::NVFP4;
-    if (nvfp4 && kNativeNvfp4) return;
     // The widest band whose buffers stay within 64 MiB each and whose call within 250 GFLOP (an
     // output head of 152K rows: T <= 128); wider bands keep the heuristic's route.
     const auto fits = [&](std::int32_t t) {

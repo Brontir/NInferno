@@ -43,8 +43,9 @@ Nvfp4GdnConvPlan nvfp4_gdn_conv_resolve_plan(LinearPolicy policy, std::int32_t t
     // projection (nvfp4_gdn_input_plan.cpp); the fused A16 schedules sum K in their own order.
     if (policy == LinearPolicy::A16Only) { return {Nvfp4GdnConvScheduleId::Materialized}; }
     // A16 otherwise (AllowA8, or a route probe forcing it, route_probe.h) keeps the fused A16
-    // schedules through T=16 and materializes wider calls through the A16 projection; a probe
-    // forcing A4 materializes every width through the W4A4 projection.
+    // schedules through T=16 and materializes wider calls through the projection (AllowA8: the
+    // generic W4A8, nvfp4_gdn_input_plan.cpp; the probe: A16); a probe forcing A4 materializes
+    // every width through the W4A4 projection.
     const std::int8_t forced = route_probe_state.quantized_act;
     if (!allows_a4(policy) || forced == 0) {
         if (tokens == 1) { return {Nvfp4GdnConvScheduleId::DecodeFusedA16}; }

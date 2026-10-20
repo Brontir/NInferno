@@ -1960,9 +1960,35 @@ int main(int argc, char** argv) {
                 i4.shared_gate           = false;
                 i4.epilogue              = ops::MoeEpilogue::Store;
                 failures += check_w4a8(i4, 115U, {17, 90});
-                // NVFP4 experts take the grouped W4A8 where the native NVFP4 kernels are absent.
+                // NVFP4 experts take the grouped W4A8 under AllowA8 on every build (with the
+                // native NVFP4 kernels: banks without A4, a W4A16 checkpoint under --activations
+                // int8). An AllowA4 expert policy keeps them off it where the build has W4A4
+                // kernels: the plan does not pick it and a plan that names it is refused.
                 if (ops::detail::generic::w4a8_supports(QType::NVFP4)) {
                     failures += check_w4a8(qwen3_like(), 116U, {17, 96});
+                }
+                if (ops::detail::generic::w4a4_schedule_count() > 0) {
+                    namespace moe   = ops::detail::moe;
+                    Case c          = qwen3_like();
+                    c.expert_policy = ops::LinearPolicy::AllowA4;
+                    const Layer l   = make_layer(c, 117U);
+                    auto p          = moe::select_plan(l.weights, c.config, 96, true);
+                    if (p.w4a8 || moe::select_plan(l.weights, c.config, 96, false).w4a8) {
+                        std::cerr << c.label << " A4: the grouped W4A8 was picked\n";
+                        ++failures;
+                    }
+                    p.w4a8 = true;
+                    const auto x =
+                        random_bf16(static_cast<std::size_t>(96) * c.hidden, 118U, -1.0, 1.0);
+                    const auto residual = random_bf16(x.size(), 119U, -2.0, 2.0);
+                    bool refused        = false;
+                    try {
+                        (void)run_op(c, l, x, 0, 96, residual, &p);
+                    } catch (const std::invalid_argument&) { refused = true; }
+                    if (!refused) {
+                        std::cerr << c.label << " A4: a W4A8 plan ran\n";
+                        ++failures;
+                    }
                 }
             }
             // 3. Route-table plans (routes/<class>.json "moe"): a table that steers both layers to

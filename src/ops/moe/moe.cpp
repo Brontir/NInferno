@@ -550,9 +550,15 @@ bool w4a8_frag_admits(QType qtype) {
     return qtype == QType::GGML_Q4_0 || qtype == QType::GGML_Q4_K;
 }
 
+// NVFP4 banks take it under a policy that allows A8 and, where the build has the W4A4 kernels
+// (sm_120a), not A4 (generic::nvfp4_prefill_a8_policy): an A4 expert policy keeps the A16 register
+// MMA there as before, and a W4A16 checkpoint under --activations int8 prefills its experts on
+// int8 activations as on the builds without those kernels.
 bool w4a8_banks_admit(const MoeWeights& w) {
-    const auto bank = [](const Weight& b) {
+    const auto bank = [&w](const Weight& b) {
         return generic::w4a8_supports(b.qtype) && b.k % 32 == 0 &&
+               (b.qtype != QType::NVFP4 ||
+                generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) &&
                (!is_frag(b) || (ggml_frag_format(b.qtype) && w4a8_frag_admits(b.qtype)));
     };
     return allows_a8(w.expert_policy) && bank(w.gate_up) && bank(w.down);

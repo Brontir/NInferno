@@ -1,4 +1,4 @@
-// Grouped MoE W4A8 (moe_w4a8.cuh): the ggml 32-value block formats and MXFP4.
+// Grouped MoE W4A8 (moe_w4a8.cuh): the ggml 32-value block formats, MXFP4 and NVFP4.
 #include "ops/moe/moe_w4a8.cuh"
 
 namespace ninferno::ops::detail::moe {
@@ -29,11 +29,10 @@ bool launch_moe_w4a8_ggml32(generic::WeightCodec codec, Stage stage, const GemmA
     case generic::WeightCodec::Mxfp4:
         moe_w4a8_launch_codec<generic::W4a8Mxfp4>(stage, args, act, grid, stream);
         return true;
-#ifdef NINFERNO_WITHOUT_NVFP4
-    case generic::WeightCodec::Nvfp4: // w4a8_supports admits NVFP4 only without kNativeNvfp4
+    // Every build: with the native NVFP4 kernels only for banks without A4 (w4a8_banks_admit).
+    case generic::WeightCodec::Nvfp4:
         moe_w4a8_launch_codec<generic::W4a8Nvfp4>(stage, args, act, grid, stream);
         return true;
-#endif
     default:
         return false;
     }

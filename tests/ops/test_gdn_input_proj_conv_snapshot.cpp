@@ -30,6 +30,8 @@ namespace {
 // This criterion belongs to the complete A16 fused projection/conv/snapshot Op.
 constexpr ReductionCriterion kGdnInputProjConvSnapshotA16Tolerance{3.15e-3, 4.0e-3, 3.2e-3};
 constexpr ReductionCriterion kGdnInputProjConvSnapshotA4Tolerance{0.16, 4.0e-3, 0.16};
+// NVFP4 AllowA8 from 17 tokens: the projection on the generic W4A8 (int8 x per 32 values).
+constexpr ReductionCriterion kGdnInputProjConvSnapshotA8Tolerance{0.04, 4.0e-3, 0.06};
 constexpr ReductionCriterion kFp8GdnInputProjConvSnapshotA16Tolerance{1.0 / 256.0, 1.0 / 256.0,
                                                                       2.0 / 256.0};
 constexpr ReductionCriterion kFp8GdnInputProjConvSnapshotA8Tolerance{0.04, 1.0 / 256.0, 0.06};
@@ -1062,11 +1064,17 @@ int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearP
                 kHidden);
         });
     const bool a4 = policy == ops::LinearPolicy::AllowA4 && tokens >= 4;
-    const ReductionCriterion& criterion =
-        a4 ? kGdnInputProjConvSnapshotA4Tolerance : kGdnInputProjConvSnapshotA16Tolerance;
-    const std::string suffix =
-        std::string(" NVFP4 ") + (a4 ? "A4" : "A16") + " T=" + std::to_string(tokens) +
-        " initial=" + std::to_string(initial_slot) + " base=" + std::to_string(kSnapshotBaseSlot);
+    const bool a8                       = policy == ops::LinearPolicy::AllowA8 && tokens >= 17;
+    const ReductionCriterion& criterion = a4   ? kGdnInputProjConvSnapshotA4Tolerance
+                                          : a8 ? kGdnInputProjConvSnapshotA8Tolerance
+                                               : kGdnInputProjConvSnapshotA16Tolerance;
+    const std::string suffix            = std::string(" NVFP4 ") +
+                               (a4   ? "A4"
+                                : a8 ? "A8"
+                                     : "A16") +
+                               " T=" + std::to_string(tokens) +
+                               " initial=" + std::to_string(initial_slot) +
+                               " base=" + std::to_string(kSnapshotBaseSlot);
     const std::vector<std::uint16_t> state_after = state.bits();
     int failures =
         verify_snapshot_outputs(suffix, query, key, value, kValueRows, tokens, oracle, criterion);
@@ -1114,6 +1122,9 @@ int run_nvfp4() {
     failures += run_nvfp4_case(parent, 4, ops::LinearPolicy::AllowA4, 5);
     failures += run_nvfp4_case(parent, 17, ops::LinearPolicy::AllowA4, 0);
     failures += run_nvfp4_case(parent, 1024, ops::LinearPolicy::AllowA4, 1025);
+    failures += run_nvfp4_case(parent, 16, ops::LinearPolicy::AllowA8, 3);
+    failures += run_nvfp4_case(parent, 17, ops::LinearPolicy::AllowA8, 0);
+    failures += run_nvfp4_case(parent, 33, ops::LinearPolicy::AllowA8, 2);
     constexpr std::int32_t kValueRows = 6144;
     constexpr std::int32_t kZRows     = 6144;
     constexpr std::int32_t kChannels  = 10240;

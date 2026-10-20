@@ -400,11 +400,21 @@ int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
     constexpr std::int32_t kValueBegin = kGateBegin + kQRows;
     int failures                       = 0;
     const bool a4                      = policy == ops::LinearPolicy::AllowA4;
-    const ReductionCriterion& criterion =
-        a4 ? kAttnInputProjA4Tolerance : kAttnInputProjA16Tolerance;
-    const std::int32_t sample_count = a4 ? kA4SampleRows : 7;
-    const std::string suffix =
-        std::string(" NVFP4 ") + (a4 ? "A4" : "A16") + " T=" + std::to_string(tokens);
+    // AllowA8 from 17 tokens: the generic W4A8 (int8 x per 32 values) writes the four parts.
+    const bool a8                       = policy == ops::LinearPolicy::AllowA8 && tokens >= 17;
+    const ReductionCriterion& criterion = a4   ? kAttnInputProjA4Tolerance
+                                          : a8 ? kAttnInputProjA8Tolerance
+                                               : kAttnInputProjA16Tolerance;
+    const std::int32_t sample_count     = a4 ? kA4SampleRows : a8 ? 31 : 7;
+    const std::string suffix            = std::string(" NVFP4 ") +
+                               (a4   ? "A4"
+                                : a8 ? "A8"
+                                     : "A16") +
+                               " T=" + std::to_string(tokens);
+    if (a8 && workspace.peak_used() == 0) {
+        std::cerr << "attn" << suffix << ": no W4A8 planes in the workspace\n";
+        return 1;
+    }
     failures += verify_output("attn q" + suffix, query, parent.host, 0, kQRows, activation, kHidden,
                               tokens, criterion, sample_count);
     failures += verify_output("attn k" + suffix, key, parent.host, kKeyBegin, kKvRows, activation,
@@ -434,6 +444,9 @@ int run_nvfp4_target() {
     }
     failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA8);
     failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA8, true);
+    failures += run_nvfp4_target_case(parent, 16, ops::LinearPolicy::AllowA8);
+    failures += run_nvfp4_target_case(parent, 17, ops::LinearPolicy::AllowA8);
+    failures += run_nvfp4_target_case(parent, 33, ops::LinearPolicy::AllowA8, true);
     failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_target_case(parent, 17, ops::LinearPolicy::AllowA4);
     // 1023, 1024 and 1025 straddle this route's floor. 1024 was the narrowest width it
