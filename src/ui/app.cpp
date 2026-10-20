@@ -1443,14 +1443,18 @@ void App::install(httplib::Server& server) {
                         "Host not allowed: ninferno-ui answers localhost only (see --listen)");
             return httplib::Server::HandlerResponse::Handled;
         }
-        switch (check_key(policy, req.remote_addr, req.get_header_value("Cookie"),
-                          req.get_header_value("Authorization"), req.get_param_value("key"))) {
+        const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
+                             req.has_header("X-Real-IP");
+        switch (check_key(policy, req.remote_addr, req.get_header_value("Host"), proxied,
+                          req.get_header_value("Cookie"), req.get_header_value("Authorization"),
+                          req.get_param_value("key"))) {
         case KeyCheck::pass: break;
         case KeyCheck::pass_set_cookie:
             res.set_header("Set-Cookie", std::string(kKeyCookie) + "=" + policy.key +
                                              "; Path=/; HttpOnly; SameSite=Lax");
             if (req.method == "GET") { // the key leaves the address bar and the history
-                res.set_redirect(req.path, 303);
+                const bool local = req.path.size() < 2 || (req.path[1] != '/' && req.path[1] != '\\');
+                res.set_redirect(local ? req.path : std::string("/"), 303);
                 return httplib::Server::HandlerResponse::Handled;
             }
             break;

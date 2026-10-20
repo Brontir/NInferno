@@ -6,7 +6,8 @@
 //   listen    127.0.0.1 unless --listen names another address;
 //   key       on another address, a request from another machine carries the access key: the
 //             ninferno_ui_key cookie, "Authorization: Bearer KEY", or ?key=KEY (which sets the
-//             cookie); requests from this machine need none;
+//             cookie); a request from this machine (loopback peer and Host, no proxy's
+//             Forwarded / X-Forwarded-For / X-Real-IP) needs none;
 //   Host      on a loopback listener, only localhost, 127.0.0.1 or [::1] (any port): a page on
 //             another site whose name resolves to 127.0.0.1 (DNS rebinding) is refused;
 //   Origin    a request that changes something (POST) must come from the UI's own page: an Origin
@@ -42,10 +43,11 @@ inline constexpr std::string_view kKeyCookie = "ninferno_ui_key";
 
 enum class KeyCheck { pass, pass_set_cookie, refused };
 
-// Whether a request from `remote_addr` carries the policy's key in its Cookie header, its
-// Authorization header or its ?key= value (pass_set_cookie: only there, so the reply sets the
-// cookie). Compared in constant time.
+// Whether a request from `remote_addr` comes from this machine (`proxied`: it carries a proxy's
+// header) or carries the policy's key in its Cookie header, its Authorization header or its ?key=
+// value (pass_set_cookie: only there, so the reply sets the cookie). Compared in constant time.
 [[nodiscard]] KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
+                                 std::string_view host_header, bool proxied,
                                  std::string_view cookie_header, std::string_view authorization,
                                  std::string_view query_key);
 

@@ -20,6 +20,7 @@
 #include "core/sys.h"
 
 #ifdef _WIN32
+#include <io.h>
 #include <process.h>
 #else
 #include <unistd.h>
@@ -148,15 +149,33 @@ std::string first_line(const std::filesystem::path& path) {
     return line.substr(begin, line.find_last_not_of(" \t\r") - begin + 1);
 }
 
-// The key kept in `path`, made there (readable by its owner only) when there is none yet.
+// The key kept in `path`, made there when there is none yet: written to a new file created 0600
+// (on Windows the profile's permissions apply), then renamed into place.
 std::string kept_access_key(const std::filesystem::path& path) {
     namespace fs = std::filesystem;
     if (auto key = first_line(path); key.size() >= 16) { return key; }
     std::string key = ninferno::ui::new_access_key();
+    if (key.empty()) { return key; }
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    std::ofstream(path, std::ios::trunc) << key << '\n';
-    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write, ec);
+    std::string temp = (path.parent_path() / "access-key.XXXXXX").string();
+    const int fd     = ninferno::sys::create_unique(temp, 0);
+    bool written     = false;
+    if (fd >= 0) {
+#ifdef _WIN32
+        _close(fd);
+#else
+        ::close(fd);
+#endif
+        written = static_cast<bool>(std::ofstream(temp, std::ios::trunc) << key << '\n');
+        if (written) { fs::rename(temp, path, ec); }
+        if (!written || ec) { fs::remove(temp, ec); }
+        written = written && first_line(path) == key;
+    }
+    if (!written) {
+        std::cerr << "ninferno-ui: warning: cannot keep the access key in " << path
+                  << "; a new one is made at the next start\n";
+    }
     return key;
 }
 
@@ -259,6 +278,10 @@ int main(int argc, char** argv) {
         }
     } else if (const char* key = std::getenv("NINFERNO_UI_KEY"); key != nullptr && *key) {
         options.access.key = key;
+        if (options.access.key.size() < 16) {
+            std::cerr << "ninferno-ui: NINFERNO_UI_KEY needs 16+ characters\n";
+            return 2;
+        }
     } else if (exposed) {
         const auto hub = options.hub_cache.empty() ? ninferno::convert::default_hub_cache()
                                                    : options.hub_cache;

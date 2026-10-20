@@ -77,16 +77,30 @@ void test_access() {
     check(cookie_value("xninferno_ui_key=k1", "ninferno_ui_key").empty(), "cookie name exact");
     AccessPolicy keyed{.listen = "0.0.0.0", .port = 8090, .key = key};
     const std::string cookie = "ninferno_ui_key=" + key, bearer = "Bearer " + key;
-    check(check_key(local, "10.0.0.2", "", "", "") == KeyCheck::pass, "no key: all pass");
-    check(check_key(keyed, "127.0.0.1", "", "", "") == KeyCheck::pass, "this machine passes");
-    check(check_key(keyed, "::ffff:127.0.0.1", "", "", "") == KeyCheck::pass, "mapped loopback");
-    check(check_key(keyed, "10.0.0.2", "", "", "") == KeyCheck::refused, "other machine refused");
-    check(check_key(keyed, "10.0.0.2", cookie, "", "") == KeyCheck::pass, "cookie");
-    check(check_key(keyed, "10.0.0.2", "", bearer, "") == KeyCheck::pass, "bearer");
-    check(check_key(keyed, "10.0.0.2", "", "", key) == KeyCheck::pass_set_cookie, "?key= sets it");
-    check(check_key(keyed, "10.0.0.2", "ninferno_ui_key=x", "Bearer x", "x") == KeyCheck::refused,
+    const auto keyed_check = [&](std::string_view peer, std::string_view host, bool proxied,
+                                 std::string_view c, std::string_view a, std::string_view q) {
+        return check_key(keyed, peer, host, proxied, c, a, q);
+    };
+    check(check_key(local, "10.0.0.2", "x:1", false, "", "", "") == KeyCheck::pass, "no key: all pass");
+    check(keyed_check("127.0.0.1", "localhost:8090", false, "", "", "") == KeyCheck::pass,
+          "this machine passes");
+    check(keyed_check("::ffff:127.0.0.1", "127.0.0.1:8090", false, "", "", "") == KeyCheck::pass,
+          "mapped loopback");
+    check(keyed_check("127.0.0.1", "evil.example:8090", false, "", "", "") == KeyCheck::refused,
+          "rebound name refused");
+    check(keyed_check("127.0.0.1", "127.0.0.1:8090", true, "", "", "") == KeyCheck::refused,
+          "local proxy refused");
+    check(keyed_check("10.0.0.2", "box:8090", false, "", "", "") == KeyCheck::refused,
+          "other machine refused");
+    check(keyed_check("10.0.0.2", "box:8090", false, cookie, "", "") == KeyCheck::pass, "cookie");
+    check(keyed_check("10.0.0.2", "box:8090", false, "", bearer, "") == KeyCheck::pass, "bearer");
+    check(keyed_check("10.0.0.2", "box:8090", false, "", "", key) == KeyCheck::pass_set_cookie,
+          "?key= sets it");
+    check(keyed_check("10.0.0.2", "box:8090", false, "ninferno_ui_key=x", "Bearer x", "x") ==
+              KeyCheck::refused,
           "wrong key refused");
-    check(check_key(keyed, "", "", "", "") == KeyCheck::refused, "no peer address refused");
+    check(keyed_check("", "box:8090", false, "", "", "") == KeyCheck::refused,
+          "no peer address refused");
 }
 
 // The hub cache's directory names, both ways, as the page lists and deletes converted models.
@@ -781,6 +795,41 @@ void test_http() {
 
     server.stop();
     thread.join();
+
+    // The access key, through the handler: a request marked as proxied is not this machine's.
+    {
+        UiOptions keyed_options = options;
+        keyed_options.access.key = std::string(32, 'k');
+        App keyed_app(keyed_options, std::make_unique<NoGpu>());
+        httplib::Server keyed_server;
+        keyed_app.install(keyed_server);
+        const int keyed_port = keyed_server.bind_to_any_port("127.0.0.1");
+        std::thread keyed_thread([&] { keyed_server.listen_after_bind(); });
+        keyed_server.wait_until_ready();
+        httplib::Client keyed_client("127.0.0.1", keyed_port);
+        const httplib::Headers far{{"X-Forwarded-For", "10.0.0.2"}};
+        res = keyed_client.Get("/api/state");
+        check(res && res->status == 200, "key: this machine passes");
+        res = keyed_client.Get("/api/state", far);
+        check(res && res->status == 401 && res->body.find("access key") != std::string::npos,
+              "key: 401 JSON off the page");
+        res = keyed_client.Get("/", far);
+        check(res && res->status == 401 && res->body.find("name=key") != std::string::npos,
+              "key: the key form on /");
+        res = keyed_client.Get("/?key=" + keyed_options.access.key, far);
+        check(res && res->status == 303 && res->get_header_value("Location") == "/" &&
+                  res->get_header_value("Set-Cookie").find("HttpOnly") != std::string::npos,
+              "key: ?key= sets the cookie and redirects");
+        res = keyed_client.Get("//evil.example/?key=" + keyed_options.access.key, far);
+        check(res && res->status == 303 && res->get_header_value("Location") == "/",
+              "key: no redirect off the site");
+        auto bearer_headers = far;
+        bearer_headers.emplace("Authorization", "Bearer " + keyed_options.access.key);
+        res = keyed_client.Get("/api/state", bearer_headers);
+        check(res && res->status == 200, "key: bearer passes");
+        keyed_server.stop();
+        keyed_thread.join();
+    }
 
     // The catalog's feed: read from a URL, used, and kept for the next start; a broken feed
     // leaves the catalog in use.

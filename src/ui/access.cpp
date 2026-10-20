@@ -96,11 +96,15 @@ std::string cookie_value(std::string_view cookie_header, std::string_view name) 
 }
 
 KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
-                   std::string_view cookie_header, std::string_view authorization,
-                   std::string_view query_key) {
+                   std::string_view host_header, bool proxied, std::string_view cookie_header,
+                   std::string_view authorization, std::string_view query_key) {
     if (policy.key.empty()) { return KeyCheck::pass; }
     if (remote_addr.substr(0, 7) == "::ffff:") { remote_addr.remove_prefix(7); }
-    if (!remote_addr.empty() && is_loopback_host(remote_addr)) { return KeyCheck::pass; }
+    // A page whose name was rebound to 127.0.0.1 keeps its own Host; a proxy here marks itself.
+    if (!proxied && !remote_addr.empty() && is_loopback_host(remote_addr) &&
+        is_loopback_host(host_of_authority(host_header))) {
+        return KeyCheck::pass;
+    }
     if (same_secret(cookie_value(cookie_header, kKeyCookie), policy.key)) { return KeyCheck::pass; }
     constexpr std::string_view bearer = "Bearer ";
     if (authorization.substr(0, bearer.size()) == bearer &&
