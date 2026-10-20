@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": 68,
-  "published": "2026-10-19",
+  "version": 69,
+  "published": "2026-10-20",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
     "mtp": {
@@ -3697,7 +3697,7 @@
           "gpu": "NVIDIA GeForce RTX 4060 Ti",
           "gpu_class": "ad106",
           "measured_on": "Qwen3.6-35B-A3B-IQ3-dflash.ninferno, context 8192, kv int8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus",
-          "measured_at": "2026-10-11",
+          "measured_at": "2026-10-20",
           "non_thinking": {
             "acceptance": 0.48388298863424634,
             "config": "dflash:5",
@@ -3754,7 +3754,18 @@
           "requires": [
             "dflash"
           ],
-          "revision": "7d1890acee3e"
+          "load": [
+            {
+              "depth": 5,
+              "lanes": 2
+            },
+            {
+              "depth": 3,
+              "lanes": 3
+            }
+          ],
+          "load_measured_on": "Qwen3.6-35B-A3B-IQ3-dflash.ninferno, context 8192, kv int8, NVIDIA GeForce RTX 4060 Ti, load 2,3,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4060 Ti, C 2,3,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T13:09:01Z",
+          "revision": "bea23c27d393"
         },
         {
           "applies_to": [],
