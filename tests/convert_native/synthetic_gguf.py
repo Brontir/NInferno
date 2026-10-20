@@ -322,7 +322,7 @@ GPT2_PRES = {
     "dbrx": (LLAMA3_SPLIT, False, False, False),
     "smaug-bpe": (LLAMA3_SPLIT, False, True, False),
     "tekken": (TEKKEN_SPLIT, False, True, True),
-    "pixtral": (TEKKEN_SPLIT, False, True, True),  # Nemotron 3 (nvidia's tokenizer.json)
+    "pixtral": (LLAMA3_SPLIT, False, True, True),  # pixtral-12b; a nemotron_h file takes tekken's
     "gpt-4o": (GPT4O_SPLIT, False, False, False),
     "llama4": (GPT4O_SPLIT, False, True, True),
     "smollm": ("digits", False, False, False),
@@ -2441,8 +2441,8 @@ def main() -> int:
         "mistral3-kquants": (lambda w: dense_case(w, "mistral3", {"attention": Q.Q6_K, "mlp": Q.Q4_K,
                                                                   "embedding": Q.Q8_0}, 54, rebuilt=True),
                              "dense_bf16", "text", {False}),
-        # The tekken vocabulary under llama.cpp's other name for it (Nemotron 3's GGUFs: pre
-        # "pixtral", no tokenizer files in the repository).
+        # llama.cpp's "pixtral" hash outside Nemotron (mistral-community/pixtral-12b: the Llama 3
+        # regex), no tokenizer files beside the GGUF.
         "mistral3-pixtral-rebuilt": (lambda w: dense_case(w, "mistral3", None, 60, rebuilt=True,
                                                           pre_tokenizer="pixtral"),
                                      "dense_bf16", "text", set()),

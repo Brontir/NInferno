@@ -60,9 +60,10 @@ constexpr Gpt2Pre kGpt2Pres[] = {
     {"smaug-bpe", kLlama3Split, false, true, false, false},
     // mistralai/Ministral-3-*, Mistral Small 3.x (Tekken)
     {"tekken", kTekkenSplit, false, true, true, false},
-    // nvidia/NVIDIA-Nemotron-3*, mistral-community/pixtral-12b: the tekken Split regex with
-    // ignore_merges (llama.cpp names this vocabulary's hash "pixtral")
-    {"pixtral", kTekkenSplit, false, true, true, false},
+    // mistral-community/pixtral-12b (its tokenizer.json: the Llama 3 regex). llama.cpp gives the
+    // same hash, "pixtral", to NVIDIA Nemotron 3's Tekken vocabulary, whose tokenizer.json splits
+    // with tekken's regex: a nemotron_h file takes "tekken" (gguf_frontend_resources).
+    {"pixtral", kLlama3Split, false, true, true, false},
     // microsoft/Phi-4-mini-* (o200k)
     {"gpt-4o", kGpt4oSplit, false, false, false, false},
     // meta-models/Muse-Glimmer-* (the Llama 4 vocabulary: the o200k regex, a whole pre-token in
@@ -490,6 +491,11 @@ RebuiltResources gguf_frontend_resources(const GgufFile& file) {
     OJson added      = OJson::array();
     const auto* add_bos = file.find("tokenizer.ggml.add_bos_token");
     const auto* gpt2    = kind == "gpt2" ? gpt2_pre(pre_s) : nullptr;
+    if (const auto* arch = file.find("general.architecture");
+        gpt2 && pre_s == "pixtral" && arch && arch->is_string() &&
+        arch->get<std::string>().starts_with("nemotron_h")) {
+        gpt2 = gpt2_pre("tekken");
+    }
     const bool declared = add_bos && add_bos->is_boolean();
     // llama.cpp's defaults: per gpt2 pre-tokenizer, and true for SentencePiece.
     const bool adds_bos = declared ? add_bos->get<bool>() : (gpt2 && gpt2->add_bos) || kind == "llama";
