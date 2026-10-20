@@ -171,7 +171,10 @@ std::string kept_access_key(const std::filesystem::path& path) {
 #endif
         const fs::path made(std::u8string(temp.begin(), temp.end()));
         written = static_cast<bool>(std::ofstream(made, std::ios::trunc) << key << '\n');
-        if (written) { fs::rename(made, path, ec); }
+        if (written) {
+            fs::remove(path, ec); // an unusable kept key; rename does not replace it on Windows
+            fs::rename(made, path, ec);
+        }
         if (!written || ec) { fs::remove(made, ec); }
         written = written && first_line(path) == key;
     }
