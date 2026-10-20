@@ -353,7 +353,14 @@ private:
                                      "complete matrices with equal row counts");
         }
         // Each divisor covers its source's rows; one may end inside a 128-row scale tile, as the
-        // scale words are per row and each row is divided by its own word.
+        // scale words are per row and each row is divided by its own word. The plane itself is
+        // whole tiles, as every NVFP4 operand (validate_nvfp4_weight).
+        if (*rows.begin() * sources.size() % 128) {
+            throw std::runtime_error("NVFP4 sources quantised against different divisors must "
+                                     "stack to whole 128-row scale tiles, not " +
+                                     std::to_string(sources.size()) + " x " +
+                                     std::to_string(*rows.begin()) + " rows");
+        }
         return sources.size();
     }
 
