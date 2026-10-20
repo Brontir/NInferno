@@ -182,7 +182,7 @@ table, so give `--spec-load` too.
 | `--spec auto\|none\|mtp\|dflash\|dflash2` | `auto`: measured for this model and GPU | `none` turns speculation off |
 | `--draft-tokens N` | with `--spec`: the measured depth, else `3` (MTP) or `7` (DFlash) | draft depth, `1..15` |
 | `--spec-load L:D,...\|none` | with `auto`: the measured table | from `L` requests at once, drafts at most `D` deep (`0`: none) |
-| `--kv-dtype bf16\|fp8` | per model family | Qwen also `int8\|nvfp4\|k8v4`: a smaller KV cache holds a longer context |
+| `--kv-dtype bf16\|fp8` | per model family and GPU | `fp8` from RTX 40 / L4 on; Qwen also `int8\|nvfp4\|k8v4`: a smaller KV cache holds a longer context |
 | `--activations exact\|fast` | `fast` | `exact`: the same output whatever the load and the drafts |
 | `--device N` | `0` | the GPU |
 | `--host H` `--port N` `--api-key-file F` | `127.0.0.1:8080`, no key (or `$NINFERNO_API_KEY`) | `--host 0.0.0.0` with a key opens it to the network |
@@ -191,7 +191,7 @@ table, so give `--spec-load` too.
 ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \
   --max-context 32768 --max-concurrency 4 \
   --spec dflash --draft-tokens 5 --spec-load 3:3 \
-  --kv-dtype fp8 --host 0.0.0.0 --api-key-file ~/.ninferno-key
+  --host 0.0.0.0 --api-key-file ~/.ninferno-key
 ```
 
 [Serving](docs/serving.md#important-options) lists every flag.
