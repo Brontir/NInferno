@@ -1,5 +1,6 @@
 #include "ui/access.h"
 #include "core/ascii.h"
+#include "core/sys.h"
 
 namespace ninferno::ui {
 
@@ -66,6 +67,60 @@ bool origin_allowed(std::string_view origin, std::string_view host_header) {
         authority = authority.substr(0, slash);
     }
     return ascii_lower(authority) == ascii_lower(host_header);
+}
+
+namespace {
+
+bool same_secret(std::string_view a, std::string_view b) noexcept {
+    unsigned char diff = a.size() != b.size() ? 1 : 0;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
+} // namespace
+
+std::string cookie_value(std::string_view cookie_header, std::string_view name) {
+    while (!cookie_header.empty()) {
+        const auto end        = cookie_header.find(';');
+        std::string_view pair = cookie_header.substr(0, end);
+        cookie_header = end == std::string_view::npos ? std::string_view() : cookie_header.substr(end + 1);
+        while (!pair.empty() && pair.front() == ' ') { pair.remove_prefix(1); }
+        if (pair.size() > name.size() && pair.substr(0, name.size()) == name &&
+            pair[name.size()] == '=') {
+            return std::string(pair.substr(name.size() + 1));
+        }
+    }
+    return {};
+}
+
+KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
+                   std::string_view cookie_header, std::string_view authorization,
+                   std::string_view query_key) {
+    if (policy.key.empty()) { return KeyCheck::pass; }
+    if (remote_addr.substr(0, 7) == "::ffff:") { remote_addr.remove_prefix(7); }
+    if (!remote_addr.empty() && is_loopback_host(remote_addr)) { return KeyCheck::pass; }
+    if (same_secret(cookie_value(cookie_header, kKeyCookie), policy.key)) { return KeyCheck::pass; }
+    constexpr std::string_view bearer = "Bearer ";
+    if (authorization.substr(0, bearer.size()) == bearer &&
+        same_secret(authorization.substr(bearer.size()), policy.key)) {
+        return KeyCheck::pass;
+    }
+    if (same_secret(query_key, policy.key)) { return KeyCheck::pass_set_cookie; }
+    return KeyCheck::refused;
+}
+
+std::string new_access_key() {
+    unsigned char bytes[16];
+    if (!sys::random_bytes(bytes, sizeof(bytes))) { return {}; }
+    constexpr char digits[] = "0123456789abcdef";
+    std::string key;
+    for (const unsigned char b : bytes) {
+        key += digits[b >> 4];
+        key += digits[b & 15];
+    }
+    return key;
 }
 
 } // namespace ninferno::ui

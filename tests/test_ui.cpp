@@ -68,6 +68,25 @@ void test_access() {
     check(!origin_allowed("http://localhost:8091", "localhost:8090"), "other port");
     check(!origin_allowed("https://evil.example", "localhost:8090"), "other site");
     check(!origin_allowed("null", "localhost:8090"), "opaque origin");
+
+    const std::string key = new_access_key();
+    check(key.size() == 32 && key.find_first_not_of("0123456789abcdef") == std::string::npos,
+          "key: 32 hex digits");
+    check(new_access_key() != key, "key: a new one each time");
+    check(cookie_value("a=1; ninferno_ui_key=k1; b=2", "ninferno_ui_key") == "k1", "cookie found");
+    check(cookie_value("xninferno_ui_key=k1", "ninferno_ui_key").empty(), "cookie name exact");
+    AccessPolicy keyed{.listen = "0.0.0.0", .port = 8090, .key = key};
+    const std::string cookie = "ninferno_ui_key=" + key, bearer = "Bearer " + key;
+    check(check_key(local, "10.0.0.2", "", "", "") == KeyCheck::pass, "no key: all pass");
+    check(check_key(keyed, "127.0.0.1", "", "", "") == KeyCheck::pass, "this machine passes");
+    check(check_key(keyed, "::ffff:127.0.0.1", "", "", "") == KeyCheck::pass, "mapped loopback");
+    check(check_key(keyed, "10.0.0.2", "", "", "") == KeyCheck::refused, "other machine refused");
+    check(check_key(keyed, "10.0.0.2", cookie, "", "") == KeyCheck::pass, "cookie");
+    check(check_key(keyed, "10.0.0.2", "", bearer, "") == KeyCheck::pass, "bearer");
+    check(check_key(keyed, "10.0.0.2", "", "", key) == KeyCheck::pass_set_cookie, "?key= sets it");
+    check(check_key(keyed, "10.0.0.2", "ninferno_ui_key=x", "Bearer x", "x") == KeyCheck::refused,
+          "wrong key refused");
+    check(check_key(keyed, "", "", "", "") == KeyCheck::refused, "no peer address refused");
 }
 
 // The hub cache's directory names, both ways, as the page lists and deletes converted models.

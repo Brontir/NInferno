@@ -1,13 +1,16 @@
 // ninferno-ui: a local web page to choose, download and run models on this machine's GPUs.
 //
-//   ninferno-ui [--listen ADDR] [--port N] [--serve PATH] [--hub-cache DIR] [--offline]
-//               [--no-browser]
+//   ninferno-ui [--listen ADDR] [--port N] [--access-key-file F] [--serve PATH] [--hub-cache DIR]
+//               [--offline] [--no-browser]
 //
-// It listens on 127.0.0.1:8090 by default. It has no password: whoever reaches it can start
-// processes and spend the GPUs, so another address is only taken from --listen, and is logged as
-// open to the network. Once it listens, the page opens in the desktop's browser (on WSL,
-// Windows' default browser) unless --no-browser; with no display the URL is only printed.
+// It listens on 127.0.0.1:8090 by default. Whoever reaches it can start processes and spend the
+// GPUs, so another address is only taken from --listen, and then other machines need the access
+// key (ui/access.h): --access-key-file, else $NINFERNO_UI_KEY, else one made once and kept in
+// <hub cache>/ninferno-ui/access-key; the log prints the URL with it. Once it listens, the page
+// opens in the desktop's browser (on WSL, Windows' default browser) unless --no-browser; with no
+// display the URL is only printed.
 
+#include "convert/fetch.h"
 #include "core/command_line.h"
 #include "product/numeric_options.h"
 #include "ui/app.h"
@@ -27,6 +30,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -41,12 +45,15 @@ void on_signal(int) {
 
 const char* kUsage =
     "usage: ninferno-ui --version\n"
-    "       ninferno-ui [--listen ADDR] [--port N] [--serve PATH] [--hub-cache DIR]\n"
+    "       ninferno-ui [--listen ADDR] [--port N] [--access-key-file F] [--serve PATH]\n"
+    "                 [--hub-cache DIR]\n"
     "                 [--models-dir DIR]... [--offline] [--chat-ui DIR]\n"
     "                 [--keep-originals] [--catalog-url URL] [--no-browser]\n"
-    "  --listen ADDR   address to bind (default 127.0.0.1). Anything but a loopback address\n"
-    "                  opens the UI to the network WITHOUT a password.\n"
+    "  --listen ADDR   address to bind (default 127.0.0.1). On another address, other machines\n"
+    "                  need the access key (plain HTTP: a trusted network, or TLS in front)\n"
     "  --port N        port (default 8090)\n"
+    "  --access-key-file F  the access key, F's first line, 16+ characters (default:\n"
+    "                  $NINFERNO_UI_KEY, else made once into <hub cache>/ninferno-ui/access-key)\n"
     "  --serve PATH    the ninferno-serve binary (default: beside ninferno-ui)\n"
     "  --hub-cache DIR Hugging Face cache for downloads (default: $HF_HUB_CACHE, $HF_HOME/hub,\n"
     "                  $XDG_CACHE_HOME/huggingface/hub, ~/.cache/huggingface/hub)\n"
@@ -131,6 +138,28 @@ bool executable(const std::filesystem::path& path) {
     std::exit(1);
 }
 
+// The first line of `path` without surrounding blanks; empty when unreadable.
+std::string first_line(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::string line;
+    std::getline(in, line);
+    const auto begin = line.find_first_not_of(" \t\r");
+    if (begin == std::string::npos) { return {}; }
+    return line.substr(begin, line.find_last_not_of(" \t\r") - begin + 1);
+}
+
+// The key kept in `path`, made there (readable by its owner only) when there is none yet.
+std::string kept_access_key(const std::filesystem::path& path) {
+    namespace fs = std::filesystem;
+    if (auto key = first_line(path); key.size() >= 16) { return key; }
+    std::string key = ninferno::ui::new_access_key();
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    std::ofstream(path, std::ios::trunc) << key << '\n';
+    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write, ec);
+    return key;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -140,6 +169,7 @@ int main(int argc, char** argv) {
     }
     ninferno::ui::UiOptions options;
     bool open_browser = true;
+    std::filesystem::path key_file;
     if (const char* url = std::getenv("NINFERNO_CATALOG_URL"); url != nullptr && *url != '\0') {
         options.catalog_url = url;
     }
@@ -176,6 +206,8 @@ int main(int argc, char** argv) {
                 std::cerr << "ninferno-ui: --port must be in [1,65535]\n";
                 return 2;
             }
+        } else if (arg == "--access-key-file") {
+            key_file = value();
         } else if (arg == "--serve") {
             options.serve_binary = value();
         } else if (arg == "--hub-cache") {
@@ -219,6 +251,24 @@ int main(int argc, char** argv) {
     }
     const bool exposed =
         !ninferno::ui::is_loopback_host(ninferno::ui::host_of_authority(options.access.listen));
+    if (!key_file.empty()) {
+        options.access.key = first_line(key_file);
+        if (options.access.key.size() < 16) {
+            std::cerr << "ninferno-ui: " << key_file << ": needs a key of 16+ characters\n";
+            return 2;
+        }
+    } else if (const char* key = std::getenv("NINFERNO_UI_KEY"); key != nullptr && *key) {
+        options.access.key = key;
+    } else if (exposed) {
+        const auto hub = options.hub_cache.empty() ? ninferno::convert::default_hub_cache()
+                                                   : options.hub_cache;
+        options.access.key = kept_access_key(hub / "ninferno-ui" / "access-key");
+    }
+    if (exposed && options.access.key.empty()) {
+        std::cerr << "ninferno-ui: no access key for " << options.access.listen
+                  << " (--access-key-file F)\n";
+        return 1;
+    }
     ninferno::ui::App app(options, ninferno::ui::make_nvml_source());
     g_app = &app;
     std::signal(SIGINT, on_signal);
@@ -240,10 +290,8 @@ int main(int argc, char** argv) {
                   << std::endl;
     }
     if (exposed) {
-        std::cout << "ninferno-ui: WARNING: listening on " << options.access.listen
-                  << ", open to the network with no password: anyone who reaches it can start "
-                     "models and use the GPUs"
-                  << std::endl;
+        std::cout << "ninferno-ui: from other machines: " << url << "?key=" << options.access.key
+                  << " (plain HTTP: a trusted network, or TLS in front)" << std::endl;
     }
     if (!app.run()) {
         std::cerr << "ninferno-ui: cannot listen on " << options.access.listen << ":"
