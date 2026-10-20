@@ -107,7 +107,7 @@ def weights_short(recipe):
     if not m:
         return recipe
     # No --quant: the publisher's own checkpoint (gpt-oss ships MXFP4 itself).
-    label = quant(recipe) if "--quant" in recipe else "original"
+    label = quant(recipe) if re.search(r"--quant[\s=]+\S", recipe) else "original"
     return f"[{label}](https://huggingface.co/{m.group(1)}{hint(m.group(1))})"
 
 
@@ -131,7 +131,7 @@ def gpu_short(g, info, base):
 
 def quant(recipe):
     """The quantization alone, for the narrow columns: "UD-Q4_K_XL", or the repository name."""
-    m = re.search(r"--quant\s+(\S+)", recipe)
+    m = re.search(r"--quant[\s=]+(\S+)", recipe)
     return m.group(1) if m else recipe.split()[0].split("/")[-1]
 
 
@@ -406,8 +406,8 @@ def page_model(m, gpus, models, speed):
     lines = [f"# {info['name']}", "",
              f"[`{info['hf']}`](https://huggingface.co/{info['hf']}) · {info['family']}, {info['params']} · "
              "[all GPUs and models](../README.md)", "",
-             f"Measured with {repos(s[0] for g in present for s in speed[(g, m)])}. Its fine-tunes and other "
-             f"checkpoints of the same architecture run the same way.", "",
+             (f"Measured with {measured}. " if (measured := repos(s[0] for g in present for s in speed[(g, m)]))
+              else "") + "Its fine-tunes and other checkpoints of the same architecture run the same way.", "",
              "Tokens per second, each column at its best setting: one stream, all streams (superscript = "
              "concurrent streams), prefill of a 24K-token prompt, one stream after it.", "",
              "| GPU | " + " | ".join(LEVEL2_HEAD) + " | |", "|---|---|" + "---:|" * 4 + "---|"]
