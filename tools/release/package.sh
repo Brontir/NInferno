@@ -38,8 +38,10 @@ ARCHIVE=ninferno-linux-x86_64.tar.gz  # a stable name: releases/latest/download/
 CUDA70=${NINFERNO_CUDA70:-$(ls -d /usr/local/cuda-12.8 2>/dev/null || true)}
 # Checked before hours of building: the run paths below need it.
 command -v patchelf > /dev/null || { echo "package.sh: patchelf is needed (the binaries' run path)" >&2; exit 1; }
-NVCC=$(command -v nvcc || echo "${CUDACXX:-/usr/local/cuda/bin/nvcc}")
-[ -x "$NVCC" ] || { echo "package.sh: nvcc not found (PATH, CUDACXX or /usr/local/cuda/bin)" >&2; exit 1; }
+# Every tree but Volta's builds with this nvcc, not the one CMake finds first (/usr/local/cuda can be
+# an older CUDA without the NVFP4 instructions sm_120a needs).
+NVCC=${CUDACXX:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}
+[ -x "$NVCC" ] || { echo "package.sh: nvcc not found (CUDACXX, PATH or /usr/local/cuda/bin)" >&2; exit 1; }
 CUDA=$("$NVCC" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')
 
 first=""
@@ -55,10 +57,10 @@ for arch in $ARCHS; do
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
     continue
   fi
-  extra=()
+  extra=(-DCMAKE_CUDA_COMPILER="$NVCC")
   if [ "$arch" = 70 ]; then
     [ -n "$CUDA70" ] || { echo "package.sh: no CUDA 12.8 (NINFERNO_CUDA70): no Volta engine" >&2; continue; }
-    extra+=(-DCMAKE_CUDA_COMPILER="$CUDA70/bin/nvcc")
+    extra=(-DCMAKE_CUDA_COMPILER="$CUDA70/bin/nvcc")
   fi
   # Ada's engine carries its PTX too: the driver compiles it, once, for a GPU no engine names.
   build=$BUILD_ROOT/build-release-$arch
