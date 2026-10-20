@@ -1846,8 +1846,9 @@ const std::string& supported_architectures_text() {
 
 namespace {
 
-// What stops a Qwen3.5 recipe from planning on a checkpoint (nothing: nullopt). Planning reads
-// headers and scalars only, never the bulk of the weights.
+// What stops a Qwen3.5 recipe from planning on a checkpoint, or from keeping its published
+// encodings (nothing: nullopt). Planning reads headers and scalars only, never the bulk of the
+// weights.
 std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& checkpoint,
                                               const RecipeChoice& choice) {
     try {
@@ -1858,11 +1859,24 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
         apply_qwen3_5_recipe(choice.recipe, model, recipe, sources);
         (void)share_tied_head(model, recipe);
         const Plan plan = prepare(model, recipe);
-        (void)plan;
+        const auto found = fidelity(base, model, plan);
+        if (!found.foreign.empty()) {
+            return "it would quantize again " + found.foreign.begin()->first;
+        }
     } catch (const std::exception& error) {
         return std::string(error.what());
     }
     return std::nullopt;
+}
+
+// Whether a Hugging Face checkpoint still holds its weight files (a consumed one keeps only its
+// config, and its recipe choice then stays the configuration's).
+bool has_safetensors(const std::filesystem::path& checkpoint) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(checkpoint, ec)) {
+        if (entry.path().extension() == ".safetensors") { return true; }
+    }
+    return false;
 }
 
 } // namespace
@@ -1958,6 +1972,15 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
                 if (const auto error = qwen3_5_plan_error(checkpoint, out)) {
                     out.note    = out.recipe + " does not fit this GGUF (" + *error + ")";
                     out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+                    out.sources = {};
+                }
+            } else if (has_safetensors(checkpoint)) {
+                // Those recipes fit one layout (NVFP4 experts or MLPs, the rest BF16); another
+                // publisher's (RedHatAI: NVFP4 attention; nvidia: ModelOpt experts, FP8
+                // attention, an NVFP4 head) runs every tensor as published.
+                if (const auto error = qwen3_5_plan_error(checkpoint, out)) {
+                    out.note    = out.recipe + " does not fit this checkpoint (" + *error + ")";
+                    out.recipe  = "qwen3_5_published";
                     out.sources = {};
                 }
             }
