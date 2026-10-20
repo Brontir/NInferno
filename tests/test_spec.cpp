@@ -152,6 +152,28 @@ int test_watchdog() {
     failures += check(margin.policy().trip_tokens_per_round() == 1.75, "the default trip point");
     failures += check(!margin.observe(32, 45), "1.4 drafted tokens per round hold a floor of 2.5");
     failures += check(margin.observe(64, 65), "and 0.6 trip it");
+
+    // The depth's rate counts every round since the restart, not the rolling window.
+    AcceptanceWatchdog depth(WatchdogPolicy{2.0, 8, 4, 1.0});
+    failures += check(depth.depth_tokens_per_round() == 0.0, "no rate before any round");
+    failures += check(!depth.observe(16, 32), "3 tokens per round hold a floor of 2");
+    failures += check(depth.observe(32, 32), "and a collapse trips the window of 8");
+    failures += check(depth.rolling_tokens_per_round() < 1.01 &&
+                          depth.depth_tokens_per_round() == 2.0,
+                      "the window says 1, the depth's 32 rounds 2");
+    depth.restart(1.5, 32, 32);
+    failures += check(depth.depth_tokens_per_round() == 0.0, "a restart starts the rate afresh");
+    failures += check(!depth.observe(48, 40) && depth.depth_tokens_per_round() == 1.5,
+                      "the rate after a restart counts only its own rounds");
+
+    // The steps a trip skips: those whose trip point (margin 0.5) is above the depth's rate.
+    const std::vector<double> floors{2.6, 2.2, 1.8}; // trip points 1.8, 1.6, 1.4
+    failures +=
+        check(steps_that_cannot_pay(2.0, 0.5, floors) == 0, "a rate above them all skips none");
+    failures += check(steps_that_cannot_pay(1.7, 0.5, floors) == 1, "1.7 skips the 1.8 step");
+    failures += check(steps_that_cannot_pay(1.5, 0.5, floors) == 2, "1.5 skips two");
+    failures += check(steps_that_cannot_pay(1.2, 0.5, floors) == 3, "1.2 skips all: plain");
+    failures += check(steps_that_cannot_pay(1.2, 0.5, {}) == 0, "no steps, nothing to skip");
     return failures;
 }
 

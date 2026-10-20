@@ -230,21 +230,37 @@ bool observe_watchdog(RequestControl& request) {
                                     static_cast<std::int64_t>(request.judged_accepted));
 }
 
-// A trip moves the request to its next shallower depth, judged afresh against that depth's floor,
-// or, with none left, stops its drafting for the rest of the request (decode_raw() runs it without
-// drafts); either lands in its stats. A watchdog floor is the break-even of a round against plain
-// decode of one request (spec-tune at C=1). When another row of the round drafted and keeps
-// drafting, the next steps run a speculative launch whatever this row does: stopped, it would
-// verify its columns there without drafts and save only its share of the draft phase while
-// emitting one token per step instead of its tokens per round (Nemotron-H MTP on gb202 tripped at
-// 58-66 % acceptance and rode at 142 tok/s against 216 plain; Qwen3.6 35B-A3B DFlash rows tripped
-// at about 2.8 tokens per round at C=2..8 and rode the rest of their requests). Its drafting then
-// stops only below `shared_floor` (SpeculativeOptions::shared_trip_floor; 0 when the round was
-// not shared), else the watchdog judges again after the next round.
+// A trip moves the request to its next shallower depth that can still pay (steps_that_cannot_pay,
+// spec/watchdog.h, skips the others), judged afresh against that depth's floor, or, with none
+// left, stops its drafting for the rest of the request (decode_raw() runs it without drafts);
+// either lands in its stats (step_downs counts the menu steps to the depth it lands on; skipped
+// to plain, final_draft_window stays the last depth that ran). A watchdog floor is the break-even
+// of a round against plain decode of one request (spec-tune at C=1). When another row of the round
+// drafted and keeps drafting, the next steps run a speculative launch whatever this row does:
+// stopped, it would verify its columns there without drafts and save only its share of the draft
+// phase while emitting one token per step instead of its tokens per round (Nemotron-H MTP on gb202
+// tripped at 58-66 % acceptance and rode at 142 tok/s against 216 plain; Qwen3.6 35B-A3B DFlash
+// rows tripped at about 2.8 tokens per round at C=2..8 and rode the rest of their requests). Its
+// drafting then stops only below `shared_floor` (SpeculativeOptions::shared_trip_floor; 0 when the
+// round was not shared), else the watchdog judges again after the next round.
 void apply_watchdog_trip(RequestControl& request, double shared_floor) {
     auto& stats         = request.speculative_stats;
     const auto rounds   = static_cast<std::int64_t>(request.judged_rounds);
     const auto accepted = static_cast<std::int64_t>(request.judged_accepted);
+    std::vector<double> floors;
+    floors.reserve(request.step_down.size());
+    for (const SpeculationStep& step : request.step_down) {
+        floors.push_back(step.acceptance_floor);
+    }
+    const std::size_t skipped = spec::steps_that_cannot_pay(
+        request.watchdog.depth_tokens_per_round(), request.watchdog.policy().trip_margin, floors);
+    if (skipped < request.step_down.size()) {
+        request.step_down.erase(request.step_down.begin(),
+                                request.step_down.begin() + static_cast<std::ptrdiff_t>(skipped));
+        stats.step_downs += static_cast<std::uint32_t>(skipped);
+    } else {
+        request.step_down.clear();
+    }
     if (!request.step_down.empty()) {
         const SpeculationStep step = request.step_down.front();
         request.step_down.erase(request.step_down.begin());
