@@ -11,19 +11,25 @@ task. The aim: fast, cheap inference for everyone.
 <!-- perf-summary:begin -->
 <!-- perf-summary:end -->
 
-- **GPUs:** NVIDIA Volta, Turing, Ampere, Ada and Blackwell, desktop and data-center cards alike
-  (GeForce RTX 20 to 50, V100, T4, A100, A10, L4, L40S, RTX PRO 6000). Hopper and data-center
-  Blackwell (H100, H200, B200, B300) get an engine of their own but are neither tuned nor measured.
-- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, in the quantizations
+- **GPUs:** NVIDIA Volta, Turing, Ampere, Ada and Blackwell: GeForce RTX 20 to 50, V100, T4, A10,
+  A100, L4, L40S, RTX PRO 6000.
+- **Not the target:** ✗ H100, H200, B200, B300. The project is fast inference on affordable cards;
+  these run, but get no tuning and no measurements.
+- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, **and every
+  fine-tune, fork and version built on their architectures** (support is per architecture), as
   published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ, GPTQ.
 - **Speed:** speculative decoding (MTP, DFlash, DFlash2) and kernels measured per GPU, one to eight
   concurrent streams.
-- **Long context:** YaRN and LongRoPE, KV cache in FP8 (NVFP4 for Qwen), prompt prefixes reused
-  across requests.
-- **API:** OpenAI and Anthropic compatible, with tool calls, structured output, vision and PDF
-  documents.
-- **Next:** bigger MoE models on one card, then pipeline parallelism across several
-  ([roadmap](#roadmap)).
+- **Long context:** YaRN and LongRoPE as the checkpoint defines them (Qwen stretches its window
+  with `--rope-yarn-factor`), KV cache in FP8 (NVFP4 for Qwen).
+- **Prompt cache:** a repeated prefix (system prompt, chat history, a document) is not computed
+  again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD¹.
+- **API:** OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`) on one
+  server, with tool calls, structured output, vision and PDF documents.
+- **Where it goes:** the [roadmap](#roadmap).
+
+<sub>¹ A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
+two months, an enterprise one in six to eight. NInferno will not offer one.</sub>
 
 ## Contents
 
@@ -44,7 +50,7 @@ task. The aim: fast, cheap inference for everyone.
 | Qwen3.5 | Qwen3.5-0.8B, Qwen3.5-2B, Qwen3.5-4B, Qwen3.5-9B | MTP | text, image, video |
 | Qwen3.6 | Qwen3.6-27B, Qwen3.6-35B-A3B (MoE) | MTP, DFlash | text, image, video |
 | Qwen3.8 | Qwen3.8-27B | MTP, DFlash2 | text, image, video |
-| Gemma 4 | Gemma 4 12B, Gemma 4 26B-A4B (MoE), Gemma 4 31B | Gemma 4 assistant | text, image (26B-A4B, 31B) |
+| Gemma 4 | Gemma 4 12B, Gemma 4 26B-A4B (MoE), Gemma 4 31B | Gemma 4 assistant | text, image |
 | gpt-oss | gpt-oss-20b (MoE) | DFlash | text |
 | Nemotron 3.5 | Nemotron 3.5 Lightning 30B-A3B (MoE) | MTP | text |
 | Muse Glimmer | Muse Glimmer 30B | DFlash | text |
@@ -52,8 +58,8 @@ task. The aim: fast, cheap inference for everyone.
 - **Weights:** each model runs as published on Hugging Face (GGUF, NVFP4, MXFP4, FP8, AWQ,
   GPTQ), and so do its fine-tunes. A quantization the engine cannot read is refused at start,
   with the reason. [Weight conversion](docs/weight-conversion.md) lists each family's formats.
-- **Image and video:** images for Qwen3.5, 3.6, 3.8 and Gemma 4 26B-A4B and 31B, video for Qwen. Start with
-  `--vision`; a GGUF needs its `mmproj` file beside it (the projector is converted with the model).
+- **Image and video:** start with `--vision`; a GGUF needs its `mmproj` file beside it (the
+  projector is converted with the model).
 - **Speculative decoding:** the full model checks every drafted token. `--activations exact`
   makes the output identical whatever the load, batch or draft, at some speed
   ([quality checks](docs/perplexity.md)).
@@ -152,7 +158,8 @@ Name a model on Hugging Face. The first start downloads it and converts it once 
 ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters
 ```
 
-The server speaks the OpenAI and Anthropic APIs on `http://127.0.0.1:8080`:
+The server answers the OpenAI API (`/v1/chat/completions`, `/v1/responses`) and the Anthropic API
+(`/v1/messages`) on `http://127.0.0.1:8080`; an Anthropic client takes that address as its base URL.
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
