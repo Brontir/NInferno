@@ -3754,7 +3754,18 @@
           "requires": [
             "dflash"
           ],
-          "revision": "7d1890acee3e"
+          "load": [
+            {
+              "depth": 5,
+              "lanes": 2
+            },
+            {
+              "depth": 3,
+              "lanes": 3
+            }
+          ],
+          "load_measured_on": "Qwen3.6-35B-A3B-IQ3-dflash.ninferno, NVIDIA GeForce RTX 4060 Ti, lanes 2,3,4 x depth 0/3/5/11, greedy short chat x16 x256, forward and reverse, 2026-10-20 (aggregate tok/s: L2 184/257/264/207, L3 221/290/290/225, L4 281/357/329/265)",
+          "revision": "0a075791719c"
         },
         {
           "applies_to": [],
