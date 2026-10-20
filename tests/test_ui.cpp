@@ -74,7 +74,8 @@ void test_access() {
           "key: 32 hex digits");
     check(new_access_key() != key, "key: a new one each time");
     check(usable_key(key) && usable_key("A-b_c.d~e0123456789") && !usable_key("short-key") &&
-              !usable_key("sixteen chars;x&y#z") && !usable_key("0123456789abcdef\r"),
+              !usable_key("sixteen chars;x&y#z") && !usable_key("0123456789abcdef\r") &&
+              !usable_key(std::string(257, 'k')),
           "key: URL- and cookie-safe characters only");
     check(forwarded_https("https", "") && forwarded_https("HTTPS, http", "") &&
               forwarded_https("", "for=1.2.3.4;proto=https") && !forwarded_https("http", "") &&

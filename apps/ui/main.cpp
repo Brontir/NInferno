@@ -53,7 +53,7 @@ const char* kUsage =
     "  --listen ADDR   address to bind (default 127.0.0.1). On another address, other machines\n"
     "                  need the access key (plain HTTP: a trusted network, or TLS in front)\n"
     "  --port N        port (default 8090)\n"
-    "  --access-key-file F  the access key, F's first line: 16+ of A-Z a-z 0-9 . _ ~ - (default:\n"
+    "  --access-key-file F  the access key, F's first line: 16-256 of A-Z a-z 0-9 . _ ~ - (default:\n"
     "                  $NINFERNO_UI_KEY, else made once into <hub cache>/ninferno-ui/access-key)\n"
     "  --serve PATH    the ninferno-serve binary (default: beside ninferno-ui)\n"
     "  --hub-cache DIR Hugging Face cache for downloads (default: $HF_HUB_CACHE, $HF_HOME/hub,\n"
@@ -280,13 +280,13 @@ int main(int argc, char** argv) {
         options.access.key = first_line(key_file);
         if (!ninferno::ui::usable_key(options.access.key)) {
             std::cerr << "ninferno-ui: " << key_file
-                      << ": needs a key of 16+ characters of A-Z a-z 0-9 . _ ~ -\n";
+                      << ": needs a key of 16-256 characters of A-Z a-z 0-9 . _ ~ -\n";
             return 2;
         }
     } else if (const char* key = std::getenv("NINFERNO_UI_KEY"); key != nullptr && *key) {
         options.access.key = key;
         if (!ninferno::ui::usable_key(options.access.key)) {
-            std::cerr << "ninferno-ui: NINFERNO_UI_KEY needs 16+ characters of A-Z a-z 0-9 . _ ~ -\n";
+            std::cerr << "ninferno-ui: NINFERNO_UI_KEY needs 16-256 characters of A-Z a-z 0-9 . _ ~ -\n";
             return 2;
         }
     } else if (exposed) {

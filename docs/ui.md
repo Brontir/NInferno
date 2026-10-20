@@ -34,7 +34,7 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 | `--version` | | Print the version and exit. |
 | `--listen ADDR` | `127.0.0.1` | Address to bind. On another address, other machines need the access key: the log prints `http://ADDR:PORT/?key=KEY`, which opens the page and keeps the key in a cookie; scripts send `Authorization: Bearer KEY`. Plain HTTP: use a trusted network, or put TLS in front; a proxy on this machine must send `X-Forwarded-For` (else its requests count as local), and the cookie reaches other services on the same host name (marked `Secure` when the proxy sends `X-Forwarded-Proto: https`). |
 | `--port N` | `8090` | Port. |
-| `--access-key-file F` | `$NINFERNO_UI_KEY`, else made once into `<hub cache>/ninferno-ui/access-key` | The access key: F's first line, 16+ characters of `A-Z a-z 0-9 . _ ~ -`. |
+| `--access-key-file F` | `$NINFERNO_UI_KEY`, else made once into `<hub cache>/ninferno-ui/access-key` | The access key: F's first line, 16–256 characters of `A-Z a-z 0-9 . _ ~ -`. |
 | `--no-browser` | off | Do not open the page in a browser; only print its address. |
 | `--serve PATH` | beside `ninferno-ui` | The `ninferno-serve` binary to start. |
 | `--hub-cache DIR` | `$HF_HUB_CACHE`, `$HF_HOME/hub`, `$XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub` | Where downloads go. |

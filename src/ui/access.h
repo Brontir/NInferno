@@ -54,8 +54,8 @@ enum class KeyCheck { pass, pass_set_cookie, refused };
 // The value of cookie `name` in a Cookie header; empty when absent.
 [[nodiscard]] std::string cookie_value(std::string_view cookie_header, std::string_view name);
 
-// Whether `key` can be one: 16+ characters of A-Z a-z 0-9 . _ ~ - (they pass a URL and a cookie
-// as they are).
+// Whether `key` can be one: 16 to 256 characters of A-Z a-z 0-9 . _ ~ - (they pass a URL and a
+// cookie as they are).
 [[nodiscard]] bool usable_key(std::string_view key) noexcept;
 
 // Whether a request reached the proxy in front over HTTPS (X-Forwarded-Proto or Forwarded proto):

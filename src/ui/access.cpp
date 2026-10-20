@@ -117,7 +117,8 @@ KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
 }
 
 bool usable_key(std::string_view key) noexcept {
-    if (key.size() < 16) { return false; }
+    // 256 at most: the URL, the cookie and the header carry it well inside httplib's 8 KB lines.
+    if (key.size() < 16 || key.size() > 256) { return false; }
     for (const char c : key) {
         const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
                         c == '.' || c == '_' || c == '~' || c == '-';
