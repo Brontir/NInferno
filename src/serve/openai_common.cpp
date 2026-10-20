@@ -42,7 +42,7 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
     if (!metadata.published_activations.empty()) {
         Json published = Json::object();
         for (const auto& [bits, count] : metadata.published_activations) {
-            published[std::to_string(bits)] = count;
+            published[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
         }
         meta["published_activations"] = published;
     }

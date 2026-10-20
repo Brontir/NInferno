@@ -584,8 +584,9 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         std::string widths;
         for (auto it = model.published_activations.rbegin(); it != model.published_activations.rend();
              ++it) {
-            widths += (widths.empty() ? "" : ", ") + std::to_string(it->first) + "-bit on " +
-                      std::to_string(it->second);
+            widths += (widths.empty() ? "" : ", ") +
+                      (it->first == 0 ? std::string("unnamed") : std::to_string(it->first) + "-bit") +
+                      " on " + std::to_string(it->second);
         }
         const bool exact = engine.activations == ninferno::ActivationMode::Exact;
         if (!exact && model.below_published_activations > 0) {
