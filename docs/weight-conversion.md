@@ -95,7 +95,7 @@ select kernels. Recipes are Python functions in
 | Qwen3.6-27B NVFP4 | `qwen3_6_27b_nvfp4` | Imported NVFP4, selected BF16 projections, Q8 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8, FP8 embedding generated from BF16; needs `--source quantized=PATH` | MTP, DFlash2 |
 | Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 | MTP |
-| Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing | MTP, DFlash |
+| Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
 | Gemma 4 26B-A4B / 31B | `gemma4_26b_a4b_nvfp4`, `gemma4_31b_nvfp4` | Sites the checkpoint encodes are kept; the rest Q8 | Gemma 4 assistant |
 | Gemma 4 assistant | `gemma4_assistant_published` (default), `gemma4_assistant_q8` | BF16 as is / GGUF Q8_0 kept; `_q8` is NInferno's own Q8, only when named | (is a drafter) |

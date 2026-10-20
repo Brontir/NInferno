@@ -1995,14 +1995,17 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
                     out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
                     out.sources = {};
                 }
-            } else if (has_safetensors(checkpoint) && !converted(checkpoint, out.recipe)) {
+            } else if (!converted(checkpoint, out.recipe)) {
                 // Those recipes fit one layout (NVFP4 experts or MLPs, the rest BF16); another
                 // publisher's (RedHatAI: NVFP4 attention; nvidia: ModelOpt experts, FP8
                 // attention, an NVFP4 head) runs every tensor as published. A converted
-                // artifact of either recipe answers without planning (every serve start).
+                // artifact of either recipe answers without planning (every serve start, and a
+                // consumed checkpoint, whose shards are gone).
                 if (converted(checkpoint, "qwen3_5_published")) {
                     out.recipe  = "qwen3_5_published";
                     out.sources = {};
+                } else if (!has_safetensors(checkpoint)) {
+                    // Nothing to plan on: the configuration's recipe, as before.
                 } else if (const auto error = qwen3_5_plan_error(checkpoint, out, true)) {
                     out.note    = out.recipe + " does not fit this checkpoint (" + *error + ")";
                     out.recipe  = "qwen3_5_published";

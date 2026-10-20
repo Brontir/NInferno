@@ -122,7 +122,7 @@ constexpr const char* kUsage =
     "  qwen3_6_27b, qwen3_6_27b_nvfp4, qwen3_8_27b, qwen3_8_27b_nvfp4, qwen3_6_35b_a3b,\n"
     "  qwen3_5_q8, qwen3_5_bf16 (any Qwen3.5 Dense size), qwen3_5_published (any Qwen3.5\n"
     "  Dense or MoE size; keeps the checkpoint's encoded projections and experts as published\n"
-    "  and quantizes nothing),\n"
+    "  and quantizes nothing but a DFlash drafter's projections, to Q8),\n"
     "  qwen3_6_35b_a3b_nvfp4 (the _nvfp4 recipes read --source quantized=PATH),\n"
     "  dense_encoded, dense_published, dense_nvfp4, dense_fp8, dense_q8, dense_bf16 (dense\n"
     "  decoders: Llama, Mistral, Granite, OLMo, ...; dense_published quantizes nothing),\n"
