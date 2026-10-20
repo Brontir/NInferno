@@ -456,6 +456,18 @@ ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const L
         if (!metadata.weights_id.empty()) { metadata.weights_id += "+"; }
         metadata.weights_id += format;
     }
+    const auto& provenance = reader.directory().provenance;
+    if (provenance.is_object() && provenance.contains("published_activations") &&
+        provenance.at("published_activations").is_object()) {
+        for (const auto& [key, value] : provenance.at("published_activations").items()) {
+            if (!value.is_number_unsigned()) { continue; }
+            if (key == "below") {
+                metadata.below_published_activations = value.get<std::uint64_t>();
+            } else if (key == "16" || key == "8" || key == "4") {
+                metadata.published_activations[std::stoi(key)] = value.get<std::uint64_t>();
+            }
+        }
+    }
     return metadata;
 }
 

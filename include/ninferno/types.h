@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -1689,6 +1690,10 @@ struct ModelMetadata {
     std::uint64_t native_context = 0; // Model native/training context (meta n_ctx_train).
     std::uint64_t parameters     = 0; // Total logical weight elements (meta n_params).
     std::uint64_t weight_bytes   = 0; // Encoded weight payload bytes (meta size).
+    // The activation widths the checkpoint's publisher validated its kept matrices with (bits ->
+    // matrices; empty: not said) and how many the fast mode runs below that width.
+    std::map<int, std::uint64_t> published_activations;
+    std::uint64_t below_published_activations = 0;
 };
 
 struct LoadSummary {

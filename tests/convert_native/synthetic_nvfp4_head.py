@@ -35,6 +35,8 @@ MLP gate and up were quantized against divisors of their own; the embedding and 
   qwen-moe-planner  qwen3_6_35b_a3b_nvfp4 stacks routed expert banks without the recipe-level
                     check: over 192-row experts of a divisor each the planner refuses the bank's
                     stacked parent by name, where a scale tile would span two divisors.
+  publisher         hf_quant_config.json (W4A16_NVFP4, layer 1's key NVFP4): provenance counts the
+                    kept matrices per published activation width and those fast mode runs below it.
   python-tail       the Python writer streams a 200-row NVFP4 matrix in 128-row blocks
                     (TensorOutput.write_codes, the last block ragged): the object is the codec's
                     encoding of the whole matrix and decodes back to its words.
@@ -298,6 +300,38 @@ def dense_cases(work: Path, native: Path, repository: Path) -> list[str]:
               f"{head['shape']}, {head['bytes']} bytes)", flush=True)
     if len(set(head_bytes.values())) > 1:
         errors.append("the head's words differ between the recipes, --vocab and calibration")
+    errors += publisher_case(work, native, repository)
+    return errors
+
+
+def publisher_case(work: Path, native: Path, repository: Path) -> list[str]:
+    """ModelOpt's hf_quant_config.json says which activation width the publisher validated: W4A16
+    everywhere but layer 1's key (NVFP4, 4-bit). provenance.published_activations counts the kept
+    matrices per width and those the recorded policy lets run below it (layer 1's calibrated value
+    and query, A4 under W4A16); a checkpoint without the file records nothing."""
+    import shutil
+    errors: list[str] = []
+    root = work / "publisher"
+    shutil.copytree(work / "w4a16", root)
+    (root / "hf_quant_config.json").write_text(json.dumps({"quantization": {
+        "quant_algo": "W4A16_NVFP4",
+        "quantized_layers": {"model.layers.1.self_attn.k_proj": {"quant_algo": "NVFP4"}}}}),
+        encoding="utf-8")
+    out = work / "publisher.ninferno"
+    result = convert(native, repository, root, out)
+    if result.returncode:
+        return [f"publisher: conversion failed ({result.returncode}): {result.stderr.strip()[:600]}"]
+    published = json.loads(Path(str(out) + ".conversion.json").read_text(encoding="utf-8"))[
+        "provenance"].get("published_activations")
+    if (not published or published.get("source") != "hf_quant_config.json"
+            or published.get("4") != 1 or not published.get("16") or not published.get("below")):
+        errors.append(f"publisher: published_activations {published}")
+    plain = json.loads(Path(str(work / "default.ninferno") + ".conversion.json").read_text(
+        encoding="utf-8"))["provenance"]
+    if "published_activations" in plain:
+        errors.append(f"publisher: a checkpoint without hf_quant_config.json recorded "
+                      f"{plain['published_activations']}")
+    print(f"publisher: {'ok' if not errors else 'FAILED'} {published}", flush=True)
     return errors
 
 

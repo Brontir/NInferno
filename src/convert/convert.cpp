@@ -1,4 +1,5 @@
 #include "convert/convert.h"
+#include "core/ascii.h"
 
 #include "convert/files.h"
 #include "core/clock.h"
@@ -767,6 +768,108 @@ private:
     bool workers_done_       = false;
 };
 
+// The activation width (bits) a publisher validated its quantized matrices with: ModelOpt's
+// hf_quant_config.json (one quant_algo, or one per layer under MIXED_PRECISION: W4A16_NVFP4 16,
+// FP8 8, NVFP4 4) or a compressed-tensors config whose groups agree on input_activations (none:
+// 16). `source` empty: the checkpoint says nothing.
+struct PublishedActivations {
+    std::string source;
+    int all = 0;                       // every layer; 0: per layer only
+    std::map<std::string, int> layers; // module name -> bits
+};
+
+int activation_bits(const std::string& algorithm) {
+    const auto name = ascii_lower(algorithm);
+    if (name.find("a16") != std::string::npos) { return 16; }
+    if (name.find("a8") != std::string::npos || name.starts_with("fp8") ||
+        name.find("int8") != std::string::npos) {
+        return 8;
+    }
+    if (name == "nvfp4" || name.find("a4") != std::string::npos) { return 4; }
+    return 0;
+}
+
+PublishedActivations published_activations(const Checkpoint& base) {
+    PublishedActivations out;
+    const std::filesystem::path root(base.path_string());
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(root / "hf_quant_config.json", ec)) {
+        try {
+            std::ifstream file(root / "hf_quant_config.json");
+            const auto json  = OJson::parse(file);
+            const auto& body = json.contains("quantization") ? json.at("quantization") : json;
+            out.source       = "hf_quant_config.json";
+            if (body.contains("quant_algo") && body.at("quant_algo").is_string()) {
+                out.all = activation_bits(body.at("quant_algo").get<std::string>());
+            }
+            if (body.contains("quantized_layers") && body.at("quantized_layers").is_object()) {
+                for (const auto& [name, layer] : body.at("quantized_layers").items()) {
+                    if (layer.is_object() && layer.contains("quant_algo") &&
+                        layer.at("quant_algo").is_string()) {
+                        out.layers[name] = activation_bits(layer.at("quant_algo").get<std::string>());
+                    }
+                }
+            }
+        } catch (const std::exception&) { out = {}; }
+        return out;
+    }
+    const auto& config = base.config();
+    if (!config.contains("quantization_config")) { return out; }
+    const auto& quantization = config.at("quantization_config");
+    if (!quantization.is_object() || !quantization.contains("config_groups") ||
+        !quantization.at("config_groups").is_object()) {
+        return out;
+    }
+    std::set<int> widths;
+    for (const auto& [name, group] : quantization.at("config_groups").items()) {
+        const bool given = group.is_object() && group.contains("input_activations") &&
+                           group.at("input_activations").is_object() &&
+                           group.at("input_activations").contains("num_bits") &&
+                           group.at("input_activations").at("num_bits").is_number_integer();
+        widths.insert(given ? group.at("input_activations").at("num_bits").get<int>() : 16);
+    }
+    if (widths.size() == 1) {
+        out.source = "compressed-tensors";
+        out.all    = *widths.begin();
+    }
+    return out;
+}
+
+// The published activation widths of the matrices kept as published, and how many of them the
+// recorded policy lets run below that width (fast mode): provenance["published_activations"].
+std::optional<OJson> published_activation_summary(const Checkpoint& base, const Model& model,
+                                                  const Recipe& recipe) {
+    const auto published = published_activations(base);
+    if (published.source.empty()) { return std::nullopt; }
+    std::map<int, std::uint64_t> counts;
+    std::uint64_t below = 0;
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const auto& parameter = model.parameters[i];
+        if (recipe.selections[i].method != Method::ImportEncoded || parameter.probe_leaf.empty() ||
+            recipe.policies[i].empty()) {
+            continue;
+        }
+        int bits = published.all;
+        if (const auto it = published.layers.find(parameter.probe_leaf);
+            it != published.layers.end()) {
+            bits = it->second;
+        }
+        if (bits == 0) { continue; }
+        ++counts[bits];
+        const auto policy = recipe.policies[i].front();
+        const int allowed = policy == ActivationPolicy::AllowA4   ? 4
+                            : policy == ActivationPolicy::AllowA8 ? 8
+                                                                  : 16;
+        below += allowed < bits ? 1 : 0;
+    }
+    if (counts.empty()) { return std::nullopt; }
+    OJson out     = OJson::object();
+    out["source"] = published.source;
+    for (const auto& [bits, count] : counts) { out[std::to_string(bits)] = count; }
+    out["below"] = below;
+    return out;
+}
+
 void write_report(const std::string& report_path, const OJson& report) {
     const auto temporary = report_path + ".tmp";
     std::remove(temporary.c_str()); // a leftover of an interrupted run
@@ -1477,6 +1580,19 @@ ConvertResult convert(const ConvertOptions& options) {
     provenance["sources"]   = sources.provenance();
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
     if (options.proposal) { provenance["ranking"] = ranking_text; }
+    if (const auto published = published_activation_summary(base, model, recipe)) {
+        provenance["published_activations"] = *published;
+        std::string widths;
+        for (const char* bits : {"16", "8", "4"}) {
+            if (published->contains(bits)) {
+                widths += (widths.empty() ? "" : ", ") + std::string(bits) + "-bit on " +
+                          std::to_string(published->at(bits).get<std::uint64_t>());
+            }
+        }
+        log("published activations (" + published->at("source").get<std::string>() + "): " +
+            widths + " kept matrices; fast mode runs " +
+            std::to_string(published->at("below").get<std::uint64_t>()) + " of them below that");
+    }
     ConvertResult result;
     result.model_seconds = seconds_since(begin);
 
