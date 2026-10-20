@@ -49,6 +49,8 @@ def main() -> int:
         parser.error(f"no files with a .sha256 in {args.dist}")
     manifest = {"version": args.version, "date": datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
                 "notes": args.notes, "min_version": args.min_version, "assets": assets}
+    # install.sh reads the assets line by line from this layout (one key per line, indent 1): the
+    # bytes are signed, so it cannot be changed under it, but changing it here breaks the installer.
     json.dump(manifest, sys.stdout, indent=1)
     sys.stdout.write("\n")
     return 0

@@ -26,8 +26,10 @@ copy against it.
 
 The private key never reaches this server or the repository: `tools/release/sign.sh` signs on the
 machine that holds it. A server that is broken into can serve old or broken files, but it cannot
-sign, so no installation acts on what it serves. The installer itself comes from GitHub
-(`tools/release/install.sh` on master, `NInferno-Setup.exe` from the GitHub release), not from here.
+sign, so no installation acts on what it serves. What it can still do is serve an older signed
+manifest: an existing installation refuses to go back (`ninferno-update` compares versions), a new
+one installs that older release. The installer itself comes from GitHub (`tools/release/install.sh`
+on master, `NInferno-Setup.exe` from the GitHub release), not from here.
 
 ## Publishing
 
