@@ -15,6 +15,7 @@
 //             to, so another site open in the same browser cannot start or stop anything
 //             (cross-site request forgery). A request without Origin (curl, scripts) is allowed.
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -65,5 +66,14 @@ enum class KeyCheck { pass, pass_set_cookie, refused };
 
 // A new key: 32 hex digits from the operating system's random source; empty if it gives none.
 [[nodiscard]] std::string new_access_key();
+
+// The first line of a key file without surrounding blanks; empty when unreadable.
+[[nodiscard]] std::string key_file_line(const std::filesystem::path& path);
+
+// The key kept in `path`, made there when there is none or it is unusable; empty when no key can
+// be made. UIs started at once on one hub cache agree on one key: the check and the replacement
+// run under a lock on <path>.lock, so the later one finds the earlier one's key. `kept` tells
+// whether the key returned is the one on disk (else the next start makes another).
+[[nodiscard]] std::string kept_access_key(const std::filesystem::path& path, bool* kept = nullptr);
 
 } // namespace ninferno::ui

@@ -82,6 +82,39 @@ void test_access() {
               !forwarded_https("", ""),
           "key: HTTPS seen through the proxy");
     check(cookie_value("a=1; ninferno_ui_key=k1; b=2", "ninferno_ui_key") == "k1", "cookie found");
+    // The kept key: made once, kept, an unusable one replaced, and one key for starters at once.
+    {
+        namespace fs = std::filesystem;
+        const auto dir =
+            fs::temp_directory_path() / ("ninferno_ui_key_" + std::to_string(::getpid()));
+        fs::remove_all(dir);
+        const auto path        = dir / "ninferno-ui" / "access-key";
+        bool kept              = false;
+        const std::string made = kept_access_key(path, &kept);
+        check(usable_key(made) && kept && key_file_line(path) == made, "kept key: made and kept");
+        check(kept_access_key(path) == made, "kept key: the same at the next start");
+        std::ofstream(path, std::ios::trunc) << "0123456789abcdef0123\n";
+        check(kept_access_key(path) == "0123456789abcdef0123", "kept key: another one written");
+        std::ofstream(path, std::ios::trunc) << "short\n";
+        const std::string replaced = kept_access_key(path, &kept);
+        check(usable_key(replaced) && kept && replaced != made && kept_access_key(path) == replaced,
+              "kept key: an unusable one replaced once");
+        for (const char* start : {"", "bad;key\n"}) {
+            fs::remove(path);
+            if (*start != '\0') { std::ofstream(path) << start; }
+            std::vector<std::string> keys(8);
+            std::vector<std::thread> starters;
+            for (auto& key : keys) {
+                starters.emplace_back([&key, &path] { key = kept_access_key(path); });
+            }
+            for (auto& starter : starters) { starter.join(); }
+            check(usable_key(keys[0]) && std::count(keys.begin(), keys.end(), keys[0]) == 8 &&
+                      key_file_line(path) == keys[0],
+                  std::string("kept key: starters at once agree, ") +
+                      (*start != '\0' ? "an unusable file" : "no file"));
+        }
+        fs::remove_all(dir);
+    }
     check(cookie_value("xninferno_ui_key=k1", "ninferno_ui_key").empty(), "cookie name exact");
     AccessPolicy keyed{.listen = "0.0.0.0", .port = 8090, .key = key};
     const std::string cookie = "ninferno_ui_key=" + key, bearer = "Bearer " + key;

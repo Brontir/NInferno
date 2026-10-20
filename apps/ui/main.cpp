@@ -139,52 +139,6 @@ bool executable(const std::filesystem::path& path) {
     std::exit(1);
 }
 
-// The first line of `path` without surrounding blanks; empty when unreadable.
-std::string first_line(const std::filesystem::path& path) {
-    std::ifstream in(path);
-    std::string line;
-    std::getline(in, line);
-    const auto begin = line.find_first_not_of(" \t\r");
-    if (begin == std::string::npos) { return {}; }
-    return line.substr(begin, line.find_last_not_of(" \t\r") - begin + 1);
-}
-
-// The key kept in `path`, made there when there is none yet: written to a new file created 0600
-// (on Windows the profile's permissions apply), then renamed into place.
-std::string kept_access_key(const std::filesystem::path& path) {
-    namespace fs = std::filesystem;
-    if (auto key = first_line(path); ninferno::ui::usable_key(key)) { return key; }
-    std::string key = ninferno::ui::new_access_key();
-    if (key.empty()) { return key; }
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    // create_unique takes UTF-8 (a Windows user name in Cyrillic stays intact).
-    const std::u8string name = (path.parent_path() / "access-key.XXXXXX").u8string();
-    std::string temp(name.begin(), name.end());
-    const int fd     = ninferno::sys::create_unique(temp, 0);
-    bool written     = false;
-    if (fd >= 0) {
-#ifdef _WIN32
-        _close(fd);
-#else
-        ::close(fd);
-#endif
-        const fs::path made(std::u8string(temp.begin(), temp.end()));
-        written = static_cast<bool>(std::ofstream(made, std::ios::trunc) << key << '\n');
-        if (written) {
-            fs::remove(path, ec); // an unusable kept key; rename does not replace it on Windows
-            fs::rename(made, path, ec);
-        }
-        if (!written || ec) { fs::remove(made, ec); }
-        written = written && first_line(path) == key;
-    }
-    if (!written) {
-        std::cerr << "ninferno-ui: warning: cannot keep the access key in " << path
-                  << "; a new one is made at the next start\n";
-    }
-    return key;
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -277,7 +231,7 @@ int main(int argc, char** argv) {
     const bool exposed =
         !ninferno::ui::is_loopback_host(ninferno::ui::host_of_authority(options.access.listen));
     if (!key_file.empty()) {
-        options.access.key = first_line(key_file);
+        options.access.key = ninferno::ui::key_file_line(key_file);
         if (!ninferno::ui::usable_key(options.access.key)) {
             std::cerr << "ninferno-ui: " << key_file
                       << ": needs a key of 16-256 characters of A-Z a-z 0-9 . _ ~ -\n";
@@ -292,7 +246,13 @@ int main(int argc, char** argv) {
     } else if (exposed) {
         const auto hub = options.hub_cache.empty() ? ninferno::convert::default_hub_cache()
                                                    : options.hub_cache;
-        options.access.key = kept_access_key(hub / "ninferno-ui" / "access-key");
+        const auto path    = hub / "ninferno-ui" / "access-key";
+        bool kept          = false;
+        options.access.key = ninferno::ui::kept_access_key(path, &kept);
+        if (!options.access.key.empty() && !kept) {
+            std::cerr << "ninferno-ui: warning: cannot keep the access key in " << path
+                      << "; a new one is made at the next start\n";
+        }
     }
     if (exposed && options.access.key.empty()) {
         std::cerr << "ninferno-ui: no access key for " << options.access.listen

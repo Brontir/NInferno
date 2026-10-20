@@ -2,6 +2,10 @@
 #include "core/ascii.h"
 #include "core/sys.h"
 
+#include <cerrno>
+#include <fstream>
+#include <system_error>
+
 namespace ninferno::ui {
 
 bool is_loopback_host(std::string_view host) noexcept {
@@ -143,6 +147,68 @@ std::string new_access_key() {
         key += digits[b >> 4];
         key += digits[b & 15];
     }
+    return key;
+}
+
+std::string key_file_line(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::string line;
+    std::getline(in, line);
+    const auto begin = line.find_first_not_of(" \t\r");
+    if (begin == std::string::npos) { return {}; }
+    return line.substr(begin, line.find_last_not_of(" \t\r") - begin + 1);
+}
+
+// A new key is written to a new file created 0600 (on Windows the profile's permissions apply),
+// then renamed into place.
+std::string kept_access_key(const std::filesystem::path& path, bool* kept) {
+    namespace fs = std::filesystem;
+    if (kept != nullptr) { *kept = false; }
+    if (auto key = key_file_line(path); usable_key(key)) {
+        if (kept != nullptr) { *kept = true; }
+        return key;
+    }
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    // Two starters that both found no key would each make one, and the later rename would take
+    // away the key the first one already serves. Under the lock the later one reads the first
+    // one's key instead. Without a lock (a read-only directory) the write below fails anyway.
+    const int lock = sys::open(fs::path(path) += ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+
+    struct Close {
+        int fd;
+
+        ~Close() {
+            if (fd >= 0) { sys::close(fd); }
+        }
+    } closer{lock};
+
+    if (lock >= 0) {
+        while (sys::lock(lock, true) != 0 && errno == EINTR) {}
+    }
+    if (auto key = key_file_line(path); usable_key(key)) {
+        if (kept != nullptr) { *kept = true; }
+        return key;
+    }
+    std::string key = new_access_key();
+    if (key.empty()) { return key; }
+    // create_unique takes UTF-8 (a Windows user name in Cyrillic stays intact).
+    const std::u8string name = (path.parent_path() / "access-key.XXXXXX").u8string();
+    std::string temp(name.begin(), name.end());
+    const int fd = sys::create_unique(temp, 0);
+    bool written = false;
+    if (fd >= 0) {
+        sys::close(fd);
+        const fs::path made(std::u8string(temp.begin(), temp.end()));
+        written = static_cast<bool>(std::ofstream(made, std::ios::trunc) << key << '\n');
+        if (written) {
+            fs::remove(path, ec); // an unusable kept key; rename does not replace it on Windows
+            fs::rename(made, path, ec);
+        }
+        if (!written || ec) { fs::remove(made, ec); }
+        written = written && key_file_line(path) == key;
+    }
+    if (kept != nullptr) { *kept = written; }
     return key;
 }
 
