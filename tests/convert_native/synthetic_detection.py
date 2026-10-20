@@ -326,12 +326,16 @@ def main() -> int:
         else:
             if "recipe qwen3_5_published (chosen" not in log or "does not fit this checkpoint" not in log:
                 errors.append(f"expected qwen3_5_published with a note: {[l for l in log.splitlines() if 'recipe' in l]}")
-            banks = {("shared" if any("/moe/shared/" in p for p in m["parameters"]) else "routed"):
-                     (m["format"], m["method"]) for m in methods(out)
-                     if any("/moe/" in p for p in m["parameters"]) and not any("mtp" in p for p in m["parameters"])
-                     and not any(p.endswith(("/router", "/shared_score")) for p in m["parameters"])}
-            if banks.get("routed") != ("nvfp4", "import_encoded") or banks.get("shared", ("bf16",))[0] != "bf16":
-                errors.append(f"expected routed NVFP4 kept and the shared expert BF16: {banks}")
+            banks = {"routed": set(), "shared": set()}
+            for m in methods(out):
+                names = m["parameters"]
+                if (any("/moe/" in p for p in names) and not any("mtp" in p for p in names)
+                        and not any(p.endswith(("/router", "/shared_score")) for p in names)):
+                    kind = "shared" if any("/moe/shared/" in p for p in names) else "routed"
+                    banks[kind].add((m["format"], m["method"]))
+            if banks["routed"] != {("nvfp4", "import_encoded")} or not banks["shared"] or \
+                    any(format != "bf16" for format, _ in banks["shared"]):
+                errors.append(f"expected every routed bank NVFP4 kept and the shared expert BF16: {banks}")
         case("qwen-bf16-shared", errors)
 
         root = work / "gemma-bf16-layer"
