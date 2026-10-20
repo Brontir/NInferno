@@ -152,6 +152,17 @@ int test_watchdog() {
     failures += check(margin.policy().trip_tokens_per_round() == 1.75, "the default trip point");
     failures += check(!margin.observe(32, 45), "1.4 drafted tokens per round hold a floor of 2.5");
     failures += check(margin.observe(64, 65), "and 0.6 trip it");
+
+    // The depth's rate counts every round since the restart, not the rolling window.
+    AcceptanceWatchdog depth(WatchdogPolicy{2.0, 8, 4, 1.0});
+    failures += check(depth.depth_tokens_per_round() == 0.0, "no rate before any round");
+    failures += check(!depth.observe(16, 32), "3 tokens per round hold a floor of 2");
+    failures += check(depth.observe(32, 32), "and a collapse trips the window of 8");
+    failures += check(depth.rolling_tokens_per_round() < 1.01 &&
+                          depth.depth_tokens_per_round() == 2.0,
+                      "the window says 1, the depth's 32 rounds 2");
+    depth.restart(1.5, 32, 32);
+    failures += check(depth.depth_tokens_per_round() == 0.0, "a restart starts the rate afresh");
     return failures;
 }
 

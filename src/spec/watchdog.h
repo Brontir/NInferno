@@ -16,6 +16,9 @@
 // tokens: 1 + trip_margin * (floor - 1) tokens per round. Measured on gpt-oss, Nemotron and the
 // Qwen families (5090, 4090, 3090, V100): a trip at the break-even itself stopped requests whose
 // acceptance came back, 8..50 % slower than speculating on.
+//
+// A trip judges a minimum (the window that fell below the trip point), so an owner that sizes the
+// next depth reads depth_tokens_per_round(), the rate over every round at the depth just judged.
 
 #include <cstdint>
 #include <deque>
@@ -54,6 +57,8 @@ public:
         rolling_  = 0.0;
         observed_ = rounds;
         start_    = rounds;
+        start_accepted_ = accepted;
+        last_accepted_  = accepted;
     }
 
     // The request's cumulative counters after some rounds: rounds run and drafts accepted since
@@ -68,6 +73,7 @@ public:
         const auto [r0, a0] = history_.front();
         const auto span     = rounds - r0;
         observed_           = rounds;
+        last_accepted_      = accepted;
         rolling_            = double(span + (accepted - a0)) / double(span);
         if (rounds - start_ >= policy_.min_rounds && rolling_ < policy_.trip_tokens_per_round()) {
             tripped_ = true;
@@ -82,6 +88,11 @@ public:
 
     [[nodiscard]] bool tripped() const noexcept { return tripped_; }
     [[nodiscard]] double rolling_tokens_per_round() const noexcept { return rolling_; }
+    // Tokens per round over every round observed since the last reset() or restart(); 0 before any.
+    [[nodiscard]] double depth_tokens_per_round() const noexcept {
+        const auto span = observed_ - start_;
+        return span > 0 ? double(span + (last_accepted_ - start_accepted_)) / double(span) : 0.0;
+    }
     [[nodiscard]] std::int64_t rounds_observed() const noexcept { return observed_; }
     [[nodiscard]] const WatchdogPolicy& policy() const noexcept { return policy_; }
 
@@ -92,6 +103,8 @@ private:
     double rolling_        = 0.0;
     std::int64_t observed_ = 0;
     std::int64_t start_    = 0; // the round the current verdict counts min_rounds from
+    std::int64_t start_accepted_ = 0; // drafts accepted by then
+    std::int64_t last_accepted_  = 0; // drafts accepted at the last observe()
 };
 
 } // namespace ninferno::spec

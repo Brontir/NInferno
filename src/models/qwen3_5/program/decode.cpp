@@ -245,6 +245,19 @@ void apply_watchdog_trip(RequestControl& request, double shared_floor) {
     auto& stats         = request.speculative_stats;
     const auto rounds   = static_cast<std::int64_t>(request.judged_rounds);
     const auto accepted = static_cast<std::int64_t>(request.judged_accepted);
+    // A shallower depth accepts at most the prefix the deeper one did, so its tokens per round are
+    // at most those of the depth just judged: a step whose trip point is above that rate would only
+    // trip again after its own min_rounds, and is skipped (gpt-oss-20b DFlash on a ~24K-token
+    // prompt: 1.4..2 tokens per round at depth 7, judged 16 rounds at each of depths 7, 5 and 3
+    // before it went plain). The rate is the depth's whole history, not the rolling window that
+    // tripped (a minimum), and the bound is the step's trip point, not its floor: short-chat rows of
+    // 25..30 % acceptance at depth 7 paid at depth 5 below its floor.
+    const double depth_rate = request.watchdog.depth_tokens_per_round();
+    const double margin     = request.watchdog.policy().trip_margin;
+    while (!request.step_down.empty() &&
+           depth_rate < 1.0 + margin * (request.step_down.front().acceptance_floor - 1.0)) {
+        request.step_down.erase(request.step_down.begin());
+    }
     if (!request.step_down.empty()) {
         const SpeculationStep step = request.step_down.front();
         request.step_down.erase(request.step_down.begin());
