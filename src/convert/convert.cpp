@@ -1846,11 +1846,11 @@ const std::string& supported_architectures_text() {
 
 namespace {
 
-// What stops a Qwen3.5 recipe from planning on a checkpoint, or from keeping its published
-// encodings (nothing: nullopt). Planning reads headers and scalars only, never the bulk of the
-// weights.
+// What stops a Qwen3.5 recipe from planning on a checkpoint, or (`kept`) from keeping its
+// published encodings as convert() would (nothing: nullopt). Planning reads headers and scalars
+// only, never the bulk of the weights.
 std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& checkpoint,
-                                              const RecipeChoice& choice) {
+                                              const RecipeChoice& choice, bool kept = false) {
     try {
         const Checkpoint base(checkpoint);
         SourceInputs sources(base, choice.sources);
@@ -1858,15 +1858,28 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
         Recipe recipe(model);
         apply_qwen3_5_recipe(choice.recipe, model, recipe, sources);
         (void)share_tied_head(model, recipe);
+        if (kept) { (void)keep_published(model, recipe); }
         const Plan plan = prepare(model, recipe);
-        const auto found = fidelity(base, model, plan);
-        if (!found.foreign.empty()) {
-            return "it would quantize again " + found.foreign.begin()->first;
+        if (kept) {
+            const auto found = fidelity(base, model, plan);
+            if (!found.foreign.empty()) {
+                const auto& [handling, count] = *found.foreign.begin();
+                return "it would change " + std::to_string(count) + " published matrices: " +
+                       handling;
+            }
         }
     } catch (const std::exception& error) {
         return std::string(error.what());
     }
     return std::nullopt;
+}
+
+// Whether a checkpoint directory's cache holds an artifact of `recipe` (cache.cpp's
+// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno).
+bool converted(const std::filesystem::path& checkpoint, const std::string& recipe) {
+    const auto cache = checkpoint / ".ninferno-cache";
+    return std::filesystem::exists(cache / (recipe + ".ninferno")) ||
+           std::filesystem::exists(cache / ("vision." + recipe + ".ninferno"));
 }
 
 // Whether a Hugging Face checkpoint still holds its weight files (a consumed one keeps only its
@@ -1974,11 +1987,15 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
                     out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
                     out.sources = {};
                 }
-            } else if (has_safetensors(checkpoint)) {
+            } else if (has_safetensors(checkpoint) && !converted(checkpoint, out.recipe)) {
                 // Those recipes fit one layout (NVFP4 experts or MLPs, the rest BF16); another
                 // publisher's (RedHatAI: NVFP4 attention; nvidia: ModelOpt experts, FP8
-                // attention, an NVFP4 head) runs every tensor as published.
-                if (const auto error = qwen3_5_plan_error(checkpoint, out)) {
+                // attention, an NVFP4 head) runs every tensor as published. A converted
+                // artifact of either recipe answers without planning (every serve start).
+                if (converted(checkpoint, "qwen3_5_published")) {
+                    out.recipe  = "qwen3_5_published";
+                    out.sources = {};
+                } else if (const auto error = qwen3_5_plan_error(checkpoint, out, true)) {
                     out.note    = out.recipe + " does not fit this checkpoint (" + *error + ")";
                     out.recipe  = "qwen3_5_published";
                     out.sources = {};

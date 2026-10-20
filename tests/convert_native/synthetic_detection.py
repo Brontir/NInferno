@@ -16,9 +16,9 @@ Every conversion runs without --recipe, as a user would:
                          note, instead of a refusal for missing NVFP4 tensors; the MoE has no
                          unquantized recipe, so the conversion is then refused as NInferno's own
                          quantization (and runs with --maintainer-quantize);
-  qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: the engine's NVFP4 MoE
-                         runs all four expert matrices in NVFP4 or none, so this is refused, by
-                         the shared expert's name, at conversion;
+  qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: qwen3_6_35b_a3b_nvfp4 has
+                         no NVFP4 source for the shared expert, so qwen3_5_published runs it as
+                         published (routed NVFP4, shared BF16: the generic MoE op), with a note;
   gemma-bf16-layer       a Gemma 4 MoE checkpoint whose layer 1 is BF16 throughout (its experts
                          too) while layer 0 is NVFP4 and quantization_config ignores nothing: layer
                          0 imported as NVFP4, layer 1 quantized from BF16, per site;
@@ -317,9 +317,22 @@ def main() -> int:
 
         root = work / "qwen-bf16-shared"
         qwen_moe(root, nvfp4=True, quantization_config=ignore_only_head, bf16_shared=True)
-        run = convert(native, repository, root, work / "qwen-bf16-shared.ninferno")
-        case("qwen-bf16-shared", [] if run.returncode and "shared_expert" in run.stderr else [
-            f"a BF16 shared expert next to NVFP4 routed experts was not refused by name (rc {run.returncode})"])
+        out = work / "qwen-bf16-shared.ninferno"
+        run = convert(native, repository, root, out)
+        log = run.stdout + run.stderr
+        errors = []
+        if run.returncode:
+            errors.append(f"conversion failed: {log.strip().splitlines()[-1][:300]}")
+        else:
+            if "recipe qwen3_5_published (chosen" not in log or "does not fit this checkpoint" not in log:
+                errors.append(f"expected qwen3_5_published with a note: {[l for l in log.splitlines() if 'recipe' in l]}")
+            banks = {("shared" if any("/moe/shared/" in p for p in m["parameters"]) else "routed"):
+                     (m["format"], m["method"]) for m in methods(out)
+                     if any("/moe/" in p for p in m["parameters"]) and not any("mtp" in p for p in m["parameters"])
+                     and not any(p.endswith(("/router", "/shared_score")) for p in m["parameters"])}
+            if banks.get("routed") != ("nvfp4", "import_encoded") or banks.get("shared", ("bf16",))[0] != "bf16":
+                errors.append(f"expected routed NVFP4 kept and the shared expert BF16: {banks}")
+        case("qwen-bf16-shared", errors)
 
         root = work / "gemma-bf16-layer"
         gemma_mixed(root)
