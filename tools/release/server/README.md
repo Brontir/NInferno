@@ -43,7 +43,19 @@ manifest finds every file it names. Where the release key is not (a build machin
 it lets the next run publish. Raising `--min-version` makes older installations ask to update at every start; use
 it for a broken or unsafe release only.
 
-## nginx
+## The site
 
-`nginx.conf` here is the site: static files, long caching for versioned files, no caching for the
-manifest, and `latest/download` served through the link.
+`nginx.conf` is the site: GET and HEAD of files under `/releases/` only, long caching for versioned
+files, none for the manifest and its signature, `latest/download` served through the link. It runs as
+one Docker Swarm service behind the host's Traefik (`traefik.yml`: TLS from Let's Encrypt, HSTS):
+
+```bash
+docker service create --name ninferno-releases --network dokploy-network --read-only \
+  --mount type=bind,src=/srv/ninferno,dst=/srv/ninferno,readonly \
+  --mount type=bind,src=/srv/ninferno-site/nginx.conf,dst=/etc/nginx/conf.d/default.conf,readonly \
+  --mount type=tmpfs,dst=/tmp --cap-drop ALL --limit-memory 256M --limit-cpu 2 \
+  nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+```
+
+The container runs unprivileged on a read-only file system and sees the releases read-only:
+`publish.sh` writes them over SSH as the upload user, who owns `/srv/ninferno` and nothing else.
