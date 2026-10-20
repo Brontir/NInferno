@@ -9,7 +9,7 @@
 
 namespace jinja::unicode {
 namespace {
-namespace utf8 = ninfer::text::unicode_internal;
+namespace utf8 = ninferno::text::unicode_internal;
 
 template <std::size_t N>
 bool contains(const data::Range (&ranges)[N], std::int32_t cp) {
@@ -51,6 +51,20 @@ std::size_t length(std::string_view text) {
         pos += utf8::utf8_codepoint_at(text, pos, "Jinja string").length;
     }
     return result;
+}
+
+std::size_t byte_offset(std::string_view text, std::size_t index, std::size_t from_byte,
+                        std::size_t from_index) {
+    std::size_t pos = from_byte;
+    for (std::size_t i = from_index; i < index && pos < text.size(); ++i) {
+        pos += utf8::utf8_codepoint_at(text, pos, "Jinja string").length;
+    }
+    return pos;
+}
+
+Character character_at(std::string_view text, std::size_t pos) {
+    const auto cp = utf8::utf8_codepoint_at(text, pos, "Jinja string");
+    return {cp.value, pos, pos + cp.length};
 }
 
 bool whitespace(std::int32_t cp) {

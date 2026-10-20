@@ -2,7 +2,7 @@
 
 #include <cuda_runtime.h>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 // Apply the five lane dimensions of a Sylvester transform to independent columns. Keeping the
 // column loop inside each stage exposes their independent shuffle instructions while preserving
@@ -11,13 +11,18 @@ template <int Columns>
 __device__ __forceinline__ void hadamard_d32_columns_inplace(float (&values)[Columns], int lane) {
     constexpr unsigned FullMask = 0xffffffffu;
 
+    // (-value) + peer rounds exactly as peer - value, signed zeros included, so the lane's side of
+    // the butterfly is a sign rather than a branch: a lane-dependent select around the shuffles
+    // made ptxas guard each one with its own divergent branch (a short
+    // prompt launch on an RTX 3090 43.7 -> 33.5 us).
 #pragma unroll
     for (int stride = 1; stride <= 16; stride <<= 1) {
+        const float sign = (lane & stride) == 0 ? 1.0f : -1.0f;
 #pragma unroll
         for (int column = 0; column < Columns; ++column) {
             const float value = values[column];
             const float peer  = __shfl_xor_sync(FullMask, value, stride);
-            values[column] = (lane & stride) == 0 ? __fadd_rn(value, peer) : __fsub_rn(peer, value);
+            values[column]    = __fadd_rn(__fmul_rn(sign, value), peer);
         }
     }
 }
@@ -64,4 +69,4 @@ __device__ __forceinline__ void normalized_hadamard_d256_inplace(float (&values)
     for (float& value : values) { value = __fmul_rn(value, 0x1p-4f); }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

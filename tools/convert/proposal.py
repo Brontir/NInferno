@@ -42,6 +42,21 @@ def select_shortlist(total: np.ndarray, n: int, force_include=()) -> np.ndarray:
     return np.ascontiguousarray(selected[np.argsort(-counts[selected], kind="stable")])
 
 
+def shortlist_ids(model, ranking: str | Path, rows: int) -> torch.Tensor:
+    """The `rows` most frequent tokens of the model's own token domain, by a ranking file.
+
+    The ranking holds int64 counts for the full vocabulary (whole rows of it); the special tokens
+    are always kept. Returns int32 vocabulary ids ordered by decreasing count.
+    """
+    vocab = model.config["vocab_size"]
+    ranking = Path(ranking)
+    if ranking.stat().st_size == 0 or ranking.stat().st_size % (vocab * 8):
+        raise ValueError("ranking must contain complete int64 vocabulary rows")
+    total = np.fromfile(ranking, dtype="<i8", count=vocab)
+    selected = select_shortlist(total[: model.token_count], rows, model.special_token_ids)
+    return torch.from_numpy(selected).to(torch.int32)
+
+
 def add_proposal(
     recipe: Recipe,
     *,
@@ -53,15 +68,7 @@ def add_proposal(
     model = recipe.model
     if "proposal/head" in model.parameters:
         raise ValueError("proposal head already configured")
-    vocab = model.config["vocab_size"]
-    ranking = Path(ranking)
-    if ranking.stat().st_size == 0 or ranking.stat().st_size % (vocab * 8):
-        raise ValueError("ranking must contain complete int64 vocabulary rows")
-    total = np.fromfile(ranking, dtype="<i8", count=vocab)
-    selected = select_shortlist(
-        total[: model.token_count], rows, model.special_token_ids
-    )
-    ids = torch.from_numpy(selected).to(torch.int32)
+    ids = shortlist_ids(model, ranking, rows)
     if source is None:
         selections = recipe.selections["text/output_head"]
         if len(selections) != 1:

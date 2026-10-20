@@ -1,4 +1,4 @@
-target_sources(ninfer_ops PRIVATE
+ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/fp8/fp8_gdn_input_decode.cu"
   "${CMAKE_CURRENT_LIST_DIR}/fp8/fp8_gdn_input_matrix.cu"
   "${CMAKE_CURRENT_LIST_DIR}/fp8/fp8_gdn_input_a8.cu"
@@ -6,8 +6,10 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/fp8/fp8_gdn_conv_fused.cu"
   "${CMAKE_CURRENT_LIST_DIR}/fp8/fp8_gdn_conv_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_decode.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_exact.cu"
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_small_t.cu"
-  "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_w4a4.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_a16.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_a4.cu"
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_snapshot_decode.cu"
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_snapshot_small_t.cu"
@@ -15,6 +17,8 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_snapshot_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_gemm_mma.cu"
   "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_independent.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_sliced.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_small_t.cu"
   "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_conv_snapshot.cu"
   "${CMAKE_CURRENT_LIST_DIR}/q4_q5/q4_q5_gdn_input_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/gdn_projected_conv.cu"
@@ -23,4 +27,8 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/q8/q8_gdn_input_gemm_splitk.cu"
   "${CMAKE_CURRENT_LIST_DIR}/q8/q8_gdn_input_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../wrapper/gdn_input_proj.cpp"
+)
+
+ninferno_target_sources(ninferno_nvfp4_non_rdc PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/nvfp4/nvfp4_gdn_input_a4_tma.cu"
 )

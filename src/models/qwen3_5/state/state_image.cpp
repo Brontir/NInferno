@@ -1,5 +1,6 @@
 #include "models/qwen3_5/state/state_image.h"
 
+#include "core/checked.h"
 #include "core/device.h"
 
 #include <limits>
@@ -7,24 +8,10 @@
 #include <string>
 #include <utility>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 namespace {
 
 constexpr std::size_t kStateImageAlignment = 256;
-
-std::size_t checked_mul(std::size_t left, std::size_t right, const char* label) {
-    if (right != 0 && left > std::numeric_limits<std::size_t>::max() / right) {
-        throw std::overflow_error(label);
-    }
-    return left * right;
-}
-
-std::size_t checked_add(std::size_t left, std::size_t right, const char* label) {
-    if (right > std::numeric_limits<std::size_t>::max() - left) {
-        throw std::overflow_error(label);
-    }
-    return left + right;
-}
 
 std::uint32_t padded_dflash_capacity(std::uint32_t capacity) {
     if (capacity == 0) {
@@ -44,7 +31,8 @@ bool same_linear_spec(const LinearAttentionStatePoolSpec& left,
     return left.layers == right.layers && left.conv_channels == right.conv_channels &&
            left.conv_width == right.conv_width && left.value_heads == right.value_heads &&
            left.value_head_dim == right.value_head_dim && left.key_head_dim == right.key_head_dim &&
-           left.slot_count == right.slot_count && left.conv_dtype == right.conv_dtype;
+           left.slot_count == right.slot_count && left.conv_dtype == right.conv_dtype &&
+           left.recurrent_dtype == right.recurrent_dtype;
 }
 
 bool same_dflash_spec(const std::optional<DFlashLocalStateSpec>& left,
@@ -52,7 +40,25 @@ bool same_dflash_spec(const std::optional<DFlashLocalStateSpec>& left,
     if (left.has_value() != right.has_value()) { return false; }
     if (!left) { return true; }
     return left->layers == right->layers && left->capacity == right->capacity &&
-           left->kv_heads == right->kv_heads && left->head_dim == right->head_dim;
+           left->kv_heads == right->kv_heads && left->head_dim == right->head_dim &&
+           left->int8 == right->int8;
+}
+
+bool same_region(const LayoutRegion& left, const LayoutRegion& right) noexcept;
+
+bool same_rings(const std::vector<KvRingHostLayout>& left,
+                const std::vector<KvRingHostLayout>& right) noexcept {
+    if (left.size() != right.size()) { return false; }
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        if (!same_region(left[i].k, right[i].k) || !same_region(left[i].v, right[i].v) ||
+            left[i].layer_bytes != right[i].layer_bytes ||
+            !same_region(left[i].k_scale, right[i].k_scale) ||
+            !same_region(left[i].v_scale, right[i].v_scale) ||
+            left[i].scale_layer_bytes != right[i].scale_layer_bytes) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool same_region(const LayoutRegion& left, const LayoutRegion& right) noexcept {
@@ -78,16 +84,38 @@ bool same_host_layout(const StateImageHostLayout& left,
            same_optional_region(left.dflash_local_k, right.dflash_local_k) &&
            same_optional_region(left.dflash_local_v, right.dflash_local_v) &&
            left.dflash_local_layer_bytes == right.dflash_local_layer_bytes &&
+           left.spec.rings == right.spec.rings && same_rings(left.rings, right.rings) &&
            left.image_bytes == right.image_bytes;
 }
 
+// One slot of a ring layer: its K (or V) plane [head_dim, capacity, kv_heads].
+Tensor ring_slot_shape(const KvRingSpec& ring) {
+    return Tensor(nullptr, ring.fp8 ? DType::FP8_E4M3FN : DType::BF16,
+                  {ring.head_dim, static_cast<std::int32_t>(ring.capacity), ring.kv_heads});
+}
+
+// One slot of an FP8 ring layer's K (or V) scale plane [1, capacity, kv_heads].
+Tensor ring_scale_slot_shape(const KvRingSpec& ring) {
+    return Tensor(nullptr, DType::FP32, {1, static_cast<std::int32_t>(ring.capacity), ring.kv_heads});
+}
+
 StateImageHostLayout plan_host_state_image(const StateImageSpec& spec) {
-    if (spec.linear.layers == 0 || spec.linear.conv_channels <= 0 || spec.linear.conv_width <= 0 ||
-        spec.linear.value_heads <= 0 || spec.linear.value_head_dim <= 0 ||
-        spec.linear.key_head_dim <= 0 || spec.linear.slot_count <= 0 ||
-        (spec.linear.conv_dtype != DType::BF16 && spec.linear.conv_dtype != DType::FP32) ||
-        spec.hidden <= 0) {
+    if (spec.linear.slot_count <= 0 || spec.hidden <= 0 ||
+        (spec.linear.layers != 0 &&
+         (spec.linear.conv_channels <= 0 || spec.linear.conv_width <= 0 ||
+          spec.linear.value_heads <= 0 || spec.linear.value_head_dim <= 0 ||
+          spec.linear.key_head_dim <= 0 ||
+          (spec.linear.conv_dtype != DType::BF16 && spec.linear.conv_dtype != DType::FP32) ||
+          (spec.linear.recurrent_dtype != DType::BF16 &&
+           spec.linear.recurrent_dtype != DType::FP16 &&
+           spec.linear.recurrent_dtype != DType::FP32)))) {
         throw std::invalid_argument("StateImage host geometry is invalid");
+    }
+    for (const KvRingSpec& ring : spec.rings) {
+        if (ring.layers == 0 || ring.kv_heads <= 0 || ring.head_dim <= 0 || ring.capacity == 0 ||
+            ring.capacity > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+            throw std::invalid_argument("StateImage ring geometry is invalid");
+        }
     }
     if (spec.dflash_local && (spec.dflash_local->layers == 0 || spec.dflash_local->kv_heads <= 0 ||
                               spec.dflash_local->head_dim <= 0)) {
@@ -97,27 +125,31 @@ StateImageHostLayout plan_host_state_image(const StateImageSpec& spec) {
     LayoutBuilder builder;
     StateImageHostLayout host;
     host.spec = spec;
-    const Tensor conv_slot(nullptr, spec.linear.conv_dtype,
-                           {spec.linear.conv_channels, spec.linear.conv_width});
-    const Tensor recurrent_slot(
-        nullptr, DType::FP32,
-        {spec.linear.key_head_dim, spec.linear.value_head_dim, spec.linear.value_heads});
+    if (spec.linear.layers != 0) {
+        const Tensor conv_slot(nullptr, spec.linear.conv_dtype,
+                               {spec.linear.conv_channels, spec.linear.conv_width});
+        const Tensor recurrent_slot(
+            nullptr, spec.linear.recurrent_dtype,
+            {spec.linear.key_head_dim, spec.linear.value_head_dim, spec.linear.value_heads});
+        host.linear_conv_layer_bytes = conv_slot.bytes();
+        host.linear_conv = builder.add(checked_mul(host.linear_conv_layer_bytes, spec.linear.layers,
+                                                   "StateImage host convolution bytes overflow"),
+                                       kStateImageAlignment, "StateImage host convolution");
+        host.linear_recurrent_layer_bytes = recurrent_slot.bytes();
+        host.linear_recurrent =
+            builder.add(checked_mul(host.linear_recurrent_layer_bytes, spec.linear.layers,
+                                    "StateImage host recurrent bytes overflow"),
+                        kStateImageAlignment, "StateImage host recurrent");
+    }
     const Tensor hidden_slot(nullptr, DType::BF16, {spec.hidden});
-    host.linear_conv_layer_bytes = conv_slot.bytes();
-    host.linear_conv = builder.add(checked_mul(host.linear_conv_layer_bytes, spec.linear.layers,
-                                               "StateImage host convolution bytes overflow"),
-                                   kStateImageAlignment, "StateImage host convolution");
-    host.linear_recurrent_layer_bytes = recurrent_slot.bytes();
-    host.linear_recurrent =
-        builder.add(checked_mul(host.linear_recurrent_layer_bytes, spec.linear.layers,
-                                "StateImage host recurrent bytes overflow"),
-                    kStateImageAlignment, "StateImage host recurrent");
     host.continuation_hidden = builder.add(hidden_slot.bytes(), kStateImageAlignment,
                                            "StateImage host continuation hidden");
     if (spec.dflash_local) {
+        const bool int8 = spec.dflash_local->int8;
         const Tensor local_slot(
-            nullptr, DType::BF16,
-            {spec.dflash_local->head_dim,
+            nullptr, int8 ? DType::I8 : DType::BF16,
+            {int8 ? cyclic_kv_int8_row_bytes(spec.dflash_local->head_dim)
+                  : spec.dflash_local->head_dim,
              static_cast<std::int32_t>(padded_dflash_capacity(spec.dflash_local->capacity)),
              spec.dflash_local->kv_heads});
         host.dflash_local_layer_bytes = local_slot.bytes();
@@ -128,6 +160,23 @@ StateImageHostLayout plan_host_state_image(const StateImageSpec& spec) {
             builder.add(component_bytes, kStateImageAlignment, "StateImage host DFlash local K");
         host.dflash_local_v =
             builder.add(component_bytes, kStateImageAlignment, "StateImage host DFlash local V");
+    }
+    for (const KvRingSpec& ring : spec.rings) {
+        KvRingHostLayout& out = host.rings.emplace_back();
+        out.layer_bytes       = ring_slot_shape(ring).bytes();
+        const std::size_t component_bytes =
+            checked_mul(out.layer_bytes, ring.layers, "StateImage host ring bytes overflow");
+        out.k = builder.add(component_bytes, kStateImageAlignment, "StateImage host ring K");
+        out.v = builder.add(component_bytes, kStateImageAlignment, "StateImage host ring V");
+        if (ring.fp8) {
+            out.scale_layer_bytes = ring_scale_slot_shape(ring).bytes();
+            const std::size_t scale_bytes = checked_mul(out.scale_layer_bytes, ring.layers,
+                                                        "StateImage host ring scale bytes overflow");
+            out.k_scale =
+                builder.add(scale_bytes, kStateImageAlignment, "StateImage host ring K scale");
+            out.v_scale =
+                builder.add(scale_bytes, kStateImageAlignment, "StateImage host ring V scale");
+        }
     }
     host.image_bytes = builder.finish(kStateImageAlignment, "StateImage host image");
     return host;
@@ -152,7 +201,9 @@ StateImageDeviceLayout plan_state_image_device_pool(LayoutBuilder& builder,
     }
 
     StateImageDeviceLayout out;
-    out.linear = plan_linear_attention_state_pool(builder, spec.linear);
+    if (spec.linear.layers != 0) {
+        out.linear = plan_linear_attention_state_pool(builder, spec.linear);
+    }
     out.continuation_hidden =
         builder.add_tensor(DType::BF16, {spec.hidden, spec.linear.slot_count}, kStateImageAlignment,
                            "StateImage continuation hidden");
@@ -160,7 +211,28 @@ StateImageDeviceLayout plan_state_image_device_pool(LayoutBuilder& builder,
         const DFlashLocalStateSpec& dflash = *spec.dflash_local;
         out.dflash_local =
             plan_cyclic_kv_cache(builder, dflash.layers, dflash.capacity, dflash.kv_heads,
-                                 dflash.head_dim, spec.linear.slot_count);
+                                 dflash.head_dim, spec.linear.slot_count, dflash.int8);
+    }
+    for (const KvRingSpec& ring : spec.rings) {
+        KvRingDeviceLayout& group = out.rings.emplace_back();
+        group.spec                = ring;
+        for (std::uint32_t layer = 0; layer < ring.layers; ++layer) {
+            for (auto* plane : {&group.k, &group.v}) {
+                plane->push_back(
+                    builder.add_tensor(ring.fp8 ? DType::FP8_E4M3FN : DType::BF16,
+                                       {ring.head_dim, static_cast<std::int32_t>(ring.capacity),
+                                        ring.kv_heads, spec.linear.slot_count},
+                                       kStateImageAlignment, "StateImage ring plane"));
+            }
+            if (!ring.fp8) { continue; }
+            for (auto* plane : {&group.k_scale, &group.v_scale}) {
+                plane->push_back(builder.add_tensor(
+                    DType::FP32,
+                    {1, static_cast<std::int32_t>(ring.capacity), ring.kv_heads,
+                     spec.linear.slot_count},
+                    kStateImageAlignment, "StateImage ring scale plane"));
+            }
+        }
     }
 
     out.host = plan_host_state_image(spec);
@@ -183,9 +255,17 @@ TransferWork state_image_transfer_work(const StateImageHostLayout& layout) {
             payload, checked_mul(component_bytes, 2U, "StateImage transfer payload overflow"),
             "StateImage transfer payload overflow");
     }
-    const std::uint64_t operations =
+    std::uint64_t operations =
         2ULL * layout.spec.linear.layers + 1ULL +
         (layout.spec.dflash_local ? 2ULL * layout.spec.dflash_local->layers : 0ULL);
+    for (std::size_t group = 0; group < layout.rings.size(); ++group) {
+        const KvRingHostLayout& ring = layout.rings[group];
+        for (const std::size_t bytes : {ring.k.bytes, ring.v.bytes, ring.k_scale.bytes,
+                                        ring.v_scale.bytes}) {
+            payload = checked_add(payload, bytes, "StateImage transfer payload overflow");
+        }
+        operations += (layout.spec.rings[group].fp8 ? 4ULL : 2ULL) * layout.spec.rings[group].layers;
+    }
     if (operations > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("StateImage transfer operation count exceeds uint32");
     }
@@ -266,43 +346,116 @@ std::byte* HostStatePool::slot_data(std::uint32_t index) const noexcept {
 }
 
 StateImageDevicePool::StateImageDevicePool(DeviceSpan backing, const StateImageDeviceLayout& layout)
-    : linear_(backing, layout.linear),
+    : slot_count_(layout.host.spec.linear.slot_count),
       continuation_hidden_(layout.continuation_hidden.bind(backing)), host_layout_(layout.host) {
+    if (layout.linear) { linear_.emplace(backing, *layout.linear); }
+    if (layout.linear.has_value() != (host_layout_.spec.linear.layers != 0) ||
+        (linear_ && linear_->slot_count() != slot_count_)) {
+        throw std::invalid_argument("StateImage linear layout is inconsistent");
+    }
     if (continuation_hidden_.dtype != DType::BF16 || !continuation_hidden_.is_contiguous() ||
         continuation_hidden_.ne[0] != host_layout_.spec.hidden ||
-        continuation_hidden_.ne[1] != linear_.slot_count()) {
+        continuation_hidden_.ne[1] != slot_count_) {
         throw std::invalid_argument("StateImage continuation hidden layout is inconsistent");
     }
     if (layout.dflash_local.has_value() != host_layout_.spec.dflash_local.has_value()) {
         throw std::invalid_argument("StateImage DFlash layout is inconsistent");
     }
-    StateImageSpec device_spec{.linear = layout.linear.spec, .hidden = continuation_hidden_.ne[0]};
+    StateImageSpec device_spec{.linear =
+                                   layout.linear ? layout.linear->spec : host_layout_.spec.linear,
+                               .hidden = continuation_hidden_.ne[0]};
     if (layout.dflash_local) {
         device_spec.dflash_local = DFlashLocalStateSpec{
             .layers   = static_cast<std::uint32_t>(layout.dflash_local->k.size()),
             .capacity = layout.dflash_local->capacity,
             .kv_heads = layout.dflash_local->num_kv_heads,
             .head_dim = layout.dflash_local->head_dim,
+            .int8     = layout.dflash_local->int8,
         };
+    }
+    for (const KvRingDeviceLayout& group : layout.rings) {
+        device_spec.rings.push_back(group.spec);
+        RingGroup& bound = rings_.emplace_back();
+        bound.spec       = group.spec;
+        const std::size_t scale_layers = group.spec.fp8 ? group.spec.layers : 0;
+        if (group.k.size() != group.spec.layers || group.v.size() != group.spec.layers ||
+            group.k_scale.size() != scale_layers || group.v_scale.size() != scale_layers) {
+            throw std::invalid_argument("StateImage ring layout is inconsistent");
+        }
+        for (std::uint32_t layer = 0; layer < group.spec.layers; ++layer) {
+            bound.k.push_back(group.k[layer].bind(backing));
+            bound.v.push_back(group.v[layer].bind(backing));
+            if (group.spec.fp8) {
+                bound.k_scale.push_back(group.k_scale[layer].bind(backing));
+                bound.v_scale.push_back(group.v_scale[layer].bind(backing));
+            }
+            for (const Tensor* plane : bound.planes(layer)) {
+                if (plane->ne[3] != slot_count_) {
+                    throw std::invalid_argument("StateImage ring slots do not match the pool");
+                }
+            }
+        }
     }
     if (!same_host_layout(host_layout_, plan_host_state_image(device_spec))) {
         throw std::invalid_argument("StateImage host layout does not match its device components");
     }
     if (layout.dflash_local) {
-        if (layout.dflash_local->lane_capacity != linear_.slot_count()) {
+        if (layout.dflash_local->lane_capacity != slot_count_) {
             throw std::invalid_argument("StateImage components do not share one slot geometry");
         }
         dflash_local_.emplace(backing, *layout.dflash_local);
     }
 }
 
-StateImageDeviceSlotView StateImageDevicePool::slot_view(std::int32_t slot) const {
-    StateImageDeviceSlotView view{
-        .linear              = linear_.slot_view(slot),
-        .continuation_hidden = continuation_hidden_slot(slot),
-    };
-    if (dflash_local_) { view.dflash_local = dflash_local_->slot_view(slot); }
-    return view;
+LinearAttentionStatePool& StateImageDevicePool::linear() {
+    if (!linear_) { throw std::logic_error("StateImage has no linear attention state"); }
+    return *linear_;
+}
+
+const LinearAttentionStatePool& StateImageDevicePool::linear() const {
+    if (!linear_) { throw std::logic_error("StateImage has no linear attention state"); }
+    return *linear_;
+}
+
+const KvRingSpec& StateImageDevicePool::ring_spec(std::size_t group) const {
+    return rings_.at(group).spec;
+}
+
+std::vector<const Tensor*> StateImageDevicePool::RingGroup::planes(std::size_t layer) const {
+    std::vector<const Tensor*> out{&k.at(layer), &v.at(layer)};
+    if (spec.fp8) {
+        out.push_back(&k_scale.at(layer));
+        out.push_back(&v_scale.at(layer));
+    }
+    return out;
+}
+
+StateImageDevicePool::RingPlanes StateImageDevicePool::ring_planes(std::size_t group,
+                                                                   std::uint32_t layer) const {
+    const RingGroup& ring = rings_.at(group);
+    RingPlanes out{.k = ring.k.at(layer), .v = ring.v.at(layer)};
+    if (ring.spec.fp8) {
+        out.k_scale = ring.k_scale.at(layer);
+        out.v_scale = ring.v_scale.at(layer);
+    }
+    return out;
+}
+
+void StateImageDevicePool::copy_rings(std::int32_t source, std::int32_t destination,
+                                      cudaStream_t stream) {
+    validate_slot(source, slot_count(), "StateImage ring copy source is out of range");
+    validate_slot(destination, slot_count(), "StateImage ring copy destination is out of range");
+    if (source == destination) { return; }
+    for (const RingGroup& ring : rings_) {
+        for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
+            for (const Tensor* plane : ring.planes(layer)) {
+                const Tensor from = plane->slice(3, source, 1);
+                const Tensor to   = plane->slice(3, destination, 1);
+                CUDA_CHECK(cudaMemcpyAsync(to.data, from.data, to.bytes(), cudaMemcpyDeviceToDevice,
+                                           stream));
+            }
+        }
+    }
 }
 
 Tensor StateImageDevicePool::continuation_hidden_slot(std::int32_t slot) const {
@@ -319,23 +472,42 @@ const CyclicKVCache* StateImageDevicePool::dflash_local() const noexcept {
 }
 
 void StateImageDevicePool::zero_slot(std::int32_t slot, cudaStream_t stream) {
-    validate_slot(slot, slot_count(), "StateImage zero slot is out of range");
-    linear_.zero_slot(slot, stream);
+    fill_slot(slot, 0, stream);
+}
+
+void StateImageDevicePool::fill_slot(std::int32_t slot, unsigned char value, cudaStream_t stream) {
+    validate_slot(slot, slot_count(), "StateImage fill slot is out of range");
+    if (linear_) { linear_->fill_slot(slot, value, stream); }
+    for (const RingGroup& ring : rings_) {
+        for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
+            for (const Tensor* plane : ring.planes(layer)) {
+                const Tensor part = plane->slice(3, slot, 1);
+                CUDA_CHECK(cudaMemsetAsync(part.data, value, part.bytes(), stream));
+            }
+        }
+    }
     const Tensor hidden = continuation_hidden_slot(slot);
-    CUDA_CHECK(cudaMemsetAsync(hidden.data, 0, hidden.bytes(), stream));
+    CUDA_CHECK(cudaMemsetAsync(hidden.data, value, hidden.bytes(), stream));
     if (dflash_local_) {
         for (std::uint32_t layer = 0; layer < dflash_local_->layer_count(); ++layer) {
             const CyclicKVCacheLayerView view = dflash_local_->layer_view(layer);
             const Tensor k                    = view.k.slice(3, slot, 1);
             const Tensor v                    = view.v.slice(3, slot, 1);
-            CUDA_CHECK(cudaMemsetAsync(k.data, 0, k.bytes(), stream));
-            CUDA_CHECK(cudaMemsetAsync(v.data, 0, v.bytes(), stream));
+            CUDA_CHECK(cudaMemsetAsync(k.data, value, k.bytes(), stream));
+            CUDA_CHECK(cudaMemsetAsync(v.data, value, v.bytes(), stream));
         }
     }
 }
 
 void StateImageDevicePool::zero_all(cudaStream_t stream) {
-    linear_.zero_all(stream);
+    if (linear_) { linear_->zero_all(stream); }
+    for (const RingGroup& ring : rings_) {
+        for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
+            for (const Tensor* plane : ring.planes(layer)) {
+                CUDA_CHECK(cudaMemsetAsync(plane->data, 0, plane->bytes(), stream));
+            }
+        }
+    }
     CUDA_CHECK(cudaMemsetAsync(continuation_hidden_.data, 0, continuation_hidden_.bytes(), stream));
     if (dflash_local_) {
         for (std::uint32_t layer = 0; layer < dflash_local_->layer_count(); ++layer) {
@@ -351,7 +523,8 @@ void StateImageDevicePool::copy_slot(std::int32_t source, std::int32_t destinati
     validate_slot(source, slot_count(), "StateImage copy source is out of range");
     validate_slot(destination, slot_count(), "StateImage copy destination is out of range");
     if (source == destination) { return; }
-    linear_.copy_slot(source, destination, stream);
+    if (linear_) { linear_->copy_slot(source, destination, stream); }
+    copy_rings(source, destination, stream);
     const Tensor source_hidden      = continuation_hidden_slot(source);
     const Tensor destination_hidden = continuation_hidden_slot(destination);
     CUDA_CHECK(cudaMemcpyAsync(destination_hidden.data, source_hidden.data,
@@ -382,13 +555,14 @@ void StateImageDevicePool::copy_to_host(std::int32_t source, HostStateImageView 
                                         cudaStream_t stream) const {
     validate_slot(source, slot_count(), "StateImage copy-to-host source is out of range");
     validate_host_layout(destination.layout, destination.data);
-    for (std::uint32_t layer = 0; layer < linear_.layer_count(); ++layer) {
-        const Tensor conv = linear_.conv_slot(layer, source);
+    const std::uint32_t linear_layers = linear_ ? linear_->layer_count() : 0;
+    for (std::uint32_t layer = 0; layer < linear_layers; ++layer) {
+        const Tensor conv = linear_->conv_slot(layer, source);
         CUDA_CHECK(cudaMemcpyAsync(
             byte_offset(destination.data, host_layout_.linear_conv.offset +
                                               layer * host_layout_.linear_conv_layer_bytes),
             conv.data, conv.bytes(), cudaMemcpyDeviceToHost, stream));
-        const Tensor recurrent = linear_.recurrent_slot(layer, source);
+        const Tensor recurrent = linear_->recurrent_slot(layer, source);
         CUDA_CHECK(cudaMemcpyAsync(
             byte_offset(destination.data, host_layout_.linear_recurrent.offset +
                                               layer * host_layout_.linear_recurrent_layer_bytes),
@@ -413,6 +587,29 @@ void StateImageDevicePool::copy_to_host(std::int32_t source, HostStateImageView 
                 v.data, v.bytes(), cudaMemcpyDeviceToHost, stream));
         }
     }
+    for (std::size_t group = 0; group < rings_.size(); ++group) {
+        const RingGroup& ring        = rings_[group];
+        const KvRingHostLayout& host = host_layout_.rings[group];
+        for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
+            const Tensor k = ring.k[layer].slice(3, source, 1);
+            const Tensor v = ring.v[layer].slice(3, source, 1);
+            CUDA_CHECK(cudaMemcpyAsync(
+                byte_offset(destination.data, host.k.offset + layer * host.layer_bytes), k.data,
+                k.bytes(), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaMemcpyAsync(
+                byte_offset(destination.data, host.v.offset + layer * host.layer_bytes), v.data,
+                v.bytes(), cudaMemcpyDeviceToHost, stream));
+            if (!ring.spec.fp8) { continue; }
+            const Tensor k_scale = ring.k_scale[layer].slice(3, source, 1);
+            const Tensor v_scale = ring.v_scale[layer].slice(3, source, 1);
+            CUDA_CHECK(cudaMemcpyAsync(
+                byte_offset(destination.data, host.k_scale.offset + layer * host.scale_layer_bytes),
+                k_scale.data, k_scale.bytes(), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaMemcpyAsync(
+                byte_offset(destination.data, host.v_scale.offset + layer * host.scale_layer_bytes),
+                v_scale.data, v_scale.bytes(), cudaMemcpyDeviceToHost, stream));
+        }
+    }
 }
 
 void StateImageDevicePool::copy_from_host(HostStateImageConstView source, std::int32_t destination,
@@ -420,14 +617,15 @@ void StateImageDevicePool::copy_from_host(HostStateImageConstView source, std::i
     validate_slot(destination, slot_count(),
                   "StateImage copy-from-host destination is out of range");
     validate_host_layout(source.layout, source.data);
-    for (std::uint32_t layer = 0; layer < linear_.layer_count(); ++layer) {
-        const Tensor conv = linear_.conv_slot(layer, destination);
+    const std::uint32_t linear_layers = linear_ ? linear_->layer_count() : 0;
+    for (std::uint32_t layer = 0; layer < linear_layers; ++layer) {
+        const Tensor conv = linear_->conv_slot(layer, destination);
         CUDA_CHECK(cudaMemcpyAsync(
             conv.data,
             byte_offset(source.data, host_layout_.linear_conv.offset +
                                          layer * host_layout_.linear_conv_layer_bytes),
             conv.bytes(), cudaMemcpyHostToDevice, stream));
-        const Tensor recurrent = linear_.recurrent_slot(layer, destination);
+        const Tensor recurrent = linear_->recurrent_slot(layer, destination);
         CUDA_CHECK(cudaMemcpyAsync(
             recurrent.data,
             byte_offset(source.data, host_layout_.linear_recurrent.offset +
@@ -455,6 +653,31 @@ void StateImageDevicePool::copy_from_host(HostStateImageConstView source, std::i
                 v.bytes(), cudaMemcpyHostToDevice, stream));
         }
     }
+    for (std::size_t group = 0; group < rings_.size(); ++group) {
+        const RingGroup& ring        = rings_[group];
+        const KvRingHostLayout& host = host_layout_.rings[group];
+        for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
+            const Tensor k = ring.k[layer].slice(3, destination, 1);
+            const Tensor v = ring.v[layer].slice(3, destination, 1);
+            CUDA_CHECK(cudaMemcpyAsync(
+                k.data, byte_offset(source.data, host.k.offset + layer * host.layer_bytes),
+                k.bytes(), cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaMemcpyAsync(
+                v.data, byte_offset(source.data, host.v.offset + layer * host.layer_bytes),
+                v.bytes(), cudaMemcpyHostToDevice, stream));
+            if (!ring.spec.fp8) { continue; }
+            const Tensor k_scale = ring.k_scale[layer].slice(3, destination, 1);
+            const Tensor v_scale = ring.v_scale[layer].slice(3, destination, 1);
+            CUDA_CHECK(cudaMemcpyAsync(
+                k_scale.data,
+                byte_offset(source.data, host.k_scale.offset + layer * host.scale_layer_bytes),
+                k_scale.bytes(), cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaMemcpyAsync(
+                v_scale.data,
+                byte_offset(source.data, host.v_scale.offset + layer * host.scale_layer_bytes),
+                v_scale.bytes(), cudaMemcpyHostToDevice, stream));
+        }
+    }
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

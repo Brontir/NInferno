@@ -1,6 +1,7 @@
-// ninfer::ops - causal_conv1d wrapper: public api validation and launcher dispatch.
-#include "ninfer/ops/causal_conv1d_silu.h"
+// ninferno::ops - causal_conv1d wrapper: public api validation and launcher dispatch.
+#include "ninferno/ops/causal_conv1d_silu.h"
 
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/causal_conv1d.h" // detail::causal_conv1d_*_launch
 
 #include <cstdint>
@@ -9,29 +10,8 @@
 #include <string>
 #include <utility>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t, const char* label) {
-    bool has_zero = false;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument(std::string("causal_conv1d: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { has_zero = true; }
-    }
-    if (has_zero) { return 0; }
-
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("causal_conv1d: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
 
 void require_x_shape(const Tensor& x) {
     if (x.ne[2] != 1 || x.ne[3] != 1) {
@@ -96,10 +76,10 @@ std::int64_t validate_common(const Tensor& x, const Tensor& weight, const Tensor
         throw std::invalid_argument("causal_conv1d: x/weight/conv_state/out must be BF16");
     }
 
-    const std::int64_t n = numel_allow_zero(x, "x");
-    (void)numel_allow_zero(weight, "weight");
-    (void)numel_allow_zero(conv_state, "conv_state");
-    (void)numel_allow_zero(out, "out");
+    const std::int64_t n = numel_allow_zero(x, "causal_conv1d", "x");
+    (void)numel_allow_zero(weight, "causal_conv1d", "weight");
+    (void)numel_allow_zero(conv_state, "causal_conv1d", "conv_state");
+    (void)numel_allow_zero(out, "causal_conv1d", "out");
 
     require_x_shape(x);
     require_weight_shape(weight, x.ne[0]);
@@ -130,12 +110,6 @@ void require_metadata_accessible(const Tensor& metadata, const char* label) {
     }
 }
 
-bool overlaps(const Tensor& lhs, const Tensor& rhs) {
-    const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs.data);
-    const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs.data);
-    return lhs_begin < rhs_begin + rhs.bytes() && rhs_begin < lhs_begin + lhs.bytes();
-}
-
 void require_accessible(const Tensor& tensor, const char* label) {
     if (!tensor.is_contiguous()) {
         throw std::invalid_argument(std::string("causal_conv1d: ") + label + " must be contiguous");
@@ -146,8 +120,10 @@ void require_accessible(const Tensor& tensor, const char* label) {
     }
 }
 
-detail::CausalConvSplitGeometry resolve_split_geometry(const Tensor& x, const Tensor& out0,
-                                                       const Tensor& out1, const Tensor& out2) {
+// Any partition of the channels into three even row counts (a pair must not straddle two
+// destinations): the kernels read the boundaries at run time.
+void require_split_partition(const Tensor& x, const Tensor& out0, const Tensor& out1,
+                             const Tensor& out2) {
     if (out0.dtype != DType::BF16 || out1.dtype != DType::BF16 || out2.dtype != DType::BF16) {
         throw std::invalid_argument("causal_conv1d: split destinations must be BF16");
     }
@@ -159,13 +135,12 @@ detail::CausalConvSplitGeometry resolve_split_geometry(const Tensor& x, const Te
         throw std::invalid_argument("causal_conv1d: split destinations must match the x column "
                                     "count");
     }
-    if (x.ne[0] == 8192 && out0.ne[0] == 2048 && out1.ne[0] == 2048 && out2.ne[0] == 4096) {
-        return detail::CausalConvSplitGeometry::Rows2048x2048x4096;
+    if (out0.ne[0] <= 0 || out1.ne[0] <= 0 || out2.ne[0] <= 0 ||
+        out0.ne[0] + out1.ne[0] + out2.ne[0] != x.ne[0] || (out0.ne[0] % 2) != 0 ||
+        (out1.ne[0] % 2) != 0 || (out2.ne[0] % 2) != 0) {
+        throw std::invalid_argument(
+            "causal_conv1d: split needs three positive even row counts covering the channels");
     }
-    if (x.ne[0] == 10240 && out0.ne[0] == 2048 && out1.ne[0] == 2048 && out2.ne[0] == 6144) {
-        return detail::CausalConvSplitGeometry::Rows2048x2048x6144;
-    }
-    throw std::invalid_argument("causal_conv1d: split received an unregistered row profile");
 }
 
 // The prefill split route reads and writes __nv_bfloat162. The requirement is stated uniformly for
@@ -245,11 +220,11 @@ void causal_conv1d_silu(const Tensor& x, const Tensor& weight, const Tensor& con
         throw std::invalid_argument("causal_conv1d: x/weight/conv_state/out must be BF16");
     }
 
-    const std::int64_t n = numel_allow_zero(x, "x");
-    (void)numel_allow_zero(weight, "weight");
-    (void)numel_allow_zero(conv_state_in, "conv_state_in");
-    (void)numel_allow_zero(conv_state_out, "conv_state_out");
-    (void)numel_allow_zero(out, "out");
+    const std::int64_t n = numel_allow_zero(x, "causal_conv1d", "x");
+    (void)numel_allow_zero(weight, "causal_conv1d", "weight");
+    (void)numel_allow_zero(conv_state_in, "causal_conv1d", "conv_state_in");
+    (void)numel_allow_zero(conv_state_out, "causal_conv1d", "conv_state_out");
+    (void)numel_allow_zero(out, "causal_conv1d", "out");
 
     require_x_shape(x);
     require_weight_shape(weight, x.ne[0]);
@@ -285,15 +260,15 @@ void causal_conv1d_silu_split(const Tensor& x, const Tensor& weight, const Tenso
     require_weight_shape(weight, x.ne[0]);
     require_state_shape(conv_state_in, x.ne[0]);
     require_state_shape(conv_state_out, x.ne[0]);
-    const detail::CausalConvSplitGeometry geometry = resolve_split_geometry(x, out0, out1, out2);
+    require_split_partition(x, out0, out1, out2);
 
-    const std::int64_t n = numel_allow_zero(x, "x");
-    (void)numel_allow_zero(weight, "weight");
-    (void)numel_allow_zero(conv_state_in, "conv_state_in");
-    (void)numel_allow_zero(conv_state_out, "conv_state_out");
-    (void)numel_allow_zero(out0, "out0");
-    (void)numel_allow_zero(out1, "out1");
-    (void)numel_allow_zero(out2, "out2");
+    const std::int64_t n = numel_allow_zero(x, "causal_conv1d", "x");
+    (void)numel_allow_zero(weight, "causal_conv1d", "weight");
+    (void)numel_allow_zero(conv_state_in, "causal_conv1d", "conv_state_in");
+    (void)numel_allow_zero(conv_state_out, "causal_conv1d", "conv_state_out");
+    (void)numel_allow_zero(out0, "causal_conv1d", "out0");
+    (void)numel_allow_zero(out1, "causal_conv1d", "out1");
+    (void)numel_allow_zero(out2, "causal_conv1d", "out2");
     if (n == 0) { return; }
 
     const std::pair<const Tensor*, const char*> operands[7] = {{&x, "x"},
@@ -315,10 +290,10 @@ void causal_conv1d_silu_split(const Tensor& x, const Tensor& weight, const Tenso
     // it beats the prefill pair, which is flat above it.
     if (x.ne[1] <= detail::kCausalConvParallelMaxTokens) {
         detail::causal_conv1d_smallt_split_launch(x, weight, conv_state_in, conv_state_out, out0,
-                                                  out1, out2, geometry, stream);
+                                                  out1, out2, stream);
     } else {
         detail::causal_conv1d_prefill_split_launch(x, weight, conv_state_in, conv_state_out, out0,
-                                                   out1, out2, geometry, stream);
+                                                   out1, out2, stream);
     }
 }
 
@@ -352,13 +327,13 @@ void causal_conv1d_silu_snapshot(const Tensor& x, const Tensor& weight, Tensor& 
         throw std::invalid_argument("causal_conv1d: snapshot selectors must be I32");
     }
 
-    const std::int64_t n = numel_allow_zero(x, "x");
-    (void)numel_allow_zero(weight, "weight");
-    (void)numel_allow_zero(conv_states, "conv_states");
-    if (masked) { (void)numel_allow_zero(valid_columns, "valid_columns"); }
-    (void)numel_allow_zero(initial_state_slots, "initial_state_slots");
-    (void)numel_allow_zero(snapshot_base_slots, "snapshot_base_slots");
-    (void)numel_allow_zero(out, "out");
+    const std::int64_t n = numel_allow_zero(x, "causal_conv1d", "x");
+    (void)numel_allow_zero(weight, "causal_conv1d", "weight");
+    (void)numel_allow_zero(conv_states, "causal_conv1d", "conv_states");
+    if (masked) { (void)numel_allow_zero(valid_columns, "causal_conv1d", "valid_columns"); }
+    (void)numel_allow_zero(initial_state_slots, "causal_conv1d", "initial_state_slots");
+    (void)numel_allow_zero(snapshot_base_slots, "causal_conv1d", "snapshot_base_slots");
+    (void)numel_allow_zero(out, "causal_conv1d", "out");
 
     require_snapshot_x_shape(x);
     const std::int32_t batch = x.ne[2];
@@ -378,4 +353,4 @@ void causal_conv1d_silu_snapshot(const Tensor& x, const Tensor& weight, Tensor& 
                                           initial_state_slots, snapshot_base_slots, out, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

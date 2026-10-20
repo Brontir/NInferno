@@ -11,10 +11,15 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::product::media_acquire {
+struct sockaddr;
+
+namespace ninferno::product::media_acquire {
 
 enum class ErrorKind {
     BudgetExceeded,
+    // The URL itself is wrong: its host does not exist, its server answers 4xx, or its redirects
+    // lead nowhere. The request's input, not a server fault.
+    RemoteRejected,
     RemoteUnavailable,
     RemoteTimeout,
     DeadlineExceeded,
@@ -46,4 +51,10 @@ struct Policy {
 
 std::vector<std::uint8_t> acquire_bytes(const Source& source, const Policy& policy = {});
 
-} // namespace ninfer::product::media_acquire
+// Whether a media URL may reach the resolved address only with allow_private_network: private,
+// loopback, link-local and special-purpose IPv4 ranges, site-local and unique-local IPv6, and the
+// IPv6 forms that carry such an IPv4 address (mapped, compatible, NAT64, 6to4) or tunnel to one
+// of their own choosing (Teredo).
+[[nodiscard]] bool private_network_address(const sockaddr* address) noexcept;
+
+} // namespace ninferno::product::media_acquire

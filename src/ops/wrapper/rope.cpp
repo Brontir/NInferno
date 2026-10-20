@@ -1,5 +1,7 @@
-#include "ninfer/ops/rope.h"
+#include "ninferno/ops/rope.h"
 
+#include "ops/common/tensor_checks.h"
+#include "ops/kernel/rope_limits.h"
 #include "ops/launcher/rope.h"
 
 #include <cmath>
@@ -8,31 +10,10 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kTextHeadDim = 256;
-constexpr std::int32_t kVisionDim   = 72;
-
-std::int64_t numel_allow_zero(const Tensor& tensor, const char* label) {
-    bool zero      = false;
-    std::int64_t n = 1;
-    for (int dim = 0; dim < 4; ++dim) {
-        if (tensor.ne[dim] < 0) {
-            throw std::invalid_argument(std::string("rope: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (tensor.ne[dim] == 0) {
-            zero = true;
-            continue;
-        }
-        if (n > std::numeric_limits<std::int64_t>::max() / tensor.ne[dim]) {
-            throw std::overflow_error("rope: tensor size overflows int64");
-        }
-        n *= tensor.ne[dim];
-    }
-    return zero ? 0 : n;
-}
 
 int position_axes(const Tensor& positions, std::int32_t tokens) {
     if (positions.ne[0] != tokens || positions.ne[2] != 1 || positions.ne[3] != 1 ||
@@ -59,7 +40,11 @@ void require_tensor_layout(const Tensor& tensor, const char* label, std::int32_t
     }
 }
 
-void require_common(const Tensor& positions, int rotary_dim, float theta) {
+void require_common(const Tensor& positions, int rotary_dim, float theta,
+                    DeviceExecutionView execution) {
+    if (execution.multiprocessor_count <= 0) {
+        throw std::invalid_argument("rope: positive multiprocessor count required");
+    }
     if (positions.dtype != DType::I32) {
         throw std::invalid_argument("rope: positions must be I32");
     }
@@ -82,8 +67,11 @@ void require_positions_storage(const Tensor& positions) {
 
 void require_model_mode(int axes, int rotary_dim, std::int32_t head_dim) {
     if (axes == 2) {
-        if (head_dim != kVisionDim || rotary_dim != kVisionDim) {
-            throw std::invalid_argument("rope: 2-D Vision mode requires head_dim=rotary_dim=72");
+        // Each axis rotates a quarter of the head's values (Qwen's encoders: heads of 64 or 72).
+        if (rotary_dim != head_dim || head_dim % 4 != 0 || head_dim / 2 > kRopeMaxHalf) {
+            throw std::invalid_argument(
+                "rope: 2-D Vision mode requires head_dim=rotary_dim, a multiple of 4, at most " +
+                std::to_string(2 * kRopeMaxHalf));
         }
         return;
     }
@@ -99,17 +87,17 @@ void require_model_mode(int axes, int rotary_dim, std::int32_t head_dim) {
 } // namespace
 
 void rope(const Tensor& positions, int rotary_dim, float theta, Tensor& q, Tensor& k,
-          cudaStream_t stream) {
-    require_common(positions, rotary_dim, theta);
+          DeviceExecutionView execution) {
+    require_common(positions, rotary_dim, theta, execution);
     if (q.dtype != DType::BF16 || k.dtype != DType::BF16) {
         throw std::invalid_argument("rope: q/k must be BF16");
     }
-    (void)numel_allow_zero(positions, "positions");
-    const std::int64_t q_numel = numel_allow_zero(q, "q");
-    (void)numel_allow_zero(k, "k");
+    (void)numel_allow_zero(positions, "rope", "positions");
+    const std::int64_t q_numel = numel_allow_zero(q, "rope", "q");
+    (void)numel_allow_zero(k, "rope", "k");
     const std::int32_t tokens   = q.ne[2];
     const int axes              = position_axes(positions, tokens);
-    const std::int32_t head_dim = axes == 2 ? kVisionDim : q.ne[0];
+    const std::int32_t head_dim = q.ne[0];
     const std::int32_t q_heads  = q.ne[1];
     const std::int32_t k_heads  = k.ne[1];
     require_model_mode(axes, rotary_dim, head_dim);
@@ -120,24 +108,87 @@ void rope(const Tensor& positions, int rotary_dim, float theta, Tensor& q, Tenso
     if (q.data == nullptr || k.data == nullptr) {
         throw std::invalid_argument("rope: q/k data must be non-null");
     }
-    detail::rope_launch(positions, rotary_dim, theta, q, k, stream);
+    detail::rope_launch(positions, rotary_dim, theta, q, k, execution);
 }
 
-void rope(const Tensor& positions, int rotary_dim, float theta, Tensor& x, cudaStream_t stream) {
-    require_common(positions, rotary_dim, theta);
+void rope(const Tensor& positions, int rotary_dim, float theta, Tensor& x,
+          DeviceExecutionView execution) {
+    require_common(positions, rotary_dim, theta, execution);
     if (x.dtype != DType::BF16) { throw std::invalid_argument("rope: tensor must be BF16"); }
-    (void)numel_allow_zero(positions, "positions");
-    const std::int64_t x_numel  = numel_allow_zero(x, "tensor");
+    (void)numel_allow_zero(positions, "rope", "positions");
+    const std::int64_t x_numel  = numel_allow_zero(x, "rope", "tensor");
     const std::int32_t tokens   = x.ne[2];
     const int axes              = position_axes(positions, tokens);
-    const std::int32_t head_dim = axes == 2 ? kVisionDim : x.ne[0];
+    const std::int32_t head_dim = x.ne[0];
     const std::int32_t heads    = x.ne[1];
     require_model_mode(axes, rotary_dim, head_dim);
     require_tensor_layout(x, "tensor", head_dim, heads, tokens);
     if (x_numel == 0) { return; }
     require_positions_storage(positions);
     if (x.data == nullptr) { throw std::invalid_argument("rope: tensor data must be non-null"); }
-    detail::rope_single_launch(positions, rotary_dim, theta, x, stream);
+    detail::rope_single_launch(positions, rotary_dim, theta, x, execution);
 }
 
-} // namespace ninfer::ops
+namespace {
+
+void require_scaled(const Tensor& positions, int rotary_dim, const Tensor& inverse_frequencies,
+                    float attention_scale, std::int32_t head_dim, std::int32_t tokens) {
+    if (positions.dtype != DType::I32) {
+        throw std::invalid_argument("rope_scaled: positions must be I32");
+    }
+    const int axes = position_axes(positions, tokens);
+    if (axes == 2 || head_dim != kTextHeadDim || rotary_dim <= 0 || (rotary_dim & 1) != 0 ||
+        rotary_dim > kTextHeadDim || (axes == 3 && rotary_dim != 64)) {
+        throw std::invalid_argument("rope_scaled: Text modes only (D256; MRoPE needs R64)");
+    }
+    if (inverse_frequencies.dtype != DType::FP32 || inverse_frequencies.ne[0] != rotary_dim / 2 ||
+        inverse_frequencies.ne[1] != 1 || inverse_frequencies.ne[2] != 1 ||
+        inverse_frequencies.ne[3] != 1 || !inverse_frequencies.is_contiguous() ||
+        inverse_frequencies.data == nullptr) {
+        throw std::invalid_argument(
+            "rope_scaled: inverse_frequencies must be contiguous device FP32 [rotary_dim/2]");
+    }
+    if (!(attention_scale > 0.0F) || !std::isfinite(attention_scale)) {
+        throw std::invalid_argument("rope_scaled: attention_scale must be positive and finite");
+    }
+}
+
+} // namespace
+
+void rope_scaled(const Tensor& positions, int rotary_dim, const Tensor& inverse_frequencies,
+                 float attention_scale, Tensor& q, Tensor& k, DeviceExecutionView execution) {
+    if (q.dtype != DType::BF16 || k.dtype != DType::BF16) {
+        throw std::invalid_argument("rope_scaled: q/k must be BF16");
+    }
+    (void)numel_allow_zero(positions, "rope", "positions");
+    const std::int64_t q_numel = numel_allow_zero(q, "rope", "q");
+    (void)numel_allow_zero(k, "rope", "k");
+    const std::int32_t tokens = q.ne[2];
+    require_scaled(positions, rotary_dim, inverse_frequencies, attention_scale, q.ne[0], tokens);
+    require_tensor_layout(q, "q", q.ne[0], q.ne[1], tokens);
+    require_tensor_layout(k, "k", q.ne[0], k.ne[1], tokens);
+    if (q_numel == 0) { return; }
+    require_positions_storage(positions);
+    if (q.data == nullptr || k.data == nullptr) {
+        throw std::invalid_argument("rope_scaled: q/k data must be non-null");
+    }
+    detail::rope_scaled_launch(positions, rotary_dim, inverse_frequencies, attention_scale, &q, &k,
+                               execution.stream);
+}
+
+void rope_scaled(const Tensor& positions, int rotary_dim, const Tensor& inverse_frequencies,
+                 float attention_scale, Tensor& x, DeviceExecutionView execution) {
+    if (x.dtype != DType::BF16) { throw std::invalid_argument("rope_scaled: tensor must be BF16"); }
+    (void)numel_allow_zero(positions, "rope", "positions");
+    const std::int64_t x_numel = numel_allow_zero(x, "rope", "tensor");
+    const std::int32_t tokens  = x.ne[2];
+    require_scaled(positions, rotary_dim, inverse_frequencies, attention_scale, x.ne[0], tokens);
+    require_tensor_layout(x, "tensor", x.ne[0], x.ne[1], tokens);
+    if (x_numel == 0) { return; }
+    require_positions_storage(positions);
+    if (x.data == nullptr) { throw std::invalid_argument("rope_scaled: tensor data must be non-null"); }
+    detail::rope_scaled_launch(positions, rotary_dim, inverse_frequencies, attention_scale, &x,
+                               nullptr, execution.stream);
+}
+
+} // namespace ninferno::ops

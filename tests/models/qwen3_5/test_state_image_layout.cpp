@@ -7,7 +7,7 @@
 
 namespace {
 
-namespace q36 = ninfer::models::qwen3_5;
+namespace q36 = ninferno::models::qwen3_5;
 
 int failures = 0;
 
@@ -28,7 +28,7 @@ q36::StateImageDeviceLayout plan(bool dflash) {
                 .value_head_dim = 4,
                 .key_head_dim   = 3,
                 .slot_count     = 2,
-                .conv_dtype     = ninfer::DType::BF16,
+                .conv_dtype     = ninferno::DType::BF16,
             },
         .hidden = 7,
     };
@@ -36,7 +36,7 @@ q36::StateImageDeviceLayout plan(bool dflash) {
         spec.dflash_local =
             q36::DFlashLocalStateSpec{.layers = 2, .capacity = 17, .kv_heads = 2, .head_dim = 4};
     }
-    ninfer::LayoutBuilder builder;
+    ninferno::LayoutBuilder builder;
     return q36::plan_state_image_device_pool(builder, spec);
 }
 

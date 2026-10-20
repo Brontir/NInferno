@@ -2,14 +2,18 @@
 
 #include "ops/softmax_attention/common/context_query.cuh"
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 struct SlidingWindowAttentionPolicy {
+    using Geo                        = ContextQueryD128;
     static constexpr bool PageMapped = false;
 
     const std::int32_t* positions;
     int padded_context;
     int window_mask;
+    // Int8 ring only: the lane's FP16 G64 scales, [2] x padded x heads (core/cyclic_kv_cache.h).
+    const __half* k_scale = nullptr;
+    const __half* v_scale = nullptr;
 
     __device__ __forceinline__ int context_count(int value) const { return min(value, window_mask); }
 
@@ -29,23 +33,36 @@ struct SlidingWindowAttentionPolicy {
         return tile + d + static_cast<std::int64_t>(kContextQueryHeadDim) * slot;
     }
 
+    __device__ __forceinline__ std::int64_t scale_index(int kv_head, int key0, int, int row,
+                                                        int d) const {
+        const int slot = (key0 + row) & (window_mask);
+        return (d >> 6) + 2 * (static_cast<std::int64_t>(padded_context) * kv_head +
+                               static_cast<std::int64_t>(slot));
+    }
+
     template <int Tokens, int KeyBlock>
     __device__ __forceinline__ void prime(int, int, int, int) {}
 };
 
-template <int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput>
+// KT/VT: BF16/FP16 ring, or int8 codes (Int8Group64; the scales follow each lane's codes).
+template <int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput, typename KT = __nv_bfloat16,
+          typename VT = __half>
 __launch_bounds__(WarpsPerCta * 32, 2) __global__
     void sliding_window_attention_split_partial_kernel(
         const __nv_bfloat16* __restrict__ q, const __nv_bfloat16* __restrict__ query_k,
         const __nv_bfloat16* __restrict__ query_v, const std::int32_t* __restrict__ positions,
         const std::int32_t* __restrict__ valid_columns, const std::int32_t* __restrict__ lanes,
-        const __nv_bfloat16* __restrict__ context_k, const __half* __restrict__ context_v,
-        int padded_context, int window_mask, int max_context, int split_capacity, float scale,
+        const KT* __restrict__ context_k, const VT* __restrict__ context_v, int padded_context,
+        int window_mask, int max_context, int split_capacity, float scale,
         float* __restrict__ partial_acc, float* __restrict__ partial_m,
         float* __restrict__ partial_l, __nv_bfloat16* __restrict__ out) {
+    constexpr bool Int8 = std::is_same_v<KT, std::int8_t>;
+    static_assert(Int8 == std::is_same_v<VT, std::int8_t>);
     const int batch = static_cast<int>(blockIdx.z);
+    const std::int64_t rows = static_cast<std::int64_t>(padded_context) * kContextQueryKVHeads;
     const std::int64_t lane_elements =
-        static_cast<std::int64_t>(kContextQueryHeadDim) * padded_context * kContextQueryKVHeads;
+        rows *
+        (Int8 ? kContextQueryHeadDim + 2 * (kContextQueryHeadDim / 64) : kContextQueryHeadDim);
     context_k += lane_elements * lanes[batch];
     context_v += lane_elements * lanes[batch];
     const std::int32_t* batch_positions = positions + static_cast<std::int64_t>(Tokens) * batch;
@@ -54,6 +71,10 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__
         .padded_context = padded_context,
         .window_mask = window_mask,
     };
+    if constexpr (Int8) {
+        policy.k_scale = reinterpret_cast<const __half*>(context_k + rows * kContextQueryHeadDim);
+        policy.v_scale = reinterpret_cast<const __half*>(context_v + rows * kContextQueryHeadDim);
+    }
     context_query_split_partial_body<SlidingWindowAttentionPolicy, Tokens, WarpsPerCta,
                                      KeyBlock, DirectOutput>(
         q, query_k, query_v, valid_columns, context_k, context_v, policy,
@@ -134,4 +155,4 @@ __launch_bounds__(WarpsPerBlock * 32, 2) __global__
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

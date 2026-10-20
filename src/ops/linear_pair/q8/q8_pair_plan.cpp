@@ -1,5 +1,5 @@
-#include "core/weight.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
+#include "core/weight.h"
 
 #include "ops/linear_pair/q8/q8_pair_kernels.h"
 #include "ops/common/token_slices.h"
@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr std::int32_t kAnyCols = std::numeric_limits<std::int32_t>::max();
@@ -288,10 +288,6 @@ void require_dflash_row_views(const Weight& first_weight, const Weight& second_w
     }
 }
 
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
-
 void require_pair_operands(const Tensor& x, const Weight& first_weight, const Weight& second_weight,
                            const Tensor& first_out, const Tensor& second_out,
                            bool require_scale_16) {
@@ -411,9 +407,13 @@ Q8PairProblem q8_pair_problem(const Tensor& x, const Weight& first_weight,
     return {first_out.ne[0], x.ne[0], first_weight.padded_shape[1], x.ne[1]};
 }
 
+bool q8_pair_registered(std::int32_t rows, std::int32_t k) noexcept {
+    return rows == 1024 && (k == 5120 || k == 2048);
+}
+
 bool q8_pair_admits(const Q8PairProblem& problem) noexcept {
-    return problem.rows == 1024 && (problem.k == 5120 || problem.k == 2048) &&
-           problem.padded_k == problem.k && problem.cols >= 1;
+    return q8_pair_registered(problem.rows, problem.k) && problem.padded_k == problem.k &&
+           problem.cols >= 1;
 }
 
 Q8PairPlan q8_pair_resolve_plan(const Q8PairProblem& problem) {
@@ -450,7 +450,7 @@ void launch_tiled(Q8PairScheduleId schedule, bool full, const Tensor& x, const W
         Tensor second_slice  = second_out.slice(1, offset, count);
         switch (schedule) {
         case Q8PairScheduleId::TwoSimtR8C4:
-            q8_pair_simt_r8_c4_launch(full, x_slice, first_weight, second_weight, first_slice,
+            q8_pair_simt_r8_c4_launch(x_slice, first_weight, second_weight, first_slice,
                                       second_slice, stream);
             return;
         case Q8PairScheduleId::DualMmaR32C64:
@@ -463,7 +463,7 @@ void launch_tiled(Q8PairScheduleId schedule, bool full, const Tensor& x, const W
             return;
         default:
             if (is_concat_schedule(schedule)) {
-                q8_pair_concat_mma_launch(schedule, full, x_slice, first_weight, second_weight,
+                q8_pair_concat_mma_launch(schedule, x_slice, first_weight, second_weight,
                                           first_slice, second_slice, stream);
                 return;
             }
@@ -509,6 +509,15 @@ void launch_exact_tail(Q8PairScheduleId exact_schedule, const Q8PairProblem& pro
 }
 
 } // namespace
+
+bool q8_pair_uses_full_tile(const Q8PairPlan& plan, const Q8PairProblem& problem) {
+    const Q8PairScheduleId schedule = plan.schedule;
+    const bool tiled = schedule == Q8PairScheduleId::TwoSimtR8C4 ||
+                       schedule == Q8PairScheduleId::DualMmaR32C64 ||
+                       schedule == Q8PairScheduleId::DualMmaR32C128 ||
+                       (is_concat_schedule(schedule) && !is_exact_tail_schedule(schedule));
+    return tiled && tiled_use_full(schedule, problem);
+}
 
 void q8_pair_execute_plan(Q8PairPlan plan, const Tensor& x, const Weight& first_weight,
                           const Weight& second_weight, Tensor& first_out, Tensor& second_out,
@@ -572,4 +581,4 @@ void q8_pair_dispatch(const Tensor& x, const Weight& first_weight, const Weight&
     q8_pair_execute_plan(plan, x, first_weight, second_weight, first_out, second_out, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

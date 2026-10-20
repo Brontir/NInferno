@@ -1,6 +1,7 @@
 #include "artifact/binder.h"
 #include "artifact/fixture.h"
 #include "artifact/views.h"
+#include "core/debug_poison.h"
 #include "core/device.h"
 
 #include <cuda_runtime.h>
@@ -11,15 +12,15 @@
 #include <map>
 #include <optional>
 
-namespace ninfer::test {
+namespace ninferno::test {
 void materialization_cuda_errors(DeviceContext& device);
 }
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::artifact;
-using namespace ninfer::test::artifact_fixture;
+using namespace ninferno;
+using namespace ninferno::artifact;
+using namespace ninferno::test::artifact_fixture;
 
 void materialization(DeviceContext& device) {
     Fixture fixture;
@@ -71,6 +72,47 @@ void materialization(DeviceContext& device) {
     require(code[0] == std::byte{0x52}, "native row pointer addressed a different row");
 }
 
+// Residency::Mapped: the cross-file parent is read into pinned host memory and bound at a device
+// address, without a device arena or an upload; one object is never both copied and mapped.
+void mapped_residency(DeviceContext& device) {
+    Fixture fixture;
+    fixture.write(true);
+    std::optional<MaterializedArtifact> backing;
+    ParameterReference row;
+    ObjectHandle quantized;
+    {
+        Reader reader(fixture.entry);
+        Binder binder(reader);
+        row       = binder.parameter("row", {1, 130}, Residency::Mapped);
+        quantized = reader.find("q5");
+        backing.emplace(materialize(reader, std::move(binder).finish(), device));
+    }
+    const auto& stats = backing->stats();
+    require(stats.device_capacity_bytes == 0 && stats.h2d_bytes == 0 &&
+                stats.device_object_count == 0 && stats.mapped_object_count == 1 &&
+                stats.mapped_host_bytes == 528,
+            "a mapped parent was placed in the device arena");
+    const auto native = native_weight(bind_view(row, *backing));
+    require(backing->has_device(quantized) &&
+                native.payload == backing->device_parent(quantized).data,
+            "the mapped row does not address its parent");
+    std::vector<std::byte> read(528);
+    CUDA_CHECK(cudaMemcpy(read.data(), backing->device_parent(quantized).data, read.size(),
+                          cudaMemcpyDefault));
+    require(std::equal(read.begin(), read.end(), fixture.payload.begin() + 256),
+            "mapped bytes differ from the cross-file parent");
+    std::array<std::byte, 1> code{};
+    CUDA_CHECK(cudaMemcpy(code.data(), native.qdata, 1, cudaMemcpyDefault));
+    require(code[0] == std::byte{0x52}, "mapped row pointer addressed a different row");
+
+    Reader reader(fixture.entry);
+    Binder binder(reader);
+    (void)binder.parameter("matrix", {2, 130});
+    (void)binder.parameter("row", {1, 130}, Residency::Mapped);
+    rejects([&] { (void)std::move(binder).finish(); },
+            "one object was demanded both in the arena and mapped");
+}
+
 void failure_and_host_only(DeviceContext& device) {
     Fixture fixture;
     fixture.write();
@@ -102,6 +144,7 @@ void file_roundtrip(DeviceContext& device, const std::filesystem::path& path, bo
     std::optional<MaterializedArtifact> storage;
     std::map<std::size_t, std::vector<std::byte>> expected;
     std::vector<ParameterReference> parameters;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> placements; // arena offset, bytes
     {
         Reader reader(path);
         require(reader.file_bytes() < 32ULL * 1024 * 1024,
@@ -124,6 +167,10 @@ void file_roundtrip(DeviceContext& device, const std::filesystem::path& path, bo
             }
         }
         auto plan = std::move(binder).finish();
+        placements.clear();
+        for (const auto& placement : plan.device_objects) {
+            placements.emplace_back(placement.offset, placement.bytes);
+        }
         for (const auto& placement : plan.device_objects) {
             auto bytes = reader.read_object(placement.object);
             if (writer_fixture && reader.directory().tensor(placement.object).id == "matrix") {
@@ -153,6 +200,42 @@ void file_roundtrip(DeviceContext& device, const std::filesystem::path& path, bo
         require(elements == weight_element_count(view.shape),
                 "resolved view lost logical coverage");
     }
+    // Under NINFERNO_DEBUG_POISON the arena starts as poison: every byte outside the objects (the
+    // alignment gaps) must still hold it, which shows the poison was there for the upload to
+    // overwrite - so the byte-exact comparison above also proves no object byte was left unwritten
+    // (no NaN in parameters after load, whatever the buffer held).
+    if (const auto poison = debug_poison_byte(); poison && !expected.empty()) {
+        const auto first             = expected.begin()->first;
+        const std::byte* object_base = storage->device_parent({first}).data;
+        std::uint64_t first_offset   = 0;
+        std::uint64_t extent         = 0;
+        for (std::size_t i = 0; i < placements.size(); ++i) {
+            extent = std::max(extent, placements[i].first + placements[i].second);
+        }
+        std::size_t index = 0;
+        for (const auto& [index_key, bytes] : expected) {
+            if (index_key == first) { first_offset = placements[index].first; }
+            ++index;
+        }
+        std::vector<std::byte> arena(extent);
+        CUDA_CHECK(cudaMemcpy(arena.data(), object_base - first_offset, arena.size(),
+                              cudaMemcpyDeviceToHost));
+        std::vector<bool> covered(extent, false);
+        for (const auto& [offset, bytes] : placements) {
+            std::fill(covered.begin() + static_cast<std::ptrdiff_t>(offset),
+                      covered.begin() + static_cast<std::ptrdiff_t>(offset + bytes), true);
+        }
+        std::uint64_t gaps = 0, unpoisoned = 0;
+        for (std::uint64_t i = 0; i < extent; ++i) {
+            if (covered[i]) { continue; }
+            ++gaps;
+            unpoisoned += arena[i] != std::byte(*poison) ? 1 : 0;
+        }
+        std::cout << path.filename().string() << ": poisoned arena, " << placements.size()
+                  << " objects, " << gaps << " gap bytes, " << unpoisoned
+                  << " of them not poison\n";
+        require(gaps > 0 && unpoisoned == 0, "the weight arena was not poisoned before the upload");
+    }
     std::cout << path.filename().string() << ": all bound parent bytes and logical views passed\n";
 }
 
@@ -174,7 +257,7 @@ void staging_reuse(DeviceContext& device) {
                        {"files", Json::array({{{"path", nullptr}, {"payload_bytes", bytes}}})}};
     const auto text = fixture.root.dump();
     std::array<std::byte, 4096> header{};
-    const std::array<unsigned char, 8> magic{'N', 'I', 'N', 'F', 'E', 'R', 0, 3};
+    const std::array<unsigned char, 8> magic{'N', 'I', 'n', 'f', 'e', 'r', 'n', 'o'};
     for (std::size_t i = 0; i < magic.size(); ++i) { header[i] = std::byte(magic[i]); }
     put_word(header, 8, text.size(), 8);
     std::memcpy(header.data() + 32, text.data(), text.size());
@@ -207,6 +290,64 @@ void staging_reuse(DeviceContext& device) {
     }
 }
 
+// An act-order u4 plane (row_group_zp_ordered_v1) binds only when its column order is a
+// permutation of K: a kernel gathers input column order[j] for every j.
+void column_order(DeviceContext& device) {
+    constexpr std::size_t bytes = 1024; // u4_g32 [1, 64]: codes, zeros @256, scales @512, order @768
+    const auto artifact = [&](Fixture& fixture, bool valid) {
+        fixture.payload.clear();
+        fixture.root = {{"components", {{"text", {{"config", Json::object()}}}}},
+                        {"objects", Json::array({{{"id", "ordered"},
+                                                  {"kind", "tensor"},
+                                                  {"shape", {1, 64}},
+                                                  {"format", "u4_g32_zp_fp16"},
+                                                  {"layout", "row_group_zp_ordered_v1"},
+                                                  {"offset", 0},
+                                                  {"bytes", bytes}}})},
+                        {"bindings", {{"ordered", {{"object", "ordered"}}}}},
+                        {"uses", Json::array()},
+                        {"files", Json::array({{{"path", nullptr}, {"payload_bytes", bytes}}})}};
+        const auto text = fixture.root.dump();
+        std::array<std::byte, 4096> header{};
+        const std::array<unsigned char, 8> magic{'N', 'I', 'n', 'f', 'e', 'r', 'n', 'o'};
+        for (std::size_t i = 0; i < magic.size(); ++i) { header[i] = std::byte(magic[i]); }
+        put_word(header, 8, text.size(), 8);
+        std::memcpy(header.data() + 32, text.data(), text.size());
+        std::vector<std::byte> payload(bytes);
+        for (std::size_t j = 0; j < 64; ++j) {
+            put_word(payload, 768 + 4 * j, valid ? 63 - j : j / 2, 4); // reversed, or repeats
+        }
+        std::ofstream file(fixture.entry, std::ios::binary | std::ios::trunc);
+        file.exceptions(std::ios::badbit | std::ios::failbit);
+        file.write(reinterpret_cast<const char*>(header.data()), header.size());
+        file.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+    };
+    {
+        Fixture fixture;
+        artifact(fixture, true);
+        Reader reader(fixture.entry);
+        Binder binder(reader);
+        (void)binder.parameter("ordered", {1, 64});
+        auto backing        = materialize(reader, std::move(binder).finish(), device);
+        const auto& parent  = backing.device_parent(reader.find("ordered"));
+        std::array<std::uint32_t, 64> order{};
+        CUDA_CHECK(cudaMemcpy(order.data(), parent.data + parent.geometry.order_offset,
+                              sizeof(order), cudaMemcpyDeviceToHost));
+        require(parent.geometry.order_offset == 768 && order[0] == 63 && order[63] == 0,
+                "the column order plane did not reach the device");
+    }
+    Fixture fixture;
+    artifact(fixture, false);
+    rejects(
+        [&] {
+            Reader reader(fixture.entry);
+            Binder binder(reader);
+            (void)binder.parameter("ordered", {1, 64});
+            (void)materialize(reader, std::move(binder).finish(), device);
+        },
+        "a column order that is not a permutation of K was bound");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -229,8 +370,10 @@ int main(int argc, char** argv) {
         }
         materialization(device);
         failure_and_host_only(device);
-        ninfer::test::materialization_cuda_errors(device);
+        mapped_residency(device);
+        ninferno::test::materialization_cuda_errors(device);
         staging_reuse(device);
+        column_order(device);
         std::cout << "artifact materialization checks passed\n";
         return 0;
     } catch (const std::exception& error) {

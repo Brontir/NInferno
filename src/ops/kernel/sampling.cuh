@@ -1,15 +1,15 @@
 #pragma once
 
-// Implements: include/ninfer/ops/sampling.h
+// Implements: include/ninferno/ops/sampling.h
 // Match: contiguous BF16 logits, physical stride >= token domain, and at most
 // sixteen columns on the multi-block route.
-// Algorithm assumptions: 256-thread/2-item partial tiles feed bounded top-20
+// Algorithm assumptions: 256-thread/2-item partial tiles feed bounded top-64
 // group merges through caller-owned workspace; unsupported finite geometries
-// use the semantically identical single-block fallback.
+// use the single-block fallback (top-20).
 
 #include "ops/kernel/sampling_device.cuh"
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 __launch_bounds__(kSamplerBlock) __global__
     void sample_row_kernel(const __nv_bfloat16* logits, std::int32_t* out,
@@ -23,13 +23,17 @@ __launch_bounds__(kSamplerBlock) __global__
 
     __shared__ float red_val[kSamplerBlock];
     __shared__ int red_idx[kSamplerBlock];
+    // The greedy route borrows merge_val as its mask stage; the sampled route merges in it.
+    __shared__ __align__(16) float merge_val[kSamplerBlock * kSamplerFastCandidates];
+    __shared__ int merge_idx[kSamplerBlock * kSamplerFastCandidates];
 
-    // With penalties disabled this remains the exact raw-logit argmax route.
+    // With penalties and masks disabled this remains the exact raw-logit argmax route.
     if (!(cfg.temperature > 0.0f)) {
-        float bv             = -CUDART_INF_F;
-        int bi               = INT_MAX;
-        const bool penalties = cfg.presence_penalty != 0.0f || cfg.frequency_penalty != 0.0f;
-        if (!penalties) {
+        float bv            = -CUDART_INF_F;
+        int bi              = INT_MAX;
+        const bool adjusted = sampling_adjusts(cfg);
+        sampling_acquire_token_mask(cfg);
+        if (!adjusted) {
             for (int v = tid; v < token_domain; v += blockDim.x) {
                 const float x = __bfloat162float(logits[base + v]);
                 if (sampling_better(x, v, bv, bi)) {
@@ -38,13 +42,17 @@ __launch_bounds__(kSamplerBlock) __global__
                 }
             }
         } else {
-            for (int v = tid; v < token_domain; v += blockDim.x) {
-                const float x = sampling_adjusted_logit(__bfloat162float(logits[base + v]), v, cfg);
-                if (sampling_better(x, v, bv, bi)) {
-                    bv = x;
-                    bi = v;
-                }
-            }
+            sampling_for_each_token(
+                cfg, 0, token_domain, reinterpret_cast<std::uint32_t*>(merge_val),
+                kSamplerBlock * kSamplerFastCandidates,
+                [&](int v, const std::uint32_t* stage, int stage_first) {
+                    const float x = sampling_staged_logit(__bfloat162float(logits[base + v]), v,
+                                                          cfg, stage, stage_first);
+                    if (sampling_better(x, v, bv, bi)) {
+                        bv = x;
+                        bi = v;
+                    }
+                });
         }
         red_val[tid] = bv;
         red_idx[tid] = bi;
@@ -71,13 +79,12 @@ __launch_bounds__(kSamplerBlock) __global__
                               group_count)) {
         return;
     }
+    sampling_acquire_token_mask(cfg);
 
     __shared__ float cand_val[kSamplerCandidateCap];
     __shared__ int cand_idx[kSamplerCandidateCap];
     __shared__ float prob[kSamplerCandidateCap];
     __shared__ int n_support;
-    __shared__ float merge_val[kSamplerBlock * kSamplerFastCandidates];
-    __shared__ int merge_idx[kSamplerBlock * kSamplerFastCandidates];
 
     if (token_domain <= kSamplerTileItems) {
         sampling_build_truncated_small(logits, base, token_domain, cfg, red_val, red_idx, cand_val,
@@ -117,16 +124,23 @@ __launch_bounds__(kSamplerBlock) __global__
     unsigned long long keys[kSamplerItemsPerThread];
 
     const bool greedy       = !(cfg.temperature > 0.0f);
-    const bool penalties    = cfg.presence_penalty != 0.0f || cfg.frequency_penalty != 0.0f;
+    const bool adjusted     = sampling_adjusts(cfg);
     const int cap           = greedy ? 1 : sampling_candidate_cap(cfg, token_domain);
     const std::int64_t base = static_cast<std::int64_t>(col) * physical_rows;
     const int tile_start    = partial * kSamplerPartialTileItems;
+    __shared__ __align__(16) std::uint32_t mask_stage[kSamplerPartialTileItems / 32];
+    sampling_acquire_token_mask(cfg);
+    const std::uint32_t* stage = nullptr;
+    if (cfg.token_mask != nullptr) {
+        sampling_stage_mask_words(cfg, 0, tile_start, kSamplerPartialTileItems, mask_stage);
+        stage = mask_stage;
+    }
 #pragma unroll
     for (int item = 0; item < kSamplerItemsPerThread; ++item) {
         const int v = tile_start + item * blockDim.x + threadIdx.x;
         if (v < token_domain) {
             const float raw = __bfloat162float(logits[base + v]);
-            const float x   = penalties ? sampling_adjusted_logit(raw, v, cfg) : raw;
+            const float x   = adjusted ? sampling_staged_logit(raw, v, cfg, stage, tile_start) : raw;
             keys[item]      = sampling_sort_key(x, v);
         } else {
             keys[item] = 0ull;
@@ -294,4 +308,4 @@ __launch_bounds__(kSamplerGroupBlock) __global__ void sampling_group_finalize_sa
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

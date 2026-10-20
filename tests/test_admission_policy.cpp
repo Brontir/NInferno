@@ -23,14 +23,14 @@ struct SchedulerRequest {
 
     struct Output {
         std::uint32_t model_tokens = 0;
-        std::vector<ninfer::TokenId> control;
+        std::vector<ninferno::TokenId> control;
 
         [[nodiscard]] std::uint32_t
         model_token_budget_remaining(std::uint32_t total) const noexcept {
             return std::min(total, model_tokens);
         }
 
-        [[nodiscard]] std::span<const ninfer::TokenId> pending_control_tokens() const noexcept {
+        [[nodiscard]] std::span<const ninferno::TokenId> pending_control_tokens() const noexcept {
             return control;
         }
     };
@@ -44,9 +44,10 @@ struct SchedulerRequest {
     std::uint64_t id                              = 0;
     std::uint64_t remaining_service_work          = 1;
     std::uint64_t backfill_epoch                  = 0;
-    ninfer::runtime::BackfillClass backfill_class = ninfer::runtime::BackfillClass::None;
+    ninferno::runtime::BackfillClass backfill_class = ninferno::runtime::BackfillClass::None;
     State state                                   = State::Decode;
     bool capture_pending                          = false;
+    bool lease_parked                             = false;
     std::optional<Budget> budget;
     std::optional<SequenceHandle> sequence;
     Output output;
@@ -69,10 +70,10 @@ bool throws_logic(Function&& function) {
 } // namespace
 
 int main() {
-    using ninfer::runtime::ActiveAdmissionSnapshot;
-    using ninfer::runtime::BackfillClass;
-    using ninfer::runtime::ProgramResourceRevision;
-    using Scheduler     = ninfer::runtime::Scheduler<SchedulerRequest>;
+    using ninferno::runtime::ActiveAdmissionSnapshot;
+    using ninferno::runtime::BackfillClass;
+    using ninferno::runtime::ProgramResourceRevision;
+    using Scheduler     = ninferno::runtime::Scheduler<SchedulerRequest>;
     const auto revision = [](std::uint64_t value) {
         return ProgramResourceRevision{.value = value};
     };
@@ -83,17 +84,17 @@ int main() {
         ActiveAdmissionSnapshot{.request_id = 2},
     };
 
-    auto protection = ninfer::runtime::make_admission_protection(7, 10, revision(31), incumbents);
+    auto protection = ninferno::runtime::make_admission_protection(7, 10, revision(31), incumbents);
     failures +=
         check(protection.donor_count == 2 && protection.donor_ids[0] == 1 &&
                   protection.donor_ids[1] == 2 && protection.resource_revision == revision(31),
               "protection did not freeze every incumbent donor");
-    failures += check(ninfer::runtime::protection_has_live_donor(protection, incumbents),
+    failures += check(ninferno::runtime::protection_has_live_donor(protection, incumbents),
                       "live donor was not recognized");
-    failures += check(ninfer::runtime::persistent_backfill_is_authorized(protection, 11, incumbents,
-                                                                         revision(31)),
+    failures += check(ninferno::runtime::persistent_backfill_is_authorized(
+                          protection, 11, incumbents, revision(31)),
                       "matching Program proof did not authorize persistent backfill");
-    failures += check(!ninfer::runtime::persistent_backfill_is_authorized(protection, 11,
+    failures += check(!ninferno::runtime::persistent_backfill_is_authorized(protection, 11,
                                                                           incumbents, revision(30)),
                       "stale Program proof authorized persistent backfill");
 
@@ -106,16 +107,16 @@ int main() {
             .backfill_class = BackfillClass::Persistent,
         },
     };
-    ninfer::runtime::rebind_admission_protection(protection, with_borrower, revision(32));
+    ninferno::runtime::rebind_admission_protection(protection, with_borrower, revision(32));
     failures += check(protection.donor_count == 2 && protection.resource_revision == revision(32) &&
-                          ninfer::runtime::persistent_backfill_is_authorized(
+                          ninferno::runtime::persistent_backfill_is_authorized(
                               protection, 12, with_borrower, revision(32)),
                       "revision rebind changed the frozen donor partition");
 
     const std::array<ActiveAdmissionSnapshot, 1> borrower_only{with_borrower[2]};
-    ninfer::runtime::rebind_admission_protection(protection, borrower_only, revision(33));
-    failures += check(!ninfer::runtime::protection_has_live_donor(protection, borrower_only) &&
-                          !ninfer::runtime::persistent_backfill_is_authorized(
+    ninferno::runtime::rebind_admission_protection(protection, borrower_only, revision(33));
+    failures += check(!ninferno::runtime::protection_has_live_donor(protection, borrower_only) &&
+                          !ninferno::runtime::persistent_backfill_is_authorized(
                               protection, 12, borrower_only, revision(33)),
                       "backfill remained open after every frozen donor completed");
 
@@ -123,7 +124,7 @@ int main() {
         ActiveAdmissionSnapshot{.request_id = 99},
     };
     failures += check(throws_logic([&] {
-                          ninfer::runtime::rebind_admission_protection(protection, unknown_active,
+                          ninferno::runtime::rebind_admission_protection(protection, unknown_active,
                                                                        revision(34));
                       }),
                       "unclassified post-protection active request was accepted as a donor");
@@ -188,7 +189,33 @@ int main() {
               "prefill/decode alternation changed");
     scheduler.clear_prefill_lane(0);
 
-    std::array<std::shared_ptr<SchedulerRequest>, ninfer::kMaximumConcurrency> slots{};
+    // --concurrent-prefill: admission stays open while lanes prefill; lanes are served in turn.
+    scheduler.allow_concurrent_prefill(true);
+    scheduler.set_prefill_lane(1);
+    scheduler.set_prefill_lane(3);
+    const auto every = [](std::uint32_t) { return true; };
+    const auto lane_a = scheduler.next_prefill_lane(every);
+    scheduler.note_prefill_served(lane_a.value_or(0));
+    const auto lane_b = scheduler.next_prefill_lane(every);
+    scheduler.note_prefill_served(lane_b.value_or(0));
+    const auto lane_c = scheduler.next_prefill_lane(every);
+    const auto skip  = scheduler.next_prefill_lane([](std::uint32_t lane) { return lane != 1; });
+    failures += check(scheduler.should_attempt_admission(true, true, true, true, false) &&
+                          lane_a == 1U && lane_b == 3U && lane_c == 1U && skip == 3U &&
+                          scheduler.owns_prefill_lane(3) && !scheduler.owns_prefill_lane(2),
+                      "concurrent prefill must keep admission open and serve lanes in turn");
+    // Equal GPU time per request: decode owed after a chunk goes on before the next chunk.
+    failures += check(scheduler.choose_execution(true, true, true, true) == ExecutionAction::Decode &&
+                          scheduler.choose_execution(true, true, true, false) == ExecutionAction::Prefill &&
+                          scheduler.fair_decode_seconds(0.8, 3, 2) == 0.8 * 3 / 2 &&
+                          scheduler.fair_decode_seconds(0.8, 2, 0) == 0.0,
+                      "fair decode time beside prefill changed");
+    scheduler.clear_prefill_lane(1);
+    scheduler.clear_prefill_lane(3);
+    scheduler.allow_concurrent_prefill(false);
+    scheduler.reset();
+
+    std::array<std::shared_ptr<SchedulerRequest>, ninferno::kMaximumConcurrency> slots{};
     slots[0]                      = std::make_shared<SchedulerRequest>();
     slots[0]->id                  = 21;
     slots[0]->budget              = SchedulerRequest::Budget{.tokens = 11};
@@ -198,6 +225,11 @@ int main() {
     failures += check(model_membership.size == 1 &&
                           model_membership.budgets[0].generated_tokens_remaining == 3,
                       "model-token licensing changed");
+    // A request waiting on KV lease pages sits out the round and comes back once it may grow.
+    slots[0]->lease_parked = true;
+    failures += check(scheduler.build_round_membership(slots, 1).size == 0,
+                      "a parked KV lease still joined the decode round");
+    slots[0]->lease_parked = false;
 
     const auto active_set = scheduler.active_admission_set(slots, 1);
     failures += check(active_set.size == 1 && active_set.requests[0].request_id == 21,

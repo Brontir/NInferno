@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer {
+namespace ninferno {
 
 struct GdnReplayRecordSpec {
     std::int32_t layers          = 0;
@@ -56,6 +56,10 @@ struct GdnReplayRecords {
     GdnReplayRecords(DeviceSpan backing, const GdnReplayRecordLayout& layout);
 
     [[nodiscard]] GdnReplayRecordLayer layer(std::int32_t layer, std::int32_t rows) const;
+
+    // The same storage laid out for a narrower record width (at most spec.width): a speculative
+    // round verified at that width records, and its fold replays, through this view.
+    [[nodiscard]] GdnReplayRecords narrowed(std::int32_t width) const;
 };
 
-} // namespace ninfer
+} // namespace ninferno

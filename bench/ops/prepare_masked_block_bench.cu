@@ -1,9 +1,9 @@
 // Public-Op benchmark for the exact anchor-and-mask block transform.
 
-#include "ninfer/ops/prepare_masked_block.h"
+#include "ninferno/ops/prepare_masked_block.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
@@ -19,18 +19,18 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
 constexpr std::int32_t kMaskId    = 248077;
 constexpr std::size_t kFlushBytes = std::size_t{256} << 20;
-constexpr double kRtx5090DramGBs  = 1792.0;
+const double kDeviceDramGBs       = bench::device_roofs().dram_gbs;
 
 enum class Execution : std::uint8_t { Eager, Graph, Both };
-enum class CacheMode : std::uint8_t { Cold, Warm, Both };
-enum class CacheState : std::uint8_t { Cold, Warm };
-
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 struct Options {
     std::vector<std::int32_t> block_sizes{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     Execution execution = Execution::Graph;
@@ -52,7 +52,7 @@ struct Result {
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_prepare_masked_block_bench [--block-sizes 2,...,16] "
+                 "usage: ninferno_prepare_masked_block_bench [--block-sizes 2,...,16] "
                  "[--execution eager|graph|both] [--cache cold|warm|both] "
                  "[--warmup N] [--repeat N] [--profile] [--csv-out PATH]\n",
                  message);
@@ -182,11 +182,9 @@ const char* execution_name(Execution execution) {
     return execution == Execution::Eager ? "eager" : "graph";
 }
 
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
-
 bench::ColdTiming measure(Case& data, Execution execution, CacheState cache,
-                          bench::TimedGraph* graph, DeviceBuffer& flush, cudaStream_t stream,
-                          int warmup, int repeat) {
+                          bench::TimedGraph* graph, bench::L2FlushBuffer& flush,
+                          cudaStream_t stream, int warmup, int repeat) {
     if (execution == Execution::Eager) {
         const auto launch = [&](cudaStream_t launch_stream) { data.launch(launch_stream); };
         return cache == CacheState::Cold
@@ -206,7 +204,7 @@ void report(const Result& result) {
                 "(%7.4f%% of %.0f)\n",
                 execution_name(result.execution), cache_name(result.cache), result.block_size,
                 result.timing.median_us, result.timing.min_us, result.timing.p95_us, gbps,
-                gbps / kRtx5090DramGBs * 100.0, kRtx5090DramGBs);
+                gbps / kDeviceDramGBs * 100.0, kDeviceDramGBs);
 }
 
 void write_csv(const Options& options, const std::vector<Result>& results) {
@@ -224,7 +222,7 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
     }
 }
 
-void profile(Case& data, const Options& options, DeviceBuffer& flush, cudaStream_t stream) {
+void profile(Case& data, const Options& options, bench::L2FlushBuffer& flush, cudaStream_t stream) {
     const Execution execution = options.execution;
     const CacheState cache = options.cache == CacheMode::Cold ? CacheState::Cold : CacheState::Warm;
     bench::TimedGraph graph;
@@ -265,7 +263,7 @@ int main(int argc, char** argv) {
         const Options options = parse_options(argc, argv);
         cudaStream_t stream   = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
+        bench::L2FlushBuffer flush(kFlushBytes);
 
         if (options.profile) {
             Case data(options.block_sizes.front());
@@ -307,7 +305,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_prepare_masked_block_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_prepare_masked_block_bench: %s\n", error.what());
         return 1;
     }
 }

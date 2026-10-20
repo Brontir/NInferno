@@ -17,7 +17,7 @@
 
 namespace {
 
-using namespace ninfer::serve;
+using namespace ninferno::serve;
 using Json = nlohmann::json;
 
 int check(bool condition, const char* message) {
@@ -33,34 +33,34 @@ int main() {
 
     bool protected_artifact_rejected = false;
     try {
-        JsonlRequestLog unsafe("same-path.ninfer", "same-path.ninfer");
+        JsonlRequestLog unsafe("same-path.ninferno", "same-path.ninferno");
     } catch (const std::invalid_argument&) { protected_artifact_rejected = true; }
     failures += check(protected_artifact_rejected,
                       "request log accepted the model artifact as its output path");
 
     ServeOptions options;
-    options.artifact_path                  = "/models/qwen3_6_27b.ninfer";
+    options.artifact_path                  = "/models/qwen3_6_27b.ninferno";
     options.host                           = "127.0.0.1";
     options.port                           = 8123;
     options.api_key                        = "must-not-appear";
     options.model_id_override              = "deployment-alias";
     options.request_log_jsonl              = "requests.jsonl";
     options.max_context                    = 262144;
-    options.kv_capacity                    = ninfer::KvCapacityPolicy::explicit_capacity(524288);
+    options.kv_capacity                    = ninferno::KvCapacityPolicy::explicit_capacity(524288);
     options.prefill_chunk                  = 1024;
     options.log_stats_interval_ms          = 2500;
-    options.kv_cache                       = ninfer::KvCacheStorage::Fp8E4M3Row256;
-    options.speculative.backend            = ninfer::SpeculativeBackend::Mtp;
+    options.kv_cache                       = ninferno::KvCacheStorage::Fp8E4M3Row256;
+    options.speculative.backend            = ninferno::SpeculativeBackend::Mtp;
     options.speculative.draft_tokens       = 3;
-    options.speculative.proposal_head      = ninfer::ProposalHead::Optimized;
+    options.speculative.proposal_head      = ninferno::ProposalHead::Optimized;
     options.enable_vision                  = false;
     options.allow_prefix_reuse             = true;
     options.preserve_thinking              = true;
     options.default_thinking_budget        = 512;
     options.sampling_overrides.temperature = 0.6F;
-    options.startup_argv = {"ninfer-serve", options.artifact_path, "--api-key", "<redacted>"};
+    options.startup_argv = {"ninferno-serve", options.artifact_path, "--api-key", "<redacted>"};
 
-    ninfer::EngineOptions engine_options;
+    ninferno::EngineOptions engine_options;
     engine_options.artifact_path                                   = options.artifact_path;
     engine_options.device                                          = options.device;
     engine_options.max_context                                     = options.max_context;
@@ -68,7 +68,7 @@ int main() {
     engine_options.max_pending_requests                            = options.max_pending_requests;
     engine_options.pending_timeout_ms                              = options.pending_timeout_ms;
     engine_options.prefill_chunk                                   = options.prefill_chunk;
-    engine_options.kv_cache                                        = options.kv_cache;
+    engine_options.kv_cache                                        = *options.kv_cache;
     engine_options.speculative                                     = options.speculative;
     engine_options.enable_vision                                   = options.enable_vision;
     engine_options.use_cuda_graph                                  = options.use_cuda_graph;
@@ -79,12 +79,12 @@ int main() {
     engine_options.context_cache.max_shared_prefixes               = 2;
     engine_options.context_cache.max_long_anchors_per_continuation = 2;
 
-    const ninfer::ModelSamplingDefaults sampling_defaults{
+    const ninferno::ModelSamplingDefaults sampling_defaults{
         .thinking     = {.temperature = 1.0F, .top_k = 20, .top_p = 0.95F},
         .non_thinking = {.temperature = 0.7F, .top_k = 20, .top_p = 0.8F, .presence_penalty = 1.5F},
     };
 
-    ninfer::LoadSummary load;
+    ninferno::LoadSummary load;
     load.architecture         = "Qwen3_5ForCausalLM";
     load.model_name           = "qwen3.6-27b";
     load.weight_formats       = {"q4_g64_fp16", "q8_g32_fp16"};
@@ -96,24 +96,24 @@ int main() {
     load.device_object_count  = 42;
     load.host_object_count    = 6;
     load.context_cost         = {
-                .transfer_source   = ninfer::ContextCostPresetSource::External,
-                .prefill_source    = ninfer::ContextCostPresetSource::CompiledDefault,
+                .transfer_source   = ninferno::ContextCostPresetSource::External,
+                .prefill_source    = ninferno::ContextCostPresetSource::CompiledDefault,
                 .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
                 .prefill_signature = "example-prefill-signature",
                 .preset_path       = "local-costs.json",
     };
 
-    ninfer::MemorySummary memory;
+    ninferno::MemorySummary memory;
     memory.max_context                 = 262144;
-    memory.kv_capacity_mode            = ninfer::KvCapacityMode::Explicit;
+    memory.kv_capacity_mode            = ninferno::KvCapacityMode::Explicit;
     memory.kv_capacity                 = 524288;
     memory.kv_capacity_page_groups     = 8192;
     memory.kv_capacity_max_page_groups = 16384;
-    memory.kv_cache                    = ninfer::KvCacheStorage::Fp8E4M3Row256;
+    memory.kv_cache                    = ninferno::KvCacheStorage::Fp8E4M3Row256;
     memory.weights.capacity_bytes      = 100;
     memory.sequence.capacity_bytes     = 200;
     memory.workspace.capacity_bytes    = 500;
-    memory.vision_workspace            = ninfer::VisionWorkspaceMemorySummary{
+    memory.vision_workspace            = ninferno::VisionWorkspaceMemorySummary{
                    .aggregate_prompt_tokens = 32768,
                    .max_item_tokens         = 16384,
                    .general_capacity_bytes  = 300,
@@ -135,6 +135,14 @@ int main() {
     memory.host_state_occupied_slots         = 1;
     memory.host_kv_capacity_bytes            = 64ULL << 20;
     memory.host_kv_occupied_bytes            = 8ULL << 20;
+    memory.kernel_warm_up                    = true;
+    memory.kernel_warm_up_prefill_widths     = 1024;
+    memory.kernel_warm_up_widths_run         = {1, 2, 48, 49, 1024};
+    memory.kernel_warm_up_graph_passes       = 1;
+    memory.kernel_warm_up_lasting_bytes      = 24ULL << 20;
+    memory.stack_limit_before_bytes          = 1024;
+    memory.stack_limit_bytes                 = 2048;
+    memory.stack_limit_source                = "a prefill of 17 tokens";
 
     ServerLogEnvironment environment;
     environment.device                    = 0;
@@ -176,17 +184,17 @@ int main() {
     failures += check(server.at("server").at("default_thinking_budget") == 512,
                       "server thinking budget missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");
-    options.kv_cache        = ninfer::KvCacheStorage::Nvfp4Group16;
-    engine_options.kv_cache = options.kv_cache;
-    memory.kv_cache         = options.kv_cache;
+    options.kv_cache        = ninferno::KvCacheStorage::Nvfp4Group16;
+    engine_options.kv_cache = *options.kv_cache;
+    memory.kv_cache         = *options.kv_cache;
     const Json nvfp4_server = Json::parse(format_server_start_json(
         "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias", load,
         memory, environment, std::uint64_t{123456}));
     failures +=
         check(nvfp4_server.at("engine").at("kv_cache") == "nvfp4", "NVFP4 KV report name missing");
-    options.kv_cache        = ninfer::KvCacheStorage::Fp8KeyNvfp4Value;
-    engine_options.kv_cache = options.kv_cache;
-    memory.kv_cache         = options.kv_cache;
+    options.kv_cache        = ninferno::KvCacheStorage::Fp8KeyNvfp4Value;
+    engine_options.kv_cache = *options.kv_cache;
+    memory.kv_cache         = *options.kv_cache;
     const Json k8v4_server  = Json::parse(format_server_start_json(
         "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias", load,
         memory, environment, std::uint64_t{123456}));
@@ -205,6 +213,9 @@ int main() {
             server.at("engine").at("context_cost").at("preset_path") == "local-costs.json",
         "resolved context-cost layers missing");
     failures += check(server.at("engine").at("prefix_reuse") == true, "prefix-reuse state missing");
+    failures += check(server.at("engine").at("activations") == "fast" ||
+                          server.at("engine").at("activations") == "exact",
+                      "activation mode missing");
     failures += check(
         server.at("engine").at("context_cache").at("device_state_slots") == 2 &&
             server.at("engine").at("context_cache").at("total_device_state_slots") == 4 &&
@@ -234,6 +245,18 @@ int main() {
               "Vision workspace layout missing");
     failures += check(server.at("memory").at("cuda_graph_allowance_bytes") == 600,
                       "CUDA Graph allowance missing");
+    failures += check(server.at("memory").at("kernel_warm_up").at("ran") == true &&
+                          server.at("memory").at("kernel_warm_up").at("prefill_widths") == 1024 &&
+                          server.at("memory").at("kernel_warm_up").at("widths_run") ==
+                              Json::array({1, 2, 48, 49, 1024}) &&
+                          server.at("memory").at("kernel_warm_up").at("graph_passes") == 1 &&
+                          server.at("memory").at("kernel_warm_up").at("lasting_bytes") ==
+                              (24ULL << 20) &&
+                          server.at("memory").at("kernel_warm_up").at("stack_limit_bytes") ==
+                              2048 &&
+                          server.at("memory").at("kernel_warm_up").at("stack_limit_source") ==
+                              "a prefill of 17 tokens",
+                      "kernel warm-up missing");
     failures += check(server.at("memory").at("runtime_reservation_bytes") == 1600 &&
                           server.at("memory").at("available_after_weights_bytes") == 1700 &&
                           server.at("memory").at("available_after_startup_bytes") == 180 &&
@@ -258,7 +281,7 @@ int main() {
     PreparedRequest prepared;
     prepared.enable_thinking                           = true;
     prepared.thinking_budget                           = 256;
-    prepared.reasoning_effort                          = ninfer::ReasoningEffort::XHigh;
+    prepared.reasoning_effort                          = ninferno::ReasoningEffort::XHigh;
     prepared.preserve_thinking                         = true;
     prepared.sampling.temperature                      = 0.6F;
     prepared.sampling.top_p                            = 0.95F;
@@ -290,6 +313,11 @@ int main() {
             "req#7 started | openai-chat non-stream | 2 messages | max output 4,096 | thinking "
             "xhigh, budget 256 | media 1, prepared 120 ms | preserve thinking",
         "pretty request-start record mismatch");
+    RequestLogContext with_http_id = context;
+    with_http_id.http_request_id   = "req-client-1";
+    failures += check(render_request_start(with_http_id)
+                          .message.starts_with("req#7 started | openai-chat non-stream | request "),
+                      "the request-start record names the response's request id");
     RequestLogContext default_thinking = context;
     default_thinking.requested_reasoning_effort.reset();
     default_thinking.thinking_budget.reset();
@@ -298,6 +326,17 @@ int main() {
         check(default_thinking_start.find("thinking template default") != std::string::npos &&
                   default_thinking_start.find("unresolved") == std::string::npos,
               "default thinking state leaks an internal resolution detail");
+    RequestLogContext noted = context;
+    noted.notes             = {"reasoning Item rs_1 without reasoning_text left out of the prompt"};
+    const OperationalRecord noted_start = render_request_start(noted);
+    const Json noted_json = Json::parse(format_request_start_json("serve-test", 2000, noted));
+    failures += check(noted_start.severity == OperationalSeverity::Warning &&
+                          noted_start.message.ends_with(
+                              " | reasoning Item rs_1 without reasoning_text left out of the "
+                              "prompt") &&
+                          noted_json.at("request").at("notes") == Json::array({noted.notes[0]}) &&
+                          pretty_start.severity == OperationalSeverity::Info,
+                      "request notes are not a warning on the start line and in the record");
     const Json started = Json::parse(format_request_start_json("serve-test", 2000, context));
     failures +=
         check(started.at("request").at("request_id") == 7, "request id missing from start record");
@@ -329,7 +368,7 @@ int main() {
     preparation_error.code                            = "context_length_exceeded";
     preparation_error.message                         = "sentinel-client-value\nsecond-record";
     GenerationRequest rejected_request                = request;
-    rejected_request.reasoning_effort                 = RequestedReasoningEffort::High;
+    rejected_request.reasoning_effort                 = ninferno::ReasoningEffort::High;
     const RequestRejectionLogContext rejected_context = make_request_rejection_log_context(
         8, "anthropic_messages", rejected_request, metadata, preparation_error);
     const Json rejected =
@@ -367,7 +406,7 @@ int main() {
     GenerationOutcome outcome;
     outcome.prompt_tokens                   = 401;
     outcome.completion_tokens               = 1024;
-    outcome.finish_reason                   = ninfer::FinishReason::OutputLimit;
+    outcome.finish_reason                   = ninferno::FinishReason::OutputLimit;
     outcome.metrics.prepare_seconds         = 0.1234567890123;
     outcome.metrics.ttft_seconds            = 0.3580246791357;
     outcome.metrics.vision_seconds          = 0.0;
@@ -375,7 +414,7 @@ int main() {
     outcome.metrics.decode_seconds          = 5.3456789012345;
     outcome.metrics.total_seconds           = 5.7037035803702;
     outcome.metrics.prefix_cache_hit_tokens = 101;
-    outcome.metrics.prefix_reuse_path       = ninfer::PrefixReusePath::PrivateTurnClosure;
+    outcome.metrics.prefix_reuse_path       = ninferno::PrefixReusePath::PrivateTurnClosure;
     outcome.metrics.engine_timing           = {
                   .queue_wait_seconds                   = 0.001,
                   .engine_boundary_exposed_seconds      = 0.001,
@@ -390,7 +429,7 @@ int main() {
                   .decode_rounds                        = 2,
                   .control_units                        = 1,
     };
-    outcome.metrics.speculative_backend               = ninfer::SpeculativeBackend::Mtp;
+    outcome.metrics.speculative_backend               = ninferno::SpeculativeBackend::Mtp;
     outcome.metrics.speculative_draft_window          = 3;
     outcome.metrics.speculative_rounds                = 300;
     outcome.metrics.speculative_draft_tokens          = 900;
@@ -405,7 +444,7 @@ int main() {
                           .projection_work            = 31,
                           .planning_elapsed_ns        = 9000,
                           .search_elapsed_ns          = 6000,
-                          .stop_reason                = ninfer::MaterializationStopReason::QueueExhausted,
+                          .stop_reason                = ninferno::MaterializationStopReason::QueueExhausted,
                           .budget_exhausted           = false,
                           .selected_degradation_units = 2,
                           .selected_maximal_fallback  = false,
@@ -418,7 +457,7 @@ int main() {
                           .search_discovery_used      = true,
                           .search_overshoot_ns        = 0,
     };
-    outcome.thinking = ninfer::ThinkingBudgetStats{.configured_budget     = 256,
+    outcome.thinking = ninferno::ThinkingBudgetStats{.configured_budget     = 256,
                                                    .model_thinking_tokens = 256,
                                                    .injected_tokens       = 19,
                                                    .applied               = true};
@@ -447,9 +486,12 @@ int main() {
                   done.at("result").at("tool_call_parse").at("structured_call_count") == 0 &&
                   done.at("result").at("tool_call_parse").at("empty_arguments_omitted") == 0 &&
                   done.at("result").at("tool_call_parse").at("schema_mismatch_arguments") == 0 &&
+                  done.at("result").at("tool_call_parse").at("repeated_parameters") == 0 &&
+                  done.at("result").at("tool_call_parse").at("recovered_from_reasoning") == false &&
+                  done.at("result").at("tool_call_parse").at("cut_calls_dropped") == 0 &&
                   done.at("result").at("tool_call_parse").at("fallback_reason") == "none",
               "default tool-call parse diagnostics missing");
-    outcome.metrics.prefix_reuse_path = ninfer::PrefixReusePath::PrivateResponseReplay;
+    outcome.metrics.prefix_reuse_path = ninferno::PrefixReusePath::PrivateResponseReplay;
     const Json response_restore =
         Json::parse(format_request_done_json("serve-test", 3001, context, outcome));
     failures +=
@@ -493,13 +535,15 @@ int main() {
 
     GenerationOutcome normalized_tool_outcome = outcome;
     normalized_tool_outcome.tool_calls.push_back(
-        ninfer::GeneratedToolCall{.name = "Edit", .arguments_json = R"({"file_path":"x"})"});
+        ninferno::GeneratedToolCall{.name = "Edit", .arguments_json = R"({"file_path":"x"})"});
     normalized_tool_outcome.tool_call_parse = {
         .marker_seen               = true,
         .structured_call_count     = 1,
         .empty_arguments_omitted   = 1,
         .schema_mismatch_arguments = 2,
-        .fallback_reason           = ninfer::ToolCallParseFallbackReason::None,
+        .repeated_parameters       = 1,
+        .fallback_reason           = ninferno::ToolCallParseFallbackReason::None,
+        .recovered_from_reasoning  = true,
     };
     const Json normalized_tool_done =
         Json::parse(format_request_done_json("serve-test", 3002, context, normalized_tool_outcome));
@@ -512,6 +556,11 @@ int main() {
             normalized_tool_done.at("result")
                     .at("tool_call_parse")
                     .at("schema_mismatch_arguments") == 2 &&
+            normalized_tool_done.at("result").at("tool_call_parse").at("repeated_parameters") ==
+                1 &&
+            normalized_tool_done.at("result")
+                    .at("tool_call_parse")
+                    .at("recovered_from_reasoning") == true &&
             normalized_tool_done.at("result").at("tool_call_parse").at("fallback_reason") ==
                 "none" &&
             !render_tool_call_fallback(context, normalized_tool_outcome),
@@ -523,7 +572,7 @@ int main() {
           .structured_call_count     = 0,
           .empty_arguments_omitted   = 0,
           .schema_mismatch_arguments = 0,
-          .fallback_reason           = ninfer::ToolCallParseFallbackReason::DuplicateParameter,
+          .fallback_reason           = ninferno::ToolCallParseFallbackReason::DuplicateParameter,
     };
     const Json fallback_done =
         Json::parse(format_request_done_json("serve-test", 3003, context, fallback_outcome));
@@ -683,7 +732,7 @@ int main() {
 
     const std::filesystem::path log_path =
         std::filesystem::temp_directory_path() /
-        ("ninfer-request-log-test-" + std::to_string(static_cast<long long>(::getpid())) +
+        ("ninferno-request-log-test-" + std::to_string(static_cast<long long>(::getpid())) +
          ".jsonl");
     std::filesystem::remove(log_path);
     {
@@ -717,6 +766,49 @@ int main() {
     }
     input.close();
     std::filesystem::remove(log_path);
+
+    // The start line of an automatic KV pool short of every slot's full context (an explicit
+    // --max-context, several slots): its tokens of the whole-page pool it aimed for, which is
+    // more than C x ctx when the context is not a whole number of 64-token pages.
+    {
+        ninferno::MemorySummary pool;
+        pool.kv_capacity_mode              = ninferno::KvCapacityMode::Automatic;
+        pool.max_context                   = 2048;
+        pool.kv_capacity_page_groups       = 100;
+        pool.kv_capacity_max_page_groups   = 128;
+        pool.kv_capacity                   = 100 * 64;
+        pool.available_after_weights_bytes = 1ULL << 30;
+        const auto aligned                 = render_kv_shortfall(pool, 4);
+        failures += check(aligned && aligned->severity == OperationalSeverity::Info &&
+                              aligned->message.starts_with(
+                                  "capacity | KV 6,400 of 8,192 tokens (auto: --max-concurrency 4 "
+                                  "x --max-context 2,048 does not fit the ") &&
+                              aligned->message.ends_with("a request waits while the pool is full"),
+                          "KV shortfall line of an aligned context");
+        // 2,049 tokens take 33 pages (2,112 tokens); 8 slots 264 pages. A pool of 260 pages holds
+        // 16,640 tokens, more than 8 x 2,049 = 16,392, but not every slot's pages.
+        pool.max_context                 = 2049;
+        pool.kv_capacity_page_groups     = 260;
+        pool.kv_capacity_max_page_groups = 264;
+        pool.kv_capacity                 = 260 * 64;
+        const auto rounded               = render_kv_shortfall(pool, 8);
+        failures += check(rounded && rounded->message.starts_with(
+                                         "capacity | KV 16,640 of 16,896 tokens (auto: "
+                                         "--max-concurrency 8 x --max-context 2,049 in whole "
+                                         "pages of 64 does not fit the "),
+                          "KV shortfall line in whole pages");
+        ninferno::MemorySummary full              = pool;
+        full.kv_capacity_page_groups            = full.kv_capacity_max_page_groups;
+        ninferno::MemorySummary automatic_context = pool;
+        automatic_context.max_context_automatic = true;
+        ninferno::MemorySummary explicit_pool     = pool;
+        explicit_pool.kv_capacity_mode          = ninferno::KvCapacityMode::Explicit;
+        failures += check(!render_kv_shortfall(full, 8) &&
+                              !render_kv_shortfall(automatic_context, 8) &&
+                              !render_kv_shortfall(explicit_pool, 8),
+                          "a KV shortfall line for a full pool, an automatic context or an "
+                          "explicit --kv-capacity");
+    }
 
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

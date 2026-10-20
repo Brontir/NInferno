@@ -1,4 +1,5 @@
 #include "core/arena.h"
+#include "core/cuda_error.h"
 
 #include <cuda_runtime.h>
 
@@ -8,19 +9,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
-
-std::string cuda_error_message(const char* prefix, cudaError_t err) {
-    return std::string(prefix) + ": " + cudaGetErrorName(err) + ": " + cudaGetErrorString(err);
-}
-
-void log_cuda_error(const char* op, cudaError_t err) noexcept {
-    if (err != cudaSuccess) {
-        std::fprintf(stderr, "CUDA cleanup failed during %s: %s: %s\n", op, cudaGetErrorName(err),
-                     cudaGetErrorString(err));
-    }
-}
 
 bool is_power_of_two(std::size_t value) { return value != 0 && (value & (value - 1)) == 0; }
 
@@ -89,6 +79,14 @@ void DeviceBuffer::fill(int byte_value) {
     if (err != cudaSuccess) {
         throw std::runtime_error(cuda_error_message("cudaMemset failed", err));
     }
+    // cudaMemset of device memory may return before the fill runs, and the legacy default
+    // stream does not order against the non-blocking streams every consumer uses: a kernel
+    // queued next could write the buffer and then have the fill land on top of it. Settle the
+    // default stream, as copy_from_host does.
+    const cudaError_t settled = cudaStreamSynchronize(nullptr);
+    if (settled != cudaSuccess) {
+        throw std::runtime_error(cuda_error_message("cudaMemset settle failed", settled));
+    }
 }
 
 void DeviceBuffer::copy_from_host(const void* source, std::size_t count, std::size_t byte_offset) {
@@ -127,14 +125,18 @@ void DeviceBuffer::require_range(std::size_t byte_offset, std::size_t count,
 }
 
 DeviceArena::Scope::Scope(DeviceArena& arena) noexcept
-    : arena_(&arena), saved_offset_(arena.off_) {}
+    : arena_(&arena), saved_offset_(arena.off_), saved_generation_(arena.generation_) {}
 
 DeviceArena::Scope::~Scope() noexcept {
-    if (arena_ != nullptr && saved_offset_ <= arena_->off_) { arena_->off_ = saved_offset_; }
+    if (arena_ != nullptr && arena_->generation_ == saved_generation_ &&
+        saved_offset_ <= arena_->off_) {
+        arena_->off_ = saved_offset_;
+    }
 }
 
 DeviceArena::Scope::Scope(Scope&& other) noexcept
-    : arena_(other.arena_), saved_offset_(other.saved_offset_) {
+    : arena_(other.arena_), saved_offset_(other.saved_offset_),
+      saved_generation_(other.saved_generation_) {
     other.arena_ = nullptr;
 }
 
@@ -167,7 +169,7 @@ DeviceArena::~DeviceArena() {
 
 DeviceArena::DeviceArena(DeviceArena&& other) noexcept
     : base_(other.base_), cap_(other.cap_), off_(other.off_), peak_(other.peak_),
-      owns_(other.owns_) {
+      generation_(other.generation_), owns_(other.owns_) {
     other.base_ = nullptr;
     other.cap_  = 0;
     other.off_  = 0;
@@ -183,6 +185,7 @@ DeviceArena& DeviceArena::operator=(DeviceArena&& other) noexcept {
     cap_  = other.cap_;
     off_  = other.off_;
     peak_ = other.peak_;
+    generation_ = other.generation_;
     owns_ = other.owns_;
 
     other.base_ = nullptr;
@@ -229,7 +232,10 @@ Tensor DeviceArena::alloc(DType dtype, std::initializer_list<std::int32_t> shape
 
 DeviceArena::Scope DeviceArena::scope() noexcept { return Scope(*this); }
 
-void DeviceArena::reset() noexcept { off_ = 0; }
+void DeviceArena::reset() noexcept {
+    off_ = 0;
+    ++generation_;
+}
 
 void* DeviceArena::base() const noexcept { return base_; }
 
@@ -278,4 +284,4 @@ void* PinnedHostBuffer::data() const noexcept { return data_; }
 
 std::size_t PinnedHostBuffer::size() const noexcept { return size_; }
 
-} // namespace ninfer
+} // namespace ninferno

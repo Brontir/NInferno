@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 RowSplitGroupedMmaJob make_job(const Weight& weight, std::int32_t weight_row_offset,
@@ -85,21 +85,23 @@ void q4_q5_gdn_input_grouped_mma_launch(const Tensor& x, const Weight& qk_weight
                                         Q4Q5GdnInputScheduleId schedule, cudaStream_t stream) {
     switch (schedule) {
     case Q4Q5GdnInputScheduleId::GroupedMixedMmaR32C32S2:
-        launch_grouped<GemmCfg<32, 32, 64, 16, 16, 2, 1, false, true, true>>(
-            x, qk_weight, value_z_weight, qkv, z, stream);
+        launch_grouped<GemmCfg<32, 32, 64, 16, 16, 2, 1, true, true>>(x, qk_weight, value_z_weight,
+                                                                      qkv, z, stream);
         return;
     case Q4Q5GdnInputScheduleId::GroupedMixedMmaR32C64S4:
-        launch_grouped<GemmCfg<32, 64, 64, 16, 16, 4, 1, false, true, true>>(
-            x, qk_weight, value_z_weight, qkv, z, stream);
+        launch_grouped<GemmCfg<32, 64, 64, 16, 16, 4, 1, true, true>>(x, qk_weight, value_z_weight,
+                                                                      qkv, z, stream);
         return;
     case Q4Q5GdnInputScheduleId::GroupedMixedMmaR64C128S2:
-        launch_grouped<GemmCfg<64, 128, 64, 64, 16, 2, 1, false, true, true>>(
-            x, qk_weight, value_z_weight, qkv, z, stream);
+        launch_grouped<GemmCfg<64, 128, 64, 64, 16, 2, 1, true, true>>(x, qk_weight, value_z_weight,
+                                                                       qkv, z, stream);
         return;
     case Q4Q5GdnInputScheduleId::IndependentDirectFixed:
+    case Q4Q5GdnInputScheduleId::SlicedKSmallT:
+    case Q4Q5GdnInputScheduleId::SmallTMma:
         break;
     }
     throw std::logic_error("Q4/Q5 GDN input: grouped MMA schedule is unknown");
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

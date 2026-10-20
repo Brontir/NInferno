@@ -1,4 +1,5 @@
 #include "runtime/engine/context_cache/resource_manager.h"
+#include "core/fnv.h"
 
 #include <algorithm>
 #include <array>
@@ -17,33 +18,33 @@
 
 namespace {
 
-using ninfer::PrefixReusePath;
-using ninfer::RuntimeStats;
-using ninfer::runtime::CancellationFlagView;
-using ninfer::runtime::CheckpointKind;
-using ninfer::runtime::CheckpointRecoveryAlternativeWork;
-using ninfer::runtime::CheckpointRef;
-using ninfer::runtime::CheckpointScope;
-using ninfer::runtime::CommitDisposition;
-using ninfer::runtime::ConsumeStatus;
-using ninfer::runtime::ContextOperationCounts;
-using ninfer::runtime::ContextTransactionInProgress;
-using ninfer::runtime::ContextTransactionReserveStatus;
-using ninfer::runtime::ContextTransactionStatus;
-using ninfer::runtime::ContextTransferObservation;
-using ninfer::runtime::ContextTransferRequirement;
-using ninfer::runtime::FinishDisposition;
-using ninfer::runtime::LaneId;
-using ninfer::runtime::MaterializationMachineWork;
-using ninfer::runtime::PrefillWork;
-using ninfer::runtime::PlanningCandidateId;
-using ninfer::runtime::PlanningOwnerId;
-using ninfer::runtime::PrivateSourceMode;
-using ninfer::runtime::ProgramResourceRevision;
-using ninfer::runtime::Readiness;
-using ninfer::runtime::RequestPlanSummary;
-using ninfer::runtime::RetentionClass;
-using ninfer::runtime::VictimDisposition;
+using ninferno::PrefixReusePath;
+using ninferno::RuntimeStats;
+using ninferno::runtime::CancellationFlagView;
+using ninferno::runtime::CheckpointKind;
+using ninferno::runtime::CheckpointRecoveryAlternativeWork;
+using ninferno::runtime::CheckpointRef;
+using ninferno::runtime::CheckpointScope;
+using ninferno::runtime::CommitDisposition;
+using ninferno::runtime::ConsumeStatus;
+using ninferno::runtime::ContextOperationCounts;
+using ninferno::runtime::ContextTransactionInProgress;
+using ninferno::runtime::ContextTransactionReserveStatus;
+using ninferno::runtime::ContextTransactionStatus;
+using ninferno::runtime::ContextTransferObservation;
+using ninferno::runtime::ContextTransferRequirement;
+using ninferno::runtime::FinishDisposition;
+using ninferno::runtime::LaneId;
+using ninferno::runtime::MaterializationMachineWork;
+using ninferno::runtime::PrefillWork;
+using ninferno::runtime::PlanningCandidateId;
+using ninferno::runtime::PlanningOwnerId;
+using ninferno::runtime::PrivateSourceMode;
+using ninferno::runtime::ProgramResourceRevision;
+using ninferno::runtime::Readiness;
+using ninferno::runtime::RequestPlanSummary;
+using ninferno::runtime::RetentionClass;
+using ninferno::runtime::VictimDisposition;
 
 int failures = 0;
 
@@ -61,17 +62,17 @@ void run_test(const char* name, Test&& test) {
     }
 }
 
-ninfer::runtime::ContextMachineCostModel test_cost_model() {
-    ninfer::runtime::ContextMachineCostModel model;
+ninferno::runtime::ContextMachineCostModel test_cost_model() {
+    ninferno::runtime::ContextMachineCostModel model;
     for (auto& transfer : model.transfer) {
         transfer.batch_ns        = 0;
         transfer.operation_ns    = 0;
-        transfer.ns_per_byte_q32 = ninfer::runtime::kContextCostQ32One;
+        transfer.ns_per_byte_q32 = ninferno::runtime::kContextCostQ32One;
     }
-    model.prefill.token_ns_q32          = 100ULL * ninfer::runtime::kContextCostQ32One;
-    model.prefill.attention_pair_ns_q32 = ninfer::runtime::kContextCostQ32One;
+    model.prefill.token_ns_q32          = 100ULL * ninferno::runtime::kContextCostQ32One;
+    model.prefill.attention_pair_ns_q32 = ninferno::runtime::kContextCostQ32One;
     model.prefill.vision_item_ns        = 1;
-    model.prefill.vision_patch_ns_q32   = ninfer::runtime::kContextCostQ32One;
+    model.prefill.vision_patch_ns_q32   = ninferno::runtime::kContextCostQ32One;
     return model;
 }
 
@@ -123,8 +124,8 @@ struct FakeCheckpointSummary {
     CheckpointRef ref;
     CheckpointScope scope = CheckpointScope::Private;
     FakeShortlistKey shortlist_key;
-    ninfer::runtime::ReplicaResidency state_residency =
-        ninfer::runtime::ReplicaResidency::DeviceOnly;
+    ninferno::runtime::ReplicaResidency state_residency =
+        ninferno::runtime::ReplicaResidency::DeviceOnly;
     FakeRequiredKV required_kv;
     PrefillWork rebuild_work;
 
@@ -196,9 +197,9 @@ FakeCheckpointSummary shared_checkpoint(std::uint32_t digest, std::uint32_t fron
 
 struct FakeContextCache {
     struct Opportunity {
-        ninfer::PromptCacheMarkerKind kind = ninfer::PromptCacheMarkerKind::SharedStablePrefix;
-        ninfer::SharedCandidateEvidence evidence =
-            ninfer::SharedCandidateEvidence::ExplicitBoundary;
+        ninferno::PromptCacheMarkerKind kind = ninferno::PromptCacheMarkerKind::SharedStablePrefix;
+        ninferno::SharedCandidateEvidence evidence =
+            ninferno::SharedCandidateEvidence::ExplicitBoundary;
         std::uint32_t frontier = 0;
     };
 
@@ -300,7 +301,7 @@ struct FakeAdmissionCandidate {
     RequestPlanSummary value;
     PrefillWork remaining;
     std::vector<ContextTransferRequirement> transfers;
-    ninfer::runtime::IdentityMaterializationAssessment identity;
+    ninferno::runtime::IdentityMaterializationAssessment identity;
     PrivateSourceMode source_mode           = PrivateSourceMode::ConsumeToActive;
     std::uint32_t private_source_id         = 0;
     std::uint32_t shared_source_id          = 0;
@@ -309,7 +310,7 @@ struct FakeAdmissionCandidate {
 
     [[nodiscard]] const RequestPlanSummary& summary() const noexcept { return value; }
 
-    [[nodiscard]] const ninfer::runtime::IdentityMaterializationAssessment&
+    [[nodiscard]] const ninferno::runtime::IdentityMaterializationAssessment&
     identity_assessment() const noexcept {
         return identity;
     }
@@ -365,17 +366,17 @@ public:
     FakeAssessedPressureTarget(const FakeAssessedPressureTarget&)                = delete;
     FakeAssessedPressureTarget& operator=(const FakeAssessedPressureTarget&)     = delete;
 
-    [[nodiscard]] const ninfer::runtime::PressureTargetAssessment& assessment() const noexcept {
+    [[nodiscard]] const ninferno::runtime::PressureTargetAssessment& assessment() const noexcept {
         return assessment_;
     }
 
 private:
     FakeAssessedPressureTarget(FakePressureTargetHandle target,
-                               ninfer::runtime::PressureTargetAssessment assessment) noexcept
+                               ninferno::runtime::PressureTargetAssessment assessment) noexcept
         : target_(target), assessment_(assessment) {}
 
     FakePressureTargetHandle target_;
-    ninfer::runtime::PressureTargetAssessment assessment_;
+    ninferno::runtime::PressureTargetAssessment assessment_;
 
     friend class FakePressurePlanningSession;
 };
@@ -472,7 +473,7 @@ using FakeContextTransactionProgress =
 
 struct FakeCaptureAssessment {
     FakeShortlistKey shortlist_key;
-    ninfer::SharedCandidateEvidence shared_evidence = ninfer::SharedCandidateEvidence::None;
+    ninferno::SharedCandidateEvidence shared_evidence = ninferno::SharedCandidateEvidence::None;
     PrefillWork protected_rebuild_work;
     std::vector<ContextTransferRequirement> transfer_requirements;
     std::vector<CheckpointRecoveryAlternativeWork> projected_recovery_work{fake_recovery_work(0)};
@@ -515,7 +516,7 @@ struct FakeCommitRowResult {
 };
 
 struct FakeCommitResult {
-    std::array<FakeCommitRowResult, ninfer::kMaximumConcurrency> rows{};
+    std::array<FakeCommitRowResult, ninferno::kMaximumConcurrency> rows{};
     std::size_t row_count = 0;
 };
 
@@ -560,11 +561,13 @@ public:
     struct Cursor;
     [[nodiscard]] FakePressureTargetHandle maximal_target(PlanningCandidateId candidate);
     [[nodiscard]] Cursor begin_construction(FakePressureTargetHandle target, bool restore = false);
-    [[nodiscard]] ninfer::runtime::PressureConstructionStep
+    [[nodiscard]] ninferno::runtime::PressureConstructionStep
     next_construction_option(Cursor& cursor);
-    void choose_construction(Cursor& cursor, ninfer::runtime::PressureConstructionOptionId option);
+    void choose_construction(Cursor& cursor,
+                             ninferno::runtime::PressureConstructionOptionId option);
     [[nodiscard]] std::optional<FakePressureTargetHandle> construction_target(const Cursor& cursor);
-    [[nodiscard]] ninfer::runtime::PressureTargetGuidance guidance(FakePressureTargetHandle target);
+    [[nodiscard]] ninferno::runtime::PressureTargetGuidance
+    guidance(FakePressureTargetHandle target);
     [[nodiscard]] FakeAssessedPressureTarget assess(FakePressureTargetHandle target);
     [[nodiscard]] FakePreparedPressureExpansion
     prepare_expansion(FakePressureTargetHandle parent,
@@ -575,9 +578,9 @@ public:
     [[nodiscard]] PrefillWork
     shared_capture_split_prefill_work(const FakeAssessedPressureTarget&, const FakePreparedPrompt&,
                                       std::span<const std::uint32_t> frontiers) const;
-    [[nodiscard]] std::optional<FakeResourcePlan> seal(FakeAssessedPressureTarget&& assessed,
-                                                       const FakePreparedPrompt& prompt,
-                                                       ninfer::runtime::FinalScheduleIntent intent);
+    [[nodiscard]] std::optional<FakeResourcePlan>
+    seal(FakeAssessedPressureTarget&& assessed, const FakePreparedPrompt& prompt,
+         ninferno::runtime::FinalScheduleIntent intent);
     [[nodiscard]] std::optional<FakeResourcePlan> seal(FakeAssessedPressureTarget&& assessed);
     [[nodiscard]] std::optional<FakeResourcePlan>
     seal_capture(FakeAssessedPressureTarget&& assessed);
@@ -608,7 +611,7 @@ public:
     };
 private:
     std::uint32_t construction_generation_ = 0;
-    [[nodiscard]] ninfer::runtime::PressureTargetGuidance guidance_for(const Target& target);
+    [[nodiscard]] ninferno::runtime::PressureTargetGuidance guidance_for(const Target& target);
     [[nodiscard]] bool valid(FakePressureTargetHandle target) const noexcept;
     [[nodiscard]] std::uint32_t candidate_index(PlanningCandidateId candidate) const;
     void populate_options(std::uint32_t candidate_index);
@@ -630,9 +633,9 @@ private:
     std::vector<Target> targets_;
     std::vector<Target> expansion_scratch_;
     std::vector<FakePressureTargetHandle> committed_children_;
-    std::vector<ninfer::runtime::PressureOwnerOutcome> guidance_outcomes_;
-    std::vector<ninfer::runtime::PressureOwnerOutcome> assessment_outcomes_;
-    std::vector<ninfer::runtime::PressureCheckpointRecoveryImpact> assessment_impacts_;
+    std::vector<ninferno::runtime::PressureOwnerOutcome> guidance_outcomes_;
+    std::vector<ninferno::runtime::PressureOwnerOutcome> assessment_outcomes_;
+    std::vector<ninferno::runtime::PressureCheckpointRecoveryImpact> assessment_impacts_;
     std::vector<CheckpointRecoveryAlternativeWork> assessment_recovery_work_;
 };
 
@@ -709,11 +712,11 @@ public:
         plan.identity.machine_work.reused_prompt_tokens   = plan.value.reusable_prompt_tokens;
         plan.identity.physical_status =
             target_feasible(std::span<const FakeTargetDecision>{})
-                ? ninfer::runtime::MaterializationPhysicalStatus::Feasible
-                : ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+                ? ninferno::runtime::MaterializationPhysicalStatus::Feasible
+                : ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
         plan.identity.source_mode = plan.source_mode;
         plan.identity.expandable  = plan.identity.physical_status !=
-                                   ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+                                   ninferno::runtime::MaterializationPhysicalStatus::Feasible;
         plan.identity.projection_work = 1;
         plan.identity.assessment_digest =
             (static_cast<std::uint64_t>(plan.value.reusable_prompt_tokens) << 32U) ^
@@ -723,9 +726,9 @@ public:
 
     [[nodiscard]] std::optional<FakeResourcePlan>
     seal_identity(const FakeAdmissionCandidate& admission, const FakePreparedPrompt&,
-                  ninfer::runtime::FinalScheduleIntent intent) {
+                  ninferno::runtime::FinalScheduleIntent intent) {
         if (admission.identity.physical_status !=
-            ninfer::runtime::MaterializationPhysicalStatus::Feasible) {
+            ninferno::runtime::MaterializationPhysicalStatus::Feasible) {
             return std::nullopt;
         }
         selected_shared_capture_frontiers.assign(intent.shared_capture_frontiers.begin(),
@@ -897,6 +900,7 @@ public:
         require(pending_plan_.has_value(), "fake materialization plan disappeared");
         const FakeResourcePlan& plan = *pending_plan_;
         FakeMaterializationResult result;
+        result.transfer_observations = transfer_observations;
         result.status = (abort_progress || cancellation.requested())
                             ? ContextTransactionStatus::Aborted
                             : ContextTransactionStatus::Published;
@@ -961,7 +965,7 @@ public:
                     shared_checkpoint(plan.admission.shared_source_content_key,
                                       plan.admission.shared_source_frontier);
                 if (change_shared_source_residency_on_second_report && references >= 2) {
-                    checkpoint.state_residency = ninfer::runtime::ReplicaResidency::Both;
+                    checkpoint.state_residency = ninferno::runtime::ReplicaResidency::Both;
                 }
                 result.shared_source->final_summary = FakeSharedPrefixSummary{
                     .checkpoint        = std::move(checkpoint),
@@ -987,11 +991,15 @@ public:
         return transaction_kind_ != TransactionKind::None;
     }
 
+    [[nodiscard]] bool has_unsettled_state_fork() const noexcept { return unsettled_state_fork; }
+
     [[nodiscard]] FakeCaptureAssessment inspect_capture(const FakeCaptureOffer&,
                                                         const FakeSharedPrefixHandle*,
                                                         const FakeSharedPrefixHandle*,
                                                         std::optional<CheckpointRef>,
-                                                        bool permit_shared_publication) const {
+                                                        bool permit_shared_publication,
+                                                        std::uint32_t waiting_admissions) const {
+        inspected_capture_waiting = waiting_admissions;
         FakeCaptureAssessment assessment = capture_assessment;
         if (!permit_shared_publication) { assessment.publishes_shared = false; }
         return assessment;
@@ -1027,10 +1035,10 @@ public:
             candidate.identity.machine_work.candidate_transfers;
         candidate.identity.physical_status =
             target_feasible(std::span<const FakeTargetDecision>{})
-                ? ninfer::runtime::MaterializationPhysicalStatus::Feasible
-                : ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+                ? ninferno::runtime::MaterializationPhysicalStatus::Feasible
+                : ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
         candidate.identity.expandable = candidate.identity.physical_status !=
-                                        ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+                                        ninferno::runtime::MaterializationPhysicalStatus::Feasible;
         candidate.identity.projection_work = 1;
         candidate.identity.assessment_digest =
             (static_cast<std::uint64_t>(assessment.shortlist_key.frontier) << 32U) ^
@@ -1052,7 +1060,8 @@ public:
     [[nodiscard]] ContextTransactionReserveStatus
     reserve_active_capture(FakeCaptureOffer&&, const FakeSharedPrefixHandle*,
                            const FakeSharedPrefixHandle*, std::optional<CheckpointRef>, bool,
-                           CancellationFlagView cancellation) {
+                           std::uint32_t waiting_admissions, CancellationFlagView cancellation) {
+        reserved_capture_waiting = waiting_admissions;
         if (cancellation.requested() || abort_capture_start) {
             return ContextTransactionReserveStatus::Aborted;
         }
@@ -1065,8 +1074,9 @@ public:
 
     [[nodiscard]] ContextTransactionReserveStatus reserve_active_capture_with_pressure(
         FakeCaptureOffer&&, const FakeSharedPrefixHandle*, const FakeSharedPrefixHandle*,
-        std::optional<CheckpointRef>, bool publish_shared, FakeResourcePlan&& pressure,
-        CancellationFlagView cancellation) {
+        std::optional<CheckpointRef>, bool publish_shared, std::uint32_t waiting_admissions,
+        FakeResourcePlan&& pressure, CancellationFlagView cancellation) {
+        pressured_capture_waiting = waiting_admissions;
         if (cancellation.requested() || abort_capture_start || pressure.revision != revision_) {
             return ContextTransactionReserveStatus::Aborted;
         }
@@ -1105,6 +1115,11 @@ public:
         }
         result.continuation.emplace(sequence.id, key);
         return result;
+    }
+
+    [[nodiscard]] FakeFinishResult finish_cancelled(FakeSequenceHandle sequence) noexcept {
+        ++finish_cancelled_calls;
+        return finish(sequence);
     }
 
     [[nodiscard]] FakeAbortResult abort(FakeSequenceHandle) noexcept {
@@ -1153,6 +1168,7 @@ public:
     bool finish_release                                  = false;
     bool finish_with_rewrite                             = false;
     bool abort_capture_start                             = false;
+    bool unsettled_state_fork                            = false;
     bool report_shared_source_summary                    = false;
     bool change_shared_source_residency_on_second_report = false;
     std::uint32_t reported_shared_active_references      = 0;
@@ -1160,14 +1176,19 @@ public:
     FakeCaptureAssessment capture_assessment;
     FakeContinuationSummary capture_summary;
     FakePhysicalUsage usage;
+    std::vector<ContextTransferObservation> transfer_observations;
 
     std::uint64_t admission_inspections       = 0;
     std::uint64_t pressure_planning_sessions  = 0;
     std::uint64_t pressure_target_assessments = 0;
     std::uint64_t start_calls                 = 0;
     std::uint64_t finish_calls                = 0;
+    std::uint64_t finish_cancelled_calls      = 0;
     std::uint64_t abort_calls                 = 0;
     std::uint64_t skipped_captures            = 0;
+    mutable std::uint32_t inspected_capture_waiting = 0;
+    std::uint32_t reserved_capture_waiting          = 0;
+    std::uint32_t pressured_capture_waiting         = 0;
     std::size_t pressure_target_count_peak    = 0;
     std::uint32_t finish_frontier             = 16;
     std::uint32_t started_source_id           = 0;
@@ -1377,7 +1398,7 @@ FakePressurePlanningSession::begin_construction(FakePressureTargetHandle handle,
     return cursor;
 }
 
-ninfer::runtime::PressureConstructionStep
+ninferno::runtime::PressureConstructionStep
 FakePressurePlanningSession::next_construction_option(Cursor& cursor) {
     if (cursor.next_option < cursor.options.size()) {
         auto index = static_cast<std::uint32_t>(cursor.next_option++);
@@ -1406,7 +1427,7 @@ FakePressurePlanningSession::next_construction_option(Cursor& cursor) {
 }
 
 void FakePressurePlanningSession::choose_construction(
-    Cursor& cursor, ninfer::runtime::PressureConstructionOptionId id) {
+    Cursor& cursor, ninferno::runtime::PressureConstructionOptionId id) {
     require(id.cursor_generation == cursor.generation && id.scan_generation == cursor.scan &&
                 id.index < cursor.options.size(),
             "stale fake construction option");
@@ -1435,13 +1456,13 @@ FakePressurePlanningSession::construction_target(const Cursor& cursor) {
                                     .index = static_cast<std::uint32_t>(found - targets_.begin())};
 }
 
-ninfer::runtime::PressureTargetGuidance
+ninferno::runtime::PressureTargetGuidance
 FakePressurePlanningSession::guidance(FakePressureTargetHandle handle) {
     require(valid(handle) && !scratch_live_, "fake pressure guidance is stale");
     return guidance_for(targets_[handle.index]);
 }
 
-ninfer::runtime::PressureTargetGuidance
+ninferno::runtime::PressureTargetGuidance
 FakePressurePlanningSession::guidance_for(const Target& target) {
     populate_options(target.candidate_index);
     const FakeAdmissionCandidate& candidate = *candidates_[target.candidate_index];
@@ -1458,7 +1479,7 @@ FakePressurePlanningSession::guidance_for(const Target& target) {
         selected.push_back(decision);
         degradation_units += decision.degradation_units;
         dropped += decision.dropped_checkpoints;
-        guidance_outcomes_.push_back(ninfer::runtime::PressureOwnerOutcome{
+        guidance_outcomes_.push_back(ninferno::runtime::PressureOwnerOutcome{
             .owner               = owners_[index].id,
             .disposition         = decision.evicts_continuation ? VictimDisposition::Evicted
                                                                 : VictimDisposition::Retained,
@@ -1487,7 +1508,7 @@ FakePressurePlanningSession::guidance_for(const Target& target) {
     const std::size_t remaining      = selected_units >= program_->required_pressure_actions
                                            ? 0
                                            : program_->required_pressure_actions - selected_units;
-    return ninfer::runtime::PressureTargetGuidance{
+    return ninferno::runtime::PressureTargetGuidance{
         .physical =
             {
                 .unsatisfied_constraints   = remaining == 0 ? 0U : 1U,
@@ -1535,7 +1556,7 @@ FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTarge
         selected.push_back(decision);
         degradation_units += decision.degradation_units;
         dropped += decision.dropped_checkpoints;
-        assessment_outcomes_.push_back(ninfer::runtime::PressureOwnerOutcome{
+        assessment_outcomes_.push_back(ninferno::runtime::PressureOwnerOutcome{
             .owner               = owners_[index].id,
             .disposition         = decision.evicts_continuation ? VictimDisposition::Evicted
                                                                 : VictimDisposition::Retained,
@@ -1545,7 +1566,7 @@ FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTarge
         const auto append_checkpoint_outcome = [&](CheckpointRef checkpoint, bool survives) {
             assessment_recovery_work_.push_back(
                 fake_recovery_work(survives ? 0 : program_->pressure_checkpoint_recovery_ns));
-            assessment_impacts_.push_back(ninfer::runtime::PressureCheckpointRecoveryImpact{
+            assessment_impacts_.push_back(ninferno::runtime::PressureCheckpointRecoveryImpact{
                 .owner                = owners_[index].id,
                 .checkpoint           = checkpoint,
                 .target_recovery_work = std::span<const CheckpointRecoveryAlternativeWork>(
@@ -1594,17 +1615,16 @@ FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTarge
     const bool identity  = selected.empty();
     std::uint64_t digest = candidate.identity.assessment_digest;
     if (!identity) {
-        digest = 1469598103934665603ULL;
+        digest = ninferno::fnv::kOffset;
         for (const std::uint16_t choice : target.choices) {
-            digest ^= choice;
-            digest *= 1099511628211ULL;
+            digest = ninferno::fnv::mix(digest, choice);
         }
         digest ^= target.candidate_index;
     }
-    ninfer::runtime::PressureTargetAssessment assessment{
+    ninferno::runtime::PressureTargetAssessment assessment{
         .physical_status       = program_->target_feasible(selected)
-                                     ? ninfer::runtime::MaterializationPhysicalStatus::Feasible
-                                     : ninfer::runtime::MaterializationPhysicalStatus::Infeasible,
+                                     ? ninferno::runtime::MaterializationPhysicalStatus::Feasible
+                                     : ninferno::runtime::MaterializationPhysicalStatus::Infeasible,
         .source_mode           = candidate.source_mode,
         .machine_work          = machine,
         .owner_outcomes        = assessment_outcomes_,
@@ -1728,12 +1748,12 @@ PrefillWork FakePressurePlanningSession::shared_capture_split_prefill_work(
 
 std::optional<FakeResourcePlan>
 FakePressurePlanningSession::seal(FakeAssessedPressureTarget&& assessed, const FakePreparedPrompt&,
-                                  ninfer::runtime::FinalScheduleIntent intent) {
+                                  ninferno::runtime::FinalScheduleIntent intent) {
     const FakePressureTargetHandle handle = assessed.target_;
     require(valid(handle) && !scratch_live_, "fake pressure seal is stale");
     const Target& target   = targets_[handle.index];
     const auto& assessment = assessed.assessment_;
-    if (assessment.physical_status != ninfer::runtime::MaterializationPhysicalStatus::Feasible) {
+    if (assessment.physical_status != ninferno::runtime::MaterializationPhysicalStatus::Feasible) {
         return std::nullopt;
     }
     assessed.target_.generation = 0;
@@ -1809,7 +1829,7 @@ struct FakeModelContract {
     using CacheSessionKey            = FakeCacheSessionKey;
 };
 
-using FakeManager = ninfer::runtime::ResourceManager<FakeModelContract>;
+using FakeManager = ninferno::runtime::ResourceManager<FakeModelContract>;
 
 FakeManager make_manager(std::uint32_t lanes = 1, std::uint32_t private_capacity = 4,
                          std::uint32_t shared_capacity = 0, bool cache_enabled = true) {
@@ -1845,15 +1865,15 @@ ActiveRequest start_active(FakeManager& manager, FakeProgram& program, std::uint
     auto activation                   = std::move(*outcome.activation);
     const FakeSequenceHandle sequence = activation.sequence();
     manager.adopt(program, std::move(activation));
-    require(manager.lane_state(lane) == ninfer::runtime::LogicalLaneState::Active,
+    require(manager.lane_state(lane) == ninferno::runtime::LogicalLaneState::Active,
             "published lane was not adopted as active");
     return ActiveRequest{.lane = lane, .sequence = sequence};
 }
 
 void test_private_portfolio_loss_keeps_checkpoint_identity_fixed() {
-    using ninfer::runtime::ContextPortfolioCheckpointValue;
-    using ninfer::runtime::ContextPortfolioOwnerPolicy;
-    using ninfer::runtime::ContextPortfolioValue;
+    using ninferno::runtime::ContextPortfolioCheckpointValue;
+    using ninferno::runtime::ContextPortfolioOwnerPolicy;
+    using ninferno::runtime::ContextPortfolioValue;
 
     const std::array owners{
         ContextPortfolioOwnerPolicy{.owner                    = PlanningOwnerId{.value = 0},
@@ -1881,9 +1901,9 @@ void test_private_portfolio_loss_keeps_checkpoint_identity_fixed() {
 }
 
 void test_portfolio_demand_and_owner_aggregation() {
-    using ninfer::runtime::ContextPortfolioCheckpointValue;
-    using ninfer::runtime::ContextPortfolioOwnerPolicy;
-    using ninfer::runtime::ContextPortfolioValue;
+    using ninferno::runtime::ContextPortfolioCheckpointValue;
+    using ninferno::runtime::ContextPortfolioOwnerPolicy;
+    using ninferno::runtime::ContextPortfolioValue;
 
     {
         const std::array owners{ContextPortfolioOwnerPolicy{.owner = PlanningOwnerId{.value = 0}}};
@@ -1939,14 +1959,14 @@ void test_portfolio_demand_and_owner_aggregation() {
 }
 
 void test_shared_capture_subtracts_private_transition_loss() {
-    using Planner = ninfer::runtime::SharedCapturePlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
 
     FakeProgram program;
     program.required_pressure_actions             = 1;
     program.require_evictions                     = true;
     program.pressure_target_immediate_ns_override = 0;
     FakeCaptureAssessment capture{
-        .shared_evidence     = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .shared_evidence     = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .publishes_shared    = true,
         .physically_feasible = false,
     };
@@ -1984,8 +2004,64 @@ void test_shared_capture_subtracts_private_transition_loss() {
             "shared capture gain did not subtract the private capability transition loss");
 }
 
+void test_private_capture_is_priced_by_the_shared_rule() {
+    using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
+
+    // One inactive owner (retention weight 4) whose endpoint saves 1000 ns; evicting it leaves a
+    // full rebuild (recovery 1000 ns) and loses 4 * 1000. A private checkpoint joining a continuation of the same weight is worth its own
+    // saving times 4: it is published only when that is strictly larger than the loss.
+    const auto plan = [](std::uint64_t candidate_rebuild_ns) {
+        FakeProgram program;
+        program.required_pressure_actions             = 1;
+        program.require_evictions                     = true;
+        program.pressure_target_immediate_ns_override = 0;
+        program.pressure_checkpoint_recovery_ns       = 1000;
+        const FakeCaptureAssessment capture{
+            .publishes_private   = true,
+            .physically_feasible = false,
+        };
+        FakeContinuationHandle owner{7, 0};
+        const std::array<const FakeContinuationHandle*, 1> private_owners{&owner};
+        const std::array<PlanningOwnerId, 1> private_owner_ids{PlanningOwnerId{.value = 0}};
+        const std::array<Planner::OwnerPolicy, 1> owner_policies{
+            Planner::OwnerPolicy{.owner = PlanningOwnerId{.value = 0},
+                                 .private_retention_weight = 4},
+        };
+        const std::array<Planner::CheckpointPolicy, 1> checkpoint_policies{
+            Planner::CheckpointPolicy{
+                .owner                = PlanningOwnerId{.value = 0},
+                .checkpoint           = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
+                                                      .frontier = 16,
+                                                      .ordinal  = 0},
+                .rebuild_ns           = 1000,
+                .baseline_recovery_ns = 0,
+            },
+        };
+        Planner planner;
+        return planner.plan(program, test_cost_model(),
+                            Planner::Input{
+                                .capture                            = &capture,
+                                .private_owners                     = private_owners,
+                                .private_owner_ids                  = private_owner_ids,
+                                .shared_owners                      = {},
+                                .shared_owner_ids                   = {},
+                                .owner_policies                     = owner_policies,
+                                .checkpoint_policies                = checkpoint_policies,
+                                .candidate_rebuild_ns               = candidate_rebuild_ns,
+                                .candidate_private_retention_weight = 4,
+                            });
+    };
+    const auto worth = plan(2000);
+    require(worth && worth->net_gain == 4 * 2000 - 4 * 1000 && worth->owner_outcomes.size() == 1 &&
+                worth->owner_outcomes.front().disposition ==
+                    ninferno::runtime::VictimDisposition::Evicted,
+            "a private checkpoint worth more than its victim was not published over it");
+    require(!plan(1000), "a private checkpoint worth exactly its victim's loss evicted it");
+    require(!plan(500), "a private checkpoint worth less than its victim evicted it");
+}
+
 void test_shared_capture_budget_bounds_committed_canonical_targets() {
-    using Planner = ninfer::runtime::SharedCapturePlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
 
     constexpr std::size_t private_owner_count = 16;
     constexpr std::size_t shared_owner_count  = 4;
@@ -2034,8 +2110,70 @@ void test_shared_capture_budget_bounds_committed_canonical_targets() {
             "shared-capture search committed more canonical targets than its budget");
 }
 
+void test_capture_search_grant_bounds_wall_time() {
+    using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
+    require(Planner::economic_grant_ns(0, 0) == 200'000, "capture grant floor");
+    require(Planner::economic_grant_ns(20'000'000, 0) == 1'000'000, "capture grant is a twentieth");
+    require(Planner::economic_grant_ns(20'000'000, 3) == 250'000,
+            "capture grant is shared by the waiting requests");
+    require(Planner::economic_grant_ns(1'000'000'000, 0) == 5'000'000, "capture grant ceiling");
+
+    constexpr std::size_t private_owner_count = 16;
+    constexpr std::size_t shared_owner_count  = 4;
+    constexpr std::uint32_t target_budget     = 64;
+
+    const auto search = [&](std::uint64_t grant_ns) {
+        FakeProgram program;
+        program.required_pressure_actions         = private_owner_count + shared_owner_count + 1U;
+        program.pressure_optional_target_capacity = target_budget;
+        std::array<FakeContinuationHandle, private_owner_count> private_handles;
+        std::array<const FakeContinuationHandle*, private_owner_count> private_owners;
+        std::array<PlanningOwnerId, private_owner_count> private_owner_ids;
+        for (std::size_t index = 0; index < private_owner_count; ++index) {
+            private_handles[index] =
+                FakeContinuationHandle(static_cast<std::uint32_t>(index + 1U), 0);
+            private_owners[index]    = &private_handles[index];
+            private_owner_ids[index] = PlanningOwnerId{.value = static_cast<std::uint32_t>(index)};
+        }
+        std::array<FakeSharedPrefixHandle, shared_owner_count> shared_handles;
+        std::array<const FakeSharedPrefixHandle*, shared_owner_count> shared_owners;
+        std::array<PlanningOwnerId, shared_owner_count> shared_owner_ids;
+        for (std::size_t index = 0; index < shared_owner_count; ++index) {
+            shared_handles[index].id = static_cast<std::uint32_t>(index + 1U);
+            shared_owners[index]     = &shared_handles[index];
+            shared_owner_ids[index] =
+                PlanningOwnerId{.value = static_cast<std::uint32_t>(private_owner_count + index)};
+        }
+        const FakeCaptureAssessment capture{
+            .shortlist_key       = FakeShortlistKey{.digest = 92, .frontier = 64},
+            .publishes_shared    = true,
+            .physically_feasible = false,
+        };
+        Planner planner;
+        const auto result = planner.plan(program, test_cost_model(),
+                                         Planner::Input{
+                                             .capture           = &capture,
+                                             .private_owners    = private_owners,
+                                             .private_owner_ids = private_owner_ids,
+                                             .shared_owners     = shared_owners,
+                                             .shared_owner_ids  = shared_owner_ids,
+                                             .target_budget     = target_budget,
+                                             .search_grant_ns   = grant_ns,
+                                         });
+        require(!result, "infeasible capture search unexpectedly found a plan");
+        return program.pressure_target_assessments;
+    };
+    // A 1 ns grant is spent by the identity assessment, so no further target is assessed; without
+    // a grant the target budget alone bounds the walk.
+    const std::uint64_t granted   = search(1);
+    const std::uint64_t unbounded = search(0);
+    require(granted == 1, "an exhausted capture grant did not stop the search");
+    require(unbounded > 1 && unbounded <= target_budget,
+            "the unbounded capture search did not walk its target budget");
+}
+
 void test_equal_lower_bound_does_not_short_circuit_tie_break() {
-    using Planner = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
     program.required_pressure_actions         = 1;
@@ -2045,14 +2183,14 @@ void test_equal_lower_bound_does_not_short_circuit_tie_break() {
     FakeAdmissionCandidate incumbent;
     set_fake_machine_costs(incumbent.identity.machine_work, 1'000'000'000, 1'000'000'000);
     incumbent.identity.machine_work.candidate_transfers[2].copy_operations = 1;
-    incumbent.identity.physical_status   = ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+    incumbent.identity.physical_status = ninferno::runtime::MaterializationPhysicalStatus::Feasible;
     incumbent.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     incumbent.identity.assessment_digest = 11;
 
     FakeAdmissionCandidate tied_pressure;
     set_fake_machine_costs(tied_pressure.identity.machine_work, 1'000'000'000, 1'000'000'000);
     tied_pressure.identity.physical_status =
-        ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+        ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
     tied_pressure.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     tied_pressure.identity.expandable        = true;
     tied_pressure.identity.assessment_digest = 22;
@@ -2070,11 +2208,11 @@ void test_equal_lower_bound_does_not_short_circuit_tie_break() {
     FakeContinuationHandle owner{7, 0};
     const std::array<const FakeContinuationHandle*, 1> private_owners{&owner};
     const std::array<PlanningOwnerId, 1> private_owner_ids{PlanningOwnerId{.value = 0}};
-    const std::array<ninfer::runtime::MaterializationOwnerPolicy, 1> owner_policy{
-        ninfer::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 0}},
+    const std::array<ninferno::runtime::MaterializationOwnerPolicy, 1> owner_policy{
+        ninferno::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 0}},
     };
-    const std::array<ninfer::runtime::MaterializationCheckpointPolicy, 1> checkpoint_policy{
-        ninfer::runtime::MaterializationCheckpointPolicy{
+    const std::array<ninferno::runtime::MaterializationCheckpointPolicy, 1> checkpoint_policy{
+        ninferno::runtime::MaterializationCheckpointPolicy{
             .owner      = PlanningOwnerId{.value = 0},
             .checkpoint = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
                                         .frontier = 16,
@@ -2085,7 +2223,7 @@ void test_equal_lower_bound_does_not_short_circuit_tie_break() {
 
     Planner planner;
     const auto logical_goal = [](PlanningCandidateId, PrivateSourceMode,
-                                 std::span<const ninfer::runtime::PressureOwnerOutcome>)
+                                 std::span<const ninferno::runtime::PressureOwnerOutcome>)
         -> std::optional<Planner::LogicalGoal> {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
@@ -2108,13 +2246,13 @@ void test_equal_lower_bound_does_not_short_circuit_tie_break() {
 }
 
 void test_machine_cost_changes_selection_without_changing_physical_assessment() {
-    using Planner = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
     FakeAdmissionCandidate prefill_candidate;
     prefill_candidate.identity.machine_work.remaining_prefill_work.tokens = 10;
     prefill_candidate.identity.physical_status =
-        ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+        ninferno::runtime::MaterializationPhysicalStatus::Feasible;
     prefill_candidate.identity.assessment_digest = 31;
 
     FakeAdmissionCandidate transfer_candidate;
@@ -2123,7 +2261,7 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
     transfer_candidate.identity.machine_work.optimistic_candidate_transfers[1] = {
         .payload_bytes = 100, .copy_operations = 1};
     transfer_candidate.identity.physical_status =
-        ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+        ninferno::runtime::MaterializationPhysicalStatus::Feasible;
     transfer_candidate.identity.assessment_digest = 32;
 
     const std::array<Planner::CandidateInput, 2> candidates{
@@ -2136,22 +2274,22 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
     };
     const auto pressure_inputs = [] { return Planner::PressureInputs{}; };
     const auto logical_goal    = [](PlanningCandidateId, PrivateSourceMode,
-                                 std::span<const ninfer::runtime::PressureOwnerOutcome>)
+                                 std::span<const ninferno::runtime::PressureOwnerOutcome>)
         -> std::optional<Planner::LogicalGoal> {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
 
     auto prefill_expensive                 = test_cost_model();
-    prefill_expensive.prefill.token_ns_q32 = 100U * ninfer::runtime::kContextCostQ32One;
+    prefill_expensive.prefill.token_ns_q32 = 100U * ninferno::runtime::kContextCostQ32One;
     Planner first_planner;
     const auto first =
         first_planner.plan(program, FakePreparedPrompt{}, prefill_expensive, candidates, 0,
                            pressure_inputs, logical_goal, Planner::Clock::now());
 
     auto transfer_expensive                 = test_cost_model();
-    transfer_expensive.prefill.token_ns_q32 = ninfer::runtime::kContextCostQ32One;
+    transfer_expensive.prefill.token_ns_q32 = ninferno::runtime::kContextCostQ32One;
     for (auto& direction : transfer_expensive.transfer) {
-        direction.ns_per_byte_q32 = 100U * ninfer::runtime::kContextCostQ32One;
+        direction.ns_per_byte_q32 = 100U * ninferno::runtime::kContextCostQ32One;
     }
     Planner second_planner;
     const auto second =
@@ -2161,14 +2299,14 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
     require(first && first->candidate == PlanningCandidateId{.value = 1} && second &&
                 second->candidate == PlanningCandidateId{.value = 0} &&
                 prefill_candidate.identity.physical_status ==
-                    ninfer::runtime::MaterializationPhysicalStatus::Feasible &&
+                    ninferno::runtime::MaterializationPhysicalStatus::Feasible &&
                 transfer_candidate.identity.physical_status ==
-                    ninfer::runtime::MaterializationPhysicalStatus::Feasible,
+                    ninferno::runtime::MaterializationPhysicalStatus::Feasible,
             "machine cost policy changed physical assessment or failed to change selection");
 }
 
 void test_candidate_search_prefers_deep_reuse_without_eviction() {
-    using Planner = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
     program.required_pressure_actions         = 2;
@@ -2180,7 +2318,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
 
     FakeAdmissionCandidate root;
     set_fake_machine_costs(root.identity.machine_work, 8'000'000'000ULL, 8'000'000'000ULL);
-    root.identity.physical_status   = ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+    root.identity.physical_status   = ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
     root.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     root.identity.expandable        = true;
     root.identity.assessment_digest = 101;
@@ -2190,7 +2328,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
     reuse.private_source_id            = 1;
     set_fake_machine_costs(reuse.identity.machine_work, 100'000'000, 100'000'000);
     reuse.identity.machine_work.reused_prompt_tokens = 55'048;
-    reuse.identity.physical_status   = ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+    reuse.identity.physical_status   = ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
     reuse.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     reuse.identity.expandable        = true;
     reuse.identity.assessment_digest = 202;
@@ -2214,31 +2352,34 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
         &owner_handles[0], &owner_handles[1], &owner_handles[2]};
     const std::array<PlanningOwnerId, 3> private_owner_ids{
         PlanningOwnerId{.value = 0}, PlanningOwnerId{.value = 1}, PlanningOwnerId{.value = 2}};
-    const std::array<ninfer::runtime::MaterializationOwnerPolicy, 3> owner_policy{
-        ninfer::runtime::MaterializationOwnerPolicy{.owner           = PlanningOwnerId{.value = 0},
-                                                    .retention_class = RetentionClass::LiveSession,
-                                                    .private_retention_weight = 16},
-        ninfer::runtime::MaterializationOwnerPolicy{.owner           = PlanningOwnerId{.value = 1},
-                                                    .retention_class = RetentionClass::LiveSession,
-                                                    .private_retention_weight = 16},
-        ninfer::runtime::MaterializationOwnerPolicy{.owner           = PlanningOwnerId{.value = 2},
-                                                    .retention_class = RetentionClass::LiveSession,
-                                                    .private_retention_weight = 16},
+    const std::array<ninferno::runtime::MaterializationOwnerPolicy, 3> owner_policy{
+        ninferno::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 0},
+                                                      .retention_class =
+                                                          RetentionClass::LiveSession,
+                                                      .private_retention_weight = 16},
+        ninferno::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 1},
+                                                      .retention_class =
+                                                          RetentionClass::LiveSession,
+                                                      .private_retention_weight = 16},
+        ninferno::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 2},
+                                                      .retention_class =
+                                                          RetentionClass::LiveSession,
+                                                      .private_retention_weight = 16},
     };
-    const std::array<ninfer::runtime::MaterializationCheckpointPolicy, 3> checkpoint_policy{
-        ninfer::runtime::MaterializationCheckpointPolicy{
+    const std::array<ninferno::runtime::MaterializationCheckpointPolicy, 3> checkpoint_policy{
+        ninferno::runtime::MaterializationCheckpointPolicy{
             .owner      = PlanningOwnerId{.value = 0},
             .checkpoint = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
                                         .frontier = 16,
                                         .ordinal  = 0},
             .rebuild_ns = 8'000'000'000ULL},
-        ninfer::runtime::MaterializationCheckpointPolicy{
+        ninferno::runtime::MaterializationCheckpointPolicy{
             .owner      = PlanningOwnerId{.value = 1},
             .checkpoint = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
                                         .frontier = 16,
                                         .ordinal  = 0},
             .rebuild_ns = 8'000'000'000ULL},
-        ninfer::runtime::MaterializationCheckpointPolicy{
+        ninferno::runtime::MaterializationCheckpointPolicy{
             .owner      = PlanningOwnerId{.value = 2},
             .checkpoint = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
                                         .frontier = 16,
@@ -2258,7 +2399,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
         };
     };
     const auto logical_goal = [](PlanningCandidateId, PrivateSourceMode,
-                                 std::span<const ninfer::runtime::PressureOwnerOutcome>)
+                                 std::span<const ninferno::runtime::PressureOwnerOutcome>)
         -> std::optional<Planner::LogicalGoal> {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
@@ -2275,7 +2416,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
 }
 
 void test_feasible_identity_expands_when_pressure_can_remove_copy() {
-    using Planner = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
     program.pressure_action_immediate_ns          = 0;
@@ -2286,7 +2427,7 @@ void test_feasible_identity_expands_when_pressure_can_remove_copy() {
     set_fake_machine_costs(candidate.identity.machine_work, 100'000'000, 1'000'000'000);
     candidate.identity.machine_work.candidate_transfers[2].copy_operations = 1;
     candidate.identity.pressure_may_change_machine_work                    = true;
-    candidate.identity.physical_status   = ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+    candidate.identity.physical_status = ninferno::runtime::MaterializationPhysicalStatus::Feasible;
     candidate.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     candidate.identity.assessment_digest = 17;
 
@@ -2299,11 +2440,11 @@ void test_feasible_identity_expands_when_pressure_can_remove_copy() {
     FakeContinuationHandle owner{9, 0};
     const std::array<const FakeContinuationHandle*, 1> private_owners{&owner};
     const std::array<PlanningOwnerId, 1> private_owner_ids{PlanningOwnerId{.value = 0}};
-    const std::array<ninfer::runtime::MaterializationOwnerPolicy, 1> owner_policy{
-        ninfer::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 0}},
+    const std::array<ninferno::runtime::MaterializationOwnerPolicy, 1> owner_policy{
+        ninferno::runtime::MaterializationOwnerPolicy{.owner = PlanningOwnerId{.value = 0}},
     };
-    const std::array<ninfer::runtime::MaterializationCheckpointPolicy, 1> checkpoint_policy{
-        ninfer::runtime::MaterializationCheckpointPolicy{
+    const std::array<ninferno::runtime::MaterializationCheckpointPolicy, 1> checkpoint_policy{
+        ninferno::runtime::MaterializationCheckpointPolicy{
             .owner      = PlanningOwnerId{.value = 0},
             .checkpoint = CheckpointRef{.kind     = CheckpointKind::SessionEndpoint,
                                         .frontier = 16,
@@ -2324,7 +2465,7 @@ void test_feasible_identity_expands_when_pressure_can_remove_copy() {
         };
     };
     const auto logical_goal = [](PlanningCandidateId, PrivateSourceMode,
-                                 std::span<const ninfer::runtime::PressureOwnerOutcome>)
+                                 std::span<const ninferno::runtime::PressureOwnerOutcome>)
         -> std::optional<Planner::LogicalGoal> {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
@@ -2339,12 +2480,12 @@ void test_feasible_identity_expands_when_pressure_can_remove_copy() {
 }
 
 void test_dominating_identity_does_not_build_pressure_graph() {
-    using Planner = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
     FakeAdmissionCandidate candidate;
     set_fake_machine_costs(candidate.identity.machine_work, 100'000'000, 100'000'000);
-    candidate.identity.physical_status   = ninfer::runtime::MaterializationPhysicalStatus::Feasible;
+    candidate.identity.physical_status = ninferno::runtime::MaterializationPhysicalStatus::Feasible;
     candidate.identity.source_mode       = PrivateSourceMode::ConsumeToActive;
     candidate.identity.assessment_digest = 23;
     const std::array<Planner::CandidateInput, 1> candidates{
@@ -2360,7 +2501,7 @@ void test_dominating_identity_does_not_build_pressure_graph() {
         return {};
     };
     const auto logical_goal = [](PlanningCandidateId, PrivateSourceMode,
-                                 std::span<const ninfer::runtime::PressureOwnerOutcome>)
+                                 std::span<const ninferno::runtime::PressureOwnerOutcome>)
         -> std::optional<Planner::LogicalGoal> {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
@@ -2369,7 +2510,8 @@ void test_dominating_identity_does_not_build_pressure_graph() {
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
                                pressure_inputs, logical_goal, Planner::Clock::now());
     require(result &&
-                result->diagnostics.stop_reason == ninfer::MaterializationStopReason::NoPressure &&
+                result->diagnostics.stop_reason ==
+                    ninferno::MaterializationStopReason::NoPressure &&
                 !pressure_inputs_built && program.pressure_planning_sessions == 0,
             "dominating identity eagerly constructed the pressure graph");
 }
@@ -2391,7 +2533,7 @@ void test_root_lifecycle_and_prefix_reuse() {
     require(finish.status == ConsumeStatus::Consumed &&
                 finish.disposition == FinishDisposition::Catalogued,
             "terminal continuation was not catalogued");
-    require(manager.lane_state(first.lane) == ninfer::runtime::LogicalLaneState::Free,
+    require(manager.lane_state(first.lane) == ninferno::runtime::LogicalLaneState::Free,
             "terminal lane did not return to Free");
 
     auto reuse = manager.inspect(program, FakePreparedPrompt{7}, make_base(7), 2);
@@ -2409,6 +2551,39 @@ void test_root_lifecycle_and_prefix_reuse() {
             "failed start did not roll back its logical source claim");
 }
 
+void test_state_transfer_statistics_use_payload_bytes() {
+    FakeManager manager = make_manager(1, 2);
+    FakeProgram program;
+    using ninferno::runtime::ContextResourceClass;
+    using ninferno::runtime::ContextTransferDirection;
+    program.transfer_observations = {
+        {.resource   = ContextResourceClass::State,
+         .direction  = ContextTransferDirection::DeviceToHost,
+         .units      = 2,
+         .work       = {.payload_bytes = 8192},
+         .elapsed_ns = 1000},
+        {.resource   = ContextResourceClass::State,
+         .direction  = ContextTransferDirection::HostToDevice,
+         .units      = 1,
+         .work       = {.payload_bytes = 4096},
+         .elapsed_ns = 2000},
+        {.resource   = ContextResourceClass::State,
+         .direction  = ContextTransferDirection::DeviceToDevice,
+         .units      = 1,
+         .work       = {.payload_bytes = 4096},
+         .elapsed_ns = 3000},
+    };
+    const auto active = start_active(manager, program, 7, make_base(7), 1);
+    RuntimeStats stats;
+    manager.populate_runtime_stats(program, stats);
+    require(stats.state_d2h_count == 1 && stats.state_h2d_count == 1 && stats.state_d2d_count == 1,
+            "state transfer counts must count operations, not images or bytes");
+    require(stats.state_d2h_bytes == 8192 && stats.state_h2d_bytes == 4096 &&
+                stats.state_d2d_bytes == 4096,
+            "state transfer byte counters reported image counts instead of payloads");
+    (void)finish_active(manager, program, active);
+}
+
 void test_stale_revision_is_retryable() {
     FakeManager manager = make_manager();
     FakeProgram program;
@@ -2422,7 +2597,7 @@ void test_stale_revision_is_retryable() {
             "revision mismatch was not reported as retryable stale work");
     require(program.start_calls == start_calls,
             "known-stale plan was incorrectly passed into Program start");
-    require(manager.lane_state(LaneId{0}) == ninfer::runtime::LogicalLaneState::Free,
+    require(manager.lane_state(LaneId{0}) == ninferno::runtime::LogicalLaneState::Free,
             "known-stale plan changed logical lane state");
 }
 
@@ -2859,15 +3034,18 @@ void test_in_progress_adoption_and_private_capture() {
     program.capture_summary.endpoint = endpoint(12, 24);
     program.capture_summary.long_anchors.push_back(long_anchor(12, 16, 1));
     const auto reserved =
-        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 1}, true, {});
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 1}, true, 3,
+                                       {});
     require(reserved == FakeManager::ActiveCaptureReserveResult::Reserved,
             "private capture was not reserved");
+    require(program.inspected_capture_waiting == 3 && program.reserved_capture_waiting == 3,
+            "capture placement did not see the requests waiting for admission");
     auto progress = manager.progress_context_transaction(program, {});
     auto outcome  = std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress));
     require(outcome.status == ContextTransactionStatus::Published &&
                 !manager.context_transaction_kind(),
             "private capture was not adopted to a stable logical state");
-    require(manager.lane_state(active.lane) == ninfer::runtime::LogicalLaneState::Active,
+    require(manager.lane_state(active.lane) == ninferno::runtime::LogicalLaneState::Active,
             "private capture disturbed active lane ownership");
     (void)finish_active(manager, program, active, 24);
 }
@@ -2878,13 +3056,13 @@ void test_projected_nested_shared_candidates_use_marginal_value() {
     FakeRequestBasePlan base = make_base(61);
     base.cache.opportunities = {
         FakeContextCache::Opportunity{
-            .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-            .evidence = ninfer::SharedCandidateEvidence::EngineStructural,
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::EngineStructural,
             .frontier = 32,
         },
         FakeContextCache::Opportunity{
-            .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-            .evidence = ninfer::SharedCandidateEvidence::EngineStructural,
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::EngineStructural,
             .frontier = 64,
         },
     };
@@ -2898,8 +3076,8 @@ void test_observed_shared_candidate_requires_independent_domains() {
     const auto observed_base = [](std::optional<FakeCacheSessionKey> session) {
         FakeRequestBasePlan base = make_base(71, session);
         base.cache.opportunities.push_back(FakeContextCache::Opportunity{
-            .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-            .evidence = ninfer::SharedCandidateEvidence::EngineObserved,
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::EngineObserved,
             .frontier = 64,
         });
         return base;
@@ -2934,8 +3112,8 @@ void test_repeated_private_reuse_selects_zero_prefill_shared_promotion() {
     const auto observed_base = [] {
         FakeRequestBasePlan base = make_base(81);
         base.cache.opportunities.push_back(FakeContextCache::Opportunity{
-            .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-            .evidence = ninfer::SharedCandidateEvidence::EngineObserved,
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::EngineObserved,
             .frontier = 16,
         });
         return base;
@@ -2960,20 +3138,20 @@ void test_shared_fanout_keeps_owner_edges_live_across_summary_refresh() {
 
     FakeRequestBasePlan seed_base = make_base(91);
     seed_base.cache.opportunities.push_back(FakeContextCache::Opportunity{
-        .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-        .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .frontier = 64,
     });
     const ActiveRequest seed   = start_active(manager, program, 91, seed_base, 1);
     program.capture_assessment = FakeCaptureAssessment{
         .shortlist_key          = FakeShortlistKey{.digest = 91, .frontier = 64},
-        .shared_evidence        = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .protected_rebuild_work = PrefillWork{.tokens = 64},
         .publishes_shared       = true,
         .physically_feasible    = true,
     };
-    require(manager.reserve_active_capture(program, seed.lane, FakeCaptureOffer{.id = 31}, 0, {}) ==
-                FakeManager::ActiveCaptureReserveResult::Reserved,
+    require(manager.reserve_active_capture(program, seed.lane, FakeCaptureOffer{.id = 31}, 0, 0,
+                                           {}) == FakeManager::ActiveCaptureReserveResult::Reserved,
             "shared-fanout fixture could not publish its source");
     auto capture_progress = manager.progress_context_transaction(program, {});
     const auto capture = std::get<FakeManager::ActiveCaptureOutcome>(std::move(capture_progress));
@@ -3001,6 +3179,72 @@ void test_shared_fanout_keeps_owner_edges_live_across_summary_refresh() {
             "shared fanout did not release both logical owner edges");
 }
 
+void test_full_cache_private_capture_evicts_lower_value_owner() {
+    FakeManager manager = make_manager(1, 4);
+    FakeProgram program;
+    const ActiveRequest first = start_active(manager, program, 51, make_base(51), 1);
+    (void)finish_active(manager, program, first);
+    const ActiveRequest second = start_active(manager, program, 52, make_base(52), 2);
+    (void)finish_active(manager, program, second);
+
+    // The cache is full: the checkpoint of the running request does not fit as it is. Its
+    // saving (64 tokens, 6400 ns) is larger than an evicted owner's (16 tokens rebuilt from
+    // scratch, 1600 ns) at the same retention weight, so it takes a slot.
+    const ActiveRequest active              = start_active(manager, program, 53, make_base(53), 3);
+    program.required_pressure_actions       = 1;
+    program.pressure_action_immediate_ns    = 0;
+    program.pressure_checkpoint_recovery_ns = 1600;
+    program.require_evictions               = true;
+    program.pressure_target_immediate_ns_override = 0;
+    program.capture_assessment           = FakeCaptureAssessment{
+                  .shortlist_key          = FakeShortlistKey{.digest = 53, .frontier = 64},
+                  .protected_rebuild_work = PrefillWork{.tokens = 64},
+                  .publishes_private      = true,
+                  .physically_feasible    = false,
+    };
+    program.capture_summary.endpoint = endpoint(53, 64);
+    const auto reserved =
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 57}, 0, 2, {});
+    require(reserved == FakeManager::ActiveCaptureReserveResult::Reserved &&
+                program.skipped_captures == 0 && program.started_action_ids.size() == 1,
+            "a full cache skipped a private checkpoint worth more than an inactive owner");
+    require(program.inspected_capture_waiting == 2 && program.pressured_capture_waiting == 2,
+            "pressured capture placement did not see the requests waiting for admission");
+    auto progress      = manager.progress_context_transaction(program, {});
+    const auto outcome = std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress));
+    require(outcome.status == ContextTransactionStatus::Published &&
+                !manager.context_transaction_kind(),
+            "private capture under pressure was not adopted");
+    program.required_pressure_actions = 0;
+    (void)finish_active(manager, program, active, 64);
+
+    // A checkpoint worth less than the owner it would displace is skipped.
+    FakeManager small_manager = make_manager(1, 4);
+    FakeProgram small;
+    const ActiveRequest owner = start_active(small_manager, small, 61, make_base(61), 1);
+    (void)finish_active(small_manager, small, owner, 64);
+    const ActiveRequest small_active      = start_active(small_manager, small, 62, make_base(62), 2);
+    small.required_pressure_actions       = 1;
+    small.pressure_action_immediate_ns    = 0;
+    small.pressure_checkpoint_recovery_ns = 6400;
+    small.require_evictions               = true;
+    small.pressure_target_immediate_ns_override = 0;
+    small.capture_assessment           = FakeCaptureAssessment{
+                  .shortlist_key          = FakeShortlistKey{.digest = 62, .frontier = 8},
+                  .protected_rebuild_work = PrefillWork{.tokens = 8},
+                  .publishes_private      = true,
+                  .physically_feasible    = false,
+    };
+    require(small_manager.reserve_active_capture(small, small_active.lane,
+                                                 FakeCaptureOffer{.id = 63}, 0, 0, {}) ==
+                    FakeManager::ActiveCaptureReserveResult::Skipped &&
+                small.skipped_captures == 1 &&
+                small_manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
+            "a private checkpoint worth less than an inactive owner displaced it");
+    small.required_pressure_actions = 0;
+    (void)finish_active(small_manager, small, small_active);
+}
+
 void test_shared_capture_combines_two_pressure_owners() {
     FakeManager manager = make_manager(1, 4, 1);
     FakeProgram program;
@@ -3011,8 +3255,8 @@ void test_shared_capture_combines_two_pressure_owners() {
 
     FakeRequestBasePlan shared_request = make_base(43);
     shared_request.cache.opportunities.push_back(FakeContextCache::Opportunity{
-        .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-        .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .frontier = 64,
     });
     const ActiveRequest active           = start_active(manager, program, 43, shared_request, 3);
@@ -3020,14 +3264,14 @@ void test_shared_capture_combines_two_pressure_owners() {
     program.pressure_action_immediate_ns = 0;
     program.capture_assessment           = FakeCaptureAssessment{
                   .shortlist_key          = FakeShortlistKey{.digest = 43, .frontier = 64},
-                  .shared_evidence        = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+                  .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
                   .protected_rebuild_work = PrefillWork{.tokens = 64},
                   .publishes_shared       = true,
                   .physically_feasible    = false,
     };
 
     const auto reserved =
-        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 7}, 0, {});
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 7}, 0, 0, {});
     require(reserved == FakeManager::ActiveCaptureReserveResult::Reserved,
             "shared capture did not reserve a multi-owner pressure target");
     auto progress      = manager.progress_context_transaction(program, {});
@@ -3053,8 +3297,8 @@ void test_aborted_shared_capture_start_rolls_back_logical_claims() {
 
     FakeRequestBasePlan request = make_base(143);
     request.cache.opportunities.push_back(FakeContextCache::Opportunity{
-        .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-        .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .frontier = 64,
     });
     const ActiveRequest active           = start_active(manager, program, 143, request, 3);
@@ -3062,7 +3306,7 @@ void test_aborted_shared_capture_start_rolls_back_logical_claims() {
     program.pressure_action_immediate_ns = 0;
     program.capture_assessment           = FakeCaptureAssessment{
                   .shortlist_key          = FakeShortlistKey{.digest = 143, .frontier = 64},
-                  .shared_evidence        = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+                  .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
                   .protected_rebuild_work = PrefillWork{.tokens = 64},
                   .publishes_shared       = true,
                   .physically_feasible    = false,
@@ -3070,7 +3314,7 @@ void test_aborted_shared_capture_start_rolls_back_logical_claims() {
     program.abort_capture_start = true;
 
     const auto reserved =
-        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 13}, 0, {});
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 13}, 0, 0, {});
     require(reserved == FakeManager::ActiveCaptureReserveResult::Skipped &&
                 !manager.context_transaction_kind() && !program.has_context_transaction(),
             "aborted shared capture start retained transaction ownership");
@@ -3080,7 +3324,7 @@ void test_aborted_shared_capture_start_rolls_back_logical_claims() {
 
     program.abort_capture_start = false;
     const auto retried =
-        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 14}, 0, {});
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 14}, 0, 0, {});
     require(retried == FakeManager::ActiveCaptureReserveResult::Reserved,
             "aborted shared capture start leaked the shared publication slot");
     auto progress      = manager.progress_context_transaction(program, {});
@@ -3102,8 +3346,8 @@ void test_capture_result_is_validated_before_any_adoption() {
 
     FakeRequestBasePlan request = make_base(243);
     request.cache.opportunities.push_back(FakeContextCache::Opportunity{
-        .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-        .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .frontier = 64,
     });
     const ActiveRequest active           = start_active(manager, program, 243, request, 3);
@@ -3111,14 +3355,14 @@ void test_capture_result_is_validated_before_any_adoption() {
     program.pressure_action_immediate_ns = 0;
     program.capture_assessment           = FakeCaptureAssessment{
                   .shortlist_key          = FakeShortlistKey{.digest = 243, .frontier = 64},
-                  .shared_evidence        = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+                  .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
                   .protected_rebuild_work = PrefillWork{.tokens = 64},
                   .publishes_shared       = true,
                   .physically_feasible    = false,
     };
     program.malform_last_capture_private_victim = true;
 
-    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 17}, 0,
+    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 17}, 0, 0,
                                            {}) == FakeManager::ActiveCaptureReserveResult::Reserved,
             "malformed capture fixture could not reserve pressure");
     require(manager.catalog_state(0) == FakeManager::CatalogState::Claimed &&
@@ -3145,8 +3389,8 @@ void test_capture_result_is_adopted_by_owner_identity() {
 
     FakeRequestBasePlan request = make_base(253);
     request.cache.opportunities.push_back(FakeContextCache::Opportunity{
-        .kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-        .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
         .frontier = 64,
     });
     const ActiveRequest active           = start_active(manager, program, 253, request, 3);
@@ -3155,13 +3399,13 @@ void test_capture_result_is_adopted_by_owner_identity() {
     program.reverse_pressure_results     = true;
     program.capture_assessment           = FakeCaptureAssessment{
                   .shortlist_key          = FakeShortlistKey{.digest = 253, .frontier = 64},
-                  .shared_evidence        = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+                  .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
                   .protected_rebuild_work = PrefillWork{.tokens = 64},
                   .publishes_shared       = true,
                   .physically_feasible    = false,
     };
 
-    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 27}, 0,
+    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 27}, 0, 0,
                                            {}) == FakeManager::ActiveCaptureReserveResult::Reserved,
             "reordered capture fixture could not reserve pressure");
     auto progress      = manager.progress_context_transaction(program, {});
@@ -3198,9 +3442,46 @@ void test_terminal_fallback_releases_failed_retention() {
     require(result.timings.value == 7 && result.speculative.value == 9,
             "terminal fallback lost abort accounting");
     require(program.abort_calls == 1 &&
-                manager.lane_state(active.lane) == ninfer::runtime::LogicalLaneState::Free &&
+                manager.lane_state(active.lane) == ninferno::runtime::LogicalLaneState::Free &&
                 manager.catalog_state(0) == FakeManager::CatalogState::Vacant,
             "terminal fallback did not free every logical owner");
+}
+
+// A request cancelled at a decode boundary is catalogued as a finished one is, so the
+// conversation it consumed stays reusable; a sequence the Program cannot publish is discarded.
+void test_cancelled_finish_catalogues_active_lane() {
+    {
+        FakeManager manager = make_manager(1, 1);
+        FakeProgram program;
+        const ActiveRequest active = start_active(manager, program, 4, make_base(4), 1);
+        program.finish_frontier    = 16;
+        const FakeFinishResult result =
+            manager.finish(program, active.lane, active.sequence, /*cancelled=*/true);
+        require(result.status == ConsumeStatus::Consumed &&
+                    result.disposition == FinishDisposition::Catalogued &&
+                    program.finish_cancelled_calls == 1 && program.abort_calls == 0,
+                "a cancelled active lane was not catalogued");
+        require(manager.lane_state(active.lane) == ninferno::runtime::LogicalLaneState::Free &&
+                    manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
+                "a catalogued cancellation left a logical owner");
+        auto reuse = manager.inspect(program, FakePreparedPrompt{4}, make_base(4), 2);
+        require(reuse.choice && reuse.choice->summary().reusable_prompt_tokens == 16,
+                "the cancelled conversation is not reusable");
+    }
+    {
+        FakeManager manager = make_manager(1, 1);
+        FakeProgram program;
+        const ActiveRequest active = start_active(manager, program, 5, make_base(5), 1);
+        program.finish_fail_next   = true;
+        const FakeFinishResult result =
+            manager.finish(program, active.lane, active.sequence, /*cancelled=*/true);
+        require(result.status == ConsumeStatus::Consumed &&
+                    result.disposition == FinishDisposition::Released &&
+                    program.abort_calls == 1 &&
+                    manager.lane_state(active.lane) == ninferno::runtime::LogicalLaneState::Free &&
+                    manager.catalog_state(0) == FakeManager::CatalogState::Vacant,
+                "a cancellation the Program refused was not discarded");
+    }
 }
 
 void test_terminal_settlement_waits_for_open_resource_transaction() {
@@ -3216,11 +3497,12 @@ void test_terminal_settlement_waits_for_open_resource_transaction() {
             "concurrent materialization was not reserved");
 
     const auto capture =
-        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 9}, true, {});
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 9}, true, 0,
+                                       {});
     require(capture == FakeManager::ActiveCaptureReserveResult::Skipped &&
                 program.skipped_captures == 1 &&
                 manager.context_transaction_kind() ==
-                    ninfer::runtime::ContextTransactionKind::Materialization,
+                    ninferno::runtime::ContextTransactionKind::Materialization,
             "optional capture was not skipped behind the open materialization");
 
     manager.mark_terminal_pending(active.lane);
@@ -3229,8 +3511,38 @@ void test_terminal_settlement_waits_for_open_resource_transaction() {
         (void)manager.finish(program, active.lane, active.sequence);
     } catch (const std::logic_error&) { rejected = true; }
     require(rejected && manager.lane_state(active.lane) ==
-                            ninfer::runtime::LogicalLaneState::TerminalPending,
+                            ninferno::runtime::LogicalLaneState::TerminalPending,
             "terminal settlement changed topology during an open resource transaction");
+}
+
+// An exact-hit request holds an open StateImage Fork from its Begin round until its first decode
+// commit; the Program refuses to seal a materialization or reserve a capture against it. Planning
+// must wait (admission) or yield (optional capture) instead of reaching the Program's refusal.
+void test_open_state_fork_blocks_planning() {
+    FakeManager manager = make_manager(2, 3);
+    FakeProgram program;
+    const ActiveRequest active = start_active(manager, program, 41, make_base(41), 1);
+
+    program.unsettled_state_fork = true;
+    auto blocked = manager.inspect(program, FakePreparedPrompt{42}, make_base(42), 2);
+    require(blocked.readiness == Readiness::TemporarilyBlocked && !blocked.choice,
+            "admission planned against an open StateImage Fork");
+
+    program.capture_assessment = FakeCaptureAssessment{
+        .shortlist_key     = FakeShortlistKey{.digest = 41, .frontier = 24},
+        .publishes_private = true,
+    };
+    const std::uint64_t skipped = program.skipped_captures;
+    const auto capture =
+        manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 43}, 0, 0, {});
+    require(capture == FakeManager::ActiveCaptureReserveResult::Skipped &&
+                program.skipped_captures == skipped + 1 && !manager.context_transaction_kind(),
+            "capture was reserved against an open StateImage Fork");
+
+    program.unsettled_state_fork = false;
+    auto ready = manager.inspect(program, FakePreparedPrompt{42}, make_base(42), 2);
+    require(ready.readiness == Readiness::Ready && ready.choice,
+            "admission did not resume after the StateImage Fork settled");
 }
 
 void test_commit_and_discard_terminal_states() {
@@ -3244,16 +3556,16 @@ void test_commit_and_discard_terminal_states() {
     commit.rows[0].disposition = CommitDisposition::Active;
     commit.rows[1].disposition = CommitDisposition::Finishable;
     manager.apply_commit(lanes, commit);
-    require(manager.lane_state(first.lane) == ninfer::runtime::LogicalLaneState::Active &&
+    require(manager.lane_state(first.lane) == ninferno::runtime::LogicalLaneState::Active &&
                 manager.lane_state(second.lane) ==
-                    ninfer::runtime::LogicalLaneState::TerminalPending,
+                    ninferno::runtime::LogicalLaneState::TerminalPending,
             "row-aligned commit did not establish terminal pending state");
     (void)manager.finish(program, second.lane, second.sequence);
 
     FakeDiscardResult discard{.status = ConsumeStatus::Consumed, .row_count = 1};
     const std::array<LaneId, 1> remaining{first.lane};
     manager.apply_discard(remaining, discard);
-    require(manager.lane_state(first.lane) == ninfer::runtime::LogicalLaneState::Free,
+    require(manager.lane_state(first.lane) == ninferno::runtime::LogicalLaneState::Free,
             "discard did not release cancelled active membership");
 }
 
@@ -3301,7 +3613,7 @@ void test_shortlist_collision_requires_program_exact_verification() {
 // Enumerates raw owner choices independently of the search frontier/generator and portfolio fold.
 // Each owner can keep its cache, spill it (one relief unit), or drop it (two relief units).
 void test_complete_search_against_small_exhaustive_oracle() {
-    using Planner              = ninfer::runtime::MaterializationPlanner<FakeModelContract>;
+    using Planner              = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
     constexpr std::uint64_t ms = 1'000'000;
     const std::array<std::uint64_t, 3> rebuild{600 * ms, 200 * ms, 100 * ms};
     const std::array<std::uint64_t, 3> spill{40 * ms, 200 * ms, 10 * ms};
@@ -3316,8 +3628,8 @@ void test_complete_search_against_small_exhaustive_oracle() {
                 std::array<FakeContinuationHandle, 3> handles;
                 std::array<const FakeContinuationHandle*, 3> owners;
                 std::array<PlanningOwnerId, 3> ids;
-                std::array<ninfer::runtime::MaterializationOwnerPolicy, 3> policies;
-                std::array<ninfer::runtime::MaterializationCheckpointPolicy, 3> checkpoints;
+                std::array<ninferno::runtime::MaterializationOwnerPolicy, 3> policies;
+                std::array<ninferno::runtime::MaterializationCheckpointPolicy, 3> checkpoints;
                 const std::array<unsigned, 3> weights{1, 4, 16};
                 for (unsigned i = 0; i < 3; ++i) {
                     handles[i]     = FakeContinuationHandle{i + 1, 0};
@@ -3347,8 +3659,9 @@ void test_complete_search_against_small_exhaustive_oracle() {
                 reuse.identity.machine_work.reused_prompt_tokens = 48;
                 for (auto* candidate : {&root, &reuse}) {
                     candidate->identity.physical_status =
-                        required == 0 ? ninfer::runtime::MaterializationPhysicalStatus::Feasible
-                                      : ninfer::runtime::MaterializationPhysicalStatus::Infeasible;
+                        required == 0
+                            ? ninferno::runtime::MaterializationPhysicalStatus::Feasible
+                            : ninferno::runtime::MaterializationPhysicalStatus::Infeasible;
                     candidate->identity.expandable = required != 0;
                 }
                 const std::array candidates{
@@ -3363,7 +3676,7 @@ void test_complete_search_against_small_exhaustive_oracle() {
                 };
                 const auto goal =
                     [&](PlanningCandidateId candidate, PrivateSourceMode,
-                        std::span<const ninfer::runtime::PressureOwnerOutcome> outcomes)
+                        std::span<const ninferno::runtime::PressureOwnerOutcome> outcomes)
                     -> std::optional<Planner::LogicalGoal> {
                     if (candidate.value == 1 || !full_catalog ||
                         std::any_of(outcomes.begin(), outcomes.end(), [](auto outcome) {
@@ -3406,7 +3719,7 @@ void test_complete_search_against_small_exhaustive_oracle() {
                     }
                 }
                 Planner planner;
-                auto allowance     = ninfer::runtime::PlanningAllowance::boundary(0);
+                auto allowance     = ninferno::runtime::PlanningAllowance::boundary(0);
                 allowance.limit_ns = 5 * ms;
                 auto result =
                     planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
@@ -3439,7 +3752,7 @@ void test_publication_only_pressure_constructs_adoptable_target() {
         (void)finish_active(manager, program, active);
     }
     require(program.required_pressure_actions == 0, "publication fixture has physical pressure");
-    auto allowance     = ninfer::runtime::PlanningAllowance::boundary(0);
+    auto allowance     = ninferno::runtime::PlanningAllowance::boundary(0);
     allowance.limit_ns = 5'000'000;
     auto result = manager.inspect(program, FakePreparedPrompt{600}, make_base(600), 20, allowance);
     require(result.choice.has_value(),
@@ -3455,6 +3768,7 @@ void test_publication_only_pressure_constructs_adoptable_target() {
 } // namespace
 
 int main() {
+    run_test("state transfer payload statistics", test_state_transfer_statistics_use_payload_bytes);
     run_test("independent complete-target oracle",
              test_complete_search_against_small_exhaustive_oracle);
     run_test("publication-only construction",
@@ -3464,8 +3778,13 @@ int main() {
     run_test("portfolio demand and owner aggregation", test_portfolio_demand_and_owner_aggregation);
     run_test("shared capture private transition loss",
              test_shared_capture_subtracts_private_transition_loss);
+    run_test("private capture priced by the shared rule",
+             test_private_capture_is_priced_by_the_shared_rule);
+    run_test("full cache private capture evicts a lower-value owner",
+             test_full_cache_private_capture_evicts_lower_value_owner);
     run_test("shared capture committed target budget",
              test_shared_capture_budget_bounds_committed_canonical_targets);
+    run_test("capture search grant bounds wall time", test_capture_search_grant_bounds_wall_time);
     run_test("equal lower-bound tie-break",
              test_equal_lower_bound_does_not_short_circuit_tie_break);
     run_test("machine cost is selection-only",
@@ -3519,8 +3838,10 @@ int main() {
              test_capture_result_is_validated_before_any_adoption);
     run_test("capture result owner identity", test_capture_result_is_adopted_by_owner_identity);
     run_test("terminal fallback", test_terminal_fallback_releases_failed_retention);
+    run_test("cancelled finish", test_cancelled_finish_catalogues_active_lane);
     run_test("terminal waits for resource transaction",
              test_terminal_settlement_waits_for_open_resource_transaction);
+    run_test("open StateImage Fork blocks planning", test_open_state_fork_blocks_planning);
     run_test("commit and discard", test_commit_and_discard_terminal_states);
     run_test("backfill proof and stats", test_backfill_proof_and_stats_follow_program_revision);
     run_test("shortlist exact verification",

@@ -1,5 +1,5 @@
 #include "core/weight.h"
-#include "ninfer/ops/gdn_gating_proj.h"
+#include "ninferno/ops/gdn_gating_proj.h"
 
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.h"
 
@@ -8,12 +8,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 void require_bf16_weight(const Weight& w, std::int32_t rows, std::int32_t input_rows,
                          const char* name) {
@@ -184,4 +180,4 @@ void gdn_norm_gating_proj(const Tensor& x, const Tensor& norm_weight, float eps,
                                           dt_bias, ws, g, beta, execution);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

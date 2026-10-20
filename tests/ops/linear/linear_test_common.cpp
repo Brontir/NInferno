@@ -4,6 +4,8 @@
 #include "core/arena.h"
 #include "core/decode_graph.h"
 #include "core/device.h"
+#include "ninferno/ops/prefill_routes.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -24,7 +26,7 @@
 #include <thread>
 #include <utility>
 
-namespace ninfer::test::linear {
+namespace ninferno::test::linear {
 namespace {
 
 constexpr std::size_t kOutputGuardBytes   = 256;
@@ -333,6 +335,17 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
         const std::string case_label = std::string(label) + " [" + std::to_string(shape.n) + "," +
                                        std::to_string(shape.k) +
                                        "] T=" + std::to_string(invocation.t);
+        // A Q8 call whose policy allows A8 takes the int8 tiers from 17 tokens inside a prefill
+        // (q8_prefill_a8): such widths run under the prefill route profile, so the test meets
+        // them, and the int8 call's activations are quantized: it meets the A8 criterion.
+        const ops::ScopedPrefillRoutes prefill(weight.qtype == QType::Q8_G32_FP16 &&
+                                               invocation.t >=
+                                                   ops::detail::generic::kQ8PrefillA8Tokens);
+        const ActivationCompute expected =
+            activation_compute == ActivationCompute::A16 &&
+                    ops::detail::generic::q8_prefill_a8(weight, invocation.policy, invocation.t)
+                ? ActivationCompute::A8
+                : activation_compute;
         GuardedOutput output(checked_elements(shape.n, invocation.t, "guarded output"));
         Tensor input(device_activation.p, DType::BF16, {shape.k, invocation.t});
         Tensor destination(output.data(), DType::BF16, {shape.n, invocation.t});
@@ -394,8 +407,7 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
                         for (double& value : negative_reference) value = -value;
                         reference = negative_reference;
                     }
-                    failures +=
-                        compare_output(case_label, actual.selected, reference, activation_compute);
+                    failures += compare_output(case_label, actual.selected, reference, expected);
                 } else {
                     std::vector<float> activation =
                         materialize_activation(activation_bits, shape.k, columns);
@@ -407,8 +419,7 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
                     cpu_linear_gemm_fp64(oracle_weight.data(), activation.data(), reference.data(),
                                          static_cast<std::int32_t>(oracle_rows.size()), shape.k,
                                          static_cast<std::int32_t>(columns.size()));
-                    failures +=
-                        compare_output(case_label, actual.selected, reference, activation_compute);
+                    failures += compare_output(case_label, actual.selected, reference, expected);
                 }
                 if (replay == 1) {
                     std::vector<std::uint16_t> after(activation_bits.size());
@@ -469,4 +480,14 @@ int verify_workspace_envelopes(QType qtype, std::int32_t n, std::int32_t k) {
     return failures;
 }
 
-} // namespace ninfer::test::linear
+ReductionCriterion linear_criterion(ActivationCompute activation_compute) {
+    return tolerance_for(activation_compute);
+}
+
+std::vector<std::uint16_t> make_linear_activation(std::int32_t k, std::int32_t t,
+                                                  std::uint32_t seed,
+                                                  ActivationCompute activation_compute) {
+    return make_activation(k, t, seed, activation_compute);
+}
+
+} // namespace ninferno::test::linear

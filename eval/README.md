@@ -1,50 +1,92 @@
-# Capability Evaluation
+# Capability evaluation
 
-`eval/` contains the repository-local capability evaluation coordinator. It can evaluate this
-project's server, another local OpenAI-compatible service, or a remote online model. The inference
-engine is only one possible target; each target and job declares the concurrency admitted by that
-particular server run instead of baking an Engine policy into the framework.
+`eval/` is a repository-local coordinator for capability evaluations (AIME, GPQA-Diamond, IFBench,
+BFCL-v4, ERQA, RealWorldQA, Needle-in-a-Haystack). It can evaluate `ninferno-serve`, another local
+OpenAI-compatible service or a remote online model; each target and job declares the concurrency
+that server run admits. [EvalScope](https://github.com/modelscope/evalscope) is the first real
+backend; the coordinator, configuration, logging, progress, resume and result contracts do not
+depend on it, and a deterministic `mock` backend exercises them without a model or network. Use it
+to check the quality of a converted model or quantization; throughput belongs to
+[bench](../bench/README.md).
 
-EvalScope is the first real evaluation backend. The coordinator, configuration, logging, progress,
-resume, and result contracts do not import or depend on EvalScope. The deterministic `mock` backend
-can exercise those contracts without a model service or network access.
-
-## Environment
-
-Create the isolated environment with the repository's canonical Python:
+## Quick start
 
 ```bash
 python3 -m venv eval/.venv
 eval/.venv/bin/python -m pip install -r eval/requirements.txt
+export PYTHONPATH="$PWD/eval"
+
+# Network-free check of the coordinator
+eval/.venv/bin/python -m ninferno_eval run --config eval/configs/mock-suite.yaml --suite all
+
+# Real model: serve it where the config points (127.0.0.1:18080, model id qwen3.6-27b), in
+# another terminal, then run the small matrix
+ninferno-serve models/qwen3_6_27b.ninferno --port 18080 --model-id qwen3.6-27b
+eval/.venv/bin/python -m ninferno_eval run --config eval/configs/capability-suite.yaml --suite smoke
 ```
 
-The pinned stack is EvalScope 1.10.0 with its BFCL, IFBench, and Needle-in-a-Haystack extras,
-`bfcl-eval==2025.10.27.1`, and the BFCL runtime dependency `soundfile==0.14.0`. Dataset and model
-caches remain owned by their upstream libraries. Installing dependencies does not download the
-Qwen model or create a `.ninfer` artifact.
+Installing the dependencies downloads no model and creates no `.ninferno` file; convert the model
+first (`ninferno-convert --fetch org/name`, see the [conversion guide](../docs/weight-conversion.md))
+and serve it. `requirements.txt` pins PyYAML 6.0.3, rich 15.0.0, EvalScope 1.10.0 with the
+`bfcl`, `ifbench` and `needle-haystack` extras, and `soundfile` 0.14.0; the BFCL job additionally
+checks for `bfcl-eval==2025.10.27.1`. Dataset and model caches stay owned by their upstream
+libraries.
+
+## Commands
+
+All commands are `python -m ninferno_eval <command>` with `PYTHONPATH=eval`.
+
+| Command | Options | Purpose |
+|---|---|---|
+| `validate` | `--config FILE` (required), `--suite NAME` (default: all suites) | Validate configuration and installed backend dependencies. |
+| `plan` | `--config FILE`, `--suite NAME` (both required), `--check-runtime` | Show expected work and requirements without model requests; `--check-runtime` also resolves secret environment variables and pinned packages. |
+| `run` | `--config FILE`, `--suite NAME` (both required) | Run one suite. |
+| `status` | `--run DIR` | Print `state.json` of a run. |
+| `resume` | `--run DIR` | Continue an interrupted run; rejects a changed effective configuration or backend version. Completed jobs are skipped and an incomplete EvalScope job reuses its prediction cache. |
+| `summarize` | `--run DIR` | Print the normalized summary. |
+| `list-backends` | none | List registered backends (`evalscope`, `mock`). |
+
+Ctrl-C asks the active backend to checkpoint; a second Ctrl-C aborts. Typical sequence for a formal
+evaluation:
+
+```bash
+eval/.venv/bin/python -m ninferno_eval plan \
+  --config eval/configs/capability-suite.yaml --suite reasoning
+eval/.venv/bin/python -m ninferno_eval run \
+  --config eval/configs/capability-suite.yaml --suite reasoning
+SERPAPI_API_KEY=... eval/.venv/bin/python -m ninferno_eval run \
+  --config eval/configs/capability-suite.yaml --suite bfcl_full
+eval/.venv/bin/python -m ninferno_eval status    --run eval/runs/<run-id>
+eval/.venv/bin/python -m ninferno_eval summarize --run eval/runs/<run-id>
+```
+
+### Exit status
+
+| Code | Meaning |
+|---:|---|
+| 0 | Completed, or status query of a running run. |
+| 2 | Invalid configuration or missing configured secret. |
+| 3 | Missing or incompatible backend dependency. |
+| 4 | Partial evaluation. |
+| 5 | Failed evaluation, missing run artifact or other error. |
+| 6 | Cancelled. |
 
 ## Configuration
 
-See [`configs/capability-suite.yaml`](configs/capability-suite.yaml) for the initial AIME25,
-AIME26, GPQA-Diamond, and BFCL-v4 suites, and [`configs/mock-suite.yaml`](configs/mock-suite.yaml)
-for a network-free example.
+A YAML file (`schema_version: 1`) with `targets`, `suites` and an optional `runtime` section. Unknown
+fields are rejected everywhere. Shipped examples:
 
-The published Qwen3.6 reasoning runs retain their exact configurations in
-[`configs/qwen3_6_27b_reasoning.yaml`](configs/qwen3_6_27b_reasoning.yaml),
-[`configs/qwen3_6_35b_aime.yaml`](configs/qwen3_6_35b_aime.yaml), and
-[`configs/qwen3_6_35b_gpqa.yaml`](configs/qwen3_6_35b_gpqa.yaml). The Qwen3.8 groupwise-int and
-NVFP4 campaigns use their format-specific reasoning configurations and managed scripts documented
-below.
+| File | Suites | Content |
+|---|---|---|
+| `configs/capability-suite.yaml` | `smoke`, `reasoning`, `bfcl_full` | AIME25, AIME26, GPQA-Diamond, BFCL-v4. |
+| `configs/mock-suite.yaml` | `all` | Network-free coordinator check. |
+| `configs/qwen3_6_27b_reasoning.yaml` | `reasoning_full` | Qwen3.6-27B AIME25/26 and GPQA-Diamond. |
+| `configs/qwen3_6_35b_aime.yaml`, `qwen3_6_35b_gpqa.yaml` | `smoke`, `aime_full`; `gpqa_full` | Qwen3.6-35B-A3B. |
+| `configs/qwen3_6_35b_needle_haystack.yaml` | `smoke`, `standard`, `native_long` | Needle-in-a-Haystack (below). |
+| `configs/qwen3_8_27b_nvfp4_reasoning.yaml`, `qwen3_8_27b_groupwise_reasoning.yaml` | `text_full`, `multimodal_full` | IFBench, AIME25/26, GPQA-Diamond; ERQA, RealWorldQA. |
+| `configs/qwen3_8_27b_nvfp4_gpqa_budgets.yaml` | `gpqa_8k`, `gpqa_16k`, `gpqa_32k` | GPQA-Diamond under thinking budgets. |
 
-[`configs/qwen3_6_35b_needle_haystack.yaml`](configs/qwen3_6_35b_needle_haystack.yaml)
-defines the 35B-A3B Needle-in-a-Haystack profiles separately: `standard` preserves EvalScope's
-1K--32K, ten-length, ten-depth English/Chinese matrix (200 samples), while `native_long` evaluates
-the exact 64K, 128K, and safe 260K prompt profiles at eleven depths in both languages (66 samples).
-The 260K profile uses the exact local 35B tokenizer and leaves more than 2K native context tokens
-for chat framing and its bounded 512-token answer. All profiles use rule scoring and explicitly
-disable thinking so the observable answer is the retrieved needle.
-
-A target defines the model service:
+### Targets
 
 ```yaml
 targets:
@@ -54,279 +96,166 @@ targets:
     model: qwen3.6-27b
     api_key_env: MODEL_API_KEY   # optional; omit for an unauthenticated endpoint
     max_concurrency: 1
-    request:
-      timeout_seconds: 3600
-      retries: 2
+    request: { timeout_seconds: 3600, retries: 2 }
 ```
 
-API keys must come from environment variables. Literal `api_key`, `Authorization`, and
-`x-api-key` configuration is rejected so secrets cannot enter saved effective configurations.
+| Field | Default | Meaning |
+|---|---|---|
+| `protocol` | required | Only `openai_chat` is accepted by the EvalScope backend. |
+| `base_url`, `model` | required | `http(s)://` endpoint and served model id. |
+| `api_key_env` | none | Environment variable holding the key. Literal `api_key`, `Authorization` and `x-api-key` entries are rejected so secrets never reach saved configurations. |
+| `max_concurrency` | 1 | Cap on aggregate requests to this endpoint. |
+| `request.timeout_seconds` | 600 | Per-request timeout. |
+| `request.retries` | 5 | Retries. |
+| `request.retry_interval_seconds` | 10 | Pause between retries. |
+| `request.headers` | none | Extra string headers (no credentials). |
+| `provenance` | none | Free-form mapping recorded in the manifest. |
 
-Concurrency has two levels:
+### Jobs
 
-- `runtime.max_parallel_jobs` controls concurrently active dataset jobs;
-- target `max_concurrency` caps aggregate requests to that endpoint;
-- optional job `max_concurrency` caps how many target slots one job may reserve.
-
-For EvalScope, the granted job slots become `eval_batch_size`. Multiple jobs sharing a target can
-never reserve more slots than the target capacity. For `ninfer-serve`, match the target capacity to
-the server's startup `--max-concurrency`; an individual long-output job may set a lower concurrency
-when its KV entitlement requires it.
-
-Portable generation settings live under `generation`. Evaluator-specific controls live under
-`backend_args`; unknown fields are rejected rather than silently ignored.
-
-## Commands
-
-Set `PYTHONPATH` because this is a repository-local package:
-
-```bash
-export PYTHONPATH="$PWD/eval"
+```yaml
+- id: new_dataset
+  backend: evalscope          # or mock
+  dataset: evalscope_dataset_name
+  target: model_api
+  limit: 2                    # optional: positive integer, or float in (0, 1]
+  repeats: 1
+  max_concurrency: 1          # optional per-job cap
+  generation: { temperature: 0, max_tokens: 16384, seed: 42 }
+  backend_args: { subset_list: [subset_name] }
 ```
 
-Validate configuration and installed runtime dependencies:
+| Field | Default | Meaning |
+|---|---|---|
+| `id`, `backend`, `dataset` | required | Unique job id per suite; backend name; dataset name. |
+| `target` | none (required by EvalScope) | Target name. |
+| `max_concurrency` | target's | Cap on target slots the job may reserve. |
+| `limit` | all | Sample count or fraction. |
+| `repeats` | 1 | Repeats per sample. |
+| `generation` | `{}` | Portable settings: `temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `stream`, `frequency_penalty`, `presence_penalty`, `parallel_tool_calls`, `stop_seqs`, `extra_body`. EvalScope defaults `seed` to 42. |
+| `backend_args` | `{}` | Backend-specific. EvalScope: `subset_list`, `dataset_args`, `few_shot_num`, `shuffle`, `judge_strategy`, `judge_model_args`, `dataset_hub`, `dataset_dir`, `collect_perf`, `ignore_errors`, `debug`, `is_fc_model`, `underscore_to_dot`, `serpapi_api_key_env`, `allow_network_downloads`. Mock: `items` (10), `sleep_seconds`, `wrong_every`, `unknown_total`, `fail_at`. |
 
-```bash
-eval/.venv/bin/python -m ninfer_eval validate \
-  --config eval/configs/capability-suite.yaml --suite smoke
-```
+The EvalScope backend has built-in sample counts for `aime25`, `aime26`, `gpqa_diamond`, `ifbench`,
+`erqa`, `real_world_qa` and `bfcl_v4`; the `needle_haystack` total is computed per subset
+(`english`, `chinese`) as length intervals times depth intervals. Other EvalScope datasets run with
+an unknown total.
 
-Show expected work without making model requests:
+### Runtime
 
-```bash
-eval/.venv/bin/python -m ninfer_eval plan \
-  --config eval/configs/capability-suite.yaml --suite reasoning
-```
+| Field | Default | Meaning |
+|---|---|---|
+| `runtime.max_parallel_jobs` | 1 | Concurrently active dataset jobs. |
+| `runtime.runs_dir` | `eval/runs` | Parent of run directories. |
+| `runtime.progress.enabled` / `refresh_seconds` / `heartbeat_seconds` | true / 1 / 30 | Progress rendering. |
+| `runtime.samples.retention` | `all` | `all`, `errors` or `none`. |
 
-Add `--check-runtime` to resolve configured secret environment variables and check pinned backend
-packages.
+### Concurrency
 
-Run the network-free coordinator check:
+Three limits apply together: `runtime.max_parallel_jobs` (active jobs), the target
+`max_concurrency` (aggregate requests to the endpoint) and an optional job `max_concurrency` (target
+slots one job may reserve). For EvalScope the granted slots become `eval_batch_size`; jobs sharing a
+target never reserve more than its capacity. For `ninferno-serve`, set the target capacity to the
+server's `--max-concurrency`; a long-output job may use fewer slots when its KV entitlement requires.
 
-```bash
-eval/.venv/bin/python -m ninfer_eval run \
-  --config eval/configs/mock-suite.yaml --suite all
-```
+## Datasets and scores
 
-Run the small real-endpoint matrix before a formal evaluation:
+Each benchmark is reported independently; no cross-benchmark average is computed.
 
-```bash
-eval/.venv/bin/python -m ninfer_eval run \
-  --config eval/configs/capability-suite.yaml --suite smoke
-```
+| Benchmark | Samples | Reported |
+|---|---:|---|
+| AIME25, AIME26 | 30 each | Rule-scored accuracy. |
+| GPQA-Diamond | 198 | Accuracy. |
+| IFBench | 300 | Prompt- and instruction-level strict and loose adherence; primary `prompt_level_strict`. |
+| ERQA | 400 (eight reasoning subsets) | Accuracy (multimodal). |
+| RealWorldQA | 765 | Accuracy (multimodal). |
+| BFCL-v4 | 5106 | Official `agentic`, `multi_turn`, `live`, `non_live`, `hallucination`, `overall` once the full score-bearing suite completes. |
+| Needle-in-a-Haystack | by profile | Rule-scored retrieval. |
 
-Then run the full reasoning and BFCL suites independently:
+A partial or failed job makes the run `partial` or `failed`; an incomplete BFCL run is never labeled
+the official full score.
 
-```bash
-eval/.venv/bin/python -m ninfer_eval run \
-  --config eval/configs/capability-suite.yaml --suite reasoning
+- **BFCL-v4.** Multi-turn samples may make several requests per sample. Web Search subsets need
+  `SERPAPI_API_KEY` (or a variable named by `backend_args.serpapi_api_key_env`); `memory_vector` may
+  download an upstream model and requires `allow_network_downloads: true`.
+- **Needle-in-a-Haystack** (`qwen3_6_35b_needle_haystack.yaml`): `standard` keeps EvalScope's
+  1K-32K, ten-length, ten-depth English/Chinese matrix (200 samples); `native_long` evaluates 64K,
+  128K and a safe 260K prompt at eleven depths in both languages (66 samples), leaving more than 2K
+  context for chat framing and the bounded 512-token answer. Scoring is rule-based with thinking
+  disabled. Download the corpus and edit `local_path` and `tokenizer_path` in the config (they ship
+  as `/path/to/...` placeholders), then check the plan:
 
-SERPAPI_API_KEY=... eval/.venv/bin/python -m ninfer_eval run \
-  --config eval/configs/capability-suite.yaml --suite bfcl_full
-```
+  ```bash
+  eval/.venv/bin/python - <<'PY'
+  from modelscope import dataset_snapshot_download
+  print(dataset_snapshot_download('AI-ModelScope/Needle-in-a-Haystack-Corpus',
+        allow_file_pattern=['PaulGraham_Essays.txt', 'Journey_to_the_West.txt']))
+  PY
+  eval/.venv/bin/python -m ninferno_eval plan \
+    --config eval/configs/qwen3_6_35b_needle_haystack.yaml --suite native_long --check-runtime
+  ```
 
-For the Qwen3.8-27B NVFP4 evaluation, first populate EvalScope's default ModelScope dataset cache:
+## Managed Qwen3.8-27B runs
+
+Three scripts start a fresh `build/apps/ninferno-serve` on `127.0.0.1:18080` (they refuse to run if a
+healthy service already answers there), wait for `/health`, run the suite and stop the server. They
+need `curl`, `eval/.venv` and the artifact under `out/`. The multimodal datasets are fetched through
+ModelScope first:
 
 ```bash
 eval/.venv/bin/python - <<'PY'
 from modelscope import dataset_snapshot_download
-
-for dataset_id in (
-    'evalscope/ERQA',
-    'allenai/IFBench_test',
-    'lmms-lab/RealWorldQA',
-):
+for dataset_id in ('evalscope/ERQA', 'allenai/IFBench_test', 'lmms-lab/RealWorldQA'):
     print(dataset_snapshot_download(dataset_id))
 PY
 ```
 
-The formal run is deliberately split into two independently resumable steps. Inspect the plans,
-then run the text step (IFBench, AIME25, AIME26, and GPQA-Diamond) and the multimodal step (ERQA and
-RealWorldQA):
+| Script | Artifact | Config | Server settings |
+|---|---|---|---|
+| `eval/run_qwen3_8_27b_nvfp4_reasoning.sh [--plan] [text\|multimodal]` | `out/qwen3_8_27b_nvfp4.ninferno` | `qwen3_8_27b_nvfp4_reasoning.yaml` | Concurrency 2; `text`: context 252928; `multimodal`: context 81920 and `--vision`. |
+| `eval/run_qwen3_8_27b_groupwise_reasoning.sh [--plan] [text\|multimodal]` | `out/qwen3_8_27b.ninferno` | `qwen3_8_27b_groupwise_reasoning.yaml` | Concurrency 4; `text`: context 262144; `multimodal`: 81920 and `--vision`. |
+| `eval/run_qwen3_8_27b_nvfp4_gpqa_budgets.sh [8k\|16k\|32k ...]` | `out/qwen3_8_27b_nvfp4.ninferno` | `qwen3_8_27b_nvfp4_gpqa_budgets.yaml` | Per tier `--default-thinking-budget` 8192/16384/32768, context 12352/20544/36928, concurrency 8/8/6; outputs under `profiles/eval/`. |
 
-```bash
-eval/run_qwen3_8_27b_nvfp4_reasoning.sh --plan
-eval/run_qwen3_8_27b_nvfp4_reasoning.sh
-```
+All use `--kv-dtype int8 --spec mtp --draft-tokens 3 --lm-head-draft --prefill-chunk 1024
+--model-id qwen3.8-27b` and write server and request logs to `eval/server-logs/`. With no step
+argument the reasoning scripts run `text` (IFBench, AIME25, AIME26, GPQA-Diamond) and then
+`multimodal` (ERQA, RealWorldQA), restarting the server between steps; `--plan` previews the
+selected steps without starting a server. The NVFP4 text context is the largest that fits a 32 GB
+card after weights; pick a smaller context if the server rejects the startup reservation on your
+hardware. Output budgets: AIME 122880 tokens, IFBench and both multimodal sets 65536, GPQA-Diamond
+245760 at concurrency one.
 
-With no step argument the script runs the two steps back to back, restarting the server between
-them. Pass `text` or `multimodal` to run a single step only, and `--plan` to preview the plan for
-the selected step(s) without starting the server.
+## Runs, progress and logs
 
-The script starts a fresh local server for each step. The text server uses a 252,928-token context
-(the largest that fits the RTX 5090 after weights; 262,144 is rejected at startup) and omits
-`--vision`, so Vision's fixed GPU allocations do not reduce the KV pool needed by long reasoning.
-The multimodal server is restarted with `--vision` and an 81,920-token context. Across the cached
-ERQA and RealWorldQA data, the largest fully rendered prompt is ERQA_75 at 12,394 tokens; combined
-with the 65,536-token output bound, it leaves 3,990 tokens of context slack. Sampling is specified
-only by each EvalScope request. The target and ordinary jobs use concurrency two; GPQA-Diamond runs
-at concurrency one so its 245,760-token output budget can accommodate the observed long tail. AIME
-uses 122,880 output tokens per request, while IFBench and both multimodal datasets use 65,536.
-
-The completed formal run recorded these scores (run directories `eval/runs/20260818T132336Z-c16a8902`
-and `eval/runs/20260818T223812Z-da6cdbce`):
-
-| Benchmark | Accuracy | Correct / total |
-|---|---:|---:|
-| IFBench (prompt-level strict) | 77.00% | 231 / 300 |
-| AIME 2025 | 96.67% | 29 / 30 |
-| AIME 2026 | 96.67% | 29 / 30 |
-| GPQA-Diamond | 90.40% | 179 / 198 |
-| ERQA | 66.25% | 265 / 400 |
-| RealWorldQA | 83.53% | 639 / 765 |
-
-The Qwen3.8-27B groupwise-int profile runs the same protocol through
-`eval/run_qwen3_8_27b_groupwise_reasoning.sh`. Its 16.96 GiB artifact leaves more GPU memory, so the
-text step uses the full 262,144-token context and both steps run at concurrency four (run
-directories `eval/runs/20260819T031655Z-078bd8e0` and `eval/runs/20260819T141750Z-531a236a`; the
-multimodal step was resumed with `ninfer_eval resume` after a local proxy change interrupted
-RealWorldQA at 618/765 samples):
-
-| Benchmark | Accuracy | Correct / total |
-|---|---:|---:|
-| IFBench (prompt-level strict) | 77.67% | 233 / 300 |
-| AIME 2025 | 96.67% | 29 / 30 |
-| AIME 2026 | 96.67% | 29 / 30 |
-| GPQA-Diamond | 87.37% | 173 / 198 |
-| ERQA | 66.25% | 265 / 400 |
-| RealWorldQA | 82.22% | 629 / 765 |
-
-Prepare and inspect Needle-in-a-Haystack without issuing model requests:
-
-```bash
-eval/.venv/bin/python -m pip install -r eval/requirements.txt
-eval/.venv/bin/python - <<'PY'
-from modelscope import dataset_snapshot_download
-print(dataset_snapshot_download(
-    'AI-ModelScope/Needle-in-a-Haystack-Corpus',
-    allow_file_pattern=['PaulGraham_Essays.txt', 'Journey_to_the_West.txt'],
-))
-PY
-eval/.venv/bin/python -m ninfer_eval plan \
-  --config eval/configs/qwen3_6_35b_needle_haystack.yaml --suite standard --check-runtime
-eval/.venv/bin/python -m ninfer_eval plan \
-  --config eval/configs/qwen3_6_35b_needle_haystack.yaml --suite native_long --check-runtime
-```
-
-Run the one-sample NIAH smoke only after the active model evaluation has released the single target
-slot, then select `standard` or `native_long` as a separate formal run.
-
-BFCL-v4 full evaluation contains 5,106 samples. Multi-turn samples can make more than one model
-request. Its Web Search subsets require `SERPAPI_API_KEY`; `memory_vector` may download an upstream
-model, which the example explicitly acknowledges with `allow_network_downloads: true`.
-
-Inspect and resume a run:
-
-```bash
-eval/.venv/bin/python -m ninfer_eval status --run eval/runs/<run-id>
-eval/.venv/bin/python -m ninfer_eval resume --run eval/runs/<run-id>
-eval/.venv/bin/python -m ninfer_eval summarize --run eval/runs/<run-id>
-```
-
-Resume rejects a changed effective configuration or backend version. Completed jobs are skipped;
-an incomplete EvalScope job reuses its own prediction cache when available.
-
-## Progress And Logs
-
-TTY runs use a live display with dataset phase, completed/total units, elapsed time, rate, and ETA.
-Non-TTY runs print periodic heartbeats without ANSI cursor control. Unknown totals remain `?`; the
-framework does not invent a percentage or ETA.
-
-Every run is stored below `eval/runs/<timestamp>-<config-hash>/`:
+TTY runs show a live display (dataset phase, completed/total, elapsed, rate, ETA); other runs print
+periodic heartbeats. Unknown totals stay `?`; no percentage or ETA is invented. Every run is stored
+under `eval/runs/<timestamp>-<config-hash>/`:
 
 | Artifact | Purpose |
 |---|---|
-| `effective-config.yaml` | validated, secret-free effective configuration |
-| `manifest.json` | git state, environment, backend versions, target and concurrency provenance |
-| `state.json` | atomically updated operational and resume state |
-| `events.jsonl` | append-only structured progress and lifecycle events |
-| `run.log` | human-readable timestamps, progress, retries, and failures |
-| `backends/<job>/` | unchanged backend-native predictions, logs, cache, and reports |
-| `summary.json` | versioned normalized result contract |
-| `summary.md` | compact human-readable score table |
+| `effective-config.yaml` | Validated, secret-free effective configuration. |
+| `manifest.json` | Git state, environment, backend versions, target and concurrency provenance. |
+| `state.json` | Atomically updated operational and resume state. |
+| `events.jsonl` | Append-only structured progress and lifecycle events. |
+| `run.log` | Human-readable timestamps, progress, retries and failures. |
+| `backends/<job>/` | Unchanged backend-native predictions, logs, cache and reports. |
+| `summary.json` | Versioned normalized result contract. |
+| `summary.md` | Compact score table. |
 
 The sample-retention policy is recorded in the manifest. API keys and known secret values are
-redacted from coordinator events and task snapshots.
+redacted from events and task snapshots.
 
-## Historical Qwen3.6-27B reasoning profile
+## Adding an evaluation
 
-The published Qwen3.6-27B scores and per-dataset correct/total counts are recorded in the
-[groupwise-int model card](../model-cards/Qwen3.6-27B-NInfer/README.md#evaluation) and
-[NVFP4 model card](../model-cards/Qwen3.6-27B-nvfp4-NInfer/README.md#evaluation).
-Those runs used EvalScope 1.9.0, one sample per problem, and the sampling settings recorded on
-the cards. The current pinned evaluation environment is newer; rerunning the commands below
-reproduces the workload on the selected environment, not the historical score automatically.
-
-The NVFP4 serving command was:
-
-```bash
-build/apps/ninfer-serve out/qwen3_6_27b_nvfp4.ninfer \
-  --host 127.0.0.1 --port 18080 \
-  --max-context 262144 --prefill-chunk 1024 --kv-dtype int8 \
-  --spec mtp --draft-tokens 3 --lm-head-draft
-```
-
-Run the configured reasoning suite in a separate shell using the evaluation environment above:
-
-```bash
-PYTHONPATH=eval eval/.venv/bin/python -m ninfer_eval run \
-  --config eval/configs/qwen3_6_27b_reasoning.yaml \
-  --suite reasoning_full
-```
-
-## Scores
-
-Each benchmark remains independently reportable. The framework does not average AIME, GPQA, and
-BFCL into an invented cross-benchmark score.
-
-- AIME25 and AIME26 report rule-scored accuracy over 30 samples each.
-- GPQA-Diamond reports accuracy over 198 samples.
-- IFBench reports prompt- and instruction-level strict and loose adherence over 300 samples; its
-  primary metric is `prompt_level_strict`.
-- ERQA reports accuracy over 400 multimodal samples across eight reasoning subsets.
-- RealWorldQA reports accuracy over 765 multimodal samples.
-- BFCL-v4 reports its official `agentic`, `multi_turn`, `live`, `non_live`, `hallucination`, and
-  `overall` values when the full score-bearing suite is complete.
-
-A partial or failed job makes the run `partial` or `failed`; an incomplete BFCL run is never labeled
-as the official full BFCL score.
-
-## Adding Evaluations
-
-An ordinary EvalScope dataset needs only another configured job:
-
-```yaml
-- id: new_dataset
-  backend: evalscope
-  dataset: evalscope_dataset_name
-  target: model_api
-  generation:
-    temperature: 0
-  backend_args:
-    subset_list: [subset_name]
-```
-
-An evaluator that does not use EvalScope implements the four-method backend protocol in
-`ninfer_eval/backends/base.py`, registers one stable name in `backends/registry.py`, retains its raw
-artifacts, and returns the normalized `DatasetResult`. The coordinator and summary writer do not
-need benchmark-specific changes.
-
-## Exit Status
-
-| Code | Meaning |
-|---:|---|
-| 0 | completed successfully, or status query for an active run |
-| 2 | invalid configuration or missing configured secret |
-| 3 | missing/incompatible backend dependency |
-| 4 | partial evaluation |
-| 5 | failed evaluation or missing run artifact |
-| 6 | cancelled evaluation |
+An ordinary EvalScope dataset needs only another job (see the job example above). An evaluator
+without EvalScope implements the four-method backend protocol (`validate`, `plan`, `run`,
+`normalize`) in `ninferno_eval/backends/base.py`, registers a stable name in
+`backends/registry.py`, keeps its raw artifacts and returns the normalized `DatasetResult`; the
+coordinator and summary writer need no benchmark-specific change.
 
 ## Verification
 
 ```bash
-PYTHONPATH=eval eval/.venv/bin/python -m py_compile $(rg --files eval/ninfer_eval -g '*.py')
 PYTHONPATH=eval eval/.venv/bin/python -m unittest discover -s eval/tests -p 'test_*.py'
-PYTHONPATH=eval eval/.venv/bin/python -m ninfer_eval run \
+PYTHONPATH=eval eval/.venv/bin/python -m ninferno_eval run \
   --config eval/configs/mock-suite.yaml --suite all
 ```

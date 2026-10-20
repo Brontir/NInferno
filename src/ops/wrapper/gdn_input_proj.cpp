@@ -1,5 +1,8 @@
 #include "core/weight.h"
-#include "ninfer/ops/gdn_input_proj.h"
+#include "ops/generic/generic_gemm.h"
+#include "ops/common/native_nvfp4.h"
+#include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include "core/layout.h"
 #include "ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.h"
@@ -11,23 +14,21 @@
 #include "ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.h"
 #include "ops/gdn_input_proj/q8/q8_gdn_input_kernels.h"
 #include "ops/gdn_input_proj/q8/q8_gdn_input_plan.h"
-#include "ops/linear/fp8/fp8_config.h"
+#include "ops/linear/fp8/fp8_geometry.h"
 #include "ops/linear/fp8/fp8_format.h"
-#include "ops/linear/nvfp4/nvfp4_config.h"
+#include "ops/linear/nvfp4/nvfp4_layout.h"
 #include "ops/linear/nvfp4/nvfp4_format.h"
+#include "ops/linear_swiglu/q4a8/q4a8_linear_swiglu.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 void require_matrix(const Tensor& tensor, std::int32_t rows, std::int32_t cols, const char* label) {
     if (tensor.dtype != DType::BF16 || tensor.ne[0] != rows || tensor.ne[1] != cols ||
@@ -46,16 +47,81 @@ void require_conv_tensor(const Tensor& tensor, std::int32_t rows, std::int32_t w
     }
 }
 
-bool overlaps(const Tensor& lhs, const Tensor& rhs) {
-    const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs.data);
-    const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs.data);
-    return lhs_begin < rhs_begin + rhs.bytes() && rhs_begin < lhs_begin + lhs.bytes();
-}
-
 void require_single_parent_nonoverlap(const Tensor& x, const Tensor& qkv, const Tensor& z) {
     if (overlaps(x, qkv) || overlaps(x, z) || overlaps(qkv, z)) {
         throw std::invalid_argument("gdn_input_proj: x, qkv, and z must not overlap");
     }
+}
+
+// Int8 prefill activations (prefill_a8_policy, generic_gemm.h): inside a prefill a call of 17 columns or more of the
+// Q4/Q5 pair takes the generic path's int8 tiers, one call per parent written segment by segment,
+// as linear does for these formats. The grouped kernels read A16 at every width; ninfer-all
+// computes this projection on int8 activations (Qwen3.8-27B 8K prefill on an RTX 5090: 483 + 840 us
+// against its 260 + 149). Off unless the option asks for it: it moves the numerics as linear's
+// does.
+constexpr std::int32_t kPairHidden     = 5120;
+constexpr std::int32_t kPairQkRows     = 4096;
+constexpr std::int32_t kPairValueRows  = 6144;
+constexpr std::int32_t kPairZRows      = 6144;
+constexpr std::int32_t kPairParentRows = kPairValueRows + kPairZRows;
+
+LinearPolicy pair_prefill_a8_policy(QType qtype) {
+    return detail::generic::fixed_parent_prefill_a8_policy(qtype);
+}
+
+std::size_t pair_prefill_a8_workspace_bytes(std::int32_t min_tokens, std::int32_t max_tokens) {
+    // The dedicated int8 route of the listed cards (a8_input_pays) quantises x once for both.
+    const std::size_t dedicated =
+        max_tokens >= 128 && detail::a8_input_pays()
+            ? detail::a8_input_workspace_capacity_bytes(std::max(min_tokens, 128), max_tokens)
+            : 0;
+    return std::max(dedicated, detail::generic::fixed_parents_prefill_a8_workspace_bytes(
+                                   {{QType::Q4_G64_FP16, kPairQkRows},
+                                    {QType::Q5_G64_FP16, kPairParentRows}},
+                                   kPairHidden, min_tokens, max_tokens));
+}
+
+// qkv [10240, T] and z [6144, T] as the pair writes them; false leaves the call to the caller.
+// The invariant route profile takes the same two generic calls at every width: the Q4/Q5 pair
+// kernels pick their tile by width (direct to 12 columns, grouped tiles above), so a verify
+// launch of several rows summed a row's columns in another order than the row alone.
+bool pair_prefill_a8(const Tensor& x, const Weight& qk_weight, const Weight& value_z_weight,
+                     Tensor& qkv, Tensor& z, WorkspaceArena* workspace, cudaStream_t stream) {
+    const bool invariant = invariant_routes_active();
+    if (!invariant && (workspace == nullptr ||
+                       !detail::generic::fixed_pair_prefill_a8(qk_weight, value_z_weight, x.ne[1]))) {
+        return false;
+    }
+    if (!invariant && detail::a8_input_pays() &&
+        detail::a8_gdn_input_supported(qk_weight, value_z_weight, x.ne[1]) && x.is_contiguous() &&
+        aligned_to(x.data, 16) && qkv.is_contiguous() && z.is_contiguous()) {
+        detail::a8_gdn_input_launch(x, qk_weight, value_z_weight, qkv, z, *workspace, stream);
+        return true;
+    }
+    const LinearPolicy qk_policy =
+        invariant ? LinearPolicy::A16Only : pair_prefill_a8_policy(qk_weight.qtype);
+    const LinearPolicy value_policy =
+        invariant ? LinearPolicy::A16Only : pair_prefill_a8_policy(value_z_weight.qtype);
+    detail::generic::Call qk;
+    qk.x               = &x;
+    qk.weight          = &qk_weight;
+    qk.rows            = kPairQkRows;
+    qk.out[0]          = &qkv;
+    qk.segment_rows[0] = kPairQkRows;
+    qk.segments        = 1;
+    detail::generic::run(qk, qk_policy, workspace, stream);
+    detail::generic::Call value;
+    value.x                 = &x;
+    value.weight            = &value_z_weight;
+    value.rows              = kPairParentRows;
+    value.out[0]            = &qkv;
+    value.out_row_offset[0] = kPairQkRows;
+    value.segment_rows[0]   = kPairValueRows;
+    value.out[1]            = &z;
+    value.segment_rows[1]   = kPairZRows;
+    value.segments          = 2;
+    detail::generic::run(value, value_policy, workspace, stream);
+    return true;
 }
 
 struct ConvGeometry {
@@ -294,6 +360,9 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
     if (cols <= 0) { throw std::invalid_argument("gdn_input_proj: T must be positive"); }
 
     if (weight.qtype == QType::NVFP4) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+        detail::no_native_nvfp4("gdn_input_proj");
+#else
         constexpr std::int32_t kHidden  = 5120;
         constexpr std::int32_t kQkvRows = 10240;
         constexpr std::int32_t kZRows   = 6144;
@@ -308,6 +377,7 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
         }
         detail::nvfp4_gdn_input_dispatch(x, weight, qkv, z, policy, workspace, stream);
         return;
+#endif
     }
 
     if (weight.qtype == QType::FP8_E4M3FN_ROW_BF16) {
@@ -336,7 +406,52 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
     require_matrix(z, kZRows, cols, "z");
     require_single_parent_nonoverlap(x, qkv, z);
     require_q8_rowsplit(weight, kRows, "query/key/value/z weight");
+    // owned_decode_r8: at decode the generic R8 writes both parts in one call. The invariant route
+    // profile takes the generic path at every width too: the Q8 kernels pick their K split by
+    // width (sliced-K tiles of 8..32 columns, grouped split-K to 96), so a verify launch of
+    // several rows summed a row's columns in another order than the row alone.
+    if (invariant_routes_active() || detail::generic::owned_decode_r8(weight, policy, cols) ||
+        detail::generic::q8_prefill_a8(weight, policy, cols) ||
+        detail::generic::volta_tiled_route(weight, policy, cols)) {
+        detail::generic::Call call;
+        call.x               = &x;
+        call.weight          = &weight;
+        call.rows            = kRows;
+        call.out[0]          = &qkv;
+        call.segment_rows[0] = kQkvRows;
+        call.out[1]          = &z;
+        call.segment_rows[1] = kZRows;
+        call.segments        = 2;
+        detail::generic::run(call, policy, workspace, stream);
+        return;
+    }
     detail::q8_gdn_input_dispatch(x, weight, qkv, z, stream);
+}
+
+// Without tensor mma.sync (Volta) a call of 17 tokens or more that the tiled tensor-core route
+// takes (generic::volta_tiled_route) runs there: the shape plans' MMA tiles run on FP32 FMAs on
+// that GPU. One generic call per parent weight, its rows written segment by segment, each at its
+// row offset into its output (a row slice of a [rows, T] matrix is not contiguous).
+bool volta_tiled_parent(const Tensor& x, const Weight& weight, std::initializer_list<Tensor*> outs,
+                        std::initializer_list<std::int32_t> rows,
+                        std::initializer_list<std::int32_t> offsets, WorkspaceArena* workspace,
+                        cudaStream_t stream) {
+    if (!detail::generic::volta_tiled_route(weight, LinearPolicy::A16Only, x.ne[1])) return false;
+    detail::generic::Call call;
+    call.x      = &x;
+    call.weight = &weight;
+    int s       = 0;
+    for (Tensor* out : outs) call.out[s++] = out;
+    s = 0;
+    for (const std::int32_t offset : offsets) call.out_row_offset[s++] = offset;
+    s = 0;
+    for (const std::int32_t r : rows) {
+        call.segment_rows[s++] = r;
+        call.rows += r;
+    }
+    call.segments = s;
+    detail::generic::run(call, LinearPolicy::A16Only, workspace, stream);
+    return true;
 }
 
 detail::Q4Q5GdnInputConvPlan resolve_q4_q5_conv_plan(std::int32_t tokens, std::int32_t batch_size) {
@@ -416,6 +531,9 @@ void dispatch_single_parent_snapshot(const Tensor& x, const Weight& weight,
     validate_policy(policy);
 
     if (weight.qtype == QType::NVFP4) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+        detail::no_native_nvfp4("gdn_input_proj");
+#else
         constexpr std::int32_t kHidden     = 5120;
         constexpr std::int32_t kQueryRows  = 2048;
         constexpr std::int32_t kKeyRows    = 2048;
@@ -458,6 +576,7 @@ void dispatch_single_parent_snapshot(const Tensor& x, const Weight& weight,
                                             initial_state_slots, snapshot_base_slots, query, key,
                                             value, z, policy, workspace, stream);
         return;
+#endif
     }
 
     if (weight.qtype == QType::FP8_E4M3FN_ROW_BF16) {
@@ -531,18 +650,23 @@ void dispatch_single_parent_snapshot(const Tensor& x, const Weight& weight,
         return;
     }
 
-    const detail::Q8GdnInputConvPlan plan = resolve_q8_conv_plan(geometry.width, geometry.batch);
-    if (plan.schedule == detail::Q8GdnInputConvScheduleId::DecodeFused) {
-        detail::q8_gdn_input_decode_conv_snapshot_launch(
-            x, weight, conv_weight, conv_states, valid_columns, initial_state_slots,
-            snapshot_base_slots, query, key, value, z, stream);
-        return;
-    }
-    if (plan.schedule == detail::Q8GdnInputConvScheduleId::SplitKMmaFused) {
-        detail::q8_gdn_input_splitk_conv_snapshot_launch(
-            x, weight, conv_weight, conv_states, valid_columns, initial_state_slots,
-            snapshot_base_slots, query, key, value, z, stream);
-        return;
+    // The fused routes sum the projection in their own split of K; the invariant profile
+    // materializes it through the generic path (dispatch_single_parent) at every width.
+    if (!invariant_routes_active()) {
+        const detail::Q8GdnInputConvPlan plan =
+            resolve_q8_conv_plan(geometry.width, geometry.batch);
+        if (plan.schedule == detail::Q8GdnInputConvScheduleId::DecodeFused) {
+            detail::q8_gdn_input_decode_conv_snapshot_launch(
+                x, weight, conv_weight, conv_states, valid_columns, initial_state_slots,
+                snapshot_base_slots, query, key, value, z, stream);
+            return;
+        }
+        if (plan.schedule == detail::Q8GdnInputConvScheduleId::SplitKMmaFused) {
+            detail::q8_gdn_input_splitk_conv_snapshot_launch(
+                x, weight, conv_weight, conv_states, valid_columns, initial_state_slots,
+                snapshot_base_slots, query, key, value, z, stream);
+            return;
+        }
     }
 
     auto scope                 = workspace.scope();
@@ -562,6 +686,9 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
     validate_policy(policy);
 
     if (weight.qtype == QType::NVFP4) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+        detail::no_native_nvfp4("gdn_input_proj");
+#else
         constexpr std::int32_t kHidden     = 5120;
         constexpr std::int32_t kQueryRows  = 2048;
         constexpr std::int32_t kKeyRows    = 2048;
@@ -613,6 +740,7 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
         detail::nvfp4_gdn_record_post_launch(conv_record, conv_weight, conv_states, valid_columns,
                                              initial_state_slots, query, key, value, stream);
         return;
+#endif
     }
 
     if (weight.qtype == QType::FP8_E4M3FN_ROW_BF16) {
@@ -675,7 +803,7 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
     require_record_nonoverlap(x, conv_weight, conv_states, valid_columns, initial_state_slots,
                               conv_record, query, key, value, z, workspace);
 
-    if (geometry.batch > 1) {
+    if (geometry.batch > 1 || invariant_routes_active()) {
         compose_record(x, conv_weight, conv_states, valid_columns, initial_state_slots, conv_record,
                        query, key, value, z, geometry, workspace, stream,
                        [&](const Tensor& x_flat, Tensor& record_flat, Tensor& z_flat) {
@@ -696,6 +824,30 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
 
 void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& value_z_weight,
                     Tensor& qkv, Tensor& z, cudaStream_t stream) {
+    gdn_input_proj(x, qk_weight, value_z_weight, qkv, z, nullptr, stream);
+}
+
+void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& value_z_weight,
+                    Tensor& qkv, Tensor& z, WorkspaceArena& workspace, cudaStream_t stream) {
+    gdn_input_proj(x, qk_weight, value_z_weight, qkv, z, &workspace, stream);
+}
+
+std::size_t gdn_input_proj_pair_workspace_capacity_bytes(std::int32_t min_tokens,
+                                                         std::int32_t max_tokens) {
+    if (min_tokens <= 0 || max_tokens < min_tokens) {
+        throw std::invalid_argument("gdn_input_proj workspace: invalid token interval");
+    }
+    // The Volta tiled route takes each parent through CUTLASS, which decodes it here.
+    const std::size_t volta =
+        std::max(detail::generic::volta_prefill_workspace_bytes(QType::Q4_G64_FP16, kPairQkRows,
+                                                                kPairHidden, max_tokens, false),
+                 detail::generic::volta_prefill_workspace_bytes(QType::Q5_G64_FP16, kPairParentRows,
+                                                                kPairHidden, max_tokens, false));
+    return std::max(volta, pair_prefill_a8_workspace_bytes(min_tokens, max_tokens));
+}
+
+void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& value_z_weight,
+                    Tensor& qkv, Tensor& z, WorkspaceArena* workspace, cudaStream_t stream) {
     constexpr std::int32_t kHidden     = 5120;
     constexpr std::int32_t kQkRows     = 4096;
     constexpr std::int32_t kValueRows  = 6144;
@@ -710,6 +862,14 @@ void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& valu
     require_rowsplit(qk_weight, QType::Q4_G64_FP16, kQkRows, "qk weight");
     require_rowsplit(value_z_weight, QType::Q5_G64_FP16, kParentRows, "value/z weight");
 
+    if (pair_prefill_a8(x, qk_weight, value_z_weight, qkv, z, workspace, stream)) return;
+    if (detail::generic::volta_tiled_route(qk_weight, LinearPolicy::A16Only, cols) &&
+        detail::generic::volta_tiled_route(value_z_weight, LinearPolicy::A16Only, cols)) {
+        volta_tiled_parent(x, qk_weight, {&qkv}, {kQkRows}, {0}, workspace, stream);
+        volta_tiled_parent(x, value_z_weight, {&qkv, &z}, {kValueRows, kZRows}, {kQkRows, 0},
+                           workspace, stream);
+        return;
+    }
     detail::q4_q5_gdn_input_dispatch(x, qk_weight, value_z_weight, qkv, z, stream);
 }
 
@@ -722,11 +882,15 @@ std::size_t gdn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::int
         throw std::invalid_argument("gdn_input_proj workspace: invalid token interval");
     }
     if (parent_qtype == QType::NVFP4) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+        detail::no_native_nvfp4("gdn_input_proj");
+#else
         if (parent_rows != detail::Nvfp4N16384K5120::kOutputRows ||
             input_rows != detail::Nvfp4N16384K5120::kInputRows) {
             throw std::invalid_argument("gdn_input_proj workspace: unsupported NVFP4 profile");
         }
         return detail::nvfp4_gdn_input_workspace_capacity_bytes(policy, min_tokens, max_tokens);
+#endif
     }
     if (parent_qtype == QType::FP8_E4M3FN_ROW_BF16) {
         if (parent_rows != detail::Fp8N16384K5120::kOutputRows ||
@@ -740,6 +904,18 @@ std::size_t gdn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::int
             {input_rows, 8192, 4096, parent_rows, input_rows, min_tokens});
         (void)detail::q8_gdn_input_resolve_plan(
             {input_rows, 8192, 4096, parent_rows, input_rows, max_tokens});
+        if (allows_a8(policy) && max_tokens >= detail::generic::kQ8PrefillA8Tokens) {
+            return detail::generic::workspace_capacity_bytes(
+                {parent_qtype, policy, parent_rows, input_rows, detail::generic::Epilogue::Store},
+                nullptr, min_tokens, max_tokens);
+        }
+        // A decode call may take the generic R8 (owned_decode_r8).
+        if (allows_a8(policy) &&
+            min_tokens <= detail::generic::kR8DecodeTokens) {
+            return detail::generic::workspace_capacity_bytes(
+                {parent_qtype, policy, parent_rows, input_rows, detail::generic::Epilogue::Store},
+                nullptr, min_tokens, detail::generic::kR8DecodeTokens);
+        }
         return 0;
     }
     throw std::invalid_argument("gdn_input_proj workspace: unsupported parent profile");
@@ -774,26 +950,38 @@ std::size_t gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
             (void)resolve_q8_conv_plan(min_width, batch_size);
             (void)resolve_q8_conv_plan(max_width, batch_size);
         }
-        return composed_snapshot_capacity(channels, batch_size * max_width, 0);
+        return composed_snapshot_capacity(
+            channels, batch_size * max_width,
+            q4_q5 ? pair_prefill_a8_workspace_bytes(batch_size * min_width, batch_size * max_width)
+                  : 0);
     }
 
     std::int32_t largest_materialized_width = 0;
     if (q4_q5) {
-        (void)resolve_q4_q5_conv_plan(min_width, 1);
-        (void)resolve_q4_q5_conv_plan(max_width, 1);
-        if (max_width >= 7) {
-            largest_materialized_width = max_width;
-        } else if (min_width <= 4 && max_width >= 4) {
-            largest_materialized_width = 4;
+        // The widest width the plan materializes (the projection-epilogue fused route covers
+        // only some narrow widths, and which ones follows the projection route).
+        for (std::int32_t width = min_width; width <= max_width; ++width) {
+            if (resolve_q4_q5_conv_plan(width, 1).schedule ==
+                detail::Q4Q5GdnInputConvScheduleId::Materialized) {
+                largest_materialized_width = width;
+            }
         }
     } else {
         (void)resolve_q8_conv_plan(min_width, 1);
         (void)resolve_q8_conv_plan(max_width, 1);
-        if (max_width >= 17) { largest_materialized_width = max_width; }
+        // The invariant profile materializes every width (dispatch_single_parent_snapshot).
+        if (max_width >= 17 || invariant_routes_active()) {
+            largest_materialized_width = max_width;
+        }
     }
     if (largest_materialized_width == 0) { return 0; }
     WorkspaceLayoutBuilder layout;
     (void)allocate_projected_workspace(layout, channels, largest_materialized_width);
+    if (q4_q5) {
+        if (const std::size_t a8 = pair_prefill_a8_workspace_bytes(min_width, max_width); a8 != 0) {
+            (void)layout.alloc_bytes(a8);
+        }
+    }
     return layout.peak_bytes(1);
 }
 
@@ -808,11 +996,17 @@ std::size_t gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
         return detail::fp8_gdn_snapshot_workspace_capacity_bytes(policy, batch_size, min_width,
                                                                  max_width);
     }
+#ifdef NINFERNO_WITHOUT_NVFP4
+    if (parent_qtype == QType::NVFP4) { detail::no_native_nvfp4("gdn_input_proj"); }
+#endif
     if (parent_qtype != QType::NVFP4 || parent_rows != detail::Nvfp4N16384K5120::kOutputRows ||
         input_rows != detail::Nvfp4N16384K5120::kInputRows) {
         throw std::invalid_argument(
             "gdn_input_proj_conv_snapshot workspace: unsupported single-parent profile");
     }
+#ifdef NINFERNO_WITHOUT_NVFP4
+    detail::no_native_nvfp4("gdn_input_proj");
+#else
     if (batch_size == 1) {
         return detail::nvfp4_gdn_snapshot_workspace_capacity_bytes(policy, min_width, max_width);
     }
@@ -825,6 +1019,7 @@ std::size_t gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
     const std::size_t projection_workspace = gdn_input_proj_workspace_capacity_bytes(
         parent_qtype, parent_rows, input_rows, policy, batch_size * min_width, aggregate_columns);
     return composed_snapshot_capacity(kChannels, aggregate_columns, projection_workspace);
+#endif
 }
 
 std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
@@ -839,10 +1034,10 @@ std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
     if (q4_q5) {
         (void)resolve_q4_q5_conv_plan(min_width, batch_size);
         (void)resolve_q4_q5_conv_plan(max_width, batch_size);
-    } else {
-        (void)resolve_q8_conv_plan(min_width, batch_size);
-        (void)resolve_q8_conv_plan(max_width, batch_size);
+        return pair_prefill_a8_workspace_bytes(batch_size * min_width, batch_size * max_width);
     }
+    (void)resolve_q8_conv_plan(min_width, batch_size);
+    (void)resolve_q8_conv_plan(max_width, batch_size);
     return 0;
 }
 
@@ -857,11 +1052,17 @@ std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
         return detail::fp8_gdn_record_workspace_capacity_bytes(policy, batch_size, min_width,
                                                                max_width);
     }
+#ifdef NINFERNO_WITHOUT_NVFP4
+    if (parent_qtype == QType::NVFP4) { detail::no_native_nvfp4("gdn_input_proj"); }
+#endif
     if (parent_qtype != QType::NVFP4 || parent_rows != detail::Nvfp4N16384K5120::kOutputRows ||
         input_rows != detail::Nvfp4N16384K5120::kInputRows) {
         throw std::invalid_argument(
             "gdn_input_proj_conv_record workspace: unsupported single-parent profile");
     }
+#ifdef NINFERNO_WITHOUT_NVFP4
+    detail::no_native_nvfp4("gdn_input_proj");
+#else
     const detail::Nvfp4GdnConvPlan minimum_plan =
         detail::nvfp4_gdn_conv_resolve_plan(policy, min_width, batch_size);
     const detail::Nvfp4GdnConvPlan maximum_plan =
@@ -871,11 +1072,14 @@ std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
             throw std::logic_error("ReplaySSM record planner admitted NVFP4 decode");
         }
         if (maximum_plan.schedule == detail::Nvfp4GdnConvScheduleId::SmallTFusedA16) { return 0; }
-        return detail::nvfp4_gdn_input_workspace_capacity_bytes(LinearPolicy::AllowA4,
-                                                                std::max(min_width, 4), max_width);
+        // The record materializes from width 4 under A4 routes and at every width under
+        // A16Only (whose projection needs no workspace).
+        return detail::nvfp4_gdn_input_workspace_capacity_bytes(
+            policy, std::min(std::max(min_width, 4), max_width), max_width);
     }
     return detail::nvfp4_gdn_input_workspace_capacity_bytes(policy, batch_size * min_width,
                                                             batch_size * max_width);
+#endif
 }
 
 void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& qk_weight,
@@ -911,14 +1115,17 @@ void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& qk_weight,
             x, conv_weight, conv_states, valid_columns, initial_state_slots, snapshot_base_slots,
             query, key, value, z, kQueryRows, kKeyRows, kValueRows, geometry, ws, stream,
             [&](const Tensor& x_flat, Tensor& projected, Tensor& z_flat) {
-                gdn_input_proj(x_flat, qk_weight, value_z_weight, projected, z_flat, stream);
+                gdn_input_proj(x_flat, qk_weight, value_z_weight, projected, z_flat, &ws, stream);
             });
         return;
     }
 
     const detail::Q4Q5GdnInputConvPlan plan =
         resolve_q4_q5_conv_plan(geometry.width, geometry.batch);
-    if (plan.schedule == detail::Q4Q5GdnInputConvScheduleId::ProjectionEpilogueFused) {
+    const bool prefill_a8 = detail::generic::q8_prefill_a8(
+        qk_weight, pair_prefill_a8_policy(qk_weight.qtype), geometry.width);
+    if (!prefill_a8 &&
+        plan.schedule == detail::Q4Q5GdnInputConvScheduleId::ProjectionEpilogueFused) {
         detail::q4_q5_gdn_input_conv_snapshot_launch(
             x, qk_weight, value_z_weight, conv_weight, conv_states, valid_columns,
             initial_state_slots, snapshot_base_slots, query, key, value, z, stream);
@@ -927,7 +1134,9 @@ void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& qk_weight,
 
     auto scope                 = ws.scope();
     ProjectedWorkspace scratch = allocate_projected_workspace(ws, kChannels, geometry.width);
-    gdn_input_proj(x, qk_weight, value_z_weight, scratch.projected, z, stream);
+    Tensor x_matrix            = flatten_columns(x, kHidden, geometry);
+    Tensor z_matrix            = flatten_columns(z, kZRows, geometry);
+    gdn_input_proj(x_matrix, qk_weight, value_z_weight, scratch.projected, z_matrix, &ws, stream);
     detail::gdn_projected_conv_snapshot_launch(scratch.projected, conv_weight, conv_states,
                                                valid_columns, initial_state_slots,
                                                snapshot_base_slots, query, key, value, stream);
@@ -966,7 +1175,10 @@ void gdn_input_proj_conv_record(const Tensor& x, const Weight& qk_weight,
 
     const detail::Q4Q5GdnInputConvPlan plan =
         resolve_q4_q5_conv_plan(geometry.width, geometry.batch);
-    if (plan.schedule == detail::Q4Q5GdnInputConvScheduleId::ProjectionEpilogueFused) {
+    const bool prefill_a8 = detail::generic::q8_prefill_a8(
+        qk_weight, pair_prefill_a8_policy(qk_weight.qtype), geometry.aggregate_columns);
+    if (!prefill_a8 &&
+        plan.schedule == detail::Q4Q5GdnInputConvScheduleId::ProjectionEpilogueFused) {
         detail::q4_q5_gdn_input_conv_record_launch(x, qk_weight, value_z_weight, conv_weight,
                                                    conv_states, valid_columns, initial_state_slots,
                                                    conv_record, query, key, value, z, stream);
@@ -976,7 +1188,7 @@ void gdn_input_proj_conv_record(const Tensor& x, const Weight& qk_weight,
                    query, key, value, z, geometry, workspace, stream,
                    [&](const Tensor& x_flat, Tensor& record_flat, Tensor& z_flat) {
                        gdn_input_proj(x_flat, qk_weight, value_z_weight, record_flat, z_flat,
-                                      stream);
+                                      &workspace, stream);
                    });
 }
 
@@ -1023,4 +1235,4 @@ void gdn_input_proj_conv_record(const Tensor& x, const Weight& query_key_value_z
                                   value, z, LinearPolicy::A16Only, workspace, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

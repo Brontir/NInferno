@@ -1,5 +1,5 @@
 #pragma once
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/request.h"
 #include <array>
 #include <cstddef>
@@ -10,12 +10,46 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::models::qwen3_5 {
-namespace frontend {
-class Tokenizer;
+namespace ninferno::text {
+class TokenCodec;
+} // namespace ninferno::text
+
+namespace ninferno::chat {
 struct ToolCallOutputContract;
-} // namespace frontend
+} // namespace ninferno::chat
+
+namespace ninferno::models::qwen3_5 {
 class Frontend;
+
+// The chat conventions the output presentation reads, resolved once per Frontend.
+struct OutputConventions {
+    // Reasoning section markers. An empty open marker means the model never opens one itself.
+    std::string reasoning_open;
+    std::string reasoning_open_suffix;
+    std::string reasoning_close;
+    // Bytes whose completion inside reasoning is a prefix-execution boundary (empty: none) and
+    // the failure table of its prefix matcher.
+    std::string canonical_close;
+    std::vector<std::size_t> canonical_close_failure;
+    // Headers the answer may begin with (after reasoning, or at the output start); the first
+    // that matches is dropped from the content.
+    std::vector<std::string> content_open;
+    // Special tokens that the reasoning and tool-call parsers read; they reach the presentation.
+    std::vector<TokenId> structural_tokens;  // sorted
+
+    [[nodiscard]] bool structural(TokenId token) const noexcept;
+};
+
+// Where the prompt leaves the output channel: already inside reasoning, or at a fresh assistant
+// body where the model may open reasoning itself.
+struct OutputStart {
+    bool in_reasoning           = false;
+    bool reasoning_open_allowed = false;
+    // A reasoning close the model writes right after a quote mark or backtick, and follows with
+    // anything but a line break, is it quoting the marker (code or prose about the format), not
+    // ending its reasoning. Off under an output constraint, whose grammar opens at the first close.
+    bool quoted_close_is_text = false;
+};
 
 class PublishedOutput {
 public:
@@ -81,13 +115,14 @@ public:
 
 private:
     class Impl;
-    OutputSession(std::shared_ptr<const frontend::Tokenizer> tokenizer, StopPolicy policy,
-                  OutputOptions output, bool starts_in_reasoning, ThinkingControlOptions thinking,
+    OutputSession(std::shared_ptr<const text::TokenCodec> tokenizer, StopPolicy policy,
+                  OutputOptions output, OutputStart start, ThinkingControlOptions thinking,
                   std::shared_ptr<const std::vector<TokenId>> thinking_control_tokens,
-                  std::shared_ptr<const frontend::ToolCallOutputContract> tool_call_output);
+                  std::shared_ptr<const chat::ToolCallOutputContract> tool_call_output,
+                  std::shared_ptr<const OutputConventions> conventions);
     std::unique_ptr<Impl> impl_;
 
     friend class Frontend;
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

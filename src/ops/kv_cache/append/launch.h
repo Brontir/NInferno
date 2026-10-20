@@ -1,8 +1,14 @@
 #pragma once
 
-#include "ninfer/ops/kv_cache_append.h"
+#include "ninferno/ops/kv_cache_append.h"
 
-namespace ninfer::ops::detail {
+#include <cstdint>
+
+namespace ninferno::ops::detail {
+
+// From this many tokens a two-KV-head full append of a quantized cache (FP8, INT8, NVFP4, K8V4)
+// fills pages by 8-token tiles instead of one warp per token and head.
+inline constexpr std::int32_t kKVCacheAppendPageTileMinTokens = 128;
 
 void kv_cache_append_launch(const Tensor& k, const Tensor& v, const Tensor& positions,
                             PagedKVLayerView cache, cudaStream_t stream);
@@ -44,4 +50,4 @@ void kv_cache_append_prefix_launch(const Tensor& k, const Tensor& v, const Tenso
                                    CyclicKVCacheLayerView cache,
                                    const KVCacheAppendPrefixPlan& plan, cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

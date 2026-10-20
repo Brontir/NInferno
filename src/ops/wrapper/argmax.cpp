@@ -1,6 +1,7 @@
-// ninfer::ops - argmax wrapper: public api validation and launcher dispatch.
-#include "ninfer/ops/argmax.h"
+// ninferno::ops - argmax wrapper: public api validation and launcher dispatch.
+#include "ninferno/ops/argmax.h"
 
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/argmax.h" // detail::argmax_launch
 
 #include <cstdint>
@@ -8,38 +9,13 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
-namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t, const char* label) {
-    bool has_zero = false;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument(std::string("argmax: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { has_zero = true; }
-    }
-    if (has_zero) { return 0; }
-
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("argmax: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
-
-} // namespace
-
+namespace ninferno::ops {
 void argmax(const Tensor& logits, Tensor& out, std::int32_t valid_rows, cudaStream_t stream) {
     if (logits.dtype != DType::BF16) { throw std::invalid_argument("argmax: logits must be BF16"); }
     if (out.dtype != DType::I32) { throw std::invalid_argument("argmax: out must be I32"); }
 
-    const std::int64_t logits_n = numel_allow_zero(logits, "logits");
-    (void)numel_allow_zero(out, "out");
+    const std::int64_t logits_n = numel_allow_zero(logits, "argmax", "logits");
+    (void)numel_allow_zero(out, "argmax", "out");
 
     if (logits.ne[2] != 1 || logits.ne[3] != 1) {
         throw std::invalid_argument("argmax: logits must be rank-2 [vocab,T]");
@@ -68,4 +44,4 @@ void argmax(const Tensor& logits, Tensor& out, std::int32_t valid_rows, cudaStre
     detail::argmax_launch(logits, out, valid_rows, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

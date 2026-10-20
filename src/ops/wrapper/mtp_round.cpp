@@ -1,21 +1,13 @@
-#include "ninfer/ops/mtp_round.h"
+#include "ninferno/ops/mtp_round.h"
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/mtp_round.h"
 
 #include <algorithm>
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-void require_contiguous_nonnull(const Tensor& t, const char* op, const char* name) {
-    if (!t.is_contiguous()) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " must be contiguous");
-    }
-    if (t.data == nullptr) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " data must be non-null");
-    }
-}
 
 void require_matrix(const Tensor& t, DType dtype, std::int32_t rows, std::int32_t cols,
                     const char* op, const char* name) {
@@ -50,11 +42,27 @@ void mtp_prepare_next_round(const Tensor& verify_ids, const Tensor& next_anchors
                             Tensor& ar_positions, Tensor& ar_rope_positions,
                             Tensor& ar_valid_columns, std::int32_t max_context,
                             cudaStream_t stream) {
+    mtp_prepare_next_round(verify_ids, next_anchors, accepted, updated_frontiers, remaining_budgets,
+                           licensed_counts, rope_deltas, alignment_ids, next_extents, ar_positions,
+                           ar_rope_positions, ar_valid_columns, max_context, verify_ids.ne[0] - 1,
+                           stream);
+}
+
+void mtp_prepare_next_round(const Tensor& verify_ids, const Tensor& next_anchors,
+                            const Tensor& accepted, const Tensor& updated_frontiers,
+                            const Tensor& remaining_budgets, const Tensor& licensed_counts,
+                            const Tensor& rope_deltas, Tensor& alignment_ids, Tensor& next_extents,
+                            Tensor& ar_positions, Tensor& ar_rope_positions,
+                            Tensor& ar_valid_columns, std::int32_t max_context,
+                            std::int32_t draft_depth, cudaStream_t stream) {
     constexpr const char* op = "mtp_prepare_next_round";
     const std::int32_t T     = verify_ids.ne[0];
     const std::int32_t batch = verify_ids.ne[1];
-    if (T < 2 || T > 6) {
-        throw std::invalid_argument("mtp_prepare_next_round: T must be in [2,6]");
+    if (T < 2 || T > 16) {
+        throw std::invalid_argument("mtp_prepare_next_round: T must be in [2,16]");
+    }
+    if (draft_depth < 1 || draft_depth > T - 1) {
+        throw std::invalid_argument("mtp_prepare_next_round: draft depth must be in [1,T-1]");
     }
     if (batch < 1) { throw std::invalid_argument("mtp_prepare_next_round: B must be positive"); }
     if (max_context <= 0) {
@@ -69,7 +77,7 @@ void mtp_prepare_next_round(const Tensor& verify_ids, const Tensor& next_anchors
     require_vector(rope_deltas, DType::I32, batch, op, "rope_deltas");
     require_matrix(alignment_ids, DType::I32, T, batch, op, "alignment_ids");
     require_vector(next_extents, DType::I32, batch, op, "next_extents");
-    const std::int32_t steps = std::max(T - 2, 1);
+    const std::int32_t steps = std::max(draft_depth - 1, 1);
     require_row_pitched_matrix(ar_positions, batch, steps, op, "ar_positions");
     require_row_pitched_matrix(ar_rope_positions, batch, steps, op, "ar_rope_positions");
     require_row_pitched_matrix(ar_valid_columns, batch, steps, op, "ar_valid_columns");
@@ -78,10 +86,10 @@ void mtp_prepare_next_round(const Tensor& verify_ids, const Tensor& next_anchors
         throw std::invalid_argument(
             "mtp_prepare_next_round: AR outputs must share one step stride");
     }
-    detail::mtp_prepare_next_round_launch(verify_ids, next_anchors, accepted, updated_frontiers,
-                                          remaining_budgets, licensed_counts, rope_deltas,
-                                          alignment_ids, next_extents, ar_positions,
-                                          ar_rope_positions, ar_valid_columns, max_context, stream);
+    detail::mtp_prepare_next_round_launch(
+        verify_ids, next_anchors, accepted, updated_frontiers, remaining_budgets, licensed_counts,
+        rope_deltas, alignment_ids, next_extents, ar_positions, ar_rope_positions, ar_valid_columns,
+        max_context, draft_depth, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

@@ -1,4 +1,4 @@
-#include "ninfer/ops/prepare_ragged_prefix.h"
+#include "ninferno/ops/prepare_ragged_prefix.h"
 #include "core/decode_graph.h"
 #include "core/device.h"
 #include "ops/op_tester.h"
@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 constexpr std::array<int, 8> LaneOrder{7, 0, 4, 2, 6, 1, 5, 3};

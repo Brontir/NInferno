@@ -1,12 +1,13 @@
-#include "ninfer/ops/scatter.h"
+#include "ninferno/ops/scatter.h"
 
 #include "core/device.h"
 #include "ops/launcher/scatter.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 void scatter(const Tensor& src, const Tensor& indices, Tensor& dst, cudaStream_t stream) {
     if (src.dtype != DType::BF16 || dst.dtype != DType::BF16 || indices.dtype != DType::I32) {
@@ -57,15 +58,15 @@ void scatter_bf16_batch(const Tensor& source, const Tensor& lanes, const Tensor&
     detail::scatter_bf16_batch_launch(source, lanes, valid_columns, destination, stream);
 }
 
-void extract_bf16_columns(const Tensor& source, std::int32_t source_column, Tensor& destination,
+void extract_bf16_columns(const Tensor& source, std::int32_t source_offset, Tensor& destination,
                           cudaStream_t stream) {
     if (source.dtype != DType::BF16 || destination.dtype != DType::BF16) {
         throw std::invalid_argument("extract_bf16_columns: tensors must be BF16");
     }
     if (source.ne[0] <= 0 || source.ne[1] <= 0 || destination.ne[0] <= 0 ||
         destination.ne[1] != source.ne[1] || source.ne[2] != 1 || source.ne[3] != 1 ||
-        destination.ne[2] != 1 || destination.ne[3] != 1 || source_column < 0 ||
-        source_column > source.ne[0] - destination.ne[0]) {
+        destination.ne[2] != 1 || destination.ne[3] != 1 || source_offset < 0 ||
+        source_offset > source.ne[0] - destination.ne[0]) {
         throw std::invalid_argument("extract_bf16_columns: invalid rank-2 slice geometry");
     }
     if (!source.is_contiguous() || !destination.is_contiguous() || source.data == nullptr ||
@@ -82,10 +83,39 @@ void extract_bf16_columns(const Tensor& source, std::int32_t source_column, Tens
     const std::size_t destination_pitch =
         static_cast<std::size_t>(destination.ne[0]) * element_bytes;
     const auto* source_ptr = static_cast<const unsigned char*>(source.data) +
-                             static_cast<std::size_t>(source_column) * element_bytes;
+                             static_cast<std::size_t>(source_offset) * element_bytes;
     CUDA_CHECK(cudaMemcpy2DAsync(destination.data, destination_pitch, source_ptr, source_pitch,
                                  width, static_cast<std::size_t>(destination.ne[1]),
                                  cudaMemcpyDeviceToDevice, stream));
 }
 
-} // namespace ninfer::ops
+void regroup_bf16_heads(const Tensor& source, std::int32_t groups, Tensor& destination,
+                        cudaStream_t stream) {
+    if (source.dtype != DType::BF16 || destination.dtype != DType::BF16) {
+        throw std::invalid_argument("regroup_bf16_heads: tensors must be BF16");
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (source.ne[i] != destination.ne[i] || source.ne[i] <= 0) {
+            throw std::invalid_argument("regroup_bf16_heads: shapes must match and be positive");
+        }
+    }
+    if (source.ne[0] % 8 != 0 || groups <= 0 || source.ne[1] % groups != 0) {
+        throw std::invalid_argument(
+            "regroup_bf16_heads: D must be a multiple of eight and groups must divide H");
+    }
+    if (!source.is_contiguous() || !destination.is_contiguous() || source.data == nullptr ||
+        destination.data == nullptr) {
+        throw std::invalid_argument("regroup_bf16_heads: tensors must be contiguous and non-null");
+    }
+    if (((reinterpret_cast<std::uintptr_t>(source.data) |
+          reinterpret_cast<std::uintptr_t>(destination.data)) &
+         0xfU) != 0) {
+        throw std::invalid_argument("regroup_bf16_heads: tensors must be 16-byte aligned");
+    }
+    if (source.data == destination.data) {
+        throw std::invalid_argument("regroup_bf16_heads: source and destination must not alias");
+    }
+    detail::regroup_bf16_heads_launch(source, groups, destination, stream);
+}
+
+} // namespace ninferno::ops

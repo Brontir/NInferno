@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 enum class Q8AttnInputScheduleId {
     DecodeR8Direct,
@@ -27,6 +27,9 @@ enum class Q8AttnInputScheduleId {
     DFlash2MmaR32C64K128,
     DFlash2MmaR32C64,
     DFlash2MmaR64C128,
+    // Prefill profile, four-output target, 17..64 columns: the MMA contraction on a narrow tile
+    // chosen by T.
+    MmaPrefillSmallT,
 };
 
 struct Q8AttnInputProblem {
@@ -42,7 +45,6 @@ struct Q8AttnInputPlan {
     Q8AttnInputScheduleId schedule;
 };
 
-const char* q8_attn_input_schedule_name(Q8AttnInputScheduleId schedule) noexcept;
 bool q8_attn_input_admits(const Q8AttnInputProblem& problem) noexcept;
 Q8AttnInputPlan q8_attn_input_resolve_plan(const Q8AttnInputProblem& problem);
 
@@ -55,4 +57,4 @@ void q8_attn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& q, Te
 void q8_attn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& q, Tensor& k, Tensor& v,
                             cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

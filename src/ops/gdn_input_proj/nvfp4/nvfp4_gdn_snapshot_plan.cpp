@@ -1,12 +1,14 @@
-#include "core/weight.h"
 #include "ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.h"
+#include "core/weight.h"
 
 #include "core/layout.h"
+#include "ops/common/route_probe.h"
 #include "ops/gdn_input_proj/nvfp4/nvfp4_gdn_input_plan.h"
 
+#include <algorithm>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 struct Nvfp4GdnProjectedWorkspace {
@@ -15,12 +17,14 @@ struct Nvfp4GdnProjectedWorkspace {
 };
 
 template <class Allocator>
-Nvfp4GdnProjectedWorkspace allocate_workspace(Allocator& allocator, std::int32_t tokens) {
+Nvfp4GdnProjectedWorkspace allocate_workspace(Allocator& allocator, LinearPolicy policy,
+                                              std::int32_t tokens) {
     Nvfp4GdnProjectedWorkspace out;
     out.projected = allocator.alloc(DType::BF16, {10240, tokens}, 256);
     const std::size_t projection_bytes =
-        nvfp4_gdn_input_workspace_capacity_bytes(LinearPolicy::AllowA4, tokens, tokens);
-    out.projection = allocator.alloc_bytes(projection_bytes, 256);
+        nvfp4_gdn_input_workspace_capacity_bytes(policy, tokens, tokens);
+    // An A16 projection needs no scratch; the span stays nonempty.
+    out.projection = allocator.alloc_bytes(std::max<std::size_t>(projection_bytes, 1), 256);
     return out;
 }
 
@@ -35,11 +39,19 @@ Nvfp4GdnConvPlan nvfp4_gdn_conv_resolve_plan(LinearPolicy policy, std::int32_t t
         throw std::invalid_argument("nvfp4 gdn conv: invalid compute policy");
     }
     if (batch_size > 1) { return {Nvfp4GdnConvScheduleId::Materialized}; }
-    if (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8) {
+    // A16Only (the exact contract) materializes every width through the token-invariant A16
+    // projection (nvfp4_gdn_input_plan.cpp); the fused A16 schedules sum K in their own order.
+    if (policy == LinearPolicy::A16Only) { return {Nvfp4GdnConvScheduleId::Materialized}; }
+    // A16 otherwise (AllowA8, or a route probe forcing it, route_probe.h) keeps the fused A16
+    // schedules through T=16 and materializes wider calls through the A16 projection; a probe
+    // forcing A4 materializes every width through the W4A4 projection.
+    const std::int8_t forced = route_probe_state.quantized_act;
+    if (!allows_a4(policy) || forced == 0) {
         if (tokens == 1) { return {Nvfp4GdnConvScheduleId::DecodeFusedA16}; }
         if (tokens <= 16) { return {Nvfp4GdnConvScheduleId::SmallTFusedA16}; }
-        throw std::invalid_argument("nvfp4 gdn conv A16 is registered only through T=16");
+        return {Nvfp4GdnConvScheduleId::Materialized};
     }
+    if (forced == 1) { return {Nvfp4GdnConvScheduleId::Materialized}; }
     if (tokens == 1) { return {Nvfp4GdnConvScheduleId::DecodeFusedA16}; }
     if (tokens <= 3) { return {Nvfp4GdnConvScheduleId::SmallTFusedA16}; }
     return {Nvfp4GdnConvScheduleId::Materialized};
@@ -56,7 +68,7 @@ std::size_t nvfp4_gdn_snapshot_workspace_capacity_bytes(LinearPolicy policy,
     if (maximum_plan.schedule != Nvfp4GdnConvScheduleId::Materialized) { return 0; }
 
     WorkspaceLayoutBuilder layout;
-    (void)allocate_workspace(layout, max_tokens);
+    (void)allocate_workspace(layout, policy, max_tokens);
     return layout.peak_bytes(1);
 }
 
@@ -82,12 +94,13 @@ void nvfp4_gdn_snapshot_dispatch(const Tensor& x, const Weight& weight, const Te
     }
 
     auto scope                         = workspace.scope();
-    Nvfp4GdnProjectedWorkspace scratch = allocate_workspace(workspace, x.ne[1]);
+    Nvfp4GdnProjectedWorkspace scratch = allocate_workspace(workspace, policy, x.ne[1]);
     WorkspaceArena projection_workspace(scratch.projection);
-    nvfp4_gdn_input_dispatch(x, weight, scratch.projected, z, LinearPolicy::AllowA4,
-                             &projection_workspace, stream);
+    // The call's own policy: A16Only projects in A16 (never W4A4 behind the caller's back).
+    nvfp4_gdn_input_dispatch(x, weight, scratch.projected, z, policy, &projection_workspace,
+                             stream);
     nvfp4_gdn_snapshot_post_launch(scratch.projected, conv_weight, conv_states, valid_columns,
                                    initial_slot, snapshot_base_slot, query, key, value, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

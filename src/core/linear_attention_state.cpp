@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 constexpr std::size_t kArenaAlign = 256;
@@ -91,11 +91,16 @@ plan_linear_attention_state_pool(LayoutBuilder& builder, const LinearAttentionSt
     if (spec.conv_dtype != DType::BF16 && spec.conv_dtype != DType::FP32) {
         throw std::invalid_argument("LinearAttentionStatePool conv_dtype must be BF16 or FP32");
     }
+    if (spec.recurrent_dtype != DType::BF16 && spec.recurrent_dtype != DType::FP32 &&
+        spec.recurrent_dtype != DType::FP16) {
+        throw std::invalid_argument(
+            "LinearAttentionStatePool recurrent_dtype must be BF16, FP16 or FP32");
+    }
 
     const Tensor conv_shape(nullptr, spec.conv_dtype,
                             {spec.conv_channels, spec.conv_width, spec.slot_count});
     const Tensor recurrent_shape(
-        nullptr, DType::FP32,
+        nullptr, spec.recurrent_dtype,
         {spec.key_head_dim, spec.value_head_dim, spec.value_heads, spec.slot_count});
 
     LinearAttentionStatePoolLayout layout;
@@ -123,7 +128,7 @@ LinearAttentionStatePool::LinearAttentionStatePool(DeviceSpan backing,
     const Tensor conv_shape(nullptr, spec_.conv_dtype,
                             {spec_.conv_channels, spec_.conv_width, spec_.slot_count});
     const Tensor recurrent_shape(
-        nullptr, DType::FP32,
+        nullptr, spec_.recurrent_dtype,
         {spec_.key_head_dim, spec_.value_head_dim, spec_.value_heads, spec_.slot_count});
     conv_.reserve(layout.conv.size());
     recurrent_.reserve(layout.recurrent.size());
@@ -137,7 +142,7 @@ LinearAttentionStatePool::LinearAttentionStatePool(DeviceSpan backing,
                            std::initializer_list<std::int32_t>{spec_.conv_channels,
                                                                spec_.conv_width, spec_.slot_count});
         recurrent_.emplace_back(
-            layout.recurrent[layer].bind(backing).data, DType::FP32,
+            layout.recurrent[layer].bind(backing).data, spec_.recurrent_dtype,
             std::initializer_list<std::int32_t>{spec_.key_head_dim, spec_.value_head_dim,
                                                 spec_.value_heads, spec_.slot_count});
     }
@@ -159,22 +164,6 @@ LinearAttentionStateLayerView LinearAttentionStatePool::layer_view(std::uint32_t
     return {.conv = conv_[layer], .recurrent = recurrent_[layer]};
 }
 
-LinearAttentionStateSlotView LinearAttentionStatePool::slot_view(std::int32_t slot) const {
-    validate_layer_slot(*this, 0, slot, "LinearAttentionStatePool slot_view");
-    const auto all   = all_layers_view();
-    Tensor conv      = conv_slot(0, slot);
-    Tensor recurrent = recurrent_slot(0, slot);
-    return {
-        .conv_layer0                 = conv,
-        .recurrent_layer0            = recurrent,
-        .conv_layer_bytes            = conv.bytes(),
-        .recurrent_layer_bytes       = recurrent.bytes(),
-        .conv_layer_pitch_bytes      = all.conv_layer_stride_bytes,
-        .recurrent_layer_pitch_bytes = all.recurrent_layer_stride_bytes,
-        .layers                      = layer_count(),
-    };
-}
-
 LinearAttentionStateAllLayersView LinearAttentionStatePool::all_layers_view() const {
     if (conv_.size() != spec_.layers || recurrent_.size() != spec_.layers || conv_.empty()) {
         throw std::logic_error("LinearAttentionStatePool layer inventory is inconsistent");
@@ -183,7 +172,7 @@ LinearAttentionStateAllLayersView LinearAttentionStatePool::all_layers_view() co
         validate_state_tensor(conv_[layer], spec_.conv_dtype,
                               {spec_.conv_channels, spec_.conv_width, spec_.slot_count}, "conv");
         validate_state_tensor(
-            recurrent_[layer], DType::FP32,
+            recurrent_[layer], spec_.recurrent_dtype,
             {spec_.key_head_dim, spec_.value_head_dim, spec_.value_heads, spec_.slot_count},
             "recurrent");
     }
@@ -227,14 +216,19 @@ void LinearAttentionStatePool::copy_slot(std::int32_t src, std::int32_t dst, cud
 }
 
 void LinearAttentionStatePool::zero_slot(std::int32_t slot, cudaStream_t stream) {
-    validate_layer_slot(*this, 0, slot, "LinearAttentionStatePool zero_slot");
+    fill_slot(slot, 0, stream);
+}
+
+void LinearAttentionStatePool::fill_slot(std::int32_t slot, unsigned char value,
+                                         cudaStream_t stream) {
+    validate_layer_slot(*this, 0, slot, "LinearAttentionStatePool fill_slot");
     for (std::uint32_t layer = 0; layer < layer_count(); ++layer) {
         const Tensor state = conv_slot(layer, slot);
-        CUDA_CHECK(cudaMemsetAsync(state.data, 0, state.bytes(), stream));
+        CUDA_CHECK(cudaMemsetAsync(state.data, value, state.bytes(), stream));
     }
     for (std::uint32_t layer = 0; layer < layer_count(); ++layer) {
         const Tensor state = recurrent_slot(layer, slot);
-        CUDA_CHECK(cudaMemsetAsync(state.data, 0, state.bytes(), stream));
+        CUDA_CHECK(cudaMemsetAsync(state.data, value, state.bytes(), stream));
     }
 }
 
@@ -247,4 +241,4 @@ void LinearAttentionStatePool::zero_all(cudaStream_t stream) {
     }
 }
 
-} // namespace ninfer
+} // namespace ninferno

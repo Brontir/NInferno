@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 template <int Tokens, class Launch>
@@ -19,27 +19,27 @@ void dispatch_token_case(Launch&& launch) {
 template <class Launch>
 void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
     switch (tokens) {
-#define NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(TOKENS)                                         \
+#define NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(TOKENS)                                       \
     case TOKENS:                                                                                   \
         dispatch_token_case<TOKENS>(launch);                                                       \
         return
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(1);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(2);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(3);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(4);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(5);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(6);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(7);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(8);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(9);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(10);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(11);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(12);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(13);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(14);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(15);
-        NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(16);
-#undef NINFER_SLIDING_WINDOW_ATTENTION_TOKEN_CASE
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(1);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(2);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(3);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(4);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(5);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(6);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(7);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(8);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(9);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(10);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(11);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(12);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(13);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(14);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(15);
+        NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(16);
+#undef NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE
     default:
         throw std::invalid_argument("sliding_window_attention: unsupported T");
     }
@@ -127,23 +127,33 @@ void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, con
         if (plan.warps != Warps)
             throw std::invalid_argument("sliding_window_attention: inconsistent query layout");
         // Window determines visibility and ring addressing, not the MMA storage layout.
-        const auto partial = [&]<bool Direct>() {
+        const auto partial_typed = [&]<bool Direct, typename KT, typename VT>() {
             const dim3 grid(kContextQueryKVHeads, Direct ? 1 : plan.split_capacity, q.ne[3]);
-            sliding_window_attention_split_partial_kernel<Tokens, Warps, KeyBlock, Direct>
-                <<<grid, Warps * 32, SmemBytes, stream>>>(
+            constexpr std::size_t Bytes =
+                SmemBytes + (std::is_same_v<KT, std::int8_t>
+                                 ? kContextQueryInt8StageBytes<kContextQueryHeadDim, KeyBlock>
+                                 : 0u);
+            sliding_window_attention_split_partial_kernel<Tokens, Warps, KeyBlock, Direct, KT, VT>
+                <<<grid, Warps * 32, Bytes, stream>>>(
                     static_cast<const __nv_bfloat16*>(q.data),
                     static_cast<const __nv_bfloat16*>(query_k.data),
                     static_cast<const __nv_bfloat16*>(query_v.data),
                     static_cast<const std::int32_t*>(positions.data),
                     static_cast<const std::int32_t*>(valid_columns.data),
                     static_cast<const std::int32_t*>(lanes.data),
-                    static_cast<const __nv_bfloat16*>(context.k.data),
-                    static_cast<const __half*>(context.v.data),
+                    static_cast<const KT*>(context.k.data), static_cast<const VT*>(context.v.data),
                     static_cast<int>(context.padded_capacity), plan.window - 1, plan.max_context,
-                    Direct ? 1 : plan.split_capacity, scale,
-                    static_cast<float*>(partial_acc.data), static_cast<float*>(partial_m.data),
-                    static_cast<float*>(partial_l.data), static_cast<__nv_bfloat16*>(out.data));
+                    Direct ? 1 : plan.split_capacity, scale, static_cast<float*>(partial_acc.data),
+                    static_cast<float*>(partial_m.data), static_cast<float*>(partial_l.data),
+                    static_cast<__nv_bfloat16*>(out.data));
             CUDA_CHECK(cudaGetLastError());
+        };
+        const auto partial = [&]<bool Direct>() {
+            if (context.int8) {
+                partial_typed.template operator()<Direct, std::int8_t, std::int8_t>();
+            } else {
+                partial_typed.template operator()<Direct, __nv_bfloat16, __half>();
+            }
         };
         if (direct) {
             partial.template operator()<true>();
@@ -170,4 +180,4 @@ void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, con
     });
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

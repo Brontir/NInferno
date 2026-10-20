@@ -1,11 +1,12 @@
 #pragma once
 
 #include "core/nvtx.h"
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/execution.h"
 #include "runtime/contract/resources.h"
 #include "runtime/engine/admission_policy.h"
 #include "runtime/engine/generation_budget.h"
+#include "structured/request_constraint.h"
 
 #include <atomic>
 #include <chrono>
@@ -19,7 +20,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 enum class RequestEngineHostPhase : std::uint8_t {
     Boundary,
@@ -127,10 +128,6 @@ struct RequestRecord {
     RequestRecord(const RequestRecord&)            = delete;
     RequestRecord& operator=(const RequestRecord&) = delete;
 
-    [[nodiscard]] bool is_waiting() const noexcept {
-        return model_state == EngineRequestState::Waiting;
-    }
-
     [[nodiscard]] bool is_prefilling() const noexcept {
         return model_state == EngineRequestState::Prefill;
     }
@@ -179,6 +176,18 @@ struct RequestRecord {
     std::atomic<bool> cancelled{false};
     EngineRequestState model_state        = EngineRequestState::Waiting;
     bool capture_pending                  = false;
+    // A KV lease that stayed short after cached context was released has been reported.
+    bool lease_shortfall_reported         = false;
+    // Its KV lease cannot grow while another request still runs: it sits out decode rounds, its
+    // pages kept, until the others free pages (EngineCore::apply_device_kv_lease_settlements).
+    bool lease_parked = false;
+    // A copy of its prompt, kept under a KV lease so that it can be preempted and resumed
+    // (EngineCore::preempt_lease_victim).
+    std::optional<PreparedPrompt> preempt_source;
+    // Preempted and queued again to resume its answer: its start, stream and queue wait stand.
+    bool resumed = false;
+    // Slot releases counted when it was preempted: it resumes after another request has left.
+    std::uint64_t resume_after_releases = 0;
     EngineRequestState post_capture_state = EngineRequestState::Prefill;
     std::optional<FinishReason> terminal_reason;
 
@@ -191,6 +200,8 @@ struct RequestRecord {
     RequestHostTiming host_timing;
     SpeculativeStats speculative_stats;
     MaterializationDiagnostics materialization_diagnostics;
+    // Constrained-decoding state, owned by the worker. Advanced only along committed tokens.
+    std::optional<structured::RequestConstraint> constraint;
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -204,4 +215,4 @@ struct RequestRecord {
     bool capacity_released = false;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

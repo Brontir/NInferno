@@ -1,17 +1,19 @@
 #include "core/paged_kv_cache.h"
 
+#include "core/debug_poison.h"
 #include "core/device.h"
 #include "core/host_kv_arena.h"
 
 #include <algorithm>
 #include <limits>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 std::int32_t checked_i32(std::uint32_t value, const char* label) {
@@ -114,10 +116,6 @@ std::size_t DeviceKVPagePoolLayout::payload_bytes() const noexcept {
     std::size_t total = 0;
     for (const DeviceKVPlaneLayout& plane : planes) { total += plane.storage.region.bytes; }
     return total;
-}
-
-std::size_t KVExecutionTableLayout::metadata_bytes() const noexcept {
-    return block_tables.region.bytes;
 }
 
 DeviceKVPageLease::~DeviceKVPageLease() { (void)release(); }
@@ -227,6 +225,16 @@ DeviceKVPagePool::DeviceKVPagePool(DeviceSpan backing, const DeviceKVPagePoolLay
             throw std::logic_error("Paged KV HeadMajor plane shape is inconsistent");
         }
         planes_.push_back(plane);
+    }
+    // Debug poisoning (NINFERNO_DEBUG_POISON): every page of every plane,
+    // values and scales alike, starts as the poison byte (0xFF: NaN in BF16/FP16/FP8, -1 in int8),
+    // so a kernel that reads a slot no request has written -- past a sequence's length inside its
+    // last page, or a page it was never given -- produces NaN instead of plausible zeros.
+    if (const std::optional<unsigned char> poison = debug_poison_byte_for("kv")) {
+        for (const Tensor& plane : planes_) {
+            CUDA_CHECK(cudaMemset(plane.data, *poison, plane.bytes()));
+        }
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     free_page_runs_.reserve(spec_.page_group_count);
@@ -731,12 +739,31 @@ KVExecutionTablePool::KVExecutionTablePool(DeviceSpan backing, const KVExecution
     : spec_(layout.spec), pages_(&pages), block_tables_(layout.block_tables.bind(backing)),
       host_shadow_(checked_table_bytes(layout.spec)),
       row_in_use_(static_cast<std::size_t>(layout.spec.table_rows), false),
-      row_generations_(static_cast<std::size_t>(layout.spec.table_rows), 1) {
+      row_generations_(static_cast<std::size_t>(layout.spec.table_rows), 1),
+      row_fences_(static_cast<std::size_t>(layout.spec.table_rows)) {
     if (block_tables_.dtype != DType::I32 ||
         block_tables_.ne[0] !=
             checked_i32(spec_.logical_page_capacity, "Paged KV logical page capacity") ||
         block_tables_.ne[1] != spec_.table_rows) {
         throw std::logic_error("Paged KV execution-table layout is inconsistent");
+    }
+    for (RowFence& fence : row_fences_) {
+        const cudaError_t status = cudaEventCreateWithFlags(&fence.event, cudaEventDisableTiming);
+        if (status != cudaSuccess) {
+            for (RowFence& created : row_fences_) {
+                if (created.event != nullptr) { (void)cudaEventDestroy(created.event); }
+            }
+            throw std::runtime_error(std::string("Paged KV execution-table fence: ") +
+                                     cudaGetErrorString(status));
+        }
+    }
+}
+
+KVExecutionTablePool::~KVExecutionTablePool() {
+    for (RowFence& fence : row_fences_) {
+        // A queued copy still reads the shadow this pool is about to free.
+        if (fence.end > fence.begin) { (void)cudaEventSynchronize(fence.event); }
+        (void)cudaEventDestroy(fence.event);
     }
 }
 
@@ -778,9 +805,7 @@ void KVExecutionTablePool::publish(KVExecutionRowHandle row_handle, std::uint32_
         page_handles.size() > logical_page_capacity() - logical_begin) {
         throw std::invalid_argument("Paged KV mapping publication is outside its execution row");
     }
-    auto* shadow = static_cast<std::int32_t*>(host_shadow_.data()) +
-                   static_cast<std::size_t>(row_handle.row_) * logical_page_capacity() +
-                   logical_begin;
+    std::int32_t* shadow = writable_shadow(row_handle, logical_begin, page_handles.size(), stream);
     for (std::size_t index = 0; index < page_handles.size(); ++index) {
         shadow[index] = pages_->physical_index(page_handles[index]);
     }
@@ -795,13 +820,13 @@ void KVExecutionTablePool::publish(KVExecutionRowHandle row_handle, std::uint32_
         page_leases.size() > logical_page_capacity() - logical_begin) {
         throw std::invalid_argument("Paged KV mapping publication is outside its execution row");
     }
-    auto* shadow = static_cast<std::int32_t*>(host_shadow_.data()) +
-                   static_cast<std::size_t>(row_handle.row_) * logical_page_capacity() +
-                   logical_begin;
-    for (std::size_t index = 0; index < page_leases.size(); ++index) {
-        if (!page_leases[index].belongs_to(*pages_)) {
+    for (const DeviceKVPageLease& lease : page_leases) {
+        if (!lease.belongs_to(*pages_)) {
             throw std::invalid_argument("Paged KV execution mapping names another page pool");
         }
+    }
+    std::int32_t* shadow = writable_shadow(row_handle, logical_begin, page_leases.size(), stream);
+    for (std::size_t index = 0; index < page_leases.size(); ++index) {
         shadow[index] = pages_->physical_index(page_leases[index].handle());
     }
     publish_indices(row_handle, logical_begin,
@@ -815,10 +840,34 @@ void KVExecutionTablePool::publish_repeated(KVExecutionRowHandle row_handle,
         throw std::invalid_argument("Repeated Paged KV mapping is outside its execution row");
     }
     const std::int32_t physical = pages_->physical_index(page);
-    auto* shadow                = static_cast<std::int32_t*>(host_shadow_.data()) +
-                   static_cast<std::size_t>(row_handle.row_) * logical_page_capacity();
+    std::int32_t* shadow        = writable_shadow(row_handle, 0, count, stream);
     std::fill_n(shadow, count, physical);
     publish_indices(row_handle, 0, std::span<const std::int32_t>(shadow, count), stream);
+}
+
+std::int32_t* KVExecutionTablePool::writable_shadow(KVExecutionRowHandle row_handle,
+                                                    std::uint32_t logical_begin, std::size_t count,
+                                                    cudaStream_t stream) {
+    RowFence& fence                 = row_fences_[static_cast<std::size_t>(row_handle.row_)];
+    cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream, &capture));
+    if (count != 0 && fence.end > fence.begin && capture == cudaStreamCaptureStatusNone) {
+        const std::uint64_t end = static_cast<std::uint64_t>(logical_begin) + count;
+        const bool overlaps     = logical_begin < fence.end && fence.begin < end;
+        cudaError_t status      = cudaEventQuery(fence.event);
+        // The fence tracks one stream; a copy queued on another is settled before the next.
+        if (status == cudaErrorNotReady && (overlaps || stream != fence.stream)) {
+            status = cudaEventSynchronize(fence.event);
+        }
+        if (status == cudaSuccess) {
+            fence.begin = 0;
+            fence.end   = 0;
+        } else if (status != cudaErrorNotReady) {
+            CUDA_CHECK(status);
+        }
+    }
+    return static_cast<std::int32_t*>(host_shadow_.data()) +
+           static_cast<std::size_t>(row_handle.row_) * logical_page_capacity() + logical_begin;
 }
 
 void KVExecutionTablePool::publish_indices(KVExecutionRowHandle row_handle,
@@ -830,6 +879,15 @@ void KVExecutionTablePool::publish_indices(KVExecutionRowHandle row_handle,
     auto* destination      = static_cast<std::int32_t*>(destination_row.data) + logical_begin;
     CUDA_CHECK(cudaMemcpyAsync(destination, indices.data(), indices.size_bytes(),
                                cudaMemcpyHostToDevice, stream));
+    cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream, &capture));
+    if (capture != cudaStreamCaptureStatusNone) { return; }
+    RowFence& fence         = row_fences_[static_cast<std::size_t>(row_handle.row_)];
+    const std::uint32_t end = logical_begin + static_cast<std::uint32_t>(indices.size());
+    CUDA_CHECK(cudaEventRecord(fence.event, stream));
+    fence.stream = stream;
+    fence.begin  = fence.end > fence.begin ? std::min(fence.begin, logical_begin) : logical_begin;
+    fence.end    = std::max(fence.end, end);
 }
 
 Tensor KVExecutionTablePool::row(KVExecutionRowHandle handle) const {
@@ -838,4 +896,4 @@ Tensor KVExecutionTablePool::row(KVExecutionRowHandle handle) const {
         .view({static_cast<std::int32_t>(logical_page_capacity())});
 }
 
-} // namespace ninfer
+} // namespace ninferno

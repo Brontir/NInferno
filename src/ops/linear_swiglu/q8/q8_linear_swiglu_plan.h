@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 enum class Q8LinearSwiGluScheduleId {
     DecodePairR16,
@@ -42,8 +42,8 @@ struct Q8LinearSwiGluPlan {
     Q8LinearSwiGluScheduleId schedule;
 };
 
-const char* q8_linear_swiglu_schedule_name(Q8LinearSwiGluScheduleId schedule) noexcept;
-bool q8_linear_swiglu_schedule_uses_mma(Q8LinearSwiGluScheduleId schedule) noexcept;
+// The (gate+up rows, k) problems this plan registers; ops/wrapper/linear_swiglu.cpp asks it.
+bool q8_linear_swiglu_registered(std::int32_t gate_up_rows, std::int32_t k) noexcept;
 bool q8_linear_swiglu_admits(const Q8LinearSwiGluProblem& problem) noexcept;
 Q8LinearSwiGluPlan q8_linear_swiglu_resolve_plan(const Q8LinearSwiGluProblem& problem);
 
@@ -51,4 +51,4 @@ void q8_linear_swiglu_execute_plan(const Q8LinearSwiGluPlan& plan, const Tensor&
                                    Tensor& out, cudaStream_t stream);
 void q8_linear_swiglu_dispatch(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 [[noreturn]] void invalid_tool_history(std::string message) {
@@ -25,7 +25,7 @@ namespace {
 [[noreturn]] void response_not_found(const std::string& id) {
     ApiError error{.status  = 404,
                    .type    = "invalid_request_error",
-                   .message = "response '" + id + "' not found",
+                   .message = "response '" + ascii_preview(id) + "' not found",
                    .param   = "previous_response_id",
                    .code    = "response_not_found"};
     throw ApiException(std::move(error));
@@ -140,6 +140,31 @@ ChatTurn instruction_turn(const std::string& text) {
     return turn;
 }
 
+// Marks the end of the leading system/developer run as an automatic shared-prefix candidate,
+// unless it is marked already or every marker slot is taken.
+void mark_system_head(GenerationRequest& request) {
+    std::size_t leading = 0;
+    while (leading < request.messages.size() &&
+           (request.messages[leading].role == ChatRole::System ||
+            request.messages[leading].role == ChatRole::Developer)) {
+        ++leading;
+    }
+    if (leading == 0 || request.messages[leading - 1].cache_boundary_after) { return; }
+    std::size_t markers = 0;
+    for (const ToolDefinition& tool : request.tools) {
+        markers += tool.cache_boundary_after ? 1U : 0U;
+    }
+    for (const ChatTurn& turn : request.messages) {
+        markers += turn.cache_boundary_after ? 1U : 0U;
+        for (const ContentPart& part : turn.content) {
+            markers += part.cache_boundary_after ? 1U : 0U;
+        }
+    }
+    if (markers >= ninferno::kMaximumExplicitPromptCacheMarkers) { return; }
+    request.messages[leading - 1].cache_boundary_after =
+        CacheBoundary{.evidence = ninferno::SharedCandidateEvidence::DefaultAutomatic};
+}
+
 } // namespace
 
 OpenAIResponsesResolvedPrompt
@@ -179,6 +204,7 @@ resolve_openai_responses_prompt(const OpenAIResponsesPromptRequest& request,
     resolved.generation.messages.insert(resolved.generation.messages.end(),
                                         std::make_move_iterator(context.begin()),
                                         std::make_move_iterator(context.end()));
+    if (request.system_head_candidate) { mark_system_head(resolved.generation); }
 
     if (response_id) {
         if (parent_record) {
@@ -187,11 +213,16 @@ resolve_openai_responses_prompt(const OpenAIResponsesPromptRequest& request,
             resolved.session_key = *response_id;
         }
         resolved.cache_hints.session_key = resolved.session_key;
-        resolved.cache_hints.retention =
-            store_response ? CacheRetentionHint::LiveSession : CacheRetentionHint::Disposable;
+        // store=false on a stored parent consumes that session without advancing it. A stateless
+        // client (store=false, no parent; Codex sends its whole history each step) keeps the
+        // retention a Chat Completions request gets, not the lowest class, so pressure from other
+        // traffic does not erase its private checkpoints first.
+        resolved.cache_hints.retention            = store_response ? CacheRetentionHint::LiveSession
+                                                    : parent_record ? CacheRetentionHint::Disposable
+                                                                    : CacheRetentionHint::Default;
         resolved.cache_hints.update_session_index = store_response;
     }
     return resolved;
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

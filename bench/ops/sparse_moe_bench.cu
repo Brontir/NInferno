@@ -2,13 +2,14 @@
 //
 // The benchmark deliberately knows nothing about decode, small-T, prefill,
 // private plans, or kernel candidates. Production dispatch remains entirely
-// behind ninfer::ops::sparse_moe().
+// behind ninferno::ops::sparse_moe().
 
 #include "core/weight.h"
-#include "ninfer/ops/sparse_moe.h"
+#include "ninferno/ops/sparse_moe.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
+#include "ops/common/native_nvfp4.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_runtime.h>
@@ -31,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -46,6 +47,7 @@ enum class CodecProfile : std::uint8_t {
     Q4Q5,
     Q4Q6,
     Q8Q8,
+    Nvfp4,
 };
 
 enum class ExpertDistribution : std::uint8_t {
@@ -60,16 +62,9 @@ enum class Execution : std::uint8_t {
     Both,
 };
 
-enum class CacheMode : std::uint8_t {
-    Cold,
-    Warm,
-    Both,
-};
-
-enum class CacheState : std::uint8_t {
-    Cold,
-    Warm,
-};
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 
 struct TokenSweep {
     std::int32_t begin = 1;
@@ -123,12 +118,23 @@ const char* codec_name(CodecProfile profile) {
         return "q4-q6";
     case CodecProfile::Q8Q8:
         return "q8-q8";
+    case CodecProfile::Nvfp4:
+        return "nvfp4";
     }
     return "unknown";
 }
 
 QType gate_codec(CodecProfile profile) {
-    return profile == CodecProfile::Q8Q8 ? QType::Q8_G32_FP16 : QType::Q4_G64_FP16;
+    switch (profile) {
+    case CodecProfile::Q4Q5:
+    case CodecProfile::Q4Q6:
+        return QType::Q4_G64_FP16;
+    case CodecProfile::Q8Q8:
+        return QType::Q8_G32_FP16;
+    case CodecProfile::Nvfp4:
+        return QType::NVFP4;
+    }
+    throw std::logic_error("unknown SparseMoe codec profile");
 }
 
 QType down_codec(CodecProfile profile) {
@@ -139,8 +145,16 @@ QType down_codec(CodecProfile profile) {
         return QType::Q6_G64_FP16;
     case CodecProfile::Q8Q8:
         return QType::Q8_G32_FP16;
+    case CodecProfile::Nvfp4:
+        return QType::NVFP4;
     }
     throw std::logic_error("unknown SparseMoe codec profile");
+}
+
+// The shared expert follows the routed codec only where a profile stores all four matrices one
+// way. The row-split profiles keep it at Q8 whatever they route with.
+QType shared_codec(CodecProfile profile) {
+    return profile == CodecProfile::Nvfp4 ? QType::NVFP4 : QType::Q8_G32_FP16;
 }
 
 const char* distribution_name(ExpertDistribution distribution) {
@@ -167,9 +181,12 @@ const char* execution_name(Execution execution) {
     return "unknown";
 }
 
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
-
 std::uint64_t packed_weight_bytes(QType qtype, std::int32_t rows, std::int32_t columns) {
+    if (qtype == QType::NVFP4) {
+        // Four bits of code plus one e4m3 byte per sixteen values.
+        const std::uint64_t elements = static_cast<std::uint64_t>(rows) * columns;
+        return elements / 2 + elements / 16;
+    }
     const std::int32_t group   = qtype == QType::Q8_G32_FP16 ? 32 : 64;
     const std::uint64_t groups = static_cast<std::uint64_t>(rows) * columns / group;
     const std::uint64_t low    = qtype == QType::Q8_G32_FP16
@@ -182,9 +199,10 @@ std::uint64_t packed_weight_bytes(QType qtype, std::int32_t rows, std::int32_t c
 }
 
 double unique_weight_bytes(const Result& result) {
+    const QType shared        = shared_codec(result.codec);
     const std::uint64_t fixed = static_cast<std::uint64_t>(kRouterRows) * kHidden * 2 +
-                                packed_weight_bytes(QType::Q8_G32_FP16, 1024, kHidden) +
-                                packed_weight_bytes(QType::Q8_G32_FP16, kHidden, kIntermediate);
+                                packed_weight_bytes(shared, 1024, kHidden) +
+                                packed_weight_bytes(shared, kHidden, kIntermediate);
     const std::uint64_t per_expert =
         packed_weight_bytes(gate_codec(result.codec), 1024, kHidden) +
         packed_weight_bytes(down_codec(result.codec), kHidden, kIntermediate);
@@ -286,7 +304,8 @@ void usage(const char* argv0) {
     std::fprintf(stderr,
                  "Usage: %s [options]\n\n"
                  "Public workload:\n"
-                 "  --codec q4-q5|q4-q6|q8-q8|all  Routed weight profile (default q4-q5).\n"
+                 "  --codec q4-q5|q4-q6|q8-q8|nvfp4|all  Expert weight profile (default "
+                 "q4-q5).\n"
                  "  --tokens T                       Exact token extent (default 1).\n"
                  "  --sweep START:END[:STEP]         Public token-extent sweep.\n"
                  "  --distribution trace-like|independent|same\n"
@@ -356,8 +375,8 @@ Options parse_options(int argc, char** argv) {
         throw std::invalid_argument("--tokens and --sweep are mutually exclusive");
     }
     if (options.codec != "q4-q5" && options.codec != "q4-q6" && options.codec != "q8-q8" &&
-        options.codec != "all") {
-        throw std::invalid_argument("--codec must be q4-q5, q4-q6, q8-q8, or all");
+        options.codec != "nvfp4" && options.codec != "all") {
+        throw std::invalid_argument("--codec must be q4-q5, q4-q6, q8-q8, nvfp4, or all");
     }
     if (options.repeat <= 0) { throw std::invalid_argument("--repeat must be positive"); }
     if (options.flush_bytes > std::numeric_limits<std::size_t>::max()) {
@@ -366,11 +385,22 @@ Options parse_options(int argc, char** argv) {
     return options;
 }
 
+// NVFP4 expert banks reach this Op only on sm_120a builds (kNativeNvfp4); elsewhere "all" covers
+// the other profiles and an explicit nvfp4 is refused before any allocation.
 std::vector<CodecProfile> selected_profiles(const std::string& codec) {
-    if (codec == "all") { return {CodecProfile::Q4Q5, CodecProfile::Q4Q6, CodecProfile::Q8Q8}; }
+    if (codec == "all") {
+        std::vector<CodecProfile> profiles{CodecProfile::Q4Q5, CodecProfile::Q4Q6,
+                                           CodecProfile::Q8Q8};
+        if (ninferno::ops::detail::kNativeNvfp4) profiles.push_back(CodecProfile::Nvfp4);
+        return profiles;
+    }
     if (codec == "q4-q5") return {CodecProfile::Q4Q5};
     if (codec == "q4-q6") return {CodecProfile::Q4Q6};
-    return {CodecProfile::Q8Q8};
+    if (codec == "q8-q8") return {CodecProfile::Q8Q8};
+    if (!ninferno::ops::detail::kNativeNvfp4) {
+        throw std::invalid_argument("--codec nvfp4 needs an sm_120a build (native NVFP4 kernels)");
+    }
+    return {CodecProfile::Nvfp4};
 }
 
 std::vector<std::int32_t> selected_tokens(const TokenSweep& sweep) {
@@ -501,20 +531,27 @@ Weight dense_weight(void* data, std::int32_t rows, std::int32_t columns) {
     return result;
 }
 
+// `divisor_rows` is the artifact's own stride for that bank: gate and up are quantised apart, so
+// the routed gate/up plane carries one divisor per 512 rows, and routed down one per 2048. A shared
+// bank is one matrix and keeps a single divisor. Only NVFP4 stores divisors at all.
+bench::PackedQuantizedWeight make_expert_plane(QType qtype, std::int32_t n, std::int32_t k,
+                                               std::uint64_t seed,
+                                               std::int32_t divisor_rows = 0) {
+    return qtype == QType::NVFP4 ? bench::make_nvfp4_weight(n, k, divisor_rows, seed)
+                                 : bench::make_row_split_weight(qtype, n, k, k, seed);
+}
+
 class BenchmarkWeights {
 public:
     BenchmarkWeights(CodecProfile profile, std::uint32_t seed, std::size_t flush_bytes)
         : router_(static_cast<std::size_t>(kRouterRows) * kHidden * 2),
-          routed_gate_(bench::make_row_split_weight(
-              gate_codec(profile), kExperts * 1024, kHidden, kHidden,
-              {static_cast<std::uint8_t>(0x31U ^ seed), 0xa5, 0x1401})),
-          routed_down_(bench::make_row_split_weight(
-              down_codec(profile), kExperts * kHidden, kIntermediate, kIntermediate,
-              {static_cast<std::uint8_t>(0x59U ^ (seed >> 8)), 0x6d, 0x1403})),
-          shared_gate_(bench::make_row_split_weight(QType::Q8_G32_FP16, 1024, kHidden, kHidden,
-                                                    {0x27, 0x00, 0x1405})),
-          shared_down_(bench::make_row_split_weight(QType::Q8_G32_FP16, kHidden, kIntermediate,
-                                                    kIntermediate, {0x73, 0x00, 0x1407})),
+          routed_gate_(make_expert_plane(gate_codec(profile), kExperts * 1024, kHidden,
+                                         seed ^ 501U, 512)),
+          routed_down_(make_expert_plane(down_codec(profile), kExperts * kHidden, kIntermediate,
+                                         seed ^ 503U, kIntermediate * 4)),
+          shared_gate_(make_expert_plane(shared_codec(profile), 1024, kHidden, seed ^ 505U)),
+          shared_down_(make_expert_plane(shared_codec(profile), kHidden, kIntermediate,
+                                         seed ^ 507U)),
           flush_(flush_bytes) {
         std::vector<std::uint16_t> router(static_cast<std::size_t>(kRouterRows) * kHidden,
                                           bench::f32_to_bf16(0.0F));
@@ -523,7 +560,7 @@ public:
         }
         router[static_cast<std::size_t>(kExperts) * kHidden + kExperts] = bench::f32_to_bf16(4.0F);
         router_.copy_from_host(router.data(), router_.bytes);
-        CUDA_CHECK(cudaMemset(flush_.p, 0xa5, flush_.bytes));
+        bench::flush_l2(flush_, nullptr);
 
         weights_ = {
             dense_weight(router_.p, kRouterRows, kHidden),
@@ -537,9 +574,7 @@ public:
 
     [[nodiscard]] const ops::SparseMoeWeights& weights() const noexcept { return weights_; }
 
-    void flush(cudaStream_t stream) {
-        CUDA_CHECK(cudaMemsetAsync(flush_.p, 0xa5, flush_.bytes, stream));
-    }
+    void flush(cudaStream_t stream) { bench::flush_l2(flush_, stream); }
 
 private:
     DeviceBuffer router_;
@@ -547,15 +582,17 @@ private:
     bench::PackedQuantizedWeight routed_down_;
     bench::PackedQuantizedWeight shared_gate_;
     bench::PackedQuantizedWeight shared_down_;
-    DeviceBuffer flush_;
+    bench::L2FlushBuffer flush_;
     ops::SparseMoeWeights weights_{};
 };
 
 class BenchmarkState {
 public:
     BenchmarkState(BenchmarkWeights& fixture, CodecProfile profile, std::int32_t tokens,
-                   ExpertDistribution distribution, std::uint32_t seed)
-        : fixture_(fixture), route_pattern_(make_route_pattern(tokens, distribution, seed)),
+                   ExpertDistribution distribution, std::uint32_t seed,
+                   DeviceExecutionView execution)
+        : fixture_(fixture), execution_(execution),
+          route_pattern_(make_route_pattern(tokens, distribution, seed)),
           input_(static_cast<std::size_t>(tokens) * kHidden * 2),
           residual_(static_cast<std::size_t>(tokens) * kHidden * 2),
           destination_(static_cast<std::size_t>(tokens) * kHidden * 2),
@@ -566,11 +603,11 @@ public:
         std::vector<std::uint16_t> residual(static_cast<std::size_t>(tokens) * kHidden);
         for (std::int32_t token = 0; token < tokens; ++token) {
             for (std::int32_t index = 0; index < kHidden; ++index) {
-                const std::int32_t centered = (index * 17 + token * 29 + (index ^ token)) % 81 - 40;
-                input[static_cast<std::size_t>(token) * kHidden + index] =
-                    bench::f32_to_bf16(static_cast<float>(centered) * 0.001F);
-                residual[static_cast<std::size_t>(token) * kHidden + index] = bench::f32_to_bf16(
-                    0.125F + static_cast<float>((index + 11 * token) % 17) * 0.002F);
+                const auto offset = static_cast<std::size_t>(token) * kHidden + index;
+                input[offset] =
+                    bench::f32_to_bf16(bench::fixture::uniform(offset, seed ^ 101U, -.04F, .04F));
+                residual[offset] =
+                    bench::f32_to_bf16(bench::fixture::uniform(offset, seed ^ 103U, -.2F, .2F));
             }
             for (std::int32_t expert = 0; expert < kExperts; ++expert) {
                 input[static_cast<std::size_t>(token) * kHidden + expert] =
@@ -606,11 +643,12 @@ public:
 
     void launch(cudaStream_t stream) {
         ops::sparse_moe(x_, fixture_.weights(), ops::SparseMoeEpilogue::AddResidual,
-                        destination_tensor_, workspace_, stream);
+                        destination_tensor_, workspace_, execution_.on_stream(stream));
     }
 
 private:
     BenchmarkWeights& fixture_;
+    DeviceExecutionView execution_;
     RoutePattern route_pattern_;
     DeviceBuffer input_;
     DeviceBuffer residual_;
@@ -731,8 +769,10 @@ Stats measure_graph(BenchmarkState& state, const BodyTimedGraph& graph, CacheSta
 }
 
 std::vector<Result> run_point(BenchmarkWeights& fixture, CodecProfile profile, std::int32_t tokens,
-                              const Options& options, cudaStream_t stream) {
-    BenchmarkState state(fixture, profile, tokens, options.distribution, options.seed);
+                              const Options& options, DeviceExecutionView device_execution) {
+    const cudaStream_t stream = device_execution.stream;
+    BenchmarkState state(fixture, profile, tokens, options.distribution, options.seed,
+                         device_execution);
 
     // Match the production graph lifecycle: materialize eagerly, capture from a
     // reset state, instantiate, then prime one replay before configured warmup.
@@ -822,6 +862,7 @@ void write_csv(const std::string& path, const std::vector<Result>& results, cons
 } // namespace
 
 int main(int argc, char** argv) {
+    ninferno::bench::prefill_routes_from_env();
     try {
         const Options options = parse_options(argc, argv);
         DeviceContext context;
@@ -840,7 +881,7 @@ int main(int argc, char** argv) {
                                      static_cast<std::size_t>(options.flush_bytes));
             for (std::int32_t tokens : selected_tokens(options.tokens)) {
                 std::vector<Result> point =
-                    run_point(fixture, profile, tokens, options, context.stream);
+                    run_point(fixture, profile, tokens, options, context.execution_view());
                 for (const Result& result : point) { print_result(result, peak_memory_gbps); }
                 results.insert(results.end(), std::make_move_iterator(point.begin()),
                                std::make_move_iterator(point.end()));
@@ -849,7 +890,7 @@ int main(int argc, char** argv) {
         write_csv(options.csv_out, results, options, context);
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_sparse_moe_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_sparse_moe_bench: %s\n", error.what());
         return 1;
     }
 }

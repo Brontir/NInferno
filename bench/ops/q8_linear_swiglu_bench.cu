@@ -1,10 +1,10 @@
 // Complete public-Op benchmark for the registered Q8 LinearSwiGLU profiles.
 
 #include "core/weight.h"
-#include "ninfer/ops/linear_swiglu.h"
+#include "ninferno/ops/linear_swiglu.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_runtime.h>
@@ -22,7 +22,7 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -177,13 +177,12 @@ int main(int argc, char** argv) {
                     context.props.major, context.props.minor, CUDART_VERSION);
         const auto [minimum, maximum] =
             std::minmax_element(options.t_sweep.begin(), options.t_sweep.end());
-        DeviceBuffer flush(kFlushBytes);
+        bench::L2FlushBuffer flush(kFlushBytes);
         DeviceBuffer input =
-            bench::make_bf16(static_cast<std::size_t>(problem.hidden) * (*maximum));
+            bench::make_bf16(static_cast<std::size_t>(problem.hidden) * (*maximum), 101U);
         DeviceBuffer output(static_cast<std::size_t>(problem.output_rows) * (*maximum) * 2);
-        auto packed =
-            bench::make_row_split_weight(QType::Q8_G32_FP16, problem.gate_up_rows, problem.hidden,
-                                         problem.hidden, {0x31, 0x00, 0x3c00});
+        auto packed         = bench::make_row_split_weight(QType::Q8_G32_FP16, problem.gate_up_rows,
+                                                           problem.hidden, problem.hidden, 501U);
         const auto capacity = ops::linear_swiglu_workspace_capacity_bytes(
             QType::Q8_G32_FP16, problem.gate_up_rows, problem.hidden, ops::LinearPolicy::A16Only,
             *minimum, *maximum);
@@ -234,7 +233,7 @@ int main(int argc, char** argv) {
         write_csv(options, results);
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_q8_linear_swiglu_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_q8_linear_swiglu_bench: %s\n", error.what());
         return 1;
     }
 }

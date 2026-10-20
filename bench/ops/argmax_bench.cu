@@ -1,10 +1,10 @@
 // Qualification benchmark for the Qwen3.6-35B G1 argmax domains.
 //
-//   ./ninfer_argmax_bench
-//   ./ninfer_argmax_bench --shape full --cols 1
-//   ./ninfer_argmax_bench --shape shortlist --cols 120
-#include "ninfer/ops/argmax.h"
-#include "ninfer_bench_common.h"
+//   ./ninferno_argmax_bench
+//   ./ninferno_argmax_bench --shape full --cols 1
+//   ./ninferno_argmax_bench --shape shortlist --cols 120
+#include "ninferno/ops/argmax.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_runtime.h>
 
@@ -15,8 +15,8 @@
 #include <string>
 #include <string_view>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -60,7 +60,7 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "--cols") {
             options.cols = parse_int(need_value("--cols"), "--cols");
         } else if (arg == "-h" || arg == "--help") {
-            usage(argc > 0 ? argv[0] : "ninfer_argmax_bench");
+            usage(argc > 0 ? argv[0] : "ninferno_argmax_bench");
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown argument: " + std::string(arg));
@@ -82,7 +82,7 @@ Options parse_args(int argc, char** argv) {
 }
 
 void run_shape(std::int32_t physical_rows, std::int32_t valid_rows, int cols, const char* shape) {
-    DeviceBuffer logits = make_bf16(static_cast<std::size_t>(physical_rows) * kLogitSlots);
+    DeviceBuffer logits = make_bf16(static_cast<std::size_t>(physical_rows) * kLogitSlots, 101U);
     DeviceBuffer out    = make_zeros(static_cast<std::size_t>(cols) * sizeof(std::int32_t));
     auto* logits_base   = static_cast<std::uint16_t*>(logits.p);
     Tensor tout(out.p, DType::I32, {cols});
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
             run_shape(kShortlistRows, kShortlistRows, options.cols, "shortlist");
         }
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "ninfer_argmax_bench: %s\n", e.what());
+        std::fprintf(stderr, "ninferno_argmax_bench: %s\n", e.what());
         return 2;
     }
     return 0;

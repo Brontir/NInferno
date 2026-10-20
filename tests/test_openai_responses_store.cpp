@@ -9,7 +9,7 @@
 
 namespace {
 
-using namespace ninfer::serve;
+using namespace ninferno::serve;
 
 int check(bool condition, const std::string& message) {
     if (condition) { return 0; }
@@ -17,7 +17,7 @@ int check(bool condition, const std::string& message) {
     return 1;
 }
 
-ChatTurn text_turn(ninfer::ChatRole role, std::string text) {
+ChatTurn text_turn(ninferno::ChatRole role, std::string text) {
     ChatTurn turn;
     turn.role = role;
     ContentPart part;
@@ -41,11 +41,11 @@ StoredOpenAIResponse record(std::string id, OpenAIResponseContext context) {
 
 int test_context_dag() {
     const OpenAIResponseContext first =
-        append_openai_response_context({}, {text_turn(ninfer::ChatRole::User, "one"),
-                                            text_turn(ninfer::ChatRole::Assistant, "a")});
+        append_openai_response_context({}, {text_turn(ninferno::ChatRole::User, "one"),
+                                            text_turn(ninferno::ChatRole::Assistant, "a")});
     const OpenAIResponseContext second =
-        append_openai_response_context(first, {text_turn(ninfer::ChatRole::User, "two"),
-                                               text_turn(ninfer::ChatRole::Assistant, "b")});
+        append_openai_response_context(first, {text_turn(ninferno::ChatRole::User, "two"),
+                                               text_turn(ninferno::ChatRole::Assistant, "b")});
     const std::vector<ChatTurn> flattened = flatten_openai_response_context(second);
     int failures                          = 0;
     failures += check(flattened.size() == 4, "context chain flattened all turns");
@@ -58,14 +58,14 @@ int test_context_dag() {
 int test_lru_and_delete() {
     OpenAIResponsesStore store(2, 1ULL << 20);
     const OpenAIResponseContext root =
-        append_openai_response_context({}, {text_turn(ninfer::ChatRole::User, "root")});
-    store.put(record("resp_1", root));
+        append_openai_response_context({}, {text_turn(ninferno::ChatRole::User, "root")});
+    (void)store.put(record("resp_1", root));
     const OpenAIResponseContext child =
-        append_openai_response_context(root, {text_turn(ninfer::ChatRole::Assistant, "child")});
-    store.put(record("resp_2", child));
+        append_openai_response_context(root, {text_turn(ninferno::ChatRole::Assistant, "child")});
+    (void)store.put(record("resp_2", child));
     (void)store.get("resp_1"); // resp_2 becomes the least-recently used entry.
-    store.put(record("resp_3", append_openai_response_context(
-                                   root, {text_turn(ninfer::ChatRole::User, "fork")})));
+    (void)store.put(record("resp_3", append_openai_response_context(
+                                         root, {text_turn(ninferno::ChatRole::User, "fork")})));
 
     int failures = 0;
     failures += check(store.get("resp_1") != nullptr, "get refreshes LRU recency");
@@ -85,17 +85,49 @@ int test_lru_and_delete() {
 
 int test_oversized_record() {
     OpenAIResponsesStore store(4, 256);
-    StoredOpenAIResponse large =
-        record("resp_large", append_openai_response_context(
-                                 {}, {text_turn(ninfer::ChatRole::User, std::string(1024, 'x'))}));
-    std::string code;
-    try {
-        store.put(std::move(large));
-    } catch (const ApiException& exception) { code = exception.error().code; }
+    StoredOpenAIResponse large = record(
+        "resp_large", append_openai_response_context(
+                          {}, {text_turn(ninferno::ChatRole::User, std::string(1024, 'x'))}));
     int failures = 0;
-    failures += check(code == "response_store_capacity_exceeded",
-                      "oversized response fails deterministically");
+    failures += check(!store.put(std::move(large)),
+                      "an oversized response is not stored (the caller answers it unstored)");
     failures += check(store.size() == 0, "oversized insertion does not mutate store");
+    return failures;
+}
+
+// A request whose input alone exceeds the store is refused before generation (400); the bound is
+// below what put() needs, so an admitted input can still be too large for put() with its output
+// (answered unstored), never the reverse.
+int test_input_admission() {
+    OpenAIResponsesStore store(4, 2048);
+    int failures = 0;
+    const std::vector<nlohmann::json> items{nlohmann::json{{"type", "message"}}};
+    const std::vector<ChatTurn> small{text_turn(ninferno::ChatRole::User, "hi")};
+    const std::vector<ChatTurn> large{text_turn(ninferno::ChatRole::User, std::string(4096, 'x'))};
+    try {
+        store.admit(openai_response_input_bytes({}, small, items));
+    } catch (const ApiException&) { failures += check(false, "a small input is admitted"); }
+    ApiError refused;
+    try {
+        store.admit(openai_response_input_bytes({}, large, items));
+    } catch (const ApiException& exception) { refused = exception.error(); }
+    failures += check(refused.code == "response_store_capacity_exceeded" && refused.status == 400,
+                      "an input above the store's capacity is refused with 400");
+    const auto previous = append_openai_response_context({}, large);
+    refused             = {};
+    try {
+        store.admit(openai_response_input_bytes(previous, small, items));
+    } catch (const ApiException& exception) { refused = exception.error(); }
+    failures += check(refused.code == "response_store_capacity_exceeded",
+                      "a previous context above the store's capacity is refused");
+    const std::size_t bound     = openai_response_input_bytes({}, small, items);
+    StoredOpenAIResponse stored = record("resp_small", append_openai_response_context({}, small));
+    stored.input_items          = items;
+    failures +=
+        check(bound <= sizeof(StoredOpenAIResponse) + stored.id.size() + stored.session_key.size() +
+                           stored.response.dump().size() + sizeof(nlohmann::json) +
+                           items[0].dump().size() + stored.context->cumulative_bytes,
+              "the admission bound does not exceed what put() accounts");
     return failures;
 }
 
@@ -106,6 +138,7 @@ int main() {
     failures += test_context_dag();
     failures += test_lru_and_delete();
     failures += test_oversized_record();
+    failures += test_input_admission();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-// Implements: include/ninfer/ops/speculative_round.h
+// Implements: include/ninferno/ops/speculative_round.h
 // Match: contiguous request-major state and BF16 verification logits.
 // Algorithm assumptions: small vocabularies use one cooperative block; the
 // registered full-vocabulary stochastic route uses the sampling partial/group
@@ -13,7 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kSparseSpeculativeCandidates = 16;
 
@@ -166,7 +166,9 @@ __device__ __forceinline__ void speculative_sparse_warp_accept(
             const float qd = speculative_sparse_probability(candidate_ids + at, proposal_q + at, d);
             const float u  = sampling_uniform(cfg.seed, old_length + lane + 1,
                                               kSamplePurposeSpeculativeAccept, 0);
-            reject         = !(pd >= qd || u * qd < pd);
+            // A draft its proposal gave no mass (qd = 0, e.g. a rank the draw fell back to) has
+            // no acceptance ratio: reject it rather than accept it unconditionally.
+            reject = !(qd > 0.0f && (pd >= qd || u * qd < pd));
         }
     }
     const unsigned failures = __ballot_sync(0xffffffffU, reject);
@@ -243,9 +245,9 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_accept_greedy_draft
     std::int32_t* row_tokens        = licensed_tokens + row * cols;
     const __nv_bfloat16* row_logits =
         logits + static_cast<std::int64_t>(row) * cols * physical_rows;
-    const bool penalties = cfg.presence_penalty != 0.0f || cfg.frequency_penalty != 0.0f;
+    const bool adjusted = sampling_adjusts(cfg);
 
-    if (!(cfg.temperature > 0.0f) && !penalties) {
+    if (!(cfg.temperature > 0.0f) && !adjusted) {
         if (tid == 0) {
             int a = 0;
             while (a < extent && row_targets[a] == row_drafts[a]) { ++a; }
@@ -261,7 +263,8 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_accept_greedy_draft
     __shared__ float cand_val[kSamplerCandidateCap];
     __shared__ int cand_idx[kSamplerCandidateCap];
     __shared__ float prob[kSamplerCandidateCap];
-    __shared__ float merge_val[kSamplerBlock * kSamplerFastCandidates];
+    // merge_val is also the mask stage of the greedy route and of the block builder.
+    __shared__ __align__(16) float merge_val[kSamplerBlock * kSamplerFastCandidates];
     __shared__ int merge_idx[kSamplerBlock * kSamplerFastCandidates];
     __shared__ int n_support;
     __shared__ int a_sh;
@@ -273,6 +276,7 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_accept_greedy_draft
     const int group_count    = sampler_group_count(partial_blocks);
     // No-op when the scratch/group path owns this shape.
     if (sampler_multiblock_ok(token_domain, cols, partial_blocks, group_count)) { return; }
+    sampling_acquire_token_mask(cfg);
 
     if (tid == 0) {
         a_sh     = 0;
@@ -287,14 +291,18 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_accept_greedy_draft
             const std::int64_t base = static_cast<std::int64_t>(i) * physical_rows;
             float best_value        = -CUDART_INF_F;
             int best_index          = INT_MAX;
-            for (int v = tid; v < token_domain; v += blockDim.x) {
-                const float value = sampling_adjusted_logit(__bfloat162float(row_logits[base + v]),
-                                                            v, cfg, row_drafts, i);
-                if (sampling_better(value, v, best_value, best_index)) {
-                    best_value = value;
-                    best_index = v;
-                }
-            }
+            sampling_for_each_token(
+                cfg, i, token_domain, reinterpret_cast<std::uint32_t*>(merge_val),
+                kSamplerBlock * kSamplerFastCandidates,
+                [&](int v, const std::uint32_t* stage, int stage_first) {
+                    const float value =
+                        sampling_staged_logit(__bfloat162float(row_logits[base + v]), v, cfg,
+                                              stage, stage_first, row_drafts, i);
+                    if (sampling_better(value, v, best_value, best_index)) {
+                        best_value = value;
+                        best_index = v;
+                    }
+                });
             red_val[tid] = best_value;
             red_idx[tid] = best_index;
             __syncthreads();
@@ -334,11 +342,11 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_accept_greedy_draft
         const std::int64_t base = static_cast<std::int64_t>(i) * physical_rows;
         if (token_domain <= kSamplerTileItems) {
             sampling_build_truncated_small(row_logits, base, token_domain, cfg, red_val, red_idx,
-                                           cand_val, cand_idx, prob, &n_support, row_drafts, i);
+                                           cand_val, cand_idx, prob, &n_support, row_drafts, i, i);
         } else {
             sampling_build_truncated_block_fast(row_logits, base, token_domain, cfg, merge_val,
                                                 merge_idx, cand_val, cand_idx, prob, &n_support,
-                                                row_drafts, i);
+                                                row_drafts, i, i);
         }
         if (tid == 0 && done_sh == 0) {
             const int L = L_sh;
@@ -394,8 +402,8 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_sampling_partial_to
     if (col > extent) { return; }
     const SamplingConfig cfg = configs[row];
     const bool greedy        = !(cfg.temperature > 0.0f);
-    const bool penalties     = cfg.presence_penalty != 0.0f || cfg.frequency_penalty != 0.0f;
-    if ((greedy && !penalties) || token_domain <= kSamplerTileItems) { return; }
+    const bool adjusted      = sampling_adjusts(cfg);
+    if ((greedy && !adjusted) || token_domain <= kSamplerTileItems) { return; }
     workspace = speculative_workspace_row(workspace, workspace_row_stride, row);
     if (partial == 0 && threadIdx.x == 0) {
         workspace.group_done[col] = 0;
@@ -409,7 +417,7 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_sampling_partial_to
     const std::int64_t base        = (static_cast<std::int64_t>(row) * cols + col) * physical_rows;
     const std::int32_t* row_drafts = drafts + row * k;
     const int tile_start           = partial * kSamplerPartialTileItems;
-    if (!penalties) {
+    if (!adjusted) {
         unsigned int keys[kSamplerItemsPerThread];
 #pragma unroll
         for (int item = 0; item < kSamplerItemsPerThread; ++item) {
@@ -424,16 +432,25 @@ __launch_bounds__(kSamplerBlock) __global__ void speculative_sampling_partial_to
     }
 
     unsigned long long keys[kSamplerItemsPerThread];
+    __shared__ __align__(16) std::uint32_t mask_stage[kSamplerPartialTileItems / 32];
+    sampling_acquire_token_mask(cfg);
+    const std::uint32_t* stage = nullptr;
+    if (cfg.token_mask != nullptr) {
+        sampling_stage_mask_words(cfg, col, tile_start, kSamplerPartialTileItems, mask_stage);
+        stage = mask_stage;
+    }
     // Column col's penalty overlay is the first `col` drafts (see accept loop);
     // applying it before top-k selection lets it change the candidate set, not
-    // just the post-truncation probabilities.
+    // just the post-truncation probabilities. The same holds for column col's token mask.
 #pragma unroll
     for (int item = 0; item < kSamplerItemsPerThread; ++item) {
         const int v = tile_start + item * blockDim.x + threadIdx.x;
         if (v < token_domain) {
             const __nv_bfloat16 raw = logits[base + v];
             keys[item]              = sampling_sort_key(
-                sampling_adjusted_logit(__bfloat162float(raw), v, cfg, row_drafts, col), v);
+                sampling_staged_logit(__bfloat162float(raw), v, cfg, stage, tile_start,
+                                                   row_drafts, col),
+                v);
         } else {
             keys[item] = 0ull;
         }
@@ -475,10 +492,10 @@ __launch_bounds__(kSamplerGroupBlock) __global__ void speculative_sampling_group
     const std::int32_t* row_drafts  = drafts + row * k;
     std::int32_t* row_tokens        = licensed_tokens + row * cols;
     if (token_domain <= kSamplerTileItems) { return; }
-    const bool greedy    = !(cfg.temperature > 0.0f);
-    const bool penalties = cfg.presence_penalty != 0.0f || cfg.frequency_penalty != 0.0f;
+    const bool greedy   = !(cfg.temperature > 0.0f);
+    const bool adjusted = sampling_adjusts(cfg);
 
-    if (greedy && !penalties) {
+    if (greedy && !adjusted) {
         if constexpr (SparseProposal) {
             if (tid < 32 && col == 0 && group == 0)
                 speculative_sparse_warp_greedy(target_tokens, drafts, lengths, anchors,
@@ -501,7 +518,7 @@ __launch_bounds__(kSamplerGroupBlock) __global__ void speculative_sampling_group
 
     workspace = speculative_workspace_row(workspace, workspace_row_stride, row);
 
-    __shared__ SamplingTileTopKStorage topk_storage;
+    __shared__ typename SamplingGroupSort::TempStorage sort_storage;
     __shared__ float cand_val[kSamplerCandidateCap];
     __shared__ int cand_idx[kSamplerCandidateCap];
     __shared__ float prob[kSamplerCandidateCap];
@@ -530,7 +547,7 @@ __launch_bounds__(kSamplerGroupBlock) __global__ void speculative_sampling_group
             keys[item] = 0ull;
         }
     }
-    sampling_store_tile_topk(keys, cap, workspace, col, partial_blocks + group, topk_storage);
+    sampling_store_group_topk(keys, cap, workspace, col, partial_blocks + group, sort_storage);
     __syncthreads();
 
     if (tid == 0) {
@@ -554,7 +571,7 @@ __launch_bounds__(kSamplerGroupBlock) __global__ void speculative_sampling_group
             keys[item] = 0ull;
         }
     }
-    sampling_store_tile_topk(keys, cap, workspace, col, partial_blocks + group, topk_storage);
+    sampling_store_group_topk(keys, cap, workspace, col, partial_blocks + group, sort_storage);
     __syncthreads();
 
     if (tid < cap) {
@@ -708,4 +725,4 @@ __global__ void proposal_remap_token_ids_kernel(std::int32_t* proposal_tokens,
     if (idx >= 0 && idx < n) { proposal_tokens[i] = id_map[idx]; }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

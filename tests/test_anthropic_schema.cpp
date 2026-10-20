@@ -17,8 +17,8 @@
 
 namespace {
 
-using Json = ninfer::serve::RequestJson;
-using namespace ninfer::serve;
+using Json = ninferno::serve::RequestJson;
+using namespace ninferno::serve;
 
 int check(bool condition, const std::string& message) {
     if (condition) { return 0; }
@@ -66,11 +66,11 @@ ResolvedPromptSemantics semantics(const GenerationRequest& request, bool default
     return resolve_prompt_semantics(request, options);
 }
 
-ninfer::PromptInput prompt(const GenerationRequest& request) {
+ninferno::PromptInput prompt(const GenerationRequest& request) {
     return to_prompt_input(request, semantics(request), [](const ContentPart& part) {
-        ninfer::OwnedMedia media;
-        media.kind =
-            part.kind == ContentKind::Image ? ninfer::MediaKind::Image : ninfer::MediaKind::Video;
+        ninferno::OwnedMedia media;
+        media.kind                = part.kind == ContentKind::Image ? ninferno::MediaKind::Image
+                                                                    : ninferno::MediaKind::Video;
         media.bytes               = {1};
         media.image_resize_policy = part.image_resize_policy;
         return media;
@@ -113,7 +113,7 @@ int test_envelope_and_field_policy() {
     failures += check(request.generation.sampling.temperature == 0.7 &&
                           request.generation.sampling.top_p == 0.8 &&
                           request.generation.sampling.top_k == 20 &&
-                          request.generation.reasoning_effort == RequestedReasoningEffort::Low,
+                          request.generation.reasoning_effort == ninferno::ReasoningEffort::Low,
                       "executable Anthropic generation fields were not lowered");
 
     body.erase("max_tokens");
@@ -129,13 +129,39 @@ int test_envelope_and_field_policy() {
     failures += check(api_param([&] { (void)parse(body); }) == "temperature",
                       "Anthropic temperature range was not enforced");
     body          = base_request();
-    body["top_k"] = 21;
+    body["top_k"] = ninferno::kMaximumTopK + 1;
     failures += check(api_param([&] { (void)parse(body); }) == "top_k",
                       "Engine top_k range was not enforced");
     body                  = base_request();
-    body["output_config"] = Json{{"format", Json{{"type", "json_schema"}}}};
+    body["output_config"] = Json{{"format", Json{{"type", "json_text"}}}};
     failures += check(api_code([&] { (void)parse(body); }) == "output_config_format_not_supported",
-                      "structured output was silently downgraded");
+                      "unsupported structured output type was silently downgraded");
+    body                  = base_request();
+    body["output_config"] = Json{{"format", Json{{"type", "json_schema"}}}};
+    failures += check(api_param([&] { (void)parse(body); }) == "output_config.format",
+                      "json_schema without a schema was accepted");
+    body                  = base_request();
+    body["output_config"] = Json{
+        {"format", Json{{"type", "json_schema"},
+                        {"schema", Json{{"type", "object"},
+                                        {"properties", Json{{"z", Json{{"type", "string"}}}}}}}}}};
+    {
+        const auto constraint = parse(body).generation.output_constraint;
+        failures +=
+            check(constraint && constraint->kind == ninferno::OutputConstraintKind::JsonSchema &&
+                      constraint->param == "output_config.format" &&
+                      constraint->definition.find("\"z\"") != std::string::npos,
+                  "output_config.format json_schema is enforced");
+    }
+    body["tools"] = Json::array({Json{{"name", "weather"},
+                                      {"input_schema", Json{{"type", "object"}}}}});
+    {
+        const auto constraint = parse(body).generation.output_constraint;
+        failures +=
+            check(constraint && constraint->kind == ninferno::OutputConstraintKind::ToolCalls &&
+                      constraint->answer_schema.find("\"z\"") != std::string::npos,
+                  "output_config.format with enabled tools did not constrain the answer");
+    }
     body              = base_request();
     body["container"] = "container_1";
     failures += check(api_code([&] { (void)parse(body); }) == "container_not_supported",
@@ -160,8 +186,8 @@ int test_message_normalization() {
 
     const GenerationRequest request = parse(body).generation;
     int failures                    = check(request.messages.size() == 3 &&
-                                                request.messages[0].role == ninfer::ChatRole::System &&
-                                                request.messages[1].role == ninfer::ChatRole::User &&
+                                                request.messages[0].role == ninferno::ChatRole::System &&
+                                                request.messages[1].role == ninferno::ChatRole::User &&
                                                 request.messages[1].content.size() == 3,
                                             "consecutive Anthropic roles were not merged by block concatenation");
     failures += check(request.messages[0].content[0].text == "A" &&
@@ -171,14 +197,14 @@ int test_message_normalization() {
                           request.messages[1].content[2].text == "three",
                       "message normalization inserted or removed text");
     failures +=
-        check(request.continuation == ninfer::PromptContinuationMode::ContinueFinalAssistant,
+        check(request.continuation == ninferno::PromptContinuationMode::ContinueFinalAssistant,
               "final assistant text did not select continuation mode");
-    const ninfer::PromptInput translated = prompt(request);
+    const ninferno::PromptInput translated = prompt(request);
     failures += check(translated.options.continuation ==
-                              ninfer::PromptContinuationMode::ContinueFinalAssistant &&
+                              ninferno::PromptContinuationMode::ContinueFinalAssistant &&
                           translated.context_cache.markers.size() == 1 &&
                           translated.context_cache.markers[0].location ==
-                              ninfer::PromptCacheMarkerLocation::LeadingInstructionBoundary,
+                              ninferno::PromptCacheMarkerLocation::LeadingInstructionBoundary,
                       "assistant continuation or system block cache boundary was lost");
     return failures;
 }
@@ -198,19 +224,19 @@ int test_attribution_system_block() {
 
     const Json first_body                 = attributed(".89c");
     const GenerationRequest first_request = parse(first_body).generation;
-    const ninfer::PromptInput first       = prompt(first_request);
-    const ninfer::PromptInput second      = prompt(parse(attributed(".8f7")).generation);
-    const ninfer::PromptInput counted =
+    const ninferno::PromptInput first       = prompt(first_request);
+    const ninferno::PromptInput second      = prompt(parse(attributed(".8f7")).generation);
+    const ninferno::PromptInput counted =
         prompt(parse_anthropic_count_tokens_request(first_body).generation);
 
-    const auto has_real_system = [](const ninfer::PromptInput& input) {
+    const auto has_real_system = [](const ninferno::PromptInput& input) {
         return input.messages.size() == 2 &&
-               input.messages.front().role == ninfer::ChatRole::System &&
+               input.messages.front().role == ninferno::ChatRole::System &&
                input.messages.front().parts.size() == 1 &&
                input.messages.front().parts.front().text == "real system" &&
                input.context_cache.markers.size() == 1 &&
                input.context_cache.markers.front().location ==
-                   ninfer::PromptCacheMarkerLocation::LeadingInstructionBoundary;
+                   ninferno::PromptCacheMarkerLocation::LeadingInstructionBoundary;
     };
     int failures =
         check(has_real_system(first) && has_real_system(second) && has_real_system(counted) &&
@@ -226,7 +252,7 @@ int test_attribution_system_block() {
         {Json{{"type", "text"}, {"text", "x-anthropic-billing-header: cc_version=2.1"}}});
     const GenerationRequest without_empty = parse(attribution_only).generation;
     failures += check(without_empty.messages.size() == 1 &&
-                          without_empty.messages.front().role == ninfer::ChatRole::User,
+                          without_empty.messages.front().role == ninferno::ChatRole::User,
                       "attribution-only system produced an empty model turn");
 
     Json non_first        = base_request();
@@ -281,22 +307,22 @@ int test_tool_history() {
                                        tool_result("toolu_a", "result A"),
                                        Json{{"type", "text"}, {"text", "continue"}}})}}});
     const GenerationRequest normalized          = parse(body).generation;
-    int failures                                = check(normalized.messages.size() == 4 &&
-                                                            normalized.messages[0].role == ninfer::ChatRole::Assistant &&
-                                                            normalized.messages[1].role == ninfer::ChatRole::Tool &&
-                                                            normalized.messages[1].tool_call_id == "toolu_a" &&
-                                                            normalized.messages[1].content[0].text == "result A" &&
-                                                            normalized.messages[2].role == ninfer::ChatRole::Tool &&
-                                                            normalized.messages[2].tool_call_id == "toolu_b" &&
-                                                            normalized.messages[2].content[0].text == "result B" &&
-                                                            normalized.messages[2].tool_result_is_error &&
-                                                            normalized.messages[2].cache_boundary_after &&
-                                                            normalized.messages[2].cache_boundary_after->kind ==
-                                                                ninfer::PromptCacheMarkerKind::SharedStablePrefix &&
-                                                            normalized.messages[3].role == ninfer::ChatRole::User &&
-                                                            normalized.messages[3].content[0].text == "continue",
-                                                        "valid out-of-order tool results were not associated by ID");
-    const ninfer::PromptInput normalized_prompt = prompt(normalized);
+    int failures                                  = check(normalized.messages.size() == 4 &&
+                                                              normalized.messages[0].role == ninferno::ChatRole::Assistant &&
+                                                              normalized.messages[1].role == ninferno::ChatRole::Tool &&
+                                                              normalized.messages[1].tool_call_id == "toolu_a" &&
+                                                              normalized.messages[1].content[0].text == "result A" &&
+                                                              normalized.messages[2].role == ninferno::ChatRole::Tool &&
+                                                              normalized.messages[2].tool_call_id == "toolu_b" &&
+                                                              normalized.messages[2].content[0].text == "result B" &&
+                                                              normalized.messages[2].tool_result_is_error &&
+                                                              normalized.messages[2].cache_boundary_after &&
+                                                              normalized.messages[2].cache_boundary_after->kind ==
+                                                                  ninferno::PromptCacheMarkerKind::SharedStablePrefix &&
+                                                              normalized.messages[3].role == ninferno::ChatRole::User &&
+                                                              normalized.messages[3].content[0].text == "continue",
+                                                          "valid out-of-order tool results were not associated by ID");
+    const ninferno::PromptInput normalized_prompt = prompt(normalized);
     failures += check(normalized_prompt.messages[2].parts.size() == 2 &&
                           normalized_prompt.messages[2].parts[0].text == "[tool_error]\n" &&
                           normalized_prompt.messages[2].parts[1].text == "result B",
@@ -338,9 +364,9 @@ int test_tool_history() {
                                        Json{{"type", "text"}, {"text", "continue"}}})}}});
     const GenerationRequest truncated = parse(body).generation;
     failures += check(truncated.messages.size() == 2 &&
-                          truncated.messages[0].role == ninfer::ChatRole::Tool &&
+                          truncated.messages[0].role == ninferno::ChatRole::Tool &&
                           truncated.messages[0].tool_call_id == "toolu_external" &&
-                          truncated.messages[1].role == ninfer::ChatRole::User,
+                          truncated.messages[1].role == ninferno::ChatRole::User,
                       "leading tool_result from a truncated history was rejected or reordered");
 
     body["messages"] = Json::array(
@@ -371,38 +397,93 @@ Json ordinary_tool(bool strict = false) {
                 {"strict", strict}};
 }
 
+// System messages are accepted anywhere in `messages`: in place, and after the tool_result turn
+// when they sit between a tool_use and its results.
+int test_system_messages_anywhere() {
+    const auto roles = [](const GenerationRequest& request) {
+        std::vector<ninferno::ChatRole> out;
+        for (const auto& message : request.messages) { out.push_back(message.role); }
+        return out;
+    };
+    using ninferno::ChatRole;
+    Json body        = base_request();
+    body["messages"] = Json::array({Json{{"role", "system"}, {"content", "be brief"}},
+                                    Json{{"role", "user"}, {"content", "hi"}}});
+    int failures     = check(roles(parse(body).generation) ==
+                                 std::vector<ChatRole>{ChatRole::System, ChatRole::User},
+                             "a leading system message was refused or moved");
+
+    body["messages"] = Json::array({Json{{"role", "user"}, {"content", "hi"}},
+                                    Json{{"role", "system"}, {"content", "reminder"}},
+                                    Json{{"role", "user"}, {"content", "go on"}}});
+    failures += check(roles(parse(body).generation) ==
+                          std::vector<ChatRole>{ChatRole::User, ChatRole::System, ChatRole::User},
+                      "a system message between user turns was refused or moved");
+
+    body["messages"] = Json::array(
+        {Json{{"role", "user"}, {"content", "look it up"}},
+         Json{{"role", "assistant"}, {"content", Json::array({tool_use("toolu_a")})}},
+         Json{{"role", "system"}, {"content", "reminder"}},
+         Json{{"role", "user"}, {"content", Json::array({tool_result("toolu_a", "found")})}}});
+    failures += check(roles(parse(body).generation) ==
+                          std::vector<ChatRole>{ChatRole::User, ChatRole::Assistant, ChatRole::Tool,
+                                                ChatRole::System},
+                      "a system message between tool_use and tool_result did not move after it");
+    return failures;
+}
+
 int test_tools() {
     Json body                       = base_request();
     body["tools"]                   = Json::array({ordinary_tool()});
     body["tool_choice"]             = Json{{"type", "auto"}, {"disable_parallel_tool_use", false}};
     const GenerationRequest request = parse(body).generation;
-    const ninfer::PromptInput translated = prompt(request);
+    const ninferno::PromptInput translated = prompt(request);
     const Json rendered                  = Json::parse(translated.options.tool_jsons.at(0));
     int failures = check(request.uses_tools() && rendered["function"]["name"] == "weather" &&
                              rendered["function"]["input_examples"].is_array(),
                          "Anthropic tool schema/examples did not reach the Qwen prompt");
 
     body["tools"] = Json::array({ordinary_tool(true)});
-    failures += check(api_code([&] { (void)parse(body); }) == "strict_tools_not_supported",
-                      "active strict tool was accepted without constrained decoding");
+    {
+        const auto strict = parse(body).generation.output_constraint;
+        failures += check(strict && strict->kind == ninferno::OutputConstraintKind::ToolCalls &&
+                              strict->tools.size() == 1 && strict->tools[0].strict,
+                          "active strict tool is not enforced by a tool-call constraint");
+    }
     body["tool_choice"]               = Json{{"type", "none"}, {"disable_parallel_tool_use", true}};
     body["tools"][0]["defer_loading"] = true;
     body["tools"][0]["allowed_callers"] = Json::array({"code_execution"});
     const GenerationRequest disabled    = parse(body).generation;
     failures += check(!disabled.uses_tools() && prompt(disabled).options.tool_jsons.empty(),
                       "tool_choice:none did not neutralize inactive tool guarantees");
+    // tool_choice none renders the tools an auto turn renders, with calls disabled.
+    Json none_ordinary                    = base_request();
+    none_ordinary["tools"]                = Json::array({ordinary_tool()});
+    none_ordinary["tool_choice"]          = Json{{"type", "none"}};
+    Json auto_ordinary                    = none_ordinary;
+    auto_ordinary["tool_choice"]          = Json{{"type", "auto"}};
+    const ninferno::PromptInput none_prompt = prompt(parse(none_ordinary).generation);
+    failures += check(!none_prompt.options.tool_calls_enabled &&
+                          none_prompt.options.tool_jsons ==
+                              prompt(parse(auto_ordinary).generation).options.tool_jsons,
+                      "tool_choice:none did not render the auto turn's tools");
 
     body                = base_request();
     body["tools"]       = Json::array({ordinary_tool()});
     body["tool_choice"] = Json{{"type", "any"}};
-    failures += check(api_code([&] { (void)parse(body); }) == "tool_choice_not_supported",
-                      "forced any-tool choice was silently downgraded");
+    failures += check(parse(body).generation.output_constraint->tool_requirement ==
+                          ninferno::ToolCallRequirement::Required,
+                      "forced any-tool choice is not enforced");
     body["tool_choice"] = Json{{"type", "tool"}, {"name", "weather"}};
-    failures += check(api_code([&] { (void)parse(body); }) == "tool_choice_not_supported",
-                      "named tool choice was silently downgraded");
+    {
+        const auto named = parse(body).generation.output_constraint;
+        failures += check(named->tool_requirement == ninferno::ToolCallRequirement::Named &&
+                              named->named_tool == "weather",
+                          "named tool choice is not enforced");
+    }
     body["tool_choice"] = Json{{"type", "auto"}, {"disable_parallel_tool_use", true}};
-    failures += check(api_code([&] { (void)parse(body); }) == "parallel_tool_use_not_supported",
-                      "active single-tool-call guarantee was silently downgraded");
+    failures += check(!parse(body).generation.output_constraint->parallel_tool_calls,
+                      "active single-tool-call guarantee is not enforced");
 
     body          = base_request();
     body["tools"] = Json::array({Json{{"type", "web_search_20250305"}, {"name", "web_search"}}});
@@ -431,11 +512,12 @@ int test_prompt_object_order() {
     const std::string original      = R"({"zeta":"last","alpha":{"yankee":2,"bravo":true}})";
     const GenerationRequest request = parse_raw(original);
     const auto assistant =
-        std::find_if(request.messages.begin(), request.messages.end(),
-                     [](const ChatTurn& turn) { return turn.role == ninfer::ChatRole::Assistant; });
-    const ninfer::PromptInput translated = prompt(request);
+        std::find_if(request.messages.begin(), request.messages.end(), [](const ChatTurn& turn) {
+            return turn.role == ninferno::ChatRole::Assistant;
+        });
+    const ninferno::PromptInput translated = prompt(request);
     const std::string expected_tool =
-        R"({"type":"function","function":{"name":"probe","parameters":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}}},"strict":false}})";
+        R"({"type":"function","function":{"name":"probe","parameters":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}}}}})";
     int failures = check(assistant != request.messages.end() && assistant->tool_calls.size() == 1 &&
                              assistant->tool_calls.front().arguments_json == original &&
                              translated.options.tool_jsons.size() == 1 &&
@@ -444,9 +526,9 @@ int test_prompt_object_order() {
 
     const GenerationRequest reordered =
         parse_raw(R"({"alpha":{"yankee":2,"bravo":true},"zeta":"last"})");
-    const auto reordered_assistant =
-        std::find_if(reordered.messages.begin(), reordered.messages.end(),
-                     [](const ChatTurn& turn) { return turn.role == ninfer::ChatRole::Assistant; });
+    const auto reordered_assistant = std::find_if(
+        reordered.messages.begin(), reordered.messages.end(),
+        [](const ChatTurn& turn) { return turn.role == ninferno::ChatRole::Assistant; });
     failures +=
         check(reordered_assistant != reordered.messages.end() &&
                   reordered_assistant->tool_calls.size() == 1 &&
@@ -462,21 +544,34 @@ int test_thinking_and_count_tokens() {
     const GenerationRequest enabled = parse(body).generation;
     ServeOptions server;
     server.default_thinking_budget = 777;
-    const ninfer::RequestOptions options =
+    const ninferno::RequestOptions options =
         to_request_options(enabled, server, semantics(enabled), true);
     int failures = check(enabled.enable_thinking == true && enabled.thinking_budget == 1024 &&
                              options.execution.thinking.budget == 1024,
                          "request Thinking budget did not reach Engine options");
 
-    body["thinking"]["budget_tokens"] = 4096;
+    // A budget at or above max_tokens is accepted and passed on; the output limit ends thinking
+    // first. Qwen Code sends a fixed budget while shrinking max_tokens to the context left.
+    for (const int budget : {4096, 128000}) {
+        body["thinking"]["budget_tokens"] = budget;
+        const GenerationRequest over      = parse(body).generation;
+        failures += check(over.enable_thinking == true && over.max_tokens == 4096 &&
+                              over.thinking_budget == static_cast<std::uint32_t>(budget),
+                          "Thinking budget at or above max_tokens was rejected or altered");
+    }
+    body["thinking"]["budget_tokens"] = 1023;
     failures += check(api_param([&] { (void)parse(body); }) == "thinking",
-                      "Thinking budget equal to max_tokens was accepted");
+                      "Thinking budget below 1024 was accepted");
     body["thinking"] = Json{{"type", "future"}};
     failures += check(api_param([&] { (void)parse(body); }) == "thinking",
                       "unknown Thinking mode defaulted to enabled");
     body["thinking"] = Json{{"type", "adaptive"}, {"display", "omitted"}};
-    failures += check(api_code([&] { (void)parse(body); }) == "thinking_display_not_supported",
-                      "hidden Thinking was accepted without restore semantics");
+    failures += check(parse(body).thinking_display == AnthropicThinkingDisplay::Omitted &&
+                          parse(body).generation.enable_thinking,
+                      "hidden adaptive Thinking was not accepted");
+    body["thinking"] = Json{{"type", "adaptive"}, {"display", "summarized"}};
+    failures += check(parse(body).thinking_display == AnthropicThinkingDisplay::Visible,
+                      "summarized Thinking was not visible");
 
     body["max_tokens"]                        = 0;
     body["temperature"]                       = "ignored for counting";
@@ -558,17 +653,17 @@ int test_content_and_cache_hints() {
                                           {"transformations", Json{{"oversized_image", "error"}}}}})}}});
     const GenerationRequest request = parse(body).generation;
     int failures                    = check(request.messages[0].content[1].cache_boundary_after &&
-                                                ninfer::has_shared_candidate_evidence(
+                                                ninferno::has_shared_candidate_evidence(
                                  request.messages[0].content[1].cache_boundary_after->evidence,
-                                 ninfer::SharedCandidateEvidence::RequestedAutomatic) &&
+                                 ninferno::SharedCandidateEvidence::RequestedAutomatic) &&
                                                 request.media_item_count() == 1 &&
                                                 request.messages[0].content[1].image_resize_policy ==
-                                                    ninfer::ImageResizePolicy::RejectOversized,
+                                                    ninferno::ImageResizePolicy::RejectOversized,
                                             "automatic caching or image transformation policy was lost");
-    const ninfer::PromptInput translated = prompt(request);
+    const ninferno::PromptInput translated = prompt(request);
     failures += check(translated.context_cache.markers.size() == 2 &&
                           translated.context_cache.markers[1].location ==
-                              ninfer::PromptCacheMarkerLocation::MessagePartBoundary,
+                              ninferno::PromptCacheMarkerLocation::MessagePartBoundary,
                       "message-part cache boundary was not represented in PromptInput");
 
     body                           = base_request();
@@ -579,7 +674,45 @@ int test_content_and_cache_hints() {
     body["messages"][0]["content"] =
         Json::array({Json{{"type", "document"}, {"source", Json::object()}}});
     failures += check(api_code([&] { (void)parse(body); }) == "documents_not_supported",
-                      "document citation semantics were silently discarded");
+                      "a document without a readable source was accepted");
+    body["messages"][0]["content"] = Json::array(
+        {Json{{"type", "document"},
+              {"title", "notes"},
+              {"source", Json{{"type", "text"}, {"media_type", "text/plain"}, {"data", "abc"}}}},
+         Json{{"type", "document"},
+              {"source", Json{{"type", "content"},
+                              {"content", Json::array({Json{{"type", "text"}, {"text", "x"}}})}}}},
+         Json{{"type", "text"}, {"text", "summarize"}}});
+    bool parsed = true;
+    try {
+        (void)parse(body);
+    } catch (const std::exception&) { parsed = false; }
+    failures += check(parsed, "text and content documents were refused");
+    body["messages"][0]["content"] = Json::array(
+        {Json{{"type", "document"},
+              {"title", "report.pdf"},
+              {"source", Json{{"type", "base64"}, {"media_type", "application/pdf"}, {"data", "JVBE"}}}}});
+    {
+        const GenerationRequest pdf = parse(body).generation;
+        failures += check(pdf.messages[0].content.size() == 1 &&
+                              pdf.messages[0].content[0].kind == ContentKind::Document &&
+                              pdf.messages[0].content[0].document_title == "report.pdf" &&
+                              pdf.messages[0].content[0].source.value == "data:application/pdf;base64,JVBE",
+                          "a base64 PDF document did not become a Document part");
+        // The test acquirer hands back one byte, not a PDF: refused as not a PDF, not as vision.
+        failures += check(api_code([&] { (void)prompt(pdf); }) == "documents_not_supported",
+                          "bytes that are not a PDF were read as one");
+        failures += check(pdf.media_item_count() == 0, "a PDF document counted as vision media");
+    }
+    body["messages"][0]["content"] = Json::array(
+        {Json{{"type", "document"},
+              {"source", Json{{"type", "base64"}, {"media_type", "text/csv"}, {"data", "YQ=="}}}}});
+    failures += check(api_code([&] { (void)parse(body); }) == "documents_not_supported",
+                      "a base64 document other than PDF was accepted");
+    body["messages"][0]["content"] = Json::array(
+        {Json{{"type", "document"}, {"source", Json{{"type", "file"}, {"file_id", "file_1"}}}}});
+    failures += check(api_code([&] { (void)parse(body); }) == "files_not_supported",
+                      "a Files API document was accepted");
     return failures;
 }
 
@@ -590,7 +723,7 @@ GenerationOutcome sample_outcome() {
     outcome.prompt_tokens                   = 100;
     outcome.completion_tokens               = 12;
     outcome.reasoning_tokens                = 5;
-    outcome.finish_reason                   = ninfer::FinishReason::StopString;
+    outcome.finish_reason                   = ninferno::FinishReason::StopString;
     outcome.matched_stop_string             = "STOP";
     outcome.metrics.prefix_cache_hit_tokens = 60;
     return outcome;
@@ -620,7 +753,7 @@ int test_aggregate_and_errors() {
                       "cache-read usage was not clamped to the prompt token count");
 
     outcome               = {};
-    outcome.finish_reason = ninfer::FinishReason::ContextCapacity;
+    outcome.finish_reason = ninferno::FinishReason::ContextCapacity;
     const Json empty      = Json::parse(make_anthropic_messages_response(identity, outcome));
     failures +=
         check(empty["content"].empty() && empty["stop_reason"] == "model_context_window_exceeded",
@@ -644,9 +777,9 @@ int test_tool_call_presentation() {
         make_anthropic_response_identity("req_tool", "claude-local");
     GenerationOutcome outcome;
     outcome.text                = "I need one more check.";
-    outcome.finish_reason       = ninfer::FinishReason::StopToken;
+    outcome.finish_reason       = ninferno::FinishReason::StopToken;
     const std::string arguments = R"({"zeta":"last","alpha":{"yankee":2,"bravo":true}})";
-    outcome.tool_calls.push_back(ninfer::GeneratedToolCall{
+    outcome.tool_calls.push_back(ninferno::GeneratedToolCall{
         .name           = "Edit",
         .arguments_json = arguments,
     });
@@ -690,12 +823,80 @@ int test_tool_call_presentation() {
     return failures;
 }
 
+// Hidden Thinking (display "omitted", sent by Claude Code in headless mode) returns empty Thinking
+// whose signature carries the reasoning; the echoed block restores it exactly, so the next prompt
+// equals the visible-Thinking one and its prefix is reused.
+int test_hidden_thinking_round_trip() {
+    const AnthropicResponseIdentity identity =
+        make_anthropic_response_identity("req_hidden", "claude-local");
+    GenerationOutcome outcome = sample_outcome();
+    outcome.reasoning = "Line one.\nUnicode: \xd0\xbf\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82, "
+                        "\xe2\x9c\x93 and \"quotes\" {json} \x01.";
+    const Json hidden = Json::parse(
+        make_anthropic_messages_response(identity, outcome, AnthropicThinkingDisplay::Omitted));
+    const Json block = hidden["content"][0];
+    int failures     = check(block["type"] == "thinking" && block["thinking"] == "" &&
+                                 decode_hidden_thinking_signature(
+                                 block["signature"].get<std::string>()) == outcome.reasoning,
+                             "hidden Thinking did not carry its reasoning in the signature");
+
+    Json body        = base_request();
+    body["messages"] = Json::array(
+        {Json{{"role", "user"}, {"content", "before"}},
+         Json{{"role", "assistant"},
+              {"content", Json::array({block, Json{{"type", "text"}, {"text", "answer"}}})}},
+         Json{{"role", "user"}, {"content", "after"}}});
+    failures += check(parse(body).generation.messages[1].reasoning_content == outcome.reasoning,
+                      "echoed hidden Thinking was not restored");
+    Json visible                                      = body;
+    visible["messages"][1]["content"][0]["thinking"]  = outcome.reasoning;
+    visible["messages"][1]["content"][0]["signature"] = identity.message_id;
+    failures += check(parse(visible).generation.messages[1].reasoning_content ==
+                          parse(body).generation.messages[1].reasoning_content,
+                      "hidden and visible Thinking lowered to different prompts");
+
+    Json foreign                                      = body;
+    foreign["messages"][1]["content"][0]["signature"] = "EqQBCkYIBxgCKkCopaque";
+    failures += check(parse(foreign).generation.messages[1].reasoning_content.empty(),
+                      "a foreign signature was interpreted as reasoning");
+    Json corrupt                                      = body;
+    corrupt["messages"][1]["content"][0]["signature"] = "ninferno-hidden-thinking-v1:a*b";
+    failures += check(parse(corrupt).generation.messages[1].reasoning_content.empty(),
+                      "a corrupt hidden signature was decoded");
+    for (const std::string sample : {"", "a", "ab", "abc", "abcd"}) {
+        failures += check(
+            decode_hidden_thinking_signature(encode_hidden_thinking_signature(sample)) == sample,
+            "hidden Thinking signature did not round-trip");
+    }
+
+    AnthropicMessagesStream stream(identity, 100, AnthropicThinkingDisplay::Omitted);
+    std::vector<std::string> events{stream.start()};
+    for (auto values : {stream.reasoning_delta("tho"), stream.reasoning_delta("ught"),
+                        stream.content_delta("answer"), stream.finish(sample_outcome())}) {
+        events.insert(events.end(), values.begin(), values.end());
+    }
+    bool saw_thinking_text = false;
+    std::optional<std::string> streamed;
+    for (const std::string& wire : events) {
+        const Json parsed = parse_event(wire);
+        if (parsed.at("type") != "content_block_delta") { continue; }
+        if (parsed["delta"]["type"] == "thinking_delta") { saw_thinking_text = true; }
+        if (parsed["delta"]["type"] == "signature_delta") {
+            streamed =
+                decode_hidden_thinking_signature(parsed["delta"]["signature"].get<std::string>());
+        }
+    }
+    failures += check(!saw_thinking_text && streamed == std::string("thought"),
+                      "hidden Thinking stream leaked text or lost its signature");
+    return failures;
+}
+
 int test_stream() {
     const AnthropicResponseIdentity identity =
         make_anthropic_response_identity("req_stream", "claude-local");
     AnthropicMessagesStream stream(identity, 100);
-    const ninfer::GenerationStart warm_start{
-        .prompt               = ninfer::PromptSummary{.prompt_tokens = 100},
+    const ninferno::GenerationStart warm_start{
+        .prompt               = ninferno::PromptSummary{.prompt_tokens = 100},
         .reused_prompt_tokens = 60,
     };
     std::vector<std::string> events{stream.start(warm_start)};
@@ -745,8 +946,8 @@ int test_stream() {
               "terminal stream usage did not match aggregate cache usage");
 
     AnthropicMessagesStream cold_stream(identity, 25);
-    (void)cold_stream.start(ninfer::GenerationStart{
-        .prompt               = ninfer::PromptSummary{.prompt_tokens = 25},
+    (void)cold_stream.start(ninferno::GenerationStart{
+        .prompt               = ninferno::PromptSummary{.prompt_tokens = 25},
         .reused_prompt_tokens = 0,
     });
     GenerationOutcome cold;
@@ -767,15 +968,218 @@ int test_stream() {
     return failures;
 }
 
+// The converter turns one engine outcome into content blocks. Thinking
+// arrives in two deltas, text in one; the outcome carries three tool calls, one of them with
+// arguments that a streaming parser would have seen as '{"a' then '":1}'. Every block must open
+// with the next index, carry its deltas and close before the next block opens; a tool block opens
+// with input {} and its input_json_delta fragments concatenate to the call's arguments; each call
+// appears exactly once, in order, with a unique id; the aggregate lists the same blocks.
+int test_converter_block_sequence() {
+    const AnthropicResponseIdentity identity =
+        make_anthropic_response_identity("req_blocks", "claude-local");
+    GenerationOutcome outcome;
+    outcome.reasoning     = "step one; step two";
+    outcome.text          = "calling tools";
+    outcome.finish_reason = ninferno::FinishReason::StopToken;
+    const std::vector<std::pair<std::string, std::string>> calls = {
+        {"lookup", R"({"a":1})"},
+        {"search", R"({"q":"北京 \"quoted\" }","n":[1,2]})"},
+        {"lookup", R"({})"},
+    };
+    for (const auto& [name, arguments] : calls) {
+        outcome.tool_calls.push_back(
+            ninferno::GeneratedToolCall{.name = name, .arguments_json = arguments});
+    }
+
+    AnthropicMessagesStream stream(identity, 10);
+    std::vector<std::string> events{stream.start()};
+    const auto append = [&](std::vector<std::string> values) {
+        events.insert(events.end(), std::make_move_iterator(values.begin()),
+                      std::make_move_iterator(values.end()));
+    };
+    append(stream.reasoning_delta("step one; "));
+    append(stream.reasoning_delta("step two"));
+    append(stream.content_delta(outcome.text));
+    append(stream.finish(outcome));
+
+    int failures = 0;
+    int open     = -1; // index of the open block, -1 when none
+    int next     = 0;  // index the next content_block_start must carry
+    std::vector<std::string> kinds;
+    std::vector<std::string> tool_names;
+    std::vector<std::string> tool_inputs;
+    std::vector<std::string> tool_ids;
+    std::string thinking;
+    std::string text;
+    for (const std::string& wire : events) {
+        const Json event = parse_event(wire);
+        const std::string type = event.at("type").get<std::string>();
+        if (type == "content_block_start") {
+            const int index = event.at("index").get<int>();
+            failures += check(open == -1, "a block opened before the previous one closed");
+            failures += check(index == next, "block indices are not consecutive from 0");
+            open = index;
+            ++next;
+            const Json& block = event.at("content_block");
+            kinds.push_back(block.at("type").get<std::string>());
+            if (kinds.back() == "tool_use") {
+                failures += check(block.at("input") == Json::object(),
+                                  "a tool_use block did not open with input {}");
+                tool_names.push_back(block.at("name").get<std::string>());
+                tool_ids.push_back(block.at("id").get<std::string>());
+                tool_inputs.emplace_back();
+            }
+        } else if (type == "content_block_delta") {
+            failures += check(event.at("index").get<int>() == open,
+                              "a delta addressed a block that is not open");
+            const Json& delta = event.at("delta");
+            if (delta.at("type") == "input_json_delta") {
+                if (!tool_inputs.empty()) {
+                    tool_inputs.back() += delta.at("partial_json").get<std::string>();
+                }
+            } else if (delta.at("type") == "thinking_delta") {
+                thinking += delta.at("thinking").get<std::string>();
+            } else if (delta.at("type") == "text_delta") {
+                text += delta.at("text").get<std::string>();
+            }
+        } else if (type == "content_block_stop") {
+            failures += check(event.at("index").get<int>() == open,
+                              "a stop addressed a block that is not open");
+            open = -1;
+        }
+    }
+    failures += check(open == -1, "a block was left open at message_stop");
+    failures += check(kinds == std::vector<std::string>{"thinking", "text", "tool_use",
+                                                        "tool_use", "tool_use"},
+                      "block kinds are not thinking, text, three tool_use in order");
+    failures += check(thinking == outcome.reasoning && text == outcome.text,
+                      "thinking or text deltas do not reassemble the outcome");
+    bool calls_ok = tool_names.size() == calls.size() && tool_inputs.size() == calls.size();
+    for (std::size_t i = 0; calls_ok && i < calls.size(); ++i) {
+        calls_ok = tool_names[i] == calls[i].first &&
+                   Json::parse(tool_inputs[i]) == Json::parse(calls[i].second);
+    }
+    failures += check(calls_ok, "tool calls were lost, duplicated, reordered or split wrongly");
+    std::vector<std::string> unique_ids = tool_ids;
+    std::sort(unique_ids.begin(), unique_ids.end());
+    failures += check(std::adjacent_find(unique_ids.begin(), unique_ids.end()) ==
+                          unique_ids.end(),
+                      "tool_use ids are not unique");
+
+    const Json aggregate = Json::parse(make_anthropic_messages_response(identity, outcome));
+    bool aggregate_ok = aggregate.at("content").size() == 5 &&
+                        aggregate.at("stop_reason") == "tool_use";
+    for (std::size_t i = 0; aggregate_ok && i < calls.size(); ++i) {
+        const Json& block = aggregate.at("content").at(2 + i);
+        aggregate_ok      = block.at("type") == "tool_use" && block.at("name") == calls[i].first &&
+                       block.at("input") == Json::parse(calls[i].second);
+    }
+    failures += check(aggregate_ok, "aggregate blocks differ from the streamed blocks");
+    return failures;
+}
+
+// An image inside a tool_result reaches the prompt of the tool turn, and
+// redacted_thinking in history is accepted and contributes nothing to the prompt.
+int test_tool_result_image_and_redacted_thinking() {
+    const Json png = Json{{"type", "image"},
+                          {"source", Json{{"type", "base64"},
+                                          {"media_type", "image/png"},
+                                          {"data", "iVBORw0KGgo="}}}};
+    Json body        = base_request();
+    body["messages"] = Json::array(
+        {Json{{"role", "user"}, {"content", "take a screenshot"}},
+         Json{{"role", "assistant"},
+              {"content",
+               Json::array({Json{{"type", "redacted_thinking"}, {"data", "opaque-bytes"}},
+                            Json{{"type", "text"}, {"text", "taking it"}},
+                            tool_use("toolu_shot", "screenshot")})}},
+         Json{{"role", "user"},
+              {"content",
+               Json::array({Json{{"type", "tool_result"},
+                                 {"tool_use_id", "toolu_shot"},
+                                 {"content", Json::array({Json{{"type", "text"},
+                                                               {"text", "here it is"}},
+                                                          png})}},
+                            Json{{"type", "text"}, {"text", "what colour is the square?"}}})}}});
+    body["thinking"]                = Json{{"type", "disabled"}};
+    const GenerationRequest request = parse(body).generation;
+    const auto tool =
+        std::find_if(request.messages.begin(), request.messages.end(),
+                     [](const ChatTurn& t) { return t.role == ninferno::ChatRole::Tool; });
+    int failures    = check(tool != request.messages.end() && tool->content.size() == 2 &&
+                             tool->content[0].text == "here it is" &&
+                             tool->content[1].kind == ContentKind::Image &&
+                             request.media_item_count() == 1,
+                         "an image inside tool_result did not reach the tool turn");
+    const ninferno::PromptInput input = prompt(request);
+    bool media_in_tool_turn         = false;
+    for (const auto& message : input.messages) {
+        if (message.role != ninferno::ChatRole::Tool) { continue; }
+        for (const auto& part : message.parts) {
+            media_in_tool_turn |= part.kind == ninferno::MessagePartKind::Media;
+        }
+    }
+    failures += check(media_in_tool_turn, "the tool turn's image did not reach the PromptInput");
+    const auto assistant =
+        std::find_if(request.messages.begin(), request.messages.end(),
+                     [](const ChatTurn& t) { return t.role == ninferno::ChatRole::Assistant; });
+    failures += check(assistant != request.messages.end() &&
+                          assistant->reasoning_content.empty() && assistant->content.size() == 1 &&
+                          assistant->content[0].text == "taking it" &&
+                          assistant->tool_calls.size() == 1,
+                      "redacted_thinking changed the assistant turn");
+    failures += check(api_code([&] { (void)parse_anthropic_count_tokens_request(body); }).empty(),
+                      "count_tokens refused redacted_thinking or a tool_result image");
+    return failures;
+}
+
 } // namespace
+
+// An unknown Anthropic field is accepted and noted; standard neutral ones are not.
+int test_unknown_fields_note() {
+    Json known                = base_request();
+    known["metadata"]         = Json{{"user_id", "u"}};
+    known["service_tier"]     = "auto";
+    int failures              = check(parse(known).generation.notes.empty(),
+                                      "standard neutral fields drew an unknown-field note");
+    Json misspelt             = base_request();
+    misspelt["stop_sequence"] = Json::array({"x"});
+    const auto notes          = parse(misspelt).generation.notes;
+    failures += check(notes.size() == 1 && notes[0] == "unknown fields ignored: stop_sequence",
+                      "an unknown Anthropic field was not noted");
+    return failures;
+}
+
+int test_message_count_limit() {
+    int failures = 0;
+    Json body    = base_request();
+    body["messages"].push_back(Json{{"role", "assistant"}, {"content", "hi"}});
+    body["messages"].push_back(Json{{"role", "user"}, {"content", "again"}});
+    RequestLimits narrow = limits();
+    narrow.max_messages  = 2;
+    failures += check(api_code([&] { (void)parse_anthropic_messages_request(body, narrow); }) ==
+                          "too_many_messages",
+                      "Messages over the message limit is a 400");
+    failures += check(api_code([&] { (void)parse_anthropic_count_tokens_request(body, narrow); }) ==
+                          "too_many_messages",
+                      "count_tokens over the message limit is a 400");
+    narrow.max_messages = 3;
+    failures +=
+        check(api_code([&] { (void)parse_anthropic_messages_request(body, narrow); }).empty(),
+              "Messages at the message limit is accepted");
+    return failures;
+}
 
 int main() {
     int failures = 0;
+    failures += test_message_count_limit();
     failures += test_envelope_and_field_policy();
     failures += test_message_normalization();
     failures += test_attribution_system_block();
     failures += test_tool_history();
+    failures += test_system_messages_anywhere();
     failures += test_tools();
+    failures += test_unknown_fields_note();
     failures += test_prompt_object_order();
     failures += test_thinking_and_count_tokens();
     failures += test_thinking_history_transport_metadata();
@@ -783,6 +1187,9 @@ int main() {
     failures += test_aggregate_and_errors();
     failures += test_tool_call_presentation();
     failures += test_stream();
+    failures += test_hidden_thinking_round_trip();
+    failures += test_converter_block_sequence();
+    failures += test_tool_result_image_and_redacted_thinking();
     if (failures != 0) {
         std::cerr << failures << " Anthropic adapter checks failed\n";
         return 1;

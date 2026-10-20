@@ -2,37 +2,32 @@
 #include "ops/linear_add/nvfp4/nvfp4_linear_add_plan.h"
 
 #include "core/device.h"
-#include "ops/linear/nvfp4/nvfp4_config.h"
-#include "ops/linear/nvfp4/nvfp4_simt.cuh"
-#include "ops/linear_add/nvfp4/nvfp4_linear_add_epilogue.cuh"
+#include "ops/linear/nvfp4/nvfp4_schedule.cuh"
+#include "ops/linear/nvfp4/nvfp4_template_launch.cuh"
+#include "ops/linear/common/epilogue.cuh"
 
 #include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 using Launch = void (*)(const Tensor&, const Weight&, Tensor&, cudaStream_t);
 
 template <class Geometry, int ActiveTokens>
 void launch_exact(const Tensor& x, const Weight& weight, Tensor& residual, cudaStream_t stream) {
-    using Schedule = Nvfp4SimtSchedule<
+    using Schedule = Nvfp4A16SimtSchedule<
         (ActiveTokens <= 16 && ActiveTokens >= (Geometry::kInputRows == 6144 ? 14 : 8)) ? 16 : 4, 1,
         2, (ActiveTokens >= 17 && ActiveTokens <= 20) ? 8 : 16, ActiveTokens, 1,
         Nvfp4SimtActivationAccess::TokenPacked, Nvfp4ScaleAccess::Direct, Nvfp4CodeCache::Default,
         1, Nvfp4SimtBlockOrder::RowsContiguous, 1>;
-    constexpr int kTokenTiles = (ActiveTokens + Schedule::kTokenTile - 1) / Schedule::kTokenTile;
-    constexpr int kBlocks     = (Geometry::kOutputRows / Schedule::kRowsPerCta) * kTokenTiles;
-    const float inverse       = 1.0F / weight.weight_scale_divisor;
-    auto* output              = static_cast<__nv_bfloat16*>(residual.data);
-    nvfp4_simt_kernel<Geometry, ActiveTokens, Schedule><<<kBlocks, Schedule::kThreads, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(x.data), static_cast<const std::uint8_t*>(weight.qdata),
-        static_cast<const std::uint8_t*>(weight.scales), inverse,
-        Nvfp4AddResidualEpilogue{output, Geometry::kOutputRows},
-        Nvfp4ContiguousOutput{output, Geometry::kOutputRows});
-    CUDA_CHECK(cudaGetLastError());
+    launch_nvfp4_a16_simt<
+        Nvfp4ScheduleInstance<Schedule, Geometry::kInputRows, ActiveTokens, true>>(
+        nvfp4_a16_operands(x, weight),
+        LinearBf16Output{static_cast<__nv_bfloat16*>(residual.data), weight.n},
+        LinearResidualAddEpilogue{{static_cast<__nv_bfloat16*>(residual.data), weight.n}}, stream);
 }
 
 template <class Geometry, std::size_t... Offsets>
@@ -43,7 +38,7 @@ constexpr auto make_launchers(std::index_sequence<Offsets...>) {
 
 template <class Geometry>
 constexpr auto make_launchers() {
-    return make_launchers<Geometry>(std::make_index_sequence<32 - 2 + 1>{});
+    return make_launchers<Geometry>(std::make_index_sequence<5 - 2 + 1>{});
 }
 
 constexpr auto kResidual6144Launchers  = make_launchers<Nvfp4N5120K6144>();
@@ -64,9 +59,20 @@ void nvfp4_linear_add_small_t_launch(const Tensor& x, const Weight& weight, Tens
     case Nvfp4GeometryId::N14336K5120:
     case Nvfp4GeometryId::N16384K5120:
     case Nvfp4GeometryId::N34816K5120:
+    case Nvfp4GeometryId::N8192K2816:
+    case Nvfp4GeometryId::N1024K2816:
+    case Nvfp4GeometryId::N2816K4096:
+    case Nvfp4GeometryId::N2816K8192:
+    case Nvfp4GeometryId::N16384K5376:
+    case Nvfp4GeometryId::N18432K5376:
+    case Nvfp4GeometryId::N2048K5376:
+    case Nvfp4GeometryId::N43008K5376:
+    case Nvfp4GeometryId::N5376K8192:
+    case Nvfp4GeometryId::N5376K16384:
+    case Nvfp4GeometryId::N5376K21504:
         break;
     }
     throw std::invalid_argument("nvfp4 linear_add: unsupported problem");
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

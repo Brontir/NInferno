@@ -1,8 +1,8 @@
 // Public benchmark for exact MTP tensor transforms.
 
-#include "ninfer/ops/mtp_pack.h"
+#include "ninferno/ops/mtp_pack.h"
 
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_runtime.h>
 
@@ -13,8 +13,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -37,8 +37,8 @@ std::vector<int> parse_tokens(const char* raw) {
 
 void run_pack(int hidden, int tokens) {
     const std::size_t input_elements = static_cast<std::size_t>(hidden) * tokens;
-    DeviceBuffer embedding           = make_bf16(input_elements);
-    DeviceBuffer hidden_norm         = make_bf16(input_elements);
+    DeviceBuffer embedding           = make_bf16(input_elements, 101U);
+    DeviceBuffer hidden_norm         = make_bf16(input_elements, 103U);
     DeviceBuffer output              = make_zeros(2 * input_elements * sizeof(std::uint16_t));
     Tensor embedding_tensor(embedding.p, DType::BF16, {hidden, tokens});
     Tensor hidden_tensor(hidden_norm.p, DType::BF16, {hidden, tokens});
@@ -60,7 +60,7 @@ void run_split(int tokens) {
     constexpr int kQueryRows         = 6144;
     constexpr int kKvRows            = 1024;
     const std::size_t input_elements = static_cast<std::size_t>(kInputRows) * tokens;
-    DeviceBuffer input               = make_bf16(input_elements);
+    DeviceBuffer input               = make_bf16(input_elements, 105U);
     DeviceBuffer query = make_zeros(static_cast<std::size_t>(kQueryRows) * tokens * 2);
     DeviceBuffer key   = make_zeros(static_cast<std::size_t>(kKvRows) * tokens * 2);
     DeviceBuffer gate  = make_zeros(static_cast<std::size_t>(kQueryRows) * tokens * 2);
@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
                 tokens = parse_tokens(argv[++index]);
             } else {
                 throw std::invalid_argument(
-                    "usage: ninfer_mtp_pack_bench [--op pack|split] [--d 2048|5120] "
+                    "usage: ninferno_mtp_pack_bench [--op pack|split] [--d 2048|5120] "
                     "[--tokens T[,T...]]");
             }
         }
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
         }
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_mtp_pack_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_mtp_pack_bench: %s\n", error.what());
         return 2;
     }
 }

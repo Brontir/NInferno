@@ -4,11 +4,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
-
-inline constexpr int kMtpAttnRows = 14336;
-inline constexpr int kMtpQRows    = 6144;
-inline constexpr int kMtpKvRows   = 1024;
+namespace ninferno::ops {
 
 __global__ void mtp_pack_fc_input_kernel(const __nv_bfloat16* embedding_norm,
                                          const __nv_bfloat16* hidden_norm, __nv_bfloat16* out,
@@ -23,9 +19,14 @@ __global__ void mtp_pack_fc_input_kernel(const __nv_bfloat16* embedding_norm,
     out[out_base + rows + row]  = hidden_norm[in_idx];
 }
 
+// q_rows = D*Hq, kv_rows = D*Hkv; a token's packed rows are [Q | K | Gate | V].
 __global__ void mtp_split_attn_in_kernel(const __nv_bfloat16* attn_in, __nv_bfloat16* q,
                                          __nv_bfloat16* k, __nv_bfloat16* gate, __nv_bfloat16* v,
-                                         std::int32_t tokens) {
+                                         std::int32_t tokens, std::int32_t q_rows,
+                                         std::int32_t kv_rows) {
+    const int kMtpAttnRows = 2 * (q_rows + kv_rows);
+    const int kMtpQRows    = q_rows;
+    const int kMtpKvRows   = kv_rows;
     const std::int64_t idx = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
     const std::int64_t n   = static_cast<std::int64_t>(kMtpAttnRows) * tokens;
     if (idx >= n) { return; }
@@ -53,4 +54,4 @@ __global__ void mtp_split_attn_in_kernel(const __nv_bfloat16* attn_in, __nv_bflo
     v[static_cast<std::int64_t>(token) * kMtpKvRows + local] = value;
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

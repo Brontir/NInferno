@@ -1,7 +1,8 @@
 #pragma once
 
-// ninfer::ops - RMSNorm kernels over contiguous BF16 rows.
+// ninferno::ops - RMSNorm kernels over contiguous BF16 rows.
 
+#include "core/pdl.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/warp.cuh"
 
@@ -9,7 +10,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 enum class RmsEpilogue {
     Offset,
@@ -27,12 +28,21 @@ __device__ __forceinline__ float rmsnorm_epilogue(float x, float inv, float weig
 
 // Fast geometry for D in {64, 128, 192, 256}. One warp owns one row, keeps the input in
 // registers, and uses only warp shuffles for the reduction. Block is a scheduling choice rather
-// than part of the row geometry.
+// than part of the row geometry. With `groups` > 0 the rows are `heads` heads per token and head
+// g * (heads / groups) + j is written at j * groups + g (llama.cpp's tiled value-head order).
 template <RmsEpilogue Epilogue, int Block, bool Prefetch, int FixedD = 0>
 __launch_bounds__(Block) __global__
     void rmsnorm_warp_bf16x2_kernel(const __nv_bfloat162* x, const __nv_bfloat162* weight,
                                     const __nv_bfloat162* z, __nv_bfloat162* out,
-                                    std::int32_t input_d, std::int64_t rows, float eps) {
+                                    std::int32_t input_d, std::int64_t rows, float eps,
+                                    std::int32_t heads, std::int32_t groups) {
+    // A programmatic dependent (a decode projection of the output) may launch now: it waits for
+    // this kernel before it reads, and streams its weights meanwhile.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
+    // Launched as a programmatic dependent itself where the launcher says so: its CTAs are then
+    // resident when the producer of x finishes instead of being dispatched after it. A no-op for
+    // a stream-ordered launch.
+    pdl::wait_for_dependencies();
     const int d = FixedD ? FixedD : input_d;
     static_assert(Block % kWarpSize == 0);
     constexpr int kWarpsPerBlock   = Block / kWarpSize;
@@ -44,6 +54,14 @@ __launch_bounds__(Block) __global__
 
     const int pairs             = d / 2;
     const std::int64_t row_base = row * static_cast<std::int64_t>(pairs);
+    std::int64_t out_row        = row;
+    if (groups > 0) {
+        const std::int64_t token = row / heads;
+        const int head           = static_cast<int>(row - token * heads);
+        const int per            = heads / groups;
+        out_row                  = token * heads + (head % per) * groups + head / per;
+    }
+    const std::int64_t out_base = out_row * static_cast<std::int64_t>(pairs);
     __nv_bfloat162 values[kMaxPairsPerLane];
     __nv_bfloat162 weights[kMaxPairsPerLane];
     __nv_bfloat162 gates[kMaxPairsPerLane];
@@ -84,14 +102,14 @@ __launch_bounds__(Block) __global__
             const float2 wf = __bfloat1622float2(w_pair);
             float2 zf{0.0f, 0.0f};
             if constexpr (Epilogue == RmsEpilogue::Gated) { zf = __bfloat1622float2(z_pair); }
-            out[row_base + pair] =
+            out[out_base + pair] =
                 __floats2bfloat162_rn(rmsnorm_epilogue<Epilogue>(xf.x, inv, wf.x, zf.x),
                                       rmsnorm_epilogue<Epilogue>(xf.y, inv, wf.y, zf.y));
         }
     }
 }
 
-// Implements: include/ninfer/ops/rmsnorm.h
+// Implements: include/ninferno/ops/rmsnorm.h
 // Match: aligned contiguous BF16, plain epilogue, D=128, sm_120a.
 // Algorithm assumptions: exactly two BF16x2 values per lane; one warp owns one logical row.
 template <RmsEpilogue Epilogue, int Block>
@@ -136,12 +154,22 @@ __launch_bounds__(Block) __global__
 }
 
 // Fast geometry for wide rows. One CTA owns one row and keeps up to MaxPairsPerThread BF16x2
-// values per lane. The launcher admits only widths evenly divisible by the CTA vector span.
-template <RmsEpilogue Epilogue, int Block, int MaxPairsPerThread, bool Prefetch, int FixedD = 0>
+// values per lane. Ragged: the pairs are not a multiple of Block (Gemma 4 26B's 2816, gpt-oss's
+// 2880, Nemotron's 2688) and the last pass is bounds-checked per lane; it is a separate
+// instantiation because the check costs registers that the even widths' occupancy needs.
+template <RmsEpilogue Epilogue, int Block, int MaxPairsPerThread, bool Prefetch, int FixedD = 0,
+          bool Ragged = false>
 __launch_bounds__(Block) __global__
     void rmsnorm_cta_bf16x2_kernel(const __nv_bfloat162* x, const __nv_bfloat162* weight,
                                    const __nv_bfloat162* z, __nv_bfloat162* out,
                                    std::int32_t input_d, std::int64_t rows, float eps) {
+    // A programmatic dependent (a decode projection of the output) may launch now: it waits for
+    // this kernel before it reads, and streams its weights meanwhile.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
+    // Launched as a programmatic dependent itself where the launcher says so: its CTAs are then
+    // resident when the producer of x finishes instead of being dispatched after it. A no-op for
+    // a stream-ordered launch.
+    pdl::wait_for_dependencies();
     const int d = FixedD ? FixedD : input_d;
     static_assert(Block % kWarpSize == 0);
     const std::int64_t row = static_cast<std::int64_t>(blockIdx.x);
@@ -161,9 +189,9 @@ __launch_bounds__(Block) __global__
 
 #pragma unroll
     for (int k = 0; k < MaxPairsPerThread; ++k) {
-        if (k < pairs_per_thread) {
-            const int pair = static_cast<int>(threadIdx.x) + k * Block;
-            values[k]      = x[row_base + pair];
+        const int pair = static_cast<int>(threadIdx.x) + k * Block;
+        if (Ragged ? pair < pairs : k < pairs_per_thread) {
+            values[k] = x[row_base + pair];
             if constexpr (Prefetch) {
                 weights[k] = weight[pair];
                 if constexpr (Epilogue == RmsEpilogue::Gated) { gates[k] = z[row_base + pair]; }
@@ -182,8 +210,8 @@ __launch_bounds__(Block) __global__
 
 #pragma unroll
     for (int k = 0; k < MaxPairsPerThread; ++k) {
-        if (k < pairs_per_thread) {
-            const int pair  = static_cast<int>(threadIdx.x) + k * Block;
+        const int pair = static_cast<int>(threadIdx.x) + k * Block;
+        if (Ragged ? pair < pairs : k < pairs_per_thread) {
             const float2 xf = __bfloat1622float2(values[k]);
             __nv_bfloat162 w_pair;
             __nv_bfloat162 z_pair{};
@@ -204,7 +232,7 @@ __launch_bounds__(Block) __global__
     }
 }
 
-// Implements: include/ninfer/ops/rmsnorm.h
+// Implements: include/ninferno/ops/rmsnorm.h
 // Match: aligned contiguous BF16, plain epilogue, D=2048, sm_120a.
 // Algorithm assumptions: exactly two BF16x2 values per thread; one 512-thread CTA owns one row.
 template <RmsEpilogue Epilogue>
@@ -256,6 +284,13 @@ __launch_bounds__(256) __global__
     void rmsnorm_generic_kernel(const __nv_bfloat16* x, const __nv_bfloat16* weight,
                                 const __nv_bfloat16* z, __nv_bfloat16* out, std::int32_t d,
                                 std::int64_t rows, float eps) {
+    // A programmatic dependent (a decode projection of the output) may launch now: it waits for
+    // this kernel before it reads, and streams its weights meanwhile.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
+    // Launched as a programmatic dependent itself where the launcher says so: its CTAs are then
+    // resident when the producer of x finishes instead of being dispatched after it. A no-op for
+    // a stream-ordered launch.
+    pdl::wait_for_dependencies();
     const std::int64_t row = static_cast<std::int64_t>(blockIdx.x);
     if (row >= rows) { return; }
 
@@ -285,4 +320,4 @@ __launch_bounds__(256) __global__
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

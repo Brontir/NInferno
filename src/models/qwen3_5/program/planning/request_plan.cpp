@@ -1,30 +1,24 @@
 #include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/program/program_impl.h"
+#include "models/qwen3_5/program/planning/neutral_frontier.h"
 #include "models/qwen3_5/program/planning/rebuild_work.h"
 #include "models/qwen3_5/program/context.h"
+#include "models/qwen3_5/program/context_work.h"
+#include "runtime/contract/sampling.h"
 #include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <tuple>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 namespace {
 
-void validate_sampling(const ResolvedSamplingParameters& sampling) {
-    if (!std::isfinite(sampling.temperature) || !std::isfinite(sampling.top_p) ||
-        !std::isfinite(sampling.min_p) || !std::isfinite(sampling.presence_penalty) ||
-        !std::isfinite(sampling.frequency_penalty)) {
-        throw std::invalid_argument("sampling parameters must be finite");
-    }
-    if (sampling.top_p < 0.0F || sampling.top_p > 1.0F) {
-        throw std::invalid_argument("top_p must be in [0,1]");
-    }
-    if (sampling.min_p < 0.0F || sampling.min_p > 1.0F) {
-        throw std::invalid_argument("min_p must be in [0,1]");
-    }
-}
+static_assert(runtime_support::kNeutralGridTokens == execution::kPrefillGridTokens &&
+                  runtime_support::kNeutralMinTokens == execution::kPrefillMinTokens,
+              "neutral frontiers follow the prefill call grid");
 
 ops::SamplingConfig translate_sampling(const ResolvedSamplingParameters& source) {
     ops::SamplingConfig out;
@@ -39,9 +33,6 @@ ops::SamplingConfig translate_sampling(const ResolvedSamplingParameters& source)
     return out;
 }
 
-std::uint32_t pages_for_tokens(std::uint32_t tokens) noexcept {
-    return tokens == 0 ? 0U : 1U + (tokens - 1U) / static_cast<std::uint32_t>(kPagedKVPageSize);
-}
 
 std::uint64_t segmented_prefill_chunks(std::uint32_t begin, std::uint32_t end,
                                        std::uint32_t prefill_chunk,
@@ -128,6 +119,8 @@ std::uint32_t capture_identity_tag(SpeculativeBackend backend, ProposalHead prop
            (static_cast<std::uint32_t>(storage) << 16U);
 }
 
+} // namespace
+
 runtime::PrefillWork rebuild_work_at_frontier(const PreparedPromptData& prompt,
                                               std::uint32_t frontier, std::uint32_t prefill_chunk,
                                               std::span<const CaptureGroup> captures,
@@ -156,6 +149,8 @@ runtime::PrefillWork rebuild_work_at_frontier(const PreparedPromptData& prompt,
     return scheduled_prefill_work(0, frontier, vision_items, vision_patches, prefill_chunk,
                                   captures, rewrite_frontiers);
 }
+
+namespace {
 
 detail::PhysicalDeviceResources
 convertible_source_resources(detail::PhysicalDeviceResources active,
@@ -216,7 +211,7 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
         throw std::overflow_error("prompt token count exceeds uint32");
     }
     for (const TokenId id : prompt.token_ids) {
-        if (id < 0 || id >= execution::dimension(parameters.model.resources().public_token_count)) {
+        if (id < 0 || id >= model.traits().public_tokens) {
             throw std::invalid_argument("prompt contains token outside the public token domain");
         }
     }
@@ -231,14 +226,14 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
     for (std::size_t i = 0; i < prompt.media_payloads.size(); ++i) {
         if (!prompt.media_payloads[i] ||
             prompt.media_payloads[i]->patch_elements !=
-                prompt.vision_items[i].patch_count * kPreparedVisionPatchFeatures) {
+                prompt.vision_items[i].patch_count * prompt.vision_items[i].patch_features) {
             throw std::invalid_argument("prepared prompt media item payload has an invalid shape");
         }
     }
     if (prompt.has_media() && !vision_enabled) {
         throw std::invalid_argument("Vision is disabled for this Engine");
     }
-    validate_sampling(options.sampling);
+    ninferno::runtime::check_resolved_sampling(options.sampling);
 
     auto base                             = std::make_unique<RequestBasePlanImpl>();
     base->context_cache                   = prompt.context_cache;
@@ -252,20 +247,53 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
                                                ? FinishReason::OutputLimit
                                                : FinishReason::ContextCapacity;
     base->sampling                       = translate_sampling(options.sampling);
+    base->speculation = RequestSpeculationPlan{.draft_depth      = default_draft_depth,
+                                               .acceptance_floor = watchdog_policy.floor_tokens_per_round,
+                                               .step_down        = default_step_down};
+    if (options.speculation) {
+        if (options.speculation->draft_tokens >
+            (speculative_backend == SpeculativeBackend::None ? 0U : draft_window)) {
+            throw std::invalid_argument(
+                speculative_backend == SpeculativeBackend::None
+                    ? "a request draft depth needs a speculative Engine"
+                    : "request draft depth exceeds the Engine's speculative window");
+        }
+        if (!speculation_steps_descend(options.speculation->draft_tokens,
+                                       options.speculation->step_down)) {
+            throw std::invalid_argument(
+                "request step_down depths must descend below its draft depth, down to 1");
+        }
+        base->speculation = RequestSpeculationPlan{
+            .draft_depth      = options.speculation->draft_tokens,
+            .acceptance_floor = options.speculation->acceptance_floor,
+            .step_down        = options.speculation->step_down};
+    }
     base->allow_prefix_reuse             = options.allow_prefix_reuse;
     base->summary.publish_continuation =
         options.allow_prefix_reuse && prompt.identity.reusable && context_cache.enabled;
+    // Under a KV lease (kv_lease_window) a request reserves a bounded window of its output, at
+    // least one speculative round, and extends it as it decodes (ensure_sequence_kv_lease); its
+    // whole output budget is only its ceiling (RequestControl::lease_ceiling).
+    const std::uint32_t leased_output_tokens =
+        kv_lease_window == 0 ? base->summary.effective_output_tokens
+                             : std::min(base->summary.effective_output_tokens,
+                                        std::max(kv_lease_window, draft_window + 1U));
     const std::uint32_t reserved_context_tokens =
-        base->summary.prompt_tokens + (base->summary.effective_output_tokens == 0
-                                           ? 0U
-                                           : base->summary.effective_output_tokens - 1U);
-    base->text_kv_page_entitlement = pages_for_tokens(reserved_context_tokens);
-    if (speculative_backend == SpeculativeBackend::Mtp) {
+        base->summary.prompt_tokens +
+        (leased_output_tokens == 0 ? 0U : leased_output_tokens - 1U);
+    base->text_kv_page_entitlement = paged_kv_pages(reserved_context_tokens);
+    // The backend KV entitlement pays for a drafter's own KV cache (Qwen's MTP head, a DFlash
+    // drafter's full layers). A drafter that keeps none (Gemma 4's assistant reads the target's KV;
+    // a DFlash drafter of sliding layers only keeps its rings in the state image) is entitled to
+    // no pages.
+    if (backend_kv_cache() == nullptr) {
+        base->backend_kv_page_entitlement = 0;
+    } else if (speculative_backend == SpeculativeBackend::Mtp) {
         const std::uint32_t mtp_tokens    = static_cast<std::uint32_t>(std::min<std::uint64_t>(
             capacity, static_cast<std::uint64_t>(reserved_context_tokens) + draft_window - 1ULL));
-        base->backend_kv_page_entitlement = pages_for_tokens(mtp_tokens);
+        base->backend_kv_page_entitlement = paged_kv_pages(mtp_tokens);
     } else if (speculative_backend == SpeculativeBackend::DFlash) {
-        base->backend_kv_page_entitlement = pages_for_tokens(reserved_context_tokens);
+        base->backend_kv_page_entitlement = paged_kv_pages(reserved_context_tokens);
     }
     detail::PhysicalDeviceResources root_active{
         .active_lanes     = 1,
@@ -277,8 +305,8 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
         if (!workspace_plan.vision) {
             throw std::logic_error("Vision prompt has no startup workspace plan");
         }
-        auto vision = std::make_shared<qwen3_5::VisionControlPlan>(
-            qwen3_5::plan_vision_control(prompt, *parameters.model.config().vision));
+        auto vision =
+            std::make_shared<qwen3_5::VisionControlPlan>(model.plan_vision_control(prompt));
         std::uint32_t previous_end = 0;
         for (std::size_t index = 0; index < vision->items.size(); ++index) {
             const qwen3_5::VisionItemControlPlan& item = vision->items[index];
@@ -290,10 +318,9 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
                 throw std::invalid_argument("vision item consumer spans overlap");
             }
             if (item.merged_count > workspace_plan.vision->max_merged_tokens ||
-                execution::VisionContext::workspace_bytes(
-                    *parameters.model.config().vision, *parameters.vision,
-                    prompt.vision_items[index].patch_count, item.merged_count,
-                    *workspace_plan.vision) > workspace_plan.vision->encode_peak_bytes) {
+                model.vision_item_workspace_bytes(prompt.vision_items[index].patch_count,
+                                                  item.merged_count, *workspace_plan.vision) >
+                    workspace_plan.vision->encode_peak_bytes) {
                 throw std::invalid_argument("vision item exceeds the Program workspace envelope");
             }
             previous_end = item.token_end;
@@ -322,6 +349,46 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
         base->prefix_digests.assign(prompt);
         base->prefix_identity_tag =
             capture_identity_tag(speculative_backend, proposal_head, kv_storage);
+    }
+    // A shared or long-anchor capture splits the prefill wherever it lies, and it happens only
+    // when the cache holds it. Each opportunity's frontier moves down to its neutral point, so that
+    // the split, and a later restore there, leave the prompt's bytes as a cold prefill computes
+    // them. The plan's opportunities are rewritten in place, so that its captures, its shortlist
+    // keys and the resource manager's candidates all name the same frontier.
+    base->context_cache.opportunities = runtime_support::neutral_cache_opportunities(
+        std::span<const qwen3_5::PreparedCacheOpportunity>(base->context_cache.opportunities),
+        base->summary.prompt_tokens, prompt.identity.rewrite_execution_frontiers);
+    // Nor may a frontier divide a Vision item: its tokens enter whole, and a prefix identity cut
+    // inside one matches no prompt. Token ids alone do not keep it out: two images of one size
+    // give the same placeholder tokens, so the prefix two such prompts share runs into the image.
+    // Such a frontier moves down to the neutral point at or before the item's first token.
+    if (!prompt.vision_items.empty()) {
+        auto& opportunities = base->context_cache.opportunities;
+        for (auto& opportunity : opportunities) {
+            for (bool moved = true; moved && opportunity.frontier != 0;) {
+                moved = false;
+                for (const auto& item : prompt.vision_items) {
+                    if (item.token_spans.empty()) { continue; }
+                    const std::size_t begin = item.token_spans.front().begin;
+                    const std::size_t end =
+                        item.token_spans.back().begin + item.token_spans.back().count;
+                    if (begin < opportunity.frontier && opportunity.frontier < end) {
+                        opportunity.frontier =
+                            runtime_support::neutral_prefill_frontier(
+                                static_cast<std::uint32_t>(begin), base->summary.prompt_tokens,
+                                prompt.identity.rewrite_execution_frontiers)
+                                .value_or(0U);
+                        moved = true;
+                        break;
+                    }
+                }
+            }
+        }
+        std::erase_if(opportunities,
+                      [](const auto& opportunity) { return opportunity.frontier == 0; });
+        opportunities = runtime_support::neutral_cache_opportunities(
+            std::span<const qwen3_5::PreparedCacheOpportunity>(opportunities),
+            base->summary.prompt_tokens, prompt.identity.rewrite_execution_frontiers);
     }
     if (options.allow_prefix_reuse && prompt.identity.reusable && context_cache.enabled) {
         const auto add_capture = [&](std::uint32_t frontier, std::uint32_t input_order,
@@ -452,6 +519,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
     auto plan                         = std::make_unique<AdmissionCandidateImpl>();
     plan->summary                     = base.summary;
     plan->sampling                    = base.sampling;
+    plan->speculation                 = base.speculation;
     plan->text_kv_page_entitlement    = base.text_kv_page_entitlement;
     plan->backend_kv_page_entitlement = base.backend_kv_page_entitlement;
     plan->root_rebuild_work           = base.root_rebuild_work;
@@ -471,6 +539,11 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             throw std::logic_error("catalog shared-prefix summary disagrees with Program state");
         }
         if (!base.allow_prefix_reuse || !prompt.identity.reusable) { return std::nullopt; }
+        if (!runtime_support::is_neutral_prefill_frontier(
+                selected.frontier, base.summary.prompt_tokens,
+                prompt.identity.rewrite_execution_frontiers)) {
+            return std::nullopt;
+        }
         const auto* shared_identity = shared_source->identity->prefix_identity();
         if (shared_identity == nullptr ||
             !qwen3_5::detail::prefix_matches(prompt, shared_source->identity->ledger(),
@@ -510,6 +583,11 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             if (anchor == source->long_anchors.end() || selected.frontier == 0) {
                 throw std::logic_error("catalog long-anchor summary disagrees with Program state");
             }
+            if (!runtime_support::is_neutral_prefill_frontier(
+                    selected.frontier, base.summary.prompt_tokens,
+                    prompt.identity.rewrite_execution_frontiers)) {
+                return std::nullopt;
+            }
             if (!qwen3_5::detail::prefix_matches(prompt, source->ledger, source->prefix_identity,
                                                  selected.frontier)) {
                 return std::nullopt;
@@ -536,18 +614,31 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
         }
     }
 
+    // A prompt that ends exactly at the restored frontier samples its first token from the
+    // checkpoint's stored tail hidden (zero suffix). A checkpoint that holds none is no source for
+    // it: another candidate, or the root, recomputes the tail from a neutral frontier, which a
+    // cold prefill computes alike.
+    if (plan->reuse != ReusePath::Root && plan->reuse_base == base.summary.prompt_tokens) {
+        const bool tail = shared_source != nullptr
+                              ? shared_source->tail_hidden_valid
+                              : checkpoint_tail_hidden_valid(*source, plan->selected_checkpoint);
+        if (!tail) { return std::nullopt; }
+    }
+
     if (speculative_backend == SpeculativeBackend::Mtp) {
         const bool append_ready =
             plan->reuse == ReusePath::PrivateEndpoint && source != nullptr &&
-            source->tail_hidden_valid && decoder->mtp_cache() != nullptr &&
+            source->tail_hidden_valid &&
             (plan->reuse_base == 0 || source->mtp_kv_valid >= plan->reuse_base - 1);
         const bool checkpoint_ready =
             (is_rewrite_checkpoint_restore(plan->reuse) ||
              plan->reuse == ReusePath::PrivateLongAnchor ||
              plan->reuse == ReusePath::SharedStablePrefix) &&
-            decoder->mtp_cache() != nullptr && plan->reuse_base != 0 &&
+            plan->reuse_base != 0 &&
             ((source != nullptr && source->mtp_kv_valid >= plan->reuse_base - 1) ||
-             (shared_source != nullptr && shared_source->backend_frontier >= plan->reuse_base - 1));
+             (shared_source != nullptr &&
+              (backend_kv_cache() == nullptr ||
+               shared_source->backend_frontier >= plan->reuse_base - 1)));
         if (plan->reuse != ReusePath::Root && !append_ready && !checkpoint_ready) {
             throw std::logic_error("published MTP checkpoint is not materializable");
         }
@@ -571,7 +662,17 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
         desired && source != nullptr &&
         plan->source_mode == runtime::PrivateSourceMode::ConsumeToActive &&
         can_retain_rewrite_checkpoint(prompt, *desired, *source, plan->reuse, plan->reuse_base);
-    if (!base.summary.publish_continuation || !desired) {
+    // A rewrite checkpoint on the Device is kept only while a Device slot stays for every lane
+    // (device_slot_spare_for_optional_state); otherwise the restore drops it rather than make a
+    // later admission wait for this lane to end.
+    const bool rewrite_contests_lanes = [&] {
+        if (!can_retain_rewrite) { return false; }
+        const StateReplicaResidency residency = state_store->residency(*source->rewrite_state);
+        return (residency == StateReplicaResidency::DeviceOnly ||
+                residency == StateReplicaResidency::Both) &&
+               !device_slot_spare_for_optional_state();
+    }();
+    if (!base.summary.publish_continuation || !desired || rewrite_contests_lanes) {
         plan->rewrite_disposition = RewriteCheckpointDisposition::DropOptional;
     } else if (can_retain_rewrite) {
         plan->rewrite_disposition = RewriteCheckpointDisposition::RetainExisting;
@@ -827,7 +928,8 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             (plan->source_mode == runtime::PrivateSourceMode::ConsumeToActive &&
              plan->state_fork_required);
         if (is_masked_draft_backend(speculative_backend) && forks_device_state &&
-            selected_state_residency != StateReplicaResidency::HostOnly) {
+            selected_state_residency != StateReplicaResidency::HostOnly &&
+            state_images->dflash_local() != nullptr) {
             // DFlash has lane-local recurrent state which is copied eagerly when a retained
             // checkpoint forks. The copy completes on the compute stream in the publication
             // boundary, so it contributes candidate cost without turning the plan into an
@@ -839,7 +941,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                               : (shared_source->kv ? &*shared_source->kv : nullptr);
         if (source_kv == nullptr) { throw std::logic_error("checkpoint has no KV address space"); }
         const std::uint32_t backend_frontier =
-            backend_frontier_at(speculative_backend, plan->reuse_base);
+            backend_kv_frontier(plan->reuse_base);
         if (plan->source_mode == runtime::PrivateSourceMode::Retain) {
             plan->text_prefix_fork_required    = true;
             plan->backend_prefix_fork_required = source_kv->backend && backend_frontier != 0;
@@ -851,7 +953,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                 partial_tail_cow_required(*backend_kv_addresses, *source_kv->backend,
                                           backend_frontier);
         }
-        const std::uint32_t main_required = pages_for_tokens(plan->reuse_base);
+        const std::uint32_t main_required = paged_kv_pages(plan->reuse_base);
         const std::uint32_t main_device =
             device_kv_prefix_pages(*text_kv_addresses, source_kv->text, plan->reuse_base);
         if (main_device > main_required) {
@@ -869,7 +971,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                             main_missing, main_contiguous_runs);
         }
         if (source_kv->backend && backend_frontier != 0) {
-            const std::uint32_t backend_required = pages_for_tokens(backend_frontier);
+            const std::uint32_t backend_required = paged_kv_pages(backend_frontier);
             const std::uint32_t backend_device   = device_kv_prefix_pages(
                 *backend_kv_addresses, *source_kv->backend, backend_frontier);
             if (backend_device > backend_required) {
@@ -920,7 +1022,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
         const std::uint32_t main_full_pages =
             plan->reuse_base / static_cast<std::uint32_t>(kPagedKVPageSize);
         const std::uint32_t backend_frontier =
-            backend_frontier_at(speculative_backend, plan->reuse_base);
+            backend_kv_frontier(plan->reuse_base);
         const std::uint32_t backend_full_pages =
             backend_frontier / static_cast<std::uint32_t>(kPagedKVPageSize);
         if (main_full_pages > active.main_kv_pages ||
@@ -937,7 +1039,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                 },
         };
         detail::PhysicalResources source_replica_additions;
-        const std::uint32_t main_required = pages_for_tokens(plan->reuse_base);
+        const std::uint32_t main_required = paged_kv_pages(plan->reuse_base);
         const std::uint32_t main_device =
             device_kv_prefix_pages(*text_kv_addresses, source_kv->text, plan->reuse_base);
         if (main_device > main_required) {
@@ -945,8 +1047,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
         }
         source_replica_additions.device.main_kv_pages = main_required - main_device;
         if (source_kv->backend) {
-            const std::uint32_t backend_required =
-                backend_frontier == 0 ? 0U : pages_for_tokens(backend_frontier);
+            const std::uint32_t backend_required = paged_kv_pages(backend_frontier);
             const std::uint32_t backend_device = device_kv_prefix_pages(
                 *backend_kv_addresses, *source_kv->backend, backend_frontier);
             if (backend_device > backend_required) {
@@ -962,7 +1063,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                 KVAddressSpaceHandle address, std::uint32_t frontier, std::uint32_t active_pages,
                 std::uint32_t missing_source_pages, bool prefix_fork, bool& staged,
                 runtime::ContextResourceClass resource) {
-                const std::uint32_t required = pages_for_tokens(frontier);
+                const std::uint32_t required = paged_kv_pages(frontier);
                 const std::uint64_t final_without_release =
                     static_cast<std::uint64_t>(required) + active_pages;
                 const std::uint32_t capacity = pages.physical_pool().capacity_pages();
@@ -1089,7 +1190,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                 frontier % static_cast<std::uint32_t>(kPagedKVPageSize) == 0) {
                 return out;
             }
-            const std::uint32_t required = pages_for_tokens(frontier);
+            const std::uint32_t required = paged_kv_pages(frontier);
             if (required > addresses.mapped_pages(address)) {
                 throw std::logic_error("checkpoint KV requirement exceeds address membership");
             }
@@ -1134,7 +1235,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             main_shared_device;
         if (source->kv->backend) {
             const std::uint32_t backend_frontier =
-                backend_frontier_at(speculative_backend, plan->reuse_base);
+                backend_kv_frontier(plan->reuse_base);
             const std::uint32_t backend_shared = shared_kv_prefix_pages(
                 *backend_kv_addresses, *source->kv->backend, backend_frontier);
             const std::uint32_t backend_missing_shared = missing_shared_device_kv_prefix_pages(
@@ -1160,7 +1261,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
         transient_host_bytes                           = main_discarded_host_bytes;
         if (source->kv->backend) {
             const std::uint32_t backend_frontier =
-                backend_frontier_at(speculative_backend, plan->reuse_base);
+                backend_kv_frontier(plan->reuse_base);
             const std::size_t backend_bytes =
                 host_kv_prefix_bytes(*backend_kv_addresses, *source->kv->backend, backend_frontier);
             if (backend_bytes > std::numeric_limits<std::size_t>::max() - retained_host.kv_bytes) {
@@ -1300,4 +1401,4 @@ ProgramImpl::shared_capture_split_prefill_work(const AdmissionCandidate& candida
     return projected.impl_->remaining_prefill_work;
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

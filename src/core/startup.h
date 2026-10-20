@@ -1,11 +1,11 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <chrono>
 #include <cstdint>
 
-namespace ninfer {
+namespace ninferno {
 
 inline void publish_startup_event(const StartupObserver& observer,
                                   const StartupEvent& event) noexcept {
@@ -77,4 +77,4 @@ private:
     bool terminal_ = false;
 };
 
-} // namespace ninfer
+} // namespace ninferno

@@ -21,7 +21,8 @@ from .direct import encode_direct
 def swizzle_nvfp4_scales(
     natural_scales: torch.Tensor, shape: Sequence[int]
 ) -> torch.Tensor:
-    """Map natural ``[N,K/16]`` E4M3FN words to the registered scale layout."""
+    """Map natural ``[N,K/16]`` E4M3FN words to the registered scale layout (whole 128-row
+    tiles, the words of rows past N zero)."""
 
     geometry = block_scale_geometry("nvfp4", shape)
     source = _exact_uint8_matrix(
@@ -29,8 +30,18 @@ def swizzle_nvfp4_scales(
         (geometry.n, geometry.groups_per_row),
         "NVFP4 scales",
     )
+    if geometry.scale_rows != geometry.n:
+        source = torch.cat(
+            (
+                source,
+                torch.zeros(
+                    (geometry.scale_rows - geometry.n, geometry.groups_per_row),
+                    dtype=torch.uint8,
+                ),
+            )
+        )
     return (
-        source.reshape(geometry.n // 128, 4, 32, geometry.k_tiles, 4)
+        source.reshape(geometry.scale_rows // 128, 4, 32, geometry.k_tiles, 4)
         .permute(0, 3, 2, 1, 4)
         .contiguous()
         .reshape(-1)
@@ -40,7 +51,8 @@ def swizzle_nvfp4_scales(
 def unswizzle_nvfp4_scales(
     stored_scales: torch.Tensor, shape: Sequence[int]
 ) -> torch.Tensor:
-    """Recover natural ``[N,K/16]`` E4M3FN words from registered layout bytes."""
+    """Recover natural ``[N,K/16]`` E4M3FN words from registered layout bytes; the words of
+    a completed last tile's rows past N must be zero."""
 
     geometry = block_scale_geometry("nvfp4", shape)
     if (
@@ -53,12 +65,15 @@ def unswizzle_nvfp4_scales(
             f"{geometry.scale_plane_bytes} elements"
         )
     source = stored_scales.detach().contiguous().cpu()
-    return (
-        source.reshape(geometry.n // 128, geometry.k_tiles, 32, 4, 4)
+    natural = (
+        source.reshape(geometry.scale_rows // 128, geometry.k_tiles, 32, 4, 4)
         .permute(0, 3, 2, 1, 4)
         .contiguous()
-        .reshape(geometry.n, geometry.groups_per_row)
+        .reshape(geometry.scale_rows, geometry.groups_per_row)
     )
+    if bool(natural[geometry.n :].any()):
+        raise ValueError("NVFP4 scale words past the last row must be zero")
+    return natural[: geometry.n].clone()
 
 
 def _positive_fp32_word(value: torch.Tensor | bytes | bytearray | memoryview) -> bytes:

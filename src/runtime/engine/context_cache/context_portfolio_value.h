@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 struct ContextPortfolioOwnerPolicy {
     PlanningOwnerId owner;
@@ -30,12 +30,17 @@ struct ContextPortfolioValueResult {
     std::uint64_t baseline_public_value   = 0;
     std::uint64_t target_public_value     = 0;
     std::uint64_t private_transition_loss = 0;
+    std::uint64_t private_transition_gain = 0;
     bool saturated                        = false;
 };
 
 // Folds one complete inactive checkpoint portfolio. Empirical demands and explicit shared credit
 // form public portfolio values. A private owner contributes the largest loss of one concrete
 // checkpoint capability, so a surviving later checkpoint cannot mask damage to an earlier one.
+// The same rule read in the other direction is the private gain: an owner whose checkpoint saves
+// more in the target than in the baseline (a checkpoint being published) contributes its weighted
+// largest gain. Pressure only ever lowers an existing owner's saving, so gains come from new
+// publications and losses from their victims, priced by one retention weight.
 class ContextPortfolioValue {
 public:
     ContextPortfolioValue() { owner_scratch_.reserve(32U); }
@@ -78,6 +83,9 @@ public:
             owner->private_transition_loss =
                 std::max(owner->private_transition_loss,
                          baseline_saving > target_saving ? baseline_saving - target_saving : 0);
+            owner->private_transition_gain =
+                std::max(owner->private_transition_gain,
+                         target_saving > baseline_saving ? target_saving - baseline_saving : 0);
             for (std::uint32_t bit = 0; bit < 32U; ++bit) {
                 if ((checkpoint.demand_mask & (1U << bit)) == 0) { continue; }
                 baseline_demand[bit] = std::max(baseline_demand[bit], baseline_saving);
@@ -93,6 +101,8 @@ public:
         for (const OwnerValue& owner : owner_scratch_) {
             if (owner.private_retention_weight != 0) {
                 add_weighted(result.private_transition_loss, owner.private_transition_loss,
+                             owner.private_retention_weight, result.saturated);
+                add_weighted(result.private_transition_gain, owner.private_transition_gain,
                              owner.private_retention_weight, result.saturated);
             }
             if (owner.explicit_shared_credit) {
@@ -111,6 +121,7 @@ private:
         std::uint64_t baseline_best            = 0;
         std::uint64_t target_best              = 0;
         std::uint64_t private_transition_loss  = 0;
+        std::uint64_t private_transition_gain  = 0;
     };
 
     static void add(std::uint64_t& value, std::uint64_t increment, bool& saturated) noexcept {
@@ -135,4 +146,4 @@ private:
     std::vector<OwnerValue> owner_scratch_;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

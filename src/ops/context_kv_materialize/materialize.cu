@@ -1,14 +1,15 @@
 #include "ops/context_kv_materialize/launch.h"
 #include "core/device.h"
+#include "ops/common/arch_limits.h"
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
-#include "ops/linear/q8/q8_ksplit_mma.cuh"
+#include "ops/linear/q8/q8_sliced_k_launch.cuh"
 #include "ops/common/warp.cuh"
 #include "ops/common/dflash_rope.cuh"
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 constexpr int kLayers  = static_cast<int>(kContextKVMaterializeLayers);
 constexpr int kRows    = 1024;
@@ -59,10 +60,6 @@ union alignas(16) Bf16x8 {
     uint4 raw;
     __nv_bfloat162 pair[4];
 };
-
-__device__ __forceinline__ int swizzle_128(int row, int column) {
-    return (((column >> 3) ^ (row & 7)) << 3) | (column & 7);
-}
 
 template <int Rows, int Columns, int BlockK>
 union alignas(16) MaterializeStorage {
@@ -302,7 +299,15 @@ void launch_mma(const Tensor& x, const Tensor& positions, const Tensor& counts, 
                 DeviceLayers layers, ContextKVMaterializeExecutionEnvelope envelope,
                 const Tensor& scratch, cudaStream_t stream) {
     constexpr int bytes = sizeof(MaterializeStorage<Rows, Columns, BlockK>);
-    if constexpr (bytes > 48 * 1024)
+    // NINFERNO-SPECIAL(arch:sm75): a tile over the build's shared memory (Turing's 64 KiB) stages
+    // half the K depth per step, as the Mma64 route does; builds with 99 KiB keep the tuned depth.
+    if constexpr (bytes > static_cast<int>(kMaxSharedBytesPerBlock)) {
+        static_assert(BlockK > 64, "context KV tile exceeds shared memory at the smallest depth");
+        launch_mma<Rows, Columns, BlockK / 2, ColumnWarps>(x, positions, counts, slots, layers,
+                                                           envelope, scratch, stream);
+        return;
+    }
+    if constexpr (bytes > kStaticSharedBytesPerBlock)
         CUDA_CHECK(cudaFuncSetAttribute(context_kv_mma_kernel<Rows, Columns, BlockK, ColumnWarps>,
                                         cudaFuncAttributeMaxDynamicSharedMemorySize, bytes));
     context_kv_mma_kernel<Rows, Columns, BlockK, ColumnWarps>
@@ -339,7 +344,9 @@ struct MaterializeProjectionEpilogue {
         }
     }
 
-    __device__ void store_pair(int row, int col, float4 sum, int columns) const {
+    template <class Output>
+    __device__ void store_fragment(const Output&, int row, int col, float4 sum, int,
+                                   int columns) const {
         if (col < columns) {
             store(row, col, sum.x);
             store(row + 8, col, sum.z);
@@ -360,7 +367,9 @@ struct ContextPrefixColumns {
 };
 
 template <int Columns, int KWarps = 8>
-using GroupedSchedule = Q8KSplitSchedule<KWarps, Columns, 1, Q8KSplitScaleAccess::Shared>;
+using GroupedSchedule =
+    Q8A16SlicedKMmaSchedule<Columns, KWarps, 1, 1, Q8ScaleAccess::Shared, Cache::ca, Cache::cg,
+                            Q8ActivationStage::ActiveOnly, 5120>;
 
 template <int Columns, int KWarps = 8>
 __global__ __launch_bounds__(KWarps * 32, 1) void context_kv_grouped_kernel(
@@ -373,10 +382,10 @@ __global__ __launch_bounds__(KWarps * 32, 1) void context_kv_grouped_kernel(
     const auto* scales = value ? layer.value_scales : layer.key_scales;
     const MaterializeProjectionEpilogue epilogue{layer, positions, counts,    slots,     scratch, l,
                                                  width, batch,     min_count, max_count, value};
-    q8_ksplit_mma<Q8LinearGeometry<1024, 5120>, Columns, GroupedSchedule<Columns, KWarps>,
-                  Q8ContiguousOutput, MaterializeProjectionEpilogue, Q8KSplitIdentityRows, true,
-                  true>(x, codes, scales, {nullptr, 0}, epilogue, {}, max_count * batch,
-                        ContextPrefixColumns{width, max_count});
+    q8_a16_sliced_k_mma<GroupedSchedule<Columns, KWarps>, true>(
+        Q8LinearOperands{x, codes, scales, 1024, 5120, max_count * batch, 5120},
+        LinearBf16Output{nullptr, 0}, epilogue, Q8SlicedKIdentityRows{}, 0,
+        ContextPrefixColumns{width, max_count});
 }
 
 template <int Columns, int KWarps = 8>
@@ -384,12 +393,14 @@ void launch_grouped(const Tensor& x, const Tensor& positions, const Tensor& coun
                     const Tensor& slots, DeviceLayers layers,
                     ContextKVMaterializeExecutionEnvelope envelope, const Tensor& scratch,
                     cudaStream_t stream) {
-    context_kv_grouped_kernel<Columns, KWarps>
-        <<<dim3(64, (envelope.max_count * x.ne[2] + Columns - 1) / Columns, 10), KWarps * 32, 0,
-           stream>>>(static_cast<const __nv_bfloat16*>(x.data),
-                     static_cast<const int*>(positions.data), static_cast<const int*>(counts.data),
-                     static_cast<const int*>(slots.data), layers, static_cast<float*>(scratch.data),
-                     x.ne[1], x.ne[2], envelope.min_count, envelope.max_count);
+    static constexpr auto kernel = context_kv_grouped_kernel<Columns, KWarps>;
+    const int shared = q8_prepare_shared<GroupedSchedule<Columns, KWarps>::kSharedBytes, kernel>();
+    kernel<<<dim3(64, (envelope.max_count * x.ne[2] + Columns - 1) / Columns, 10), KWarps * 32,
+             shared, stream>>>(
+        static_cast<const __nv_bfloat16*>(x.data), static_cast<const int*>(positions.data),
+        static_cast<const int*>(counts.data), static_cast<const int*>(slots.data), layers,
+        static_cast<float*>(scratch.data), x.ne[1], x.ne[2], envelope.min_count,
+        envelope.max_count);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -479,4 +490,4 @@ void context_kv_materialize_launch(
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

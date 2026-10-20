@@ -1,10 +1,10 @@
 // Public-Op benchmark for plain/uniform and packed dense Softmax Attention.
 // Tile selection and launch decomposition remain private to packed_softmax_attention().
 
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/softmax_attention.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -33,15 +33,15 @@ constexpr std::int32_t kHeadDim = 72;
 constexpr std::int32_t kHeads   = 16;
 constexpr float kScale          = 0.11785113019775792073F;
 constexpr ops::AttentionHeadGeometry kGeometry{kHeadDim, kHeads, kHeads};
-constexpr std::size_t kFlushBytes   = std::size_t{256} << 20;
-constexpr double kDenseBf16TcTflops = 209.5;
-constexpr double kRtx5090DramGBs    = 1792.0;
+constexpr std::size_t kFlushBytes = std::size_t{256} << 20;
+const double kDenseBf16TcTflops   = bench::device_roofs().bf16_fp32acc_tflops;
+const double kDeviceDramGBs       = bench::device_roofs().dram_gbs;
 
 enum class Entry : std::uint8_t { Uniform, Packed, Both };
 enum class Execution : std::uint8_t { Eager, Graph, Both };
-enum class CacheMode : std::uint8_t { Cold, Warm, Both };
-enum class CacheState : std::uint8_t { Cold, Warm };
-
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 struct Options {
     Entry entry           = Entry::Both;
     Execution execution   = Execution::Graph;
@@ -71,7 +71,7 @@ struct Result {
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_packed_softmax_attention_bench "
+                 "usage: ninferno_packed_softmax_attention_bench "
                  "[--entry uniform|packed|both] [--segments S --length L | "
                  "--segment-lengths L1,L2,...] "
                  "[--execution eager|graph|both] [--cache cold|warm|both] "
@@ -202,9 +202,9 @@ public:
         : segment_lengths_(std::move(segment_lengths)),
           tokens_(static_cast<std::int32_t>(
               std::accumulate(segment_lengths_.begin(), segment_lengths_.end(), std::int64_t{0}))),
-          q_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_)),
-          k_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_)),
-          v_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_)),
+          q_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_, 101U)),
+          k_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_, 103U)),
+          v_(bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_, 105U)),
           cu_seqlens_((segment_lengths_.size() + 1) * sizeof(std::int32_t)),
           output_(bench::make_zeros(static_cast<std::size_t>(kHeadDim) * kHeads * tokens_ * 2)),
           workspace_bytes_(ops::packed_softmax_attention_workspace_capacity_bytes(
@@ -285,11 +285,9 @@ const char* execution_name(Execution execution) {
     return execution == Execution::Eager ? "eager" : "graph";
 }
 
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
-
 bench::ColdTiming measure(Case& data, Entry entry, Execution execution, CacheState cache,
-                          bench::TimedGraph* graph, DeviceBuffer& flush, cudaStream_t stream,
-                          int warmup, int repeat) {
+                          bench::TimedGraph* graph, bench::L2FlushBuffer& flush,
+                          cudaStream_t stream, int warmup, int repeat) {
     if (execution == Execution::Eager) {
         const auto launch = [&](cudaStream_t launch_stream) { data.launch(entry, launch_stream); };
         return cache == CacheState::Cold
@@ -311,7 +309,7 @@ void report(const Result& result) {
                 entry_name(result.entry), execution_name(result.execution),
                 cache_name(result.cache), result.tokens, result.segments, result.workspace_bytes,
                 result.timing.median_us, result.timing.min_us, result.timing.p95_us, gbps,
-                gbps / kRtx5090DramGBs * 100.0, kRtx5090DramGBs, tflops,
+                gbps / kDeviceDramGBs * 100.0, kDeviceDramGBs, tflops,
                 tflops / kDenseBf16TcTflops * 100.0, kDenseBf16TcTflops);
 }
 
@@ -332,7 +330,7 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
     }
 }
 
-void profile(Case& data, Entry entry, const Options& options, DeviceBuffer& flush,
+void profile(Case& data, Entry entry, const Options& options, bench::L2FlushBuffer& flush,
              cudaStream_t stream) {
     const Execution execution = options.execution;
     const CacheState cache = options.cache == CacheMode::Cold ? CacheState::Cold : CacheState::Warm;
@@ -375,7 +373,7 @@ int main(int argc, char** argv) {
         const Options options = parse_options(argc, argv);
         cudaStream_t stream   = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
+        bench::L2FlushBuffer flush(kFlushBytes);
         Case data(options.segment_lengths);
 
         if (options.profile) {
@@ -426,7 +424,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_packed_softmax_attention_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_packed_softmax_attention_bench: %s\n", error.what());
         return 1;
     }
 }

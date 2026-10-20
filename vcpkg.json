@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "ninferno",
+  "version-semver": "0.1.0",
+  "description": "The libraries the Windows build takes from vcpkg (Linux takes them from the distribution).",
+  "supports": "windows & x64",
+  "builtin-baseline": "44ccfd88b3eca6929d6d16398c7b19945c29a5f6",
+  "dependencies": [
+    "curl",
+    "openssl",
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "swscale"]
+    }
+  ]
+}

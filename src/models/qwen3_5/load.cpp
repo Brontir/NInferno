@@ -1,11 +1,12 @@
 #include "models/qwen3_5/load.h"
 
+#include "artifact/expert_groups.h"
 #include "artifact/reader.h"
 #include "models/qwen3_5/load/bindings.h"
 
 #include <utility>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 struct LoadPlan::Impl {
     Config config;
@@ -41,7 +42,8 @@ std::span<const WeightUse> LoadPlan::uses(WeightId id) const {
     return impl_->pending.at(id.index).uses;
 }
 
-LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options) {
+LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options,
+                   const MoeOffloadOptions& offload) {
     auto out     = std::make_unique<LoadPlan::Impl>();
     out->options = options;
     out->config  = parse_config(reader.directory(), options);
@@ -91,10 +93,12 @@ LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options) {
                          std::string(options.speculative_component()) + "/final_hidden");
     }
     out->pending         = std::move(bindings.weights);
-    out->materialization = std::move(binder).finish();
-    out->info.name       = reader.directory().metadata.value(
+    // Every binding of a component this model loads must be bound.
+    out->materialization =
+        std::move(binder).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
+    artifact::place_expert_groups(out->materialization, reader, offload);
+    out->info.name = reader.directory().metadata.value(
         "name", std::string(architecture_name(text.architecture)));
-    out->info.metadata_json   = reader.directory().metadata.dump();
     out->info.provenance_json = reader.directory().provenance.dump();
     out->info.artifact_id     = reader.artifact_id();
     return LoadPlan(std::move(out));
@@ -107,9 +111,15 @@ std::unique_ptr<Model> materialize_model(LoadPlan&& plan, DeviceContext& device,
     auto backing = artifact::materialize(*data->materialization.source,
                                          std::move(data->materialization), device, observer);
     auto bound   = loading::resolve_weights(std::move(data->pending), backing);
+    DeviceBuffer yarn;
+    if (auto& rope = data->config.text.rope_parameters; rope && rope->yarn()) {
+        yarn = DeviceBuffer(rope->yarn_inv_freq.size() * sizeof(float));
+        yarn.copy_from_host(rope->yarn_inv_freq.data(), yarn.bytes);
+        rope->yarn_frequencies = static_cast<const float*>(yarn.p);
+    }
     return std::unique_ptr<Model>(new Model(
         std::move(data->config), data->options, std::move(data->weights), std::move(bound),
-        std::move(data->resources), std::move(data->info), std::move(backing)));
+        std::move(data->resources), std::move(data->info), std::move(backing), std::move(yarn)));
 }
 
 std::unique_ptr<Model> load_model(const std::filesystem::path& path, LoadOptions options,
@@ -118,4 +128,4 @@ std::unique_ptr<Model> load_model(const std::filesystem::path& path, LoadOptions
     return materialize_model(plan_load(reader, options), device, observer);
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

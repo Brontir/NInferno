@@ -2,23 +2,30 @@
 
 // Small fixed-capacity request execution for every backend.
 
+#include "core/debug_poison.h"
+#include "core/decode_graph.h"
 #include "core/device.h"
 #include "core/nvtx.h"
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/execution.h"
 #include "runtime/contract/resources.h"
+#include "runtime/contract/token_mask.h"
 #include "runtime/engine/request_record.h"
+#include "structured/output_constraint.h"
 #include "runtime/engine/context_cache/resource_manager.h"
 #include "runtime/engine/scheduler.h"
 #include "runtime/engine/generation_budget.h"
+#include "runtime/engine/memory_summary.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <concepts>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <exception>
 #include <future>
@@ -34,7 +41,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 template <class Instance>
 class EngineCore {
@@ -62,6 +69,16 @@ public:
     using ResourceInspection = typename ResourceManagement::Inspection;
     using Clock              = std::chrono::steady_clock;
 
+    // A model whose frontend continues a prompt by the tokens generated for it resumes a request
+    // preempted under a KV lease instead of ending it at its lease.
+    static constexpr bool kPreemptible =
+        requires(Instance& instance, const PreparedPrompt& prompt,
+                 std::span<const TokenId> generated) {
+            { instance.frontend.resumable(prompt) } -> std::convertible_to<bool>;
+            { instance.frontend.copy(prompt) } -> std::same_as<PreparedPrompt>;
+            { instance.frontend.continued(prompt, generated) } -> std::same_as<PreparedPrompt>;
+        };
+
     EngineCore(Instance& instance, DeviceContext& device, const EngineOptions& options,
                ContextMachineCostModel context_cost)
         : instance_(instance), device_(device), max_context_(options.max_context),
@@ -69,6 +86,7 @@ public:
           max_outstanding_(static_cast<std::size_t>(options.max_concurrency) +
                            options.max_pending_requests),
           pending_timeout_(std::chrono::milliseconds(options.pending_timeout_ms)),
+          kv_lease_(options.kv_lease_window != 0),
           resources_(max_concurrency_, options.context_cache.max_private_continuations.value(),
                      options.context_cache.max_shared_prefixes.value(),
                      options.context_cache.enabled,
@@ -78,6 +96,7 @@ public:
             options.max_pending_requests == 0 || pending_timeout_.count() <= 0) {
             throw std::invalid_argument("Engine core bounds are invalid");
         }
+        scheduler_.allow_concurrent_prefill(options.concurrent_prefill);
         if (!options.context_cache.max_private_continuations ||
             !options.context_cache.max_shared_prefixes) {
             throw std::logic_error("target admission capacity does not match the Engine");
@@ -93,6 +112,8 @@ public:
                 return;
             }
             worker_loop();
+            // Every request the worker owned is answered before it returns (fail_all_locked).
+            worker_exited_.store(true, std::memory_order_release);
         });
         try {
             started.get();
@@ -199,8 +220,11 @@ public:
 
         std::shared_ptr<Request> request;
         try {
+            // An output constraint's grammar opens at the first reasoning close, so the output
+            // splits there too; without one a quoted close stays reasoning text.
             auto output = instance_.frontend.make_output_session(
-                prompt, options.stop, options.output, options.execution.thinking);
+                prompt, options.stop, options.output, options.execution.thinking,
+                !options.constraint.compiled);
             const std::uint32_t capacity_output =
                 max_context_ - prompt_summary.prompt_tokens + static_cast<std::uint32_t>(1);
             try {
@@ -214,6 +238,11 @@ public:
                                                 std::move(output), prompt_summary, prepare_seconds,
                                                 std::move(options), consumer_mode, observation,
                                                 pending_deadline, submitted);
+            if (const auto& constraint = request->options.constraint.compiled) {
+                request->constraint.emplace(
+                    constraint->compiled(), prompt_summary.starts_in_reasoning,
+                    prompt_summary.reasoning_open_allowed && !request->options.output.raw);
+            }
         } catch (...) {
             release_reserved_capacity();
             throw;
@@ -235,19 +264,7 @@ public:
 
     [[nodiscard]] MemorySummary memory_summary() const {
         std::scoped_lock lock(execution_mutex_);
-        MemorySummary out                      = instance_.program->memory_summary();
-        const KvCapacityResolution& resolution = instance_.kv_capacity_resolution;
-        out.kv_capacity_mode                   = resolution.mode;
-        out.kv_capacity_page_groups            = resolution.main_page_groups;
-        out.kv_capacity_max_page_groups        = resolution.maximum_main_page_groups;
-        out.minimum_runtime_reservation_bytes  = resolution.minimum_runtime_reservation_bytes;
-        out.kv_capacity_increment_bytes        = resolution.bytes_per_additional_main_page_group;
-        out.runtime_reservation_bytes          = resolution.runtime_reservation_bytes;
-        out.available_after_weights_bytes      = resolution.available_after_weights_bytes;
-        out.available_after_startup_bytes      = resolution.available_after_startup_bytes;
-        out.kv_capacity_headroom_bytes         = resolution.automatic_headroom_bytes;
-        out.planned_slack_bytes                = resolution.planned_slack_bytes;
-        return out;
+        return summarize_memory(instance_);
     }
 
     [[nodiscard]] RuntimeStats runtime_stats() const {
@@ -529,9 +546,11 @@ private:
             snapshot.waiting_requests = static_cast<std::uint32_t>(pending_.size());
         }
         snapshot.prefilling_requests = 0;
-        if (const auto lane = scheduler_.prefill_lane();
-            lane && slots_[*lane] != nullptr && !slots_[*lane]->capture_pending) {
-            snapshot.prefilling_requests = 1;
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            if (scheduler_.owns_prefill_lane(lane) && slots_[lane] != nullptr &&
+                !slots_[lane]->capture_pending) {
+                ++snapshot.prefilling_requests;
+            }
         }
         snapshot.materializing_requests = materializing_.has_value() ? 1U : 0U;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
@@ -641,7 +660,19 @@ private:
                     queue_cv_.notify_one();
                 }
             }
-            if (!done) { continue; }
+            if (!done) {
+                // A backstop: a request the exited worker never answered (an invariant broken on
+                // its failure path) fails here instead of waiting forever.
+                if (worker_exited_.load(std::memory_order_acquire)) {
+                    std::lock_guard lock(request->mutex);
+                    if (!request->response_done) {
+                        throw RequestError(RequestErrorKind::Unavailable,
+                                           "the inference engine stopped without answering the "
+                                           "request");
+                    }
+                }
+                continue;
+            }
 
             if (caller_error != nullptr) { std::rethrow_exception(caller_error); }
             std::lock_guard lock(request->mutex);
@@ -851,7 +882,11 @@ private:
         result.reasoning               = std::move(request->reasoning);
         result.tool_calls              = request->output.take_tool_calls();
         result.tool_call_parse         = request->output.tool_call_parse_diagnostics();
-        result.reasoning_tokens        = request->output.reasoning_tokens();
+        // An empty thought (Gemma 4 opens and closes one after a tool result with thinking off)
+        // is two marker tokens, not reasoning a client is billed for.
+        result.reasoning_tokens = result.reasoning.find_first_not_of(" \t\r\n") == std::string::npos
+                                      ? 0
+                                      : request->output.reasoning_tokens();
         result.finish_reason           = reason;
         result.matched_stop_string     = request->output.matched_stop_string();
         result.timings.prepare_seconds = request->prepare_seconds;
@@ -864,6 +899,7 @@ private:
         result.speculative             = std::move(request->speculative_stats);
         result.thinking                = request->output.thinking_stats();
         result.materialization         = request->materialization_diagnostics;
+        if (request->constraint) { result.constraint = request->constraint->stats(); }
         if (request->first_token) {
             result.timings.first_token_seconds =
                 request->prepare_seconds +
@@ -907,8 +943,48 @@ private:
     }
 
     void remove_completed_slot(std::uint32_t lane) {
+        if (scheduler_.owns_prefill_lane(lane)) { scheduler_.clear_prefill_lane(lane); }
         slots_[lane].reset();
+        ++slot_releases_;
         request_admission_check();
+    }
+
+    // Rows a commit released, completed once its rows are applied (and on the way out of a
+    // failed one): its own lane, and the reason a cancelled row ended with.
+    struct ReleasedRows {
+        std::array<std::shared_ptr<Request>, kMaximumConcurrency> requests{};
+        std::array<std::uint32_t, kMaximumConcurrency> lanes{};
+        std::array<FinishReason, kMaximumConcurrency> reasons{};
+        std::size_t count = 0;
+
+        void add(const std::shared_ptr<Request>& request, std::uint32_t lane,
+                 FinishReason reason = FinishReason::None) noexcept {
+            requests[count] = request;
+            lanes[count]    = lane;
+            reasons[count]  = reason;
+            ++count;
+        }
+    };
+
+    // Completes the released rows of a commit: the terminal ones with their reason, the ones whose
+    // round computed a NaN or an infinity with a numerical failure.
+    void complete_released(const ReleasedRows& terminal, const ReleasedRows& faulted) {
+        for (std::size_t index = 0; index < terminal.count; ++index) {
+            complete_success(terminal.requests[index], terminal.reasons[index]);
+            remove_completed_slot(terminal.lanes[index]);
+        }
+        for (std::size_t index = 0; index < faulted.count; ++index) {
+            const std::size_t generated = faulted.requests[index]->generated.size();
+            complete_error(
+                faulted.requests[index],
+                std::make_exception_ptr(RequestError(
+                    RequestErrorKind::NumericalFailure,
+                    "the model computed a NaN or an infinity in its final hidden state " +
+                        (generated == 0
+                             ? std::string("at the end of the prompt")
+                             : "after " + std::to_string(generated) + " generated tokens"))));
+            remove_completed_slot(faulted.lanes[index]);
+        }
     }
 
     [[nodiscard]] std::array<bool, kMaximumConcurrency> snapshot_cancellations() const noexcept {
@@ -982,10 +1058,13 @@ private:
                 throw std::logic_error("active cancellation has no sequence binding");
             }
             (void)request->output.preview_terminal(FinishReason::Cancelled);
-            auto aborted = resources_.abort(*instance_.program, *request->lane, *request->sequence);
-            request->generation_timings = aborted.timings;
-            request->speculative_stats  = std::move(aborted.speculative);
-            if (scheduler_.prefill_lane() == lane) { scheduler_.clear_prefill_lane(lane); }
+            // Catalogued at its committed frontier where the Program can, so the conversation the
+            // request consumed stays reusable; discarded otherwise.
+            auto settled = resources_.finish(*instance_.program, *request->lane, *request->sequence,
+                                             /*cancelled=*/true);
+            request->generation_timings = settled.timings;
+            request->speculative_stats  = std::move(settled.speculative);
+            if (scheduler_.owns_prefill_lane(lane)) { scheduler_.clear_prefill_lane(lane); }
             append_output(request, request->output.commit_preview());
             finish_engine_phase(boundary, EngineHostPhase::Boundary);
             complete_success(request, FinishReason::Cancelled);
@@ -1046,6 +1125,7 @@ private:
         const std::size_t row_count = lane_indices.size();
         if (row_count == 0 || row_count != pending.row_count() || pending.row_stride() == 0 ||
             (!pending.row_counts().empty() && pending.row_counts().size() != row_count) ||
+            (!pending.row_faults().empty() && pending.row_faults().size() != row_count) ||
             pending.tokens().size() < static_cast<std::size_t>(pending.row_stride()) * row_count) {
             const auto discarded = instance_.program->abort_pending(std::move(pending));
             std::array<LaneId, kMaximumConcurrency> invalid_lanes{};
@@ -1062,12 +1142,21 @@ private:
         std::array<FinishReason, kMaximumConcurrency> finish_reasons{};
         std::array<ContinuationAction, kMaximumConcurrency> continuations{};
         std::array<std::size_t, kMaximumConcurrency> generated_sizes{};
-        std::array<bool, kMaximumConcurrency> cancelled{};
+        // A released row commits nothing and leaves the Program: a cancelled one finishes as
+        // Cancelled, a faulted one (its round computed a NaN or an infinity) fails.
+        enum class RowRelease : std::uint8_t { None, Cancelled, Faulted };
+        std::array<RowRelease, kMaximumConcurrency> releases{};
+        const auto released = [&](std::size_t row) noexcept {
+            return releases[row] != RowRelease::None;
+        };
+        const auto next_state = [&](std::size_t row) noexcept {
+            return continuations[row] == ContinuationAction::ApplyTargetControl
+                       ? EngineRequestState::ControlReady
+                       : EngineRequestState::DecodeReady;
+        };
         bool generated_staged = false;
-        std::array<std::shared_ptr<Request>, kMaximumConcurrency> terminal_requests{};
-        std::array<std::uint32_t, kMaximumConcurrency> terminal_lanes{};
-        std::array<FinishReason, kMaximumConcurrency> terminal_reasons{};
-        std::size_t terminal_count = 0;
+        ReleasedRows terminal_rows;
+        ReleasedRows faulted_rows;
         for (std::size_t row = 0; row < row_count; ++row) {
             lanes[row] = LaneId{lane_indices[row]};
         }
@@ -1090,7 +1179,11 @@ private:
                     throw std::logic_error("pending row has no active Engine request");
                 }
                 if (decode_round) { ++request->host_timing.decode_rounds; }
-                cancelled[row] = cancelled_at_unit_start[lane];
+                if (cancelled_at_unit_start[lane]) {
+                    releases[row] = RowRelease::Cancelled;
+                } else if (!pending.row_faults().empty() && pending.row_faults()[row] != 0U) {
+                    releases[row] = RowRelease::Faulted;
+                }
                 const std::int32_t raw_count =
                     pending.row_counts().empty() ? 1 : pending.row_counts()[row];
                 if (raw_count <= 0 || raw_count > static_cast<std::int32_t>(pending.row_stride())) {
@@ -1100,14 +1193,16 @@ private:
                 const auto row_tokens     = pending.tokens().subspan(row * pending.row_stride(),
                                                                      static_cast<std::size_t>(count));
                 generated_sizes[row]      = request->generated.size();
-                if (cancelled[row]) {
-                    (void)request->output.preview_terminal(FinishReason::Cancelled);
+                if (released(row)) {
+                    if (releases[row] == RowRelease::Cancelled) {
+                        (void)request->output.preview_terminal(FinishReason::Cancelled);
+                        finish_reasons[row] = FinishReason::Cancelled;
+                    }
                     decisions[row] = CommitDecision{
                         .accepted_tokens = 0,
                         .terminal        = true,
                         .cancelled       = true,
                     };
-                    finish_reasons[row] = FinishReason::Cancelled;
                     continue;
                 }
                 const OutputDecision decision = request->output.preview_model(
@@ -1179,7 +1274,7 @@ private:
             throw std::logic_error("Runtime commit result is not row aligned");
         }
         for (std::size_t row = 0; row < row_count; ++row) {
-            const CommitDisposition expected = cancelled[row] ? CommitDisposition::CancelledReleased
+            const CommitDisposition expected = released(row) ? CommitDisposition::CancelledReleased
                                                : decisions[row].terminal
                                                    ? CommitDisposition::Finishable
                                                    : CommitDisposition::Active;
@@ -1198,7 +1293,7 @@ private:
 
         for (std::size_t row = 0; row < row_count; ++row) {
             const auto& request = slots_[lane_indices[row]];
-            if (cancelled[row]) {
+            if (released(row)) {
                 request->generation_timings = committed.rows[row].timings;
                 request->speculative_stats  = std::move(committed.rows[row].speculative);
             }
@@ -1208,7 +1303,7 @@ private:
             ++cumulative_stats_.decode_rounds;
             cumulative_stats_.decode_row_rounds += row_count;
             for (std::size_t row = 0; row < row_count; ++row) {
-                if (!cancelled[row]) {
+                if (!released(row)) {
                     cumulative_stats_.committed_decode_tokens += decisions[row].accepted_tokens;
                 }
             }
@@ -1218,20 +1313,27 @@ private:
             for (std::size_t row = 0; row < row_count; ++row) {
                 const std::uint32_t lane     = lane_indices[row];
                 const auto& request          = slots_[lane];
+                if (releases[row] == RowRelease::Faulted) {
+                    faulted_rows.add(request, lane);
+                    continue;
+                }
                 const std::uint32_t accepted = decisions[row].accepted_tokens;
-                if (!cancelled[row]) {
+                if (!released(row)) {
                     request->budget->commit(accepted);
                     if (decode_round) { Scheduling::consume_service_work(*request, accepted); }
+                    // The constraint advances only along the committed prefix: rejected drafts
+                    // and tokens after an accepted stop never reach it.
+                    if (request->constraint && accepted != 0) {
+                        request->constraint->commit(
+                            std::span<const TokenId>(request->generated).last(accepted));
+                    }
                 }
                 auto published = request->output.commit_preview();
                 auto timing    = record_committed_output(request, accepted);
                 append_output(request, std::move(published), std::move(timing));
                 if (decisions[row].terminal) {
-                    if (cancelled[row]) {
-                        terminal_requests[terminal_count] = request;
-                        terminal_lanes[terminal_count]    = lane;
-                        terminal_reasons[terminal_count]  = finish_reasons[row];
-                        ++terminal_count;
+                    if (released(row)) {
+                        terminal_rows.add(request, lane, finish_reasons[row]);
                     } else {
                         request->model_state     = EngineRequestState::ModelFinished;
                         request->terminal_reason = finish_reasons[row];
@@ -1240,10 +1342,7 @@ private:
                     if (!request->is_prefilling()) {
                         throw std::logic_error("prompt-frontier capture lost its prefill owner");
                     }
-                    const EngineRequestState post_capture_state =
-                        continuations[row] == ContinuationAction::ApplyTargetControl
-                            ? EngineRequestState::ControlReady
-                            : EngineRequestState::DecodeReady;
+                    const EngineRequestState post_capture_state = next_state(row);
                     if (terminal_in_batch) {
                         instance_.program->skip_capture(std::move(*committed.captures[row]));
                         request->model_state = post_capture_state;
@@ -1252,32 +1351,18 @@ private:
                                                post_capture_state);
                     }
                     committed.captures[row].reset();
-                    if (!request->capture_pending) {
-                        request->model_state =
-                            continuations[row] == ContinuationAction::ApplyTargetControl
-                                ? EngineRequestState::ControlReady
-                                : EngineRequestState::DecodeReady;
-                    }
+                    if (!request->capture_pending) { request->model_state = post_capture_state; }
                 } else {
-                    request->model_state =
-                        continuations[row] == ContinuationAction::ApplyTargetControl
-                            ? EngineRequestState::ControlReady
-                            : EngineRequestState::DecodeReady;
+                    request->model_state = next_state(row);
                 }
             }
         } catch (...) {
             phase.finish();
-            for (std::size_t index = 0; index < terminal_count; ++index) {
-                complete_success(terminal_requests[index], terminal_reasons[index]);
-                remove_completed_slot(terminal_lanes[index]);
-            }
+            complete_released(terminal_rows, faulted_rows);
             throw;
         }
         phase.finish();
-        for (std::size_t index = 0; index < terminal_count; ++index) {
-            complete_success(terminal_requests[index], terminal_reasons[index]);
-            remove_completed_slot(terminal_lanes[index]);
-        }
+        complete_released(terminal_rows, faulted_rows);
     }
 
     [[nodiscard]] std::shared_ptr<Request> active_capture_owner() const {
@@ -1303,21 +1388,25 @@ private:
             post_capture_state == EngineRequestState::ModelFinished) {
             throw std::logic_error("committed capture offer has invalid Engine ownership");
         }
-        std::uint64_t blocked = 0;
+        std::uint64_t waiting = 0;
         {
             std::lock_guard lock(queue_mutex_);
-            blocked = pending_.size();
+            waiting = pending_.size();
         }
+        std::uint64_t blocked = waiting;
         for (const auto& active : slots_) {
             if (active != nullptr && active != request && !active->terminal_reason) { ++blocked; }
         }
-        const std::uint32_t blocked_runnable_requests =
-            blocked > std::numeric_limits<std::uint32_t>::max()
-                ? std::numeric_limits<std::uint32_t>::max()
-                : static_cast<std::uint32_t>(blocked);
+        const auto saturate = [](std::uint64_t value) {
+            return value > std::numeric_limits<std::uint32_t>::max()
+                       ? std::numeric_limits<std::uint32_t>::max()
+                       : static_cast<std::uint32_t>(value);
+        };
+        // Requests not yet admitted: the Program keeps a free Device StateImage for each of them
+        // (up to the idle lanes) instead of placing this checkpoint on Device.
         const auto reserved = resources_.reserve_active_capture(
-            *instance_.program, *request->lane, std::move(offer), blocked_runnable_requests,
-            CancellationFlagView{&request->cancelled});
+            *instance_.program, *request->lane, std::move(offer), saturate(blocked),
+            saturate(waiting), CancellationFlagView{&request->cancelled});
         if (reserved == ResourceManagement::ActiveCaptureReserveResult::Skipped) { return; }
         request->capture_pending    = true;
         request->post_capture_state = post_capture_state;
@@ -1349,7 +1438,9 @@ private:
         if (progress.complete && request->computed_prompt_tokens != suffix_tokens) {
             throw std::logic_error("completed prefill did not reach the admitted prompt frontier");
         }
-        if (progress.processed_prompt_tokens != 0) { publish_prompt_progress(request); }
+        if (progress.processed_prompt_tokens != 0 && !request->resumed) {
+            publish_prompt_progress(request);
+        }
         if (progress.capture) {
             if (progress.complete || progress.pending) {
                 throw std::logic_error("prefill capture offer overlaps prompt completion");
@@ -1367,11 +1458,11 @@ private:
             throw std::logic_error("runtime Begin summary differs from committed admission");
         }
         const std::uint32_t lane = request->lane->value;
-        if (scheduler_.prefill_lane() == lane) {
+        if (scheduler_.owns_prefill_lane(lane)) {
             scheduler_.clear_prefill_lane(lane);
             request_admission_check();
         }
-        request->begin = progress.summary;
+        if (!request->resumed) { request->begin = progress.summary; }
         const std::array<std::uint32_t, 1> lanes{lane};
         phase.finish();
         commit_pending(std::move(*progress.pending), lanes, false, cancelled_at_unit_start);
@@ -1381,9 +1472,19 @@ private:
     void run_prefill_step(const std::array<bool, kMaximumConcurrency>& cancelled_at_unit_start) {
         nvtx::ScopedRange prefill_range(nvtx::Name::Prefill, nvtx::Category::Prefill);
         EnginePhaseScope setup(*this, EngineHostPhase::CommitOutput);
-        const auto prefill_lane = scheduler_.prefill_lane();
+        // A request whose last unit ended inside an image keeps the prefill until the image is
+        // done: --concurrent-prefill would otherwise encode another request's image over its
+        // handoff, and it would read that image's soft tokens as its own.
+        if (vision_handoff_lane_ && !scheduler_.owns_prefill_lane(*vision_handoff_lane_)) {
+            vision_handoff_lane_.reset();
+        }
+        const auto prefill_lane = scheduler_.next_prefill_lane([this](std::uint32_t l) {
+            return !slots_[l]->capture_pending &&
+                   (!vision_handoff_lane_ || *vision_handoff_lane_ == l);
+        });
         if (!prefill_lane) { throw std::logic_error("no request owns staged prefill"); }
         const std::uint32_t lane = *prefill_lane;
+        scheduler_.note_prefill_served(lane);
         const auto request       = slots_[lane];
         if (request == nullptr || !request->is_prefilling() || request->capture_pending) {
             throw std::logic_error("staged prefill lane has invalid request state");
@@ -1393,21 +1494,24 @@ private:
         }
         setup.finish();
         ProgramCallScope program_call(*this);
-        auto progress =
-            instance_.program->advance_prefill(*request->sequence, &program_call.failed_timing());
+        const std::array<std::uint32_t, 1> prefill_lanes{lane};
+        UnitMasks masks(*this, prefill_lanes);
+        auto progress = instance_.program->advance_prefill(
+            *request->sequence, &program_call.failed_timing(), masks.source());
         program_call.finish(progress.timing);
+        vision_handoff_lane_ =
+            progress.holds_vision_handoff ? std::optional<std::uint32_t>(lane) : std::nullopt;
         resolve_prefill_progress(request, std::move(progress), cancelled_at_unit_start);
+        // Each chunk boundary admits the next waiting request under --concurrent-prefill.
+        if (scheduler_.concurrent_prefill() && scheduler_.owns_prefill_lane(lane)) {
+            request_admission_check();
+        }
         publish_runtime_stats();
     }
 
     [[nodiscard]] FifoSnapshot pending_snapshot() const {
         std::lock_guard lock(queue_mutex_);
         return Scheduling::fifo_snapshot(pending_);
-    }
-
-    [[nodiscard]] bool has_pending_requests() const {
-        std::lock_guard lock(queue_mutex_);
-        return !pending_.empty();
     }
 
     [[nodiscard]] bool erase_pending(const std::shared_ptr<Request>& request) {
@@ -1534,10 +1638,12 @@ private:
                     request->backfill_class              = control.backfill_class;
                     request->materialization_diagnostics = terminal.diagnostics;
                     request->model_state                 = EngineRequestState::Prefill;
-                    request->host_timing.queue_wait_ns =
-                        elapsed_ns(request->submitted, Clock::now());
-                    request->queue_wait_recorded = true;
-                    slots_[lane]                 = request;
+                    if (!request->queue_wait_recorded) {
+                        request->host_timing.queue_wait_ns =
+                            elapsed_ns(request->submitted, Clock::now());
+                        request->queue_wait_recorded = true;
+                    }
+                    slots_[lane] = request;
                     record_prefix_selection(control.summary);
                     materializing_.reset();
                     scheduler_.set_prefill_lane(lane);
@@ -1599,7 +1705,13 @@ private:
         GenerationBudget prepared_budget(summary.effective_output_tokens,
                                          summary.effective_limit_reason);
         try {
-            request->generated.reserve(summary.effective_output_tokens);
+            request->generated.reserve(request->generated.size() +
+                                       summary.effective_output_tokens);
+            if constexpr (kPreemptible) {
+                if (kv_lease_ && !request->preempt_source && resumable(*request)) {
+                    request->preempt_source.emplace(instance_.frontend.copy(request->prompt));
+                }
+            }
         } catch (...) {
             const AdmissionProgress progress =
                 remove_pending_error(request, std::current_exception());
@@ -1616,9 +1728,22 @@ private:
             .started          = Clock::now(),
         };
 
-        const auto reserved = resources_.reserve_materialization(
-            *instance_.program, std::move(choice), std::move(request->prompt),
-            CancellationFlagView{&request->cancelled});
+        if (materializing_ || slots_[lane] != nullptr) {
+            throw std::logic_error("reserved materialization destination is not empty");
+        }
+        // The reservation takes the prompt: if it fails, the request cannot be admitted again, so
+        // it is answered with the failure here (still in the FIFO, which every failure path
+        // answers) and the failure goes on to the worker, which decides whether the Engine
+        // goes on.
+        typename ResourceManagement::MaterializationReserveResult reserved{};
+        try {
+            reserved = resources_.reserve_materialization(
+                *instance_.program, std::move(choice), std::move(request->prompt),
+                CancellationFlagView{&request->cancelled});
+        } catch (...) {
+            (void)remove_pending_error(request, std::current_exception());
+            throw;
+        }
         if (reserved == ResourceManagement::MaterializationReserveResult::Stale) {
             request_admission_check();
             return AdmissionProgress::ControlProgress;
@@ -1637,16 +1762,21 @@ private:
             throw std::logic_error("admitted request disappeared from the FIFO queue");
         }
         release_planning_state(request);
-        if (materializing_ || slots_[lane] != nullptr) {
-            throw std::logic_error("reserved materialization destination is not empty");
-        }
         request->model_state = EngineRequestState::Materializing;
         materializing_.emplace(std::move(control));
         scheduler_.commit_admission(std::move(grant));
-        publish_generation_start(
-            request, BeginSummary{.prompt_tokens        = summary.prompt_tokens,
-                                  .reused_prompt_tokens = summary.reusable_prompt_tokens,
-                                  .prefix_reuse_path    = summary.prefix_reuse_path});
+        const BeginSummary admitted{.prompt_tokens        = summary.prompt_tokens,
+                                    .reused_prompt_tokens = summary.reusable_prompt_tokens,
+                                    .prefix_reuse_path    = summary.prefix_reuse_path};
+        if (request->resumed) {
+            request->admitted_begin = admitted;
+            std::fprintf(stderr,
+                         "[engine] a preempted request resumes in lane %u: %u of its %u tokens "
+                         "cached\n",
+                         lane, admitted.reused_prompt_tokens, admitted.prompt_tokens);
+        } else {
+            publish_generation_start(request, admitted);
+        }
 
         publish_runtime_stats();
         return progress_context_transaction(false);
@@ -1690,6 +1820,12 @@ private:
                 continue;
             }
 
+            if (head->resumed && head->resume_after_releases == slot_releases_ &&
+                std::any_of(slots_.begin(), slots_.end(),
+                            [](const auto& request) { return request != nullptr; })) {
+                return control_progress ? AdmissionProgress::ControlProgress
+                                        : AdmissionProgress::None;
+            }
             try {
                 ensure_base_plan(head);
             } catch (...) {
@@ -1803,16 +1939,234 @@ private:
         }
     }
 
+    // Row-aligned view of the constrained requests of one execution unit. Rounds without a
+    // constrained row pass no source, so the Program's unconstrained route is unchanged.
+    class UnitMasks final : public TokenMaskSource {
+    public:
+        UnitMasks(EngineCore& core, std::span<const std::uint32_t> lanes) noexcept
+            : core_(core), lanes_(lanes) {}
+
+        [[nodiscard]] TokenMaskSource* source() noexcept {
+            for (std::size_t row = 0; row < lanes_.size(); ++row) {
+                if (constraint(row) != nullptr) { return this; }
+            }
+            return nullptr;
+        }
+
+        [[nodiscard]] bool constrained(std::size_t row) const noexcept override {
+            return constraint(row) != nullptr;
+        }
+
+        void fill(std::size_t row, std::span<const TokenId> drafts, std::uint32_t* masks,
+                  std::size_t stride_words, std::uint32_t* progress) noexcept override {
+            if (structured::RequestConstraint* state = constraint(row)) {
+                state->fill_round(drafts, masks, stride_words, progress);
+            }
+        }
+
+        [[nodiscard]] std::uint64_t row_cost_ns(std::size_t row) const noexcept override {
+            const structured::RequestConstraint* state = constraint(row);
+            return state != nullptr ? state->slowest_row_ns() : 0U;
+        }
+
+        void fault(std::size_t row) noexcept override {
+            if (structured::RequestConstraint* state = constraint(row)) {
+                state->record_device_fault();
+            }
+        }
+
+    private:
+        [[nodiscard]] structured::RequestConstraint* constraint(std::size_t row) const noexcept {
+            if (row >= lanes_.size()) { return nullptr; }
+            const auto& request = core_.slots_[lanes_[row]];
+            return request != nullptr && request->constraint ? &*request->constraint : nullptr;
+        }
+
+        EngineCore& core_;
+        std::span<const std::uint32_t> lanes_;
+    };
+
     void run_decode_round(const RoundMembership& membership,
                           const std::array<bool, kMaximumConcurrency>& cancelled_at_unit_start) {
         nvtx::ScopedRange decode_range(nvtx::Name::Decode, nvtx::Category::Decode,
                                        static_cast<std::uint64_t>(membership.size));
         ProgramCallScope program_call(*this);
-        auto pending = instance_.program->decode(
-            membership.sequence_span(), membership.budget_span(), &program_call.failed_timing());
+        UnitMasks masks(*this, membership.lane_span());
+        auto pending = instance_.program->decode(membership.sequence_span(),
+                                                 membership.budget_span(),
+                                                 &program_call.failed_timing(), masks.source());
         program_call.finish(pending.execution_timing());
+        // NINFERNO_DEBUG_CUDA_ERROR_FILE: a survivable error with the round issued, not committed
+        debug_transient_cuda_error_point();
         commit_pending(std::move(pending), membership.lane_span(), true, cancelled_at_unit_start);
         publish_runtime_stats();
+    }
+
+    // KV lease (EngineOptions::kv_lease_window): a decoding sequence whose lease its pools could not
+    // extend first gets cached context released for it, and grows again. When one is still short,
+    // the request admitted last that can resume from its text leaves its lane and its pages go to
+    // the others (vLLM's recompute preemption: the older requests keep running). Where none can,
+    // one still short waits, its pages kept and no request admitted meanwhile, while any other
+    // request can run: those finish and free pages. Only when every running request is short does
+    // one, the one furthest into its answer, have its remaining budget bounded to what its lease
+    // covers, so it ends with its output limit instead of a launch past its pages.
+    void apply_device_kv_lease_settlements() {
+        // Room kept for a forced thinking-control span (a few tokens of the chat template).
+        constexpr std::uint32_t kControlReserveTokens = 16;
+        std::array<bool, kMaximumConcurrency> short_lane{};
+        // A context transaction (an admission) in flight runs, and leases resume after it: cached
+        // context is not released under it.
+        const bool transaction = instance_.program->has_context_transaction();
+        bool progress          = transaction;
+        std::optional<std::uint32_t> victim;
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            const auto& request = slots_[lane];
+            if (request == nullptr) { continue; }
+            request->lease_parked = false;
+            if (!request->is_decode_ready() || !request->sequence || !request->budget) {
+                // A prefill or a control span runs on pages it already holds.
+                progress = progress || request->is_prefilling() || request->is_control_ready();
+                continue;
+            }
+            if (const auto shortfall =
+                    instance_.program->device_kv_lease_shortfall(*request->sequence)) {
+                if (!transaction) {
+                    (void)resources_.reclaim_device_kv_for_lease(
+                        *instance_.program, shortfall->full.main, shortfall->full.backend);
+                }
+                if (transaction || !instance_.program->resume_device_kv_lease(*request->sequence)) {
+                    short_lane[lane] = true;
+                    if (!victim || request->generated.size() > slots_[*victim]->generated.size()) {
+                        victim = lane;
+                    }
+                    continue;
+                }
+            }
+            progress = true;
+        }
+        if constexpr (kPreemptible) {
+            // Parking short lanes behind the ones still running leaves the round a lane or two
+            // wide for as long as those take to finish: a preemption frees pages at once.
+            if (victim && !transaction) {
+                std::optional<std::uint32_t> latest;
+                for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                    const auto& request = slots_[lane];
+                    if (request == nullptr || !request->is_decode_ready() || !request->sequence ||
+                        !request->budget || !preemptible(lane, kControlReserveTokens)) {
+                        continue;
+                    }
+                    if (!latest ||
+                        request->publication_order > slots_[*latest]->publication_order) {
+                        latest = lane;
+                    }
+                }
+                if (latest) {
+                    preempt_lease_victim(*latest);
+                    // The others grow into the freed pages from the next boundary.
+                    for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                        if (short_lane[lane] && lane != *latest) { slots_[lane]->lease_parked = true; }
+                    }
+                    return;
+                }
+            }
+        }
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            if (!short_lane[lane]) { continue; }
+            const auto& request = slots_[lane];
+            if (progress || lane != *victim) {
+                request->lease_parked = true;
+                continue;
+            }
+            if (!request->lease_shortfall_reported) {
+                request->lease_shortfall_reported = true;
+                std::fprintf(stderr,
+                             "[engine] KV lease of lane %u cannot grow and every running request "
+                             "waits on pages: the answer ends at its output limit\n",
+                             lane);
+            }
+            if (const std::optional<std::uint32_t> limit =
+                    instance_.program->device_kv_lease_settlement_tokens(*request->sequence,
+                                                                         kControlReserveTokens)) {
+                request->budget->cap_remaining(*limit);
+            }
+        }
+    }
+
+    // A request resumable from text: its prompt has no media and nothing it generated shapes its
+    // sampling past what the text says (penalties count generated tokens, a thinking budget its
+    // reasoning, a constraint its grammar state).
+    [[nodiscard]] bool resumable(const Request& request) const {
+        const ResolvedExecutionOptions& execution = request.options.execution;
+        return instance_.frontend.resumable(request.prompt) &&
+               execution.sampling.presence_penalty == 0.0F &&
+               execution.sampling.frequency_penalty == 0.0F && !execution.thinking.budget &&
+               !request.options.constraint.compiled;
+    }
+
+    // A request that can leave its lane and resume: it kept its prompt, has budget beyond the
+    // control reserve, and another request holds a lane, which finishes and frees pages.
+    [[nodiscard]] bool preemptible(std::uint32_t lane, std::uint32_t reserve) const {
+        const auto& request = slots_[lane];
+        if (!request->preempt_source || request->capture_pending ||
+            request->budget->remaining() <= reserve) {
+            return false;
+        }
+        for (std::uint32_t other = 0; other < max_concurrency_; ++other) {
+            if (other != lane && slots_[other] != nullptr) { return true; }
+        }
+        return false;
+    }
+
+    // KV lease: a lease is short and the victim leaves its lane instead of ending at its lease.
+    // Its conversation is catalogued as a cancelled one's, and it queues again at the head with its
+    // prompt continued by what it generated, its remaining budget as its output; it resumes once
+    // another request has finished, and recomputes only what the cache lost meanwhile. Its stream
+    // and start stand.
+    void preempt_lease_victim(std::uint32_t lane) {
+        const auto request = slots_[lane];
+        if (!request->sequence || !request->lane || request->lane->value != lane ||
+            !request->budget || !request->preempt_source) {
+            throw std::logic_error("lease victim has no resumable sequence binding");
+        }
+        const std::uint32_t remaining = request->budget->remaining();
+        auto settled = resources_.finish(*instance_.program, *request->lane, *request->sequence,
+                                         /*cancelled=*/true);
+        request->generation_timings = settled.timings;
+        request->speculative_stats  = std::move(settled.speculative);
+        request->prompt = instance_.frontend.continued(*request->preempt_source, request->generated);
+        request->options.execution.requested_output_tokens = remaining;
+        request->budget.reset();
+        request->sequence.reset();
+        request->lane.reset();
+        request->base_plan.reset();
+        request->computed_prompt_tokens = 0;
+        request->remaining_service_work = 0;
+        request->backfill_epoch         = 0;
+        request->backfill_class         = BackfillClass::None;
+        request->lease_parked           = false;
+        request->model_state            = EngineRequestState::Waiting;
+        request->deadline               = Clock::time_point::max();
+        request->resumed                = true;
+        std::fprintf(stderr,
+                     "[engine] KV leases cannot grow: the request of lane %u leaves its lane "
+                     "after %zu tokens and resumes later\n",
+                     lane, request->generated.size());
+        // Not a completion: a preempted request resumes after one, not after another preemption.
+        if (scheduler_.owns_prefill_lane(lane)) { scheduler_.clear_prefill_lane(lane); }
+        request->resume_after_releases = slot_releases_;
+        {
+            std::lock_guard lock(queue_mutex_);
+            pending_.push_front(request);
+        }
+        slots_[lane].reset();
+        request_admission_check();
+        publish_runtime_stats();
+    }
+
+    [[nodiscard]] bool any_lease_parked() const noexcept {
+        return std::any_of(slots_.begin(), slots_.end(), [](const auto& request) {
+            return request != nullptr && request->lease_parked;
+        });
     }
 
     void run_control_batch(const ControlMembership& membership) {
@@ -1900,6 +2254,11 @@ private:
             const std::uint32_t lane = membership.lanes[row];
             const auto& request      = slots_[lane];
             request->budget->commit(membership.row_stride);
+            if (request->constraint) {
+                request->constraint->commit(std::span<const TokenId>(membership.tokens)
+                                                .subspan(row * membership.row_stride,
+                                                         membership.row_stride));
+            }
             Scheduling::consume_service_work(*request, membership.row_stride);
             cumulative_stats_.committed_decode_tokens += membership.row_stride;
             auto timing = record_committed_output(request, membership.row_stride);
@@ -1909,21 +2268,113 @@ private:
         publish_runtime_stats();
     }
 
+    // An exception that ended a worker unit. Requests are answered with `error`. A device failure
+    // ends the Engine; a transient CUDA error fails the unit's requests and the Engine goes on.
+    struct WorkerFailure {
+        std::exception_ptr error;
+        bool device_failed = false;
+        bool transient     = false;
+        std::string detail; // what() of the raised exception
+    };
+
+    // A second transient CUDA error within this window ends the Engine as a device failure does,
+    // so a condition the reset did not cure ends in a restart (within 3 to 5 minutes).
+    static constexpr std::chrono::minutes kTransientCudaErrorWindow{5};
+
+    [[nodiscard]] static std::exception_ptr unavailable(const std::string& message) noexcept {
+        try {
+            return std::make_exception_ptr(RequestError(RequestErrorKind::Unavailable, message));
+        } catch (...) { return std::current_exception(); }
+    }
+
+    // A device synchronization reports a context's sticky error (a device-side fault, an illegal
+    // address, a lost device), which a healthy device never has. With one, any exception is the
+    // device's failure: the Engine ends, every request is answered Unavailable (HTTP 503 with
+    // Retry-After) and the server exits for its supervisor to restart it, as vLLM and SGLang do.
+    // A CudaError the device survives (a failed allocation, a bad launch configuration) is
+    // transient and answered Unavailable too, as is running out of memory outside CUDA's error
+    // codes (host std::bad_alloc, a graph instantiation without Device memory): the unit's work is
+    // lost, the Engine is not. Any other exception keeps its kind.
+    [[nodiscard]] static WorkerFailure classify_failure(std::exception_ptr raised) noexcept {
+        std::string detail;
+        bool cuda_error = false;
+        bool memory     = false;
+        try {
+            std::rethrow_exception(raised);
+        } catch (const CudaError& failure) {
+            cuda_error = true;
+            try {
+                detail = failure.what();
+            } catch (...) {}
+        } catch (const std::bad_alloc&) {
+            memory = true;
+            try {
+                detail = "host memory exhausted";
+            } catch (...) {}
+        } catch (const GraphMemoryError& failure) {
+            memory = true;
+            try {
+                detail = failure.what();
+            } catch (...) {}
+        } catch (const std::exception& failure) {
+            try {
+                detail = failure.what();
+            } catch (...) {}
+        } catch (...) {}
+        (void)cudaGetLastError(); // a launch error is not the context's; the sync below decides
+        const bool device_failed = cudaDeviceSynchronize() != cudaSuccess;
+        try {
+            if (device_failed) {
+                return {unavailable("the GPU failed (" + detail + "); the server is restarting"),
+                        true, false, detail};
+            }
+            if (memory) {
+                return {unavailable("out of memory (" + detail + "); retry the request"), false,
+                        true, detail};
+            }
+            if (!cuda_error) { return {raised, false, false, detail}; }
+            return {unavailable("a CUDA error (" + detail + "); retry the request"), false, true,
+                    detail};
+        } catch (...) {
+            // The messages need memory too (an out-of-memory failure may leave none): the raw
+            // failure, classified the same way.
+            return {raised, device_failed, !device_failed && (memory || cuda_error), {}};
+        }
+    }
+
     // The worker holds execution_mutex_ across the failing operation and this cleanup, so no
-    // Program introspection can observe a partially cleared physical state.
-    void fail_all_locked(std::exception_ptr error) noexcept {
+    // Program introspection can observe a partially cleared physical state. After a device
+    // failure the Program is not cleaned up: its cleanup synchronizes the device, and a failed
+    // synchronization inside that noexcept path would terminate the process before the requests
+    // are answered. The Engine is failed for good and the process exits, which frees the rest.
+    void fail_all_locked(WorkerFailure failure) noexcept {
+        const std::exception_ptr& error = failure.error;
+        const bool device_failed        = failure.device_failed;
         std::deque<std::shared_ptr<Request>> pending;
         {
             std::lock_guard lock(queue_mutex_);
             failed_ = true;
             pending.swap(pending_);
         }
+        fail_started_locked(error, !device_failed);
+        for (const auto& request : pending) { complete_error(request, error); }
+        // Every request is answered; the stats are best effort past this point.
+        try {
+            publish_runtime_stats();
+        } catch (...) {}
+    }
+
+    // Answers the active requests and the one materializing with `error`. With `clean_program`
+    // the Program and the resource catalog are reset as well; a failed device is not touched.
+    void fail_started_locked(const std::exception_ptr& error, bool clean_program) noexcept {
         scheduler_.reset();
         const std::shared_ptr<Request> materializing_request =
             materializing_ ? materializing_->request : nullptr;
         materializing_.reset();
-        instance_.program->fail_all_cleanup();
-        resources_.clear_after_program_cleanup();
+        if (clean_program) {
+            instance_.program->fail_all_cleanup();
+            resources_.clear_after_program_cleanup();
+        }
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
             if (slots_[lane] != nullptr) {
                 complete_error(slots_[lane], error);
@@ -1931,12 +2382,21 @@ private:
             }
         }
         if (materializing_request != nullptr) { complete_error(materializing_request, error); }
-        for (const auto& request : pending) { complete_error(request, error); }
-        publish_runtime_stats();
+    }
+
+    // After a transient CUDA error the device is healthy but the unit's work is lost: the active
+    // requests and the one materializing are answered with `error`, the Program and the resource
+    // catalog are reset as after an Engine failure (the reusable context cache goes with them),
+    // and the queue is kept, so the Engine goes on with the requests that had not started.
+    void recover_after_transient_locked(const std::exception_ptr& error) noexcept {
+        fail_started_locked(error, true);
+        request_admission_check();
     }
 
     void worker_loop() noexcept {
+        std::optional<std::chrono::steady_clock::time_point> last_transient_error;
         bool previous_unit_was_decode = false;
+        double decode_owed_seconds    = 0.0;
         for (;;) {
             {
                 std::unique_lock lock(queue_mutex_);
@@ -1954,13 +2414,16 @@ private:
                     const auto error = std::make_exception_ptr(RequestError(
                         RequestErrorKind::Unavailable, "inference engine is shutting down"));
                     std::scoped_lock execution_lock(execution_mutex_);
-                    fail_all_locked(error);
+                    fail_all_locked({error, false});
                     return;
                 }
             }
 
             std::unique_lock execution_lock(execution_mutex_);
             try {
+                debug_freeze_point(); // NINFERNO_DEBUG_FREEZE_FILE: a hung executor, for /health
+                                      // tests
+                debug_device_fault_point(); // NINFERNO_DEBUG_TRAP_FILE: a device-side assert
                 set_host_work_class(HostWorkClass::Control);
                 HostPhaseMeasurement boundary = begin_host_phase();
                 const bool have_pending       = expire_pending_requests();
@@ -1968,13 +2431,22 @@ private:
                 (void)settle_terminal_requests(boundary);
                 const auto cancelled_at_boundary = snapshot_cancellations();
                 cancel_active_requests(cancelled_at_boundary, boundary);
+                apply_device_kv_lease_settlements();
                 RoundMembership membership =
                     scheduler_.build_round_membership(slots_, max_concurrency_);
                 const bool admission_check_pending =
                     admission_check_pending_.load(std::memory_order_acquire);
-                if (scheduler_.should_attempt_admission(
-                        have_pending, admission_check_pending, !membership.empty(),
-                        previous_unit_was_decode, instance_.program->has_context_transaction()) &&
+                // An open StateImage Fork blocks planning like a resource transaction does. The
+                // check stays armed, so admission resumes at the boundary after the Fork settles.
+                const bool planning_blocked = instance_.program->has_context_transaction() ||
+                                              instance_.program->has_unsettled_state_fork();
+                // A request waiting on lease pages keeps them from newcomers, so it cannot wait
+                // forever behind a stream of admissions.
+                if (!any_lease_parked() &&
+                    scheduler_.should_attempt_admission(have_pending, admission_check_pending,
+                                                        !membership.empty(),
+                                                        previous_unit_was_decode,
+                                                        planning_blocked) &&
                     consume_admission_check()) {
                     (void)try_admit_one();
                     membership = scheduler_.build_round_membership(slots_, max_concurrency_);
@@ -1997,34 +2469,85 @@ private:
                 membership = scheduler_.build_round_membership(slots_, max_concurrency_);
 
                 bool prefill_runnable = false;
-                if (const auto lane = scheduler_.prefill_lane(); lane) {
-                    if (slots_[*lane] == nullptr || !slots_[*lane]->is_prefilling()) {
+                for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                    if (!scheduler_.owns_prefill_lane(lane)) { continue; }
+                    if (slots_[lane] == nullptr || !slots_[lane]->is_prefilling()) {
                         throw std::logic_error("prefill owner has no active Engine request");
                     }
-                    prefill_runnable = !slots_[*lane]->capture_pending;
+                    prefill_runnable = prefill_runnable || !slots_[lane]->capture_pending;
                 }
                 const ExecutionAction action = scheduler_.choose_execution(
-                    !membership.empty(), prefill_runnable, previous_unit_was_decode);
+                    !membership.empty(), prefill_runnable, previous_unit_was_decode,
+                    scheduler_.concurrent_prefill() && decode_owed_seconds > 0.0);
                 if (action == ExecutionAction::Prefill) {
                     set_host_work_class(HostWorkClass::Prefill);
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
+                    const auto start = std::chrono::steady_clock::now();
                     run_prefill_step(cancelled_at_unit_start);
+                    if (scheduler_.concurrent_prefill()) {
+                        const std::chrono::duration<double> spent =
+                            std::chrono::steady_clock::now() - start;
+                        std::uint32_t prefilling = 0;
+                        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                            prefilling += scheduler_.owns_prefill_lane(lane) ? 1U : 0U;
+                        }
+                        decode_owed_seconds = scheduler_.fair_decode_seconds(
+                            spent.count(),
+                            static_cast<std::uint32_t>(
+                                scheduler_.build_round_membership(slots_, max_concurrency_)
+                                    .lane_span()
+                                    .size()),
+                            std::max(prefilling, 1U));
+                    }
                     previous_unit_was_decode = false;
                     continue;
                 }
                 if (action == ExecutionAction::Decode) {
                     set_host_work_class(HostWorkClass::Decode, membership.lane_span());
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
+                    const auto start = std::chrono::steady_clock::now();
                     run_decode_round(membership, cancelled_at_unit_start);
+                    const std::chrono::duration<double> spent =
+                        std::chrono::steady_clock::now() - start;
+                    decode_owed_seconds = std::max(0.0, decode_owed_seconds - spent.count());
                     previous_unit_was_decode = true;
                     continue;
                 }
                 set_host_work_class(HostWorkClass::Control);
                 finish_engine_phase(boundary, EngineHostPhase::Boundary);
             } catch (...) {
-                const std::exception_ptr error = std::current_exception();
-                HostPhaseMeasurement cleanup   = begin_host_phase();
-                fail_all_locked(error);
+                WorkerFailure failure        = classify_failure(std::current_exception());
+                HostPhaseMeasurement cleanup = begin_host_phase();
+                const auto now               = std::chrono::steady_clock::now();
+                if (failure.transient) {
+                    const bool repeated = last_transient_error &&
+                                          now - *last_transient_error < kTransientCudaErrorWindow;
+                    last_transient_error = now;
+                    if (!repeated) {
+                        std::fprintf(stderr,
+                                     "ninferno: transient error (%s); the unit's requests failed, "
+                                     "the Engine goes on\n",
+                                     failure.detail.c_str());
+                        recover_after_transient_locked(failure.error);
+                        try {
+                            publish_runtime_stats();
+                        } catch (...) {}
+                        finish_engine_phase(cleanup, EngineHostPhase::Maintenance);
+                        previous_unit_was_decode = false;
+                        continue;
+                    }
+                    std::fprintf(stderr,
+                                 "ninferno: a second transient error within %d "
+                                 "minutes; the server restarts\n",
+                                 static_cast<int>(kTransientCudaErrorWindow.count()));
+                    failure.error = unavailable("a second transient error within minutes (" +
+                                                failure.detail + "); the server is restarting");
+                }
+                if (!failure.detail.empty()) {
+                    std::fprintf(stderr, "ninferno: the Engine failed: %s\n",
+                                 failure.detail.c_str());
+                }
+                fail_all_locked(failure);
                 finish_engine_phase(cleanup, EngineHostPhase::Maintenance);
                 try {
                     publish_runtime_stats();
@@ -2043,6 +2566,7 @@ private:
     const std::uint32_t max_concurrency_;
     const std::size_t max_outstanding_;
     const std::chrono::milliseconds pending_timeout_;
+    const bool kv_lease_;
     ResourceManagement resources_;
 
     mutable std::mutex execution_mutex_;
@@ -2055,7 +2579,11 @@ private:
     std::uint64_t next_publication_order_ = 1;
     std::array<std::shared_ptr<Request>, kMaximumConcurrency> slots_{};
     std::optional<MaterializingRequest> materializing_;
+    // Requests that have finished and left their lanes; a preempted request resumes after one.
+    std::uint64_t slot_releases_ = 0;
     Scheduling scheduler_;
+    // The lane whose last prefill unit ended inside an image (PrefillProgress::holds_vision_handoff).
+    std::optional<std::uint32_t> vision_handoff_lane_;
     std::atomic<bool> admission_check_pending_{false};
     std::uint64_t worker_accounted_elapsed_ns_ = 0;
     HostWorkClass current_host_work_class_     = HostWorkClass::Control;
@@ -2065,7 +2593,8 @@ private:
     RuntimeStats published_stats_;
     bool stopping_ = false;
     bool failed_   = false;
+    std::atomic<bool> worker_exited_{false}; // worker_loop returned
     std::thread worker_;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

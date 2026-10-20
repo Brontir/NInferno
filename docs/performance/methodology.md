@@ -1,159 +1,75 @@
-# Serving performance methodology
+# How the performance numbers are measured
 
-[Performance index](../performance.md) · [Runner usage](../../tools/bench/README.md#serving-corpus-benchmark)
+Every number in the [performance matrix](README.md) and on the GPU, model and per-pair pages comes from one
+protocol, run the same way on every GPU by [`tools/bench/perf_matrix.py`](../../tools/bench/perf_matrix.py).
+The pages are generated from [`data/bench.jsonl`](data/bench.jsonl) by
+`tools/docs/gen_performance.py`; nothing in them is edited by hand.
 
-This is the measurement and publication reference for the serving results in this directory.
-Model pages own measured values and run-specific conditions. Engine and Op benchmarks have their
-own contracts in [bench/README.md](../../bench/README.md); their rates do not establish HTTP serving
-performance.
+## Setup
 
-## Common serving profile
+- **Model.** Converted by `ninferno-serve` from the Hugging Face repository named in the row
+  (`recipe`: the repository and its `--quant` label), exactly as the
+  [quick start](../../README.md#quick-start) does. The model page links the original checkpoint.
+- **Server.** A Release build for the GPU's architecture, started fresh for each workload with the
+  flags listed on the pair's page and `--max-concurrency` equal to the workload's concurrency (1 for
+  the long prompts and C=1, 4 for C=4, 8 for C=8), so the server is sized for its load as a user
+  would size it: more concurrent slots leave less memory for a drafter, and `--spec auto` then
+  decodes without speculation. The startup log's `speculation |` line is kept with the row.
+- **GPU.** One GPU at stock clocks and power limit; the driver, CUDA version and power limit are
+  recorded with every row (`machine`).
+- **Sampling.** Greedy (temperature 0) for every number, so repeated runs generate the same tokens.
+  Each workload starts with one untimed warm-up request.
 
-The published runs use the following common settings. Model-page run records specify context,
-concurrency, KV capacity, driver API version, sampling exceptions, and artifact paths.
-These are recorded experimental settings, not promises about current executable defaults.
+## Long prompt: prefill and single-stream decode
 
-| Setting | Value |
-|---|---|
-| GPU | One NVIDIA GeForce RTX 5090, 32 GiB |
-| CUDA compile/runtime | 13.1 / 13.1 |
-| Route | Persistent `ninfer-serve`, loopback OpenAI Chat Completions, `stream=false` |
-| Prefill chunk | 1,024 tokens |
-| KV cache | INT8 group-64 |
-| CUDA Graph | Enabled |
-| Prefix reuse | Disabled |
-| Stochastic sampling | Temperature 0.6, top-p 0.95, top-k 20, min-p 0, presence penalty 1.0, frequency penalty 0 |
-| Greedy sampling | Exact argmax; identified explicitly per run |
-| Startup and warmup | Outside measured requests/waves |
+Six different English prompts of about 24,000 tokens: slices of Federal Register documents published
+in September and October 2026 (public domain, new to every model measured, so no model has
+memorized them; [`long_niah_256k.json`](../../examples/cli/messages/long_niah_256k.json)), each
+followed by a request to summarize the text section by section.
 
-| Report label | Runner mode | Server options |
-|---|---|---|
-| MTP0 (no speculation) | `mtp0` | No `--spec` |
-| MTP3 | `mtp3` | `--spec mtp --draft-tokens 3 --lm-head-draft` |
-| DFlash, block=8 | `dflash7` | `--spec dflash --draft-tokens 7 --lm-head-draft` |
-| DFlash2, block=8 | `dflash2_7` | `--spec dflash2 --draft-tokens 7 --lm-head-draft` |
+- **Prefill** is prompt tokens divided by the wall time of a request with `max_tokens=1`.
+- **Decode @24K** is completion tokens divided by the wall time of the same prompt with
+  `max_tokens=512`; its prefix is then already cached, so the time is the decode of 512 tokens
+  after a 24K-token context.
+- Each value is the median over the six prompts; the row records min..max (`spread`).
 
-`K` denotes draft tokens; block size is `K+1`. Weight format, backend, draft count, and proposal
-head are separate experimental dimensions.
+## Short chat: aggregate decode at C=1, 4 and 8
 
-## Workloads and measurement boundaries
+Twenty fixed short prompts (code, SQL, writing, translation, reasoning; listed in the tool), each
+answered with up to 512 tokens. C client workers send them concurrently, worker *k* taking prompts
+*k*, *k+C*, ….
 
-### Single-request phases
+- **C=n** is all completion tokens of the wave divided by its wall time: the throughput a
+  server with *n* concurrent users delivers. **One stream** is C=1; **all streams** is the
+  fastest C above 1 (up to 8).
 
-The MTP0 context-length profile uses `long_niah_8k`, `long_niah_64k`, `long_niah_128k`, and
-`long_niah_256k`: thinking disabled, 128 output tokens requested, five seeds per fixture.
-Tables retain actual prompt lengths. This suite measures prefill, server TTFT, and baseline decode.
+## Reading the numbers
 
-The speculative corpus uses three reasoning fixtures (`long_decode_aime26_01`,
-`long_decode_aime26_15`, `long_decode_aime26_30`) with thinking enabled and a 65,536-token output
-budget. Twelve other fixtures cover Code, Story, Translation, and Structured output, with three
-fixtures per category, thinking disabled, and a 4,096-token output budget. Each fixture has five
-seeds, giving 75 requests per corpus. Actual completion lengths are measurements, not budgets.
+- Prefill and decode are never mixed in one number.
+- Decode includes speculative decoding when the setting uses it (MTP, DFlash, DFlash2): tokens
+  counted are committed output tokens, so speculation shows up as more tokens per second.
+- A matrix cell shows one stream / all streams, each at its own best setting. The GPU and model
+  pages give one row per pair (weights, one stream, all streams with its concurrency, prefill and
+  decode after 24K tokens), every column at its own best setting. The pair's page lists every
+  setting measured (weights, speculation, KV format, every workload, the date), the commands of
+  the best ones and the server flags.
+- A blank matrix cell means the pair was not measured; a dash, that one workload was not, for
+  example because the model does not fit.
+- Rows of other engines (`engine` `llama.cpp`, measured with `perf_matrix.py --engine llama.cpp`
+  on the same GGUF, GPU and prompts) and quality rows (`perplexity`, `acceptance`,
+  `greedy_match`; see [perplexity](../perplexity.md)) are shown where the data has them and never
+  enter the speed tables.
 
-Fixture content is in [examples/cli/manifest.json](../../examples/cli/manifest.json); fixture
-selection and the five seeds are in [run_serve_corpus.py](../../tools/bench/run_serve_corpus.py).
-Preserve their identity when comparing historical runs. Serial runs submit one request at a time
-to one persistent server. A corpus-makespan C=1 point can also supply these phase statistics;
-model pages identify that shared source.
+## Reproducing a row
 
-### Corpus makespan
-
-Each concurrency point starts a fresh server. The runner shuffles the fixed request set once with
-seed `20260811` and preserves its ordered HTTP send sequence at every C. Exactly C persistent
-workers submit their next request after reading their current response. Makespan starts at worker
-release and ends when the last complete HTTP response has been read. It includes prefill, decode,
-workload transitions, admission waits, and drain. Average decode batch covers the entire run.
-
-Prompts, seeds, and send order are fixed; stochastic continuations and token totals can vary with
-weights, backends, and concurrency. Report token totals alongside makespan and rate.
-
-### Decode saturation
-
-The published MTP3 waves use `long_decode_aime26_15`, thinking enabled, and an 8,192-token output
-budget per request. Actual rendered prompt length is model-specific and recorded on the model
-page. At each C, a fresh server releases C requests with distinct fixed seeds and waits for every
-response. Each request has a 16,384-token context ceiling; the measured automatic KV capacity is
-`C * 16,384` tokens.
-
-Steady throughput includes only complete one-second server intervals with zero computed prefill
-tokens, `running=C`, `prefilling=0`, `decode_ready=C`, at least one decode round, and exactly C rows
-in every round. Ramp-up, prefill, and drain are excluded. Wave makespan still spans client release
-through the last complete response. Acceptance is aggregated over the full wave, not just steady
-intervals. Each published point is one wave, not a repeated-sample mean.
-
-## Metrics and statistics
-
-| Published metric | Definition |
-|---|---|
-| Prefill phase (tok/s) | `prompt_tokens / prefill_seconds` for each serial request |
-| Server TTFT (ms) | `1000 * (prepare_seconds + vision_seconds + prefill_seconds)` |
-| Decode phase (tok/s) | `(completion_tokens - 1) / decode_seconds` for each serial request |
-| Corpus prefill (tok/s) | Total computed prefill tokens / full corpus makespan |
-| Corpus decode (tok/s) | Total decode tokens / full corpus makespan |
-| Steady decode (tok/s) | Sum of committed decode tokens / sum of selected interval seconds |
-| Requests/s | Number of requests / full corpus makespan |
-| Spec acceptance | Accepted draft tokens / drafted tokens |
-| Spec tokens/round | `1 + accepted_tokens / speculative_rounds` |
-
-Server TTFT is an internal phase sum. It does not include ingress queueing or HTTP transport and
-is not the external streaming TTFT measured by the [Serve TTFT client](../../tools/bench/ttft/README.md).
-The three decode rates have different time denominators and must not share an unlabeled column.
-Committed decode tokens exclude the first completion token produced by prefill.
-
-Single-request tables report arithmetic mean ± sample standard deviation of per-request values.
-Category rows pool 3 fixtures × 5 seeds: their deviation includes differences between fixtures.
-For greedy repetitions, within-fixture timing variation remains, while deterministic output and
-acceptance values may have zero deviation. A single wave or corpus point has no sample deviation.
-
-Acceptance in a phase table is the mean of per-request ratios. Acceptance in a corpus or wave
-table is the ratio of summed accepted and drafted tokens. Do not interchange these aggregations.
-Calculate new statistics and comparisons from unrounded reports. Display phase rates and their
-deviations to one decimal, seconds to two decimals, acceptance to one percentage decimal, and
-tokens/round and speedups to two decimals. Keep token totals and sample counts exact. Historical
-comparisons derived from rounded published means must identify that limitation.
-
-## Output checks and optional comparisons
-
-Performance runs check execution failures, token accounting, termination reasons, and obvious
-repetition. Record the scope and result of those checks once on the model page. Answer accuracy,
-prompt compliance, and other content audits are included only when required by the task; their
-conclusions apply only to the identified runs.
-
-Retain pathological samples in fixed-corpus statistics and label them next to affected results.
-Supplementary statistics excluding samples must identify the exclusions. A natural stop or high
-throughput alone does not establish successful task completion.
-
-Comparisons are optional. When included, identify both run IDs, the metric, and differences in
-configuration or workload. A throughput speedup is `new / baseline`; a makespan speedup is
-`baseline / new`; relative change is `(new / baseline - 1) * 100%`. C=1 must be the matching
-suite/profile baseline. Distinguish fixed-request workloads with varying output lengths from
-fixed-token measurements. Historical comparisons do not isolate a backend change. MTP0 context
-profiles and speculative scenario suites use different workloads and cannot establish per-scenario
-baseline/speculative speedups.
-
-## Publishing and updating results
-
-Use one model page ordered by configuration and run records, measured workload sections,
-termination/anomalies, and reproduction. Group results by weight format and backend within a
-workload section. Omit unmeasured sections; add comparisons or content audits only when in scope.
-A short page-local run ID links each result to its configuration, command, and source reports.
-
-Record the date, model/weights identity, explicit artifact and relevant companion, known tested
-revision, hardware/toolchain, workload, sample count, and runtime settings. Link common settings
-rather than repeating them; put exceptions and actual automatic KV capacities in the run record.
-Identify missing historical metadata without inferring values.
-
-Commands run from the repository root with a selected Python 3.11 interpreter. Use a fresh output
-directory for reruns; recorded report paths identify the measured evidence. Reproducing a workload
-on another build or artifact does not promise identical historical outputs or timings. Raw reports
-remain local under `profiles/bench/`; reuse existing JSON/CSV/Markdown summaries to verify values.
-
-Model pages own detailed serving results. README and model-card excerpts link to them and update
-with the relevant measurements. Capability scores belong in model-card Evaluation sections, with
-workflow guidance in [eval/README.md](../../eval/README.md); runner usage and report-file descriptions
-belong in [tools/bench/README.md](../../tools/bench/README.md).
-
-When replacing measurements, update their run records, applicable findings, coverage index, and
-excerpts together. Retain older data only for an explicitly requested historical comparison or
-audit. Before publishing, check affected links/anchors, values and material caveats, and
-`git diff --check`.
+```bash
+./build/apps/ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \
+  --max-context 32768 --max-concurrency 1 &
+python3 tools/bench/perf_matrix.py --port 8080 --concurrency 1 \
+  --jsonl docs/performance/data/bench.jsonl --model Qwen/Qwen3.6-35B-A3B \
+  --recipe "unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL" --spec dflash --kv auto \
+  --flags "--max-context 32768 --max-concurrency 1"
+# then a fresh server with --max-concurrency 4 and --skip-long --concurrency 4, and with 8
+python3 tools/docs/gen_performance.py          # rewrites docs/performance/** and the README blocks
+python3 tools/docs/gen_performance.py --check  # fails when a page differs from the data
+```

@@ -2,9 +2,17 @@
 
 #include <curl/curl.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -22,7 +30,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ninfer::product::media_acquire {
+namespace ninferno::product::media_acquire {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -84,30 +92,51 @@ std::vector<std::uint8_t> decode_base64(std::string_view text) {
     return out;
 }
 
+// Network byte order. This host, private, loopback, link-local, shared (100.64/10), IETF protocol
+// assignments (192.0.0/24), documentation (192.0.2/24, 198.51.100/24, 203.0.113/24), the 6to4
+// relay anycast (192.88.99/24), benchmarking (198.18/15), multicast and reserved (224/3).
 bool private_ipv4(std::uint32_t address) {
     const std::uint32_t a = ntohl(address);
     return (a >> 24U) == 0 || (a >> 24U) == 10 || (a >> 24U) == 127 || (a >> 16U) == 0xa9fe ||
            (a >> 20U) == 0xac1 || (a >> 16U) == 0xc0a8 || (a >> 22U) == 0x0191 ||
-           (a >> 17U) == 0x6309 || (a >> 24U) >= 224;
+           (a >> 17U) == 0x6309 || (a >> 8U) == 0xc00000 || (a >> 8U) == 0xc00002 ||
+           (a >> 8U) == 0xc63364 || (a >> 8U) == 0xcb0071 || (a >> 8U) == 0xc05863 ||
+           (a >> 24U) >= 224;
 }
 
-bool private_address(const sockaddr* address) {
+std::uint32_t ipv4_at(const in6_addr& address, std::size_t offset) {
+    std::uint32_t v4 = 0;
+    std::memcpy(&v4, &address.s6_addr[offset], sizeof(v4));
+    return v4;
+}
+
+} // namespace
+
+bool private_network_address(const sockaddr* address) noexcept {
     if (address->sa_family == AF_INET) {
         return private_ipv4(reinterpret_cast<const sockaddr_in*>(address)->sin_addr.s_addr);
     }
     if (address->sa_family != AF_INET6) { return true; }
     const in6_addr& a = reinterpret_cast<const sockaddr_in6*>(address)->sin6_addr;
+    const auto& b     = a.s6_addr;
     if (IN6_IS_ADDR_UNSPECIFIED(&a) || IN6_IS_ADDR_LOOPBACK(&a) || IN6_IS_ADDR_LINKLOCAL(&a) ||
-        IN6_IS_ADDR_MULTICAST(&a) || (a.s6_addr[0] & 0xfeU) == 0xfcU) {
+        IN6_IS_ADDR_SITELOCAL(&a) || IN6_IS_ADDR_MULTICAST(&a) || (b[0] & 0xfeU) == 0xfcU) {
         return true;
     }
-    if (IN6_IS_ADDR_V4MAPPED(&a)) {
-        std::uint32_t v4 = 0;
-        std::memcpy(&v4, &a.s6_addr[12], sizeof(v4));
-        return private_ipv4(v4);
+    // Forms that carry an IPv4 address the network may route to: IPv4-mapped (::ffff:a.b.c.d)
+    // and IPv4-compatible (::a.b.c.d) in the low 32 bits, NAT64 (64:ff9b::/96, and the
+    // local-use 64:ff9b:1::/48) in the low 32 bits, 6to4 (2002::/16) in bits 16..47.
+    if (IN6_IS_ADDR_V4MAPPED(&a) || IN6_IS_ADDR_V4COMPAT(&a)) {
+        return private_ipv4(ipv4_at(a, 12));
     }
-    return false;
+    const bool nat64 = b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b;
+    if (nat64) { return private_ipv4(ipv4_at(a, 12)) || (b[4] == 0x00 && b[5] == 0x01); }
+    if (b[0] == 0x20 && b[1] == 0x02) { return private_ipv4(ipv4_at(a, 2)); }
+    // Teredo (2001::/32) tunnels to an IPv4 server and client of its own choosing.
+    return b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00;
 }
+
+namespace {
 
 struct UrlParts {
     std::string scheme;
@@ -149,13 +178,13 @@ std::string resolve_public(const UrlParts& url, bool allow_private) {
     addrinfo* raw     = nullptr;
     const int rc      = getaddrinfo(url.host.c_str(), url.port.c_str(), &hints, &raw);
     if (rc != 0) {
-        throw Error(ErrorKind::RemoteUnavailable,
+        throw Error(rc == EAI_NONAME ? ErrorKind::RemoteRejected : ErrorKind::RemoteUnavailable,
                     "failed to resolve media URL host: " + std::string(gai_strerror(rc)));
     }
     std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
     std::string selected;
     for (const addrinfo* it = raw; it != nullptr; it = it->ai_next) {
-        if (!allow_private && private_address(it->ai_addr)) { continue; }
+        if (!allow_private && private_network_address(it->ai_addr)) { continue; }
         std::array<char, INET6_ADDRSTRLEN> text{};
         const void* bytes =
             it->ai_family == AF_INET
@@ -243,7 +272,7 @@ std::vector<std::uint8_t> fetch_url(std::string url, const Policy& policy) {
         curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl.get(), CURLOPT_XFERINFOFUNCTION, curl_progress);
         curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, &policy);
-        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "ninfer/vision");
+        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "ninferno/vision");
         const CURLcode code = curl_easy_perform(curl.get());
         if (code != CURLE_OK) {
             check_control(policy);
@@ -263,18 +292,24 @@ std::vector<std::uint8_t> fetch_url(std::string url, const Policy& policy) {
             check_control(policy);
             return buffer.bytes;
         }
+        if (status >= 400 && status < 500) {
+            throw Error(ErrorKind::RemoteRejected,
+                        "media URL returned HTTP " + std::to_string(status));
+        }
         if (status < 300 || status >= 400 || redirect == policy.max_redirects) {
-            throw Error(ErrorKind::RemoteUnavailable,
+            throw Error(redirect == policy.max_redirects && status >= 300 && status < 400
+                            ? ErrorKind::RemoteRejected
+                            : ErrorKind::RemoteUnavailable,
                         "media URL returned HTTP " + std::to_string(status));
         }
         char* next = nullptr;
         curl_easy_getinfo(curl.get(), CURLINFO_REDIRECT_URL, &next);
         if (next == nullptr || *next == '\0') {
-            throw Error(ErrorKind::RemoteUnavailable, "media URL redirect has no location");
+            throw Error(ErrorKind::RemoteRejected, "media URL redirect has no location");
         }
         url = next;
     }
-    throw Error(ErrorKind::RemoteUnavailable, "too many media URL redirects");
+    throw Error(ErrorKind::RemoteRejected, "too many media URL redirects");
 }
 
 std::vector<std::uint8_t> read_path(const Source& source, const Policy& policy) {
@@ -287,7 +322,8 @@ std::vector<std::uint8_t> read_path(const Source& source, const Policy& policy) 
     if (!policy.media_root.empty()) {
         const std::filesystem::path root = std::filesystem::weakly_canonical(policy.media_root, ec);
         const auto relative              = std::filesystem::relative(path, root, ec);
-        if (ec || relative.empty() || relative.native().starts_with("..")) {
+        // Outside when the first component climbs (a name such as "..notes" stays inside).
+        if (ec || relative.empty() || *relative.begin() == "..") {
             throw std::invalid_argument("media path is outside configured media root");
         }
     }
@@ -359,4 +395,4 @@ std::vector<std::uint8_t> acquire_bytes(const Source& source, const Policy& poli
     return read_path(source, policy);
 }
 
-} // namespace ninfer::product::media_acquire
+} // namespace ninferno::product::media_acquire

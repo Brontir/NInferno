@@ -1,4 +1,4 @@
-#include "ninfer/ops/argmax.h"
+#include "ninferno/ops/argmax.h"
 #include "core/device.h"
 #include <algorithm>
 #include "ops/op_tester.h"
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -123,6 +123,33 @@ int run_case(std::int32_t physical_rows, std::int32_t valid_rows, std::int32_t t
     return failures;
 }
 
+// Rows of NaN logits (a numerically failed forward) select id 0 on every route, NaN ranking as
+// -inf; a row with one finite logit among NaNs selects it.
+int nan_case(std::int32_t physical_rows, std::int32_t valid_rows, std::int32_t tokens) {
+    std::vector<std::uint16_t> logits(static_cast<std::size_t>(physical_rows) * tokens, 0x7fc0u);
+    std::vector<std::int32_t> expected(static_cast<std::size_t>(tokens), 0);
+    if (tokens > 1) {
+        logits[static_cast<std::size_t>(physical_rows) + valid_rows / 2] = f32_to_bf16(-3.0f);
+        expected[1]                                                      = valid_rows / 2;
+    }
+    GuardedDeviceBuffer device_logits(logits.size() * sizeof(std::uint16_t));
+    GuardedDeviceBuffer device_output(static_cast<std::size_t>(tokens) * sizeof(std::int32_t));
+    device_logits.copy_from_host(logits.data(), logits.size() * sizeof(std::uint16_t));
+    device_output.fill(0xcd);
+    Tensor logits_tensor(device_logits.data(), DType::BF16, {physical_rows, tokens});
+    Tensor output_tensor(device_output.data(), DType::I32, {tokens});
+    ops::argmax(logits_tensor, output_tensor, valid_rows, nullptr);
+    cuda_synchronize();
+    const std::string label =
+        "argmax NaN rows=" + std::to_string(physical_rows) + " T=" + std::to_string(tokens);
+    int failures = verify_exact(
+        label.c_str(),
+        from_device<std::int32_t>(device_output.data(), static_cast<std::size_t>(tokens)),
+        expected);
+    failures += device_output.verify_guards((label + " output").c_str());
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -142,6 +169,15 @@ int main() {
     failures += run_case(131072, 131072, 1);
     failures += run_case(131072, 131072, 15);
     failures += run_case(131072, 131072, 120);
+    // Logits of a head whose rows end inside a 128-row tile: nvidia/Muse-Glimmer-30B-NVFP4's
+    // 202048-row NVFP4 head (202048 % 128 == 64), and a short one.
+    failures += run_case(202048, 202048, 1);
+    failures += run_case(202048, 202048, 9);
+    failures += run_case(202048, 202048, 64);
+    failures += run_case(200, 200, 3);
+    failures += nan_case(248320, 248077, 2);
+    failures += nan_case(248320, 248077, 64);
+    failures += nan_case(200, 200, 3);
     std::cout << (failures ? "FAIL" : "OK") << " argmax\n";
     return failures ? 1 : 0;
 }

@@ -1,18 +1,19 @@
-#include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/execution/vision.h"
+#include "models/qwen3_5/program/internal.h"
 
+#include "core/checked.h"
 #include "core/device.h"
 #include "core/layout.h"
 #include "core/nvtx.h"
 #include "models/qwen3_5/program/vision_control.h"
-#include "ninfer/ops/add_bias.h"
-#include "ninfer/ops/gelu.h"
-#include "ninfer/ops/layer_norm.h"
-#include "ninfer/ops/linear.h"
-#include "ninfer/ops/residual_add.h"
-#include "ninfer/ops/rope.h"
-#include "ninfer/ops/softmax_attention.h"
-#include "ninfer/ops/vision_pos_embed.h"
+#include "ninferno/ops/add_bias.h"
+#include "ninferno/ops/gelu.h"
+#include "ninferno/ops/layer_norm.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/residual_add.h"
+#include "ninferno/ops/rope.h"
+#include "ninferno/ops/softmax_attention.h"
+#include "ninferno/ops/vision_pos_embed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,30 +25,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 namespace {
-
-std::size_t checked_mul(std::size_t a, std::size_t b, const char* label) {
-    if (b != 0 && a > std::numeric_limits<std::size_t>::max() / b) {
-        throw std::overflow_error(std::string("Vision ") + label + " overflows size_t");
-    }
-    return a * b;
-}
-
-std::size_t checked_add(std::size_t a, std::size_t b, const char* label) {
-    if (b > std::numeric_limits<std::size_t>::max() - a) {
-        throw std::overflow_error(std::string("Vision ") + label + " overflows size_t");
-    }
-    return a + b;
-}
-
-std::size_t align_up(std::size_t value, std::size_t alignment, const char* label) {
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
-        throw std::invalid_argument(std::string("Vision ") + label +
-                                    " alignment must be a power of two");
-    }
-    return checked_add(value, alignment - 1, label) & ~(alignment - 1);
-}
 
 constexpr std::size_t kWorkspaceAlignment = 256;
 
@@ -105,8 +84,7 @@ VisionWorkspaceLayout build_workspace_layout(const VisionConfig& config,
     const auto tokens  = static_cast<std::int32_t>(tokens64);
 
     const auto capacity = [](const LinearParameters& p, std::int32_t first, std::int32_t last) {
-        return ops::linear_workspace_capacity_bytes(p.weight.qtype, p.weight.n, p.weight.k,
-                                                    p.policy, first, last);
+        return ops::linear_workspace_capacity_bytes(p, first, last);
     };
     const auto minimum_patches =
         dimension(std::uint64_t(config.spatial_merge_size) * config.spatial_merge_size);
@@ -215,11 +193,6 @@ std::size_t merger_hidden_bytes(const VisionConfig& config, std::size_t merged_t
     return tensor.bytes();
 }
 
-void copy_host(const void* src, Tensor& dst, cudaStream_t stream) {
-    if (dst.bytes() == 0) { return; }
-    CUDA_CHECK(cudaMemcpyAsync(dst.data, src, dst.bytes(), cudaMemcpyHostToDevice, stream));
-}
-
 } // namespace
 
 VisionContext::VisionContext(DeviceContext& ctx, const Parameters& parameters)
@@ -324,15 +297,15 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
     {
         nvtx::ScopedRange patch_range(nvtx::Name::VisionPatchEmbedding, nvtx::Category::Vision,
                                       static_cast<std::uint64_t>(patches64));
-        copy_host(control.position_ids.data(), position_ids, stream);
-        copy_host(item.patches.data(), patch_bf16, stream);
+        copy_from_host(control.position_ids.data(), position_ids, stream);
+        copy_from_host(item.patches.data(), patch_bf16, stream);
         project(patch_bf16, parameters_.patch_embedding, x, layout.patch_scratch);
         ops::add_bias(parameters_.patch_embedding_bias, x, stream);
         // The artifact records the source table shape [rows,hidden], while Tensor's
         // contiguous matrix convention is [inner,columns]. The payload is already
         // row-major, so this is a zero-copy [hidden,rows] view, not a transpose.
-        copy_host(control.position_table_indices.data(), pos_indices, stream);
-        copy_host(control.position_table_weights.data(), pos_weights, stream);
+        copy_from_host(control.position_table_indices.data(), pos_indices, stream);
+        copy_from_host(control.position_table_weights.data(), pos_weights, stream);
         Tensor position_table = parameters_.position_embedding.reshape(
             {dimension(config_.hidden_size), dimension(config_.num_position_embeddings)});
         ops::vision_pos_embed_add(position_table, pos_indices, pos_weights, x, stream);
@@ -369,7 +342,7 @@ void VisionContext::encode(const VisionItemView& item, Tensor& output, DeviceSpa
                 k.nb[2] = qkv.nb[1];
                 v.nb[2] = qkv.nb[1];
                 ops::rope(position_ids, dimension(config_.hidden_size / config_.num_heads),
-                          10'000.0F, q, k, stream);
+                          10'000.0F, q, k, ctx_.execution_view().on_stream(stream));
                 Tensor attended_heads =
                     attended.view({dimension(config_.hidden_size / config_.num_heads),
                                    dimension(config_.num_heads), patches});
@@ -544,4 +517,4 @@ double VisionPrefillSession::elapsed_seconds() const {
     return milliseconds / 1000.0;
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

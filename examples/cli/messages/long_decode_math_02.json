@@ -1,0 +1,6 @@
+[
+  {
+    "role": "user",
+    "content": "Solve the following math problem step by step. Put your answer inside \\boxed{}.\n\nA string of length $25$ is formed from the letters $A$, $B$ and $C$ so that no two adjacent letters are equal and the first and last letters are equal. Let $N$ be the number of such strings in which the letter $A$ appears exactly $8$ times. Find the remainder when $N$ is divided by $1000$.\n\nRemember to put your answer inside \\boxed{}."
+  }
+]

@@ -7,8 +7,10 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <set>
+#include <string>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 float HostValues::scalar_f32() const {
     if (format != QType::FP32 || elements != 1 || data.size() != 4) {
@@ -38,6 +40,7 @@ ParameterReference Binder::parameter(std::string_view name, Shape shape, Residen
     if (found == reader_.directory().bindings.end()) {
         throw ArtifactError("missing logical parameter " + std::string(name));
     }
+    bound_.insert(std::string(name));
     return binding(std::string(name), found->second, std::move(shape), residency, exact_format);
 }
 
@@ -58,6 +61,8 @@ ParameterReference Binder::binding(std::string name, const Binding& binding, Sha
             require_device(part.object);
         } else if (residency == Residency::Host) {
             (void)host_object(part.object);
+        } else if (residency == Residency::Mapped) {
+            require_mapped(part.object);
         }
     }
     return {std::move(name), std::move(shape), binding, residency};
@@ -85,6 +90,11 @@ void Binder::require_device(ObjectHandle object, std::uint64_t alignment) {
     demand.alignment = std::max({demand.alignment, alignment, geometry.alignment});
 }
 
+void Binder::require_mapped(ObjectHandle object) {
+    (void)reader_.geometry(object);
+    demands_.at(object.index).mapped = true;
+}
+
 std::span<const std::byte> Binder::host_object(ObjectHandle object) {
     reader_.validate_object(object);
     auto& demand = demands_.at(object.index);
@@ -110,6 +120,7 @@ HostValues Binder::values(const Binding& binding, std::optional<QType> format) {
     HostValues out;
     out.elements = binding.elements;
     if (binding.parts.empty()) { throw ArtifactError("value Binding is empty"); }
+    const auto& first = reader_.directory().tensor(binding.parts.front().object).id;
     out.format = format.value_or(reader_.geometry(binding.parts.front().object).format);
     std::uint64_t word_bytes = 0;
     if (out.format == QType::BF16) {
@@ -117,7 +128,8 @@ HostValues Binder::values(const Binding& binding, std::optional<QType> format) {
     } else if (out.format == QType::FP32 || out.format == QType::INT32) {
         word_bytes = 4;
     } else {
-        throw ArtifactError("owning Host values require a direct numeric format");
+        throw ArtifactError("Host values of " + first +
+                            " need a direct numeric format (BF16, FP32 or INT32)");
     }
     const auto total_bytes = checked_mul(out.elements, word_bytes, "Host value bytes");
     if (total_bytes > std::numeric_limits<std::size_t>::max()) {
@@ -129,11 +141,13 @@ HostValues Binder::values(const Binding& binding, std::optional<QType> format) {
         const auto& geometry = reader_.geometry(part.object);
         if (geometry.layout != QuantLayout::Contiguous || geometry.format != out.format ||
             part.begin >= part.end || part.end > geometry.elements) {
-            throw ArtifactError("Host value Binding has an incompatible representation or range");
+            throw ArtifactError("Host values of " + reader_.directory().tensor(part.object).id +
+                                " have an incompatible representation or range");
         }
         const auto bytes = checked_mul(part.end - part.begin, word_bytes, "value range");
         if (bytes > out.data.size() - destination) {
-            throw ArtifactError("Host value coverage exceeds declared size");
+            throw ArtifactError("Host values of " + first + " cover more than the declared " +
+                                std::to_string(out.elements) + " elements");
         }
         const auto source = checked_mul(part.begin, word_bytes, "value offset");
         auto target = std::span(out.data).subspan(destination, static_cast<std::size_t>(bytes));
@@ -148,20 +162,47 @@ HostValues Binder::values(const Binding& binding, std::optional<QType> format) {
         destination += target.size();
     }
     if (destination != out.data.size()) {
-        throw ArtifactError("Host value coverage is incomplete");
+        throw ArtifactError("Host values of " + first + " cover fewer than the declared " +
+                            std::to_string(out.elements) + " elements");
     }
     owned_value_bytes_ = checked_add(owned_value_bytes_, out.data.size(), "owning value bytes");
     return out;
 }
 
-MaterializationPlan Binder::finish() && {
+MaterializationPlan Binder::finish(UnusedBindings unused) && {
     MaterializationPlan plan;
+    const auto component = [](std::string_view name) {
+        return std::string(name.substr(0, std::min(name.find('/'), name.size())));
+    };
+    std::set<std::string> loaded;
+    for (const auto& name : bound_) { loaded.insert(component(name)); }
+    std::vector<std::string> ignored;
+    for (const auto& [name, binding] : reader_.directory().bindings) {
+        if (bound_.contains(name)) { continue; }
+        (loaded.contains(component(name)) ? ignored : plan.unbound_bindings)
+            .push_back(std::string(name));
+    }
+    if (unused == UnusedBindings::RefuseInLoadedComponents && !ignored.empty()) {
+        std::string names;
+        for (std::size_t i = 0; i < ignored.size() && i < 8; ++i) {
+            names += (i ? ", " : "") + ignored[i];
+        }
+        throw ArtifactError(std::to_string(ignored.size()) +
+                            " artifact binding(s) of a loaded component that the model never " +
+                            "binds: " + names + (ignored.size() > 8 ? ", ..." : ""));
+    }
     plan.source            = &reader_;
     plan.object_count      = demands_.size();
     plan.prior_read_bytes  = read_bytes_;
     plan.owned_value_bytes = owned_value_bytes_;
     for (std::size_t i = 0; i < demands_.size(); ++i) {
         auto& demand = demands_[i];
+        if (demand.device && demand.mapped) {
+            // One object has one device address: the arena copy or the mapped host bytes.
+            throw ArtifactError(reader_.directory().tensor(ObjectHandle{i}).id +
+                                ": demanded both in device memory and mapped from the host");
+        }
+        if (demand.mapped) { plan.mapped_objects.push_back(ObjectHandle{i}); }
         if (demand.device) {
             const ObjectHandle handle{i};
             const auto& geometry = reader_.geometry(handle);
@@ -177,4 +218,4 @@ MaterializationPlan Binder::finish() && {
     return plan;
 }
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

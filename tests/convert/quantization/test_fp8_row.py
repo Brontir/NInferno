@@ -54,7 +54,7 @@ def test_streamed_fp8_conversion_matches_known_words(tmp_path) -> None:
     (tmp_path / "model.safetensors.index.json").write_text(
         json.dumps({"weight_map": {name: shard}}), encoding="utf-8"
     )
-    (tmp_path / "config.json").write_text("{}")
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     model = Model({"text": {"config": {}}})
     with SafetensorsSource(tmp_path) as reader:
         model.add(
@@ -68,7 +68,7 @@ def test_streamed_fp8_conversion_matches_known_words(tmp_path) -> None:
         recipe.assign(
             "embedding", format="fp8_e4m3fn_row_bf16", method="fp8_row_maxabs"
         )
-        path = tmp_path / "embedding.ninfer"
+        path = tmp_path / "embedding.ninferno"
         convert(model, recipe, path, device="cpu", rows_per_chunk=2)
     with Artifact(path) as artifact:
         object_id = artifact.directory.bindings["embedding"]["object"]

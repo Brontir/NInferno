@@ -1,17 +1,32 @@
 #include "models/qwen3_5/execution/mtp.h"
 
 #include "core/layout.h"
-#include "ninfer/ops/attn_input_proj.h"
-#include "ninfer/ops/linear_pair.h"
-#include "ninfer/ops/mtp_pack.h"
+#include "ninferno/ops/attn_input_proj.h"
+#include "ninferno/ops/linear_pair.h"
+#include "ninferno/ops/mtp_pack.h"
 
 #include <algorithm>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
+
+namespace {
+
+std::size_t rows_linear_bytes(const LinearParameters& p, std::int32_t first, std::int32_t last) {
+    const auto& w = p.weight;
+    return ops::linear_workspace_capacity_bytes(w.qtype, w.n, w.k, p.policy, first, last);
+}
+
+} // namespace
 
 std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parameters,
                                            std::int32_t first, std::int32_t last) {
-    const auto& p = parameters.packed;
+    if (!parameters.packed) {
+        // Separate parents: Q and gate one Linear each, K and V one pair (no workspace).
+        const auto& rows = *parameters.rows;
+        return std::max(rows_linear_bytes(rows[0], first, last),
+                        rows_linear_bytes(rows[2], first, last));
+    }
+    const auto& p = *parameters.packed;
     const auto& w = p.weight;
     if (!parameters.rows) {
         return ops::attn_input_proj_workspace_capacity_bytes(w.qtype, w.n, w.k, p.policy, first,
@@ -59,7 +74,12 @@ std::size_t mtp_query_gate_workspace_bytes(const MtpProjectionParameters& parame
 void mtp_projection(const Tensor& hidden, const MtpProjectionParameters& parameters,
                     const AttentionConfig& config, Tensor& query, Tensor& gate, Tensor& key,
                     Tensor& value, WorkspaceArena& workspace, cudaStream_t stream) {
-    const auto& p = parameters.packed;
+    if (!parameters.packed) {
+        mtp_query_gate_projection(hidden, parameters, config, query, gate, workspace, stream);
+        mtp_kv_projection(hidden, parameters, config, key, value, workspace, stream);
+        return;
+    }
+    const auto& p = *parameters.packed;
     if (!parameters.rows) {
         ops::attn_input_proj(hidden, p.weight, query, gate, key, value, p.policy, workspace,
                              stream);
@@ -113,4 +133,4 @@ void mtp_query_gate_projection(const Tensor& hidden, const MtpProjectionParamete
     mtp_projection(hidden, parameters, config, query, gate, key, value, workspace, stream);
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

@@ -1,5 +1,8 @@
 #pragma once
 
+// ninfer's kernel, taken back from ninfer-all (Apache-2.0, see NOTICE), which kept it after ninfer
+// replaced it; changed here as the git history records.
+
 // Warp-per-row small-T row-split low-bit GEMM: out[N,T] = W[N,K] . x[K,T].
 //
 // This is Q5's format-local small-column path. The design target is the DRAM
@@ -48,7 +51,7 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 // Q5 slab traits + dequant. A slab is 1024 K-values:
 //   nibble/code bytes : 32 B per group  -> kNibU4 uint4 per slab
@@ -90,83 +93,25 @@ struct Q5RowSplitSimtSchedule {
     }
 };
 
-template <class SC>
-__device__ __forceinline__ void
-q5_simt_issue_slab(uint4* __restrict__ s_nib, uint4* __restrict__ s_hi,
-                   std::uint32_t* __restrict__ s_sc, const std::uint8_t* __restrict__ code_row,
-                   const std::uint8_t* __restrict__ high_row,
-                   const std::uint8_t* __restrict__ scale_row, int slab, int lane) {
-    static_assert(SC::kNibU4 % 32 == 0, "nibble plane must be a whole number of warp copies");
-#pragma unroll
-    for (int j = 0; j < SC::kNibU4 / 32; ++j) {
-        const int i = j * 32 + lane;
-        pipe_copy<16>(&s_nib[i],
-                      code_row + static_cast<std::int64_t>(slab) * (SC::kNibU4 * 16) + i * 16);
-    }
-    if constexpr (SC::kHighU4 > 0) {
-        if (lane < SC::kHighU4) {
-            pipe_copy<16>(&s_hi[lane], high_row +
-                                           static_cast<std::int64_t>(slab) * (SC::kHighU4 * 16) +
-                                           lane * 16);
-        }
-    }
-    if (lane < SC::kScaleU32) {
-        pipe_copy<4>(&s_sc[lane],
-                     scale_row + static_cast<std::int64_t>(slab) * (SC::kScaleU32 * 4) + lane * 4);
-    }
-    pipe_commit();
-}
+// The occupancy targets of the split kernels scale with the column tile because their accumulators
+// do. At 16 split2 blocks per SM ptxas gets 64 registers and at 10 split4 blocks 51, which the wide
+// tiles cannot hold: they spill, and on kernels this bandwidth-bound the spill costs more than the
+// extra resident warps return. Narrow tiles fit and keep the warps.
+template <int kTt, int kStride>
+inline constexpr int kQ5Split2BlocksPerSm = kTt <= 6 ? 16 : 8;
+template <int kTt>
+inline constexpr int kQ5Split4BlocksPerSm = kTt <= 5 ? 10 : 8;
 
-// x0 points at the column tile base (x + col0*k); xslab is the slab's first
-// K-value. Requires k % 8 == 0 and 16-byte aligned x.
-template <class SC, int kTt>
-__device__ __forceinline__ void
-q5_simt_consume_slab(const __nv_bfloat16* __restrict__ x0, std::int64_t xslab, std::int32_t k,
-                     int ncols, const uint4* __restrict__ s_nib, const uint4* __restrict__ s_hi,
-                     const std::uint32_t* __restrict__ s_sc, int lane, float (&acc)[kTt]) {
-#pragma unroll
-    for (int c = 0; c < 4; ++c) {
-        float w[8];
-        SC::dequant_chunk(s_nib, s_hi, s_sc, c, lane, w);
-        const std::int64_t xoff = xslab + c * 256 + lane * 8;
-#pragma unroll
-        for (int tt = 0; tt < kTt; ++tt) {
-            if (tt < ncols) {
-                const uint4 xv  = load_vec<uint4>(x0 + static_cast<std::int64_t>(tt) * k + xoff);
-                const float2 f0 = bf16x2_bits_to_float2(xv.x);
-                const float2 f1 = bf16x2_bits_to_float2(xv.y);
-                const float2 f2 = bf16x2_bits_to_float2(xv.z);
-                const float2 f3 = bf16x2_bits_to_float2(xv.w);
-                acc[tt]         = fmaf(w[0], f0.x, acc[tt]);
-                acc[tt]         = fmaf(w[1], f0.y, acc[tt]);
-                acc[tt]         = fmaf(w[2], f1.x, acc[tt]);
-                acc[tt]         = fmaf(w[3], f1.y, acc[tt]);
-                acc[tt]         = fmaf(w[4], f2.x, acc[tt]);
-                acc[tt]         = fmaf(w[5], f2.y, acc[tt]);
-                acc[tt]         = fmaf(w[6], f3.x, acc[tt]);
-                acc[tt]         = fmaf(w[7], f3.y, acc[tt]);
-            }
-        }
-    }
-}
-
-template <class SC, int kTt, int kFullSlabs, int kStride, bool SplitOutput = false,
-          int SplitRow = 0, bool AddResidual = false>
-__launch_bounds__(64, 16) __global__
+template <int kTt, int kFullSlabs, int kStride, bool AddResidual = false>
+__launch_bounds__(64, (kQ5Split2BlocksPerSm<kTt, kStride>)) __global__
     void q5_rowsplit_gemm_simt_split2_kernel(const __nv_bfloat16* __restrict__ x,
                                              const std::uint8_t* __restrict__ codes,
                                              const std::uint8_t* __restrict__ high,
                                              const std::uint8_t* __restrict__ scales,
                                              __nv_bfloat16* __restrict__ out, std::int32_t n,
-                                             std::int32_t k, std::int32_t t, std::int32_t padded_k,
-                                             std::int32_t full_slabs) {
-    static_assert(std::is_same_v<SC, Q5RowSplitSimtSchedule>,
-                  "direct split2 small-T kernel is Q5-only");
+                                             std::int32_t padded_k) {
     static_assert(kTt > 0, "direct split2 requires a positive column tile");
     static_assert(kFullSlabs > 0 && kStride > 0, "direct split2 requires exact positive shape");
-    (void)full_slabs;
-    (void)k;
-    (void)t;
 
     __shared__ float s_part[2][kTt];
 
@@ -278,17 +223,14 @@ struct Q5Split4StoreEpilogue {
     }
 };
 
-template <class SC, int kTt, int kFullSlabs, int kStride, bool SplitOutput = false,
-          int SplitRow = 0, class Epilogue = Q5Split4StoreEpilogue, bool TriggerPdl = false,
-          bool JoinPdl = false>
-__launch_bounds__(128, 10) __global__ void q5_rowsplit_gemm_simt_split4_kernel(
-    const __nv_bfloat16* __restrict__ x, const std::uint8_t* __restrict__ codes,
-    const std::uint8_t* __restrict__ high, const std::uint8_t* __restrict__ scales,
-    __nv_bfloat16* __restrict__ out, __nv_bfloat16* __restrict__ out_tail, std::int32_t n,
-    std::int32_t out_ld, std::int32_t k, std::int32_t t, std::int32_t padded_k,
-    std::int32_t full_slabs, Epilogue epilogue = {}) {
-    static_assert(std::is_same_v<SC, Q5RowSplitSimtSchedule>,
-                  "direct split4 small-T kernel is Q5-only");
+template <int kTt, int kFullSlabs, int kStride, bool SplitOutput = false, int SplitRow = 0,
+          class Epilogue = Q5Split4StoreEpilogue, bool TriggerPdl = false, bool JoinPdl = false>
+__launch_bounds__(128, kQ5Split4BlocksPerSm<kTt>) __global__
+    void q5_rowsplit_gemm_simt_split4_kernel(
+        const __nv_bfloat16* __restrict__ x, const std::uint8_t* __restrict__ codes,
+        const std::uint8_t* __restrict__ high, const std::uint8_t* __restrict__ scales,
+        __nv_bfloat16* __restrict__ out, __nv_bfloat16* __restrict__ out_tail, std::int32_t n,
+        std::int32_t out_ld, std::int32_t padded_k, Epilogue epilogue = {}) {
     static_assert(kTt > 0, "direct split4 requires a positive column tile");
     static_assert(kFullSlabs > 0 && kStride > 0, "direct split4 requires exact positive shape");
     static_assert(!SplitOutput || SplitRow > 0,
@@ -296,10 +238,6 @@ __launch_bounds__(128, 10) __global__ void q5_rowsplit_gemm_simt_split4_kernel(
     if constexpr (TriggerPdl) {
         if (threadIdx.x == 0) { pdl::trigger_dependents(); }
     }
-    (void)full_slabs;
-    (void)k;
-    (void)t;
-
     __shared__ float s_part[4][kTt];
 
     const int lane  = static_cast<int>(threadIdx.x) & 31;
@@ -406,116 +344,4 @@ __launch_bounds__(128, 10) __global__ void q5_rowsplit_gemm_simt_split4_kernel(
     if constexpr (JoinPdl) { pdl::wait_for_dependencies(); }
 }
 
-// full_slabs is computed on the host: k/1024 when k % 8 == 0 and x is 16-byte
-// aligned, else 0 (everything runs through the scalar tail).
-template <class SC, int kTt, int kRowsPerBlock, int kStages, bool SplitOutput = false,
-          int SplitRow = 0>
-__global__ void q5_rowsplit_gemm_simt_kernel(const __nv_bfloat16* __restrict__ x,
-                                             const std::uint8_t* __restrict__ codes,
-                                             const std::uint8_t* __restrict__ high,
-                                             const std::uint8_t* __restrict__ scales,
-                                             __nv_bfloat16* __restrict__ out,
-                                             __nv_bfloat16* __restrict__ out_tail, std::int32_t n,
-                                             std::int32_t out_ld, std::int32_t k, std::int32_t t,
-                                             std::int32_t padded_k, std::int32_t full_slabs) {
-    using Codec                = typename SC::Codec;
-    constexpr int kPrefetch    = kStages - 1;
-    constexpr int kHighU4Alloc = SC::kHighU4 > 0 ? SC::kHighU4 : 1;
-    static_assert(!SplitOutput || SplitRow > 0,
-                  "split-output Q5 SIMT requires a positive compile-time seam");
-
-    __shared__ __align__(16) uint4 s_nib[kRowsPerBlock][kStages][SC::kNibU4];
-    __shared__ __align__(16) uint4 s_hi[kRowsPerBlock][kStages][kHighU4Alloc];
-    __shared__ __align__(16) std::uint32_t s_sc[kRowsPerBlock][kStages][SC::kScaleU32];
-
-    const int lane = static_cast<int>(threadIdx.x) & 31;
-    const int warp = static_cast<int>(threadIdx.x) >> 5;
-    const int row  = static_cast<int>(blockIdx.x) * kRowsPerBlock + warp;
-    if (row >= n) { return; }
-    const int col0  = static_cast<int>(blockIdx.y) * kTt;
-    const int ncols = min(kTt, t - col0);
-
-    const int kg_padded          = padded_k / Codec::kGroupK;
-    const std::uint8_t* code_row = codes + static_cast<std::int64_t>(row) * kg_padded * 32;
-    const std::uint8_t* high_row =
-        SC::kHighBytesPerGroup > 0
-            ? high + static_cast<std::int64_t>(row) * kg_padded * SC::kHighBytesPerGroup
-            : nullptr;
-    const std::uint8_t* scale_row = scales + static_cast<std::int64_t>(row) * kg_padded * 2;
-    const __nv_bfloat16* x0       = x + static_cast<std::int64_t>(col0) * k;
-
-    float acc[kTt];
-#pragma unroll
-    for (int i = 0; i < kTt; ++i) { acc[i] = 0.0f; }
-
-#pragma unroll
-    for (int p = 0; p < kPrefetch; ++p) {
-        if (p < full_slabs) {
-            q5_simt_issue_slab<SC>(s_nib[warp][p], s_hi[warp][p], s_sc[warp][p], code_row, high_row,
-                                   scale_row, p, lane);
-        } else {
-            pipe_commit();
-        }
-    }
-
-#pragma unroll 1
-    for (int s = 0; s < full_slabs; ++s) {
-        const int fetch = s + kPrefetch;
-        if (fetch < full_slabs) {
-            const int buf = fetch % kStages;
-            q5_simt_issue_slab<SC>(s_nib[warp][buf], s_hi[warp][buf], s_sc[warp][buf], code_row,
-                                   high_row, scale_row, fetch, lane);
-        } else {
-            pipe_commit();
-        }
-        pipe_wait<kPrefetch>();
-        __syncwarp();
-
-        const int buf = s % kStages;
-        q5_simt_consume_slab<SC, kTt>(x0, static_cast<std::int64_t>(s) * 1024, k, ncols,
-                                      s_nib[warp][buf], s_hi[warp][buf], s_sc[warp][buf], lane,
-                                      acc);
-        __syncwarp();
-    }
-
-    // Scalar tail: remaining groups read global memory directly, masked at k.
-    const int g0      = (full_slabs * 1024) / Codec::kGroupK;
-    const int kg_used = div_up(k, Codec::kGroupK);
-    for (int g = g0; g < kg_used; ++g) {
-        const int kk = g * Codec::kGroupK + lane * 2;
-        if (kk >= k) { continue; }
-        float w0 = 0.0f;
-        float w1 = 0.0f;
-        Codec::load_pair(codes, high, scales, static_cast<std::int64_t>(row) * kg_padded + g, lane,
-                         w0, w1);
-#pragma unroll
-        for (int tt = 0; tt < kTt; ++tt) {
-            if (tt < ncols) {
-                const std::int64_t xb = static_cast<std::int64_t>(tt) * k + kk;
-                acc[tt]               = fmaf(w0, __bfloat162float(x0[xb]), acc[tt]);
-                if (kk + 1 < k) { acc[tt] = fmaf(w1, __bfloat162float(x0[xb + 1]), acc[tt]); }
-            }
-        }
-    }
-
-#pragma unroll
-    for (int tt = 0; tt < kTt; ++tt) {
-        if (tt >= ncols) { continue; }
-        float a = acc[tt];
-        a       = warp_reduce_sum(a);
-        if (lane == 0) {
-            if constexpr (SplitOutput) {
-                if (row < SplitRow) {
-                    out[static_cast<std::int64_t>(col0 + tt) * out_ld + row] = __float2bfloat16(a);
-                } else {
-                    out_tail[static_cast<std::int64_t>(col0 + tt) * (n - SplitRow) + row -
-                             SplitRow] = __float2bfloat16(a);
-                }
-            } else {
-                out[static_cast<std::int64_t>(col0 + tt) * out_ld + row] = __float2bfloat16(a);
-            }
-        }
-    }
-}
-
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

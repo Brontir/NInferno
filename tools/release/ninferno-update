@@ -1,0 +1,87 @@
+#!/bin/sh
+# ninferno-update: install the newest NInferno release over this one (Linux and WSL 2).
+#
+#   ninferno-update            say what is new and ask before installing
+#   ninferno-update --yes      install without asking (ninferno-ui's Update button)
+#   ninferno-update --check    only say whether a newer release is out (exit 0: yes, 1: no)
+#   ninferno-update --rollback go back to the version installed before this one
+#
+# It reads the release manifest (latest.json), downloads the release's archive (one for every GPU),
+# checks its SHA-256 and installs it with the release's
+# own installer (share/ninferno/install.sh) beside the current version; `current` then points at
+# the new one. Running models keep the files they started with; the previous version stays for
+# --rollback, older ones are removed.
+#
+# Environment: NINFERNO_UPDATE_URL (the manifest, default the release server's latest.json),
+# NINFERNO_HOME / NINFERNO_BIN as for install.sh.
+set -eu
+MANIFEST=${NINFERNO_UPDATE_URL:-https://ninferno.brontir.com/releases/latest.json}
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ninferno-update: %s\n' "$*" >&2; exit 1; }
+
+self=$(readlink -f "$0")
+version_dir=$(dirname "$(dirname "$self")")      # <home>/ninferno-<version>-linux-x86_64
+home=${NINFERNO_HOME:-$(dirname "$version_dir")}
+release="$version_dir/share/ninferno/release.json"
+[ -f "$release" ] || die "not a release installation ($release missing); update a source build with git"
+field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" "$2" | head -1; }
+current=$(field version "$release")
+
+mode=ask
+case ${1:-} in
+  --yes|-y) mode=yes ;;
+  --check) mode=check ;;
+  --rollback) mode=rollback ;;
+  -h|--help) sed -n '2,17s/^# \{0,1\}//p' "$self"; exit 0 ;;
+  '') ;;
+  *) die "unknown argument $1 (--yes, --check, --rollback)" ;;
+esac
+
+if [ "$mode" = rollback ]; then
+  previous=$(ls -1dt "$home"/ninferno-*-linux-x86_64* 2>/dev/null | grep -vx "$version_dir" | head -1 || true)
+  [ -n "$previous" ] || die "no earlier version is kept in $home"
+  ln -sfn "$previous" "$home/current"
+  bin=${NINFERNO_BIN:-$HOME/.local/bin}
+  for exe in "$home/current/bin/"*; do
+    case $(basename "$exe") in *-sm[0-9]*) continue ;; esac  # the engines: ninferno-serve starts them
+    ln -sf "$exe" "$bin/$(basename "$exe")"
+  done
+  say "Back to $(basename "$previous")."
+  exit 0
+fi
+
+command -v curl > /dev/null 2>&1 || die "curl not found"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --max-time 30 -o "$tmp/latest.json" "$MANIFEST" || die "cannot read $MANIFEST"
+latest=$(field version "$tmp/latest.json")
+base=$(field linux_base "$tmp/latest.json")
+notes=$(field notes "$tmp/latest.json")
+[ -n "$latest" ] && [ -n "$base" ] || die "$MANIFEST is not a release manifest"
+
+newest=$(printf '%s\n%s\n' "${current#v}" "${latest#v}" | sort -V | tail -1)
+if [ "${current#v}" = "${latest#v}" ] || [ "$newest" != "${latest#v}" ]; then
+  say "NInferno $current is the newest release."
+  [ "$mode" = check ] && exit 1
+  exit 0
+fi
+say "NInferno $latest is available (this is $current)."
+[ -n "$notes" ] && say "What changed: $notes"
+[ "$mode" = check ] && exit 0
+if [ "$mode" = ask ]; then
+  printf 'Install it now? [Y/n] '
+  read -r answer < /dev/tty || answer=n
+  case $answer in [nN]*) say "Not installed."; exit 0 ;; esac
+fi
+
+installer="$version_dir/share/ninferno/install.sh"
+[ -f "$installer" ] || { curl -fsSL -o "$tmp/install.sh" "$base/install.sh" || die "cannot read $base/install.sh"; installer="$tmp/install.sh"; }
+say "Installing NInferno $latest ..."
+NINFERNO_URL=$base NINFERNO_HOME=$home sh "$installer"
+
+# Keep the new version and the one before it (running models may still use it).
+ls -1dt "$home"/ninferno-*-linux-x86_64* 2>/dev/null | tail -n +3 | while read -r old; do
+  [ "$(readlink -f "$home/current")" = "$(readlink -f "$old")" ] || rm -rf "$old"
+done
+say "NInferno $latest is installed; restart ninferno-ui and running models to use it (ninferno-update --rollback goes back)."

@@ -1,0 +1,15 @@
+{
+  "rtx5090": {"name": "RTX 5090", "chip": "GB202", "sm": 120, "vram_gb": 32, "match": ["NVIDIA GeForce RTX 5090"]},
+  "rtx5080": {"name": "RTX 5080", "chip": "GB203", "sm": 120, "vram_gb": 16, "match": ["NVIDIA GeForce RTX 5080"]},
+  "rtx5070ti": {"name": "RTX 5070 Ti", "chip": "GB203", "sm": 120, "vram_gb": 16, "match": ["NVIDIA GeForce RTX 5070 Ti"]},
+  "rtx5060ti": {"name": "RTX 5060 Ti 16 GB", "chip": "GB206", "sm": 120, "vram_gb": 16, "match": ["NVIDIA GeForce RTX 5060 Ti"], "label": ["RTX 5060 Ti", "16 GB"]},
+  "rtx4090": {"name": "RTX 4090", "chip": "AD102", "sm": 89, "vram_gb": 24, "match": ["NVIDIA GeForce RTX 4090"]},
+  "rtx4070ti": {"name": "RTX 4070 Ti", "chip": "AD104", "sm": 89, "vram_gb": 12, "match": ["NVIDIA GeForce RTX 4070 Ti"]},
+  "l4": {"name": "L4", "chip": "AD104", "sm": 89, "vram_gb": 24, "match": ["NVIDIA L4"]},
+  "rtx4060ti": {"name": "RTX 4060 Ti 16 GB", "chip": "AD106", "sm": 89, "vram_gb": 16, "match": ["NVIDIA GeForce RTX 4060 Ti"], "label": ["RTX 4060 Ti", "16 GB"]},
+  "rtx3090": {"name": "RTX 3090", "chip": "GA102", "sm": 86, "vram_gb": 24, "match": ["NVIDIA GeForce RTX 3090"]},
+  "a10": {"name": "A10", "chip": "GA102", "sm": 86, "vram_gb": 24, "match": ["NVIDIA A10"]},
+  "a100-40gb": {"name": "A100 40 GB", "chip": "GA100", "sm": 80, "vram_gb": 40, "match": ["NVIDIA A100-SXM4-40GB"], "label": ["A100", "40 GB"]},
+  "rtx2080ti": {"name": "RTX 2080 Ti", "chip": "TU102", "sm": 75, "vram_gb": 11, "match": ["NVIDIA GeForce RTX 2080 Ti"]},
+  "v100-32gb": {"name": "Tesla V100 32 GB", "chip": "GV100", "sm": 70, "vram_gb": 32, "match": ["Tesla V100-SXM2-32GB"], "label": ["Tesla V100", "32 GB"]}
+}

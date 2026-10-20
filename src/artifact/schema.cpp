@@ -1,12 +1,15 @@
 #include "artifact/schema.h"
 
+#include "core/ascii.h"
 #include "core/weight_view.h"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 std::uint64_t checked_add(std::uint64_t a, std::uint64_t b, std::string_view label) {
     if (b > std::numeric_limits<std::uint64_t>::max() - a) {
@@ -117,6 +120,30 @@ Json parse_json(std::string_view text, std::string_view label) {
 
 namespace {
 
+// A continuation part's name: one file in the entry's directory on every platform. Besides a
+// separator, a Windows path can leave the directory through a drive or stream (":"), and some
+// names are devices (NUL, COM1) or lose a trailing dot or space.
+bool portable_sibling_name(std::string_view name) {
+    if (name.empty() || name == "." || name == "..") { return false; }
+    for (const unsigned char c : name) {
+        if (c < 0x20 || c == 0x7f ||
+            std::string_view("/\\:<>\"|?*").find(static_cast<char>(c)) != std::string_view::npos) {
+            return false;
+        }
+    }
+    if (name.back() == '.' || name.back() == ' ') { return false; }
+    // Windows drops the spaces before a dot, so "NUL .bin" is the device too.
+    std::string stem = ascii_upper(name.substr(0, name.find('.')));
+    stem.erase(stem.find_last_not_of(' ') + 1);
+    static const std::set<std::string, std::less<>> kDevices = {
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$",
+        "CONOUT$",
+        // COM and LPT with a superscript 1, 2 or 3 (UTF-8 C2 B9, C2 B2, C2 B3).
+        "COM\xC2\xB9", "COM\xC2\xB2", "COM\xC2\xB3", "LPT\xC2\xB9", "LPT\xC2\xB2", "LPT\xC2\xB3"};
+    return !kDevices.contains(stem);
+}
+
 Shape parse_shape(const Json& value, std::string_view label) {
     if (!value.is_array() || value.size() > 16) {
         throw ArtifactError(std::string(label) + ": shape must have rank 0 through 16");
@@ -193,8 +220,7 @@ void parse_files(Directory& out, const Json& files, std::string_view entry_name)
         } else {
             file.path        = require_id(value.at("path"), "file path");
             const auto& path = *file.path;
-            if (path == "." || path == ".." || path.find('/') != std::string::npos ||
-                path.find('\\') != std::string::npos || !names.insert(path).second) {
+            if (!portable_sibling_name(path) || !names.insert(path).second) {
                 throw ArtifactError("invalid or duplicate sibling filename: " + path);
             }
         }
@@ -211,14 +237,16 @@ void parse_objects(Directory& out, const Json& objects) {
         throw ArtifactError("objects must be a nonempty array");
     }
     std::uint64_t previous_end = 0;
-    for (const auto& value : objects) {
+    for (std::size_t index = 0; index < objects.size(); ++index) {
+        const Json& value = objects[index];
         if (!value.is_object() || !value.contains("kind")) {
-            throw ArtifactError("invalid object descriptor");
+            throw ArtifactError("objects[" + std::to_string(index) +
+                                "] is not an object with a kind");
         }
         const auto kind = require_id(value.at("kind"), "object kind");
         if (kind == "tensor") {
             require_members(value, {"id", "kind", "shape", "format", "layout", "offset", "bytes"},
-                            {}, "tensor");
+                            {"divisors"}, "tensor");
         } else if (kind == "resource") {
             require_members(value, {"id", "kind", "encoding", "offset", "bytes"}, {}, "resource");
         } else {
@@ -236,9 +264,11 @@ void parse_objects(Directory& out, const Json& objects) {
         }
         previous_end = end;
         if (kind == "tensor") {
+            const std::uint64_t divisors =
+                value.contains("divisors") ? require_u64(value.at("divisors"), id, true) : 1;
             out.objects.emplace_back(TensorObject{
                 id, parse_shape(value.at("shape"), id), require_id(value.at("format"), id),
-                require_id(value.at("layout"), id), offset, bytes});
+                require_id(value.at("layout"), id), offset, bytes, divisors});
         } else {
             out.objects.emplace_back(
                 ResourceObject{id, require_id(value.at("encoding"), id), offset, bytes});
@@ -360,4 +390,4 @@ Directory parse_directory(const Json& root, std::string_view entry_name) {
     return out;
 }
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

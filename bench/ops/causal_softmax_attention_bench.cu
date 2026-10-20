@@ -4,13 +4,13 @@
 // contracts. Decode, small-T, prompt, split-KV, and kernel selection remain private production
 // implementation details and never enter this benchmark's dispatch or output schema.
 
-#include "ninfer/ops/softmax_attention.h"
-#include "ninfer/ops/kv_cache_append.h"
+#include "ninferno/ops/softmax_attention.h"
+#include "ninferno/ops/kv_cache_append.h"
 
 #include "core/device.h"
 #include "core/paged_kv_cache.h"
 #include "core/paged_kv_storage.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
@@ -27,9 +27,10 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <iterator>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -39,11 +40,11 @@ constexpr std::size_t kFlushBytes = std::size_t{256} << 20;
 
 
 enum class Entry : std::uint8_t { Append, Cached, Both };
-enum class GeometryChoice : std::uint8_t { H24Kv4, H16Kv2, All };
 enum class KvChoice : std::uint8_t { Bf16, Int8, Fp8, Nvfp4, K8V4, All };
 enum class Execution : std::uint8_t { Eager, Graph, Both };
-enum class CacheMode : std::uint8_t { Cold, Warm, Both };
-enum class CacheState : std::uint8_t { Cold, Warm };
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 enum class PageMapping : std::uint8_t { Identity, Fragmented };
 
 struct Geometry {
@@ -52,12 +53,17 @@ struct Geometry {
     std::int32_t kv_heads;
 };
 
-constexpr Geometry kH24Kv4{"d256-h24-kv4", 24, 4};
-constexpr Geometry kH16Kv2{"d256-h16-kv2", 16, 2};
+// Every geometry the op admits: Qwen3.5/3.6 27B, 35B-A3B, 0.8B/2B, 4B/9B.
+constexpr Geometry kGeometries[] = {
+    {"d256-h24-kv4", 24, 4},
+    {"d256-h16-kv2", 16, 2},
+    {"d256-h8-kv2", 8, 2},
+    {"d256-h16-kv4", 16, 4},
+};
 
 struct Options {
     Entry entry             = Entry::Both;
-    GeometryChoice geometry = GeometryChoice::All;
+    std::vector<Geometry> geometries{std::begin(kGeometries), std::end(kGeometries)};
     KvChoice kv             = KvChoice::All;
     Execution execution     = Execution::Graph;
     CacheMode cache         = CacheMode::Cold;
@@ -68,10 +74,11 @@ struct Options {
     std::vector<std::int32_t> row_contexts;
     std::vector<std::int32_t> valid_columns;
     std::vector<std::int32_t> table_rows;
-    int graph_calls = 1;
-    int warmup      = 5;
-    int repeat      = 30;
-    bool profile    = false;
+    int graph_calls  = 1;
+    int envelope_max = 0;
+    int warmup       = 5;
+    int repeat       = 30;
+    bool profile     = false;
     std::string csv_out;
 };
 
@@ -100,17 +107,19 @@ struct Result {
     bench::ColdTiming timing;
     std::size_t graph_nodes = 0, workspace_peak = 0;
     int graph_calls = 1;
+    ops::CausalAttentionExecutionEnvelope envelope{};
 };
 
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_causal_softmax_attention_bench "
+                 "usage: ninferno_causal_softmax_attention_bench "
                  "[--entry append|cached|both] "
-                 "[--geometry d256-h24-kv4|d256-h16-kv2|all] "
+                 "[--geometry d256-h24-kv4|d256-h16-kv2|d256-h8-kv2|d256-h16-kv4|all] "
                  "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4|all] [--batch B,...] [--tokens W,...] "
                  "[--context L,...] [--row-contexts L0,...] [--valid-columns V0,...] "
                  "[--table-rows R0,...] "
+                 "[--envelope-max N] "
                  "[--execution eager|graph|both] [--cache cold|warm|both] "
                  "[--mapping identity|fragmented] "
                  "[--warmup N] [--repeat N] [--graph-calls N] [--profile] [--csv-out PATH]\n",
@@ -167,14 +176,13 @@ Options parse_options(int argc, char** argv) {
                 usage("--entry expects append, cached, or both");
         } else if (argument == "--geometry") {
             const std::string_view value(next("--geometry requires a value"));
-            if (value == "d256-h24-kv4")
-                options.geometry = GeometryChoice::H24Kv4;
-            else if (value == "d256-h16-kv2")
-                options.geometry = GeometryChoice::H16Kv2;
-            else if (value == "all")
-                options.geometry = GeometryChoice::All;
-            else
-                usage("--geometry expects d256-h24-kv4, d256-h16-kv2, or all");
+            options.geometries.clear();
+            for (const Geometry& geometry : kGeometries)
+                if (value == "all" || value == geometry.name)
+                    options.geometries.push_back(geometry);
+            if (options.geometries.empty())
+                usage("--geometry expects d256-h24-kv4, d256-h16-kv2, d256-h8-kv2, d256-h16-kv4, "
+                      "or all");
         } else if (argument == "--kv-dtype") {
             const std::string_view value(next("--kv-dtype requires a value"));
             if (value == "bf16")
@@ -235,6 +243,9 @@ Options parse_options(int argc, char** argv) {
                 options.mapping = PageMapping::Fragmented;
             else
                 usage("--mapping expects identity or fragmented");
+        } else if (argument == "--envelope-max") {
+            options.envelope_max =
+                parse_i32(next("--envelope-max requires a value"), 1, 262144, "--envelope-max");
         } else if (argument == "--graph-calls") {
             options.graph_calls =
                 parse_i32(next("--graph-calls requires a value"), 1, 128, "--graph-calls");
@@ -302,7 +313,7 @@ Options parse_options(int argc, char** argv) {
         usage("cached entry is B=1 only");
     }
     if (options.profile &&
-        (options.entry == Entry::Both || options.geometry == GeometryChoice::All ||
+        (options.entry == Entry::Both || options.geometries.size() != 1 ||
          options.kv == KvChoice::All || options.batches.size() != 1 || options.tokens.size() != 1 ||
          (options.row_contexts.empty() && options.contexts.size() != 1) ||
          options.execution == Execution::Both || options.cache == CacheMode::Both)) {
@@ -374,12 +385,12 @@ PagedKVBatchLayerView make_batch_cache_view(DeviceBuffer& k, DeviceBuffer& v, De
 }
 
 std::size_t workspace_capacity(const Geometry& geometry, KvCacheStorage storage,
-                               std::int32_t tokens, std::int32_t batch, std::int32_t visible) {
-    const ops::CausalAttentionExecutionEnvelope envelope{static_cast<std::uint32_t>(visible),
-                                                         static_cast<std::uint32_t>(visible)};
+                               std::int32_t tokens, std::int32_t batch,
+                               ops::CausalAttentionExecutionEnvelope envelope,
+                               DeviceExecutionView execution) {
     return ops::causal_softmax_attention_workspace_capacity_bytes(
         {kHeadDim, geometry.query_heads, geometry.kv_heads}, storage, envelope, batch, tokens,
-        tokens);
+        tokens, execution);
 }
 
 std::int32_t profile_visible(std::span<const std::int32_t> contexts,
@@ -389,6 +400,13 @@ std::int32_t profile_visible(std::span<const std::int32_t> contexts,
         visible = std::max(visible, contexts[row] + valid_columns[row]);
     }
     return visible;
+}
+
+ops::CausalAttentionExecutionEnvelope execution_envelope(int visible, int maximum) {
+    if (maximum == 0) return {static_cast<unsigned>(visible), static_cast<unsigned>(visible)};
+    if (maximum < visible)
+        throw std::invalid_argument("--envelope-max is smaller than the visible input");
+    return {1, static_cast<unsigned>(maximum)};
 }
 
 __global__ void initialize_values(__nv_bfloat16* data, std::size_t count, unsigned seed,
@@ -417,13 +435,16 @@ class Case {
 public:
     Case(Geometry geometry, KvCacheStorage storage, std::int32_t tokens,
          std::span<const std::int32_t> contexts, std::span<const std::int32_t> valid_columns,
-         std::span<const std::int32_t> table_rows, PageMapping mapping)
-        : storage_layout_(paged_kv_storage_layout(storage, kHeadDim)),
+         std::span<const std::int32_t> table_rows, PageMapping mapping, int envelope_max,
+         DeviceExecutionView execution)
+        : execution_(execution), storage_layout_(paged_kv_storage_layout(storage, kHeadDim)),
           batch_(static_cast<std::int32_t>(contexts.size())),
           masked_(std::any_of(valid_columns.begin(), valid_columns.end(),
                               [tokens](std::int32_t valid) { return valid != tokens; })),
-          visible_(profile_visible(contexts, valid_columns)), padded_(align_context(visible_)),
-          mapping_(mapping), logical_pages_(padded_ / kPagedKVPageSize),
+          visible_(profile_visible(contexts, valid_columns)),
+          envelope_(execution_envelope(visible_, envelope_max)),
+          padded_(align_context(envelope_.max_visible_keys)), mapping_(mapping),
+          logical_pages_(padded_ / kPagedKVPageSize),
           physical_pages_(mapping == PageMapping::Identity ? batch_ * logical_pages_
                                                            : 2 * batch_ * logical_pages_ + 1),
           q_(varied_values(static_cast<std::size_t>(kHeadDim) * geometry.query_heads * tokens *
@@ -451,7 +472,8 @@ public:
           block_table_(static_cast<std::size_t>(logical_pages_) * batch_ * sizeof(std::int32_t)),
           output_(bench::make_zeros(static_cast<std::size_t>(kHeadDim) * geometry.query_heads *
                                     tokens * batch_ * 2)),
-          workspace_bytes_(workspace_capacity(geometry, storage, tokens, batch_, visible_)),
+          workspace_bytes_(
+              workspace_capacity(geometry, storage, tokens, batch_, envelope_, execution_)),
           workspace_(std::max<std::size_t>(workspace_bytes_, 1)),
           q_tensor_(q_.p, DType::BF16, {kHeadDim, geometry.query_heads, tokens, batch_}),
           k_tensor_(k_.p, DType::BF16, {kHeadDim, geometry.kv_heads, tokens, batch_}),
@@ -464,8 +486,7 @@ public:
                                       block_table_, geometry, storage, padded_, physical_pages_)),
           batch_cache_view_(make_batch_cache_view(cache_k_, cache_v_, cache_k_scale_,
                                                   cache_v_scale_, block_table_, geometry, storage,
-                                                  padded_, physical_pages_, batch_)),
-          envelope_{static_cast<std::uint32_t>(visible_), static_cast<std::uint32_t>(visible_)} {
+                                                  padded_, physical_pages_, batch_)) {
         std::vector<std::int32_t> host_positions(static_cast<std::size_t>(tokens) * batch_, 0);
         for (std::int32_t row = 0; row < batch_; ++row) {
             const std::int32_t valid = valid_columns[static_cast<std::size_t>(row)];
@@ -524,15 +545,18 @@ public:
             ops::causal_softmax_attention(
                 q_tensor_, k_tensor_, v_tensor_, positions_tensor_, validity, table_rows_tensor_,
                 {kHeadDim, q_tensor_.ne[1], k_tensor_.ne[1]}, kScale, batch_cache_view_, envelope_,
-                workspace_, output_tensor_, stream);
+                workspace_, output_tensor_, execution_.on_stream(stream));
         } else {
             ops::causal_softmax_attention_cached(
                 q_tensor_, positions_tensor_, {kHeadDim, q_tensor_.ne[1], cache_view_.num_kv_heads},
-                kScale, cache_view_, envelope_, workspace_, output_tensor_, stream);
+                kScale, cache_view_, envelope_, workspace_, output_tensor_,
+                execution_.on_stream(stream));
         }
     }
 
     [[nodiscard]] std::size_t workspace_bytes() const noexcept { return workspace_bytes_; }
+
+    [[nodiscard]] ops::CausalAttentionExecutionEnvelope envelope() const { return envelope_; }
 
     [[nodiscard]] std::size_t workspace_peak() const {
         if (workspace_.used() != 0 || workspace_.peak_used() > workspace_bytes_)
@@ -541,10 +565,12 @@ public:
     }
 
 private:
+    DeviceExecutionView execution_;
     PagedKVStorageLayout storage_layout_;
     std::int32_t batch_;
     bool masked_;
     std::int32_t visible_;
+    ops::CausalAttentionExecutionEnvelope envelope_;
     std::int32_t padded_;
     PageMapping mapping_;
     std::int32_t logical_pages_;
@@ -572,32 +598,17 @@ private:
     Tensor output_tensor_;
     PagedKVLayerView cache_view_;
     PagedKVBatchLayerView batch_cache_view_;
-    ops::CausalAttentionExecutionEnvelope envelope_;
 };
 
 const char* entry_name(Entry entry) { return entry == Entry::Append ? "append" : "cached"; }
 
 const char* storage_name(KvCacheStorage storage) {
-    switch (storage) {
-    case KvCacheStorage::BFloat16:
-        return "bf16";
-    case KvCacheStorage::Int8Group64:
-        return "int8";
-    case KvCacheStorage::Fp8E4M3Row256:
-        return "fp8";
-    case KvCacheStorage::Nvfp4Group16:
-        return "nvfp4";
-    case KvCacheStorage::Fp8KeyNvfp4Value:
-        return "k8v4";
-    }
-    return "unknown";
+    return kv_cache_storage_name(storage).data();
 }
 
 const char* execution_name(Execution execution) {
     return execution == Execution::Eager ? "eager" : "graph";
 }
-
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
 
 const char* mapping_name(PageMapping mapping) {
     return mapping == PageMapping::Identity ? "identity" : "fragmented";
@@ -683,8 +694,8 @@ double unique_kv_bytes(const Geometry& geometry, KvCacheStorage storage,
 }
 
 bench::ColdTiming measure(Case& data, Entry entry, Execution execution, CacheState cache,
-                          bench::TimedGraph* graph, DeviceBuffer& flush, cudaStream_t stream,
-                          int warmup, int repeat) {
+                          bench::TimedGraph* graph, bench::L2FlushBuffer& flush,
+                          cudaStream_t stream, int warmup, int repeat) {
     if (execution == Execution::Eager) {
         const auto launch = [&](cudaStream_t launch_stream) { data.launch(entry, launch_stream); };
         return cache == CacheState::Cold
@@ -706,13 +717,14 @@ void report(const Result& result) {
     const double pv_tflops     = result.pv_flops / seconds / 1.0e12;
     std::printf(
         "entry=%-6s geometry=%-14s kv=%-6s mapping=%-10s execution=%-5s cache=%-4s "
-        "B=%d W=%d contexts=%s valid=%s rows=%s "
+        "B=%d W=%d contexts=%s valid=%s rows=%s envelope=[%u,%u] "
         "workspace=%9zu peak=%9zu nodes=%zu calls=%d median=%10.3f us min=%10.3f us p95=%10.3f us "
         "logical_payload=%8.1f GB/s physical_payload=%8.1f GB/s math=%7.2f TFLOP/s\n",
         entry_name(result.entry), result.geometry.name, storage_name(result.storage),
         mapping_name(result.mapping), execution_name(result.execution), cache_name(result.cache),
         result.batch, result.tokens, result.row_contexts.c_str(), result.valid_columns.c_str(),
-        result.table_rows.c_str(), result.workspace_bytes, result.workspace_peak,
+        result.table_rows.c_str(), result.envelope.min_visible_keys,
+        result.envelope.max_visible_keys, result.workspace_bytes, result.workspace_peak,
         result.graph_nodes, result.graph_calls, result.timing.median_us, result.timing.min_us,
         result.timing.p95_us, logical_gbps, physical_gbps, tflops);
     std::printf("  vectors K=%.0f V=%.0f bytes cache logical=%.0f physical=%.0f bytes "
@@ -730,13 +742,13 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
     if (!path.parent_path().empty()) { std::filesystem::create_directories(path.parent_path()); }
     std::ofstream output(path);
     if (!output) { throw std::runtime_error("failed to open CSV output"); }
-    output
-        << "entry,geometry,kv_dtype,mapping,execution,cache,B,W,row_contexts,valid_columns,"
-           "table_rows,workspace_bytes,logical_bytes,physical_bytes,logical_cache_bytes,"
-           "key_vector_bytes,value_vector_bytes,physical_cache_bytes,qk_flops,pv_flops,"
-           "qk_full_op_tflops,pv_full_op_tflops,"
-           "unique_kv_bytes,"
-           "unique_kv_gbps,median_us,min_us,p95_us,graph_nodes,workspace_peak_bytes,graph_calls\n";
+    output << "entry,geometry,kv_dtype,mapping,execution,cache,B,W,row_contexts,valid_columns,"
+              "table_rows,workspace_bytes,logical_bytes,physical_bytes,logical_cache_bytes,"
+              "key_vector_bytes,value_vector_bytes,physical_cache_bytes,qk_flops,pv_flops,"
+              "qk_full_op_tflops,pv_full_op_tflops,"
+              "unique_kv_bytes,"
+              "unique_kv_gbps,median_us,min_us,p95_us,graph_nodes,workspace_peak_bytes,graph_calls,"
+              "envelope_min,envelope_max\n";
     for (const Result& result : results) {
         output << entry_name(result.entry) << ',' << result.geometry.name << ','
                << storage_name(result.storage) << ',' << mapping_name(result.mapping) << ','
@@ -752,14 +764,15 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
                << ',' << result.unique_kv_bytes << ',' << result.unique_kv_bytes / seconds / 1.0e9;
         output << ',' << result.timing.median_us << ',' << result.timing.min_us << ','
                << result.timing.p95_us << ',' << result.graph_nodes << ',' << result.workspace_peak
-               << ',' << result.graph_calls << '\n';
+               << ',' << result.graph_calls << ',' << result.envelope.min_visible_keys << ','
+               << result.envelope.max_visible_keys << '\n';
     }
 }
 
 void profile(Case& data, Entry entry, const Geometry& geometry, KvCacheStorage storage,
              const Options& options, std::int32_t batch, std::int32_t width,
              std::string_view contexts, std::string_view valid_columns, std::string_view table_rows,
-             DeviceBuffer& flush, cudaStream_t stream) {
+             bench::L2FlushBuffer& flush, cudaStream_t stream) {
     const Execution execution = options.execution;
     const CacheState cache = options.cache == CacheMode::Cold ? CacheState::Cold : CacheState::Warm;
     bench::TimedGraph graph;
@@ -795,12 +808,6 @@ void profile(Case& data, Entry entry, const Geometry& geometry, KvCacheStorage s
         data.launch(entry, stream);
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaProfilerStop());
-}
-
-std::vector<Geometry> selected_geometries(GeometryChoice choice) {
-    if (choice == GeometryChoice::H24Kv4) { return {kH24Kv4}; }
-    if (choice == GeometryChoice::H16Kv2) { return {kH16Kv2}; }
-    return {kH24Kv4, kH16Kv2};
 }
 
 std::vector<KvCacheStorage> selected_storages(KvChoice choice) {
@@ -858,10 +865,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         const Options options = parse_options(argc, argv);
-        cudaStream_t stream   = nullptr;
-        CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
-        const std::vector<Geometry> geometries     = selected_geometries(options.geometry);
+        DeviceContext device;
+        const auto execution = device.execution_view();
+        const auto stream    = execution.stream;
+        bench::L2FlushBuffer flush(kFlushBytes);
+        const std::vector<Geometry>& geometries    = options.geometries;
         const std::vector<KvCacheStorage> storages = selected_storages(options.kv);
 
         if (options.profile) {
@@ -874,13 +882,12 @@ int main(int argc, char** argv) {
                 options.row_contexts.empty() ? options.contexts.front() : 0;
             const RowProfile rows = make_row_profile(options, batch, width, context);
             Case data(geometry, storage, width, rows.contexts, rows.valid_columns, rows.table_rows,
-                      options.mapping);
+                      options.mapping, options.envelope_max, execution);
             const std::string context_name = profile_name(rows.contexts);
             const std::string valid_name   = profile_name(rows.valid_columns);
             const std::string table_name   = profile_name(rows.table_rows);
             profile(data, entry, geometry, storage, options, batch, width, context_name, valid_name,
                     table_name, flush, stream);
-            CUDA_CHECK(cudaStreamDestroy(stream));
             return 0;
         }
 
@@ -895,7 +902,8 @@ int main(int argc, char** argv) {
                             const RowProfile rows =
                                 make_row_profile(options, batch, tokens, context);
                             Case data(geometry, storage, tokens, rows.contexts, rows.valid_columns,
-                                      rows.table_rows, options.mapping);
+                                      rows.table_rows, options.mapping, options.envelope_max,
+                                      execution);
                             for (const Entry entry : {Entry::Append, Entry::Cached}) {
                                 if ((options.entry == Entry::Append && entry != Entry::Append) ||
                                     (options.entry == Entry::Cached && entry != Entry::Cached) ||
@@ -963,6 +971,7 @@ int main(int argc, char** argv) {
                                         result.graph_nodes =
                                             execution == Execution::Graph ? graph.nodes() : 0;
                                         result.workspace_peak = data.workspace_peak();
+                                        result.envelope       = data.envelope();
                                         result.graph_calls =
                                             execution == Execution::Graph ? options.graph_calls : 1;
                                         result.timing.median_us /= result.graph_calls;
@@ -979,10 +988,9 @@ int main(int argc, char** argv) {
             }
         }
         write_csv(options, results);
-        CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_causal_softmax_attention_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_causal_softmax_attention_bench: %s\n", error.what());
         return 1;
     }
 }

@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 namespace {
 std::vector<GraphExecutionProfile>
 graph_profiles_through(std::uint32_t max_frontier,
@@ -107,11 +107,18 @@ std::vector<GraphExecutionProfile> dflash_graph_profiles(SpeculativeBackend back
         const std::uint32_t target_max = static_cast<std::uint32_t>(std::min<std::uint64_t>(
             capacity, static_cast<std::uint64_t>(profile.max) + draft_window + 1ULL));
         const bool split_swa           = profile.max > 96U;
+        // The drafter's sliding attention runs direct (one kernel, no reduce) through 96 visible
+        // keys, and through 128 at 6+ rows of more than 8 query columns on a 2048-key window
+        // (sliding_window_attention_resolve_plan). The dense drafter queries its whole block (16
+        // columns) at every depth, so at 6+ rows the (96, 128] range may be direct while the
+        // ranges after it split: it gets a topology of its own.
+        const bool wide_direct_swa = batch_size >= 6 && split_swa && profile.max <= 128U;
         const bool chunked_target =
             dflash_target_uses_chunked_small_t(draft_window, batch_size, target_max);
-        profile.topology_class = (chunked_target ? 2U : 0U) | (split_swa ? 1U : 0U);
+        profile.topology_class = (chunked_target ? 2U : 0U) | (split_swa ? 1U : 0U) |
+                                 (wide_direct_swa ? 4U : 0U);
     }
     return profiles;
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

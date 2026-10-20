@@ -36,7 +36,7 @@ int expect_size(std::size_t actual, std::size_t expected, const char* label) {
     return 1;
 }
 
-int expect_shape(const ninfer::Tensor& tensor, std::int32_t d0, std::int32_t d1, std::int32_t d2,
+int expect_shape(const ninferno::Tensor& tensor, std::int32_t d0, std::int32_t d1, std::int32_t d2,
                  std::int32_t d3, const char* label) {
     if (tensor.ne[0] == d0 && tensor.ne[1] == d1 && tensor.ne[2] == d2 && tensor.ne[3] == d3) {
         return 0;
@@ -54,9 +54,9 @@ int expect_throw(Fn&& fn, const char* label) {
     return 1;
 }
 
-std::size_t record_bytes(const ninfer::GdnReplayRecordSpec& spec) {
-    ninfer::LayoutBuilder builder;
-    (void)ninfer::plan_gdn_replay_records(builder, spec);
+std::size_t record_bytes(const ninferno::GdnReplayRecordSpec& spec) {
+    ninferno::LayoutBuilder builder;
+    (void)ninferno::plan_gdn_replay_records(builder, spec);
     return builder.finish(256);
 }
 
@@ -65,7 +65,7 @@ std::size_t record_bytes(const ninfer::GdnReplayRecordSpec& spec) {
 int main() {
     int failures = 0;
 
-    const ninfer::GdnReplayRecordSpec spec{
+    const ninferno::GdnReplayRecordSpec spec{
         .layers          = 3,
         .record_capacity = 5,
         .width           = 4,
@@ -75,20 +75,20 @@ int main() {
         .key_dim         = 128,
         .value_dim       = 128,
     };
-    ninfer::LayoutBuilder builder;
-    const auto layout       = ninfer::plan_gdn_replay_records(builder, spec);
+    ninferno::LayoutBuilder builder;
+    const auto layout       = ninferno::plan_gdn_replay_records(builder, spec);
     const std::size_t bytes = builder.finish(256);
     auto backing            = make_backing(bytes);
-    const ninfer::GdnReplayRecords records({backing.get(), bytes}, layout);
+    const ninferno::GdnReplayRecords records({backing.get(), bytes}, layout);
 
     failures += expect_shape(records.conv, 256, 4, 15, 1, "conv plane");
     failures += expect_shape(records.key, 128, 2, 4, 15, "key plane");
     failures += expect_shape(records.value, 128, 6, 4, 15, "value plane");
     failures += expect_shape(records.gate, 2, 6, 4, 15, "gate plane");
-    failures += expect(records.conv.dtype == ninfer::DType::BF16, "conv dtype differs");
-    failures += expect(records.key.dtype == ninfer::DType::BF16, "key dtype differs");
-    failures += expect(records.value.dtype == ninfer::DType::BF16, "value dtype differs");
-    failures += expect(records.gate.dtype == ninfer::DType::FP32, "gate dtype differs");
+    failures += expect(records.conv.dtype == ninferno::DType::BF16, "conv dtype differs");
+    failures += expect(records.key.dtype == ninferno::DType::BF16, "key dtype differs");
+    failures += expect(records.value.dtype == ninferno::DType::BF16, "value dtype differs");
+    failures += expect(records.gate.dtype == ninferno::DType::FP32, "gate dtype differs");
     failures += expect(reinterpret_cast<std::uintptr_t>(records.conv.data) % 256 == 0,
                        "conv plane is not aligned");
     failures += expect(reinterpret_cast<std::uintptr_t>(records.key.data) % 256 == 0,
@@ -150,8 +150,8 @@ int main() {
 
     failures += expect_throw(
         [&] {
-            ninfer::LayoutBuilder invalid;
-            (void)ninfer::plan_gdn_replay_records(invalid, {.layers          = 1,
+            ninferno::LayoutBuilder invalid;
+            (void)ninferno::plan_gdn_replay_records(invalid, {.layers          = 1,
                                                             .record_capacity = 9,
                                                             .width           = 2,
                                                             .conv_channels   = 1,
@@ -162,8 +162,8 @@ int main() {
         },
         "record capacity above eight");
 
-    ninfer::LayoutBuilder state_builder;
-    const auto state_layout = ninfer::plan_linear_attention_state_pool(
+    ninferno::LayoutBuilder state_builder;
+    const auto state_layout = ninferno::plan_linear_attention_state_pool(
         state_builder, {.layers         = 3,
                         .conv_channels  = 256,
                         .conv_width     = 3,
@@ -171,10 +171,10 @@ int main() {
                         .value_head_dim = 128,
                         .key_head_dim   = 128,
                         .slot_count     = 7,
-                        .conv_dtype     = ninfer::DType::BF16});
+                        .conv_dtype     = ninferno::DType::BF16});
     const std::size_t state_bytes = state_builder.finish(256);
     auto state_backing            = make_backing(state_bytes);
-    ninfer::LinearAttentionStatePool state({state_backing.get(), state_bytes}, state_layout);
+    ninferno::LinearAttentionStatePool state({state_backing.get(), state_bytes}, state_layout);
     const auto all = state.all_layers_view();
     failures +=
         expect(all.conv_layer0.data == state.layer_view(0).conv.data, "conv layer-0 base differs");

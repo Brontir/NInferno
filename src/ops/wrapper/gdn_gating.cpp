@@ -1,6 +1,7 @@
-// ninfer::ops - gdn_gating wrapper: public api validation and launcher dispatch.
-#include "ninfer/ops/gdn_gating.h"
+// ninferno::ops - gdn_gating wrapper: public api validation and launcher dispatch.
+#include "ninferno/ops/gdn_gating.h"
 
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/gdn_gating.h" // detail::gdn_gating_launch
 
 #include <cstdint>
@@ -8,29 +9,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t, const char* label) {
-    bool has_zero = false;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument(std::string("gdn_gating: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { has_zero = true; }
-    }
-    if (has_zero) { return 0; }
-
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("gdn_gating: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
 
 void require_gate_shape(const Tensor& t, const char* label) {
     if (t.ne[0] != 48 || t.ne[2] != 1 || t.ne[3] != 1) {
@@ -68,12 +48,12 @@ void gdn_gating(const Tensor& a, const Tensor& b, const Tensor& A_log, const Ten
         throw std::invalid_argument("gdn_gating: g/beta must be FP32");
     }
 
-    const std::int64_t n = numel_allow_zero(a, "a");
-    (void)numel_allow_zero(b, "b");
-    (void)numel_allow_zero(A_log, "A_log");
-    (void)numel_allow_zero(dt_bias, "dt_bias");
-    (void)numel_allow_zero(g, "g");
-    (void)numel_allow_zero(beta, "beta");
+    const std::int64_t n = numel_allow_zero(a, "gdn_gating", "a");
+    (void)numel_allow_zero(b, "gdn_gating", "b");
+    (void)numel_allow_zero(A_log, "gdn_gating", "A_log");
+    (void)numel_allow_zero(dt_bias, "gdn_gating", "dt_bias");
+    (void)numel_allow_zero(g, "gdn_gating", "g");
+    (void)numel_allow_zero(beta, "gdn_gating", "beta");
 
     require_gate_shape(a, "a");
     require_gate_shape(b, "b");
@@ -98,4 +78,4 @@ void gdn_gating(const Tensor& a, const Tensor& b, const Tensor& A_log, const Ten
     detail::gdn_gating_launch(a, b, A_log, dt_bias, g, beta, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

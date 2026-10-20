@@ -1,5 +1,5 @@
 {
-  "corpus_id": "ninfer-ppl-1m-v1",
+  "corpus_id": "ninferno-ppl-1m-v1",
   "streams": [
     {
       "id": "wikitext-00",
@@ -62,24 +62,24 @@
       "path": "data/zhwiki/03.txt"
     },
     {
-      "id": "ninfer-00",
-      "domain": "ninfer_code",
-      "path": "data/ninfer/00.txt"
+      "id": "source-00",
+      "domain": "project_source_code",
+      "path": "data/source/00.txt"
     },
     {
-      "id": "ninfer-01",
-      "domain": "ninfer_code",
-      "path": "data/ninfer/01.txt"
+      "id": "source-01",
+      "domain": "project_source_code",
+      "path": "data/source/01.txt"
     },
     {
-      "id": "ninfer-02",
-      "domain": "ninfer_code",
-      "path": "data/ninfer/02.txt"
+      "id": "source-02",
+      "domain": "project_source_code",
+      "path": "data/source/02.txt"
     },
     {
-      "id": "ninfer-03",
-      "domain": "ninfer_code",
-      "path": "data/ninfer/03.txt"
+      "id": "source-03",
+      "domain": "project_source_code",
+      "path": "data/source/03.txt"
     }
   ],
   "modes": {
@@ -87,7 +87,7 @@
       "wikitext-00",
       "pg19-00",
       "zhwiki-00",
-      "ninfer-00"
+      "source-00"
     ],
     "full": [
       "wikitext-00",
@@ -102,10 +102,10 @@
       "zhwiki-01",
       "zhwiki-02",
       "zhwiki-03",
-      "ninfer-00",
-      "ninfer-01",
-      "ninfer-02",
-      "ninfer-03"
+      "source-00",
+      "source-01",
+      "source-02",
+      "source-03"
     ]
   }
 }

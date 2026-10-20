@@ -1,15 +1,15 @@
-#include "core/weight.h"
-#include "ninfer/ops/gated_delta_net.h"
-#include "ninfer/ops/gdn_input_proj.h"
-#include "ninfer/ops/gdn_replay.h"
+#include "ninferno/ops/gated_delta_net.h"
+#include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/gdn_replay.h"
 
+#include "core/decode_graph.h"
+#include "core/device.h"
 #include "core/gdn_replay_records.h"
 #include "core/layout.h"
 #include "core/linear_attention_state.h"
-#include "core/device.h"
-#include "core/decode_graph.h"
-#include <cstring>
+#include "core/weight.h"
 #include "ops/input_projection_test_common.h"
+#include "ops/linear_attention/gated_delta_net/launch.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -19,12 +19,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -271,7 +272,6 @@ int run_case(const FoldProfile profile, std::int32_t width, std::int32_t rows,
                               {kStateDim, kStateDim, profile.value_heads});
     Tensor output(out.p, DType::BF16, {kStateDim, profile.value_heads, width, 1});
     constexpr float kScale = 1.0F / std::sqrt(128.0F);
-    WorkspaceArena reference_workspace(256);
 
     for (std::int32_t layer = 0; layer < profile.layers; ++layer) {
         const GdnReplayRecordLayer layer_records = records.layer(layer, rows);
@@ -331,9 +331,9 @@ int run_case(const FoldProfile profile, std::int32_t width, std::int32_t rows,
                                    DType::FP32, {profile.value_heads, 1});
                 Tensor output_token =
                     output.slice(2, token, 1).view({kStateDim, profile.value_heads, 1});
-                ops::gated_delta_net(query, key, value, g_tensor, beta_tensor, kScale, true,
-                                     reference_workspace, local_state_tensor, output_token,
-                                     nullptr);
+                ops::detail::gated_delta_net::launch_recurrent(
+                    query, key, value, g_tensor, beta_tensor, kScale, true, local_state_tensor,
+                    output_token, nullptr);
                 if (token + 1 == commit)
                     cuda_check(cudaMemcpyAsync(expected, local_state.p, recurrent_slot_bytes,
                                                cudaMemcpyDeviceToDevice, nullptr),
@@ -355,9 +355,12 @@ int run_case(const FoldProfile profile, std::int32_t width, std::int32_t rows,
     if (width == 16 && rows == 8) {
         cuda_synchronize();
         DeviceBuffer original(state_bytes);
-        cuda_check(cudaMemcpy(original.p, state_base, state_bytes, cudaMemcpyDeviceToDevice),
-                   "save graph initial state");
         DeviceContext context;
+        // On context.stream, like the restores that read `original`: that stream is non-blocking,
+        // so a legacy-stream cudaMemcpy would not be ordered before them.
+        cuda_check(cudaMemcpyAsync(original.p, state_base, state_bytes, cudaMemcpyDeviceToDevice,
+                                   context.stream),
+                   "save graph initial state");
         DecodeGraphDefinition definition;
         DecodeGraphExecutable graph;
         definition.capture(context.stream, [&] { fold_plan.execute(fold_rows, context.stream); });
@@ -509,8 +512,8 @@ int run_case(const FoldProfile profile, std::int32_t width, std::int32_t rows,
 }
 
 int run_record_fold_rounds() {
-    using ninfer::test::input_projection::DevicePackedWeight;
-    using ninfer::test::input_projection::make_bf16_activation;
+    using ninferno::test::input_projection::DevicePackedWeight;
+    using ninferno::test::input_projection::make_bf16_activation;
 
     constexpr FoldProfile kProfile{48, 48, 10240};
     constexpr std::int32_t kHidden       = 5120;
@@ -772,6 +775,13 @@ int main() {
     failures += run_case({30, 32, 8192}, 6, 1, {6}, 1841U);
     failures += run_case({30, 32, 8192}, 6, 2, {2, 5}, 1851U);
     failures += run_case({30, 32, 8192}, 16, 8, {0, 1, 2, 3, 16, 7, 12, 5}, 1861U);
+    // Runtime fold geometry (stacks without a compiled instance): Qwen3.5 0.8B/2B (18 GDN
+    // layers, 16/16 heads, 6144 conv channels) and 4B/9B (24 layers, 16/32 heads, 8192).
+    failures += run_case({18, 16, 6144}, 2, 1, {2}, 1871U);
+    failures += run_case({18, 16, 6144}, 6, 4, {0, 1, 4, 6}, 1873U, true);
+    failures += run_case({18, 16, 6144}, 16, 8, {0, 1, 2, 3, 16, 7, 12, 5}, 1875U);
+    failures += run_case({24, 32, 8192}, 4, 2, {3, 4}, 1877U);
+    failures += run_case({24, 32, 8192}, 16, 8, {16, 0, 1, 2, 9, 11, 13, 15}, 1879U, true);
     failures += run_record_fold_rounds();
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_replay_fold\n";
     return failures == 0 ? 0 : 1;

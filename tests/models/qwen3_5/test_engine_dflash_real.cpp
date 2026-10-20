@@ -1,4 +1,5 @@
-#include "ninfer/engine.h"
+#include "ninferno/engine.h"
+#include "real_artifact.h"
 #include "speculative_page_boundary.h"
 
 #include <algorithm>
@@ -12,42 +13,42 @@
 
 namespace {
 
-ninfer::EngineOptions base_engine_options(const char* artifact) {
-    ninfer::EngineOptions options;
+ninferno::EngineOptions base_engine_options(const char* artifact) {
+    ninferno::EngineOptions options;
     options.artifact_path  = artifact;
     options.max_context    = 128;
-    options.kv_capacity    = ninfer::KvCapacityPolicy::explicit_capacity(128);
+    options.kv_capacity    = ninferno::KvCapacityPolicy::explicit_capacity(128);
     options.prefill_chunk  = 128;
-    options.kv_cache       = ninfer::KvCacheStorage::BFloat16;
+    options.kv_cache       = ninferno::KvCacheStorage::BFloat16;
     options.use_cuda_graph = false;
     options.enable_vision  = false;
     return options;
 }
 
-ninfer::EngineOptions dflash_engine_options(const char* artifact, ninfer::ProposalHead proposal,
+ninferno::EngineOptions dflash_engine_options(const char* artifact, ninferno::ProposalHead proposal,
                                             std::uint32_t max_context) {
-    ninfer::EngineOptions options     = base_engine_options(artifact);
+    ninferno::EngineOptions options     = base_engine_options(artifact);
     options.max_context               = max_context;
-    options.kv_capacity               = ninfer::KvCapacityPolicy::explicit_capacity(max_context);
-    options.speculative.backend       = ninfer::SpeculativeBackend::DFlash;
+    options.kv_capacity               = ninferno::KvCapacityPolicy::explicit_capacity(max_context);
+    options.speculative.backend       = ninferno::SpeculativeBackend::DFlash;
     options.speculative.draft_tokens  = 3;
-    options.speculative.proposal_head = proposal;
+    options.speculative.proposal_head = ninferno::test::proposal_head(artifact, proposal);
     options.use_cuda_graph            = true;
     options.context_cache.device_state_slots = 2;
     return options;
 }
 
-ninfer::EngineOptions dflash_vision_engine_options(const char* artifact) {
-    ninfer::EngineOptions options =
-        dflash_engine_options(artifact, ninfer::ProposalHead::Optimized, 4096);
+ninferno::EngineOptions dflash_vision_engine_options(const char* artifact) {
+    ninferno::EngineOptions options =
+        dflash_engine_options(artifact, ninferno::ProposalHead::Optimized, 4096);
     options.prefill_chunk   = 1024;
     options.max_concurrency = 2;
     options.enable_vision   = true;
     return options;
 }
 
-ninfer::RequestOptions greedy_options(std::uint32_t outputs, bool reuse) {
-    ninfer::RequestOptions options;
+ninferno::RequestOptions greedy_options(std::uint32_t outputs, bool reuse) {
+    ninferno::RequestOptions options;
     options.execution.requested_output_tokens = outputs;
     options.execution.sampling.temperature    = 0.0F;
     options.execution.allow_prefix_reuse      = reuse;
@@ -67,107 +68,108 @@ std::vector<std::uint8_t> gradient_ppm() {
     return ppm;
 }
 
-ninfer::PromptInput media_conversation(ninfer::MediaKind kind, std::string session = {}) {
-    ninfer::MessagePart media;
-    media.kind              = ninfer::MessagePartKind::Media;
+ninferno::PromptInput media_conversation(ninferno::MediaKind kind, std::string session = {}) {
+    ninferno::MessagePart media;
+    media.kind              = ninferno::MessagePartKind::Media;
     media.media.kind        = kind;
     media.media.bytes       = gradient_ppm();
     media.media.media_type  = "image/x-portable-pixmap";
-    media.media.source_name = kind == ninfer::MediaKind::Image ? "inline.ppm" : "single-frame.ppm";
+    media.media.source_name =
+        kind == ninferno::MediaKind::Image ? "inline.ppm" : "single-frame.ppm";
 
-    ninfer::ChatMessage user;
-    user.role = ninfer::ChatRole::User;
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
     user.parts.push_back(std::move(media));
-    user.parts.push_back(ninfer::MessagePart{.kind  = ninfer::MessagePartKind::Text,
+    user.parts.push_back(ninferno::MessagePart{.kind  = ninferno::MessagePartKind::Text,
                                              .text  = "Describe the visible pattern briefly.",
                                              .media = {}});
 
-    ninfer::PromptInput input;
+    ninferno::PromptInput input;
     input.messages.push_back(std::move(user));
     input.options.enable_thinking = false;
     if (!session.empty()) {
         input.context_cache.session_key = std::move(session);
-        input.context_cache.retention   = ninfer::CacheRetentionHint::LiveSession;
+        input.context_cache.retention   = ninferno::CacheRetentionHint::LiveSession;
     }
     return input;
 }
 
-ninfer::PromptInput media_followup(const ninfer::GenerationResult& first) {
-    ninfer::PromptInput input =
-        media_conversation(ninfer::MediaKind::Image, "dflash-vision-prefix-real");
-    ninfer::ChatMessage assistant;
-    assistant.role              = ninfer::ChatRole::Assistant;
+ninferno::PromptInput media_followup(const ninferno::GenerationResult& first) {
+    ninferno::PromptInput input =
+        media_conversation(ninferno::MediaKind::Image, "dflash-vision-prefix-real");
+    ninferno::ChatMessage assistant;
+    assistant.role              = ninferno::ChatRole::Assistant;
     assistant.reasoning_content = first.reasoning;
-    assistant.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = first.content, .media = {}});
+    assistant.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = first.content, .media = {}});
     input.messages.push_back(std::move(assistant));
 
-    ninfer::ChatMessage user;
-    user.role = ninfer::ChatRole::User;
-    user.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = "Give one more detail.", .media = {}});
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "Give one more detail.", .media = {}});
     input.messages.push_back(std::move(user));
     return input;
 }
 
-ninfer::PromptInput initial_conversation() {
-    ninfer::PromptInput input;
+ninferno::PromptInput initial_conversation() {
+    ninferno::PromptInput input;
     input.options.enable_thinking   = false;
     input.context_cache.session_key = "dflash-boundary-real";
-    input.context_cache.retention   = ninfer::CacheRetentionHint::LiveSession;
+    input.context_cache.retention   = ninferno::CacheRetentionHint::LiveSession;
 
-    ninfer::ChatMessage user;
-    user.role = ninfer::ChatRole::User;
-    user.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = "Name one prime number.", .media = {}});
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "Name one prime number.", .media = {}});
     input.messages.push_back(std::move(user));
     return input;
 }
 
-ninfer::PromptInput followup_conversation(const ninfer::GenerationResult& first,
+ninferno::PromptInput followup_conversation(const ninferno::GenerationResult& first,
                                           std::string followup) {
-    ninfer::PromptInput input = initial_conversation();
-    ninfer::ChatMessage assistant;
-    assistant.role              = ninfer::ChatRole::Assistant;
+    ninferno::PromptInput input = initial_conversation();
+    ninferno::ChatMessage assistant;
+    assistant.role              = ninferno::ChatRole::Assistant;
     assistant.reasoning_content = first.reasoning;
-    assistant.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = first.content, .media = {}});
+    assistant.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = first.content, .media = {}});
     input.messages.push_back(std::move(assistant));
 
-    ninfer::ChatMessage next;
-    next.role = ninfer::ChatRole::User;
-    next.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = std::move(followup), .media = {}});
+    ninferno::ChatMessage next;
+    next.role = ninferno::ChatRole::User;
+    next.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = std::move(followup), .media = {}});
     input.messages.push_back(std::move(next));
     return input;
 }
 
-ninfer::PromptInput altered_history_after_boundary() {
-    ninfer::PromptInput input = initial_conversation();
-    ninfer::ChatMessage assistant;
-    assistant.role = ninfer::ChatRole::Assistant;
-    assistant.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = "This history was changed.", .media = {}});
+ninferno::PromptInput altered_history_after_boundary() {
+    ninferno::PromptInput input = initial_conversation();
+    ninferno::ChatMessage assistant;
+    assistant.role = ninferno::ChatRole::Assistant;
+    assistant.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "This history was changed.", .media = {}});
     input.messages.push_back(std::move(assistant));
 
-    ninfer::ChatMessage next;
-    next.role = ninfer::ChatRole::User;
-    next.parts.push_back(ninfer::MessagePart{
-        .kind = ninfer::MessagePartKind::Text, .text = "Continue briefly.", .media = {}});
+    ninferno::ChatMessage next;
+    next.role = ninferno::ChatRole::User;
+    next.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "Continue briefly.", .media = {}});
     input.messages.push_back(std::move(next));
     return input;
 }
 
-int verify_dflash_load(const ninfer::Engine& engine) {
-    const ninfer::LoadSummary load = engine.load_summary();
+int verify_dflash_load(const ninferno::Engine& engine) {
+    const ninferno::LoadSummary load = engine.load_summary();
     if (load.architecture != "Qwen3_5MoeForCausalLM" || load.model_name.empty() ||
         load.host_to_device_bytes == 0 || load.artifact_bytes_read < load.host_to_device_bytes) {
         std::cerr << "DFlash Engine materialized an invalid artifact payload: target="
                   << load.architecture << " weights=" << load.prefill_signature << '\n';
         return 1;
     }
-    const ninfer::MemorySummary memory = engine.memory_summary();
-    if (memory.max_context != 4352 || memory.kv_cache != ninfer::KvCacheStorage::BFloat16 ||
+    const ninferno::MemorySummary memory = engine.memory_summary();
+    if (memory.max_context != 4352 || memory.kv_cache != ninferno::KvCacheStorage::BFloat16 ||
         memory.kv_payload_bytes == 0 || memory.weights.capacity_bytes == 0 ||
         memory.weights.used_bytes == 0 ||
         memory.weights.used_bytes > memory.weights.capacity_bytes ||
@@ -181,20 +183,21 @@ int verify_dflash_load(const ninfer::Engine& engine) {
     return 0;
 }
 
-int exercise_partial_terminal(ninfer::Engine& engine, const std::vector<ninfer::TokenId>& prompt,
-                              const std::vector<ninfer::TokenId>& reference) {
+int exercise_partial_terminal(ninferno::Engine& engine,
+                              const std::vector<ninferno::TokenId>& prompt,
+                              const std::vector<ninferno::TokenId>& reference) {
     for (std::size_t stop_index = 1; stop_index < reference.size(); ++stop_index) {
-        const ninfer::TokenId stop = reference[stop_index];
+        const ninferno::TokenId stop = reference[stop_index];
         if (std::find(reference.begin(),
                       reference.begin() + static_cast<std::ptrdiff_t>(stop_index),
                       stop) != reference.begin() + static_cast<std::ptrdiff_t>(stop_index)) {
             continue;
         }
-        ninfer::RequestOptions options = greedy_options(24, true);
+        ninferno::RequestOptions options = greedy_options(24, true);
         options.stop.token_ids.push_back(stop);
-        const ninfer::GenerationResult stopped =
+        const ninferno::GenerationResult stopped =
             engine.generate(engine.prepare_tokens(prompt), options);
-        if (stopped.finish_reason != ninfer::FinishReason::StopToken) { continue; }
+        if (stopped.finish_reason != ninferno::FinishReason::StopToken) { continue; }
         if (stopped.generated_token_ids.empty() || stopped.generated_token_ids.back() != stop) {
             std::cerr << "partial DFlash terminal did not end at the configured stop token\n";
             return 1;
@@ -205,11 +208,11 @@ int exercise_partial_terminal(ninfer::Engine& engine, const std::vector<ninfer::
                                              stopped.speculative.fallback_steps;
         if (stopped.generated_token_ids.size() >= fully_licensed) { continue; }
 
-        std::vector<ninfer::TokenId> continuation = prompt;
+        std::vector<ninferno::TokenId> continuation = prompt;
         continuation.insert(continuation.end(), stopped.generated_token_ids.begin(),
                             stopped.generated_token_ids.end());
         continuation.push_back(198);
-        const ninfer::GenerationResult reused = engine.generate(
+        const ninferno::GenerationResult reused = engine.generate(
             engine.prepare_tokens(std::move(continuation)), greedy_options(2, true));
         const std::uint32_t expected_reuse =
             static_cast<std::uint32_t>(prompt.size() + stopped.generated_token_ids.size() - 1);
@@ -226,15 +229,15 @@ int exercise_partial_terminal(ninfer::Engine& engine, const std::vector<ninfer::
     return 1;
 }
 
-int exercise_boundary_restore(ninfer::Engine& engine) {
-    const ninfer::GenerationResult first =
+int exercise_boundary_restore(ninferno::Engine& engine) {
+    const ninferno::GenerationResult first =
         engine.generate(engine.prepare(initial_conversation()), greedy_options(2, true));
     if (first.generated_token_ids.size() != 2) {
         std::cerr << "DFlash boundary fixture did not establish resident state\n";
         return 1;
     }
 
-    const ninfer::GenerationResult restored =
+    const ninferno::GenerationResult restored =
         engine.generate(engine.prepare(followup_conversation(first, "Answer with one digit.")),
                         greedy_options(4, true));
     if (restored.reused_prompt_tokens == 0 || restored.generated_token_ids.size() != 4) {
@@ -245,7 +248,7 @@ int exercise_boundary_restore(ninfer::Engine& engine) {
                   << " outputs=" << restored.generated_token_ids.size() << '\n';
         return 1;
     }
-    if (restored.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+    if (restored.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         restored.speculative.rounds == 0) {
         std::cerr << "DFlash assistant-boundary restore did not return to speculative decode\n";
         return 1;
@@ -253,21 +256,21 @@ int exercise_boundary_restore(ninfer::Engine& engine) {
     return 0;
 }
 
-int exercise_long_boundary_restore(ninfer::Engine& engine) {
+int exercise_long_boundary_restore(ninferno::Engine& engine) {
     constexpr std::uint32_t generated_tokens = 4100;
-    const ninfer::GenerationResult long_run  = engine.generate(
+    const ninferno::GenerationResult long_run  = engine.generate(
         engine.prepare(initial_conversation()), greedy_options(generated_tokens, true));
     if (long_run.generated_token_ids.size() != generated_tokens) {
         std::cerr << "DFlash long-restore fixture did not cross the cyclic-cache window\n";
         return 1;
     }
     const std::uint32_t resident_frontier = long_run.prompt.prompt_tokens + generated_tokens - 1;
-    const ninfer::GenerationResult restored =
+    const ninferno::GenerationResult restored =
         engine.generate(engine.prepare(altered_history_after_boundary()), greedy_options(2, true));
     if (restored.reused_prompt_tokens == 0 ||
         resident_frontier - restored.reused_prompt_tokens <= 4096 ||
         restored.generated_token_ids.size() != 2 ||
-        restored.speculative.backend != ninfer::SpeculativeBackend::DFlash) {
+        restored.speculative.backend != ninferno::SpeculativeBackend::DFlash) {
         std::cerr << "DFlash long-distance restore did not use the saved cyclic cache: resident="
                   << resident_frontier << " restored=" << restored.reused_prompt_tokens << '\n';
         return 1;
@@ -275,10 +278,53 @@ int exercise_long_boundary_restore(ninfer::Engine& engine) {
     return 0;
 }
 
-int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::TokenId>& text_prompt) {
+// A capture forks the prefilling lane onto a new StateImage in the middle of the prompt. The
+// prefill's drafter-context append must follow the lane: a cold run that captures and a restore
+// at the captured frontier draft the same tokens.
+ninferno::PromptInput drafted_prompt(const std::string& text) {
+    ninferno::PromptInput input;
+    input.options.enable_thinking = false;
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(
+        ninferno::MessagePart{.kind = ninferno::MessagePartKind::Text, .text = text, .media = {}});
+    input.messages.push_back(std::move(user));
+    return input;
+}
+
+bool same_drafts(const ninferno::GenerationResult& left, const ninferno::GenerationResult& right) {
+    return left.generated_token_ids == right.generated_token_ids &&
+           left.speculative.rounds == right.speculative.rounds &&
+           left.speculative.accepted_per_position == right.speculative.accepted_per_position;
+}
+
+int exercise_capture_restore_drafts(const char* artifact) {
+    ninferno::EngineOptions options =
+        dflash_engine_options(artifact, ninferno::ProposalHead::Optimized, 4096);
+    ninferno::Engine engine(std::move(options));
+    const ninferno::PromptInput prompt = drafted_prompt("Write two sentences about lighthouses.");
+    const ninferno::GenerationResult cold =
+        engine.generate(engine.prepare(prompt), greedy_options(48, true));
+    const ninferno::GenerationResult restored =
+        engine.generate(engine.prepare(prompt), greedy_options(48, true));
+    if (restored.reused_prompt_tokens == 0 || cold.speculative.rounds == 0) {
+        std::cerr << "DFlash capture fixture did not restore its checkpoint: reused="
+                  << restored.reused_prompt_tokens << '\n';
+        return 1;
+    }
+    if (!same_drafts(cold, restored)) {
+        std::cerr << "DFlash restore drafts differently from the cold run that captured it: rounds "
+                  << cold.speculative.rounds << " vs " << restored.speculative.rounds << '\n';
+        return 1;
+    }
+    return 0;
+}
+
+int exercise_vision_dflash(const char* artifact,
+                           const std::vector<ninferno::TokenId>& text_prompt) {
     constexpr std::uint32_t outputs = 12;
-    ninfer::Engine engine(dflash_vision_engine_options(artifact));
-    const ninfer::MemorySummary before = engine.memory_summary();
+    ninferno::Engine engine(dflash_vision_engine_options(artifact));
+    const ninferno::MemorySummary before = engine.memory_summary();
     if (!before.vision_workspace || before.workspace.capacity_bytes == 0 ||
         before.vision_workspace->general_capacity_bytes == 0 ||
         before.vision_workspace->handoff_capacity_bytes == 0) {
@@ -286,12 +332,12 @@ int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::Token
         return 1;
     }
 
-    const ninfer::GenerationResult image =
-        engine.generate(engine.prepare(media_conversation(ninfer::MediaKind::Image)),
+    const ninferno::GenerationResult image =
+        engine.generate(engine.prepare(media_conversation(ninferno::MediaKind::Image)),
                         greedy_options(outputs, false));
     if (!image.prompt.has_media || image.generated_token_ids.size() != outputs ||
-        image.finish_reason != ninfer::FinishReason::OutputLimit ||
-        image.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+        image.finish_reason != ninferno::FinishReason::OutputLimit ||
+        image.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         image.speculative.rounds == 0 || !(image.timings.vision_seconds > 0.0)) {
         std::cerr << "DFlash image generation did not complete through speculative decode: outputs="
                   << image.generated_token_ids.size() << " rounds=" << image.speculative.rounds
@@ -302,12 +348,12 @@ int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::Token
         return 1;
     }
 
-    const ninfer::GenerationResult video =
-        engine.generate(engine.prepare(media_conversation(ninfer::MediaKind::Video)),
+    const ninferno::GenerationResult video =
+        engine.generate(engine.prepare(media_conversation(ninferno::MediaKind::Video)),
                         greedy_options(outputs, false));
     if (!video.prompt.has_media || video.generated_token_ids.size() != outputs ||
-        video.finish_reason != ninfer::FinishReason::OutputLimit ||
-        video.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+        video.finish_reason != ninferno::FinishReason::OutputLimit ||
+        video.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         video.speculative.rounds == 0 || !(video.timings.vision_seconds > 0.0)) {
         std::cerr << "DFlash video generation did not complete through speculative decode: outputs="
                   << video.generated_token_ids.size() << " rounds=" << video.speculative.rounds
@@ -317,40 +363,41 @@ int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::Token
 
     auto text_request =
         engine.submit(engine.prepare_tokens(text_prompt), greedy_options(outputs, false));
-    auto image_request = engine.submit(engine.prepare(media_conversation(ninfer::MediaKind::Image)),
-                                       greedy_options(outputs, false));
-    const ninfer::GenerationResult mixed_text  = text_request.wait();
-    const ninfer::GenerationResult mixed_image = image_request.wait();
+    auto image_request =
+        engine.submit(engine.prepare(media_conversation(ninferno::MediaKind::Image)),
+                      greedy_options(outputs, false));
+    const ninferno::GenerationResult mixed_text  = text_request.wait();
+    const ninferno::GenerationResult mixed_image = image_request.wait();
     if (mixed_text.generated_token_ids.size() != outputs ||
         mixed_image.generated_token_ids.size() != outputs ||
-        mixed_text.finish_reason != ninfer::FinishReason::OutputLimit ||
-        mixed_image.finish_reason != ninfer::FinishReason::OutputLimit ||
+        mixed_text.finish_reason != ninferno::FinishReason::OutputLimit ||
+        mixed_image.finish_reason != ninferno::FinishReason::OutputLimit ||
         mixed_text.prompt.has_media || !mixed_image.prompt.has_media ||
-        mixed_text.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
-        mixed_image.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+        mixed_text.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
+        mixed_image.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         mixed_text.speculative.rounds == 0 || mixed_image.speculative.rounds == 0 ||
         mixed_text.timings.vision_seconds != 0.0 || !(mixed_image.timings.vision_seconds > 0.0)) {
         std::cerr << "mixed text/Vision DFlash CUDA Graph batch did not complete independently\n";
         return 1;
     }
 
-    const ninfer::GenerationResult first = engine.generate(
-        engine.prepare(media_conversation(ninfer::MediaKind::Image, "dflash-vision-prefix-real")),
+    const ninferno::GenerationResult first = engine.generate(
+        engine.prepare(media_conversation(ninferno::MediaKind::Image, "dflash-vision-prefix-real")),
         greedy_options(4, true));
     if (!first.prompt.has_media || first.generated_token_ids.size() != 4 ||
-        first.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+        first.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         first.speculative.rounds == 0 || !(first.timings.vision_seconds > 0.0)) {
         std::cerr << "retained DFlash Vision prefix did not complete speculative decode\n";
         return 1;
     }
-    const ninfer::GenerationResult reused =
+    const ninferno::GenerationResult reused =
         engine.generate(engine.prepare(media_followup(first)), greedy_options(4, true));
-    const ninfer::GenerationResult fresh =
+    const ninferno::GenerationResult fresh =
         engine.generate(engine.prepare(media_followup(first)), greedy_options(4, false));
     if (reused.reused_prompt_tokens == 0 || reused.timings.vision_seconds != 0.0 ||
         reused.generated_token_ids.size() != 4 || fresh.generated_token_ids.size() != 4 ||
-        reused.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
-        fresh.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+        reused.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
+        fresh.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         reused.speculative.rounds == 0 || fresh.speculative.rounds == 0 ||
         !(fresh.timings.vision_seconds > 0.0)) {
         std::cerr << "DFlash multimodal continuation did not preserve reusable context: reused="
@@ -359,7 +406,7 @@ int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::Token
         return 1;
     }
 
-    const ninfer::MemorySummary after = engine.memory_summary();
+    const ninferno::MemorySummary after = engine.memory_summary();
     if (!after.vision_workspace || after.vision_workspace->handoff_active_bytes != 0 ||
         after.vision_workspace->handoff_peak_bytes == 0 ||
         after.workspace_logical_peak_bytes == 0 ||
@@ -374,31 +421,43 @@ int exercise_vision_dflash(const char* artifact, const std::vector<ninfer::Token
 } // namespace
 
 int main() {
-    const char* artifact = std::getenv("NINFER_TEST_ARTIFACT");
+    const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
     if (artifact == nullptr || *artifact == '\0') {
-        std::cout << "skip: NINFER_TEST_ARTIFACT is not set\n";
+        std::cout << "skip: NINFERNO_TEST_ARTIFACT is not set\n";
         return 77;
     }
 
-    const std::vector<ninfer::TokenId> prompt{
+    const std::vector<ninferno::TokenId> prompt{
         248045, 846,    198, 109266, 3709,  96220, 117443, 97913,
         1710,   248046, 198, 248045, 74455, 198,   248068, 198,
     };
-    if (const int result = exercise_vision_dflash(artifact, prompt); result != 0) { return result; }
+    if (!ninferno::test::real_artifact(artifact).dflash) {
+        std::cout << "skip: the artifact has no DFlash component\n";
+        return 77;
+    }
+    if (!ninferno::test::real_artifact(artifact).vision) {
+        ninferno::test::skip_case("DFlash vision cases",
+                                  "no vision component (text-only artifact)");
+    } else if (const int result = exercise_vision_dflash(artifact, prompt); result != 0) {
+        return result;
+    }
+    if (const int result = exercise_capture_restore_drafts(artifact); result != 0) {
+        return result;
+    }
 
     {
-        ninfer::EngineOptions options =
-            dflash_engine_options(artifact, ninfer::ProposalHead::Full, 128);
+        ninferno::EngineOptions options =
+            dflash_engine_options(artifact, ninferno::ProposalHead::Full, 128);
         options.max_concurrency = 2;
-        ninfer::Engine full(std::move(options));
+        ninferno::Engine full(std::move(options));
         auto first  = full.submit(full.prepare_tokens(prompt), greedy_options(17, false));
         auto second = full.submit(full.prepare_tokens(prompt), greedy_options(9, false));
-        const ninfer::GenerationResult first_result  = first.wait();
-        const ninfer::GenerationResult second_result = second.wait();
-        const auto valid = [&](const ninfer::GenerationResult& result, std::size_t count) {
+        const ninferno::GenerationResult first_result  = first.wait();
+        const ninferno::GenerationResult second_result = second.wait();
+        const auto valid = [&](const ninferno::GenerationResult& result, std::size_t count) {
             return result.generated_token_ids.size() == count &&
-                   result.finish_reason == ninfer::FinishReason::OutputLimit &&
-                   result.speculative.backend == ninfer::SpeculativeBackend::DFlash &&
+                   result.finish_reason == ninferno::FinishReason::OutputLimit &&
+                   result.speculative.backend == ninferno::SpeculativeBackend::DFlash &&
                    result.speculative.rounds != 0;
         };
         if (!valid(first_result, 17) || !valid(second_result, 9)) {
@@ -407,24 +466,25 @@ int main() {
         }
     }
 
-    ninfer::Engine engine(dflash_engine_options(artifact, ninfer::ProposalHead::Optimized, 4352));
+    ninferno::Engine engine(
+        dflash_engine_options(artifact, ninferno::ProposalHead::Optimized, 4352));
     if (const int result = verify_dflash_load(engine); result != 0) { return result; }
-    ninfer::test::speculative_page_boundary(engine);
+    ninferno::test::speculative_page_boundary(engine);
     engine.reset_memory_peaks();
-    const ninfer::GenerationResult dflash =
+    const ninferno::GenerationResult dflash =
         engine.generate(engine.prepare_tokens(prompt), greedy_options(24, false));
     if (dflash.generated_token_ids.size() != 24 ||
-        dflash.finish_reason != ninfer::FinishReason::OutputLimit) {
+        dflash.finish_reason != ninferno::FinishReason::OutputLimit) {
         std::cerr << "optimized-head DFlash Graph request did not complete\n";
         return 1;
     }
-    const ninfer::MemorySummary memory = engine.memory_summary();
+    const ninferno::MemorySummary memory = engine.memory_summary();
     if (memory.workspace_logical_peak_bytes == 0 ||
         memory.workspace_logical_peak_bytes > memory.workspace.capacity_bytes) {
         std::cerr << "DFlash request did not report a valid planned workspace phase\n";
         return 1;
     }
-    if (dflash.speculative.backend != ninfer::SpeculativeBackend::DFlash ||
+    if (dflash.speculative.backend != ninferno::SpeculativeBackend::DFlash ||
         dflash.speculative.rounds == 0) {
         std::cerr << "DFlash fixture did not execute speculative decode\n";
         return 1;

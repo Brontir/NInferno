@@ -3,6 +3,7 @@
 // D256 KV-cache NVFP4 codec. Unlike weight artifacts, cache rows have no matrix-level divisor:
 // every represented value is exactly E2M1(code) * E4M3(scale) for its contiguous G16 group.
 
+#include "ops/common/e2m1.cuh"
 #include "ops/kernel/paged_kv_address.cuh"
 #include "ops/linear/nvfp4/nvfp4_codec.cuh"
 
@@ -11,7 +12,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kKVCacheNvfp4HeadDim        = 256;
 inline constexpr int kKVCacheNvfp4Group          = 16;
@@ -91,9 +92,7 @@ __device__ __forceinline__ int4 kv_cache_nvfp4_dequant_f16x8(const std::uint8_t*
     unsigned half_bits[4];
 #pragma unroll
     for (int pair = 0; pair < 4; ++pair) {
-        __nv_fp4x2_e2m1 encoded;
-        encoded.__x         = bytes[pair];
-        const __half2 value = __hmul2(static_cast<__half2>(encoded), scale2);
+        const __half2 value = __hmul2(detail::e2m1x2_to_half2(bytes[pair]), scale2);
         half_bits[pair]     = *reinterpret_cast<const unsigned*>(&value);
     }
     return make_int4(static_cast<int>(half_bits[0]), static_cast<int>(half_bits[1]),
@@ -116,9 +115,7 @@ kv_cache_nvfp4_dequant_f16x16(const std::uint8_t* codes, std::uint8_t scale_code
     unsigned half_bits[8];
 #pragma unroll
     for (int pair = 0; pair < 8; ++pair) {
-        __nv_fp4x2_e2m1 encoded;
-        encoded.__x         = bytes[pair];
-        const __half2 value = __hmul2(static_cast<__half2>(encoded), scale2);
+        const __half2 value = __hmul2(detail::e2m1x2_to_half2(bytes[pair]), scale2);
         half_bits[pair]     = *reinterpret_cast<const unsigned*>(&value);
     }
     return {
@@ -129,4 +126,4 @@ kv_cache_nvfp4_dequant_f16x16(const std::uint8_t* codes, std::uint8_t scale_code
     };
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

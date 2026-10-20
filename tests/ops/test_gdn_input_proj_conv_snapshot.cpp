@@ -1,22 +1,29 @@
 #include "core/weight.h"
-#include "ninfer/ops/gdn_input_proj.h"
+#include "core/device.h"
+#include "core/device_class.h"
+#include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include "ops/input_projection_test_common.h"
+#include "ops/workspace_query.h"
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
-using namespace ninfer::test::input_projection;
+using namespace ninferno;
+using namespace ninferno::test;
+using namespace ninferno::test::input_projection;
 
 namespace {
 
@@ -35,6 +42,7 @@ constexpr std::int32_t kKeyRows   = 2048;
 // channel, which is what the column counts that reach a changed projection mechanism are
 // verified with (the surrounding sampled cases keep the smaller comparison set).
 inline constexpr std::int32_t kFullReferenceSamples = 1 << 20;
+
 std::int32_t snapshot_sample_count(std::int32_t tokens, bool full_reference = false) {
     if (full_reference) { return kFullReferenceSamples; }
     return tokens <= 4 ? 32 : 7;
@@ -75,10 +83,10 @@ struct SnapshotOracle {
 };
 
 template <class Projection>
-SnapshotOracle
-snapshot_oracle(std::int32_t value_rows, std::int32_t tokens, const std::vector<float>& conv_weight,
-                std::span<const std::uint16_t> initial_state, Projection&& projection,
-                bool full_reference = false) {
+SnapshotOracle snapshot_oracle(std::int32_t value_rows, std::int32_t tokens,
+                               const std::vector<float>& conv_weight,
+                               std::span<const std::uint16_t> initial_state,
+                               Projection&& projection, bool full_reference = false) {
     const std::int32_t channels = kQueryRows + kKeyRows + value_rows;
     SnapshotOracle oracle;
     const std::int32_t sample_count                = snapshot_sample_count(tokens, full_reference);
@@ -87,45 +95,82 @@ snapshot_oracle(std::int32_t value_rows, std::int32_t tokens, const std::vector<
     const std::vector<std::int32_t> value_selected = sampled_rows(value_rows, sample_count);
     const std::size_t sampled_channel_count =
         query_rows.size() + key_rows.size() + value_selected.size();
-    oracle.query.reserve(query_rows.size() * static_cast<std::size_t>(tokens));
-    oracle.key.reserve(key_rows.size() * static_cast<std::size_t>(tokens));
-    oracle.value.reserve(value_selected.size() * static_cast<std::size_t>(tokens));
-    oracle.state.reserve(sampled_channel_count * 3 * static_cast<std::size_t>(tokens));
+    const auto t = static_cast<std::size_t>(tokens);
+    oracle.query.resize(query_rows.size() * t);
+    oracle.key.resize(key_rows.size() * t);
+    oracle.value.resize(value_selected.size() * t);
+    oracle.state.resize(sampled_channel_count * 3 * t);
 
-    const auto evaluate = [&](std::int32_t global_row, std::vector<double>& output) {
-        double state0        = bf16_to_f32(initial_state[global_row]);
-        double state1        = bf16_to_f32(initial_state[channels + global_row]);
-        double state2        = bf16_to_f32(initial_state[2 * channels + global_row]);
-        const double weight0 = conv_weight[global_row];
-        const double weight1 = conv_weight[channels + global_row];
-        const double weight2 = conv_weight[2 * channels + global_row];
-        const double weight3 = conv_weight[3 * channels + global_row];
+    // Channel i of the sampled list (query rows, then key rows, then value rows) writes its T
+    // outputs at its place in its group and its 3T state values at 3T i: the order the
+    // comparison reads, whichever thread computes the channel.
+    struct Channel {
+        std::int32_t global_row;
+        double* output;
+    };
+
+    std::vector<Channel> list;
+    list.reserve(sampled_channel_count);
+    for (std::size_t i = 0; i < query_rows.size(); ++i)
+        list.push_back({query_rows[i], oracle.query.data() + i * t});
+    for (std::size_t i = 0; i < key_rows.size(); ++i)
+        list.push_back({kQueryRows + key_rows[i], oracle.key.data() + i * t});
+    for (std::size_t i = 0; i < value_selected.size(); ++i)
+        list.push_back({kQueryRows + kKeyRows + value_selected[i], oracle.value.data() + i * t});
+
+    const auto evaluate = [&](std::size_t channel) {
+        const std::int32_t global_row = list[channel].global_row;
+        double* output                = list[channel].output;
+        double* state_out             = oracle.state.data() + channel * 3 * t;
+        double state0                 = bf16_to_f32(initial_state[global_row]);
+        double state1                 = bf16_to_f32(initial_state[channels + global_row]);
+        double state2                 = bf16_to_f32(initial_state[2 * channels + global_row]);
+        const double weight0          = conv_weight[global_row];
+        const double weight1          = conv_weight[channels + global_row];
+        const double weight2          = conv_weight[2 * channels + global_row];
+        const double weight3          = conv_weight[3 * channels + global_row];
         for (std::int32_t token = 0; token < tokens; ++token) {
             const double projected = projection(global_row, token);
             const double convolved =
                 weight0 * state0 + weight1 * state1 + weight2 * state2 + weight3 * projected;
-            output.push_back(silu_fp64(convolved));
-            oracle.state.push_back(state1);
-            oracle.state.push_back(state2);
-            oracle.state.push_back(projected);
-            state0 = state1;
-            state1 = state2;
-            state2 = projected;
+            output[token]            = silu_fp64(convolved);
+            state_out[3 * token]     = state1;
+            state_out[3 * token + 1] = state2;
+            state_out[3 * token + 2] = projected;
+            state0                   = state1;
+            state1                   = state2;
+            state2                   = projected;
         }
     };
 
-    for (const std::int32_t row : query_rows) { evaluate(row, oracle.query); }
-    for (const std::int32_t row : key_rows) { evaluate(kQueryRows + row, oracle.key); }
-    for (const std::int32_t row : value_selected) {
-        evaluate(kQueryRows + kKeyRows + row, oracle.value);
+    // Every projection is an FP64 dot over the hidden width: the full-reference cases took most
+    // of the test's 73 s (49 s host CPU) in one thread. Up to eight threads (a quarter of
+    // the host's, as ctest -j4 runs four tests at once); the projection must be a pure read.
+    const int share = static_cast<int>(std::thread::hardware_concurrency() / 4);
+    const int threads =
+        list.size() * t < 256
+            ? 1
+            : std::clamp(share, 1, static_cast<int>(std::min<std::size_t>(8, list.size())));
+    std::vector<std::exception_ptr> errors(static_cast<std::size_t>(threads));
+    std::vector<std::thread> workers;
+    for (int w = 0; w < threads; ++w) {
+        workers.emplace_back([&, w] {
+            try {
+                for (std::size_t c = static_cast<std::size_t>(w); c < list.size();
+                     c += static_cast<std::size_t>(threads))
+                    evaluate(c);
+            } catch (...) { errors[static_cast<std::size_t>(w)] = std::current_exception(); }
+        });
     }
+    for (auto& worker : workers) worker.join();
+    for (const auto& e : errors)
+        if (e) std::rethrow_exception(e);
     return oracle;
 }
 
 std::vector<double> gather_state(const std::vector<std::uint16_t>& full, std::int32_t channels,
                                  std::int32_t value_rows, std::int32_t tokens,
-                                 std::int32_t snapshot_base_slot,
-                                 bool full_reference = false) {
+                                 std::int32_t snapshot_base_slot, bool full_reference = false) {
     std::vector<double> gathered;
     const auto append = [&](std::int32_t global_row) {
         for (std::int32_t token = 0; token < tokens; ++token) {
@@ -179,7 +224,7 @@ int verify_snapshot_outputs(
     const GuardedBf16Tensor& value, std::int32_t value_rows, std::int32_t tokens,
     const SnapshotOracle& oracle,
     const ReductionCriterion& criterion = kGdnInputProjConvSnapshotA16Tolerance,
-    bool full_reference = false) {
+    bool full_reference                 = false) {
     int failures                    = 0;
     const std::int32_t sample_count = snapshot_sample_count(tokens, full_reference);
     failures += query.verify_guards("snapshot query" + std::string(suffix));
@@ -279,7 +324,7 @@ int run_batched_case(std::string_view label, std::int32_t hidden, std::int32_t v
                      std::int32_t z_rows, std::int32_t width, std::int32_t batch,
                      std::vector<std::int32_t> valid_columns, const std::vector<float>& conv_weight,
                      std::size_t workspace_bytes, const ReductionCriterion& criterion,
-                     ProjectQkv&& project_qkv, ProjectZ&& project_z, Launch&& launch) {
+                     ProjectQkv&& project_qkv, ProjectZ&& project_z, Launch&& launch, bool qx_parents = false) {
     const std::int32_t channels          = kQueryRows + kKeyRows + value_rows;
     const std::int32_t aggregate_columns = width * batch;
     const std::int32_t slots             = aggregate_columns + batch;
@@ -430,7 +475,10 @@ int run_batched_case(std::string_view label, std::int32_t hidden, std::int32_t v
         failures +=
             verify_preserved(std::string(label) + " valid columns", device_valid, valid_columns);
     }
-    if (workspace.used() != 0 || workspace.peak_used() != workspace_bytes) {
+    if (workspace.used() != 0 ||
+        !workspace_query_holds(workspace.peak_used(), workspace_bytes,
+                               qx_parents && qx_query_covers_prefill_a8(QType::Q4_G64_FP16,
+                                                                        aggregate_columns))) {
         std::cerr << label << ": workspace query/execution high-water mismatch\n";
         ++failures;
     }
@@ -438,8 +486,7 @@ int run_batched_case(std::string_view label, std::int32_t hidden, std::int32_t v
 }
 
 int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& value_z_weight,
-                   std::int32_t tokens, std::int32_t initial_slot,
-                   bool full_reference = false) {
+                   std::int32_t tokens, std::int32_t initial_slot, bool full_reference = false) {
     constexpr std::int32_t kHidden           = 5120;
     constexpr std::int32_t kValueRows        = 6144;
     constexpr std::int32_t kZRows            = 6144;
@@ -498,28 +545,27 @@ int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& value_z_we
                                               token_activation, kHidden);
         },
         full_reference);
-    const std::int32_t sample_count = snapshot_sample_count(tokens, full_reference);
+    const std::int32_t sample_count              = snapshot_sample_count(tokens, full_reference);
     const std::vector<std::uint16_t> state_after = state.bits();
     const std::string suffix                     = " Q4/Q5 A16 T=" + std::to_string(tokens) +
                                " initial=" + std::to_string(initial_slot) +
                                " base=" + std::to_string(kSnapshotBaseSlot);
-    int failures = verify_snapshot_outputs(
-        suffix, query, key, value, kValueRows, tokens, oracle, kGdnInputProjConvSnapshotA16Tolerance,
-        full_reference);
-    failures += compare("snapshot state" + suffix,
-                        gather_state(state_after, kChannels, kValueRows, tokens, kSnapshotBaseSlot,
-                                     full_reference),
-                        oracle.state, kGdnInputProjConvSnapshotA16Tolerance);
+    int failures = verify_snapshot_outputs(suffix, query, key, value, kValueRows, tokens, oracle,
+                                           kGdnInputProjConvSnapshotA16Tolerance, full_reference);
+    failures += compare(
+        "snapshot state" + suffix,
+        gather_state(state_after, kChannels, kValueRows, tokens, kSnapshotBaseSlot, full_reference),
+        oracle.state, kGdnInputProjConvSnapshotA16Tolerance);
     failures += state.verify_guards("snapshot state" + suffix);
     failures += verify_state_effects("snapshot state" + suffix, state_before, state_after,
                                      kChannels, tokens, slots, kSnapshotBaseSlot);
     failures += z.verify_guards("snapshot z" + suffix);
     failures += z.verify_fully_written("snapshot z" + suffix);
-    failures += compare(
-        "snapshot z" + suffix, gather_rows(z.values(), kZRows, 0, kZRows, tokens, sample_count),
-        projection_oracle(value_z_weight.host, kValueRows, kZRows, activation, kHidden, tokens,
-                          sample_count),
-        kGdnInputProjConvSnapshotA16Tolerance);
+    failures += compare("snapshot z" + suffix,
+                        gather_rows(z.values(), kZRows, 0, kZRows, tokens, sample_count),
+                        projection_oracle(value_z_weight.host, kValueRows, kZRows, activation,
+                                          kHidden, tokens, sample_count),
+                        kGdnInputProjConvSnapshotA16Tolerance);
     failures += verify_preserved("snapshot x" + suffix, device_activation, activation_bits);
     failures +=
         verify_preserved("snapshot conv weight" + suffix, device_conv_weight, conv_weight_bits);
@@ -528,7 +574,9 @@ int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& value_z_we
         verify_preserved("snapshot base slot" + suffix, device_snapshot_base, snapshot_base_value);
     failures += query_key.verify_preserved("snapshot query/key weight" + suffix);
     failures += value_z_weight.verify_preserved("snapshot value/z weight" + suffix);
-    if (workspace.used() != 0 || workspace.peak_used() != workspace_bytes) {
+    if (workspace.used() != 0 ||
+        !workspace_query_holds(workspace.peak_used(), workspace_bytes,
+                               qx_query_covers_prefill_a8(QType::Q4_G64_FP16, tokens))) {
         std::cerr << "snapshot" << suffix << ": workspace query/execution high-water mismatch\n";
         ++failures;
     }
@@ -543,6 +591,109 @@ int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& value_z_we
     return failures;
 }
 
+// PDL stress: at T=1..6 the Q4 and Q5 halves are chained with programmatic dependent
+// launch. The call as a graph whose outputs are repainted with NaN and whose workspace is filled
+// with 0xFF before every replay; each of `replays` replays must reproduce the eager call's outputs
+// and conv state bit for bit. The initial slot is not a snapshot slot, so every replay starts from
+// the same state.
+int run_q4_q5_pdl_replays(DevicePackedWeight& query_key, DevicePackedWeight& value_z_weight,
+                          std::int32_t tokens, int replays) {
+    constexpr std::int32_t kHidden    = 5120;
+    constexpr std::int32_t kValueRows = 6144;
+    constexpr std::int32_t kZRows     = 6144;
+    constexpr std::int32_t kChannels  = 10240;
+    const std::int32_t initial_slot   = tokens + 1;
+    const std::int32_t slots          = tokens + 2;
+    const auto activation_bits  = bf16_bits(make_bf16_activation(kHidden, tokens, 631U + tokens));
+    const auto conv_weight_bits = bf16_bits(make_conv_weight(kChannels, 607U));
+    const auto state_before     = make_state(kChannels, slots, initial_slot, 641U + tokens);
+    DeviceBuffer device_activation    = to_device(activation_bits);
+    DeviceBuffer device_conv_weight   = to_device(conv_weight_bits);
+    DeviceBuffer device_initial       = to_device(std::vector<std::int32_t>{initial_slot});
+    DeviceBuffer device_snapshot_base = to_device(std::vector<std::int32_t>{1});
+    GuardedBf16Tensor state(kChannels * 3, slots);
+    state.copy_from_bits(state_before);
+    GuardedBf16Tensor query(kQueryRows, tokens), key(kKeyRows, tokens), value(kValueRows, tokens),
+        z(kZRows, tokens);
+    Tensor x(device_activation.p, DType::BF16, {kHidden, tokens});
+    Tensor conv(device_conv_weight.p, DType::BF16, {kChannels, 4});
+    Tensor conv_state(state.data(), DType::BF16, {kChannels, 3, slots});
+    Tensor initial(device_initial.p, DType::I32, {1});
+    Tensor snapshot_base(device_snapshot_base.p, DType::I32, {1});
+    Tensor q = query.tensor(), k = key.tensor(), v = value.tensor(), z_out = z.tensor();
+    const std::size_t workspace_bytes = ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
+        kQueryRows, kKeyRows, kValueRows, 1, tokens, tokens);
+    WorkspaceArena workspace(std::max<std::size_t>(1, workspace_bytes));
+    cudaStream_t stream = nullptr;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    const auto launch = [&](cudaStream_t s) {
+        query.repaint(s);
+        key.repaint(s);
+        value.repaint(s);
+        z.repaint(s);
+        CUDA_CHECK(cudaMemsetAsync(workspace.base(), 0xff, workspace.capacity(), s));
+        ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv,
+                                          conv_state, Tensor{}, initial, snapshot_base, q, k, v,
+                                          z_out, workspace, s);
+    };
+    launch(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    const auto snapshot = [&] {
+        auto all = query.bits();
+        for (const auto* part : {&key, &value, &z, &state}) {
+            const auto bits = part->bits();
+            all.insert(all.end(), bits.begin(), bits.end());
+        }
+        return all;
+    };
+    const auto eager           = snapshot();
+    cudaGraph_t graph          = nullptr;
+    cudaGraphExec_t executable = nullptr;
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+    launch(stream);
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0));
+    int wrong = 0;
+    for (int replay = 0; replay < replays; ++replay) {
+        CUDA_CHECK(cudaGraphLaunch(executable, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        const auto got = snapshot();
+        if (got != eager && wrong == 0) {
+            // The first differing replay says where: which output, how many BF16 elements, and
+            // whether either side holds NaN there (a read of the NaN/0xFF repaint).
+            const std::array<std::pair<const char*, std::size_t>, 5> parts = {{
+                {"query", query.bits().size()}, {"key", key.bits().size()},
+                {"value", value.bits().size()}, {"z", z.bits().size()},
+                {"state", state.bits().size()}}};
+            std::size_t begin = 0;
+            for (const auto& [name, count] : parts) {
+                std::size_t differ = 0, eager_nan = 0, replay_nan = 0, first = count;
+                for (std::size_t i = begin; i < begin + count; ++i) {
+                    if (got[i] == eager[i]) { continue; }
+                    if (first == count) { first = i - begin; }
+                    ++differ;
+                    eager_nan += (eager[i] & 0x7fffU) > 0x7f80U ? 1 : 0;
+                    replay_nan += (got[i] & 0x7fffU) > 0x7f80U ? 1 : 0;
+                }
+                if (differ != 0) {
+                    std::cout << "  replay " << replay << " T=" << tokens << " " << name << ": "
+                              << differ << " of " << count << " differ (first at " << first
+                              << "), NaN eager " << eager_nan << " replay " << replay_nan << '\n';
+                }
+                begin += count;
+            }
+        }
+        wrong += got != eager ? 1 : 0;
+    }
+    CUDA_CHECK(cudaGraphExecDestroy(executable));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    std::cout << "REPLAY snapshot Q4/Q5 T=" << tokens
+              << ", outputs and workspace NaN-filled: " << wrong << " of " << replays
+              << " replays differ from the eager call (must be 0)\n";
+    return wrong != 0 ? 1 : 0;
+}
+
 int run_q4_q5() {
     constexpr std::int32_t kHidden = 5120;
     DevicePackedWeight query_key(
@@ -555,11 +706,12 @@ int run_q4_q5() {
         const std::int32_t initial_slot = tokens == 5 ? 0 : tokens + 1;
         failures += run_q4_q5_case(query_key, value_z_weight, tokens, initial_slot);
     }
-    // The column counts that reach a projection mechanism this change touched: 7 and 8 are the first
-    // counts the Q5 parent's split4 shape takes over (they were the row-block band, and the first two
-    // counts of the narrow-SIMT band), 9 the count that used to be the top of the split4 band, and 10
-    // the top of it now. These are compared against the complete FP64 formula for every output row and
-    // every state channel, so a mechanism that is wrong away from the sampled rows cannot pass.
+    // The column counts that reach a projection mechanism this change touched: 7 and 8 are the
+    // first counts the Q5 parent's split4 shape takes over (they were the row-block band, and the
+    // first two counts of the narrow-SIMT band), 9 the count that used to be the top of the split4
+    // band, and 10 the top of it now. These are compared against the complete FP64 formula for
+    // every output row and every state channel, so a mechanism that is wrong away from the sampled
+    // rows cannot pass.
     for (const std::int32_t tokens : {7, 8, 9, 10}) {
         failures += run_q4_q5_case(query_key, value_z_weight, tokens, tokens + 1, true);
     }
@@ -568,6 +720,10 @@ int run_q4_q5() {
     // routes.
     for (const std::int32_t tokens : {32, 33, 64}) {
         failures += run_q4_q5_case(query_key, value_z_weight, tokens, tokens + 1);
+    }
+    // Every PDL-chained width, 10^4 NaN-filled replays each.
+    for (const std::int32_t tokens : {1, 2, 3, 4, 5, 6}) {
+        failures += run_q4_q5_pdl_replays(query_key, value_z_weight, tokens, 10000);
     }
     constexpr std::int32_t kValueRows    = 6144;
     constexpr std::int32_t kZRows        = 6144;
@@ -598,18 +754,18 @@ int run_q4_q5() {
             ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv,
                                               state, valid, initial, snapshot_base, q, k, v, z,
                                               workspace, nullptr);
-        });
-    // The batched organisations whose aggregate column count is 10 reach the same Q5 parent mechanism
-    // as the dense B=1 W=10 case above, through the seam of a multi-request call: B=2/W=5 here, which
-    // covers the per-request history split and the aggregate route. Two forms of the same aggregate
-    // count are covered because the per-side band end moved, and the aggregate count is what selects
-    // the route.
+        },
+        true);
+    // The batched organisations whose aggregate column count is 10 reach the same Q5 parent
+    // mechanism as the dense B=1 W=10 case above, through the seam of a multi-request call: B=2/W=5
+    // here, which covers the per-request history split and the aggregate route. Two forms of the
+    // same aggregate count are covered because the per-side band end moved, and the aggregate count
+    // is what selects the route.
     constexpr std::int32_t kAggTenWidth = 5;
     constexpr std::int32_t kAggTenBatch = 2;
     const std::size_t agg_ten_workspace_bytes =
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(kQueryRows, kKeyRows, kValueRows,
-                                                                  kAggTenBatch, kAggTenWidth,
-                                                                  kAggTenWidth);
+        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
+            kQueryRows, kKeyRows, kValueRows, kAggTenBatch, kAggTenWidth, kAggTenWidth);
     failures += run_batched_case(
         "Q4/Q5 A16 B=2 W=5", kHidden, kValueRows, kZRows, kAggTenWidth, kAggTenBatch, {},
         conv_weight, agg_ten_workspace_bytes, kGdnInputProjConvSnapshotA16Tolerance,
@@ -633,20 +789,20 @@ int run_q4_q5() {
             ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv,
                                               state, valid, initial, snapshot_base, q, k, v, z,
                                               workspace, nullptr);
-        });
+        },
+        true);
 
-    // One batched case with mixed valid prefixes whose aggregate column count is 8 (4 x 2): two live
-    // prefixes (4 and 2 of 4) over the same projection route, plus the exact-zero invalid tails and the
-    // per-request history split. The projection is routed once from the aggregate count, not per
-    // request, so this is a batched organisation of the aggregate-8 configuration and not a claim
-    // about where any single-side band ends.
+    // One batched case with mixed valid prefixes whose aggregate column count is 8 (4 x 2): two
+    // live prefixes (4 and 2 of 4) over the same projection route, plus the exact-zero invalid
+    // tails and the per-request history split. The projection is routed once from the aggregate
+    // count, not per request, so this is a batched organisation of the aggregate-8 configuration
+    // and not a claim about where any single-side band ends.
     constexpr std::int32_t kNarrowWidth = 4;
     constexpr std::int32_t kNarrowBatch = 2;
     const std::vector<std::int32_t> narrow_valid{4, 2};
     const std::size_t narrow_workspace_bytes =
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(kQueryRows, kKeyRows, kValueRows,
-                                                                  kNarrowBatch, kNarrowWidth,
-                                                                  kNarrowWidth);
+        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
+            kQueryRows, kKeyRows, kValueRows, kNarrowBatch, kNarrowWidth, kNarrowWidth);
     failures += run_batched_case(
         "Q4/Q5 A16 B=2 W=4 masked", kHidden, kValueRows, kZRows, kNarrowWidth, kNarrowBatch,
         narrow_valid, conv_weight, narrow_workspace_bytes, kGdnInputProjConvSnapshotA16Tolerance,
@@ -670,7 +826,8 @@ int run_q4_q5() {
             ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv,
                                               state, valid, initial, snapshot_base, q, k, v, z,
                                               workspace, nullptr);
-        });
+        },
+        true);
     // One batched case with mixed valid prefixes whose aggregate column count is 48 (16 x 3). The
     // projection is routed once for the whole call from that aggregate column count - so this case
     // exercises the mixed valid prefixes and the exact-zero invalid tails, not three different
@@ -680,9 +837,8 @@ int run_q4_q5() {
     constexpr std::int32_t kMixedBatch = 3;
     const std::vector<std::int32_t> mixed_valid{16, 9, 4};
     const std::size_t mixed_workspace_bytes =
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(kQueryRows, kKeyRows, kValueRows,
-                                                                  kMixedBatch, kMixedWidth,
-                                                                  kMixedWidth);
+        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
+            kQueryRows, kKeyRows, kValueRows, kMixedBatch, kMixedWidth, kMixedWidth);
     failures += run_batched_case(
         "Q4/Q5 A16 B=3 W=16 masked", kHidden, kValueRows, kZRows, kMixedWidth, kMixedBatch,
         mixed_valid, conv_weight, mixed_workspace_bytes, kGdnInputProjConvSnapshotA16Tolerance,
@@ -706,7 +862,8 @@ int run_q4_q5() {
             ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv,
                                               state, valid, initial, snapshot_base, q, k, v, z,
                                               workspace, nullptr);
-        });
+        },
+        true);
     failures += query_key.verify_preserved("batched Q4/Q5 query/key weight");
     failures += value_z_weight.verify_preserved("batched Q4/Q5 value/z weight");
     failures += query_key.verify_preserved("batched Q4/Q5 query/key weight");
@@ -767,9 +924,10 @@ int run_q8_case(DevicePackedWeight& parent, std::int32_t tokens, std::int32_t in
                 kHidden);
         });
     const std::vector<std::uint16_t> state_after = state.bits();
-    const std::string suffix                     = " Q8 A16 T=" + std::to_string(tokens) +
-                               " initial=" + std::to_string(initial_slot) +
-                               " base=" + std::to_string(kSnapshotBaseSlot);
+    const char* const profile = ops::invariant_routes_active() ? " Q8 exact T=" : " Q8 A16 T=";
+    const std::string suffix  = profile + std::to_string(tokens) +
+                              " initial=" + std::to_string(initial_slot) +
+                              " base=" + std::to_string(kSnapshotBaseSlot);
     int failures = verify_snapshot_outputs(suffix, query, key, value, kValueRows, tokens, oracle);
     failures += compare("snapshot state" + suffix,
                         gather_state(state_after, kChannels, kValueRows, tokens, kSnapshotBaseSlot),
@@ -806,6 +964,15 @@ int run_q8() {
     for (const std::int32_t tokens : {1, 2, 17}) {
         const std::int32_t initial_slot = tokens == 2 ? 0 : tokens + 1;
         failures += run_q8_case(parent, tokens, initial_slot);
+    }
+    {
+        // --activations exact materializes the projection at every width (the workspace query
+        // reserves it from T = 1).
+        const ops::ScopedInvariantRoutes invariant(true);
+        for (const std::int32_t tokens : {1, 2, 17}) {
+            const std::int32_t initial_slot = tokens == 2 ? 0 : tokens + 1;
+            failures += run_q8_case(parent, tokens, initial_slot);
+        }
     }
     constexpr std::int32_t kValueRows = 4096;
     constexpr std::int32_t kZRows     = 4096;
@@ -932,6 +1099,7 @@ int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearP
 }
 
 int run_nvfp4() {
+    if (!qtype_runs(QType::NVFP4, "gdn_input_proj_conv_snapshot NVFP4")) return 0;
     constexpr std::int32_t kHidden = 5120;
     constexpr std::int32_t kRows   = 16384;
     quantized_weight::PatternedWeightOptions options;
@@ -1044,7 +1212,7 @@ int run_fp8_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearPol
                 parent.host, row, activation.data() + static_cast<std::size_t>(token) * kHidden,
                 kHidden);
         });
-    const bool uses_a8                  = policy == ops::LinearPolicy::AllowA8 && tokens >= 10;
+    const bool uses_a8                  = policy == ops::LinearPolicy::AllowA8 && tokens >= 17;
     const ReductionCriterion& criterion = uses_a8 ? kFp8GdnInputProjConvSnapshotA8Tolerance
                                                   : kFp8GdnInputProjConvSnapshotA16Tolerance;
     const std::string suffix =
@@ -1101,12 +1269,16 @@ int run_fp8() {
     failures += run_fp8_case(parent, 10, ops::LinearPolicy::AllowA8, 11);
     failures += run_fp8_case(parent, 10, ops::LinearPolicy::A16Only, 11);
     failures += run_fp8_case(parent, 11, ops::LinearPolicy::A16Only, 12);
+    failures += run_fp8_case(parent, 16, ops::LinearPolicy::AllowA8, 17);
     failures += run_fp8_case(parent, 17, ops::LinearPolicy::AllowA8, 1);
+    failures += run_fp8_case(parent, 257, ops::LinearPolicy::AllowA8, 258);
+    failures += run_fp8_case(parent, 512, ops::LinearPolicy::AllowA8, 513);
+    failures += run_fp8_case(parent, 1025, ops::LinearPolicy::AllowA8, 1026);
 
     const auto run_batched = [&](std::int32_t width, std::int32_t batch,
                                  std::vector<std::int32_t> valid_columns, std::uint32_t seed) {
         const std::vector<float> conv_weight = make_conv_weight(kChannels, seed);
-        const bool uses_a8                   = width * batch >= 9;
+        const bool uses_a8                   = width * batch >= 17;
         const std::size_t workspace_bytes =
             ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
                 QType::FP8_E4M3FN_ROW_BF16, kRows, kHidden, ops::LinearPolicy::AllowA8, batch,
@@ -1150,14 +1322,21 @@ int main() {
     }
 
     int failures = 0;
+    // T = 2..32 materialize the projection, so an interval reserves its widest width. T = 1 keeps
+    // the projection-epilogue fused route (no scratch) except where the chip's one-token small-T
+    // MMA materializes it too (RTX 3090, NINFERNO_GDNIN_T1_MMA): then within the interval's. A
+    // build without tensor mma.sync (Volta) keeps the sliced-K and fused routes at those widths:
+    // the interval then reserves at least either endpoint.
+    const bool materialized_band = build_features().mma_tensor;
     const std::size_t q4_interval =
         ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(2048, 2048, 6144, 1, 1, 6);
-    const std::size_t q4_witness =
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(2048, 2048, 6144, 1, 4, 4);
     const std::size_t q4_right_endpoint =
         ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(2048, 2048, 6144, 1, 6, 6);
-    if (q4_interval != q4_witness || q4_witness == 0 || q4_right_endpoint != 0) {
-        std::cerr << "Q4/Q5 snapshot interval did not retain its non-monotonic T=4 route\n";
+    const std::size_t q4_single =
+        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(2048, 2048, 6144, 1, 1, 1);
+    if (q4_interval < q4_right_endpoint || q4_single > q4_interval ||
+        (materialized_band && (q4_interval != q4_right_endpoint || q4_right_endpoint == 0))) {
+        std::cerr << "Q4/Q5 snapshot interval did not reserve its widest materialized width\n";
         ++failures;
     }
     if (ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(2048, 2048, 4096, 1, 1, 16) !=
@@ -1168,37 +1347,41 @@ int main() {
         std::cerr << "Q8 snapshot interval did not preserve its zero/nonzero route boundary\n";
         ++failures;
     }
-    const std::size_t nvfp4_a4_4 = ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-        QType::NVFP4, 16384, 5120, ops::LinearPolicy::AllowA4, 1, 4, 4);
-    if (ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-            QType::NVFP4, 16384, 5120, ops::LinearPolicy::A16Only, 1, 1, 16) != 0 ||
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-            QType::NVFP4, 16384, 5120, ops::LinearPolicy::AllowA4, 1, 1, 3) != 0 ||
-        nvfp4_a4_4 == 0 ||
-        ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-            QType::NVFP4, 16384, 5120, ops::LinearPolicy::AllowA4, 1, 1, 4) != nvfp4_a4_4) {
-        std::cerr << "NVFP4 snapshot interval did not preserve its A16/A4 route boundary\n";
-        ++failures;
+    const auto nvfp4_snapshot_capacity = [](ops::LinearPolicy policy, std::int32_t min_width,
+                                            std::int32_t max_width) {
+        return ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
+            QType::NVFP4, 16384, 5120, policy, 1, min_width, max_width);
+    };
+    if (qtype_runs(QType::NVFP4, "gdn_input_proj_conv_snapshot NVFP4 capacity")) {
+        const std::size_t nvfp4_a4_4 = nvfp4_snapshot_capacity(ops::LinearPolicy::AllowA4, 4, 4);
+        // A16Only materializes every width through the token-invariant projection: the projected
+        // plane of the widest call.
+        const std::size_t nvfp4_a16_16 =
+            nvfp4_snapshot_capacity(ops::LinearPolicy::A16Only, 16, 16);
+        if (nvfp4_a16_16 == 0 ||
+            nvfp4_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 16) != nvfp4_a16_16 ||
+            nvfp4_snapshot_capacity(ops::LinearPolicy::AllowA4, 1, 3) != 0 || nvfp4_a4_4 == 0 ||
+            nvfp4_snapshot_capacity(ops::LinearPolicy::AllowA4, 1, 4) != nvfp4_a4_4) {
+            std::cerr << "NVFP4 snapshot interval did not preserve its A16/A4 route boundary\n";
+            ++failures;
+        }
     }
     const auto fp8_snapshot_capacity = [](ops::LinearPolicy policy, std::int32_t batch,
                                           std::int32_t min_width, std::int32_t max_width) {
         return ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
             QType::FP8_E4M3FN_ROW_BF16, 16384, 5120, policy, batch, min_width, max_width);
     };
-    const std::size_t fp8_a16_w4 = fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 4, 4);
-    const std::size_t fp8_a16_w6 = fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 6, 6);
-    const std::size_t fp8_a8_w10 = fp8_snapshot_capacity(ops::LinearPolicy::AllowA8, 1, 10, 10);
-    if (fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 1, 3) != 0 || fp8_a16_w4 == 0 ||
-        fp8_a16_w6 <= fp8_a16_w4 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 7, 10) != 0 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 1, 9) != fp8_a16_w6 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::A16Only, 1, 11, 11) == 0 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::AllowA8, 1, 7, 9) != 0 || fp8_a8_w10 == 0 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::AllowA8, 1, 1, 10) != fp8_a8_w10 ||
-        fp8_snapshot_capacity(ops::LinearPolicy::AllowA8, 2, 5, 5) <=
-            fp8_snapshot_capacity(ops::LinearPolicy::AllowA8, 2, 4, 4)) {
-        std::cerr << "FP8 snapshot capacity did not preserve measured route witnesses\n";
-        ++failures;
+    for (auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8}) {
+        for (int batch : {1, 2, 8}) {
+            std::size_t peak = 0;
+            for (int width = 1; width <= 16; ++width) {
+                peak = std::max(peak, fp8_snapshot_capacity(policy, batch, width, width));
+                if (fp8_snapshot_capacity(policy, batch, 1, width) != peak) {
+                    std::cerr << "FP8 snapshot interval misses an execution capacity\n";
+                    ++failures;
+                }
+            }
+        }
     }
     failures += run_q4_q5();
     failures += run_q8();

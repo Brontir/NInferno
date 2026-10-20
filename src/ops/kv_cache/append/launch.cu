@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kBlock = 256;
@@ -21,7 +21,7 @@ void launch_full(const Tensor& k, const Tensor& v, const Tensor& positions, Cach
     if (cache.storage == KvCacheStorage::Fp8E4M3Row256) {
         Tensor& cache_k_scale = cache.k_scale_pages;
         Tensor& cache_v_scale = cache.v_scale_pages;
-        if (tokens >= 128 && Geometry::KVHeads == 2) {
+        if (tokens >= kKVCacheAppendPageTileMinTokens && Geometry::KVHeads == 2) {
             constexpr int TokensPerTile = 8;
             const int max_tiles         = div_up(tokens + TokensPerTile - 1, TokensPerTile);
             const dim3 fill_grid(static_cast<unsigned>(max_tiles),
@@ -54,7 +54,7 @@ void launch_full(const Tensor& k, const Tensor& v, const Tensor& positions, Cach
     if (cache.storage == KvCacheStorage::Int8Group64) {
         Tensor& cache_k_scale = cache.k_scale_pages;
         Tensor& cache_v_scale = cache.v_scale_pages;
-        if (tokens >= 128 && Geometry::KVHeads == 2) {
+        if (tokens >= kKVCacheAppendPageTileMinTokens && Geometry::KVHeads == 2) {
             constexpr int TokensPerTile = 8;
             const int max_tiles         = div_up(tokens + TokensPerTile - 1, TokensPerTile);
             const dim3 fill_grid(static_cast<unsigned>(max_tiles),
@@ -109,6 +109,23 @@ void launch_paged(const Tensor& k, const Tensor& v, const Tensor& positions, con
                   const KVCacheAppendPrefixPlan& plan, cudaStream_t stream) {
     validate_plan(k, plan);
     if (plan.max_count == 0) return;
+    if (cache.storage == KvCacheStorage::Int8Group64) {
+        constexpr int TokensPerBlock = kBlock / (kKVCacheAppendPrefixHeads * 128 / 16);
+        const dim3 grid(1 + (plan.max_count - 1) / TokensPerBlock, k.ne[3], 1);
+        kv_cache_append_prefix_paged_i8_kernel<<<grid, kBlock, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(k.data), static_cast<const __nv_bfloat16*>(v.data),
+            static_cast<const std::int32_t*>(positions.data),
+            static_cast<const std::int32_t*>(counts.data),
+            static_cast<const std::int32_t*>(table_rows.data),
+            static_cast<std::int8_t*>(cache.k_pages.data),
+            static_cast<std::int8_t*>(cache.v_pages.data),
+            static_cast<__half*>(cache.k_scale_pages.data),
+            static_cast<__half*>(cache.v_scale_pages.data),
+            static_cast<const std::int32_t*>(cache.block_tables.data), cache.k_pages.ne[2],
+            cache.block_tables.ne[0], plan.min_count, plan.max_count, plan.tokens);
+        CUDA_CHECK(cudaGetLastError());
+        return;
+    }
     auto* cache_k       = static_cast<__nv_bfloat16*>(cache.k_pages.data);
     auto* cache_v       = static_cast<__half*>(cache.v_pages.data);
     const auto* input_k = static_cast<const __nv_bfloat16*>(k.data);
@@ -118,11 +135,21 @@ void launch_paged(const Tensor& k, const Tensor& v, const Tensor& positions, con
     const auto* rows    = static_cast<const std::int32_t*>(table_rows.data);
     const auto* tables  = static_cast<const std::int32_t*>(cache.block_tables.data);
 
-    const dim3 grid(1 + (plan.max_count - 1) / 4, k.ne[3], 1);
-    kv_cache_append_prefix_paged_kernel<<<grid, kBlock, 0, stream>>>(
-        input_k, input_v, pos, count, rows, cache_k, cache_v, tables, cache.k_pages.ne[2],
-        cache.block_tables.ne[0], plan.min_count, plan.max_count, plan.tokens);
-    CUDA_CHECK(cudaGetLastError());
+    const auto launch = [&]<int HeadDim>() {
+        constexpr int TokensPerBlock = kBlock / (kKVCacheAppendPrefixHeads * HeadDim / 16);
+        const dim3 grid(1 + (plan.max_count - 1) / TokensPerBlock, k.ne[3], 1);
+        kv_cache_append_prefix_paged_kernel<HeadDim><<<grid, kBlock, 0, stream>>>(
+            input_k, input_v, pos, count, rows, cache_k, cache_v, tables, cache.k_pages.ne[2],
+            cache.block_tables.ne[0], plan.min_count, plan.max_count, plan.tokens);
+        CUDA_CHECK(cudaGetLastError());
+    };
+    if (cache.head_dim == 128) {
+        launch.template operator()<128>();
+    } else if (cache.head_dim == 64) {
+        launch.template operator()<64>();
+    } else {
+        throw std::invalid_argument("kv_cache_append_prefix: unsupported paged head_dim");
+    }
 }
 
 template <int Capacity>
@@ -130,6 +157,19 @@ void launch_cyclic_profile(const Tensor& k, const Tensor& v, const Tensor& posit
                            const Tensor& counts, const Tensor& lanes, CyclicKVCacheLayerView cache,
                            const KVCacheAppendPrefixPlan& plan, cudaStream_t stream) {
     if (plan.max_count == 0) return;
+    if (cache.int8) {
+        constexpr int TokensPerBlock = kBlock / (kKVCacheAppendPrefixHeads * 128 / 16);
+        const dim3 grid(1 + (plan.max_count - 1) / TokensPerBlock, k.ne[3], 1);
+        kv_cache_append_prefix_cyclic_i8_kernel<Capacity><<<grid, kBlock, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(k.data), static_cast<const __nv_bfloat16*>(v.data),
+            static_cast<const std::int32_t*>(positions.data),
+            static_cast<const std::int32_t*>(counts.data),
+            static_cast<const std::int32_t*>(lanes.data), static_cast<std::int8_t*>(cache.k.data),
+            static_cast<std::int8_t*>(cache.v.data), plan.min_count, plan.max_count, plan.tokens,
+            static_cast<int>(cache.padded_capacity));
+        CUDA_CHECK(cudaGetLastError());
+        return;
+    }
     auto* cache_k       = static_cast<__nv_bfloat16*>(cache.k.data);
     auto* cache_v       = static_cast<__half*>(cache.v.data);
     const auto* input_k = static_cast<const __nv_bfloat16*>(k.data);
@@ -204,6 +244,46 @@ void kv_cache_append_batch_launch(const Tensor& k, const Tensor& v, const Tensor
             .table_rows   = static_cast<const std::int32_t*>(table_rows.data),
             .table_stride = cache.block_tables.ne[0],
         };
+        if (cache.storage == KvCacheStorage::Fp8E4M3Row256 && k.ne[3] > 1) {
+            const auto append = [&]<class Geometry>() {
+                const dim3 grid(div_up(k.ne[2] * Geometry::KVHeads, 8), 1, k.ne[3]);
+                kv_cache_append_full_fp8_batch_kernel<Geometry, Masked>
+                    <<<grid, kBlock, 0, stream>>>(
+                        static_cast<const __nv_bfloat16*>(k.data),
+                        static_cast<const __nv_bfloat16*>(v.data),
+                        static_cast<const std::int32_t*>(positions.data), metadata,
+                        static_cast<std::uint8_t*>(cache.k_pages.data),
+                        static_cast<std::uint8_t*>(cache.v_pages.data),
+                        static_cast<__half*>(cache.k_scale_pages.data),
+                        static_cast<__half*>(cache.v_scale_pages.data), k.ne[2]);
+            };
+            if (k.ne[1] == KVCacheAppendD256Kv4::KVHeads)
+                append.template operator()<KVCacheAppendD256Kv4>();
+            else
+                append.template operator()<KVCacheAppendD256Kv2>();
+            CUDA_CHECK(cudaGetLastError());
+            return;
+        }
+        if (cache.storage == KvCacheStorage::Int8Group64 && k.ne[3] > 1) {
+            const auto append = [&]<class Geometry>() {
+                const dim3 grid(div_up(k.ne[2] * Geometry::KVHeads, 8), 1, k.ne[3]);
+                kv_cache_append_full_i8_kernel<Geometry, PagedKVBatchMetadata<Masked>, true>
+                    <<<grid, kBlock, 0, stream>>>(
+                        static_cast<const __nv_bfloat16*>(k.data),
+                        static_cast<const __nv_bfloat16*>(v.data),
+                        static_cast<const std::int32_t*>(positions.data), metadata,
+                        static_cast<std::int8_t*>(cache.k_pages.data),
+                        static_cast<std::int8_t*>(cache.v_pages.data),
+                        static_cast<__half*>(cache.k_scale_pages.data),
+                        static_cast<__half*>(cache.v_scale_pages.data), k.ne[2]);
+            };
+            if (k.ne[1] == KVCacheAppendD256Kv4::KVHeads)
+                append.template operator()<KVCacheAppendD256Kv4>();
+            else
+                append.template operator()<KVCacheAppendD256Kv2>();
+            CUDA_CHECK(cudaGetLastError());
+            return;
+        }
         if (k.ne[1] == KVCacheAppendD256Kv4::KVHeads) {
             launch_full<KVCacheAppendD256Kv4>(k, v, positions, cache, metadata, stream);
             return;
@@ -248,4 +328,4 @@ void kv_cache_append_prefix_launch(const Tensor& k, const Tensor& v, const Tenso
     launch_cyclic(k, v, positions, counts, lanes, cache, plan, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

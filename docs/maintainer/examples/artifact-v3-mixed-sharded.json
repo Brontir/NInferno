@@ -354,11 +354,11 @@
       "payload_bytes": 63934464
     },
     {
-      "path": "artifact-v3-mixed-sharded.ninfer.part-0001",
+      "path": "artifact-v3-mixed-sharded.ninferno.part-0001",
       "payload_bytes": 63995904
     },
     {
-      "path": "artifact-v3-mixed-sharded.ninfer.part-0002",
+      "path": "artifact-v3-mixed-sharded.ninferno.part-0002",
       "payload_bytes": 12315648
     }
   ],

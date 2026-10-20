@@ -16,6 +16,12 @@ struct Character {
 
 std::vector<Character> characters(std::string_view text);
 std::size_t length(std::string_view text);
+// The character starting at byte pos.
+Character character_at(std::string_view text, std::size_t pos);
+// The byte offset of character `index` (text.size() past the last), scanning from the character
+// `from_index` at byte `from_byte`; no per-character storage.
+std::size_t byte_offset(std::string_view text, std::size_t index, std::size_t from_byte = 0,
+                        std::size_t from_index = 0);
 bool whitespace(std::int32_t codepoint);
 bool is_upper(std::string_view text);
 bool is_lower(std::string_view text);

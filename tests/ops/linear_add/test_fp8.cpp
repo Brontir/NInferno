@@ -1,7 +1,8 @@
 #include "core/weight.h"
-#include "ninfer/ops/linear_add.h"
+#include "ninferno/ops/linear_add.h"
 #include "core/device.h"
 
+#include "ops/generic/generic_gemm.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
 
@@ -18,8 +19,8 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 constexpr double kBf16UnitRoundoff = 1.0 / 256.0;
 constexpr ReductionCriterion kA16Tolerance{
@@ -108,10 +109,15 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
         Invocation{128, ops::LinearPolicy::AllowA8},
         Invocation{129, ops::LinearPolicy::AllowA8},
     };
+    for (int columns : {17, 18, 191, 192, 193, 255, 256, 257, 383, 384, 385, 511, 512, 513, 767,
+                        768, 769, 1023, 1025})
+        invocations.push_back({columns, ops::LinearPolicy::AllowA8});
     for (int columns = 2; columns <= 24; ++columns) {
         invocations.push_back({columns, ops::LinearPolicy::A16Only});
     }
-    constexpr std::int32_t kMaximumTokens = 1024;
+    for (int columns : {31, 32, 33, 63, 64, 65, 127, 128, 129, 1024})
+        invocations.push_back({columns, ops::LinearPolicy::A16Only});
+    constexpr std::int32_t kMaximumTokens = 1025;
     quantized_weight::PackedWeight host_weight =
         quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16, n, k, seed);
     const std::vector<std::int32_t> rows = sampled_indices(n);
@@ -136,11 +142,17 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
         const std::size_t capacity = ops::linear_add_workspace_capacity_bytes(
             QType::FP8_E4M3FN_ROW_BF16, n, k, invocation.policy, invocation.tokens,
             invocation.tokens);
-        WorkspaceArena workspace(std::max<std::size_t>(capacity, 256));
+        GuardedDeviceBuffer scratch(std::max<std::size_t>(capacity, 256));
+        WorkspaceArena workspace(DeviceSpan{scratch.data(), std::max<std::size_t>(capacity, 256)});
+        const bool replay_changed_input =
+            invocation.tokens == 4 || invocation.tokens == 128 ||
+            (invocation.policy == ops::LinearPolicy::AllowA8 &&
+             (invocation.tokens == 193 || invocation.tokens == 257 || invocation.tokens == 512 ||
+              invocation.tokens == 513 || invocation.tokens == 1025));
         ops::linear_add(x, weight, residual, invocation.policy, workspace, nullptr);
         cuda_check(cudaDeviceSynchronize(), "synchronize FP8 linear_add");
 
-        if (invocation.tokens == 128) {
+        if (replay_changed_input) {
             cudaStream_t stream;
             cudaGraph_t graph;
             cudaGraphExec_t executable;
@@ -149,7 +161,13 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
             ops::linear_add(x, weight, residual, invocation.policy, workspace, stream);
             CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
             CUDA_CHECK(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0));
+            auto negative_activation = activation;
+            for (auto& value : negative_activation) value ^= 0x8000;
             for (int replay = 0; replay < 2; ++replay) {
+                const auto& input = replay ? negative_activation : activation;
+                CUDA_CHECK(cudaMemcpyAsync(device_activation.data(), input.data(),
+                                           device_activation.bytes(), cudaMemcpyHostToDevice,
+                                           stream));
                 CUDA_CHECK(cudaMemcpyAsync(output.data(), initial_residual.data(), output.bytes(),
                                            cudaMemcpyHostToDevice, stream));
                 CUDA_CHECK(cudaGraphLaunch(executable, stream));
@@ -158,6 +176,7 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
             CUDA_CHECK(cudaGraphExecDestroy(executable));
             CUDA_CHECK(cudaGraphDestroy(graph));
             CUDA_CHECK(cudaStreamDestroy(stream));
+            device_activation.copy_from_host(activation.data(), device_activation.bytes());
         }
 
         const bool a8 =
@@ -170,6 +189,7 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
             ++failures;
         }
         failures += output.verify_guards(label);
+        failures += scratch.verify_guards(label);
 
         std::vector<std::uint16_t> actual_bits(output_words);
         output.copy_to_host(actual_bits.data(), output.bytes());
@@ -192,7 +212,8 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
                 }
                 const std::size_t index = static_cast<std::size_t>(token) * n + row;
                 actual.push_back(static_cast<double>(bf16_to_f32(actual_bits[index])));
-                expected.push_back(sum + static_cast<double>(bf16_to_f32(initial_residual[index])));
+                expected.push_back((replay_changed_input ? -sum : sum) +
+                                   static_cast<double>(bf16_to_f32(initial_residual[index])));
             }
         }
         failures += verify_reduction(label, actual, expected, a8 ? kA8Tolerance : kA16Tolerance);
@@ -219,8 +240,22 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
         QType::FP8_E4M3FN_ROW_BF16, n, k, ops::LinearPolicy::AllowA8, 1, 1024);
     const std::size_t exact_1024 = ops::linear_add_workspace_capacity_bytes(
         QType::FP8_E4M3FN_ROW_BF16, n, k, ops::LinearPolicy::AllowA8, 1024, 1024);
-    if (a16_interval != 0 || pre_boundary != 0 || hot_interval != exact_48 ||
-        through_1024 != exact_1024 || exact_1024 <= exact_48) {
+    // Without tensor mma.sync (Volta) a prefill call of 17 tokens or more decodes its rows to FP16
+    // for CUTLASS (volta_cutlass_runs): an interval reserves its widest call's decoded copy.
+    const auto volta = [&](std::int32_t max_tokens) {
+        return ops::detail::generic::volta_prefill_workspace_bytes(QType::FP8_E4M3FN_ROW_BF16, n, k,
+                                                                   max_tokens, false);
+    };
+    const bool contract =
+        volta(2048) != 0
+            ? a16_interval == volta(2048) && pre_boundary == volta(first_a8 - 1) &&
+                  hot_interval == exact_48 && through_1024 == exact_1024 && exact_1024 > exact_48
+        : ninferno::test::fp8_mma_available()
+            ? a16_interval == 0 && pre_boundary == 0 && hot_interval == exact_48 &&
+                  through_1024 == exact_1024 && exact_1024 > exact_48
+            // Without the E4M3 mma.sync AllowA8 takes the A16 route: no workspace anywhere.
+            : a16_interval == 0 && pre_boundary == 0 && hot_interval == 0 && exact_1024 == 0;
+    if (!contract) {
         std::cerr << "FP8 linear_add [" << n << ',' << k
                   << "]: workspace interval contract mismatch\n";
         ++failures;
@@ -231,13 +266,13 @@ int run_shape(std::int32_t n, std::int32_t k, std::int32_t first_a8, std::uint32
 } // namespace
 
 int main() {
-    if (ninfer::test::cuda_unavailable()) {
+    if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }
     int failures = 0;
-    failures += run_shape(5120, 6144, 22, 861U);
-    failures += run_shape(5120, 17408, 25, 863U);
+    failures += run_shape(5120, 6144, 17, 861U);
+    failures += run_shape(5120, 17408, 20, 863U);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " FP8 linear_add\n";
     return failures == 0 ? 0 : 1;
 }

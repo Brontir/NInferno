@@ -7,8 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
-from tools.ninfer_serve.client import (
-    NInferServeClient,
+from tools.ninferno_serve.client import (
+    NInfernoServeClient,
     PreparedServeExchange,
     ProtocolEvent,
     ProtocolRequest,
@@ -353,7 +353,6 @@ class RequestHandle:
             result = self._result
             thread_error = self._thread_error
             first = self.first_output_ns
-            terminal = self.completed_ns
         if thread_error is not None:
             return "worker_error"
         if result is None:
@@ -423,7 +422,7 @@ class RequestHandle:
 class CaseContext:
     def __init__(
         self,
-        client: NInferServeClient,
+        client: NInfernoServeClient,
         model: str,
         timeout_seconds: float,
         on_progress: ProgressCallback | None = None,

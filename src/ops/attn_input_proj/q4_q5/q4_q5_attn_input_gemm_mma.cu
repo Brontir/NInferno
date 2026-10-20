@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 RowSplitGroupedMmaJob make_job(const Weight& weight, std::int32_t row_begin, std::int32_t row_count,
@@ -83,7 +83,7 @@ void launch(const Tensor& x, const Weight& query_key_weight, const Weight& gate_
     });
 }
 
-using MmaR32C64S4 = GemmCfg<32, 64, 64, 16, 16, 4, 1, false, true, true>;
+using MmaR32C64S4 = GemmCfg<32, 64, 64, 16, 16, 4, 1, true, true>;
 
 template <class S, bool Full>
 void mixed_slice(const Tensor& x, const Weight& w0, const Weight& w1, Tensor& q, Tensor& g,
@@ -122,27 +122,24 @@ void q4_q5_attn_input_grouped_mma_r32_c64_s4_launch(const Tensor& x, const Weigh
 void q4_q5_attn_input_mixed_r32_c32_s2_launch(const Tensor& x, const Weight& w0, const Weight& w1,
                                               Tensor& q, Tensor& g, Tensor& k, Tensor& v,
                                               cudaStream_t stream) {
-    launch_mixed<GemmCfg<32, 32, 64, 16, 16, 2, 1, false, true, true>>(x, w0, w1, q, g, k, v,
-                                                                       stream);
+    launch_mixed<GemmCfg<32, 32, 64, 16, 16, 2, 1, true, true>>(x, w0, w1, q, g, k, v, stream);
 }
 
 void q4_q5_attn_input_mixed_r32_c64_s3_launch(const Tensor& x, const Weight& w0, const Weight& w1,
                                               Tensor& q, Tensor& g, Tensor& k, Tensor& v,
                                               cudaStream_t stream) {
-    launch_mixed<GemmCfg<32, 64, 64, 16, 16, 3, 3, false, true, true>>(x, w0, w1, q, g, k, v,
-                                                                       stream);
+    launch_mixed<GemmCfg<32, 64, 64, 16, 16, 3, 3, true, true>>(x, w0, w1, q, g, k, v, stream);
 }
 
 void q4_q5_attn_input_pair_r32_c64_s3_launch(const Tensor& x, const Weight& w0, const Weight& w1,
                                              Tensor& q, Tensor& g, Tensor& k, Tensor& v,
                                              cudaStream_t stream) {
-    launch<GemmCfg<32, 64, 64, 32, 16, 3, 2, false, true, true>>(x, w0, w1, q, g, k, v, stream);
+    launch<GemmCfg<32, 64, 64, 32, 16, 3, 2, true, true>>(x, w0, w1, q, g, k, v, stream);
 }
 
 void q4_q5_attn_input_mixed_r64_c128_s2_launch(const Tensor& x, const Weight& w0, const Weight& w1,
                                                Tensor& q, Tensor& g, Tensor& k, Tensor& v,
                                                cudaStream_t stream) {
-    launch_mixed<GemmCfg<64, 128, 64, 64, 16, 2, 2, false, true, true>>(x, w0, w1, q, g, k, v,
-                                                                        stream);
+    launch_mixed<GemmCfg<64, 128, 64, 64, 16, 2, 2, true, true>>(x, w0, w1, q, g, k, v, stream);
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

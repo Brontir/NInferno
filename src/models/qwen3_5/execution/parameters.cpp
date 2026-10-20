@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 namespace {
 
 template <class Function>
@@ -33,6 +33,12 @@ public:
                             [&] { return ops::prepare_linear_weight(model_.input(id)); });
     }
 
+    // A row table read by id (DFlash2 codebooks): the stored matrix as it is, any format.
+    Weight codebook(WeightId id) const {
+        const auto& bound = model_.weight(id);
+        return with_context(bound.name, [&] { return native_weight(bound.view); });
+    }
+
     Tensor tensor(WeightId id) const {
         const auto& bound = model_.weight(id);
         return with_context(bound.name, [&] {
@@ -53,20 +59,19 @@ public:
     }
 
     DenseParameters dense(const DenseWeights& w) const {
-        return {with_context(model_.weight(w.gate).name,
-                             [&] {
-                                 return ops::prepare_linear_swiglu_weight(model_.input(w.gate),
-                                                                          model_.input(w.up));
-                             }),
-                linear(w.down)};
+        auto gate_up = with_context(model_.weight(w.gate).name, [&] {
+            return ops::prepare_dense_gate_up_weights(model_.input(w.gate), model_.input(w.up));
+        });
+        if (auto* split = std::get_if<ops::SegmentedProjectionWeights>(&gate_up)) {
+            return {{}, linear(w.down), std::move(*split)};
+        }
+        return {std::get<ops::SingleProjectionWeight>(gate_up), linear(w.down), std::nullopt};
     }
 
     FfnParameters ffn(const BlockWeights& w) const {
         if (const auto* d = std::get_if<DenseWeights>(&w.ffn)) { return dense(*d); }
-        const auto& moe = std::get<MoeWeights>(w.ffn);
-        if (std::get<MoeConfig>(model_.config().text.ffn).num_experts_per_tok != 8) {
-            throw std::invalid_argument("SparseMoe implements top-8 routing");
-        }
+        const auto& moe  = std::get<MoeWeights>(w.ffn);
+        const auto top_k = std::get<MoeConfig>(model_.config().text.ffn).num_experts_per_tok;
         std::vector<ops::WeightInput> gate_up, down;
         gate_up.reserve(2 * moe.experts.size());
         down.reserve(moe.experts.size());
@@ -75,11 +80,26 @@ public:
             gate_up.push_back(model_.input(expert.up));
             down.push_back(model_.input(expert.down));
         }
-        return with_context(model_.weight(moe.router).name, [&] {
-            return ops::prepare_sparse_moe_weights(
+        return with_context(model_.weight(moe.router).name, [&]() -> FfnParameters {
+            auto generic = ops::prepare_moe_weights(
                 model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                 model_.input(moe.shared.gate), model_.input(moe.shared.up),
                 model_.input(moe.shared.down));
+            if (top_k == 8 && ops::sparse_moe_admits(generic)) {
+                return ops::prepare_sparse_moe_weights(
+                    model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
+                    model_.input(moe.shared.gate), model_.input(moe.shared.up),
+                    model_.input(moe.shared.down));
+            }
+            // Qwen3.5-MoE routing: softmax over every expert, top-k renormalized, SwiGLU experts
+            // with gate rows before up rows, the shared expert behind sigmoid(shared_score . x).
+            ops::MoeConfig config;
+            config.top_k          = static_cast<std::int32_t>(top_k);
+            config.scoring        = ops::MoeScoring::Softmax;
+            config.renormalize    = true;
+            config.activation     = ops::MoeActivation::SwiGlu;
+            config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+            return GenericMoeParameters{std::move(generic), config};
         });
     }
 
@@ -114,6 +134,11 @@ public:
     }
 
     ops::SparseMoeHints prefetch(const ops::ProjectionWeights& projection, WeightId query) const {
+        if (const auto* segmented = std::get_if<ops::SegmentedProjectionWeights>(&projection)) {
+            // The generic path takes no prefetch hint.
+            (void)segmented;
+            return {};
+        }
         const auto* single = std::get_if<LinearParameters>(&projection);
         const auto& weight =
             single ? single->weight : std::get<ops::PairedProjectionWeights>(projection).first;
@@ -135,8 +160,11 @@ public:
         out.input_norm          = tensor(w.layer.input_norm);
         out.post_attention_norm = tensor(w.layer.post_attention_norm);
         out.final_norm          = tensor(w.final_norm);
-        out.projection.packed   = ops::prepare_linear_weight(inputs);
-        if (model_.config().text.architecture == Architecture::Qwen3_5) {
+        const bool dense = model_.config().text.architecture == Architecture::Qwen3_5;
+        if (!dense || ops::consecutive_rows_of_one_parent(inputs)) {
+            out.projection.packed = ops::prepare_linear_weight(inputs);
+        }
+        if (dense) {
             out.projection.rows = {linear(a.query), linear(a.key), linear(a.gate), linear(a.value)};
         }
         out.query_norm  = tensor(a.query_norm);
@@ -228,14 +256,30 @@ public:
                     DraftBlockParameters result;
                     result.input_norm          = tensor(layer.input_norm);
                     result.post_attention_norm = tensor(layer.post_attention_norm);
-                    result.query_key_value     = ops::prepare_attn_input_proj_weights(
-                        model_.input(a.query), model_.input(a.key), model_.input(a.value));
+                    const std::array<ops::WeightInput, 3> qkv{
+                        model_.input(a.query), model_.input(a.key), model_.input(a.value)};
+                    result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
+                    // The fused Q/K/V kernel reads one RowSplit Q8 parent; a published drafter
+                    // whose Q/K/V are one parent in another format (the dflash GGUF's Q4_0
+                    // blocks) runs through the bank (draft.cpp, fused_q8).
+                    if (ops::consecutive_rows_of_one_parent(qkv)) {
+                        const auto joined = ops::prepare_linear_weight(
+                            std::span<const ops::WeightInput>(qkv));
+                        if (joined.weight.qtype == QType::Q8_G32_FP16 &&
+                            joined.weight.layout == QuantLayout::RowSplit) {
+                            result.query_key_value =
+                                ops::prepare_attn_input_proj_weights(qkv[0], qkv[1], qkv[2]);
+                        }
+                    }
                     result.context_key   = linear(a.context_key);
                     result.context_value = linear(a.context_value);
                     result.query_norm    = tensor(a.query_norm);
                     result.key_norm      = tensor(a.key_norm);
                     result.output        = linear(a.output);
                     result.mlp           = dense(layer.mlp);
+                    if (result.mlp.split_gate_up) {
+                        throw std::invalid_argument("draft MLP: gate and up must share one parent");
+                    }
                     if (layer.attention_conv) {
                         result.attention_conv = convolution(*layer.attention_conv);
                     }
@@ -245,8 +289,8 @@ public:
         }
         if (w.selector) {
             out.selector = SelectorParameters{linear(w.selector->hidden_projection),
-                                              tensor(w.selector->predecessor_codebook),
-                                              tensor(w.selector->successor_codebook)};
+                                              codebook(w.selector->predecessor_codebook),
+                                              codebook(w.selector->successor_codebook)};
         }
         return out;
     }
@@ -258,6 +302,11 @@ private:
 } // namespace
 
 Parameters::Parameters(const Model& source) : model(source) {
+    if (const auto* moe = std::get_if<MoeConfig>(&model.config().text.ffn)) {
+        experts = {.residency = model.expert_residency(),
+                   .experts   = moe->num_experts,
+                   .top_k     = moe->num_experts_per_tok};
+    }
     const Prepare prepare(model);
     const auto& w        = model.weights();
     text.token_embedding = native_weight(model.weight(w.text.token_embedding).view);
@@ -285,4 +334,4 @@ Parameters::Parameters(const Model& source) : model(source) {
     }
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

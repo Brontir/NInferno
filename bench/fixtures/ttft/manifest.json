@@ -1,9 +1,9 @@
 {
-  "artifact_type": "ninfer_serve_ttft_corpus",
+  "artifact_type": "ninferno_serve_ttft_corpus",
   "schema_version": 1,
   "tokenizer": {
     "identity": "Qwen/Qwen3.6-family",
-    "local_qualification_path_name": "base-hf-bf16",
+    "local_qualification_path_name": "Qwen3.6-27B",
     "enable_thinking": false,
     "add_generation_prompt": true
   },
@@ -16,39 +16,39 @@
     },
     "long-8k-16": {
       "path": "examples/cli/messages/long_niah_8k.json",
-      "sha256": "3080d984516f2917aacf159aab6b4b42d3f7d1abe8ab39e0dadbaf1f05d8ae99",
+      "sha256": "6346e159c35a8a2b9f3ae6141d5415c9b1e23cb230ac8915dba4a2bdd6de22a6",
       "prompt_tokens": 7680,
       "max_output_tokens": 16
     },
     "long-8k-32": {
       "path": "examples/cli/messages/long_niah_8k.json",
-      "sha256": "3080d984516f2917aacf159aab6b4b42d3f7d1abe8ab39e0dadbaf1f05d8ae99",
+      "sha256": "6346e159c35a8a2b9f3ae6141d5415c9b1e23cb230ac8915dba4a2bdd6de22a6",
       "prompt_tokens": 7680,
       "max_output_tokens": 32
     },
     "long-8k-independent-32": {
       "path": "bench/fixtures/ttft/text/long_8k_independent.json",
-      "sha256": "7a9f7d7a8bae3597b7fa755ed7495a00860da378786916439d249b08dc784630",
+      "sha256": "6e023bc1b2b893f6927b84c8446596ba252eb09c4400665178fad49f985781bf",
       "prompt_tokens": 7680,
       "max_output_tokens": 32,
       "seed_common_prefix_tokens": 3
     },
     "long-64k-32": {
       "path": "examples/cli/messages/long_niah_64k.json",
-      "sha256": "7160fdf1aff52cd79b5e35efa829e7ef43004fe61aa86136a3bf0adef9cc03f4",
+      "sha256": "af052962e75309193291629d96e215547f65f427b65808ae1f775e636e2b7644",
       "prompt_tokens": 64512,
       "max_output_tokens": 32
     },
     "long-64k-independent-32": {
       "path": "bench/fixtures/ttft/text/long_64k_independent.json",
-      "sha256": "360f235f326a987e5a7347657731cb49315da5fa18c742f9587db4a8fa459572",
+      "sha256": "54f6ae813835a5ce2c23afd26b18c81d5493178fd430e066895cf83fca4f1784",
       "prompt_tokens": 64512,
       "max_output_tokens": 32,
       "seed_common_prefix_tokens": 3
     },
     "rotation-55k-0": {
       "path": "bench/fixtures/ttft/text/rotation_55k_0.json",
-      "sha256": "b00be51579f76f06bdd4d3641d185bfb43350d71a75858f8eae83ec32492dbe6",
+      "sha256": "c63705d39332f92fd1439b9b80801f60f354007a5435748bc5356fe59dba4afe",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -57,7 +57,7 @@
     },
     "rotation-55k-1": {
       "path": "bench/fixtures/ttft/text/rotation_55k_1.json",
-      "sha256": "4170d17d17733ca23c9d52449d58232fe72c79356f991577a39f5d8591d8dcb8",
+      "sha256": "c1cc4428e9710961e583a4558eac4d3401915a80f9828ea75a5bb002bec10806",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -66,7 +66,7 @@
     },
     "rotation-55k-2": {
       "path": "bench/fixtures/ttft/text/rotation_55k_2.json",
-      "sha256": "1274f6f889e233189a6b870e03de63b7237ec9c1c407b48c4fc94f95415496d9",
+      "sha256": "6c13e56fb7143e1eb5ebf0dc75457b629e583fa74bd953448d69f15e5b313bd5",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -75,7 +75,7 @@
     },
     "rotation-55k-3": {
       "path": "bench/fixtures/ttft/text/rotation_55k_3.json",
-      "sha256": "5bfe7c1c610640e785391153f6680e7178c057fdc2026dbbff356f8499e366d1",
+      "sha256": "6c653c33db1bf89598a5e74517f43d1372bfe9e012a6ee1a616fb6ddbb337c1a",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -84,7 +84,7 @@
     },
     "rotation-55k-4": {
       "path": "bench/fixtures/ttft/text/rotation_55k_4.json",
-      "sha256": "23829a48cfe472ce35e79b1b9b9558d05af7ed8fbe58956f894736f459270099",
+      "sha256": "2a17235cb538b2fb7a46d31edb56e02a4bf532d9116ca7cea2447e7c8d3bf629",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -93,7 +93,7 @@
     },
     "rotation-55k-5": {
       "path": "bench/fixtures/ttft/text/rotation_55k_5.json",
-      "sha256": "747ab03b82f70f542b6d45828e4345ecf192139a0043d994cf7ffae522f3cab9",
+      "sha256": "24ddc54fba94fad7eeeb299ca2d57292f3bd25802088af434d0d6c42f759d8bf",
       "prompt_tokens": 55000,
       "max_output_tokens": 32,
       "max_peer_common_prefix_tokens": 3,
@@ -102,7 +102,7 @@
     },
     "long-256k-32": {
       "path": "examples/cli/messages/long_niah_256k.json",
-      "sha256": "73278973a82c80f5be8bcc7d4c89afd8bdd3edfe82e8900952cb4a7660cd9644",
+      "sha256": "9a3699907bccbd6c694cc8521eb0c2253937c38d870d16e864d8b2e39d784168",
       "prompt_tokens": 260096,
       "max_output_tokens": 32
     },
@@ -126,32 +126,32 @@
     },
     "context-exact": {
       "path": "bench/fixtures/ttft/text/context_exact.json",
-      "sha256": "946a56a8461593299713f24e1eae2b20482431bfcb5f4da3ad83bc0added753f",
+      "sha256": "bf0e5d0c2db7dcb4d1354d8e9adaecacbecd4d9d94b9fb4f1afb1b91fd9e62fc",
       "prompt_tokens": 8129,
       "max_output_tokens": 64
     },
     "context-over": {
       "path": "bench/fixtures/ttft/text/context_over.json",
-      "sha256": "b9ddc7bebf507257254903de9d65fc6892166cad0d8990e8818247f16ddf7584",
+      "sha256": "ccc94e18251c2b4599ef0c5acb1bf2a30ac286180f61f2d32e292ddb46af24b9",
       "prompt_tokens": 8193
     },
     "unmarked-common-a": {
       "path": "bench/fixtures/ttft/text/unmarked_common_a.json",
-      "sha256": "1ee4fbadfc9ccfa0271cf242f30a1d8deec7002b5c1e67354d2a977179f5e60d",
+      "sha256": "e09adea652ca21e5324c7df36cdc437261e420fe55f67d32aa3e35c724c93ff9",
       "prompt_tokens": 4321,
       "common_prefix_tokens": 4306,
       "max_output_tokens": 32
     },
     "unmarked-common-b": {
       "path": "bench/fixtures/ttft/text/unmarked_common_b.json",
-      "sha256": "f84eb0c439c24b6ba21634e5ca5d3533a3663e201ae48d825cc30e0697459029",
+      "sha256": "e8462d0c0715cff5eaf318beb288a7f6d3b74650a6a59020cd4a9912e0c61d9f",
       "prompt_tokens": 4321,
       "common_prefix_tokens": 4306,
       "max_output_tokens": 32
     },
     "state-2k-a": {
       "path": "bench/fixtures/ttft/text/state_working_set_a.json",
-      "sha256": "9c265610226e9d56563f30aa69ba5508c44c6181cf34c5bece6bb64ec302401a",
+      "sha256": "598f96a68597e9ab8fedbfbc715dbd744c3359a7086ec0bd3709e8902441bdc7",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -169,7 +169,7 @@
     },
     "state-2k-b": {
       "path": "bench/fixtures/ttft/text/state_working_set_b.json",
-      "sha256": "16b6851f5f8edbbc6e5756e080cf95ca59ce071c82d49029c6b724b51c576321",
+      "sha256": "ef5c2f06c67ad88754ca454155ee2650a38c63c31c87ad2221f20a8f254bcacd",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -187,7 +187,7 @@
     },
     "state-2k-c": {
       "path": "bench/fixtures/ttft/text/state_working_set_c.json",
-      "sha256": "3459edcefb104777c94f53feac65cb98cac687c0463af84b7858eeca902d6f13",
+      "sha256": "f4af9761f8e521775701e94d87a0138e26f62c97c2feecc09af494862d2ea1dd",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -205,7 +205,7 @@
     },
     "state-2k-d": {
       "path": "bench/fixtures/ttft/text/state_working_set_d.json",
-      "sha256": "dda66d2c124bea448f42dd58cc8f35b91837305efc945ebe42a1db2f2c8517bc",
+      "sha256": "dffe49b7a67f03b6563de84f359a1139c2f4df0b104d338f55a98c9d245d4c4f",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -223,7 +223,7 @@
     },
     "state-2k-e": {
       "path": "bench/fixtures/ttft/text/state_working_set_e.json",
-      "sha256": "31b3a1cbb298414e49aab10023cc0f5933f53a4be0b59d7529106fbeadc6eab9",
+      "sha256": "53c6e843a23aa42e04a689bbd4bdb073ee83bf4e664d2645642ccab02be4af80",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -241,7 +241,7 @@
     },
     "state-2k-f": {
       "path": "bench/fixtures/ttft/text/state_working_set_f.json",
-      "sha256": "75cdd4d706492c3ed702e1a0f608478300269fe08767c91c631cf86644514e9e",
+      "sha256": "bd07a6c1f750dd17864ec9e47c395be41a939b3cf3fee15130e9c9d435c2d1c6",
       "prompt_tokens": 2048,
       "max_output_tokens": 32,
       "system_frontier_tokens": 2026,
@@ -261,13 +261,13 @@
   "shared": {
     "system-a": {
       "path": "bench/fixtures/ttft/text/shared_system_a.txt",
-      "sha256": "79c05e8339e8fad4bcb9ae424ee6cf68f49add59081841825f37aef1d0e3f7c3",
+      "sha256": "f26b5c57c04908d5fbd6f1ad3546bf17db89f36a803d940471a1d06d1bb0d7a8",
       "marked_frontier_tokens": 4149,
       "example_prompt_tokens": 4173
     },
     "system-b": {
       "path": "bench/fixtures/ttft/text/shared_system_b.txt",
-      "sha256": "721f2a9ae56b5ec4e10de7bd74a9e57f4baecff2a767915e9d700f5d230a5775",
+      "sha256": "68a11ce1d956b89001a42212c796a4b9e83667e18ed8188bc9c5888b238acc8f",
       "marked_frontier_tokens": 4149,
       "example_prompt_tokens": 4173
     },

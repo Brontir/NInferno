@@ -1,18 +1,21 @@
 #pragma once
 #include "models/qwen3_5/program/internal.h"
+#include "models/qwen3_5/program/round_buffers.h"
+#include "models/qwen3_5/program/planning/speculation_load.h"
 
 #include "core/arena.h"
 #include "core/decode_graph.h"
 #include "core/device.h"
-#include "ninfer/ops/kv_cache_append.h"
-#include "ninfer/ops/sampling.h"
-#include "ninfer/ops/sliding_window_attention.h"
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/kv_cache_append.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/ops/sliding_window_attention.h"
+#include "ninferno/ops/softmax_attention.h"
 #include "models/qwen3_5/program/storage/draft_context.h"
 #include "models/qwen3_5/execution/text.h"
 #include "models/qwen3_5/execution/vision.h"
 #include "models/qwen3_5/program/vision_prefill.h"
 #include "models/qwen3_5/state/decoder_state.h"
+#include "models/qwen3_5/state/state_image.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 
 #include <array>
@@ -22,7 +25,11 @@
 #include <optional>
 #include <span>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::detail {
+class ModelExecution;
+}
+
+namespace ninferno::models::qwen3_5::execution {
 
 using qwen3_5::PreparedPromptData;
 using detail::DFlashPersistentState;
@@ -30,15 +37,31 @@ using qwen3_5::PromptModality;
 
 struct ExecutionCore {
     DeviceContext& device;
-    const execution::Parameters& parameters;
+    const detail::ModelExecution& model;
     WorkspaceArena& work;
-    LinearAttentionStatePool& linear_attention;
+    StateImageDevicePool& state_images;
     const GdnReplayRecords* replay_records;
     qwen3_5::RoundState& io;
     Tensor& prefill_hidden;
     std::uint32_t prefill_chunk;
+    // The session's context: the plan's capacity, the resolved max_context (a LongRoPE model's
+    // rotation mode follows it, models/dense/config.h).
+    std::uint32_t capacity;
     ProposalHead proposal_head;
+    // The DFlash drafter's width per round: SpeculativeOptions::draft_width and the load bounds
+    // (dflash_draft_width below).
+    DFlashDraftWidth draft_width;
+    const std::vector<SpeculationLoad>* speculation_load;
 };
+
+// The width a DFlash round of `rows` rows drafts at (detail::dflash_draft_width).
+[[nodiscard]] inline DFlashDraftWidth dflash_draft_width(const ExecutionCore& core,
+                                                         std::int32_t rows) {
+    static const std::vector<SpeculationLoad> kNoBounds;
+    return detail::dflash_draft_width(core.draft_width,
+                                      core.speculation_load ? *core.speculation_load : kNoBounds,
+                                      rows > 0 ? static_cast<std::size_t>(rows) : 0U);
+}
 
 struct PrefillContext {
     ExecutionCore execution;
@@ -50,10 +73,11 @@ struct PrefillContext {
     std::uint32_t text_kv_base;
     const ops::SamplingConfig* sampling;
     Tensor* rewrite_checkpoint_hidden;
-    std::int32_t state_source_slot                          = 0;
-    std::int32_t state_destination_slot                     = 0;
-    std::uint32_t mtp_proposal_extent                       = 0;
-    const qwen3_5::DFlashDecodeIngress* dflash_host_ingress = nullptr;
+    std::int32_t state_source_slot                             = 0;
+    std::int32_t state_destination_slot                        = 0;
+    std::uint32_t mtp_proposal_extent                          = 0;
+    std::int32_t dflash_kv_table_row                           = 0;
+    qwen3_5::DFlashPrefillIngress* dflash_prefill_host_ingress = nullptr;
 };
 
 struct OrdinaryBatchContext {
@@ -68,11 +92,15 @@ struct OrdinaryBatchContext {
 struct MtpBatchContext {
     ExecutionCore execution;
     const qwen3_5::PagedKVCache& text_cache;
-    const qwen3_5::PagedKVCache& mtp_cache;
+    // The drafter's own KV; null for a drafter that reads only the target's.
+    const qwen3_5::PagedKVCache* mtp_cache;
     qwen3_5::MtpDecodeState& frame;
     const qwen3_5::MtpDecodeIngress& host_ingress;
     qwen3_5::MtpDecodeEgress& host_egress;
     Tensor& continuation_hidden_store;
+    // The depth the drafter proposes for the next round; 0: the round's draft window (a copy
+    // window verifies more drafts than the drafter proposes).
+    std::uint32_t draft_depth = 0;
 };
 
 struct DFlashBatchContext {
@@ -93,7 +121,8 @@ struct DFlashAppendContext {
 struct MtpCausalAttentionEnvelopes {
     ops::CausalAttentionExecutionEnvelope target_verify;
     ops::CausalAttentionExecutionEnvelope batch;
-    std::array<ops::CausalAttentionExecutionEnvelope, kMaximumMtpDraftTokens - 1> ar;
+    // One per autoregressive draft step after the first, for the Program's widest MTP round.
+    std::array<ops::CausalAttentionExecutionEnvelope, kMtpDecodeMaximumDrafts - 1> ar;
 };
 
 struct DFlashEnvelopes {
@@ -152,8 +181,6 @@ struct MtpBridgeInput {
     std::array<std::int32_t, 3> rope_position{};
 };
 
-void sample_from_hidden(PrefillContext& state, const Tensor& hidden, std::int32_t absolute_position,
-                        std::int32_t purpose);
 void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
                             const Tensor& previous_hidden, std::int32_t position,
                             std::span<const std::int32_t> rope_position, bool build_proposal,
@@ -198,4 +225,4 @@ void dflash_decode_batch(DFlashBatchContext& state, std::int32_t batch_size, std
                          ops::CausalAttentionExecutionEnvelope target_envelope,
                          DecodeGraphExecutable* executable);
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

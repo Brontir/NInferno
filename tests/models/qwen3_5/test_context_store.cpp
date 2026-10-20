@@ -4,6 +4,7 @@
 #include "models/qwen3_5/program/storage/state_store.h"
 
 #include "models/qwen3_5/state/state_image.h"
+#include "support/cuda.h"
 
 #include <cuda_runtime.h>
 
@@ -17,8 +18,8 @@
 
 namespace {
 
-namespace q36   = ninfer::models::qwen3_5;
-namespace store = ninfer::models::qwen3_5::detail;
+namespace q36   = ninferno::models::qwen3_5;
+namespace store = ninferno::models::qwen3_5::detail;
 
 int failures = 0;
 
@@ -28,13 +29,9 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
 }
 
-bool cuda_unavailable(cudaError_t error) {
-    return error == cudaErrorNoDevice || error == cudaErrorInsufficientDriver;
-}
-
-std::vector<std::int32_t> read_block_table(const ninfer::KVExecutionTablePool& tables,
+std::vector<std::int32_t> read_block_table(const ninferno::KVExecutionTablePool& tables,
                                            std::int32_t row, std::size_t count) {
-    const ninfer::Tensor source = tables.matrix().slice(1, row, 1).view(
+    const ninferno::Tensor source = tables.matrix().slice(1, row, 1).view(
         {static_cast<std::int32_t>(tables.logical_page_capacity())});
     std::vector<std::int32_t> values(count);
     CUDA_CHECK(cudaMemcpy(values.data(), source.data, values.size() * sizeof(std::int32_t),
@@ -42,7 +39,7 @@ std::vector<std::int32_t> read_block_table(const ninfer::KVExecutionTablePool& t
     return values;
 }
 
-void test_state_store(ninfer::DeviceContext& device) {
+void test_state_store(ninferno::DeviceContext& device) {
     q36::StateImageSpec spec{
         .linear =
             {
@@ -53,15 +50,15 @@ void test_state_store(ninfer::DeviceContext& device) {
                 .value_head_dim = 4,
                 .key_head_dim   = 4,
                 .slot_count     = 4,
-                .conv_dtype     = ninfer::DType::BF16,
+                .conv_dtype     = ninferno::DType::BF16,
             },
         .hidden = 8,
         .dflash_local =
             q36::DFlashLocalStateSpec{.layers = 1, .capacity = 8, .kv_heads = 2, .head_dim = 4},
     };
-    ninfer::LayoutBuilder builder;
+    ninferno::LayoutBuilder builder;
     const q36::StateImageDeviceLayout layout = q36::plan_state_image_device_pool(builder, spec);
-    ninfer::DeviceArena arena(builder.finish(256));
+    ninferno::DeviceArena arena(builder.finish(256));
     q36::StateImageDevicePool physical({arena.base(), arena.capacity()}, layout);
     q36::HostStatePool host(layout.host, 2);
     store::StateImageStore images(
@@ -167,34 +164,34 @@ void test_state_store(ninfer::DeviceContext& device) {
            "State Host/Device replica ownership closes without leaked slots");
 }
 
-void test_kv_store(ninfer::DeviceContext& device) {
-    ninfer::LayoutBuilder builder;
-    ninfer::DeviceKVPagePoolSpec page_spec{
+void test_kv_store(ninferno::DeviceContext& device) {
+    ninferno::LayoutBuilder builder;
+    ninferno::DeviceKVPagePoolSpec page_spec{
         .page_group_count = 8,
         .geometry =
             {
-                .page_tokens        = static_cast<std::uint32_t>(ninfer::kPagedKVPageSize),
-                .device_plane_order = ninfer::PagedKVPlaneOrder::PageMajor,
-                .planes = {{.dtype = ninfer::DType::BF16, .leading_extent = 8, .head_extent = 2}},
+                .page_tokens        = static_cast<std::uint32_t>(ninferno::kPagedKVPageSize),
+                .device_plane_order = ninferno::PagedKVPlaneOrder::PageMajor,
+                .planes = {{.dtype = ninferno::DType::BF16, .leading_extent = 8, .head_extent = 2}},
             },
     };
-    const ninfer::DeviceKVPagePoolLayout page_layout =
-        ninfer::plan_device_kv_page_pool(builder, page_spec);
-    const ninfer::KVExecutionTableLayout table_layout =
-        ninfer::plan_kv_execution_tables(builder, {.logical_page_capacity = 4, .table_rows = 2});
-    ninfer::DeviceArena arena(builder.finish(256));
-    const ninfer::DeviceSpan backing{arena.base(), arena.capacity()};
-    ninfer::DeviceKVPagePool physical_pages(backing, page_layout);
-    ninfer::KVExecutionTablePool physical_tables(backing, table_layout, physical_pages);
-    const ninfer::HostKVPageLayout host_layout =
-        ninfer::plan_host_kv_page_layout(physical_pages.geometry());
+    const ninferno::DeviceKVPagePoolLayout page_layout =
+        ninferno::plan_device_kv_page_pool(builder, page_spec);
+    const ninferno::KVExecutionTableLayout table_layout =
+        ninferno::plan_kv_execution_tables(builder, {.logical_page_capacity = 4, .table_rows = 2});
+    ninferno::DeviceArena arena(builder.finish(256));
+    const ninferno::DeviceSpan backing{arena.base(), arena.capacity()};
+    ninferno::DeviceKVPagePool physical_pages(backing, page_layout);
+    ninferno::KVExecutionTablePool physical_tables(backing, table_layout, physical_pages);
+    const ninferno::HostKVPageLayout host_layout =
+        ninferno::plan_host_kv_page_layout(physical_pages.geometry());
     const std::array host_layouts{host_layout};
-    ninfer::HostKVArena host_arena(host_layout.page_stride * 8, host_layouts);
+    ninferno::HostKVArena host_arena(host_layout.page_stride * 8, host_layouts);
     store::LogicalKVPageStore pages(physical_pages, physical_pages.capacity_pages() + 8U);
     store::HostKVExtentStore extents(host_arena, 8);
     store::KVAddressSpaceStore addresses(pages, physical_tables, 4, 4);
 
-    const auto address = addresses.create_active(3, 0);
+    const auto address = addresses.create_active(3, 0, device.stream);
     expect(address.has_value(), "active KV address allocation");
     addresses.ensure_mapped_to_tokens(*address, 65, device.stream);
     device.synchronize();
@@ -239,7 +236,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
     addresses.set_checkpoint_requirement(*address, 65);
     auto host_backup = extents.prepare(pages, logical_pages);
     expect(host_backup.has_value(), "Host KV extent reservation");
-    const std::vector<ninfer::DeviceKVPageHandle> sources = extents.device_sources(*host_backup);
+    const std::vector<ninferno::DeviceKVPageHandle> sources = extents.device_sources(*host_backup);
     physical_pages.copy_to_host(sources, extents.writable_view(*host_backup),
                                 device.transfer_stream);
     expect(!pages.host_resident(logical_pages[0]) && !pages.host_resident(logical_pages[1]),
@@ -264,7 +261,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
 
     auto second_host_backup = extents.prepare(pages, logical_pages);
     expect(second_host_backup.has_value(), "second Host KV extent reservation");
-    const std::vector<ninfer::DeviceKVPageHandle> second_sources =
+    const std::vector<ninferno::DeviceKVPageHandle> second_sources =
         extents.device_sources(*second_host_backup);
     physical_pages.copy_to_host(second_sources, extents.writable_view(*second_host_backup),
                                 device.transfer_stream);
@@ -278,9 +275,9 @@ void test_kv_store(ninfer::DeviceContext& device) {
         .page  = logical_pages[1],
     }};
     const std::array seven_page_request{
-        ninfer::HostKVAllocationRequest{.layout = &host_layout, .pages = 7}};
+        ninferno::HostKVAllocationRequest{.layout = &host_layout, .pages = 7}};
     const std::array eight_page_request{
-        ninfer::HostKVAllocationRequest{.layout = &host_layout, .pages = 8}};
+        ninferno::HostKVAllocationRequest{.layout = &host_layout, .pages = 8}};
     expect(
         extents.can_allocate_after_page_releases({}, last_reference_release, seven_page_request) &&
             !extents.can_allocate_after_page_releases({}, last_reference_release,
@@ -329,7 +326,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
            "KV release invalidates generations and closes physical ownership");
 
     // Verify crosses a page boundary, but the terminal commit consumes only its first column.
-    const auto terminal = addresses.create_active(3, 0);
+    const auto terminal = addresses.create_active(3, 0, device.stream);
     expect(terminal.has_value(), "terminal boundary KV address allocation");
     addresses.ensure_mapped_to_tokens(*terminal, 63, device.stream);
     addresses.commit_frontier(*terminal, 63);
@@ -365,7 +362,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
                physical_pages.reserved_pages() == 0 && physical_pages.available_pages() == 8,
            "terminal settlement releases both mappings and unused growth");
 
-    const auto snapshot_source      = addresses.create_active(3, 0);
+    const auto snapshot_source      = addresses.create_active(3, 0, device.stream);
     const auto snapshot_destination = addresses.create_inactive();
     expect(snapshot_source && snapshot_destination, "active KV snapshot endpoints allocate");
     addresses.ensure_mapped_to_tokens(*snapshot_source, 65, device.stream);
@@ -391,7 +388,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
                pages.occupied() == 0,
            "active KV snapshot references close with both address spaces");
 
-    const auto alternating = addresses.create_active(4, 0);
+    const auto alternating = addresses.create_active(4, 0, device.stream);
     expect(alternating.has_value(), "alternating Host release address allocation");
     addresses.ensure_mapped_to_tokens(*alternating, 193, device.stream);
     addresses.commit_frontier(*alternating, 193);
@@ -424,7 +421,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
                pages.occupied() == 0,
            "alternating Host extent partitions close without leaked descriptors");
 
-    const auto shared = addresses.create_active(3, 0);
+    const auto shared = addresses.create_active(3, 0, device.stream);
     expect(shared.has_value(), "shared-prefix source address allocation");
     addresses.ensure_mapped_to_tokens(*shared, 65, device.stream);
     addresses.commit_frontier(*shared, 65);
@@ -479,7 +476,7 @@ void test_kv_store(ninfer::DeviceContext& device) {
                physical_pages.allocated_pages() == 0,
            "shared full-page occupancy survives until its final address reference releases");
 
-    const auto mixed_source = addresses.create_active(4, 0);
+    const auto mixed_source = addresses.create_active(4, 0, device.stream);
     expect(mixed_source.has_value(), "mixed snapshot retained-prefix source allocation");
     addresses.ensure_mapped_to_tokens(*mixed_source, 65, device.stream);
     addresses.commit_frontier(*mixed_source, 65);
@@ -570,14 +567,14 @@ void test_kv_store(ninfer::DeviceContext& device) {
                pages.occupied() == 0 && physical_pages.allocated_pages() == 0,
            "repeated mixed snapshot ownership closes without leaked logical or physical pages");
 
-    const auto filler = addresses.create_active(4, 0);
+    const auto filler = addresses.create_active(4, 0, device.stream);
     expect(filler.has_value(), "full-capacity staged-fork filler allocation");
     addresses.ensure_mapped_to_tokens(*filler, 193, device.stream);
     addresses.commit_frontier(*filler, 193);
     addresses.set_checkpoint_requirement(*filler, 193);
     addresses.deactivate(*filler);
 
-    const auto retained = addresses.create_active(4, 0);
+    const auto retained = addresses.create_active(4, 0, device.stream);
     expect(retained.has_value(), "full-capacity retained source allocation");
     addresses.ensure_mapped_to_tokens(*retained, 65, device.stream);
     addresses.commit_frontier(*retained, 65);
@@ -629,17 +626,47 @@ void test_kv_store(ninfer::DeviceContext& device) {
 
 } // namespace
 
+void test_capture_placement() {
+    struct Row {
+        std::uint32_t free_images;
+        std::uint32_t idle_lanes;
+        std::uint32_t waiting;
+        bool host_tier;
+        bool recycles;
+        bool device;
+        std::string_view what;
+    };
+    constexpr std::array rows{
+        Row{1, 3, 0, true, false, true, "light load keeps the Device fork"},
+        Row{3, 3, 0, true, false, true, "idle lanes alone reserve nothing"},
+        Row{3, 3, 3, true, false, false, "first wave: three waiting take the three free images"},
+        Row{2, 3, 3, true, false, false, "fewer free images than waiting requests"},
+        Row{4, 3, 3, true, false, true, "an image beyond the waiting requests"},
+        Row{2, 1, 3, true, false, true, "waiting beyond idle lanes reserve only the idle lanes"},
+        Row{1, 1, 1, true, false, false, "one waiting request takes the last image"},
+        Row{0, 0, 0, true, false, false, "full pool snapshots to Host"},
+        Row{0, 3, 3, false, false, true, "no Host tier: the fork is the only placement"},
+        Row{0, 3, 3, true, true, true, "recycled Device checkpoint stays on Device"},
+    };
+    for (const Row& row : rows) {
+        expect(store::capture_prefers_device(row.free_images, row.idle_lanes, row.waiting,
+                                             row.host_tier, row.recycles) == row.device,
+               row.what);
+    }
+}
+
 int main() {
+    test_capture_placement();
     int count                   = 0;
     const cudaError_t count_err = cudaGetDeviceCount(&count);
     if (cuda_unavailable(count_err) || count == 0) {
         std::cout << "SKIP: no usable CUDA device\n";
-        return 77;
+        return failures == 0 ? 77 : 1;
     }
     CUDA_CHECK(count_err);
 
     try {
-        ninfer::DeviceContext device(0);
+        ninferno::DeviceContext device(0);
         test_state_store(device);
         test_kv_store(device);
         device.synchronize();

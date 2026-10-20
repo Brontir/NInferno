@@ -1,0 +1,324 @@
+{
+ "entries": [
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 5376,
+   "n": 12288,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 5376,
+   "n": 18432,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 16384,
+   "n": 5376,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     2,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 21504,
+   "n": 5376,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 8192,
+   "n": 5376,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q4k",
+   "k": 5376,
+   "n": 21504,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 5376,
+   "n": 12288,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 5376,
+   "n": 18432,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 5376,
+   "n": 262144,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 5376,
+   "n": 4096,
+   "prefill": "tiled.128x64"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 21504,
+   "n": 5376,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q5k",
+   "k": 5376,
+   "n": 21504,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 5376,
+   "n": 4096,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 21504,
+   "n": 5376,
+   "prefill": "rmma.m1.n8.w8x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     128,
+     2047,
+     "rmma.m2.n4.w4x1"
+    ]
+   ]
+  }
+ ],
+ "gpu": {
+  "class": "ga100",
+  "name": "NVIDIA A100-SXM4-40GB",
+  "board": {"cc": 80, "sms": 108, "l2_mib": 40, "dram_gbps": 1555}
+ },
+ "schema": "ninferno-route-table/1"
+}

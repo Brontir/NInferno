@@ -1,4 +1,4 @@
-#include "ninfer/ops/causal_conv1d_silu.h"
+#include "ninferno/ops/causal_conv1d_silu.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -766,6 +766,15 @@ int main() {
                                6200U + static_cast<std::uint32_t>(T));
         failures += split_case(kQwen35Channels, 2048, 2048, 4096, T, false, true,
                                7200U + static_cast<std::uint32_t>(T));
+    }
+
+    // Runtime channel partitions (no compiled profile): Qwen3.5 0.8B/2B (2048/2048/2048) and an
+    // unshipped 1024/1024/3072 split, across both routes, both state forms and offset destinations.
+    for (const std::int32_t T : {1, 2, 15, 16, 17, 33, 64, 257}) {
+        failures += split_case(6144, 2048, 2048, 2048, T, false, false,
+                               8000U + static_cast<std::uint32_t>(T));
+        failures += split_case(5120, 1024, 1024, 3072, T, (T % 2) == 1, T == 33,
+                               8100U + static_cast<std::uint32_t>(T));
     }
 
     // Argument rejection, on both sides of the route bound.

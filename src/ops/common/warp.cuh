@@ -2,7 +2,7 @@
 
 #include <cuda_runtime.h>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kWarpSize          = 32;
 inline constexpr unsigned kFullWarpMask = 0xffffffffu;
@@ -56,4 +56,22 @@ __device__ __forceinline__ float block_reduce_sum(float x, float* sums) {
     return x;
 }
 
-} // namespace ninfer::ops
+// Sum over a block of Threads threads (a multiple of 32); `scratch` holds one float per warp. Every
+// thread returns the total; the trailing barrier lets the caller reuse `scratch` at once.
+template <int Threads>
+__device__ __forceinline__ float block_sum(float value, float* scratch) {
+    static_assert(Threads % kWarpSize == 0);
+    constexpr int kWarps = Threads / kWarpSize;
+    const int lane       = threadIdx.x & (kWarpSize - 1);
+    const int warp       = threadIdx.x / kWarpSize;
+    value                = warp_sum(value);
+    if (lane == 0) { scratch[warp] = value; }
+    __syncthreads();
+    float total = 0.0f;
+#pragma unroll
+    for (int w = 0; w < kWarps; ++w) { total += scratch[w]; }
+    __syncthreads();
+    return total;
+}
+
+} // namespace ninferno::ops

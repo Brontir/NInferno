@@ -1,15 +1,16 @@
 #pragma once
 
-// Total-order key for a finite FP32 score and non-negative int32 id. Larger keys mean higher
-// scores; exact numeric ties mean lower ids. Numeric zero is canonicalized so +0 and -0 reach the
-// id tie-break. Key zero is reserved as a sentinel below every finite score/id pair.
+// Total-order key for an FP32 score and non-negative int32 id. Larger keys mean higher scores;
+// exact numeric ties mean lower ids. Numeric zero is canonicalized so +0 and -0 reach the id
+// tie-break, and NaN ranks as -inf (rank_score). Key zero is reserved as a sentinel below every
+// score/id pair.
 
 #include <climits>
 #include <cstdint>
 
 #include <cuda_runtime.h>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 struct ScoreIdOrderGreater {
     __device__ __forceinline__ bool operator()(std::uint64_t lhs, std::uint64_t rhs) const {
@@ -17,7 +18,16 @@ struct ScoreIdOrderGreater {
     }
 };
 
+// The score a candidate ranks by: NaN ranks as -inf. A column of NaN logits (a numerically failed
+// forward) then still selects an id of its domain, the lowest, where a reduction seeded with
+// (-inf, INT_MAX) would keep its seed and hand an out-of-range id to the embedding and the token
+// counts.
+__device__ __forceinline__ float rank_score(float value) {
+    return isnan(value) ? __int_as_float(0xff800000) : value;
+}
+
 __device__ __forceinline__ std::uint32_t ordered_score_bits(float value) {
+    value = rank_score(value);
     if (value == 0.0f) { value = 0.0f; }
     const std::uint32_t bits = __float_as_uint(value);
     return (bits & 0x80000000u) != 0 ? ~bits : (bits ^ 0x80000000u);
@@ -40,4 +50,4 @@ __device__ __forceinline__ std::int32_t id_from_order_key(std::uint64_t key) {
     return static_cast<std::int32_t>(0xffffffffu - static_cast<std::uint32_t>(key));
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

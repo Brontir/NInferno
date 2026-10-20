@@ -1,8 +1,8 @@
 // Public benchmark for the registered proposal token-id remap.
 
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/speculative_round.h"
 
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_runtime.h>
 
@@ -14,8 +14,8 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -38,7 +38,9 @@ void run(int tokens) {
     proposals.copy_from_host(host_tokens.data(), proposals.bytes);
     Tensor proposal_tensor(proposals.p, DType::I32, {tokens});
 
-    const Result result = bench_loop(
+    SavedBuffer initial(proposals);
+    const Result result = bench_loop_prepared(
+        [&](cudaStream_t stream) { initial.restore(stream); },
         [&](cudaStream_t stream) {
             ops::proposal_remap_token_ids(proposal_tensor, static_cast<const std::int32_t*>(map.p),
                                           kMapSize, stream);
@@ -70,12 +72,12 @@ int main(int argc, char** argv) {
             }
             token_counts = {tokens};
         } else if (argc != 1) {
-            throw std::invalid_argument("usage: ninfer_proposal_remap_bench [--tokens T]");
+            throw std::invalid_argument("usage: ninferno_proposal_remap_bench [--tokens T]");
         }
         for (const int tokens : token_counts) { run(tokens); }
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_proposal_remap_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_proposal_remap_bench: %s\n", error.what());
         return 2;
     }
 }

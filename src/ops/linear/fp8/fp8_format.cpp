@@ -1,5 +1,7 @@
-#include "core/weight.h"
 #include "ops/linear/fp8/fp8_format.h"
+
+#include "core/checked.h"
+#include "core/weight.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -7,34 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops::detail {
-namespace {
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
-
-std::uint64_t checked_mul(std::uint64_t left, std::uint64_t right, const char* operation) {
-    if (left != 0 && right > std::numeric_limits<std::uint64_t>::max() / left) {
-        throw std::overflow_error(std::string(operation) + ": FP8 geometry overflows");
-    }
-    return left * right;
-}
-
-std::uint64_t checked_add(std::uint64_t left, std::uint64_t right, const char* operation) {
-    if (right > std::numeric_limits<std::uint64_t>::max() - left) {
-        throw std::overflow_error(std::string(operation) + ": FP8 geometry overflows");
-    }
-    return left + right;
-}
-
-std::uint64_t align_up(std::uint64_t value, std::uint64_t alignment, const char* operation) {
-    return checked_mul(checked_add(value, alignment - 1, operation) / alignment, alignment,
-                       operation);
-}
-
-} // namespace
-
+namespace ninferno::ops::detail {
 Fp8WeightGeometry validate_fp8_weight(const Weight& weight, const char* operation) {
     if (weight.n <= 0 || weight.k <= 0) {
         throw std::invalid_argument(std::string(operation) + ": FP8 shape must be positive");
@@ -72,4 +47,4 @@ Fp8WeightGeometry validate_fp8_weight(const Weight& weight, const char* operatio
     return geometry;
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -1,15 +1,16 @@
 #include "core/device.h"
-#include "ninfer/ops/position.h"
+#include "ninferno/ops/position.h"
 #include "ops/op_tester.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -132,6 +133,56 @@ int lane_offset_case(int width, int batch, int axes, bool in_place) {
     return failures;
 }
 
+// One buffer holds the five vectors back to back (as a decode round's ingress and egress do), so
+// the guards around it catch a write past any of them.
+int feed_case(std::int32_t count) {
+    const auto n = static_cast<std::size_t>(count);
+    std::vector<std::int32_t> host(5 * n);
+    for (std::size_t i = 0; i < n; ++i) {
+        host[i]         = 262000 + 13 * static_cast<std::int32_t>(i); // sampled
+        host[n + i]     = -1;                                         // record
+        host[2 * n + i] = 7;                                          // tokens
+        host[3 * n + i] = 4095 + static_cast<std::int32_t>(i);        // cache positions
+        host[4 * n + i] = 4095 + static_cast<std::int32_t>(i) + 9;    // RoPE positions
+    }
+    std::vector<std::int32_t> expected = host;
+    for (std::size_t i = 0; i < n; ++i) {
+        expected[n + i]     = host[i];
+        expected[2 * n + i] = host[i];
+        expected[3 * n + i] += 1;
+        expected[4 * n + i] += 1;
+    }
+
+    GuardedDeviceBuffer buffer(host.size() * sizeof(std::int32_t));
+    buffer.copy_from_host(host.data(), buffer.bytes());
+    auto* base = static_cast<std::int32_t*>(buffer.data());
+    const auto vector = [&](std::size_t index) {
+        return Tensor(base + index * n, DType::I32, {count});
+    };
+    const Tensor sampled = vector(0);
+    Tensor record        = vector(1);
+    Tensor tokens        = vector(2);
+    Tensor cache         = vector(3);
+    Tensor rope          = vector(4);
+    ops::feed_sampled_tokens(sampled, record, tokens, cache, rope, nullptr);
+    cuda_synchronize();
+
+    const std::string label = "feed_sampled_tokens B=" + std::to_string(count);
+    int failures = verify_exact(label.c_str(),
+                                from_device<std::int32_t>(buffer.data(), host.size()), expected);
+    failures += buffer.verify_guards(label.c_str());
+
+    bool refused = false;
+    try {
+        ops::feed_sampled_tokens(sampled, record, record, cache, rope, nullptr);
+    } catch (const std::invalid_argument&) { refused = true; }
+    if (!refused) {
+        std::cout << "FAIL " << label << ": aliased outputs were accepted\n";
+        ++failures;
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -152,6 +203,9 @@ int main() {
     failures += offset_case(1, -17, false);
     failures += offset_case(6, 31, true);
     failures += offset_case(1024, -257, false);
+    failures += feed_case(1);
+    failures += feed_case(8);
+    failures += feed_case(300);
     std::cout << (failures ? "FAIL" : "OK") << " position\n";
     return failures ? 1 : 0;
 }

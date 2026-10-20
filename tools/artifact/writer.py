@@ -15,7 +15,6 @@ from .layouts import align_up
 from .file_io import IO_CHUNK_BYTES, Writeback
 from .schema import (
     ArtifactError,
-    ArtifactObject,
     Directory,
     ObjectSpec,
     encode_directory,

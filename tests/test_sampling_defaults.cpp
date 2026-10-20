@@ -15,7 +15,7 @@ int check(bool condition, const char* message) {
     return 1;
 }
 
-bool same_preset(const ninfer::SamplingPreset& actual, const ninfer::SamplingPreset& expected) {
+bool same_preset(const ninferno::SamplingPreset& actual, const ninferno::SamplingPreset& expected) {
     return actual.temperature == expected.temperature && actual.top_k == expected.top_k &&
            actual.top_p == expected.top_p && actual.min_p == expected.min_p &&
            actual.presence_penalty == expected.presence_penalty &&
@@ -33,22 +33,22 @@ bool throws_invalid(const auto& operation) {
 } // namespace
 
 int main() {
-    using ninfer::models::Architecture;
-    using ninfer::models::qwen3_5::default_sampling;
+    using ninferno::models::Architecture;
+    using ninferno::models::qwen3_5::default_sampling;
     int failures     = 0;
     const auto dense = default_sampling(Architecture::Qwen3_5);
     const auto moe   = default_sampling(Architecture::Qwen3_5Moe);
 
-    const ninfer::SamplingPreset dense_thinking{
+    const ninferno::SamplingPreset dense_thinking{
         .temperature = 1.0F, .top_k = 20, .top_p = 0.95F, .min_p = 0.0F};
-    const ninfer::SamplingPreset dense_non_thinking{
+    const ninferno::SamplingPreset dense_non_thinking{
         .temperature      = 0.7F,
         .top_k            = 20,
         .top_p            = 0.8F,
         .min_p            = 0.0F,
         .presence_penalty = 1.5F,
     };
-    const ninfer::SamplingPreset moe_thinking{
+    const ninferno::SamplingPreset moe_thinking{
         .temperature      = 1.0F,
         .top_k            = 20,
         .top_p            = 0.95F,
@@ -64,10 +64,10 @@ int main() {
                           same_preset(moe.non_thinking, dense_non_thinking),
                       "MoE mode defaults mismatch");
 
-    const ninfer::ResolvedSamplingParameters thinking = ninfer::runtime::resolve_sampling(
-        dense, ninfer::SamplingMode::Thinking, ninfer::SamplingOverrides{});
-    const ninfer::ResolvedSamplingParameters non_thinking = ninfer::runtime::resolve_sampling(
-        dense, ninfer::SamplingMode::NonThinking, ninfer::SamplingOverrides{});
+    const ninferno::ResolvedSamplingParameters thinking = ninferno::runtime::resolve_sampling(
+        dense, ninferno::SamplingMode::Thinking, ninferno::SamplingOverrides{});
+    const ninferno::ResolvedSamplingParameters non_thinking = ninferno::runtime::resolve_sampling(
+        dense, ninferno::SamplingMode::NonThinking, ninferno::SamplingOverrides{});
     failures += check(thinking.temperature == 1.0F && thinking.top_p == 0.95F &&
                           thinking.presence_penalty == 0.0F && thinking.seed == 0,
                       "omitted overrides did not select Dense thinking defaults");
@@ -75,7 +75,7 @@ int main() {
                           non_thinking.presence_penalty == 1.5F,
                       "omitted overrides did not select Dense non-thinking defaults");
 
-    ninfer::SamplingOverrides overrides;
+    ninferno::SamplingOverrides overrides;
     overrides.temperature       = 0.0F;
     overrides.top_k             = 0;
     overrides.top_p             = 0.0F;
@@ -83,25 +83,25 @@ int main() {
     overrides.presence_penalty  = 0.0F;
     overrides.frequency_penalty = -1.0F;
     overrides.seed              = 123;
-    const ninfer::ResolvedSamplingParameters overridden =
-        ninfer::runtime::resolve_sampling(dense, ninfer::SamplingMode::NonThinking, overrides);
-    failures += check(overridden.temperature == 0.0F && overridden.top_k == 20 &&
-                          overridden.top_p == 0.0F && overridden.presence_penalty == 0.0F &&
+    const ninferno::ResolvedSamplingParameters overridden =
+        ninferno::runtime::resolve_sampling(dense, ninferno::SamplingMode::NonThinking, overrides);
+    failures += check(overridden.temperature == 0.0F &&
+                          overridden.top_k == ninferno::kMaximumTopK && overridden.top_p == 0.0F && overridden.presence_penalty == 0.0F &&
                           overridden.frequency_penalty == -1.0F && overridden.seed == 123,
                       "explicit zero sampling overrides were not normalized to the target cap");
 
-    overrides.top_k = 21;
+    overrides.top_k = ninferno::kMaximumTopK + 1;
     failures += check(throws_invalid([&] {
-                          (void)ninfer::runtime::resolve_sampling(
-                              dense, ninfer::SamplingMode::Thinking, overrides);
+                          (void)ninferno::runtime::resolve_sampling(
+                              dense, ninferno::SamplingMode::Thinking, overrides);
                       }),
                       "top_k beyond the executable candidate domain was accepted");
     overrides.top_k = 0;
 
     overrides.temperature = std::numeric_limits<float>::quiet_NaN();
     failures += check(throws_invalid([&] {
-                          (void)ninfer::runtime::resolve_sampling(
-                              dense, ninfer::SamplingMode::Thinking, overrides);
+                          (void)ninferno::runtime::resolve_sampling(
+                              dense, ninferno::SamplingMode::Thinking, overrides);
                       }),
                       "non-finite sampling override was accepted");
 

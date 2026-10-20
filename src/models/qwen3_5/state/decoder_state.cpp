@@ -4,30 +4,32 @@
 #include <stdexcept>
 #include <utility>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 namespace {
-
-std::uint32_t page_count(std::uint32_t capacity) {
-    if (capacity == 0) { throw std::invalid_argument("Paged KV capacity must be positive"); }
-    return 1U + (capacity - 1U) / static_cast<std::uint32_t>(kPagedKVPageSize);
-}
 
 PagedKVCacheLayout plan_cache(LayoutBuilder& builder, std::uint32_t layers, std::uint32_t capacity,
                               std::int32_t kv_heads, std::int32_t head_dim, KvCacheStorage storage,
-                              std::int32_t table_rows, std::uint32_t physical_page_groups) {
+                              std::int32_t table_rows, std::uint32_t physical_page_groups,
+                              const std::optional<PagedKVStorageLayout>& storage_layout,
+                              PagedKVPlaneOrder plane_order) {
     if (layers == 0 ||
         layers > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) ||
         kv_heads <= 0 || head_dim <= 0 || table_rows <= 0) {
         throw std::invalid_argument("Paged KV cache geometry is invalid");
     }
-    const PagedKVStorageLayout layer_storage = paged_kv_storage_layout(storage, head_dim);
+    const PagedKVStorageLayout layer_storage =
+        storage_layout ? *storage_layout : paged_kv_storage_layout(storage, head_dim);
+    if (layer_storage.head_dim != head_dim) {
+        throw std::invalid_argument("Paged KV layer layout does not match its head_dim");
+    }
 
-    const std::uint32_t logical_pages = page_count(capacity);
+    const std::uint32_t logical_pages = paged_kv_capacity_pages(capacity);
     if (physical_page_groups < logical_pages) {
         throw std::invalid_argument("Paged KV physical pages are below logical capacity");
     }
 
     KVPageGeometry geometry;
+    geometry.device_plane_order = plane_order;
     geometry.planes.reserve(static_cast<std::size_t>(layers) * layer_storage.planes_per_layer());
     for (std::uint32_t layer = 0; layer < layers; ++layer) {
         geometry.planes.push_back(
@@ -61,13 +63,15 @@ PagedKVCacheLayout plan_cache(LayoutBuilder& builder, std::uint32_t layers, std:
 
 DecoderStateLayout plan_decoder_state(LayoutBuilder& builder, const DecoderStateSpec& spec) {
     DecoderStateLayout layout;
-    layout.text_kv = plan_cache(builder, spec.full_attention_layers, spec.capacity, spec.kv_heads,
-                                spec.attention_head_dim, spec.kv_storage, spec.kv_table_rows,
-                                spec.text_physical_page_groups);
+    layout.text_kv =
+        plan_cache(builder, spec.full_attention_layers, spec.capacity, spec.kv_heads,
+                   spec.attention_head_dim, spec.kv_storage, spec.kv_table_rows,
+                   spec.text_physical_page_groups, spec.layer_storage, spec.plane_order);
     if (spec.enable_mtp) {
-        layout.mtp_kv = plan_cache(builder, spec.mtp_layers, spec.capacity, spec.kv_heads,
-                                   spec.attention_head_dim, spec.kv_storage, spec.kv_table_rows,
-                                   spec.mtp_physical_page_groups);
+        layout.mtp_kv =
+            plan_cache(builder, spec.mtp_layers, spec.capacity, spec.kv_heads,
+                       spec.attention_head_dim, spec.kv_storage, spec.kv_table_rows,
+                       spec.mtp_physical_page_groups, spec.layer_storage, spec.plane_order);
     }
     return layout;
 }
@@ -147,4 +151,4 @@ PagedKVCache* DecoderState::mtp_cache() noexcept { return mtp_kv ? &*mtp_kv : nu
 
 const PagedKVCache* DecoderState::mtp_cache() const noexcept { return mtp_kv ? &*mtp_kv : nullptr; }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

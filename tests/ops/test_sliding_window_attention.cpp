@@ -1,4 +1,6 @@
-#include "ninfer/ops/sliding_window_attention.h"
+#include "ninferno/ops/sliding_window_attention.h"
+
+#include "ninferno/ops/kv_cache_append.h"
 
 #include "core/decode_graph.h"
 #include "core/device.h"
@@ -18,8 +20,8 @@
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 constexpr int D = 128, Hq = 32, Hkv = 8, Lanes = 8;
@@ -47,11 +49,52 @@ std::vector<std::uint16_t> fp16_bits(std::vector<float>& v) {
     return bits;
 }
 
+// Int8Group64 ring rows (core/cyclic_kv_cache.h): per lane the codes [D] x padded x heads, then
+// the FP16 G64 scales [2] x padded x heads.
+constexpr int Int8Row = D + 2 * (D / 64);
+
+// One G64 group as the append kernels encode it: scale FP16-RNE(absmax / 127), codes RNE(x / scale)
+// clamped to +-127; x becomes the decoded code * scale (rounded to the storage type by the caller).
+__half quantize_group(float* x, std::int8_t* codes) {
+    float m = 0.0f;
+    for (int i = 0; i < 64; ++i) m = std::max(m, std::fabs(x[i]));
+    const __half scale  = __float2half_rn(m > 0.0f ? m / 127.0f : 0.0f);
+    const float shown   = __half2float(scale);
+    const float inverse = shown > 0.0f ? 1.0f / shown : 0.0f;
+    for (int i = 0; i < 64; ++i) {
+        const int q =
+            inverse == 0.0f
+                ? 0
+                : std::max(-127, std::min(127, static_cast<int>(std::nearbyint(x[i] * inverse))));
+        codes[i] = static_cast<std::int8_t>(q);
+        x[i]     = static_cast<float>(q) * shown;
+    }
+    return scale;
+}
+
+// Encodes rows [lanes][heads][padded] of D values into the packed int8 lane layout.
+std::vector<std::uint8_t> pack_int8(std::vector<float>& x, int padded) {
+    const std::size_t rows = static_cast<std::size_t>(padded) * Hkv;
+    std::vector<std::uint8_t> out(Lanes * rows * Int8Row, 0);
+    for (int lane = 0; lane < Lanes; ++lane)
+        for (std::size_t row = 0; row < rows; ++row)
+            for (int g = 0; g < D / 64; ++g) {
+                float* values           = &x[(lane * rows + row) * D + g * 64];
+                std::uint8_t* lane_base = out.data() + lane * rows * Int8Row;
+                const __half scale      = quantize_group(
+                    values, reinterpret_cast<std::int8_t*>(lane_base + row * D + g * 64));
+                std::memcpy(lane_base + rows * D + (row * 2 + g) * 2, &scale, 2);
+            }
+    return out;
+}
+
 struct Cache {
     int window, padded;
     bool boundary;
+    bool int8;
     std::vector<float> k, v;
     std::vector<std::uint16_t> k_bits, v_bits;
+    std::vector<std::uint8_t> k_packed, v_packed;
     GuardedDeviceBuffer device_k, device_v;
 
     std::size_t index(int lane, int head, int position, int d) const {
@@ -61,10 +104,11 @@ struct Cache {
                d;
     }
 
-    Cache(int w, bool edge = false)
-        : window(w), padded(w + 8), boundary(edge),
+    Cache(int w, bool edge = false, bool i8 = false)
+        : window(w), padded(w + 8), boundary(edge), int8(i8),
           k(static_cast<std::size_t>(D) * padded * Hkv * Lanes), v(k.size()),
-          device_k(k.size() * 2), device_v(v.size() * 2) {
+          device_k(i8 ? k.size() / D * Int8Row : k.size() * 2),
+          device_v(i8 ? v.size() / D * Int8Row : v.size() * 2) {
         if (!edge) {
             fill_uniform(k, 401U + w, -0.4f, 0.4f);
             fill_uniform(v, 503U + w, -0.8f, 0.8f);
@@ -78,6 +122,16 @@ struct Cache {
         }
         round_to_bf16(k);
         round_to_bf16(v);
+        if (int8) {
+            // The oracle reads the decoded values as the kernel stages them: K as BF16, V as FP16.
+            k_packed = pack_int8(k, padded);
+            v_packed = pack_int8(v, padded);
+            round_to_bf16(k);
+            (void)fp16_bits(v);
+            device_k.copy_from_host(k_packed.data(), k_packed.size());
+            device_v.copy_from_host(v_packed.data(), v_packed.size());
+            return;
+        }
         k_bits = bf16_bits(k);
         v_bits = fp16_bits(v);
         device_k.copy_from_host(k_bits.data(), k_bits.size() * 2);
@@ -85,6 +139,16 @@ struct Cache {
     }
 
     CyclicKVCacheLayerView view() {
+        if (int8) {
+            return {.k        = Tensor(device_k.data(), DType::I8, {Int8Row, padded, Hkv, Lanes}),
+                    .v        = Tensor(device_v.data(), DType::I8, {Int8Row, padded, Hkv, Lanes}),
+                    .capacity = static_cast<std::uint32_t>(window),
+                    .padded_capacity = static_cast<std::uint32_t>(padded),
+                    .num_kv_heads    = Hkv,
+                    .head_dim        = D,
+                    .lane_capacity   = Lanes,
+                    .int8            = true};
+        }
         return {.k               = Tensor(device_k.data(), DType::BF16, {D, padded, Hkv, Lanes}),
                 .v               = Tensor(device_v.data(), DType::FP16, {D, padded, Hkv, Lanes}),
                 .capacity        = static_cast<std::uint32_t>(window),
@@ -97,6 +161,15 @@ struct Cache {
     int verify() const {
         int failures =
             device_k.verify_guards("context K guards") + device_v.verify_guards("context V guards");
+        if (int8) {
+            failures +=
+                verify_exact("int8 context K unchanged",
+                             from_device<std::uint8_t>(device_k.data(), k_packed.size()), k_packed);
+            failures +=
+                verify_exact("int8 context V unchanged",
+                             from_device<std::uint8_t>(device_v.data(), v_packed.size()), v_packed);
+            return failures;
+        }
         failures +=
             verify_exact("context K unchanged",
                          from_device<std::uint16_t>(device_k.data(), k_bits.size()), k_bits);
@@ -272,7 +345,8 @@ int run_case(Cache& cache, int width, int batch, int base_context, int envelope_
             launch();
         cuda_synchronize(device.stream);
         const auto expected = oracle(cache, width, batch, q, qk, value, positions, valid, lanes);
-        const std::string label = "SWA window=" + std::to_string(cache.window) +
+        const std::string label = std::string(cache.int8 ? "SWA int8" : "SWA") +
+                                  " window=" + std::to_string(cache.window) +
                                   " W=" + std::to_string(width) + " B=" + std::to_string(batch) +
                                   " L=" + std::to_string(base_context) +
                                   " envelope=" + std::to_string(envelope_max) +
@@ -312,6 +386,87 @@ int run_case(Cache& cache, int width, int batch, int base_context, int envelope_
     failures += dq.verify_guards("Q guards") + dk.verify_guards("query K guards") +
                 dv.verify_guards("query V guards") + dp.verify_guards("positions guards") +
                 dvalid.verify_guards("valid guards") + dlane.verify_guards("lanes guards");
+    return failures;
+}
+
+// kv_cache_append_prefix into an int8 ring: codes and scales equal the host encoding exactly,
+// including a write that wraps the ring and lanes the call does not name staying untouched.
+int append_int8_case(int window, int width, int batch, int first) {
+    const int padded       = window + 8;
+    const std::size_t rows = static_cast<std::size_t>(padded) * Hkv;
+    std::vector<float> ring(static_cast<std::size_t>(D) * rows * Lanes, 0.0f);
+    std::vector<float> ring_v(ring.size(), 0.0f);
+    std::vector<std::uint8_t> expect_k(Lanes * rows * Int8Row, 0x5a), expect_v(expect_k);
+    const std::size_t kv_count = static_cast<std::size_t>(D) * Hkv * width * batch;
+    std::vector<float> k(kv_count), v(kv_count);
+    fill_uniform(k, 900U + width, -2.0f, 2.0f);
+    fill_uniform(v, 901U + width, -3.0f, 3.0f);
+    round_to_bf16(k);
+    round_to_bf16(v);
+    std::vector<int> positions(width * batch), counts(batch), lanes(batch);
+    for (int b = 0; b < batch; ++b) {
+        counts[b] = width - (b % 2);
+        lanes[b]  = LaneOrder[b];
+        for (int t = 0; t < width; ++t) positions[b * width + t] = first + 37 * b + t;
+    }
+    for (int b = 0; b < batch; ++b)
+        for (int t = 0; t < counts[b]; ++t)
+            for (int h = 0; h < Hkv; ++h) {
+                const int slot        = positions[b * width + t] & (window - 1);
+                const std::size_t row = static_cast<std::size_t>(h) * padded + slot;
+                std::uint8_t* lk      = expect_k.data() + lanes[b] * rows * Int8Row;
+                std::uint8_t* lv      = expect_v.data() + lanes[b] * rows * Int8Row;
+                for (int g = 0; g < D / 64; ++g) {
+                    std::array<float, 64> xk{}, xv{};
+                    for (int i = 0; i < 64; ++i) {
+                        const std::size_t src =
+                            ((static_cast<std::size_t>(b) * width + t) * Hkv + h) * D + g * 64 + i;
+                        xk[i] = k[src];
+                        xv[i] = v[src];
+                    }
+                    const __half sk = quantize_group(
+                        xk.data(), reinterpret_cast<std::int8_t*>(lk + row * D + g * 64));
+                    const __half sv = quantize_group(
+                        xv.data(), reinterpret_cast<std::int8_t*>(lv + row * D + g * 64));
+                    std::memcpy(lk + rows * D + (row * 2 + g) * 2, &sk, 2);
+                    std::memcpy(lv + rows * D + (row * 2 + g) * 2, &sv, 2);
+                }
+            }
+    GuardedDeviceBuffer ck(expect_k.size()), cv(expect_v.size()), dk(kv_count * 2),
+        dv(kv_count * 2), dp(positions.size() * 4), dc(batch * 4), dl(batch * 4);
+    ck.fill(0x5a);
+    cv.fill(0x5a);
+    const auto kb = bf16_bits(k), vb = bf16_bits(v);
+    dk.copy_from_host(kb.data(), kb.size() * 2);
+    dv.copy_from_host(vb.data(), vb.size() * 2);
+    dp.copy_from_host(positions.data(), positions.size() * 4);
+    dc.copy_from_host(counts.data(), batch * 4);
+    dl.copy_from_host(lanes.data(), batch * 4);
+    const CyclicKVCacheLayerView view{
+        .k               = Tensor(ck.data(), DType::I8, {Int8Row, padded, Hkv, Lanes}),
+        .v               = Tensor(cv.data(), DType::I8, {Int8Row, padded, Hkv, Lanes}),
+        .capacity        = static_cast<std::uint32_t>(window),
+        .padded_capacity = static_cast<std::uint32_t>(padded),
+        .num_kv_heads    = Hkv,
+        .head_dim        = D,
+        .lane_capacity   = Lanes,
+        .int8            = true};
+    DeviceContext device;
+    ops::kv_cache_append_prefix(
+        Tensor(dk.data(), DType::BF16, {D, Hkv, width, batch}),
+        Tensor(dv.data(), DType::BF16, {D, Hkv, width, batch}),
+        Tensor(dp.data(), DType::I32, {width, batch}), Tensor(dc.data(), DType::I32, {batch}),
+        Tensor(dl.data(), DType::I32, {batch}),
+        {static_cast<std::uint32_t>(width - 1), static_cast<std::uint32_t>(width)}, view,
+        device.stream);
+    cuda_synchronize(device.stream);
+    const std::string label = "int8 ring append window=" + std::to_string(window) +
+                              " W=" + std::to_string(width) + " B=" + std::to_string(batch);
+    int failures = verify_exact((label + " K").c_str(),
+                                from_device<std::uint8_t>(ck.data(), expect_k.size()), expect_k);
+    failures += verify_exact((label + " V").c_str(),
+                             from_device<std::uint8_t>(cv.data(), expect_v.size()), expect_v);
+    failures += ck.verify_guards(label + " K guards") + cv.verify_guards(label + " V guards");
     return failures;
 }
 
@@ -381,6 +536,28 @@ int qualify() {
         Cache edge(4096, true);
         failures += run_case(edge, 2, 1, 4096, 4096, Prefix::Full, true);
         failures += edge.verify();
+    }
+    // The Int8Group64 ring (a DFlash drafter's sliding layers): the same cases against the decoded
+    // values, every token count, the direct and split routes, both windows, and the append.
+    {
+        Cache ring(2048, false, true);
+        for (int width = 1; width <= 16; ++width)
+            failures += run_case(ring, width, width % 8 + 1, -1, width % 2 ? 96 : 2048,
+                                 Prefix::Mixed, width == 1 || width == 16);
+        for (int width : {2, 8, 16})
+            for (int batch : {1, 8})
+                failures += run_case(ring, width, batch, 4103, 262144, Prefix::Mixed, true);
+        failures += ring.verify();
+        Cache wide(4096, false, true);
+        failures += run_case(wide, 8, 1, 96, 4096, Prefix::Full, true);
+        failures += run_case(wide, 16, 2, 8194, 8194, Prefix::Mixed, true);
+        failures += wide.verify();
+        Cache edge(2048, true, true);
+        failures += run_case(edge, 3, 8, 2048, 2048, Prefix::Full, true);
+        failures += edge.verify();
+        failures += append_int8_case(2048, 16, 3, 2040);
+        failures += append_int8_case(4096, 7, 8, 0);
+        failures += append_int8_case(2048, 1, 2, 5);
     }
     return failures;
 }

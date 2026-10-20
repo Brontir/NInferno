@@ -1,11 +1,11 @@
 // Cold-cache benchmark and route crossover tuner for BF16 LinearAdd [5120,6144].
 
 #include "core/weight.h"
-#include "ninfer/ops/linear_add.h"
+#include "ninferno/ops/linear_add.h"
 
 #include "core/device.h"
 #include "direct_bf16_weight.cuh"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "ops/linear_add/bf16/bf16_linear_add_plan.h"
 
 #include <cuda_profiler_api.h>
@@ -24,15 +24,15 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
 constexpr std::int32_t kRows               = 5120;
 constexpr std::int32_t kHidden             = 6144;
-constexpr double kRtx5090DramGBs           = 1792.0;
-constexpr double kRtx5090SustainedReadGBs  = 1674.5;
-constexpr double kRtx5090DenseBf16Tflops   = 209.5;
+const double kDeviceDramGBs                = bench::device_roofs().dram_gbs;
+const double kDeviceSustainedReadGBs       = bench::device_roofs().read_gbs;
+const double kDeviceDenseBf16Tflops        = bench::device_roofs().bf16_fp32acc_tflops;
 constexpr std::uint64_t kDefaultFlushBytes = 256ULL << 20;
 constexpr int kDefaultWarmup               = 3;
 constexpr int kDefaultRepeat               = 20;
@@ -232,8 +232,8 @@ Result make_result(std::string route, std::int32_t tokens, const bench::ColdTimi
         2.0 * static_cast<double>(kRows) * static_cast<double>(kHidden) * tokens;
     const double seconds = timing.median_us * 1.0e-6;
     const double memory_floor_us =
-        static_cast<double>(logical_bytes) / (kRtx5090DramGBs * 1.0e9) * 1.0e6;
-    const double compute_floor_us  = useful_flops / (kRtx5090DenseBf16Tflops * 1.0e12) * 1.0e6;
+        static_cast<double>(logical_bytes) / (kDeviceDramGBs * 1.0e9) * 1.0e6;
+    const double compute_floor_us  = useful_flops / (kDeviceDenseBf16Tflops * 1.0e12) * 1.0e6;
     const double roofline_floor_us = std::max(memory_floor_us, compute_floor_us);
 
     return {
@@ -243,9 +243,9 @@ Result make_result(std::string route, std::int32_t tokens, const bench::ColdTimi
         logical_bytes,
         useful_flops,
         static_cast<double>(logical_bytes) / seconds / 1.0e9,
-        (static_cast<double>(logical_bytes) / seconds / 1.0e9) / kRtx5090SustainedReadGBs * 100.0,
+        (static_cast<double>(logical_bytes) / seconds / 1.0e9) / kDeviceSustainedReadGBs * 100.0,
         useful_flops / seconds / 1.0e12,
-        (useful_flops / seconds / 1.0e12) / kRtx5090DenseBf16Tflops * 100.0,
+        (useful_flops / seconds / 1.0e12) / kDeviceDenseBf16Tflops * 100.0,
         memory_floor_us,
         compute_floor_us,
         roofline_floor_us / timing.median_us * 100.0,
@@ -287,9 +287,12 @@ int main(int argc, char** argv) {
         cudaStream_t stream           = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-        DeviceBuffer flush(options.flush_bytes);
-        DeviceBuffer input    = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens);
-        DeviceBuffer residual = bench::make_bf16(static_cast<std::size_t>(kRows) * max_tokens);
+        bench::L2FlushBuffer flush(options.flush_bytes);
+        DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens, 101U);
+        DeviceBuffer residual =
+            bench::make_bf16(static_cast<std::size_t>(kRows) * max_tokens, 103U);
+        bench::SavedBuffer residual_initial(residual);
+        const auto restore             = [&](cudaStream_t s) { residual_initial.restore(s); };
         bench::DirectBf16Weight weight = bench::make_direct_bf16_weight(kRows, kHidden, 0x61U);
         WorkspaceArena workspace(1);
 
@@ -301,10 +304,12 @@ int main(int argc, char** argv) {
             Tensor x(input.p, DType::BF16, {kHidden, tokens});
             Tensor out(residual.p, DType::BF16, {kRows, tokens});
             for (int index = 0; index < options.warmup; ++index) {
+                restore(stream);
                 bench::flush_l2(flush, stream);
                 launch_route(options.route, x, weight.weight, out, workspace, stream);
             }
             CUDA_CHECK(cudaStreamSynchronize(stream));
+            restore(stream);
             bench::flush_l2(flush, stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));
             std::printf("PROFILE route=%s T=%d\n", route_name(options.route, tokens).c_str(),
@@ -332,16 +337,13 @@ int main(int argc, char** argv) {
                     if (options.route == Route::All) { return; }
                     throw std::invalid_argument("selected route does not support T");
                 }
-                CUDA_CHECK(cudaMemsetAsync(
-                    out.data, 0, 2ULL * static_cast<std::uint64_t>(kRows) * tokens, stream));
-                CUDA_CHECK(cudaStreamSynchronize(stream));
                 const auto launch = [&](cudaStream_t launch_stream) {
                     launch_route(route, x, weight.weight, out, workspace, launch_stream);
                 };
                 Result result =
                     make_result(route_name(route, tokens), tokens,
-                                bench::measure_cold_launch(launch, flush, stream, options.warmup,
-                                                           options.repeat),
+                                bench::measure_cold_launch_prepared(restore, launch, flush, stream,
+                                                                    options.warmup, options.repeat),
                                 weight.model_weight_bytes());
                 print_result(result);
                 results.push_back(std::move(result));
@@ -356,7 +358,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_bf16_linear_add_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_bf16_linear_add_bench: %s\n", error.what());
         return 1;
     }
 }

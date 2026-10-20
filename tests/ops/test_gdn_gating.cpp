@@ -1,4 +1,4 @@
-#include "ninfer/ops/gdn_gating.h"
+#include "ninferno/ops/gdn_gating.h"
 
 #include "ops/op_tester.h"
 
@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 

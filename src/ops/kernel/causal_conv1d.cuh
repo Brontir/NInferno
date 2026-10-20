@@ -1,6 +1,7 @@
 #pragma once
 
-// ninfer::ops - causal_conv1d kernel: depthwise causal k=4 with fused SiLU.
+#include "core/pdl.cuh"
+// ninferno::ops - causal_conv1d kernel: depthwise causal k=4 with fused SiLU.
 // SiLU is computed as x / (1 + exp(-x)) in fp32, with no polynomial approximation.
 
 #include "ops/common/math.cuh"
@@ -10,7 +11,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 __device__ __forceinline__ void causal_conv1d_acc_pair(__nv_bfloat162 w, __nv_bfloat162 x,
                                                        float& acc0, float& acc1) {
@@ -20,7 +21,25 @@ __device__ __forceinline__ void causal_conv1d_acc_pair(__nv_bfloat162 w, __nv_bf
 
 inline constexpr int kCausalConvChannelTile = 32;
 
+// Every global load below that only one arm of a condition needs has an index that is valid
+// whatever the condition (clamped to row 0 or channel 0), and the condition selects the value.
+// The same holds for the shared history rows (row 0 when the position is past them). CUDA 12.8's
+// sm_120a code evaluated such loads in the arm not taken: the state at row t past its three, the
+// input at row -1 or -2, the history row t + 3; it faulted (cudaErrorIllegalAddress) where 13.1's
+// did not.
+
 namespace detail {
+
+// Position p's value of one channel: the shared history row p + 3 before the chunk (p < 0), else
+// row p of the chunk, whose rows start at `rows` (the channel's column already added). Both
+// addresses are valid whatever p is (the note above); the condition selects the value.
+__device__ __forceinline__ __nv_bfloat16
+causal_conv_tap(const __nv_bfloat16 (&history)[3][kCausalConvChannelTile], int lane,
+                const __nv_bfloat16* rows, std::int64_t C64, std::int32_t p) {
+    const bool before = p < 0;
+    return before ? history[before ? p + 3 : 0][lane]
+                  : rows[static_cast<std::int64_t>(before ? 0 : p) * C64];
+}
 
 // One destination column resolved for a fixed row: the address of element (row,0) and the row
 // count of the destination that owns it.
@@ -47,24 +66,23 @@ struct CausalConvContiguousOutput {
     }
 };
 
-// Output address map for three destinations partitioned by row. The partition is a template
-// parameter: the registered geometries are the only ones the wrapper admits, so the boundaries and
-// the three leading dimensions are constants here. Callers writing pairs pass halved row counts,
-// which requires every boundary to be even.
-template <class Element, std::int32_t Rows0, std::int32_t Rows1, std::int32_t Rows2>
-struct CausalConvSplitOutput3 {
-    static_assert(Rows0 > 0 && Rows1 > 0 && Rows2 > 0);
-
+// Output address map for three destinations partitioned by row (the model's q/k/v row counts, read
+// at run time). Callers writing pairs pass halved row counts, which requires every boundary to be
+// even. The two compares per element cost nothing measurable in these memory-bound kernels (r64:
+// against the compile-time partitions of Qwen3.5 27B and 35B-A3B it replaced).
+template <class Element>
+struct CausalConvSplitOutputRuntime {
     Element* __restrict__ out0;
     Element* __restrict__ out1;
     Element* __restrict__ out2;
+    std::int32_t rows0;
+    std::int32_t rows1;
+    std::int32_t rows2;
 
     __device__ __forceinline__ CausalConvOutputColumn<Element> column(std::int64_t row) const {
-        constexpr std::int32_t split1 = Rows0;
-        constexpr std::int32_t split2 = Rows0 + Rows1;
-        if (row < split1) { return {out0 + row, Rows0}; }
-        if (row < split2) { return {out1 + (row - split1), Rows1}; }
-        return {out2 + (row - split2), Rows2};
+        if (row < rows0) { return {out0 + row, rows0}; }
+        if (row < rows0 + rows1) { return {out1 + (row - rows0), rows1}; }
+        return {out2 + (row - rows0 - rows1), rows2};
     }
 };
 
@@ -84,12 +102,15 @@ __global__ void causal_conv1d_prefill_kernel(const __nv_bfloat16* x, const __nv_
 
     const std::int32_t c       = static_cast<std::int32_t>(c64);
     const std::int64_t in_idx = static_cast<std::int64_t>(t) * C64 + c64;
-    const __nv_bfloat16 x0     = (t >= 3) ? x[static_cast<std::int64_t>(t - 3) * C64 + c64]
-                                          : conv_state[static_cast<std::int64_t>(t) * C64 + c64];
-    const __nv_bfloat16 x1     = (t >= 2) ? x[static_cast<std::int64_t>(t - 2) * C64 + c64]
-                                          : conv_state[static_cast<std::int64_t>(t + 1) * C64 + c64];
-    const __nv_bfloat16 x2     = (t >= 1) ? x[static_cast<std::int64_t>(t - 1) * C64 + c64]
-                                          : conv_state[static_cast<std::int64_t>(t + 2) * C64 + c64];
+    const __nv_bfloat16 x0     = (t >= 3)
+                                     ? x[static_cast<std::int64_t>(t >= 3 ? t - 3 : 0) * C64 + c64]
+                                     : conv_state[static_cast<std::int64_t>(t < 3 ? t : 0) * C64 + c64];
+    const __nv_bfloat16 x1 =
+        (t >= 2) ? x[static_cast<std::int64_t>(t >= 2 ? t - 2 : 0) * C64 + c64]
+                 : conv_state[static_cast<std::int64_t>(t < 2 ? t + 1 : 0) * C64 + c64];
+    const __nv_bfloat16 x2 =
+        (t >= 1) ? x[static_cast<std::int64_t>(t >= 1 ? t - 1 : 0) * C64 + c64]
+                 : conv_state[static_cast<std::int64_t>(t < 1 ? t + 2 : 0) * C64 + c64];
     const __nv_bfloat16 x3    = x[in_idx];
 
     float acc = 0.0f;
@@ -117,14 +138,21 @@ __global__ void causal_conv1d_prefill_pairs_kernel(const __nv_bfloat16* x,
     const auto* weight2 = reinterpret_cast<const __nv_bfloat162*>(weight);
     const auto* state2  = reinterpret_cast<const __nv_bfloat162*>(conv_state);
 
-    const std::int64_t in_idx = static_cast<std::int64_t>(t) * C2 + p;
-    const __nv_bfloat162 x0    = (t >= 3) ? x2[static_cast<std::int64_t>(t - 3) * C2 + p]
-                                          : state2[static_cast<std::int64_t>(t) * C2 + p];
-    const __nv_bfloat162 x1    = (t >= 2) ? x2[static_cast<std::int64_t>(t - 2) * C2 + p]
-                                          : state2[static_cast<std::int64_t>(t + 1) * C2 + p];
-    const __nv_bfloat162 x2v   = (t >= 1) ? x2[static_cast<std::int64_t>(t - 1) * C2 + p]
-                                          : state2[static_cast<std::int64_t>(t + 2) * C2 + p];
-    const __nv_bfloat162 x3   = x2[in_idx];
+    // Column t - 3 + k of the sequence: the input past the state's three columns, else the state.
+    // The pointer is chosen before the one load: with a load in each arm of the conditional, CUDA
+    // 12.8's sm_120a code read the state at row t (past its three) for every t >= 3 and faulted
+    // (cudaErrorIllegalAddress in the Qwen3.5 warm-up, RTX 5080); 13.1's did not. The row is
+    // never negative in either arm: 12.8 widened a negative s = t - 3 + k without its sign and read
+    // 2^32 rows past x for t < 3 (address ~4 * C2 * 2^32 bytes out, causal_conv1d test).
+    const auto column = [&](std::int32_t k) {
+        const bool input       = t + k >= 3;
+        const std::int64_t row = static_cast<std::int64_t>(input ? t + k - 3 : t + k);
+        return (input ? x2 : state2) + row * C2 + p;
+    };
+    const __nv_bfloat162 x0  = *column(0);
+    const __nv_bfloat162 x1  = *column(1);
+    const __nv_bfloat162 x2v = *column(2);
+    const __nv_bfloat162 x3  = x2[static_cast<std::int64_t>(t) * C2 + p];
 
     float acc0 = 0.0f;
     float acc1 = 0.0f;
@@ -166,7 +194,7 @@ __global__ void causal_conv1d_prefill_state_kernel(const __nv_bfloat16* x,
             } else if (seq_pos == 2) {
                 v = old2;
             } else {
-                v = x[static_cast<std::int64_t>(seq_pos - 3) * C64 + c];
+                v = x[static_cast<std::int64_t>(seq_pos < 3 ? 0 : seq_pos - 3) * C64 + c];
             }
             conv_state_out[static_cast<std::int64_t>(s) * C64 + c] = v;
         }
@@ -180,9 +208,13 @@ template <class Output>
 __global__ void causal_conv1d_smallt_kernel(const __nv_bfloat16* x, const __nv_bfloat16* weight,
                                             const __nv_bfloat16* conv_state_in,
                                             __nv_bfloat16* conv_state_out, Output out,
-                                            std::int32_t C, std::int32_t T) {
+                                            std::int32_t C, std::int32_t T, int release) {
     __shared__ __nv_bfloat16 history[3][kCausalConvChannelTile];
     __shared__ __nv_bfloat16 weights[4][kCausalConvChannelTile];
+    // release: the next kernel joins this one by PDL and waits for it before it reads anything
+    // this kernel writes (the GDN decode recurrence); letting it launch now puts its state loads
+    // under this kernel.
+    if (release != 0 && threadIdx.x == 0 && threadIdx.y == 0) pdl::trigger_dependents();
 
     const std::int32_t lane = static_cast<std::int32_t>(threadIdx.x);
     const std::int32_t t    = static_cast<std::int32_t>(threadIdx.y);
@@ -192,12 +224,14 @@ __global__ void causal_conv1d_smallt_kernel(const __nv_bfloat16* x, const __nv_b
 
     if (t == 0) {
         for (std::int32_t s = 0; s < 3; ++s) {
-            history[s][lane] = valid ? conv_state_in[static_cast<std::int64_t>(s) * C64 + c64]
-                                     : __float2bfloat16(0.0f);
+            history[s][lane] =
+                valid ? conv_state_in[static_cast<std::int64_t>(s) * C64 + (valid ? c64 : 0)]
+                      : __float2bfloat16(0.0f);
         }
         for (std::int32_t r = 0; r < 4; ++r) {
-            weights[r][lane] =
-                valid ? weight[static_cast<std::int64_t>(r) * C64 + c64] : __float2bfloat16(0.0f);
+            weights[r][lane] = valid
+                                   ? weight[static_cast<std::int64_t>(r) * C64 + (valid ? c64 : 0)]
+                                   : __float2bfloat16(0.0f);
         }
     }
     __syncthreads();
@@ -206,12 +240,9 @@ __global__ void causal_conv1d_smallt_kernel(const __nv_bfloat16* x, const __nv_b
     const std::int32_t p0 = t - 3;
     const std::int32_t p1 = t - 2;
     const std::int32_t p2 = t - 1;
-    const __nv_bfloat16 x0 =
-        p0 < 0 ? history[p0 + 3][lane] : x[static_cast<std::int64_t>(p0) * C64 + c64];
-    const __nv_bfloat16 x1 =
-        p1 < 0 ? history[p1 + 3][lane] : x[static_cast<std::int64_t>(p1) * C64 + c64];
-    const __nv_bfloat16 x2 =
-        p2 < 0 ? history[p2 + 3][lane] : x[static_cast<std::int64_t>(p2) * C64 + c64];
+    const __nv_bfloat16 x0   = detail::causal_conv_tap(history, lane, x + c64, C64, p0);
+    const __nv_bfloat16 x1   = detail::causal_conv_tap(history, lane, x + c64, C64, p1);
+    const __nv_bfloat16 x2   = detail::causal_conv_tap(history, lane, x + c64, C64, p2);
     const std::int64_t x_idx = static_cast<std::int64_t>(t) * C64 + c64;
     const __nv_bfloat16 x3   = x[x_idx];
 
@@ -226,7 +257,7 @@ __global__ void causal_conv1d_smallt_kernel(const __nv_bfloat16* x, const __nv_b
         for (std::int32_t s = 0; s < 3; ++s) {
             const std::int32_t pos = T - 3 + s;
             conv_state_out[static_cast<std::int64_t>(s) * C64 + c64] =
-                pos < 0 ? history[pos + 3][lane] : x[static_cast<std::int64_t>(pos) * C64 + c64];
+                detail::causal_conv_tap(history, lane, x + c64, C64, pos);
         }
     }
 }
@@ -435,12 +466,13 @@ causal_conv1d_snapshot_smallt_kernel(const __nv_bfloat16* x, const __nv_bfloat16
         const std::int32_t slot   = *initial_slot;
         const __nv_bfloat16* init = conv_states + static_cast<std::int64_t>(slot) * slot_stride;
         for (std::int32_t s = 0; s < 3; ++s) {
-            history[s][lane] =
-                valid ? init[static_cast<std::int64_t>(s) * C64 + c64] : __float2bfloat16(0.0f);
+            history[s][lane] = valid ? init[static_cast<std::int64_t>(s) * C64 + (valid ? c64 : 0)]
+                                     : __float2bfloat16(0.0f);
         }
         for (std::int32_t r = 0; r < 4; ++r) {
-            weights[r][lane] =
-                valid ? weight[static_cast<std::int64_t>(r) * C64 + c64] : __float2bfloat16(0.0f);
+            weights[r][lane] = valid
+                                   ? weight[static_cast<std::int64_t>(r) * C64 + (valid ? c64 : 0)]
+                                   : __float2bfloat16(0.0f);
         }
     }
     __syncthreads();
@@ -449,12 +481,9 @@ causal_conv1d_snapshot_smallt_kernel(const __nv_bfloat16* x, const __nv_bfloat16
     const std::int32_t p0 = t - 3;
     const std::int32_t p1 = t - 2;
     const std::int32_t p2 = t - 1;
-    const __nv_bfloat16 x0 =
-        p0 < 0 ? history[p0 + 3][lane] : x[static_cast<std::int64_t>(p0) * C64 + c64];
-    const __nv_bfloat16 x1 =
-        p1 < 0 ? history[p1 + 3][lane] : x[static_cast<std::int64_t>(p1) * C64 + c64];
-    const __nv_bfloat16 x2 =
-        p2 < 0 ? history[p2 + 3][lane] : x[static_cast<std::int64_t>(p2) * C64 + c64];
+    const __nv_bfloat16 x0     = detail::causal_conv_tap(history, lane, x + c64, C64, p0);
+    const __nv_bfloat16 x1     = detail::causal_conv_tap(history, lane, x + c64, C64, p1);
+    const __nv_bfloat16 x2     = detail::causal_conv_tap(history, lane, x + c64, C64, p2);
     const std::int64_t out_idx = static_cast<std::int64_t>(t) * C64 + c64;
     const __nv_bfloat16 x3     = x[out_idx];
 
@@ -470,7 +499,7 @@ causal_conv1d_snapshot_smallt_kernel(const __nv_bfloat16* x, const __nv_bfloat16
     for (std::int32_t s = 0; s < 3; ++s) {
         const std::int32_t pos = t - 2 + s;
         snapshot[static_cast<std::int64_t>(s) * C64 + c64] =
-            pos < 0 ? history[pos + 3][lane] : x[static_cast<std::int64_t>(pos) * C64 + c64];
+            detail::causal_conv_tap(history, lane, x + c64, C64, pos);
     }
 }
 
@@ -494,12 +523,15 @@ __global__ void causal_conv1d_batched_snapshot_smallt_kernel(
         const __nv_bfloat16* init =
             conv_states + static_cast<std::int64_t>(initial_state_slots[batch]) * slot_stride;
         for (std::int32_t s = 0; s < 3; ++s) {
-            history[s][lane] = channel_valid ? init[static_cast<std::int64_t>(s) * C64 + c64]
-                                             : __float2bfloat16(0.0f);
+            history[s][lane] =
+                channel_valid ? init[static_cast<std::int64_t>(s) * C64 + (channel_valid ? c64 : 0)]
+                              : __float2bfloat16(0.0f);
         }
         for (std::int32_t r = 0; r < 4; ++r) {
-            weights[r][lane] = channel_valid ? weight[static_cast<std::int64_t>(r) * C64 + c64]
-                                             : __float2bfloat16(0.0f);
+            weights[r][lane] =
+                channel_valid
+                    ? weight[static_cast<std::int64_t>(r) * C64 + (channel_valid ? c64 : 0)]
+                    : __float2bfloat16(0.0f);
         }
     }
     __syncthreads();
@@ -516,12 +548,9 @@ __global__ void causal_conv1d_batched_snapshot_smallt_kernel(
     const std::int32_t p0 = column - 3;
     const std::int32_t p1 = column - 2;
     const std::int32_t p2 = column - 1;
-    const __nv_bfloat16 x0 =
-        p0 < 0 ? history[p0 + 3][lane] : x[row_base + static_cast<std::int64_t>(p0) * C64 + c64];
-    const __nv_bfloat16 x1 =
-        p1 < 0 ? history[p1 + 3][lane] : x[row_base + static_cast<std::int64_t>(p1) * C64 + c64];
-    const __nv_bfloat16 x2 =
-        p2 < 0 ? history[p2 + 3][lane] : x[row_base + static_cast<std::int64_t>(p2) * C64 + c64];
+    const __nv_bfloat16 x0 = detail::causal_conv_tap(history, lane, x + row_base + c64, C64, p0);
+    const __nv_bfloat16 x1 = detail::causal_conv_tap(history, lane, x + row_base + c64, C64, p1);
+    const __nv_bfloat16 x2 = detail::causal_conv_tap(history, lane, x + row_base + c64, C64, p2);
     const __nv_bfloat16 x3 = x[out_idx];
 
     float acc = 0.0f;
@@ -536,9 +565,8 @@ __global__ void causal_conv1d_batched_snapshot_smallt_kernel(
     for (std::int32_t s = 0; s < 3; ++s) {
         const std::int32_t pos = column - 2 + s;
         snapshot[static_cast<std::int64_t>(s) * C64 + c64] =
-            pos < 0 ? history[pos + 3][lane]
-                    : x[row_base + static_cast<std::int64_t>(pos) * C64 + c64];
+            detail::causal_conv_tap(history, lane, x + row_base + c64, C64, pos);
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

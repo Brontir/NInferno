@@ -3,14 +3,18 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include <unistd.h>
+
 namespace {
 
-// Neroued/ninfer#20: this 300x200 yuvj420p JPEG selected an swscale SIMD path that overwrote a
+// This 300x200 yuvj420p JPEG selected an swscale SIMD path that overwrote a
 // width-tight RGB24 destination. Keep the exact public reproducer so the test does not depend on
 // an encoder or external files.
 constexpr std::string_view issue_20_jpeg_base64 = R"jpeg(
@@ -96,7 +100,7 @@ std::vector<std::uint8_t> decode_base64(std::string_view encoded) {
     return out;
 }
 
-void expect_pixel(const ninfer::media::decode::Image& image, int x, int y,
+void expect_pixel(const ninferno::media::decode::Image& image, int x, int y,
                   std::array<int, 3> expected, int tolerance) {
     const std::size_t offset = (static_cast<std::size_t>(y) * image.width + x) * 3;
     for (int channel = 0; channel < 3; ++channel) {
@@ -110,8 +114,9 @@ void expect_pixel(const ninfer::media::decode::Image& image, int x, int y,
 
 void test_issue_20_unaligned_jpeg() {
     const std::vector<std::uint8_t> encoded     = decode_base64(issue_20_jpeg_base64);
-    const ninfer::media::decode::ImageInfo info = ninfer::media::decode::inspect_image(encoded, {});
-    const ninfer::media::decode::Image image    = ninfer::media::decode::decode_image(encoded, {});
+    const ninferno::media::decode::ImageInfo info =
+        ninferno::media::decode::inspect_image(encoded, {});
+    const ninferno::media::decode::Image image = ninferno::media::decode::decode_image(encoded, {});
     if (info.width != image.width || info.height != image.height || image.width != 300 ||
         image.height != 200 || image.rgb.size() != 300U * 200U * 3U) {
         throw std::runtime_error("decoded JPEG dimensions mismatch");
@@ -125,14 +130,151 @@ void test_issue_20_unaligned_jpeg() {
     expect_pixel(image, 299, 199, blue, 3);
     expect_pixel(image, 150, 100, yellow, 4);
 
-    const ninfer::media::decode::VideoInfo video_info =
-        ninfer::media::decode::inspect_video(encoded, {}, 2.0, 4, 16);
-    const ninfer::media::decode::Video video =
-        ninfer::media::decode::decode_video(encoded, {}, 2.0, 4, 16);
+    const ninferno::media::decode::VideoInfo video_info =
+        ninferno::media::decode::inspect_video(encoded, {}, 2.0, 4, 16);
+    const ninferno::media::decode::Video video =
+        ninferno::media::decode::decode_video(encoded, {}, 2.0, 4, 16);
     if (video_info.width != video.width || video_info.height != video.height ||
         video_info.sampled_frames != static_cast<int>(video.frames.size()) ||
         video_info.indices != video.indices) {
         throw std::runtime_error("inspected video geometry differs from decoded video");
+    }
+}
+
+std::size_t resident_bytes() {
+    std::ifstream statm("/proc/self/statm");
+    std::size_t pages    = 0;
+    std::size_t resident = 0;
+    statm >> pages >> resident;
+    return resident * static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+}
+
+// Every Decoder opens its input through a custom AVIOContext. Probing replaces the context's
+// buffer, so the buffer must be freed from the context and not from the pointer handed to
+// avio_alloc_context. Found by LeakSanitizer: each image or video request leaked one probe buffer
+// of about 32 KiB, for the whole server lifetime. 2000 inspect+decode rounds leaked ~128 MiB;
+// the bound leaves room for allocator noise only.
+std::size_t peak_resident_bytes() {
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.rfind("VmHWM:", 0) == 0) { return std::stoull(line.substr(6)) * 1024U; }
+    }
+    return 0;
+}
+
+// A grayscale PNG of side x side zero pixels whose IDAT is one fixed-Huffman deflate block of
+// back-references (258 bytes per 13 bits): 16384 x 16384 is 268 MB decoded and 2.5 MB encoded.
+std::vector<std::uint8_t> zero_png(std::uint32_t side) {
+    std::vector<std::uint8_t> zlib = {0x78, 0x01};
+    std::uint64_t bits             = 0;
+    int count                      = 0;
+    const auto put                 = [&](std::uint32_t value, int length) {
+        bits |= static_cast<std::uint64_t>(value) << count;
+        count += length;
+        while (count >= 8) {
+            zlib.push_back(static_cast<std::uint8_t>(bits & 0xffU));
+            bits >>= 8U;
+            count -= 8;
+        }
+    };
+    const auto huffman = [&](std::uint32_t code, int length) {
+        std::uint32_t reversed = 0;
+        for (int i = 0; i < length; ++i) { reversed |= ((code >> i) & 1U) << (length - 1 - i); }
+        put(reversed, length);
+    };
+    const std::uint64_t raw = static_cast<std::uint64_t>(side) * (side + 1U); // filter byte + row
+    put(1, 1);                                                                // final block
+    put(1, 2);                                                                // fixed Huffman
+    huffman(0x30, 8);                                                         // literal 0
+    std::uint64_t left = raw - 1;
+    for (; left >= 258; left -= 258) {
+        huffman(0xc5, 8); // length 258
+        huffman(0, 5);    // distance 1
+    }
+    for (; left > 0; --left) { huffman(0x30, 8); }
+    huffman(0, 7); // end of block
+    if (count > 0) { zlib.push_back(static_cast<std::uint8_t>(bits & 0xffU)); }
+    const std::uint32_t adler = static_cast<std::uint32_t>(raw % 65521U) << 16U | 1U;
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        zlib.push_back(static_cast<std::uint8_t>(adler >> shift));
+    }
+
+    std::vector<std::uint8_t> png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    const auto chunk              = [&](const char* type, const std::vector<std::uint8_t>& data) {
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            png.push_back(static_cast<std::uint8_t>(data.size() >> shift));
+        }
+        const std::size_t begin = png.size();
+        png.insert(png.end(), type, type + 4);
+        png.insert(png.end(), data.begin(), data.end());
+        std::uint32_t crc = 0xffffffffU;
+        for (std::size_t i = begin; i < png.size(); ++i) {
+            crc ^= png[i];
+            for (int k = 0; k < 8; ++k) { crc = (crc >> 1U) ^ (0xedb88320U & (0U - (crc & 1U))); }
+        }
+        crc ^= 0xffffffffU;
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            png.push_back(static_cast<std::uint8_t>(crc >> shift));
+        }
+    };
+    std::vector<std::uint8_t> header;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            header.push_back(static_cast<std::uint8_t>(side >> shift));
+        }
+    }
+    header.insert(header.end(), {8, 0, 0, 0, 0}); // 8-bit grayscale, deflate, no interlace
+    chunk("IHDR", header);
+    chunk("IDAT", zlib);
+    chunk("IEND", {});
+    return png;
+}
+
+// A decompression bomb is refused before FFmpeg allocates its frame: 268 MB of declared pixels
+// past the 64 Mpx budget grow the peak resident set by far less than the frame.
+void test_pixel_bomb_refused_before_allocation() {
+    const std::vector<std::uint8_t> bomb = zero_png(16384);
+    ninferno::media::decode::Policy small;
+    small.max_decoded_pixels = 4096U * 4096U;
+    bool small_refused       = false;
+    try {
+        (void)ninferno::media::decode::decode_image(zero_png(4097), small);
+    } catch (const ninferno::media::decode::Error&) { small_refused = true; }
+    if (!small_refused) { throw std::runtime_error("a 4097^2 PNG passed a 4096^2 budget"); }
+    for (const bool inspect : {true, false}) {
+        const std::size_t before = peak_resident_bytes();
+        bool refused             = false;
+        try {
+            if (inspect) {
+                (void)ninferno::media::decode::inspect_image(bomb, {});
+            } else {
+                (void)ninferno::media::decode::decode_image(bomb, {});
+            }
+        } catch (const ninferno::media::decode::Error&) { refused = true; }
+        const std::size_t grown = peak_resident_bytes() - before;
+        if (!refused) { throw std::runtime_error("a 16384^2 PNG passed the 64 Mpx budget"); }
+        if (grown > (64U << 20U)) {
+            throw std::runtime_error("refusing a 16384^2 PNG grew the peak resident set by " +
+                                     std::to_string(grown >> 20U) + " MiB");
+        }
+    }
+}
+
+void test_decoder_releases_probe_buffers() {
+    const std::vector<std::uint8_t> encoded = decode_base64(issue_20_jpeg_base64);
+    const auto round                        = [&] {
+        (void)ninferno::media::decode::inspect_image(encoded, {});
+        (void)ninferno::media::decode::decode_image(encoded, {});
+    };
+    for (int i = 0; i < 200; ++i) { round(); } // warm the allocator and codec tables
+    const std::size_t before = resident_bytes();
+    for (int i = 0; i < 2000; ++i) { round(); }
+    const std::size_t after = resident_bytes();
+    const std::size_t grown = after > before ? after - before : 0;
+    if (grown > (16U << 20U)) {
+        throw std::runtime_error("resident memory grew by " + std::to_string(grown >> 10U) +
+                                 " KiB over 4000 decoder lifetimes");
     }
 }
 
@@ -141,6 +283,8 @@ void test_issue_20_unaligned_jpeg() {
 int main() {
     try {
         test_issue_20_unaligned_jpeg();
+        test_pixel_bomb_refused_before_allocation();
+        test_decoder_releases_probe_buffers();
         std::cout << "ok\n";
         return 0;
     } catch (const std::exception& error) {

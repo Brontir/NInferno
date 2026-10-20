@@ -4,7 +4,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 std::int64_t checked_mul_i64(std::int64_t a, std::int64_t b) {
@@ -146,4 +146,15 @@ Tensor Tensor::permute(std::initializer_list<int> order) const {
     return out;
 }
 
-} // namespace ninfer
+bool overlaps(const void* a, std::size_t a_bytes, const void* b, std::size_t b_bytes) noexcept {
+    if (a == nullptr || b == nullptr || a_bytes == 0 || b_bytes == 0) { return false; }
+    const auto a0 = reinterpret_cast<std::uintptr_t>(a);
+    const auto b0 = reinterpret_cast<std::uintptr_t>(b);
+    return a0 < b0 + b_bytes && b0 < a0 + a_bytes;
+}
+
+bool overlaps(const Tensor& a, const Tensor& b) {
+    return overlaps(a.data, a.bytes(), b.data, b.bytes());
+}
+
+} // namespace ninferno

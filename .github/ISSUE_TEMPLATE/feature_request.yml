@@ -1,0 +1,16 @@
+name: Model or GPU request
+description: Ask for a model, GPU, format or feature NInferno does not support yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you would like
+      description: The model (Hugging Face id), GPU, weight format or feature, and what you use it for.
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What happens today
+      description: The error or the limitation you hit, if any.

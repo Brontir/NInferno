@@ -1,16 +1,19 @@
-#include "ninfer/ops/gated_rmsnorm.h"
+#include "ninferno/ops/gated_rmsnorm.h"
+#include "ninferno/ops/scatter.h"
 #include "core/device.h"
 #include "ops/norm_test_common.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
-using namespace ninfer::test::norm;
+using namespace ninferno;
+using namespace ninferno::test;
+using namespace ninferno::test::norm;
 
 namespace {
 
@@ -42,15 +45,16 @@ std::vector<double> gated_rmsnorm_oracle(const std::vector<float>& input,
     return output;
 }
 
-int run_case(const char* label, const Shape& shape, std::uint32_t seed, float input_scale = 4.0F,
-             bool bf16x2_unaligned = false, bool graph = false) {
+int run_case(DeviceExecutionView execution, const char* label, const Shape& shape,
+             std::uint32_t seed, float input_scale = 4.0F, bool bf16x2_unaligned = false,
+             bool graph = false) {
     const std::size_t count = shape.elements();
     std::vector<float> input(count), weight(shape.d), gate(count);
     fill_uniform(input, seed, -input_scale, input_scale);
     fill_uniform(weight, seed + 1U, 0.25F, 1.75F);
     fill_uniform(gate, seed + 2U, -5.0F, 5.0F);
     gate.front() = 0.0F;
-    gate.back() = -0.0F;
+    gate.back()  = -0.0F;
     round_to_bf16(input);
     round_to_bf16(weight);
     round_to_bf16(gate);
@@ -68,7 +72,7 @@ int run_case(const char* label, const Shape& shape, std::uint32_t seed, float in
     Tensor weight_tensor(device_weight.data, DType::BF16, {shape.d});
     Tensor gate_tensor   = tensor_for(device_gate.data, shape);
     Tensor output_tensor = tensor_for(output_data, shape);
-    ops::gated_rmsnorm(input_tensor, weight_tensor, gate_tensor, kEps, output_tensor, nullptr);
+    ops::gated_rmsnorm(input_tensor, weight_tensor, gate_tensor, kEps, output_tensor, execution);
     cuda_synchronize();
 
     if (graph) {
@@ -77,17 +81,18 @@ int run_case(const char* label, const Shape& shape, std::uint32_t seed, float in
         cudaGraphExec_t executable;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
         CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-        ops::gated_rmsnorm(input_tensor, weight_tensor, gate_tensor, kEps, output_tensor, stream);
+        ops::gated_rmsnorm(input_tensor, weight_tensor, gate_tensor, kEps, output_tensor,
+                           execution.on_stream(stream));
         CUDA_CHECK(cudaStreamEndCapture(stream, &captured));
         CUDA_CHECK(cudaGraphInstantiate(&executable, captured, nullptr, nullptr, 0));
         CUDA_CHECK(cudaGraphLaunch(executable, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
         for (std::size_t i = 0; i < gate.size(); ++i) {
-            gate[i] = -gate[i];
+            gate[i]                                                   = -gate[i];
             device_gate.expected[i + leading / sizeof(std::uint16_t)] = f32_to_bf16(gate[i]);
         }
         CUDA_CHECK(cudaMemcpyAsync(device_gate.storage.p, device_gate.expected.data(),
-            device_gate.storage.bytes, cudaMemcpyHostToDevice, stream));
+                                   device_gate.storage.bytes, cudaMemcpyHostToDevice, stream));
         CUDA_CHECK(cudaGraphLaunch(executable, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
         CUDA_CHECK(cudaGraphExecDestroy(executable));
@@ -105,6 +110,53 @@ int run_case(const char* label, const Shape& shape, std::uint32_t seed, float in
     return failures;
 }
 
+// gated_rmsnorm_regrouped against gated_rmsnorm followed by regroup_bf16_heads: the same bytes.
+int run_regrouped(DeviceExecutionView execution, const Shape& shape, std::int32_t groups,
+                  std::uint32_t seed) {
+    const std::string label = "gated_rmsnorm_regrouped [" + std::to_string(shape.d) + "," +
+                              std::to_string(shape.rows) + "," + std::to_string(shape.tokens) +
+                              "] groups " + std::to_string(groups);
+    const std::size_t count = shape.elements();
+    std::vector<float> input(count), weight(shape.d), gate(count);
+    fill_uniform(input, seed, -4.0F, 4.0F);
+    fill_uniform(weight, seed + 1U, 0.25F, 1.75F);
+    fill_uniform(gate, seed + 2U, -5.0F, 5.0F);
+    round_to_bf16(input);
+    round_to_bf16(weight);
+    round_to_bf16(gate);
+    DeviceInput device_input  = make_input(input, false);
+    DeviceInput device_weight = make_input(weight, false);
+    DeviceInput device_gate   = make_input(gate, false);
+    GuardedDeviceBuffer normed(count * sizeof(std::uint16_t)), tiled(count * sizeof(std::uint16_t)),
+        fused(count * sizeof(std::uint16_t));
+    normed.fill(0xff);
+    tiled.fill(0xff);
+    fused.fill(0xff);
+    // Three dimensions also for one token: the regroup reads the heads from ne[1].
+    const auto as_3d = [&](void* data) {
+        return Tensor(data, DType::BF16, {shape.d, shape.rows, shape.tokens});
+    };
+    const Tensor x = as_3d(device_input.data), z = as_3d(device_gate.data);
+    const Tensor w(device_weight.data, DType::BF16, {shape.d});
+    Tensor normed_tensor = as_3d(normed.data()), tiled_tensor = as_3d(tiled.data()),
+           fused_tensor = as_3d(fused.data());
+    ops::gated_rmsnorm(x, w, z, kEps, normed_tensor, execution);
+    ops::regroup_bf16_heads(normed_tensor, groups, tiled_tensor, execution.stream);
+    ops::gated_rmsnorm_regrouped(x, w, z, kEps, groups, fused_tensor, execution);
+    cuda_synchronize();
+    const auto want = from_device_bf16(tiled.data(), count);
+    const auto got  = from_device_bf16(fused.data(), count);
+    int failures    = 0;
+    if (std::memcmp(want.data(), got.data(), count * sizeof(want[0])) != 0) {
+        std::cerr << "FAIL " << label << ": differs from gated_rmsnorm + regroup_bf16_heads\n";
+        ++failures;
+    }
+    failures += verify_output_storage(label + " output", fused, false);
+    failures += verify_preserved(label + " preserves input", device_input);
+    failures += verify_preserved(label + " preserves gate", device_gate);
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -113,17 +165,39 @@ int main() {
         return 77;
     }
 
-    int failures = 0;
-    failures += run_case("gated_rmsnorm [128,48,1]", {128, 48}, 1401U);
+    DeviceContext device;
+    // Fixture initialization uses the default stream; keep the eager call ordered with it.
+    const auto execution = device.execution_view().on_stream(nullptr);
+    int failures         = 0;
+    failures += run_case(execution, "gated_rmsnorm [128,48,1]", {128, 48}, 1401U);
     for (int columns : {2, 7, 16, 48, 56, 57, 64, 96, 128}) {
         const std::string label = "gated_rmsnorm target [128,48," + std::to_string(columns) + "]";
-        failures += run_case(label.c_str(), {128, 48, columns}, 1420U + columns,
-                             4.0F, false, columns == 56 || columns == 57 || columns == 128);
+        failures += run_case(execution, label.c_str(), {128, 48, columns}, 1420U + columns, 4.0F,
+                             false, columns == 56 || columns == 57 || columns == 128);
     }
-    failures += run_case("gated_rmsnorm [128,32,7]", {128, 32, 7}, 1402U);
-    failures += run_case("gated_rmsnorm [128,32,128]", {128, 32, 128}, 1403U);
-    failures += run_case("gated_rmsnorm near-zero [128,32]", {128, 32}, 1404U, 1.0e-5F);
-    failures += run_case("gated_rmsnorm unaligned [128,48]", {128, 48}, 1405U, 4.0F, true);
+    failures += run_case(execution, "gated_rmsnorm [128,32,7]", {128, 32, 7}, 1402U);
+    failures += run_case(execution, "gated_rmsnorm [128,32,128]", {128, 32, 128}, 1403U);
+    failures += run_case(execution, "gated_rmsnorm near-zero [128,32]", {128, 32}, 1404U, 1.0e-5F);
+    failures +=
+        run_case(execution, "gated_rmsnorm unaligned [128,48]", {128, 48}, 1405U, 4.0F, true);
+    // Qwen3.5's linear-attention heads (value heads over key-head groups), every warp-route D,
+    // decode, verify and prefill widths.
+    for (const auto& [d, heads, groups] : std::vector<std::array<std::int32_t, 3>>{{128, 48, 16},
+                                                                                   {128, 32, 16},
+                                                                                   {128, 64, 16},
+                                                                                   {64, 32, 8},
+                                                                                   {192, 12, 4},
+                                                                                   {256, 16, 8}}) {
+        for (const std::int32_t tokens : {1, 2, 4, 7, 64, 513}) {
+            failures += run_regrouped(execution, {d, heads, tokens}, groups,
+                                      1500U + static_cast<std::uint32_t>(d + heads + tokens));
+        }
+    }
+    try {
+        failures += run_regrouped(execution, {512, 16, 2}, 8, 1600U);
+        std::cerr << "FAIL gated_rmsnorm_regrouped D=512 must be refused\n";
+        ++failures;
+    } catch (const std::invalid_argument&) {}
     std::cout << (failures ? "FAIL" : "OK") << " gated_rmsnorm\n";
     return failures ? 1 : 0;
 }

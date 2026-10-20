@@ -10,11 +10,11 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 struct Directory;
 }
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 enum class MixerKind { FullAttention, LinearAttention };
 enum class DraftAttentionKind { FullAttention, SlidingAttention };
@@ -39,6 +39,19 @@ struct RopeConfig {
     std::array<std::uint32_t, 3> mrope_section{};
     std::uint32_t rotary_dim = 0;
     std::vector<std::uint8_t> pair_axes;
+    // YaRN (LoadOptions::rope_yarn_factor > 1, core/yarn.h): each rotated pair's frequency and
+    // the scale on cos and sin; `yarn_frequencies` is their device copy, owned by the Model.
+    // Empty: the theta ladder.
+    std::vector<float> yarn_inv_freq;
+    float yarn_attention_scale     = 1.0F;
+    const float* yarn_frequencies  = nullptr;
+    std::uint32_t yarn_original    = 0; // the checkpoint's max_position_embeddings
+    // The checkpoint's own YaRN (rope_scaling type "yarn", carried by the converter): applied at
+    // load unless --rope-yarn-factor names another factor. 1: none.
+    double artifact_yarn_factor          = 1.0;
+    std::uint32_t artifact_yarn_original = 0;
+
+    [[nodiscard]] bool yarn() const noexcept { return !yarn_inv_freq.empty(); }
 };
 
 struct GdnConfig {
@@ -47,6 +60,9 @@ struct GdnConfig {
     std::uint32_t linear_num_value_heads = 0;
     std::uint32_t linear_value_head_dim  = 0;
     std::uint32_t linear_conv_kernel_dim = 0;
+    // out_proj's input columns hold the value heads in llama.cpp's tiled order (a GGUF K-quant
+    // out_proj kept as published): value head g * per + j is column chunk j * key_heads + g.
+    bool output_heads_tiled = false;
 
     [[nodiscard]] std::uint64_t key_width() const noexcept {
         return std::uint64_t(linear_num_key_heads) * linear_key_head_dim;
@@ -147,4 +163,4 @@ struct Config {
 
 [[nodiscard]] Config parse_config(const artifact::Directory& directory, const LoadOptions& options);
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

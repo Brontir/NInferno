@@ -1,0 +1,81 @@
+#pragma once
+
+// What every architecture adapter shares: the checks config.json fields pass
+// (tools/convert/config_checks.py), the frontend resources and token domain (resources.py), and
+// the frequency shortlist (proposal.py).
+
+#include "convert/files.h"
+#include "convert/model.h"
+
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace ninferno::convert {
+
+// Tokenizer resources hold objects of 262k members; ordered_json inserts in linear time, so they
+// are parsed unordered (token_domain does not depend on member order).
+using Json = nlohmann::json;
+
+template <class J>
+const J* member(const J& object, std::string_view key) {
+    if (!object.is_object()) { return nullptr; }
+    const auto it = object.find(key);
+    return it == object.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] bool present(const OJson* value);
+// A positive integer (a bool is not one).
+[[nodiscard]] std::uint64_t positive(const OJson* value, const std::string& name);
+// A positive finite value representable as FP32; returns the FP32 value as a Python float.
+[[nodiscard]] double f32(const OJson* value, const std::string& name);
+[[nodiscard]] double f32_value(const OJson* value, double fallback, const std::string& name);
+// Python `a == b` for JSON values.
+[[nodiscard]] bool py_equal(const OJson& a, const OJson& b);
+// `key`, when present, must equal `value` (with a bool `value`, it must be a bool).
+void fixed(const OJson& config, std::string_view key, const OJson& value, const std::string& label);
+// Whether a source's config.json describes a model rather than only its bookkeeping.
+[[nodiscard]] bool has_model_config(const OJson& config);
+// An additional source must agree with the model on every field its site depends on.
+void check_source_fields(const std::string& name, const OJson& actual, const OJson& expected,
+                         const std::set<std::string>& fields);
+
+// The one architecture a checkpoint's config declares; throws otherwise.
+[[nodiscard]] std::string declared_architecture(const OJson& config);
+
+// proposal.add_official_proposal: an indexed Q4 proposal head gathered from the text head's
+// default source, with its int32 token ids.
+void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::path& ranking,
+                           const std::string& ranking_text, std::uint64_t rows);
+
+using ResourceOverrides = std::vector<std::pair<std::string, std::filesystem::path>>;
+using ResourceFallbacks = std::map<std::string, std::string>;
+
+// The text resources (and, with a Vision config, the preprocessor configs) as artifact
+// resources, their references in the components, and the tokenizer's public token domain.
+// A role neither overridden nor present in `root` takes its bytes from `fallbacks`, when there
+// (recorded in model.resource_notes); so do the tokenizer roles when `root`'s tokenizer.json has
+// another vocabulary than the fallback's (a GGUF in a folder with another model's files).
+void load_resources(Model& model, const std::filesystem::path& root, std::uint64_t vocab_size,
+                    const ResourceOverrides& overrides, const OJson* vision = nullptr,
+                    const ResourceFallbacks& fallbacks = {});
+
+// Resources a checkpoint can stand in for when its directory lacks them: those a GGUF file's
+// metadata rebuilds, and a generation_config.json derived from config.json and
+// tokenizer_config.json (end-of-sequence ids) for a checkpoint published without one.
+[[nodiscard]] ResourceFallbacks resource_fallbacks(const Checkpoint& checkpoint);
+
+// select_shortlist(counts, n, force_include).
+[[nodiscard]] std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& counts,
+                                                         std::uint64_t n,
+                                                         const std::vector<std::int64_t>& forced);
+// shortlist_ids: the `rows` most frequent ids of the model's token domain by a ranking file.
+[[nodiscard]] std::vector<std::int64_t>
+shortlist_ids(const Model& model, const std::filesystem::path& ranking, std::uint64_t rows);
+
+} // namespace ninferno::convert

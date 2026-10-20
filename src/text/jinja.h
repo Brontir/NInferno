@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::text {
+namespace ninferno::text {
 
 struct TemplateInputRegion {
     std::string pointer;
@@ -35,6 +35,11 @@ struct TemplateRenderOptions {
     std::span<const TemplateInputRegion> regions;
     // Only engine-supplied token variables opt out of ordinary input-string handling.
     std::span<const std::string> control_variables;
+    // JSON pointers (as in regions) to strings inside the context that the engine chose from a
+    // closed set, such as a message's role: they render as template text, so a template that
+    // builds a control token around one ('<|' + role + '|>', Phi) writes that control token.
+    // Every other input string stays ordinary content and never forms a control token.
+    std::span<const std::string> control_pointers;
 };
 
 struct TemplateOutput {
@@ -56,4 +61,4 @@ private:
     std::shared_ptr<const Impl> impl_;
 };
 
-} // namespace ninfer::text
+} // namespace ninferno::text

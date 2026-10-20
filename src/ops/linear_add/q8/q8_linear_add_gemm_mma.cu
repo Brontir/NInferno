@@ -1,167 +1,117 @@
+#include "ops/linear_add/q8/q8_add_epilogue.cuh"
 #include "core/weight.h"
 #include "ops/linear_add/q8/q8_linear_add_kernels.h"
 
 #include "core/device.h"
 #include "ops/common/math.h"
-#include "ops/linear/q8/q8_rowsplit_gemm_mma.cuh"
+#include "ops/linear/q8/q8_mma_launch.cuh"
+#include "ops/linear/q8/q8_prefill_small_t.cuh"
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
-template <class Schedule, bool Full>
-void launch_tt(const Tensor& x, const Weight& w, Tensor& residual_out, cudaStream_t stream) {
-    const std::int32_t rows     = w.n;
-    const std::int32_t k        = w.k;
-    const std::int32_t cols     = x.ne[1];
-    const std::int32_t padded_k = w.padded_shape[1];
-    const dim3 grid(static_cast<unsigned>(div_up(rows, Schedule::BM)),
-                    static_cast<unsigned>(div_up(cols, Schedule::BN)), 1u);
-    const Q8ContiguousOutput output{static_cast<__nv_bfloat16*>(residual_out.data), rows};
-    q8_rowsplit_gemm_mma_kernel<Schedule, Full, Q8Epilogue::Residual>
-        <<<grid, Schedule::THREADS, 0, stream>>>(
-            static_cast<const __nv_bfloat16*>(x.data), static_cast<const std::uint8_t*>(w.qdata),
-            static_cast<const std::uint8_t*>(w.scales), output, rows, k, cols, padded_k);
-}
-
 template <class Schedule>
-void launch_variant(bool full, const Tensor& x, const Weight& w, Tensor& residual_out,
-                    cudaStream_t stream) {
-    if (full) {
-        launch_tt<Schedule, true>(x, w, residual_out, stream);
-    } else {
-        launch_tt<Schedule, false>(x, w, residual_out, stream);
-    }
-    CUDA_CHECK(cudaGetLastError());
+void launch_variant(const Tensor& x, const Weight& w, Tensor& residual_out, cudaStream_t stream) {
+    launch_q8_a16_mma<Schedule>(
+        q8_linear_operands(x, w),
+        LinearBf16Output{static_cast<__nv_bfloat16*>(residual_out.data), residual_out.ne[0]},
+        Q8AddMmaEpilogue{}, stream);
 }
 
 } // namespace
 
-void q8_linear_add_mma_r32_c32_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 32, 32, 16, 4>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+static_assert(Q8PrefillSmallR16C32::kBlockTokens == kQ8LinearAddPrefillSmallTileCols &&
+                  Q8PrefillSmallR32C32::kBlockTokens == kQ8LinearAddPrefillSmallTileCols,
+              "the prefill small-T tiles are kQ8LinearAddPrefillSmallTileCols wide");
+
+void q8_linear_add_mma_prefill_small_t_launch(const Tensor& x, const Weight& w,
+                                              Tensor& residual_out, cudaStream_t stream) {
+    // Swept over 17..128 columns: the 16-row tile leads through 64, the 32-row one after.
+    const Q8PrefillSmallTile tile = x.ne[1] <= kQ8LinearAddPrefillSmallR16MaxCols
+                                        ? Q8PrefillSmallTile::R16C32
+                                        : Q8PrefillSmallTile::R32C32;
+    q8_prefill_small_t_dispatch(
+        tile, [&]<class Schedule>() { launch_variant<Schedule>(x, w, residual_out, stream); });
 }
 
-void q8_linear_add_mma_r32_c48_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 48, 32, 16, 4>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r32_c64_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<32, 64, 64, 32, 16, 2, 3>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r32_c64_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 64, 32, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r32_c80_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<32, 80, 64, 32, 16, 2, 3>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r32_c80_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 80, 32, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r32_c96_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<32, 96, 64, 32, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r32_c96_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 96, 32, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r32_c128_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<32, 128, 64, 32, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r32_c112_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 112, 32, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r48_c64_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<48, 64, 64, 48, 16, 2, 3>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r32_c128_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<32, 128, 32, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r48_c96_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<48, 96, 64, 48, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r48_c64_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<48, 64, 48, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r48_c112_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<48, 112, 64, 48, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r48_c80_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<48, 80, 48, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r48_c128_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<48, 128, 64, 48, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r48_c96_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<48, 96, 48, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r64_c96_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                      cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<64, 96, 64, 64, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r48_c112_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<48, 112, 48, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r64_c112_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<64, 112, 64, 64, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r48_c128_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<48, 128, 48, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r64_c128_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<64, 128, 64, 64, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r64_c32_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 32, 64, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r128_c64_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<128, 64, 64, 64, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r64_c48_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 48, 64, 16, 3>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
+void q8_linear_add_mma_r128_c80_launch(const Tensor& x, const Weight& w, Tensor& residual_out,
+                                       cudaStream_t stream) {
+    using Schedule = Q8A16MmaSchedule<128, 80, 64, 64, 16, 2, 2>;
+    launch_variant<Schedule>(x, w, residual_out, stream);
 }
 
-void q8_linear_add_mma_r64_c64_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 64, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r64_c80_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 80, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r64_c96_launch(bool full, const Tensor& x, const Weight& w,
-                                      Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 96, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r64_c112_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 112, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r64_c128_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<64, 128, 64, 16, 2, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r128_c64_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<128, 64, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-void q8_linear_add_mma_r128_c80_launch(bool full, const Tensor& x, const Weight& w,
-                                       Tensor& residual_out, cudaStream_t stream) {
-    using Schedule = Q8RowSplitMmaGemmSchedule<128, 80, 64, 16, 2>;
-    launch_variant<Schedule>(full, x, w, residual_out, stream);
-}
-
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

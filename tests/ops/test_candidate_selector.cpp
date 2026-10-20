@@ -1,4 +1,4 @@
-#include "ninfer/ops/candidate_selector.h"
+#include "ninferno/ops/candidate_selector.h"
 
 #include "ops/op_tester.h"
 #include "core/decode_graph.h"
@@ -16,8 +16,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -27,6 +27,12 @@ constexpr std::int32_t kRank         = 256;
 constexpr std::int32_t kCodebookRows = 248320;
 constexpr std::int32_t kTokenDomain  = 248077;
 constexpr std::int32_t kMaxBatch     = 8;
+
+// How the codebooks reach the Op: BF16 Tensors, BF16 Weights, or Q4_0 GGUF planes (the published
+// dflash GGUF's form) read by the generic decode. The Q4_0 fixture values are (q - 8) / 16,
+// exact in BF16 as well, so every form shares one oracle.
+enum class CodebookForm { Bf16Tensor, Bf16Weight, Q4_0Weight };
+CodebookForm g_form = CodebookForm::Bf16Tensor;
 
 constexpr PointwiseCriterion kProbabilityCriterion{/*absolute=*/2.0e-6,
                                                    /*relative=*/2.0e-5};
@@ -40,21 +46,26 @@ std::uint32_t mix32(std::uint32_t value) {
 }
 
 float represented_pattern(std::uint32_t first, std::uint32_t second, std::uint32_t seed,
-                          float scale) {
+                          float scale, bool four_bit = false) {
     const std::uint32_t mixed = mix32(first * 0x9e3779b9U ^ second * 0x85ebca6bU ^ seed);
-    int centered              = static_cast<int>((mixed >> 8) & 0xffU) - 128;
+    int centered              = four_bit ? static_cast<int>((mixed >> 8) & 0xfU) - 8
+                                         : static_cast<int>((mixed >> 8) & 0xffU) - 128;
     if (centered == 0) { centered = ((first + second) & 1U) == 0 ? 1 : -1; }
     return bf16_to_f32(f32_to_bf16(static_cast<float>(centered) * scale));
 }
 
 float predecessor_value(std::int32_t token, std::int32_t rank) {
+    // Q4_0 codebooks: (q - 8) / 16, the same range as the BF16 fixture's c / 256.
+    const bool q4 = g_form == CodebookForm::Q4_0Weight;
     return represented_pattern(static_cast<std::uint32_t>(token), static_cast<std::uint32_t>(rank),
-                               101U, 1.0F / 256.0F);
+                               101U, q4 ? 1.0F / 16.0F : 1.0F / 256.0F, q4);
 }
 
 float successor_value(std::int32_t token, std::int32_t rank) {
+    // Q4_0 codebooks: (q - 8) / 16, the same range as the BF16 fixture's c / 256.
+    const bool q4 = g_form == CodebookForm::Q4_0Weight;
     return represented_pattern(static_cast<std::uint32_t>(token), static_cast<std::uint32_t>(rank),
-                               211U, 1.0F / 256.0F);
+                               211U, q4 ? 1.0F / 16.0F : 1.0F / 256.0F, q4);
 }
 
 std::size_t candidate_offset(std::int32_t batch, std::int32_t step, std::int32_t candidate) {
@@ -144,6 +155,56 @@ void populate_codebook(DeviceBuffer& device, std::span<const std::int32_t> token
         device.copy_from_host(row.data(), row.size() * sizeof(std::uint16_t),
                               static_cast<std::size_t>(token) * kRank * sizeof(std::uint16_t));
     }
+}
+
+// ggml Q4_0 planes of [248320, 256]: per 32-value block 16 qs bytes (value j the low nibble of
+// qs[j], value j + 16 the high one), then per block its binary16 d (here 1/16).
+constexpr std::size_t kQ4Blocks     = kRank / 32;
+constexpr std::size_t kQ4CodeBytes  = static_cast<std::size_t>(kCodebookRows) * kQ4Blocks * 16;
+constexpr std::size_t kQ4ScaleBytes = static_cast<std::size_t>(kCodebookRows) * kQ4Blocks * 2;
+
+void populate_q4_codebook(DeviceBuffer& device, std::span<const std::int32_t> tokens,
+                          bool predecessor) {
+    std::vector<std::uint8_t> codes(kQ4Blocks * 16);
+    const std::vector<std::uint16_t> scales(kQ4Blocks, 0x2C00); // binary16 1/16
+    for (const std::int32_t token : tokens) {
+        std::fill(codes.begin(), codes.end(), 0);
+        for (std::int32_t rank = 0; rank < kRank; ++rank) {
+            const float value =
+                predecessor ? predecessor_value(token, rank) : successor_value(token, rank);
+            const int q = static_cast<int>(std::lround(value * 16.0F)) + 8;
+            if (q < 0 || q > 15) throw std::runtime_error("Q4_0 codebook fixture out of range");
+            const std::size_t block = static_cast<std::size_t>(rank) / 32, v = rank % 32;
+            codes[block * 16 + (v & 15)] |= static_cast<std::uint8_t>(v < 16 ? q : q << 4);
+        }
+        device.copy_from_host(codes.data(), codes.size(),
+                              static_cast<std::size_t>(token) * kQ4Blocks * 16);
+        device.copy_from_host(scales.data(), scales.size() * sizeof(std::uint16_t),
+                              kQ4CodeBytes + static_cast<std::size_t>(token) * kQ4Blocks * 2);
+    }
+}
+
+Weight codebook_weight(void* data, bool q4) {
+    Weight w;
+    w.payload       = data;
+    w.ndim          = 2;
+    w.n = w.shape[0] = w.padded_shape[0] = kCodebookRows;
+    w.k = w.shape[1] = w.padded_shape[1] = kRank;
+    w.qdata                              = data;
+    if (q4) {
+        w.qtype         = QType::GGML_Q4_0;
+        w.layout        = QuantLayout::GgmlPlanes;
+        w.payload_bytes = kQ4CodeBytes + kQ4ScaleBytes;
+        w.scales        = static_cast<std::uint8_t*>(data) + kQ4CodeBytes;
+        w.scale_dtype   = DType::FP16;
+        w.group_size    = 32;
+        w.group         = 32;
+    } else {
+        w.qtype         = QType::BF16;
+        w.layout        = QuantLayout::Contiguous;
+        w.payload_bytes = static_cast<std::uint64_t>(kCodebookRows) * kRank * 2;
+    }
+    return w;
 }
 
 std::vector<double> build_lattice(const std::vector<std::int32_t>& candidate_ids,
@@ -428,18 +489,39 @@ int run(bool ties = false, bool dependent = false) {
     DeviceBuffer anchor_device    = to_device(anchors);
     DeviceBuffer position_device  = to_device(base_positions);
     DeviceBuffer config_device    = to_device(configs);
-    DeviceBuffer predecessor_device(static_cast<std::size_t>(kRank) * kCodebookRows *
-                                    sizeof(std::uint16_t));
-    DeviceBuffer successor_device(static_cast<std::size_t>(kRank) * kCodebookRows *
-                                  sizeof(std::uint16_t));
+    const bool q4 = g_form == CodebookForm::Q4_0Weight;
+    const std::size_t book_bytes =
+        q4 ? kQ4CodeBytes + kQ4ScaleBytes
+           : static_cast<std::size_t>(kRank) * kCodebookRows * sizeof(std::uint16_t);
+    DeviceBuffer predecessor_device(book_bytes);
+    DeviceBuffer successor_device(book_bytes);
     predecessor_device.fill();
     successor_device.fill();
     const std::vector<std::int32_t> tokens = accessed_tokens(candidate_ids, anchors);
-    populate_codebook(predecessor_device, tokens, true);
-    populate_codebook(successor_device, tokens, false);
+    if (q4) {
+        populate_q4_codebook(predecessor_device, tokens, true);
+        populate_q4_codebook(successor_device, tokens, false);
+    } else {
+        populate_codebook(predecessor_device, tokens, true);
+        populate_codebook(successor_device, tokens, false);
+    }
 
     Tensor predecessor(predecessor_device.p, DType::BF16, {kRank, kCodebookRows});
     Tensor successor(successor_device.p, DType::BF16, {kRank, kCodebookRows});
+    const Weight predecessor_weight = codebook_weight(predecessor_device.p, q4);
+    const Weight successor_weight   = codebook_weight(successor_device.p, q4);
+    // The Op under the selected codebook form; the Tensor arguments are the BF16 form's.
+    const auto selector_path = [&](const Tensor& i, const Tensor& u, const Tensor& h,
+                                   const Tensor& a, const Tensor& pred, const Tensor& succ,
+                                   const Tensor& pos, const ops::SamplingConfig* c, Tensor& d,
+                                   Tensor& q, WorkspaceArena& w, cudaStream_t stream) {
+        if (g_form == CodebookForm::Bf16Tensor) {
+            ops::candidate_selector_path(i, u, h, a, pred, succ, pos, c, d, q, w, stream);
+        } else {
+            ops::candidate_selector_path(i, u, h, a, predecessor_weight, successor_weight, pos, c,
+                                         d, q, w, stream);
+        }
+    };
 
     int failures = 0;
     for (int batch_size = 1; batch_size <= kMaxBatch; ++batch_size) {
@@ -461,7 +543,7 @@ int run(bool ties = false, bool dependent = false) {
         GuardedDeviceBuffer scratch(std::max<std::size_t>(capacity, 1));
         WorkspaceArena workspace(DeviceSpan{scratch.data(), scratch.bytes()});
         const auto launch = [&](cudaStream_t stream) {
-            ops::candidate_selector_path(ids, unary, hidden, anchor, predecessor, successor,
+            selector_path(ids, unary, hidden, anchor, predecessor, successor,
                                          positions,
                                          static_cast<const ops::SamplingConfig*>(config_device.p),
                                          drafts, q, workspace, stream);
@@ -580,7 +662,7 @@ int run(bool ties = false, bool dependent = false) {
             tp(dp.p, DType::I32, {3});
         Tensor td(dd.data(), DType::I32, {kSteps, 3}),
             tq(dq.data(), DType::FP32, {kCandidates, kSteps, 3});
-        ops::candidate_selector_path(ti, tu, th, ta, predecessor, successor, tp,
+        selector_path(ti, tu, th, ta, predecessor, successor, tp,
                                      static_cast<const ops::SamplingConfig*>(dc.p), td, tq,
                                      workspace, nullptr);
         cuda_synchronize();
@@ -617,6 +699,14 @@ int main() {
         }
         int failures = 0;
         for (kSteps = 1; kSteps <= 15; ++kSteps) failures += run();
+        // The codebook Weight overload: BF16 (the BF16 kernels) and GGUF Q4_0 (generic decode).
+        for (const auto form : {CodebookForm::Bf16Weight, CodebookForm::Q4_0Weight}) {
+            g_form = form;
+            for (kSteps = 1; kSteps <= 15; kSteps += 7) failures += run();
+            kSteps = 15;
+            failures += run(false, true);
+        }
+        g_form = CodebookForm::Bf16Tensor;
         {
             kSteps = 1;
             failures += run(true);

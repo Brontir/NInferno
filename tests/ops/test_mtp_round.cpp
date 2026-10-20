@@ -1,4 +1,4 @@
-#include "ninfer/ops/mtp_round.h"
+#include "ninferno/ops/mtp_round.h"
 #include "ops/op_tester.h"
 
 #include <algorithm>
@@ -7,12 +7,16 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
-int run_case(int k, const std::vector<std::int32_t>& accepted) {
+// first: row 0's frontier before its licensed tokens; row b's is stride * b later. Rows before
+// the last have a budget of 12 - b tokens (row0_budget, when given, for row 0); the last row's
+// ends with its licensed tokens.
+int run_case(int k, const std::vector<std::int32_t>& accepted, int first = 20, int row0_budget = 0,
+             int stride = 17) {
     const int batch           = static_cast<int>(accepted.size());
     const int T               = k + 1;
     constexpr int max_context = 128;
@@ -33,9 +37,10 @@ int run_case(int k, const std::vector<std::int32_t>& accepted) {
         anchors[static_cast<std::size_t>(b)]  = 90000 + 31 * b;
         licensed[static_cast<std::size_t>(b)] = accepted[static_cast<std::size_t>(b)] + 1;
         frontiers[static_cast<std::size_t>(b)] =
-            20 + 17 * b + licensed[static_cast<std::size_t>(b)];
-        budgets[static_cast<std::size_t>(b)] =
-            b == batch - 1 ? licensed[static_cast<std::size_t>(b)] : 12 - b;
+            first + stride * b + licensed[static_cast<std::size_t>(b)];
+        budgets[static_cast<std::size_t>(b)] = b == 0 && row0_budget > 0 ? row0_budget : 12 - b;
+        if (b == batch - 1)
+            budgets[static_cast<std::size_t>(b)] = licensed[static_cast<std::size_t>(b)];
         rope_deltas[static_cast<std::size_t>(b)] = 3 * b - 2;
         for (int j = 0; j < T; ++j) {
             verify[static_cast<std::size_t>(b * T + j)] = 1000 + 101 * b + 7 * j;
@@ -54,7 +59,8 @@ int run_case(int k, const std::vector<std::int32_t>& accepted) {
             std::min({k, budget_extent, context_extent});
         for (int s = 0; s < steps; ++s) {
             const std::size_t offset   = static_cast<std::size_t>(s * batch + b);
-            expected_positions[offset] = frontiers[static_cast<std::size_t>(b)] + s;
+            expected_positions[offset] =
+                std::min(frontiers[static_cast<std::size_t>(b)] + s, max_context - 1);
             expected_rope_positions[offset] =
                 expected_positions[offset] + rope_deltas[static_cast<std::size_t>(b)];
             expected_valid[offset] = s + 1 < expected_extents[static_cast<std::size_t>(b)] ? 1 : 0;
@@ -96,8 +102,8 @@ int run_case(int k, const std::vector<std::int32_t>& accepted) {
                                 t_rope_positions, t_valid, max_context, nullptr);
     cuda_synchronize();
 
-    const std::string label =
-        "mtp next round K=" + std::to_string(k) + " B=" + std::to_string(batch);
+    const std::string label = "mtp next round K=" + std::to_string(k) +
+                              " B=" + std::to_string(batch) + " first=" + std::to_string(first);
     int failures =
         verify_exact((label + " alignment").c_str(),
                      from_device<std::int32_t>(d_alignment.data(), expected_alignment.size()),
@@ -135,6 +141,18 @@ int main() {
     int failures = 0;
     failures += run_case(1, {0});
     failures += run_case(5, {0, 2, 5});
+    // The Program's MTP round domain reaches 15 drafts (a Gemma 4 assistant round, 16 columns).
+    failures += run_case(8, {0, 3, 8});
+    failures += run_case(15, {0, 7, 15, 11});
+    // Rounds ending on and past the context's last slots: the AR steps stay on the last slot
+    // (Nemotron 3.5 MTP read a page past its table at the context's end).
+    failures += run_case(2, {1}, 126);
+    failures += run_case(4, {4}, 121);
+    failures += run_case(4, {2}, 124);
+    // A row at the context's end with budget left, batched with a row far from it: the context,
+    // not the budget, ends its round, and the other row's steps keep their own positions.
+    failures += run_case(4, {2, 0}, 124, 64, -60);
+    failures += run_case(5, {0, 3}, 124, 64, -50);
 
     if (failures != 0) {
         std::cerr << "mtp_round failures=" << failures << '\n';

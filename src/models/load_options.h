@@ -1,22 +1,20 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <string_view>
 
-namespace ninfer::models {
+namespace ninferno::models {
 
 struct LoadOptions {
     EnginePurpose purpose          = EnginePurpose::Generation;
     bool vision                    = false;
     SpeculativeBackend speculative = SpeculativeBackend::None;
     ProposalHead proposal_head     = ProposalHead::Full;
+    ActivationMode activations     = kDefaultActivationMode;
+    float rope_yarn_factor         = 1.0F; // EngineOptions::rope_yarn_factor (Qwen 3.5)
 
     bool operator==(const LoadOptions&) const = default;
-
-    [[nodiscard]] bool speculative_enabled() const noexcept {
-        return speculative != SpeculativeBackend::None;
-    }
 
     [[nodiscard]] bool mtp() const noexcept { return speculative == SpeculativeBackend::Mtp; }
 
@@ -56,7 +54,9 @@ struct LoadOptions {
     return {.purpose       = options.purpose,
             .vision        = options.enable_vision,
             .speculative   = options.speculative.backend,
-            .proposal_head = options.speculative.proposal_head};
+            .proposal_head = options.speculative.proposal_head,
+            .activations   = options.activations,
+            .rope_yarn_factor = options.rope_yarn_factor};
 }
 
-} // namespace ninfer::models
+} // namespace ninferno::models

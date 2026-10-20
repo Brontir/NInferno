@@ -1,14 +1,14 @@
 // Public-Op benchmark for full and device-count-prefix KV cache append contracts.
 // Cache encoding, launch geometry, and route selection remain private to the public wrappers.
 
-#include "ninfer/ops/softmax_attention.h"
-#include "ninfer/ops/kv_cache_append.h"
+#include "ninferno/ops/softmax_attention.h"
+#include "ninferno/ops/kv_cache_append.h"
 
 #include "core/device.h"
 #include "core/cyclic_kv_cache.h"
 #include "core/paged_kv_cache.h"
 #include "core/paged_kv_storage.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
@@ -26,7 +26,7 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -35,16 +35,16 @@ constexpr std::int32_t kPrefixHeadDim       = 128;
 constexpr std::int32_t kPrefixKvHeads       = 8;
 constexpr std::int32_t kPagedPrefixCapacity = 4096;
 constexpr std::size_t kFlushBytes           = std::size_t{256} << 20;
-constexpr double kRtx5090DramGBs            = 1792.0;
+const double kDeviceDramGBs                 = bench::device_roofs().dram_gbs;
 
 enum class Mode : std::uint8_t { Full, Prefix, All };
 enum class FullGeometryChoice : std::uint8_t { Kv4, Kv2, All };
 enum class KvChoice : std::uint8_t { Bf16, Int8, Fp8, Nvfp4, K8V4, All };
 enum class LayoutChoice : std::uint8_t { Paged, Cyclic, All };
 enum class Execution : std::uint8_t { Eager, Graph, Both };
-enum class CacheMode : std::uint8_t { Cold, Warm, Both };
-enum class CacheState : std::uint8_t { Cold, Warm };
-
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 struct FullGeometry {
     const char* name;
     std::int32_t kv_heads;
@@ -98,7 +98,7 @@ struct Result {
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_kv_cache_append_bench [--mode full|prefix|all] "
+                 "usage: ninferno_kv_cache_append_bench [--mode full|prefix|all] "
                  "[--full-geometry d256-kv4|d256-kv2|all] "
                  "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4|all] "
                  "[--layout paged|cyclic|all] [--tokens T,...] [--counts C,...] "
@@ -328,8 +328,10 @@ public:
         : geometry_(geometry), storage_(storage),
           storage_layout_(paged_kv_storage_layout(storage, kFullHeadDim)), tokens_(tokens),
           capacity_(context + tokens), padded_(align_context(capacity_)),
-          k_(bench::make_bf16(static_cast<std::size_t>(kFullHeadDim) * geometry.kv_heads * tokens)),
-          v_(bench::make_bf16(static_cast<std::size_t>(kFullHeadDim) * geometry.kv_heads * tokens)),
+          k_(bench::make_bf16(static_cast<std::size_t>(kFullHeadDim) * geometry.kv_heads * tokens,
+                              101U)),
+          v_(bench::make_bf16(static_cast<std::size_t>(kFullHeadDim) * geometry.kv_heads * tokens,
+                              103U)),
           positions_(static_cast<std::size_t>(tokens) * sizeof(std::int32_t)),
           cache_k_(bench::make_zeros(full_data_bytes(geometry, storage_layout_.key, padded_))),
           cache_v_(bench::make_zeros(full_data_bytes(geometry, storage_layout_.value, padded_))),
@@ -421,10 +423,10 @@ public:
     PrefixCase(std::int32_t tokens, std::int32_t committed, bool cyclic,
                std::int32_t cyclic_capacity, std::int32_t batch, int maximum)
         : tokens_(tokens), committed_(committed), cyclic_(cyclic),
-          k_(bench::make_bf16(static_cast<std::size_t>(kPrefixHeadDim) * kPrefixKvHeads * tokens *
-                              batch)),
-          v_(bench::make_bf16(static_cast<std::size_t>(kPrefixHeadDim) * kPrefixKvHeads * tokens *
-                              batch)),
+          k_(bench::make_bf16(
+              static_cast<std::size_t>(kPrefixHeadDim) * kPrefixKvHeads * tokens * batch, 105U)),
+          v_(bench::make_bf16(
+              static_cast<std::size_t>(kPrefixHeadDim) * kPrefixKvHeads * tokens * batch, 107U)),
           positions_(static_cast<std::size_t>(tokens) * batch * sizeof(std::int32_t)),
           commit_count_(static_cast<std::size_t>(batch) * sizeof(std::int32_t)),
           selector_(static_cast<std::size_t>(batch) * sizeof(std::int32_t)),
@@ -519,26 +521,12 @@ private:
 const char* mode_name(Mode mode) { return mode == Mode::Full ? "full" : "prefix"; }
 
 const char* storage_name(KvCacheStorage storage) {
-    switch (storage) {
-    case KvCacheStorage::BFloat16:
-        return "bf16";
-    case KvCacheStorage::Int8Group64:
-        return "int8";
-    case KvCacheStorage::Fp8E4M3Row256:
-        return "fp8";
-    case KvCacheStorage::Nvfp4Group16:
-        return "nvfp4";
-    case KvCacheStorage::Fp8KeyNvfp4Value:
-        return "k8v4";
-    }
-    return "unknown";
+    return kv_cache_storage_name(storage).data();
 }
 
 const char* execution_name(Execution execution) {
     return execution == Execution::Eager ? "eager" : "graph";
 }
-
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
 
 double full_vector_bytes(const PagedKVVectorLayout& layout) {
     return static_cast<double>(layout.physical_bytes());
@@ -571,8 +559,8 @@ double prefix_useful_bytes(std::int32_t committed, std::int32_t batch) {
 
 template <class Case>
 bench::ColdTiming measure(Case& data, Execution execution, CacheState cache,
-                          bench::TimedGraph* graph, DeviceBuffer& flush, cudaStream_t stream,
-                          int warmup, int repeat) {
+                          bench::TimedGraph* graph, bench::L2FlushBuffer& flush,
+                          cudaStream_t stream, int warmup, int repeat) {
     if (execution == Execution::Eager) {
         const auto launch = [&](cudaStream_t launch_stream) { data.launch(launch_stream); };
         return cache == CacheState::Cold
@@ -598,7 +586,7 @@ void report(const Result& result) {
                 result.committed, result.max_count, result.graph_nodes, result.graph_calls,
                 result.timing.median_us, result.timing.min_us, result.timing.p95_us,
                 result.logical_cache_bytes, result.physical_cache_bytes, result.key_vector_bytes,
-                result.value_vector_bytes, gbps, gbps / kRtx5090DramGBs * 100.0, kRtx5090DramGBs);
+                result.value_vector_bytes, gbps, gbps / kDeviceDramGBs * 100.0, kDeviceDramGBs);
 }
 
 void write_csv(const Options& options, const std::vector<Result>& results) {
@@ -626,8 +614,8 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
 }
 
 template <class Case>
-void profile_case(Case& data, const char* label, const Options& options, DeviceBuffer& flush,
-                  cudaStream_t stream) {
+void profile_case(Case& data, const char* label, const Options& options,
+                  bench::L2FlushBuffer& flush, cudaStream_t stream) {
     const Execution execution = options.execution;
     const CacheState cache = options.cache == CacheMode::Cold ? CacheState::Cold : CacheState::Warm;
     const bool empty       = options.mode == Mode::Prefix && options.max_count == 0;
@@ -678,7 +666,7 @@ void collect_case(Case& data, Mode mode, const char* geometry, KvCacheStorage st
                   const char* layout, std::int32_t batch, std::int32_t cyclic_capacity,
                   std::int32_t tokens, std::int32_t committed, double logical_cache_bytes,
                   double key_vector_bytes, double value_vector_bytes, double physical_cache_bytes,
-                  double useful_bytes, const Options& options, DeviceBuffer& flush,
+                  double useful_bytes, const Options& options, bench::L2FlushBuffer& flush,
                   cudaStream_t stream, std::vector<Result>& results) {
     const bool empty = mode == Mode::Prefix && options.max_count == 0;
     bench::TimedGraph graph;
@@ -747,7 +735,7 @@ int main(int argc, char** argv) {
         const Options options = parse_options(argc, argv);
         cudaStream_t stream   = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
+        bench::L2FlushBuffer flush(kFlushBytes);
         const std::vector<FullGeometry> geometries = selected_geometries(options.full_geometry);
         const std::vector<KvCacheStorage> storages = selected_storages(options.kv);
 
@@ -841,7 +829,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_kv_cache_append_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_kv_cache_append_bench: %s\n", error.what());
         return 1;
     }
 }

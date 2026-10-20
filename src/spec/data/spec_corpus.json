@@ -1,0 +1,276 @@
+{
+  "schema": 1,
+  "note": "Built-in speculation-tuning corpus: eight prompts per task family, written for NInferno. Engines with a tokenizer render the text with the model's chat template (thinking as given); engines without one read the pre-rendered ids listed under tokens for the model's vocabulary fingerprint (tools/spec/tokenize_corpus.py adds them).",
+  "families": [
+    "math",
+    "code",
+    "prose",
+    "thinking"
+  ],
+  "prompts": [
+    {
+      "id": "math_0",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A train leaves at 9:40 and travels 214 km at an average speed of 80 km/h, then stops for 25 minutes and travels another 96 km at 64 km/h. At what time does it arrive? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_1",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A shop sells notebooks for $3.20 each or in packs of 6 for $16.50. Mia needs exactly 27 notebooks. What is the lowest total price she can pay? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_2",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "The sum of three consecutive even numbers is 246. What is the product of the smallest and the largest of them? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_3",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A tank holds 1200 liters. Pipe A fills it in 6 hours and pipe B empties it in 10 hours. The tank starts empty with both pipes open. How many hours until it is full? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_4",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A cyclist rides 18 km uphill at 12 km/h and returns downhill along the same road at 36 km/h. What is her average speed for the whole trip in km/h? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_5",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A bakery makes 480 rolls. It sells 35% of them in the morning and 5/8 of the rest in the afternoon. How many rolls are left at closing? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_6",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Tom is four times as old as his daughter. In 20 years he will be twice as old as she will be then. How old is Tom now? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "math_7",
+      "family": "math",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "A rectangular garden is 24 m long and 15 m wide. A path 1.5 m wide runs all around the outside of it. What is the area of the path in square metres? Solve step by step and give the final answer after ####."
+    },
+    {
+      "id": "code_0",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n    \"\"\"Merge overlapping closed intervals and return them sorted by their start.\n\n    >>> merge_intervals([(1, 3), (2, 6), (8, 10)])\n    [(1, 6), (8, 10)]\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_1",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef rle_encode(text: str) -> str:\n    \"\"\"Run-length encode a string: every run of one character becomes the character\n    followed by the length of the run.\n\n    >>> rle_encode(\"aaabcc\")\n    'a3b1c2'\n    >>> rle_encode(\"\")\n    ''\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_2",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef balanced(s: str) -> bool:\n    \"\"\"Return True when every bracket in s, of the kinds (), [] and {}, is closed by\n    the matching bracket in the right order. Other characters are ignored.\n\n    >>> balanced(\"a(b[c]{d})\")\n    True\n    >>> balanced(\"(]\")\n    False\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_3",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef top_words(text: str, k: int) -> list[str]:\n    \"\"\"Return the k most frequent lowercase words of text (words are runs of letters),\n    most frequent first, ties broken alphabetically.\n\n    >>> top_words(\"the cat and the hat and the bat\", 2)\n    ['the', 'and']\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_4",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef rotate_left(items: list[int], k: int) -> list[int]:\n    \"\"\"Return items rotated left by k positions; k may exceed the length.\n\n    >>> rotate_left([1, 2, 3, 4, 5], 2)\n    [3, 4, 5, 1, 2]\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_5",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef is_anagram(a: str, b: str) -> bool:\n    \"\"\"Return True when a and b hold the same letters the same number of times,\n    ignoring case and spaces.\n\n    >>> is_anagram(\"Dormitory\", \"dirty room\")\n    True\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_6",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef flatten(nested: list) -> list:\n    \"\"\"Flatten arbitrarily nested lists into one list, keeping the order.\n\n    >>> flatten([1, [2, [3, 4]], [], 5])\n    [1, 2, 3, 4, 5]\n    \"\"\"\n```"
+    },
+    {
+      "id": "code_7",
+      "family": "code",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef roman_to_int(s: str) -> int:\n    \"\"\"Convert a Roman numeral (I, V, X, L, C, D, M; subtractive forms allowed) to an\n    integer.\n\n    >>> roman_to_int(\"MCMXCIV\")\n    1994\n    \"\"\"\n```"
+    },
+    {
+      "id": "prose_0",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a 300-word short story about a clockmaker who discovers that one of her clocks runs backwards."
+    },
+    {
+      "id": "prose_1",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Describe an early-morning fish market in a small harbour town, as a vivid 250-word piece of prose."
+    },
+    {
+      "id": "prose_2",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a letter from a lighthouse to the ships that pass it at night, in about 250 words."
+    },
+    {
+      "id": "prose_3",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a short fable about a tortoise who wants to learn to fly, ending with a moral."
+    },
+    {
+      "id": "prose_4",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a 250-word scene in which two strangers share an umbrella during a sudden summer storm."
+    },
+    {
+      "id": "prose_5",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Describe a mountain village waking up on the first snowy morning of the year, in about 250 words."
+    },
+    {
+      "id": "prose_6",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a diary entry of a young astronaut on her first night aboard a space station."
+    },
+    {
+      "id": "prose_7",
+      "family": "prose",
+      "thinking": false,
+      "max_tokens": 160,
+      "text": "Write a short myth that explains why the moon changes its shape, in about 250 words."
+    },
+    {
+      "id": "thinking_0",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "How many positive integers below 500 are divisible by 6 or by 15, but not by both?"
+    },
+    {
+      "id": "thinking_1",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "A rectangle has a perimeter of 58 cm and a diagonal of 21 cm. What is its area?"
+    },
+    {
+      "id": "thinking_2",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef longest_common_prefix(words: list[str]) -> str:\n    \"\"\"Return the longest string that every word in words starts with ('' for an\n    empty list).\n\n    >>> longest_common_prefix([\"flower\", \"flow\", \"flight\"])\n    'fl'\n    \"\"\"\n```"
+    },
+    {
+      "id": "thinking_3",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef spiral(matrix: list[list[int]]) -> list[int]:\n    \"\"\"Return the elements of a rectangular matrix in clockwise spiral order,\n    starting at the top-left corner.\n\n    >>> spiral([[1, 2, 3], [4, 5, 6], [7, 8, 9]])\n    [1, 2, 3, 6, 9, 8, 7, 4, 5]\n    \"\"\"\n```"
+    },
+    {
+      "id": "thinking_4",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "A bag holds 5 red, 4 blue and 3 green marbles. Two marbles are drawn without replacement. What is the probability that they have different colours?"
+    },
+    {
+      "id": "thinking_5",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "Find the smallest positive integer that leaves remainder 2 when divided by 3, remainder 3 when divided by 5, and remainder 2 when divided by 7."
+    },
+    {
+      "id": "thinking_6",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef merge_sorted(a: list[int], b: list[int]) -> list[int]:\n    \"\"\"Merge two ascending lists into one ascending list in linear time.\n\n    >>> merge_sorted([1, 4, 9], [2, 3, 10])\n    [1, 2, 3, 4, 9, 10]\n    \"\"\"\n```"
+    },
+    {
+      "id": "thinking_7",
+      "family": "thinking",
+      "thinking": true,
+      "max_tokens": 256,
+      "text": "Complete the following Python function. Return the whole function.\n\n```python\ndef count_islands(grid: list[list[int]]) -> int:\n    \"\"\"Count the groups of 1s connected horizontally or vertically in a grid of 0s\n    and 1s.\n\n    >>> count_islands([[1, 1, 0], [0, 0, 1], [1, 0, 1]])\n    3\n    \"\"\"\n```"
+    }
+  ],
+  "tokens": {
+    "v1:9a7777576d37749e": {
+      "label": "Gemma 4 chat template (google/gemma-4-26B-A4B-it tokenizer)",
+      "stops": [1,106,50],
+      "prompts": {
+        "math_0": [2,105,2364,107,236776,2519,6895,657,236743,236819,236787,236812,236771,532,33036,236743,236778,236770,236812,7251,657,614,4398,4249,529,236743,236828,236771,7251,236786,236754,236764,1299,20627,573,236743,236778,236810,4310,532,33036,2264,236743,236819,236825,7251,657,236743,236825,236812,7251,236786,236754,236761,2640,1144,990,1677,625,15074,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_1": [2,105,2364,107,236776,7805,35025,73967,573,609,236800,236761,236778,236771,1546,653,528,37924,529,236743,236825,573,609,236770,236825,236761,236810,236771,236761,74470,3548,7121,236743,236778,236832,73967,236761,2900,563,506,14723,2558,3385,1304,740,2350,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_2": [2,105,2364,107,818,2324,529,1806,22592,1581,4945,563,236743,236778,236812,236825,236761,2900,563,506,1698,529,506,21548,532,506,7488,529,1091,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_3": [2,105,2364,107,236776,10886,9258,236743,236770,236778,236771,236771,66795,236761,60329,562,46239,625,528,236743,236825,3885,532,14228,603,68229,695,625,528,236743,236770,236771,3885,236761,669,10886,9857,7738,607,1800,29209,1932,236761,2088,1551,3885,3097,625,563,2587,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_4": [2,105,2364,107,236776,110745,33249,236743,236770,236828,7251,95981,657,236743,236770,236778,7251,236786,236754,532,7623,81302,3008,506,1638,4284,657,236743,236800,236825,7251,236786,236754,236761,2900,563,1116,4398,4249,573,506,3697,7946,528,7251,236786,236754,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_5": [2,105,2364,107,236776,61537,3590,236743,236812,236828,236771,28809,236761,1030,35025,236743,236800,236810,236908,529,1091,528,506,5597,532,236743,236810,236786,236828,529,506,1884,528,506,12399,236761,2088,1551,28809,659,2378,657,16996,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_6": [2,105,2364,107,23889,563,2390,2782,618,2255,618,914,8709,236761,799,236743,236778,236771,1518,668,795,577,10911,618,2255,618,1304,795,577,1299,236761,2088,2255,563,8460,1492,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "math_7": [2,105,2364,107,236776,30777,7972,563,236743,236778,236812,520,1440,532,236743,236770,236810,520,5777,236761,562,2479,236743,236770,236761,236810,520,5777,8784,784,2101,506,4782,529,625,236761,2900,563,506,2433,529,506,2479,528,6281,30762,236881,61973,2918,684,2918,532,2583,506,1626,3890,1308,113887,236761,106,107,105,4368,107,100,45518,107,101],
+        "code_0": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,22223,236779,95829,236769,95829,236787,1694,236840,40505,236840,720,236764,801,32215,3921,1694,236840,40505,236840,720,236764,801,135748,107,140,12234,78145,48490,6535,20312,532,994,1091,19372,684,910,1502,236761,108,140,22539,22223,236779,95829,173296,236770,236764,236743,236800,779,568,236778,236764,236743,236825,779,568,236828,236764,236743,236770,236771,44538,107,140,17576,236770,236764,236743,236825,779,568,236828,236764,236743,236770,236771,7066,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_1": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,637,519,236779,18016,236769,1005,236787,1540,236768,3921,1540,236787,107,140,12234,7306,236772,3119,41193,496,2483,236787,1418,1845,529,886,2872,6775,506,2872,107,140,206815,684,506,3861,529,506,1845,236761,108,140,22539,637,519,236779,18016,885,9236,596,767,1373,107,140,236789,236746,236800,236763,236770,236755,236778,236789,107,140,22539,637,519,236779,18016,48391,107,140,10440,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_2": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,20433,236769,236751,236787,1540,236768,3921,7014,236787,107,140,12234,13293,6288,1056,1418,34704,528,503,236764,529,506,12042,120044,2977,532,31763,563,6535,684,107,140,1437,16590,34704,528,506,1447,1900,236761,7067,7579,659,22519,236761,108,140,22539,20433,885,236746,236769,236763,236840,236755,5546,236753,2454,1373,107,140,4339,107,140,22539,20433,73303,95230,107,140,9277,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_3": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,1903,236779,8992,236769,1005,236787,1540,236764,620,236787,801,236768,3921,1694,236840,1714,9414,107,140,12234,13293,506,620,1346,17597,67505,4171,529,1816,568,8992,659,8784,529,11739,779,107,140,3374,17597,1171,236764,23948,11207,181444,236761,108,140,22539,1903,236779,8992,885,1437,5866,532,506,5423,532,506,9537,827,236743,236778,236768,107,140,1922,1437,963,756,624,2000,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_4": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,24036,236779,989,236769,7633,236787,1694,236840,720,1604,620,236787,801,236768,3921,1694,236840,720,9414,107,140,12234,13293,4852,57384,2378,684,620,10681,236793,620,1149,9644,506,3861,236761,108,140,22539,24036,236779,989,5551,236770,236764,236743,236778,236764,236743,236800,236764,236743,236812,236764,236743,236810,1604,236743,236778,236768,107,140,236840,236800,236764,236743,236812,236764,236743,236810,236764,236743,236770,236764,236743,236778,236842,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_5": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,563,236779,100385,236769,236746,236787,1540,236764,518,236787,1540,236768,3921,7014,236787,107,140,12234,13293,6288,1056,496,532,518,2768,506,1638,11739,506,1638,1548,529,2782,236764,107,140,796,5227,1624,532,9952,236761,108,140,22539,563,236779,100385,885,236796,741,5292,827,623,95857,2978,1373,107,140,4339,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_6": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,47198,236769,103895,236787,1694,236768,3921,1694,236787,107,140,12234,131561,61762,43927,15852,1131,886,1694,236764,10264,506,1900,236761,108,140,22539,47198,5551,236770,236764,870,236778,236764,870,236800,236764,236743,236812,36878,17811,236743,236810,2812,107,140,236840,236770,236764,236743,236778,236764,236743,236800,236764,236743,236812,236764,236743,236810,236842,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "code_7": [2,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,34900,236779,1071,236779,720,236769,236751,236787,1540,236768,3921,801,236787,107,140,12234,34339,496,10995,132944,568,236777,236764,782,236764,1684,236764,639,236764,565,236764,622,236764,587,236793,30579,705,6667,6208,236768,531,614,107,140,28018,236761,108,140,22539,34900,236779,1071,236779,720,885,236792,10087,92732,3767,1373,107,140,236770,236819,236819,236812,107,140,12234,107,2717,106,107,105,4368,107,100,45518,107,101],
+        "prose_0": [2,105,2364,107,6974,496,236743,236800,236771,236771,236772,3017,2822,3925,1003,496,11072,29822,1015,77828,600,886,529,1116,76357,8784,44615,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_1": [2,105,2364,107,82858,614,3649,236772,67719,5385,2436,528,496,1944,53676,5148,236764,618,496,35094,236743,236778,236810,236771,236772,3017,6347,529,57243,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_2": [2,105,2364,107,6974,496,6064,699,496,63937,531,506,19916,600,1786,625,657,3446,236764,528,1003,236743,236778,236810,236771,4171,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_3": [2,105,2364,107,6974,496,2822,179578,1003,496,132199,1015,8150,531,3449,531,10240,236764,16548,607,496,16643,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_4": [2,105,2364,107,6974,496,236743,236778,236810,236771,236772,3017,8317,528,837,1156,54203,4024,614,36187,1913,496,11059,5312,12978,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_5": [2,105,2364,107,82858,496,10565,9744,58111,872,580,506,1171,54530,5597,529,506,1051,236764,528,1003,236743,236778,236810,236771,4171,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_6": [2,105,2364,107,6974,496,55873,7234,529,496,3184,43839,580,1116,1171,3446,44146,496,2557,6410,236761,106,107,105,4368,107,100,45518,107,101],
+        "prose_7": [2,105,2364,107,6974,496,2822,27642,600,15948,3217,506,16254,3731,1061,6230,236764,528,1003,236743,236778,236810,236771,4171,236761,106,107,105,4368,107,100,45518,107,101],
+        "thinking_0": [2,105,9731,107,98,107,106,107,105,2364,107,3910,1551,4414,25630,3426,236743,236810,236771,236771,659,69330,684,236743,236825,653,684,236743,236770,236810,236764,840,711,684,1800,236881,106,107,105,4368,107],
+        "thinking_1": [2,105,9731,107,98,107,106,107,105,2364,107,236776,32891,815,496,44803,529,236743,236810,236828,6480,532,496,22219,529,236743,236778,236770,6480,236761,2900,563,1061,2433,236881,106,107,105,4368,107],
+        "thinking_2": [2,105,9731,107,98,107,106,107,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,27801,236779,11147,236779,20836,236769,8992,236787,1694,236840,1714,2812,3921,1540,236787,107,140,12234,13293,506,27801,2483,600,1418,3658,528,4171,9857,607,568,10440,573,614,107,140,11681,1694,769,108,140,22539,27801,236779,11147,236779,20836,60522,21888,827,623,5101,827,623,30861,18992,107,140,236789,1674,236789,107,140,12234,107,2717,106,107,105,4368,107],
+        "thinking_3": [2,105,9731,107,98,107,106,107,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,32450,236769,10098,236787,1694,236840,2234,236840,720,32215,3921,1694,236840,720,9414,107,140,12234,13293,506,4820,529,496,30777,6113,528,78136,32450,1900,236764,107,140,52167,657,506,1903,236772,989,9895,236761,108,140,22539,32450,62918,236770,236764,236743,236778,236764,236743,236800,1604,870,236812,236764,236743,236810,236764,236743,236825,1604,870,236832,236764,236743,236828,236764,236743,236819,32215,107,140,236840,236770,236764,236743,236778,236764,236743,236800,236764,236743,236825,236764,236743,236819,236764,236743,236828,236764,236743,236832,236764,236743,236812,236764,236743,236810,236842,107,140,12234,107,2717,106,107,105,4368,107],
+        "thinking_4": [2,105,9731,107,98,107,106,107,105,2364,107,236776,5693,9258,236743,236810,2604,236764,236743,236812,3730,532,236743,236800,3826,147437,236761,8512,147437,659,9710,2180,14268,236761,2900,563,506,9948,600,901,735,1607,22640,236881,106,107,105,4368,107],
+        "thinking_5": [2,105,9731,107,98,107,106,107,105,2364,107,11823,506,21548,4414,11995,600,6895,24232,236743,236778,1056,11310,684,236743,236800,236764,24232,236743,236800,1056,11310,684,236743,236810,236764,532,24232,236743,236778,1056,11310,684,236743,236832,236761,106,107,105,4368,107],
+        "thinking_6": [2,105,9731,107,98,107,106,107,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,22223,236779,40835,236769,236746,236787,1694,236840,720,1604,518,236787,1694,236840,720,2812,3921,1694,236840,720,9414,107,140,12234,78145,1156,52557,15852,1131,886,52557,1694,528,6373,990,236761,108,140,22539,22223,236779,40835,5551,236770,236764,236743,236812,236764,236743,236819,1604,870,236778,236764,236743,236800,236764,236743,236770,236771,2812,107,140,236840,236770,236764,236743,236778,236764,236743,236800,236764,236743,236812,236764,236743,236819,236764,236743,236770,236771,236842,107,140,12234,107,2717,106,107,105,4368,107],
+        "thinking_7": [2,105,9731,107,98,107,106,107,105,2364,107,25146,506,2269,17856,1292,236761,9657,506,3697,1292,236761,108,2717,6719,107,2063,1527,236779,511,6615,236769,8545,236787,1694,236840,2234,236840,720,32215,3921,801,236787,107,140,12234,4377,506,4402,529,236743,236770,236751,6638,54679,653,44665,528,496,8411,529,236743,236771,236751,107,140,624,236743,236770,236751,236761,108,140,22539,1527,236779,511,6615,62918,236770,236764,236743,236770,236764,236743,236771,1604,870,236771,236764,236743,236771,236764,236743,236770,1604,870,236770,236764,236743,236771,236764,236743,236770,32215,107,140,236800,107,140,12234,107,2717,106,107,105,4368,107]
+      }
+    }
+  }
+}

@@ -1,295 +1,277 @@
-# NInfer
+# NInferno
 
-> Selected checkpoints. Maximum single-GPU inference performance.
+**Fast LLM inference on the NVIDIA GPU you already own.**
 
-NInfer is a from-scratch C++/CUDA inference engine for Qwen3.5 Dense and MoE architectures on a
-single NVIDIA GeForce RTX 5090. It runs text, image, and video prompts through a local CLI or
-OpenAI-/Anthropic-compatible HTTP APIs. The runtime is deliberately specialized: one GPU, one
-resident model, and a startup-fixed capacity of one to eight active requests.
+A well-tuned launch can run a model more than twice as fast as a plain one
+([measured](docs/performance/README.md)). NInferno comes
+already measured on nearly every GPU you can buy: it knows the best settings for each
+architecture and model and starts with them, and its GUI walks you through fitting them to your
+task. The aim: fast, cheap inference for everyone.
 
-Five official artifacts are available. The quick-start commands use Qwen3.8-27B NVFP4.
+<!-- perf-summary:begin -->
+<!-- perf-summary:end -->
 
-| Model | Weights | Artifact | Download and model card |
+- **GPUs:** NVIDIA Volta, Turing, Ampere, Ada and Blackwell, desktop and data-center cards alike
+  (GeForce RTX 20 to 50, V100, T4, A100, A10, L4, L40S, RTX PRO 6000). Hopper and data-center
+  Blackwell (H100, H200, B200, B300) get an engine of their own but are neither tuned nor measured.
+- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, in the quantizations
+  published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ, GPTQ.
+- **Speed:** speculative decoding (MTP, DFlash, DFlash2) and kernels measured per GPU, one to eight
+  concurrent streams.
+- **Long context:** YaRN and LongRoPE, KV cache in FP8 (NVFP4 for Qwen), prompt prefixes reused
+  across requests.
+- **API:** OpenAI and Anthropic compatible, with tool calls, structured output, vision and PDF
+  documents.
+- **Next:** bigger MoE models on one card, then pipeline parallelism across several
+  ([roadmap](#roadmap)).
+
+## Contents
+
+- [Supported models](#supported-models)
+- [Performance](#performance)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works) · [Limits](#limits)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Documentation](#documentation)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
+## Supported models
+
+| Family | Models | Speculative decoding | Input |
 |---|---|---|---|
-| Qwen3.6-27B | `groupwise-int` | `qwen3_6_27b.ninfer` | [Qwen3.6-27B](https://huggingface.co/neroued/Qwen3.6-27B-NInfer) |
-| Qwen3.6-27B | `nvfp4` | `qwen3_6_27b_nvfp4.ninfer` | [Qwen3.6-27B NVFP4](https://huggingface.co/neroued/Qwen3.6-27B-nvfp4-NInfer) |
-| Qwen3.8-27B | `groupwise-int` | `qwen3_8_27b.ninfer` | [Qwen3.8-27B](https://huggingface.co/neroued/Qwen3.8-27B-NInfer) |
-| Qwen3.8-27B | `nvfp4` | `qwen3_8_27b_nvfp4.ninfer` | [Qwen3.8-27B NVFP4](https://huggingface.co/neroued/Qwen3.8-27B-nvfp4-NInfer) |
-| Qwen3.6-35B-A3B | `groupwise-int` | `qwen3_6_35b_a3b.ninfer` | [Qwen3.6-35B-A3B](https://huggingface.co/neroued/Qwen3.6-35B-A3B-NInfer) |
+| Qwen3.5 | Qwen3.5-0.8B, Qwen3.5-2B, Qwen3.5-4B, Qwen3.5-9B | MTP | text, image, video |
+| Qwen3.6 | Qwen3.6-27B, Qwen3.6-35B-A3B (MoE) | MTP, DFlash | text, image, video |
+| Qwen3.8 | Qwen3.8-27B | MTP, DFlash2 | text, image, video |
+| Gemma 4 | Gemma 4 12B, Gemma 4 26B-A4B (MoE), Gemma 4 31B | Gemma 4 assistant | text, image (26B-A4B, 31B) |
+| gpt-oss | gpt-oss-20b (MoE) | DFlash | text |
+| Nemotron 3.5 | Nemotron 3.5 Lightning 30B-A3B (MoE) | MTP | text |
+| Muse Glimmer | Muse Glimmer 30B | DFlash | text |
 
-Each v3 `.ninfer` artifact carries model configuration, encoded weights, logical bindings and
-frontend resources. Runtime execution uses those facts with the implemented model and Op
-capabilities. You can also [convert your own weights](docs/weight-conversion.md), reuse an official
-recipe or choose another supported mixture of formats.
+- **Weights:** each model runs as published on Hugging Face (GGUF, NVFP4, MXFP4, FP8, AWQ,
+  GPTQ), and so do its fine-tunes. A quantization the engine cannot read is refused at start,
+  with the reason. [Weight conversion](docs/weight-conversion.md) lists each family's formats.
+- **Image and video:** images for Qwen3.5, 3.6, 3.8 and Gemma 4 26B-A4B and 31B, video for Qwen. Start with
+  `--vision`; a GGUF needs its `mmproj` file beside it (the projector is converted with the model).
+- **Speculative decoding:** the full model checks every drafted token. `--activations exact`
+  makes the output identical whatever the load, batch or draft, at some speed
+  ([quality checks](docs/perplexity.md)).
+- **KV cache:** BF16 or FP8 for every family; Qwen also INT8, NVFP4 and K8V4 (8-bit keys, 4-bit
+  values).
 
-The current engine requires v3 artifacts. Existing official v2 downloads can be
-[upgraded locally](docs/weight-conversion.md#upgrade-an-existing-v2-artifact) without downloading
-the weights again.
+### By GPU generation
+
+| | Blackwell<br>RTX 50, PRO 6000 | Ada<br>RTX 40, L4, L40S | Ampere<br>RTX 30, A10, A100 | Turing<br>RTX 20, T4 | Volta<br>V100 |
+|---|---|---|---|---|---|
+| GGUF, MXFP4, AWQ, GPTQ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| NVFP4 | ✓ native | slower path¹ | slower path¹ | slower path¹ | slower path¹ |
+| FP8 weights | ✓ | ✓ | ✓ 16-bit math | ✓ 16-bit math | ✓ 16-bit math |
+| BF16 weights | ✓ | ✓ | ✓ | ✓ via FP16² | ✓ via FP32 |
+| FP8 KV cache | ✓ | ✓ | ✓ emulated | ✓ emulated | ✓ emulated |
+| Driver | 580+ | 580+ | 580+ | 580+ | 570+ (CUDA 12.8 build) |
+
+¹ Runs on generic kernels, not yet measured; the model's GGUF is the measured choice.
+² FP16 range: values under 2⁻²⁴ round to zero.
+
+## Performance
+
+<!-- perf:begin -->
+Tokens per second, best settings: **one stream / all streams**, superscript = concurrent streams. Click a GPU, model or number for details ([all GPUs and models](docs/performance/README.md)).
+
+| GPU | [Qwen3.8<br>27B](docs/performance/models/qwen3.8-27b.md "Qwen3.5 dense, 27B") | [Qwen3.6<br>35B-A3B](docs/performance/models/qwen3.6-35b-a3b.md "Qwen3.5 MoE, 35B total, 3B active") | [Gemma 4<br>31B](docs/performance/models/gemma-4-31b-it.md "Gemma 4 dense, 31B") | [Gemma 4<br>26B-A4B](docs/performance/models/gemma-4-26b-a4b-it.md "Gemma 4 MoE, 26B total, 4B active") | [gpt-oss<br>20b](docs/performance/models/gpt-oss-20b.md "MoE decoder, 21B total, 3.6B active") |
+|---|---:|---:|---:|---:|---:|
+| [**RTX 5090**](docs/performance/gpus/rtx5090.md "GB202, sm_120, 32 GB") | [193 / 557<sup>8</sup>](docs/performance/runs/rtx5090/qwen3.8-27b.md "one stream: 193 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 557 tok/s at 8 streams, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19") | [588 / 1,526<sup>8</sup>](docs/performance/runs/rtx5090/qwen3.6-35b-a3b.md "one stream: 588 tok/s, UD-Q4_K_M, dflash ×7, measured 2026-10-19; all streams: 1,526 tok/s at 8 streams, UD-Q4_K_M, dflash ×7, measured 2026-10-19") | [151 / 416<sup>8</sup>](docs/performance/runs/rtx5090/gemma-4-31b-it.md "one stream: 151 tok/s, UD-Q4_K_XL, mtp ×10, measured 2026-10-19; all streams: 416 tok/s at 8 streams, UD-Q4_K_XL, mtp ×10, measured 2026-10-19") | [464 / 1,349<sup>8</sup>](docs/performance/runs/rtx5090/gemma-4-26b-a4b-it.md "one stream: 464 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-19; all streams: 1,349 tok/s at 8 streams, UD-Q4_K_XL, mtp ×6, measured 2026-10-19") | [409 / 1,281<sup>8</sup>](docs/performance/runs/rtx5090/gpt-oss-20b.md "one stream: 409 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-20; all streams: 1,281 tok/s at 8 streams, gpt-oss-20b, dflash ×7, measured 2026-10-20") |
+| [**RTX 5070 Ti**](docs/performance/gpus/rtx5070ti.md "GB203, sm_120, 16 GB") | [120 / 261<sup>8</sup>](docs/performance/runs/rtx5070ti/qwen3.8-27b.md "one stream: 120 tok/s, UD-IQ3_XXS, dflash2 ×7, measured 2026-10-19; all streams: 261 tok/s at 8 streams, UD-IQ3_XXS, no speculation, measured 2026-10-19") | [365 / 755<sup>8</sup>](docs/performance/runs/rtx5070ti/qwen3.6-35b-a3b.md "one stream: 365 tok/s, UD-IQ3_XXS, dflash ×7, measured 2026-10-19; all streams: 755 tok/s at 8 streams, UD-IQ3_XXS, no speculation, measured 2026-10-19") |  | [301 / 638<sup>4</sup>](docs/performance/runs/rtx5070ti/gemma-4-26b-a4b-it.md "one stream: 301 tok/s, UD-IQ3_XXS, mtp ×6, measured 2026-10-19; all streams: 638 tok/s at 4 streams, UD-IQ3_XXS, mtp ×6, measured 2026-10-19") | [225 / 568<sup>8</sup>](docs/performance/runs/rtx5070ti/gpt-oss-20b.md "one stream: 225 tok/s, gpt-oss-20b, dflash ×6, measured 2026-10-19; all streams: 568 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-19") |
+| [**RTX 4090**](docs/performance/gpus/rtx4090.md "AD102, sm_89, 24 GB") | [122 / 366<sup>8</sup>](docs/performance/runs/rtx4090/qwen3.8-27b.md "one stream: 122 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 366 tok/s at 8 streams, UD-Q4_K_XL, mtp ×3, measured 2026-10-19") | [398 / 843<sup>4</sup>](docs/performance/runs/rtx4090/qwen3.6-35b-a3b.md "one stream: 398 tok/s, UD-Q4_K_M, dflash ×7, measured 2026-10-19; all streams: 843 tok/s at 4 streams, UD-Q4_K_M, dflash ×7, measured 2026-10-19") | [114 / 143<sup>4</sup>](docs/performance/runs/rtx4090/gemma-4-31b-it.md "one stream: 114 tok/s, UD-Q4_K_XL, mtp ×10, measured 2026-10-19; all streams: 143 tok/s at 4 streams, UD-Q4_K_XL, no speculation, measured 2026-10-19") | [321 / 892<sup>8</sup>](docs/performance/runs/rtx4090/gemma-4-26b-a4b-it.md "one stream: 321 tok/s, UD-Q4_K_XL, mtp ×5, measured 2026-10-19; all streams: 892 tok/s at 8 streams, UD-Q4_K_XL, mtp ×5, measured 2026-10-19") | [261 / 865<sup>8</sup>](docs/performance/runs/rtx4090/gpt-oss-20b.md "one stream: 261 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-19; all streams: 865 tok/s at 8 streams, gpt-oss-20b, dflash ×7, measured 2026-10-19") |
+| [**RTX 4070 Ti**](docs/performance/gpus/rtx4070ti.md "AD104, sm_89, 12 GB") | [104 / 216<sup>8</sup>](docs/performance/runs/rtx4070ti/qwen3.8-27b.md "one stream: 104 tok/s, UD-IQ2_XXS, dflash2 ×7, measured 2026-10-19; all streams: 216 tok/s at 8 streams, UD-IQ2_XXS, no speculation, measured 2026-10-19") |  |  |  |  |
+| [**L4**](docs/performance/gpus/l4.md "AD104, sm_89, 24 GB") | [32.8 / 67.1<sup>8</sup>](docs/performance/runs/l4/qwen3.8-27b.md "one stream: 32.8 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 67.1 tok/s at 8 streams, UD-Q4_K_XL, no speculation, measured 2026-10-19") | [114 / 247<sup>8</sup>](docs/performance/runs/l4/qwen3.6-35b-a3b.md "one stream: 114 tok/s, UD-Q4_K_M, dflash ×11, measured 2026-10-19; all streams: 247 tok/s at 8 streams, UD-Q4_K_M, no speculation, measured 2026-10-19") | [33.0 / –](docs/performance/runs/l4/gemma-4-31b-it.md "one stream: 33.0 tok/s, UD-Q4_K_XL, mtp ×10, measured 2026-10-20") | [92.9 / 205<sup>4</sup>](docs/performance/runs/l4/gemma-4-26b-a4b-it.md "one stream: 92.9 tok/s, UD-Q4_K_XL, mtp ×5, measured 2026-10-20; all streams: 205 tok/s at 4 streams, UD-Q4_K_XL, mtp ×5, measured 2026-10-20") | [70.8 / 174<sup>8</sup>](docs/performance/runs/l4/gpt-oss-20b.md "one stream: 70.8 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-20; all streams: 174 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-20") |
+| [**RTX 4060 Ti<br>16 GB**](docs/performance/gpus/rtx4060ti.md "AD106, sm_89, 16 GB") | [49.0 / 115<sup>8</sup>](docs/performance/runs/rtx4060ti/qwen3.8-27b.md "one stream: 49.0 tok/s, UD-IQ3_XXS, dflash2 ×7, measured 2026-10-19; all streams: 115 tok/s at 8 streams, UD-IQ3_XXS, no speculation, measured 2026-10-19") | [155 / 360<sup>8</sup>](docs/performance/runs/rtx4060ti/qwen3.6-35b-a3b.md "one stream: 155 tok/s, UD-IQ3_XXS, dflash ×11, measured 2026-10-19; all streams: 360 tok/s at 8 streams, UD-IQ3_XXS, no speculation, measured 2026-10-19") |  | [127 / 294<sup>4</sup>](docs/performance/runs/rtx4060ti/gemma-4-26b-a4b-it.md "one stream: 127 tok/s, UD-IQ3_XXS, mtp ×5, measured 2026-10-19; all streams: 294 tok/s at 4 streams, UD-IQ3_XXS, mtp ×5, measured 2026-10-19") | [86.6 / 208<sup>8</sup>](docs/performance/runs/rtx4060ti/gpt-oss-20b.md "one stream: 86.6 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-19; all streams: 208 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-19") |
+| [**RTX 3090**](docs/performance/gpus/rtx3090.md "GA102, sm_86, 24 GB") | [94.6 / 264<sup>8</sup>](docs/performance/runs/rtx3090/qwen3.8-27b.md "one stream: 94.6 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 264 tok/s at 8 streams, UD-Q4_K_XL, mtp ×3, measured 2026-10-19") | [291 / 595<sup>8</sup>](docs/performance/runs/rtx3090/qwen3.6-35b-a3b.md "one stream: 291 tok/s, UD-Q4_K_M, dflash ×7, measured 2026-10-19; all streams: 595 tok/s at 8 streams, UD-Q4_K_M, no speculation, measured 2026-10-19") | [89.8 / –](docs/performance/runs/rtx3090/gemma-4-31b-it.md "one stream: 89.8 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-19") | [234 / 497<sup>4</sup>](docs/performance/runs/rtx3090/gemma-4-26b-a4b-it.md "one stream: 234 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-19; all streams: 497 tok/s at 4 streams, UD-Q4_K_XL, mtp ×6, measured 2026-10-19") | [201 / 453<sup>8</sup>](docs/performance/runs/rtx3090/gpt-oss-20b.md "one stream: 201 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-19; all streams: 453 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-19") |
+| [**A10**](docs/performance/gpus/a10.md "GA102, sm_86, 24 GB") | [49.9 / 104<sup>8</sup>](docs/performance/runs/a10/qwen3.8-27b.md "one stream: 49.9 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 104 tok/s at 8 streams, UD-Q4_K_XL, no speculation, measured 2026-10-19") | [193 / 386<sup>8</sup>](docs/performance/runs/a10/qwen3.6-35b-a3b.md "one stream: 193 tok/s, UD-Q4_K_M, dflash ×7, measured 2026-10-19; all streams: 386 tok/s at 8 streams, UD-Q4_K_M, no speculation, measured 2026-10-19") | [55.6 / –](docs/performance/runs/a10/gemma-4-31b-it.md "one stream: 55.6 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-19") | [146 / 316<sup>4</sup>](docs/performance/runs/a10/gemma-4-26b-a4b-it.md "one stream: 146 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-19; all streams: 316 tok/s at 4 streams, UD-Q4_K_XL, mtp ×6, measured 2026-10-19") | [120 / 274<sup>8</sup>](docs/performance/runs/a10/gpt-oss-20b.md "one stream: 120 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-19; all streams: 274 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-19") |
+| [**A100<br>40 GB**](docs/performance/gpus/a100-40gb.md "GA100, sm_80, 40 GB") | [87.8 / 211<sup>8</sup>](docs/performance/runs/a100-40gb/qwen3.8-27b.md "one stream: 87.8 tok/s, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19; all streams: 211 tok/s at 8 streams, UD-Q4_K_XL, dflash2 ×7, measured 2026-10-19") | [298 / 773<sup>8</sup>](docs/performance/runs/a100-40gb/qwen3.6-35b-a3b.md "one stream: 298 tok/s, UD-Q4_K_M, dflash ×7, measured 2026-10-20; all streams: 773 tok/s at 8 streams, UD-Q4_K_M, dflash ×7, measured 2026-10-20") | [106 / 247<sup>8</sup>](docs/performance/runs/a100-40gb/gemma-4-31b-it.md "one stream: 106 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-20; all streams: 247 tok/s at 8 streams, UD-Q4_K_XL, mtp ×6, measured 2026-10-20") | [268 / 683<sup>8</sup>](docs/performance/runs/a100-40gb/gemma-4-26b-a4b-it.md "one stream: 268 tok/s, UD-Q4_K_XL, mtp ×6, measured 2026-10-20; all streams: 683 tok/s at 8 streams, UD-Q4_K_XL, mtp ×6, measured 2026-10-20") | [225 / 627<sup>8</sup>](docs/performance/runs/a100-40gb/gpt-oss-20b.md "one stream: 225 tok/s, gpt-oss-20b, dflash ×7, measured 2026-10-20; all streams: 627 tok/s at 8 streams, gpt-oss-20b, dflash ×7, measured 2026-10-20") |
+| [**RTX 2080 Ti**](docs/performance/gpus/rtx2080ti.md "TU102, sm_75, 11 GB") | [52.1 / 120<sup>8</sup>](docs/performance/runs/rtx2080ti/qwen3.8-27b.md "one stream: 52.1 tok/s, UD-IQ2_XXS, dflash2 ×7, measured 2026-10-19; all streams: 120 tok/s at 8 streams, UD-IQ2_XXS, no speculation, measured 2026-10-19") |  |  |  |  |
+| [**Tesla V100<br>32 GB**](docs/performance/gpus/v100-32gb.md "GV100, sm_70, 32 GB") | [33.0 / 82.9<sup>4</sup>](docs/performance/runs/v100-32gb/qwen3.8-27b.md "one stream: 33.0 tok/s, UD-Q4_K_XL, no speculation, measured 2026-10-19; all streams: 82.9 tok/s at 4 streams, UD-Q4_K_XL, no speculation, measured 2026-10-19") | [111 / 193<sup>8</sup>](docs/performance/runs/v100-32gb/qwen3.6-35b-a3b.md "one stream: 111 tok/s, UD-Q4_K_M, dflash ×3, measured 2026-10-19; all streams: 193 tok/s at 8 streams, UD-Q4_K_M, dflash ×3, measured 2026-10-19") | [57.6 / 73.9<sup>4</sup>](docs/performance/runs/v100-32gb/gemma-4-31b-it.md "one stream: 57.6 tok/s, UD-Q4_K_XL, mtp ×3, measured 2026-10-20; all streams: 73.9 tok/s at 4 streams, UD-Q4_K_XL, no speculation, measured 2026-10-20") | [106 / 141<sup>8</sup>](docs/performance/runs/v100-32gb/gemma-4-26b-a4b-it.md "one stream: 106 tok/s, UD-Q4_K_XL, mtp ×3, measured 2026-10-20; all streams: 141 tok/s at 8 streams, UD-Q4_K_XL, mtp ×3, measured 2026-10-20") | [93.6 / 188<sup>8</sup>](docs/performance/runs/v100-32gb/gpt-oss-20b.md "one stream: 93.6 tok/s, gpt-oss-20b, no speculation, measured 2026-10-20; all streams: 188 tok/s at 8 streams, gpt-oss-20b, no speculation, measured 2026-10-20") |
+
+<sub>Measured 2026-10-19 – 2026-10-20 · NInferno 0.1.0 · [methodology](docs/performance/methodology.md)</sub>
+<!-- perf:end -->
 
 ## Quick start
 
-NInfer requires 64-bit Linux, an NVIDIA GeForce RTX 5090, a CUDA toolkit supporting `sm_120a`,
-CMake 3.28 or newer, a C++20 host compiler, Ninja, `pkg-config`, FFmpeg development libraries
-(`libavformat`, `libavcodec`, `libavutil`, and `libswscale`), and `libcurl >= 7.85`.
-CUDA 13.1 is the validated development toolkit; CMake does not impose a CUDA version floor.
-The build rejects CUDA architectures other than `sm_120a`.
+### 1. Install
 
-Build the product binaries:
+One release for every NVIDIA GPU from the RTX 20 series and V100 on, home, workstation and datacenter
+cards alike, several of them in one machine too; no compiler needed. It wants NVIDIA driver 580 or
+newer (570 for a V100).
 
-```bash
-git clone https://github.com/Neroued/ninfer.git
-cd ninfer
+**Windows:** download
+[NInferno-Setup.exe](https://ninferno.brontir.com/releases/latest/download/NInferno-Setup.exe) and
+run it. It needs no administrator rights, installs the native engine, and adds NInferno to the Start
+menu; it updates itself. [Windows](docs/windows.md) has the details.
 
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-Tests and benchmarks are excluded from the default build. `cmake --preset release` configures
-the same product build; `cmake --preset dev` also enables tests and benchmarks and finds a
-Python 3 interpreter. Both presets use `build/` and explicitly reset the build options.
-Machine-specific compiler and Python paths belong in the ignored `CMakeUserPresets.json`.
-See [build organization and configuration](docs/maintainer/build-system.md) for details.
-
-There is no install target or packaged binary distribution; run NInfer from its source build tree.
-Python tools run independently of CMake; the standalone HBM probe has its own
-[build command](tools/README.md#standalone-hbm-probe).
-
-Download the artifact used by this example with the Hugging Face CLI:
+**Linux** (or WSL 2):
 
 ```bash
-hf download neroued/Qwen3.8-27B-nvfp4-NInfer \
-  qwen3_8_27b_nvfp4.ninfer \
-  --local-dir models
+curl -fsSL https://ninferno.brontir.com/releases/latest/download/install.sh | sh
 ```
 
-Start a long-running text/agent server with two active-request lanes and explicit Device/Host
-checkpoint capacity:
+The installer checks your GPUs and the download's SHA-256. To read it before running it,
+download [`install.sh`](tools/release/install.sh) and run it with `sh`. It unpacks the release into
+`~/.local/share/ninferno` and links the commands into `~/.local/bin`; `NINFERNO_HOME` and
+`NINFERNO_BIN` change those, `NINFERNO_URL` names another release server, and
+`NINFERNO_ARCHIVE=FILE` installs an archive you already have. Besides `ninferno-ui` and
+`ninferno-serve` it installs `ninferno-start`, which lists the models measured on your GPU and starts
+one at its measured settings (`--list` only lists them, `--multi` takes the setting for several
+users, `NINFERNO_DEVICE` picks the GPU), and `ninferno-update`, which installs a newer release
+(`--check` only says whether there is one, `--yes` skips the question, `--rollback` returns to the
+one before).
+
+### 2. Run with the GUI
 
 ```bash
-./build/apps/ninfer-serve models/qwen3_8_27b_nvfp4.ninfer \
-  --max-context 240000 \
-  --kv-capacity 240000 \
-  --max-concurrency 2 \
-  --kv-dtype fp8 \
-  --device-state-slots 2 \
-  --host-state-slots 8 \
-  --host-kv-mib 8192 \
-  --spec mtp --draft-tokens 3 \
-  --lm-head-draft \
-  --preserve-thinking
+ninferno-ui
 ```
 
-Each request has a 240,000-token logical ceiling. A shared 240,000-token Device KV pool serves
-admitted requests; two requests run concurrently when their combined reservations fit. The cache
-tiers provide two Device checkpoint slots, eight pinned Host State slots, and 8 GiB of pinned Host
-KV beyond the two active StateImages.
+On Windows, start **NInferno** from the Start menu instead. The page opens in your default
+browser at `http://localhost:8090`, and from there you can:
 
-Send an OpenAI-style request:
+- see your GPUs and the models measured on them, with the speed to expect;
+- search Hugging Face, compare quantizations by size, context and speed, and download one;
+- start it with the measured settings, then chat with it or point any OpenAI-compatible app at it.
+
+The page is reachable from your own machine only. On a server with no display, `ninferno-ui`
+prints the address instead of opening a browser (`--no-browser` asks for that anywhere); over SSH,
+forward port 8090.
+
+### 3. Or run from the command line
+
+Name a model on Hugging Face. The first start downloads it and converts it once for your GPU:
+
+```bash
+ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters
+```
+
+The server speaks the OpenAI and Anthropic APIs on `http://127.0.0.1:8080`:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "qwen3.8-27b",
-    "messages": [{"role": "user", "content": "Reply with one short sentence."}],
-    "max_tokens": 64
-  }'
+  -d '{"model": "unsloth/Qwen3.6-35B-A3B-GGUF",
+       "messages": [{"role": "user", "content": "Reply with one short sentence."}],
+       "max_tokens": 64}'
 ```
 
-Run a one-shot CLI request with a 32,768-token allocation:
+- A local checkpoint directory or `.gguf` file works too.
+- `HF_TOKEN` authorizes gated models.
+- [Serving](docs/serving.md), [CLI](docs/cli.md) and [weight conversion](docs/weight-conversion.md)
+  list every option; the [performance pages](docs/performance/README.md) show what fits and how
+  fast it runs.
+
+### Build it yourself
+
+You need Linux, a CUDA toolkit (12.8, 13.2 or 13.4; 12.8 for a V100), CMake 3.28+, a C++20 compiler and Ninja,
+plus a few development libraries ([building from source](docs/building.md) lists them).
 
 ```bash
-./build/apps/ninfer models/qwen3_8_27b_nvfp4.ninfer \
-  --prompt "Explain prefill and decode, then give a concise conclusion." \
-  --max-context 32768 \
-  --max-new 8192 \
-  --kv-dtype fp8 \
-  --spec mtp --draft-tokens 3 \
-  --lm-head-draft
+git clone https://github.com/Brontir/NInferno.git && cd NInferno
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build -j
 ```
 
-Answer content is written to stdout. Human-readable startup/runtime diagnostics and the CLI-owned
-reasoning, timing, throughput, memory, and speculative-decoding report are written to stderr;
-reasoning and the result report remain unprefixed product output. On a terminal, weight
-materialization uses one transient progress line followed by a compact Engine-ready summary.
-Redirected stderr receives persistent readable progress without terminal control sequences. Use
-`--log-level debug` for complete startup detail. Option and local input errors remain direct command
-diagnostics. Use `--messages FILE` and `--vision` for structured image/video input; see the
-[CLI guide](docs/cli.md) and [committed examples](examples/cli/).
+Set `CMAKE_CUDA_ARCHITECTURES` to your GPU:
 
-## Resource-aware long-context reuse
+| `120a` | `89` | `86` | `80` | `75` | `70` |
+|---|---|---|---|---|---|
+| RTX 50, PRO 6000 | RTX 40, L4, L40S | RTX 30, A10 | A100 | RTX 20, T4 | V100 |
 
-A reusable prefix checkpoint contains KV and the complete continuation state for its exact prompt
-frontier. A Device-resident checkpoint resumes directly. Under pressure, the planner weighs Device
-retention, pinned Host State/KV, and eviction by immediate restore work and later reuse cost. Active
-requests retain their completion reservations.
+The binaries land in `build/apps/`. [Building from source](docs/building.md) also covers Docker
+images and release archives.
 
-See [Resource scheduling and context cache](docs/maintainer/resource-scheduling-and-context-cache.md)
-for the algorithm and [Serve TTFT benchmark](tools/bench/ttft/) for public-HTTP coverage of hot
-reuse, Host resume, eviction, shared prefixes, scheduling boundaries, and multimodal load.
+## How it works
 
-## Performance
+- **One GPU, one resident model, fixed capacity.** GPU memory is planned once at startup: weights,
+  KV pool, CUDA graphs and drafter state. Nothing is allocated while requests run.
+- **Kernels chosen per GPU class.** Every linear, attention and MoE shape takes a route decided
+  from the GPU's properties, refined by the tables measured on real cards where there is one for
+  its class ([`routes/`](routes/)).
+- **Speculation measured per GPU.** Draft depth and the drafter come from profiles measured on each
+  GPU class, and the depth shrinks as more requests run at once
+  ([drafter registry](src/spec/data/drafter_registry.json)).
+- **Long contexts reuse their prefix.** A retained checkpoint of KV and model state resumes an
+  exact prompt prefix on the GPU or from pinned host memory; the planner weighs restore cost
+  against later reuse ([resource scheduling](docs/maintainer/resource-scheduling-and-context-cache.md)).
 
-Published measurements use an RTX 5090. The [performance index](docs/performance.md) links to
-per-model run records and the [measurement rules](docs/performance/methodology.md). The tables
-below are excerpts from those detailed results.
+## Limits
 
-### Concurrent MTP3 decode
+- One GPU and one resident model per process; no multi-GPU or distributed serving.
+- One to eight concurrent requests, fixed at startup, with a bounded FIFO queue; a running request
+  gives up its lane only when the KV pool runs short (`--kv-lease-window`), and resumes.
+- Model architectures and weight formats run on explicitly implemented paths only.
+- Tool calls are parsed and returned to the client; NInferno does not execute tools.
 
-Saturated decode used INT8 group-64 KV, CUDA Graphs, MTP3, and one 8,192-token generation per active
-request. Throughput uses aggregate committed decode tokens from complete intervals whose actual
-decode batch equaled the configured concurrency. Acceptance covers the complete request wave;
-these rates are steady decode (tok/s).
+## Roadmap
 
-| Model profile | C=1 tok/s / accept | C=2 tok/s / accept | C=4 tok/s / accept | C=8 tok/s / accept | C8 / C1 |
-|---|---:|---:|---:|---:|---:|
-| [Qwen3.6-27B](docs/performance/qwen3.6-27b.md#decode-saturation) `groupwise-int` | 185.8 / 68.2% | 247.0 / 69.0% | 309.5 / 68.4% | 535.0 / 68.3% | 2.88× |
-| [Qwen3.6-27B](docs/performance/qwen3.6-27b.md#decode-saturation) `nvfp4` | 202.4 / 69.3% | 399.7 / 71.4% | 699.7 / 69.3% | 1,146.9 / 68.6% | 5.67× |
-| [Qwen3.6-35B-A3B](docs/performance/qwen3.6-35b-a3b.md#decode-saturation) `groupwise-int` | 642.5 / 68.6% | 907.2 / 66.3% | 1,213.5 / 69.6% | 1,380.7 / 68.0% | 2.15× |
-| [Qwen3.8-27B](docs/performance/qwen3.8-27b.md#decode-saturation) `nvfp4` | 143.8 / 48.9% | 267.6 / 48.1% | 461.1 / 45.8% | 766.6 / 46.0% | 5.33× |
+1. **Proven on real consumer GPUs** *(now)*. Run every supported model on every GPU generation
+   people actually own, fix what breaks, and keep the published numbers current.
+2. **New models first** *(ongoing)*. Support the new open models that matter soon after their
+   release, starting with those that fit in one GPU's memory.
+3. **Bigger models and longer contexts on one GPU** *(started: `--moe-offload`)*. Compute part of a
+   MoE model's experts outside the GPU, so larger MoE models and contexts fit, while keeping the
+   speed of one to four concurrent users.
+4. **Several GPUs** *(planned)*. Pipeline parallelism across two to six cards for models that do not
+   fit one. Consumer GPUs lack the interconnect tensor parallelism needs, so NInferno will not go
+   that way.
 
-### Single-request serving
+## Contributing
 
-The serial serving corpus used INT8 group-64 KV, CUDA Graphs, a 1,024-token prefill chunk, and five
-fixed seeds after warm-up. The table keeps one short-prefill, one extreme-prefill, and one
-structured-output MTP3 point for each published profile; the full context and scenario matrices are
-linked from each model below.
+NInferno is fully open (Apache 2.0) and gets better with every GPU and model people run it on. The
+goal is fast, affordable inference for everyone, and there is a lot to do:
 
-| Model profile | 7,680-token prefill | 260,096-token prefill | Structured MTP3 decode |
-|---|---:|---:|---:|
-| [Qwen3.6-35B-A3B](docs/performance/qwen3.6-35b-a3b.md#single-request-speculative-decode) `groupwise-int` | 17,705.4 tok/s | 5,247.0 tok/s | 779.6 tok/s |
-| [Qwen3.6-27B](docs/performance/qwen3.6-27b.md#single-request-speculative-decode) `groupwise-int` | 3,218.1 tok/s | 1,614.8 tok/s | 193.0 tok/s |
-| [Qwen3.6-27B](docs/performance/qwen3.6-27b.md#single-request-speculative-decode) `nvfp4` | 11,191.5 tok/s | 2,510.6 tok/s | 252.2 tok/s |
-| [Qwen3.8-27B](docs/performance/qwen3.8-27b.md#single-request-speculative-decode) `groupwise-int` | 3,274.7 tok/s | 1,609.7 tok/s | 224.4 tok/s |
-| [Qwen3.8-27B](docs/performance/qwen3.8-27b.md#single-request-speculative-decode) `nvfp4` | 8,340.4 tok/s | 2,203.1 tok/s | 219.8 tok/s |
-
-## Evaluation
-
-Capability scores were measured through NInfer's OpenAI-compatible serving route with thinking
-enabled, MTP3, and EvalScope 1.9.0 (0-shot, rule scoring, one sample per problem):
-
-| Model profile | AIME 2025 | AIME 2026 | GPQA-Diamond | ERQA | RealWorldQA |
-|---|---:|---:|---:|---:|---:|
-| [Qwen3.6-27B groupwise-int](model-cards/Qwen3.6-27B-NInfer/README.md) | 86.67% | 93.33% | 86.87% | — | — |
-| [Qwen3.6-27B NVFP4](model-cards/Qwen3.6-27B-nvfp4-NInfer/README.md) | 93.33% | 93.33% | 84.34% | — | — |
-| [Qwen3.6-35B-A3B groupwise-int](model-cards/Qwen3.6-35B-A3B-NInfer/README.md) | 90.00% | 90.00% | 85.35% | — | — |
-| [Qwen3.8-27B groupwise-int](model-cards/Qwen3.8-27B-NInfer/README.md) | 96.67% | 96.67% | 87.37% | 66.25% | 82.22% |
-| [Qwen3.8-27B NVFP4](model-cards/Qwen3.8-27B-nvfp4-NInfer/README.md) | 96.67% | 96.67% | 90.40% | 66.25% | 83.53% |
-
-The Qwen3.6 rows used temperature 0.6 and presence penalty 1.0; the Qwen3.8 rows used temperature
-1.0 and presence penalty 0.0. Multimodal evaluation used `--vision` and an 81,920-token context
-limit. Text evaluation used 262,144 tokens except Qwen3.8-27B NVFP4, which used 252,928 tokens to
-fit the RTX 5090 after weights. Each score is one sample per problem; model cards contain the
-correct/total counts and evaluation notes.
-
-## Startup notes
-
-GPU residency is fixed at process startup. `--spec` selects speculative decoding residency, and
-`--vision` independently selects Vision residency. Qwen3.6-35B-A3B DFlash can be combined with
-Vision; it accelerates generated-text decode after multimodal prefill, not Vision encode itself.
-
-## Docker
-
-Build the runtime image on a host with the NVIDIA Container Toolkit:
-
-```bash
-docker build --tag ninfer:local .
-```
-
-Mount the downloaded model and run the same example server profile:
-
-```bash
-docker run --rm \
-  --gpus '"device=0"' \
-  --publish 8080:8080 \
-  --volume "$PWD/models:/models:ro" \
-  ninfer:local \
-  ninfer-serve /models/qwen3_8_27b_nvfp4.ninfer \
-  --host 0.0.0.0 \
-  --max-context 240000 \
-  --kv-capacity 240000 \
-  --max-concurrency 2 \
-  --kv-dtype fp8 \
-  --device-state-slots 2 \
-  --host-state-slots 8 \
-  --host-kv-mib 8192 \
-  --spec mtp --draft-tokens 3 \
-  --lm-head-draft \
-  --preserve-thinking
-```
-
-## Capabilities and limits
-
-The official artifacts provide the following capabilities, with optional components enabled at startup:
-
-- text generation with thinking and non-thinking prompt modes;
-- image, multi-image, video, and mixed multimodal messages;
-- chunked prefill, exact-batch CUDA Graph decode, and startup-bounded batched decode;
-- MTP speculative decoding with draft windows from one to five;
-- BF16, INT8, FP8, NVFP4, and K8V4 KV storage;
-- offline causal-perplexity scoring;
-- private and shared exact-prefix reuse with Device/Host State and KV retention;
-- model-aware sampling defaults and explicit sampler overrides;
-- OpenAI Responses Core, OpenAI Chat Completions, and Anthropic Messages, including streaming,
-  tools, local response state, token counting, and usage accounting.
-
-The 35B-A3B target additionally supports DFlash with draft windows from one to fifteen for Text and
-image/video Vision prompts. Qwen3.8-27B artifacts with the DFlash2 companion weights support
-`--spec dflash2 --draft-tokens 7` for the same Text/Vision Engine path, with draft counts 1..15
-and either full or optimized proposal heads.
-
-The product boundary remains intentionally small:
-
-- one RTX 5090 and one resident model per Engine;
-- a startup-fixed capacity of one to eight active requests with bounded FIFO ingress;
-- no request preemption, priority/QoS, active-request swapping, weight offload, multi-GPU, or
-  distributed serving;
-- one shared startup-fixed KV pool across active requests and retained prefixes;
-- model architectures and format/shape combinations use explicitly implemented native paths;
-- parsed tool calls are returned to the client; NInfer does not execute tools;
-- the in-tree C++ headers are not distributed as an installed SDK.
-
-`--max-context` is each sequence's logical limit. `--kv-capacity` sizes the shared Main Text KV pool
-used by active requests and retained prefixes; `auto` resolves the largest legal capacity at
-startup from the memory remaining after weights while keeping 1 GiB of sizing headroom. Explicit
-capacities remain fixed for the process lifetime.
+- **Run it on your GPU** and report what breaks or runs slower than the tables say, with
+  `ninferno-serve --version` and the startup log.
+- **Measure a GPU** that has no page yet: [`tools/bench/perf_matrix.py`](tools/bench/perf_matrix.py)
+  and the [methodology](docs/performance/methodology.md); send the rows in a pull request.
+- **Add a model, a format or a kernel.** [Build from source](docs/building.md), read the
+  [maintainer documentation](docs/maintainer/), and open an issue first: [CONTRIBUTING](CONTRIBUTING.md)
+  explains how changes are agreed, tested and measured before they are merged.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [CLI](docs/cli.md)
-- [HTTP serving](docs/serving.md)
-- [Performance](docs/performance.md)
+- [Performance by GPU and model](docs/performance/README.md)
+- [The local page (GUI)](docs/ui.md) · [HTTP serving](docs/serving.md) · [CLI](docs/cli.md) · [Weight conversion](docs/weight-conversion.md)
+- [Building from source](docs/building.md)
 - [Perplexity evaluation](docs/perplexity.md)
-- [Weight conversion and custom recipes](docs/weight-conversion.md)
-- [Resource scheduling and context cache](docs/maintainer/resource-scheduling-and-context-cache.md)
-- [Serve TTFT benchmark](tools/bench/ttft/)
-- [CLI examples](examples/cli/)
-- [Contributing](CONTRIBUTING.md)
+- [Maintainer documentation](docs/maintainer/) · [Contributing](CONTRIBUTING.md)
 
-Run the relevant `--help` for the exact current option contract.
+## Acknowledgements
 
-## Support
+NInferno started from [ninfer](https://github.com/Neroued/ninfer) by Neroued and grew from there.
 
-NInfer is a personal project that I develop out of interest. If you find it useful and would like
-to support its continued development, you can [support the project on Ko-fi](https://ko-fi.com/neroued).
+It includes or builds with code from:
 
-Support is entirely voluntary. It is not a purchase or investment and does not come with financial
-returns, promised services or features, or a role in project decisions. The project's direction,
-priorities, technical choices, and release schedule remain independently determined by the
-maintainer.
+- [llama.cpp / ggml](https://github.com/ggml-org/llama.cpp): the GGUF block-quant formats and their
+  integer matrix kernel, the Jinja template engine and the chat window of ninferno-ui;
+- [ninfer-all](https://github.com/iamwavecut/ninfer-all): the small-T tensor-core kernels for
+  verify widths, the integer-activation prefill GEMMs, the ggml matrix-kernel bridge and the int8
+  prompt attention;
+- [ninfer-v100-sm70](https://github.com/Flo5k5/ninfer-v100-sm70), through which
+  [sm70-attn](https://github.com/fishlikeX/sm70-attn) (1Cat-vLLM's kernel on a FlashAttention base
+  layer) came: Volta attention for head size 256;
+- [CUTLASS](https://github.com/NVIDIA/cutlass): Volta tensor-core GEMM for prefill;
+- [xgrammar](https://github.com/mlc-ai/xgrammar): constrained output for tool calls and JSON;
+- [cpp-httplib](https://github.com/yhirose/cpp-httplib), [nlohmann/json](https://github.com/nlohmann/json),
+  [spdlog](https://github.com/gabime/spdlog) and [utf8proc](https://github.com/JuliaStrings/utf8proc).
+
+Ideas and techniques came from [FlashInfer](https://github.com/flashinfer-ai/flashinfer) (linear attention),
+[FlashAttention](https://github.com/Dao-AILab/flash-attention), [vLLM](https://github.com/vllm-project/vllm)
+and [SGLang](https://github.com/sgl-project/sglang) (serving and API conventions),
+[z-lab](https://huggingface.co/z-lab)'s DFlash (block-diffusion drafters), and the other forks of ninfer. [NOTICE](NOTICE) lists
+every file taken from another project.
 
 ## License
 
-NInfer is licensed under the [Apache License 2.0](LICENSE).
-
-The published artifacts are derived from
-[Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B),
-[Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), and
-[Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B). The Qwen3.6-27B NVFP4 artifact
-also uses the fixed packed weights from
-[rdtand/Qwen3.6-27B-PrismaSCOUT-Blackwell-NVFP4-BF16-vllm](https://huggingface.co/rdtand/Qwen3.6-27B-PrismaSCOUT-Blackwell-NVFP4-BF16-vllm).
-The Qwen3.8-27B NVFP4 artifact also uses the fixed mixed FP8/NVFP4 weights from
-[unsloth/Qwen3.8-27B-NVFP4](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4). These source
-repositories are distributed under Apache-2.0. Vendored dependencies retain their own license files
-under `third_party/`.
+NInferno is licensed under the [Apache License 2.0](LICENSE). It is derived from
+[ninfer](https://github.com/Neroued/ninfer) by Neroued, under the same license; see [NOTICE](NOTICE).
+Vendored dependencies keep their own licenses under `third_party/`. Model weights are subject to the
+licenses of their original checkpoints.

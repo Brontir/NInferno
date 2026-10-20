@@ -17,15 +17,21 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 
 struct GenerationOutcome;
 
 struct OpenAIResponsesFunctionIdentity {
     std::string name;
     std::optional<std::string> wire_namespace;
+    // A custom tool (free-form input, served as a single-string-input function): its calls are
+    // custom_tool_call Items carrying that string, not function_call Items. Not part of the
+    // identity: a history Item or tool_choice that names the tool either way is the same tool.
+    bool custom = false;
 
-    bool operator==(const OpenAIResponsesFunctionIdentity&) const = default;
+    bool operator==(const OpenAIResponsesFunctionIdentity& other) const {
+        return name == other.name && wire_namespace == other.wire_namespace;
+    }
 };
 
 struct OpenAIResponsesPromptRequest {
@@ -35,6 +41,10 @@ struct OpenAIResponsesPromptRequest {
     std::vector<nlohmann::json> input_items;
     std::optional<std::string> instructions;
     std::optional<std::string> previous_response_id;
+    std::optional<std::string> reasoning_summary;
+    // The end of the leading system/developer run (the instructions first) is an automatic
+    // shared-prefix candidate: the instructions join the conversation only when it is resolved.
+    bool system_head_candidate = false;
 };
 
 struct OpenAIResponsesCreateRequest {
@@ -42,14 +52,17 @@ struct OpenAIResponsesCreateRequest {
     nlohmann::json metadata    = nlohmann::json::object();
     nlohmann::json tools       = nlohmann::json::array();
     nlohmann::json tool_choice = "auto";
+    // The accepted text.format, echoed in the Response object.
+    nlohmann::json text_format = nlohmann::json{{"type", "text"}};
     // Responses beta namespace tools are flattened for the Engine and restored only at the wire
     // boundary. Never infer a namespace by splitting an Engine function name.
     std::unordered_map<std::string, OpenAIResponsesFunctionIdentity> tool_identities;
     std::optional<int> requested_max_output_tokens;
     std::optional<int> max_tool_calls;
-    bool parallel_tool_calls = true;
-    bool store               = true;
-    bool stream              = false;
+    bool parallel_tool_calls                 = true;
+    bool store                               = true;
+    bool stream                              = false;
+    bool include_reasoning_encrypted_content = false;
 };
 
 struct OpenAIResponsesResolvedPrompt {
@@ -72,8 +85,9 @@ struct BuiltOpenAIResponse {
     std::vector<ChatTurn> output_history;
 };
 
-OpenAIResponsesCreateRequest parse_openai_responses_create_request(const RequestJson& body,
-                                                                   const RequestLimits& limits);
+OpenAIResponsesCreateRequest
+parse_openai_responses_create_request(const RequestJson& body, const RequestLimits& limits,
+                                      bool auto_system_shared_prefix = true);
 
 OpenAIResponsesPromptRequest
 parse_openai_responses_input_tokens_request(const RequestJson& body, const RequestLimits& limits);
@@ -119,4 +133,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

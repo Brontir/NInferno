@@ -1,1 +1,1 @@
-"""Tests for common NInfer artifact primitives."""
+"""Tests for common NInferno artifact primitives."""

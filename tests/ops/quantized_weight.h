@@ -15,8 +15,13 @@
 #include <stdexcept>
 #include <vector>
 
-namespace ninfer::test::quantized_weight {
+namespace ninferno::test::quantized_weight {
 namespace detail {
+
+// ggml's i-quant codebooks (the converter's verbatim copy of ggml-common.h).
+namespace ggml_tables {
+#include "convert/ggml_tables.inc"
+} // namespace ggml_tables
 
 inline std::int32_t align_up(std::int32_t x, std::int32_t m) { return ((x + m - 1) / m) * m; }
 
@@ -159,12 +164,17 @@ inline QuantSpec quant_spec(QType qtype) {
         return {6, 64, 31, -32};
     case QType::Q8_G32_FP16:
         return {8, 32, 127, -127};
+    case QType::Q3_G128_FP16:
+        return {3, 128, 3, -4};
+    case QType::Q3_G64_FP16:
+        return {3, 64, 3, -4};
     default:
         throw std::invalid_argument("row-split test packer: unsupported qtype");
     }
 }
 
 inline int nibble_bytes_per_group(const QuantSpec& spec) {
+    if (spec.bits == 3) { return spec.group_size * 3 / 8; }
     return spec.bits == 8 ? spec.group_size : spec.group_size / 2;
 }
 
@@ -182,6 +192,17 @@ inline void pack_lowbit_group(const std::int8_t* codes, const QuantSpec& spec,
     if (spec.bits == 8) {
         for (int i = 0; i < spec.group_size; ++i) {
             nibble_out[i] = static_cast<std::uint8_t>(codes[i]);
+        }
+        return;
+    }
+    if (spec.bits == 3) { // code i in bits 3i..3i+2 of the group's little-endian bit stream
+        for (int i = 0; i < spec.group_size; ++i) {
+            const std::uint32_t u = static_cast<std::uint32_t>(codes[i]) & 7u;
+            const int bit         = 3 * i;
+            nibble_out[bit >> 3] |= static_cast<std::uint8_t>(u << (bit & 7));
+            if ((bit & 7) > 5) {
+                nibble_out[(bit >> 3) + 1] |= static_cast<std::uint8_t>(u >> (8 - (bit & 7)));
+            }
         }
         return;
     }
@@ -209,6 +230,13 @@ inline void pack_lowbit_group(const std::int8_t* codes, const QuantSpec& spec,
 inline int unpack_lowbit_code(const std::uint8_t* nibble, const std::uint8_t* high,
                               const QuantSpec& spec, int index) {
     if (spec.bits == 8) { return static_cast<std::int8_t>(nibble[index]); }
+    if (spec.bits == 3) {
+        const int bit   = 3 * index;
+        std::uint32_t w = nibble[bit >> 3];
+        if ((bit & 7) > 5) { w |= static_cast<std::uint32_t>(nibble[(bit >> 3) + 1]) << 8; }
+        const std::uint32_t u = (w >> (bit & 7)) & 7u;
+        return (u & 4u) ? static_cast<int>(u) - 8 : static_cast<int>(u);
+    }
     const std::uint8_t low_byte = nibble[index >> 1];
     const std::uint32_t low     = (index & 1) ? (low_byte >> 4) : (low_byte & 0x0fu);
     std::uint32_t hi            = 0;
@@ -247,10 +275,15 @@ struct PackedWeight {
                            ? nullptr
                            : static_cast<std::uint8_t*>(device_payload) + high_plane_offset;
             w.scales = static_cast<std::uint8_t*>(device_payload) + scale_plane_offset;
+            if (w.qtype == QType::NVFP4) {
+                w.weight_divisors =
+                    static_cast<std::uint8_t*>(device_payload) + weight_divisor_offset;
+            }
         } else {
-            w.qdata  = nullptr;
-            w.qhigh  = nullptr;
-            w.scales = nullptr;
+            w.qdata           = nullptr;
+            w.qhigh           = nullptr;
+            w.scales          = nullptr;
+            w.weight_divisors = nullptr;
         }
         return w;
     }
@@ -293,6 +326,8 @@ struct PackedWeight {
         w.n               = row_count;
         w.shape[0]        = row_count;
         w.padded_shape[0] = row_count;
+        // A view is one source's worth of rows, so its divisor covers all of them.
+        w.weight_divisor_rows = row_count;
         return w;
     }
 };
@@ -313,6 +348,10 @@ struct PatternedWeightOptions {
     RowSplitCodePattern row_split_codes  = RowSplitCodePattern::Coordinate;
     float weight_scale_divisor           = 0.0F;
     float input_scale_divisor            = 0.0F;
+    // NVFP4 only: added to the seed of the rows in the upper half. The NVFP4 pattern repeats every
+    // 16 rows, so without it a [gate; up] plane whose half is a multiple of 16 rows has identical
+    // halves and cannot tell silu(gate)*up from silu(up)*gate.
+    std::uint32_t upper_half_seed = 0;
 };
 
 // Builds a deterministic full-shape payload without allocating a source or dequantized matrix.
@@ -388,10 +427,260 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.k                = k;
         return packed;
     }
-    if (qtype == QType::NVFP4) {
-        if ((n % 128) != 0 || (k % 64) != 0) {
+    if (qtype == QType::FP8_E4M3FN_ROW_F32 || qtype == QType::FP8_E4M3FN_B128_F32) {
+        if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {
             throw std::invalid_argument(
-                "quantized-weight fixture: NVFP4 N must be divisible by 128 and K by 64");
+                "quantized-weight fixture: divisors do not belong to FP8 weights");
+        }
+        const bool block = qtype == QType::FP8_E4M3FN_B128_F32;
+        const std::int32_t row_blocks = (n + 127) / 128;
+        const std::int32_t k_blocks   = (k + 127) / 128;
+        PackedWeight packed;
+        packed.code_plane_bytes = static_cast<std::uint64_t>(n) * k;
+        packed.scale_plane_offset =
+            detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
+        packed.scale_plane_bytes =
+            4ULL * (block ? static_cast<std::uint64_t>(row_blocks) * k_blocks
+                          : static_cast<std::uint64_t>(n));
+        packed.payload.assign(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+        for (std::int32_t row = 0; row < n; ++row) {
+            for (std::int32_t column = 0; column < k; ++column) {
+                std::uint8_t code = static_cast<std::uint8_t>(
+                    detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                  static_cast<std::uint64_t>(column) ^
+                                  (static_cast<std::uint64_t>(seed) << 48)));
+                if ((code & 0x7fU) == 0x7fU) { code = static_cast<std::uint8_t>(code ^ 1U); }
+                packed.payload[static_cast<std::size_t>(row) * k + column] = code;
+            }
+        }
+        // Multipliers a BF16 word cannot hold (the reason these formats exist), around 2^-8.
+        const std::int32_t scales = block ? row_blocks * k_blocks : n;
+        for (std::int32_t i = 0; i < scales; ++i) {
+            const auto h = detail::mix64(static_cast<std::uint64_t>(i) ^
+                                         (static_cast<std::uint64_t>(seed) << 40));
+            const float scale = 0.0039F * (1.0F + static_cast<float>(h % 1000U) * 1.37e-3F);
+            detail::store_u32_le(packed.payload,
+                                 packed.scale_plane_offset + static_cast<std::size_t>(i) * 4,
+                                 detail::float_bits(scale));
+        }
+        packed.weight.qtype         = qtype;
+        packed.weight.layout        = block ? QuantLayout::BlockScale128F32 : QuantLayout::RowScale;
+        packed.weight.scale_dtype   = DType::FP32;
+        packed.weight.payload       = packed.payload.data();
+        packed.weight.payload_bytes = packed.payload.size();
+        packed.weight.qdata         = packed.payload.data();
+        packed.weight.qhigh         = nullptr;
+        packed.weight.scales        = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.group_size    = static_cast<std::uint32_t>(block ? 128 : k);
+        packed.weight.group         = block ? 128 : k;
+        packed.weight.ndim          = 2;
+        packed.weight.shape[0] = packed.weight.padded_shape[0] = n;
+        packed.weight.shape[1] = packed.weight.padded_shape[1] = k;
+        packed.weight.n        = n;
+        packed.weight.k        = k;
+        return packed;
+    }
+    if (is_ggml_block(qtype)) {
+        const auto values = static_cast<std::int32_t>(ggml_block_values(qtype));
+        if ((k % values) != 0) {
+            throw std::invalid_argument(
+                "quantized-weight fixture: ggml block formats need K a whole number of blocks");
+        }
+        if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {
+            throw std::invalid_argument("quantized-weight fixture: ggml formats carry no divisor");
+        }
+        const std::int32_t blocks = k / values;
+        const auto byte_at = [&](std::uint64_t index) {
+            const auto salt = static_cast<std::uint64_t>(seed) << 40;
+            return static_cast<std::uint8_t>(detail::mix64(index ^ salt));
+        };
+        // d (and dmin) around 2^-10 with ten significant bits: values of a few units at most.
+        const auto half_at = [&](std::uint64_t index) {
+            const auto salt = (static_cast<std::uint64_t>(seed) << 36) ^ 0x5bd1e995ULL;
+            const auto h    = detail::mix64(index ^ salt);
+            const float mantissa = 1.0F + static_cast<float>(h % 1024U) / 1024.0F;
+            return detail::f32_to_f16(0.0009765625F * mantissa);
+        };
+        PackedWeight packed;
+        if (qtype != QType::GGML_Q4_K && qtype != QType::GGML_Q5_K) {
+            // ggml_planes_v1: per block (code, high, scale) bytes. Random bytes everywhere but
+            // the binary16 words of the scale plane (IQ4_XS scales_h among them: any bits).
+            const auto plane         = ggml_plane_bytes(qtype);
+            const std::uint64_t nb   = static_cast<std::uint64_t>(n) * blocks;
+            packed.code_plane_bytes  = nb * plane.code;
+            packed.high_plane_offset = detail::align_up_size(packed.code_plane_bytes, 256);
+            packed.high_plane_bytes  = nb * plane.high;
+            packed.scale_plane_offset =
+                packed.high_plane_offset + detail::align_up_size(packed.high_plane_bytes, 256);
+            packed.scale_plane_bytes = nb * plane.scale;
+            packed.payload.assign(
+                static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+            for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
+                packed.payload[i] = byte_at(i);
+            for (std::uint64_t i = 0; i < packed.high_plane_bytes; ++i)
+                packed.payload[packed.high_plane_offset + i] = byte_at(i + (1ULL << 40));
+            for (std::uint64_t h = 0; h < packed.scale_plane_bytes / 2; ++h)
+                detail::store_u16_le(packed.payload, packed.scale_plane_offset + h * 2, half_at(h));
+            packed.weight.layout      = QuantLayout::GgmlPlanes;
+            packed.weight.scale_dtype = DType::FP16;
+            packed.weight.high_plane_bytes = packed.high_plane_bytes;
+            packed.weight.qhigh  = packed.high_plane_bytes == 0
+                                       ? nullptr
+                                       : packed.payload.data() + packed.high_plane_offset;
+            packed.weight.scales = packed.payload.data() + packed.scale_plane_offset;
+        } else {
+            const std::uint64_t block_bytes = qtype == QType::GGML_Q4_K ? 144 : 176;
+            packed.code_plane_bytes         = static_cast<std::uint64_t>(n) * blocks * block_bytes;
+            packed.scale_plane_offset       = packed.code_plane_bytes;
+            packed.payload.assign(static_cast<std::size_t>(packed.code_plane_bytes), 0);
+            for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
+                packed.payload[i] = byte_at(i);
+            for (std::uint64_t b = 0; b < static_cast<std::uint64_t>(n) * blocks; ++b) {
+                detail::store_u16_le(packed.payload, b * block_bytes, half_at(2 * b));
+                detail::store_u16_le(packed.payload, b * block_bytes + 2, half_at(2 * b + 1));
+            }
+            packed.weight.layout = QuantLayout::GgmlBlocks;
+            packed.weight.qhigh  = nullptr;
+            packed.weight.scales = nullptr;
+        }
+        packed.weight.qtype         = qtype;
+        packed.weight.payload       = packed.payload.data();
+        packed.weight.payload_bytes = packed.payload.size();
+        packed.weight.qdata         = packed.payload.data();
+        packed.weight.group_size    = static_cast<std::uint32_t>(values);
+        packed.weight.group         = values;
+        packed.weight.ndim          = 2;
+        packed.weight.shape[0] = packed.weight.padded_shape[0] = n;
+        packed.weight.shape[1] = packed.weight.padded_shape[1] = k;
+        packed.weight.n        = n;
+        packed.weight.k        = k;
+        return packed;
+    }
+    if (u4_zp_group(qtype)) {
+        const auto group = static_cast<std::int32_t>(u4_zp_group(qtype));
+        if ((k % group) != 0) {
+            throw std::invalid_argument("quantized-weight fixture: U4 K must be whole groups");
+        }
+        if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {
+            throw std::invalid_argument("quantized-weight fixture: U4 carries no divisor");
+        }
+        const std::int32_t groups = k / group;
+        PackedWeight packed;
+        packed.code_plane_bytes  = static_cast<std::uint64_t>(n) * k / 2;
+        packed.high_plane_offset =
+            detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
+        packed.high_plane_bytes   = static_cast<std::uint64_t>(n) * groups;
+        packed.scale_plane_offset = packed.high_plane_offset +
+                                    detail::align_up_size(packed.high_plane_bytes, 256);
+        packed.scale_plane_bytes = static_cast<std::uint64_t>(n) * groups * 2;
+        packed.payload.assign(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+        for (std::int32_t row = 0; row < n; ++row) {
+            for (std::int32_t column = 0; column < k; column += 2) {
+                const auto code = [&](std::int32_t c) {
+                    return static_cast<std::uint8_t>(
+                        detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                      static_cast<std::uint64_t>(c) ^
+                                      (static_cast<std::uint64_t>(seed) << 48)) &
+                        0x0fU);
+                };
+                packed.payload[static_cast<std::size_t>(row) * k / 2 +
+                               static_cast<std::size_t>(column / 2)] =
+                    static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+            }
+            for (std::int32_t g = 0; g < groups; ++g) {
+                // Zero points 0..16 (8 for a symmetric group, 16 for GPTQ v1's top), binary16
+                // scales around 2^-7 with ten significant bits.
+                const auto h = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
+                                             static_cast<std::uint64_t>(g) ^
+                                             (static_cast<std::uint64_t>(seed) << 44));
+                const auto zero =
+                    static_cast<std::uint8_t>((h & 3U) == 0 ? 8U : (h >> 2) % 17U);
+                const float scale =
+                    0.0078125F * (1.0F + static_cast<float>((h >> 12) % 1024U) / 1024.0F);
+                const auto at     = static_cast<std::size_t>(row) * groups + g;
+                packed.payload[packed.high_plane_offset + at] = zero;
+                detail::store_u16_le(packed.payload, packed.scale_plane_offset + at * 2,
+                                     detail::f32_to_f16(scale));
+            }
+        }
+        packed.weight.qtype            = qtype;
+        packed.weight.layout           = QuantLayout::RowGroupZp;
+        packed.weight.scale_dtype      = DType::FP16;
+        packed.weight.payload          = packed.payload.data();
+        packed.weight.payload_bytes    = packed.payload.size();
+        packed.weight.high_plane_bytes = packed.high_plane_bytes;
+        packed.weight.qdata            = packed.payload.data();
+        packed.weight.qhigh            = packed.payload.data() + packed.high_plane_offset;
+        packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.group_size       = static_cast<std::uint32_t>(group);
+        packed.weight.group            = group;
+        packed.weight.ndim             = 2;
+        packed.weight.shape[0] = packed.weight.padded_shape[0] = n;
+        packed.weight.shape[1] = packed.weight.padded_shape[1] = k;
+        packed.weight.n                = n;
+        packed.weight.k                = k;
+        return packed;
+    }
+    if (qtype == QType::MXFP4) {
+        if ((k % 32) != 0) {
+            throw std::invalid_argument("quantized-weight fixture: MXFP4 K must divide by 32");
+        }
+        if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {
+            throw std::invalid_argument("quantized-weight fixture: MXFP4 carries no divisor");
+        }
+        PackedWeight packed;
+        packed.code_plane_bytes = static_cast<std::uint64_t>(n) * k / 2;
+        packed.scale_plane_offset =
+            detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
+        packed.scale_plane_bytes = static_cast<std::uint64_t>(n) * k / 32;
+        packed.payload.assign(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+        for (std::int32_t row = 0; row < n; ++row) {
+            for (std::int32_t column = 0; column < k; column += 2) {
+                const auto code = [&](std::int32_t c) {
+                    return static_cast<std::uint8_t>(
+                        detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                      static_cast<std::uint64_t>(c) ^
+                                      (static_cast<std::uint64_t>(seed) << 48)) &
+                        0x0fU);
+                };
+                packed.payload[static_cast<std::size_t>(row) * k / 2 +
+                               static_cast<std::size_t>(column / 2)] =
+                    static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+            }
+            for (std::int32_t g = 0; g < k / 32; ++g) {
+                // Exponents 2^-9 .. 2^-2, and now and then 2^0 and the subnormal word 0.
+                const auto h = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
+                                             static_cast<std::uint64_t>(g) ^ seed);
+                std::uint8_t e = static_cast<std::uint8_t>(118 + (h & 7U));
+                if ((h >> 8) % 61 == 0) { e = 127; }
+                if ((h >> 8) % 97 == 1) { e = 0; }
+                packed.payload[packed.scale_plane_offset +
+                               static_cast<std::size_t>(row) * (k / 32) + g] = e;
+            }
+        }
+        packed.weight.qtype            = QType::MXFP4;
+        packed.weight.layout           = QuantLayout::BlockScaleK32E8M0;
+        packed.weight.scale_dtype      = DType::U8;
+        packed.weight.payload          = packed.payload.data();
+        packed.weight.payload_bytes    = packed.payload.size();
+        packed.weight.qdata            = packed.payload.data();
+        packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.group_size       = 32;
+        packed.weight.group            = 32;
+        packed.weight.ndim             = 2;
+        packed.weight.shape[0] = packed.weight.padded_shape[0] = n;
+        packed.weight.shape[1] = packed.weight.padded_shape[1] = k;
+        packed.weight.n                = n;
+        packed.weight.k                = k;
+        return packed;
+    }
+    if (qtype == QType::NVFP4) {
+        if ((k % 64) != 0) {
+            throw std::invalid_argument(
+                "quantized-weight fixture: NVFP4 K must be divisible by 64");
         }
         if (options.row_split_scale != RowSplitScalePattern::Unit ||
             options.row_split_codes != RowSplitCodePattern::Coordinate) {
@@ -408,16 +697,21 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.code_plane_bytes = static_cast<std::uint64_t>(n) * k / 2;
         packed.scale_plane_offset =
             detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
-        packed.scale_plane_bytes     = static_cast<std::uint64_t>(n) * k / 16;
+        // Whole 128-row scale tiles; the words of a last tile's rows past N stay zero.
+        packed.scale_plane_bytes = static_cast<std::uint64_t>(detail::align_up(n, 128)) *
+                                   static_cast<std::uint64_t>(k) / 16;
         packed.weight_divisor_offset = packed.scale_plane_offset + packed.scale_plane_bytes;
         packed.payload.assign(static_cast<std::size_t>(packed.weight_divisor_offset) + 4U, 0);
 
+        const auto row_seed = [&](std::int32_t row) {
+            return seed + (row >= n / 2 ? options.upper_half_seed : 0U);
+        };
         for (std::int32_t row = 0; row < n; ++row) {
             for (std::int32_t column = 0; column < k; column += 2) {
                 const auto code = [&](std::int32_t logical_column) {
                     return static_cast<std::uint8_t>(
                         (static_cast<std::uint32_t>(row) * 13U +
-                         static_cast<std::uint32_t>(logical_column) * 7U + seed) &
+                         static_cast<std::uint32_t>(logical_column) * 7U + row_seed(row)) &
                         0x0fU);
                 };
                 packed.payload[static_cast<std::size_t>(row) * k / 2 +
@@ -450,9 +744,10 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
                     static_cast<std::size_t>(row_inner % 32) * 16U +
                     static_cast<std::size_t>(row_inner / 32) * 4U +
                     static_cast<std::size_t>(scale_lane);
-                const std::size_t pattern = (static_cast<std::uint32_t>(row) * 5U +
-                                             static_cast<std::uint32_t>(group) * 3U + seed) &
-                                            7U;
+                const std::size_t pattern =
+                    (static_cast<std::uint32_t>(row) * 5U + static_cast<std::uint32_t>(group) * 3U +
+                     row_seed(row)) &
+                    7U;
                 packed.payload[stored_offset] = kScaleWords[pattern];
             }
         }
@@ -483,6 +778,8 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.k                    = k;
         packed.weight.weight_scale_divisor = options.weight_scale_divisor;
         packed.weight.input_scale_divisor  = options.input_scale_divisor;
+        packed.weight.weight_divisors      = packed.payload.data() + packed.weight_divisor_offset;
+        packed.weight.weight_divisor_rows  = n;
         return packed;
     }
     if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {
@@ -534,7 +831,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
             }
         }
     } else {
-        std::uint8_t code_patterns[256][32]{};
+        std::uint8_t code_patterns[256][48]{};
         std::uint8_t high_patterns[256][16]{};
         for (std::size_t pattern = 0; pattern < 256; ++pattern) {
             std::uint64_t state = detail::mix64(static_cast<std::uint64_t>(seed) << 32 | pattern);
@@ -566,7 +863,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
     }
     const std::int32_t partial_group_lanes = k % spec.group_size;
     if (partial_group_lanes != 0) {
-        std::int8_t codes[64]{};
+        std::int8_t codes[128]{};
         const std::int32_t group = logical_groups - 1;
         for (std::int32_t row = 0; row < n; ++row) {
             const std::size_t group_index = static_cast<std::size_t>(row) * kg + group;
@@ -658,6 +955,323 @@ inline double logical_weight_fp64(const PackedWeight& packed, std::int32_t row,
         const float decoded =
             static_cast<float>(detail::decode_e4m3fn(code)) * detail::bf16_to_f32(scale_bits);
         return static_cast<double>(decoded);
+    }
+
+    if (weight.qtype == QType::FP8_E4M3FN_ROW_F32 || weight.qtype == QType::FP8_E4M3FN_B128_F32) {
+        const std::uint8_t code = packed.payload[static_cast<std::size_t>(row) * weight.k + column];
+        const auto k_blocks     = static_cast<std::size_t>((weight.k + 127) / 128);
+        const std::size_t index = weight.qtype == QType::FP8_E4M3FN_ROW_F32
+                                      ? static_cast<std::size_t>(row)
+                                      : static_cast<std::size_t>(row / 128) * k_blocks +
+                                            static_cast<std::size_t>(column / 128);
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, packed.payload.data() + packed.scale_plane_offset + index * 4, 4);
+        return static_cast<double>(static_cast<float>(detail::decode_e4m3fn(code)) *
+                                   detail::bits_float(bits));
+    }
+
+    if (weight.qtype == QType::GGML_Q4_K || weight.qtype == QType::GGML_Q5_K) {
+        // ggml dequantize_row_q4_K / q5_K: float d*sc and dmin*m, then d1*q - m1 in float.
+        const bool q5          = weight.qtype == QType::GGML_Q5_K;
+        const std::size_t bb   = q5 ? 176 : 144;
+        const std::size_t base = (static_cast<std::size_t>(row) * (weight.k / 256) +
+                                  static_cast<std::size_t>(column / 256)) * bb;
+        const auto* b          = packed.payload.data() + base;
+        const float d          = detail::f16_to_f32(detail::load_u16_le(packed.payload, base));
+        const float dmin       = detail::f16_to_f32(detail::load_u16_le(packed.payload, base + 2));
+        const int p = column % 256, j = p / 32, l = p % 32;
+        const std::uint8_t* s = b + 4;
+        int sc, m;
+        if (j < 4) {
+            sc = s[j] & 63;
+            m  = s[j + 4] & 63;
+        } else {
+            sc = (s[j + 4] & 0xF) | ((s[j - 4] >> 6) << 4);
+            m  = (s[j + 4] >> 4) | ((s[j] >> 6) << 4);
+        }
+        int q = (b[(q5 ? 48 : 16) + (j / 2) * 32 + l] >> ((j & 1) * 4)) & 0xF;
+        if (q5) q |= ((b[16 + l] >> j) & 1) << 4;
+        const float d1 = d * static_cast<float>(sc);
+        const float m1 = dmin * static_cast<float>(m);
+        return static_cast<double>(d1 * static_cast<float>(q) - m1);
+    }
+
+    if (weight.qtype == QType::GGML_Q6_K) {
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const auto* c         = packed.payload.data() + blk * 192;
+        const int p = column % 256, half = p / 128, qq = (p % 128) / 32, l = p % 32;
+        const int ql = c[64 * half + l + 32 * (qq & 1)];
+        const int qh = c[128 + 32 * half + l];
+        const int q  = (((qq >= 2) ? (ql >> 4) : ql) & 0xF) | (((qh >> (2 * qq)) & 3) << 4);
+        const auto sc = static_cast<std::int8_t>(
+            packed.payload[packed.high_plane_offset + blk * 16 + 8 * half + 2 * qq + l / 16]);
+        const float d = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        return static_cast<double>(d * static_cast<float>(sc) * static_cast<float>(q - 32));
+    }
+
+    if (weight.qtype == QType::GGML_Q3_K) {
+        // ggml dequantize_row_q3_K: dl = d * (sc - 32), then dl * q.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const auto* c         = packed.payload.data() + blk * 96; // hmask[32] qs[64]
+        const auto* b         = packed.payload.data() + packed.high_plane_offset + blk * 12;
+        const int p = column % 256, half = p / 128, j = (p % 128) / 32, l = p % 32;
+        const int s   = 8 * half + 2 * j + l / 16;
+        const int low = (c[32 + 32 * half + l] >> (2 * j)) & 3;
+        const int q   = ((c[l] >> (4 * half + j)) & 1) ? low : low - 4;
+        const int sc  = ((b[s % 8] >> (4 * (s / 8))) & 0xF) |
+                       (((b[8 + s % 4] >> (2 * (s / 4))) & 3) << 4);
+        const float d = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        const float dl = d * static_cast<float>(sc - 32);
+        return static_cast<double>(dl * static_cast<float>(q));
+    }
+
+    if (weight.qtype == QType::GGML_Q2_K) {
+        // ggml dequantize_row_q2_K: dl = d * (sc & 15), ml = dmin * (sc >> 4), dl * q - ml.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int p = column % 256, half = p / 128, j = (p % 128) / 32, l = p % 32;
+        const int q  = (packed.payload[blk * 64 + 32 * half + l] >> (2 * j)) & 3;
+        const int sc =
+            packed.payload[packed.high_plane_offset + blk * 16 + 8 * half + 2 * j + l / 16];
+        const float d = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 4));
+        const float dmin = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 4 + 2));
+        const float dl = d * static_cast<float>(sc & 0xF);
+        const float ml = dmin * static_cast<float>(sc >> 4);
+        return static_cast<double>(dl * static_cast<float>(q) - ml);
+    }
+
+    if (weight.qtype == QType::GGML_Q4_0 || weight.qtype == QType::GGML_Q4_1 ||
+        weight.qtype == QType::GGML_Q5_0 || weight.qtype == QType::GGML_Q5_1 ||
+        weight.qtype == QType::GGML_IQ4_NL) {
+        // ggml dequantize_row_q4_0 .. q5_1, iq4_nl: float(q) * d (+ m), d * kvalues_iq4nl[q].
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 32) +
+                                static_cast<std::size_t>(column / 32);
+        const int v           = column % 32;
+        const int b           = packed.payload[blk * 16 + static_cast<std::size_t>(v % 16)];
+        int q                 = v < 16 ? (b & 0xF) : (b >> 4);
+        const bool with_min =
+            weight.qtype == QType::GGML_Q4_1 || weight.qtype == QType::GGML_Q5_1;
+        const std::size_t scale_at = packed.scale_plane_offset + blk * (with_min ? 4 : 2);
+        const float d = detail::f16_to_f32(detail::load_u16_le(packed.payload, scale_at));
+        if (weight.qtype == QType::GGML_Q5_0 || weight.qtype == QType::GGML_Q5_1) {
+            std::uint32_t qh = 0;
+            std::memcpy(&qh, packed.payload.data() + packed.high_plane_offset + blk * 4, 4);
+            q |= static_cast<int>(((qh >> v) & 1U) << 4);
+        }
+        if (weight.qtype == QType::GGML_IQ4_NL) {
+            return static_cast<double>(d * static_cast<float>(detail::ggml_tables::kvalues_iq4nl[q]));
+        }
+        if (with_min) {
+            const float m = detail::f16_to_f32(detail::load_u16_le(packed.payload, scale_at + 2));
+            return static_cast<double>(static_cast<float>(q) * d + m);
+        }
+        const int bias = weight.qtype == QType::GGML_Q4_0 ? 8 : 16;
+        return static_cast<double>(static_cast<float>(q - bias) * d);
+    }
+
+    if (weight.qtype == QType::GGML_IQ4_XS) {
+        // ggml dequantize_row_iq4_xs: dl = d * (ls - 32), then dl * kvalues_iq4nl[q].
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int p = column % 256, ib = p / 32, l = p % 32;
+        const int b = packed.payload[blk * 128 + static_cast<std::size_t>(16 * ib + l % 16)];
+        const int q = l < 16 ? (b & 0xF) : (b >> 4);
+        const int sl = packed.payload[packed.high_plane_offset + blk * 4 + static_cast<std::size_t>(ib / 2)];
+        const std::size_t scale_at = packed.scale_plane_offset + blk * 4;
+        const float d = detail::f16_to_f32(detail::load_u16_le(packed.payload, scale_at));
+        const int sh  = detail::load_u16_le(packed.payload, scale_at + 2);
+        const int ls  = ((sl >> (4 * (ib % 2))) & 0xF) | (((sh >> (2 * ib)) & 3) << 4);
+        const float dl = d * static_cast<float>(ls - 32);
+        return static_cast<double>(dl * static_cast<float>(detail::ggml_tables::kvalues_iq4nl[q]));
+    }
+
+    if (weight.qtype == QType::GGML_IQ3_XXS) {
+        // ggml dequantize_row_iq3_xxs: db = d * (0.5 + ls) * 0.5, then db * grid * sign.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int p = column % 256;
+        std::uint32_t aux = 0;
+        std::memcpy(&aux, packed.payload.data() + packed.high_plane_offset + blk * 32 +
+                              static_cast<std::size_t>(4 * (p / 32)), 4);
+        const int index    = packed.payload[blk * 64 + static_cast<std::size_t>(p / 4)];
+        const auto signs   = detail::ggml_tables::ksigns_iq2xs[(aux >> (7 * ((p % 32) / 8))) & 127];
+        const float d      = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        const float db     = d * (0.5F + static_cast<float>(aux >> 28)) * 0.5F;
+        const auto grid    = (detail::ggml_tables::iq3xxs_grid[index] >> (8 * (p % 4))) & 0xFF;
+        return static_cast<double>(db * static_cast<float>(grid) *
+                                   ((signs >> (p % 8)) & 1 ? -1.0F : 1.0F));
+    }
+
+    if (weight.qtype == QType::GGML_IQ3_S) {
+        // ggml dequantize_row_iq3_s: db = d * (1 + 2*ls), then db * grid * sign.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const auto* c = packed.payload.data() + blk * 104;
+        const int p = column % 256, gi = p / 4;
+        const int index = c[gi] | (((c[64 + gi / 8] >> (gi % 8)) & 1) << 8);
+        const int sc    = (packed.payload[packed.high_plane_offset + blk * 4 +
+                                          static_cast<std::size_t>(p / 64)] >>
+                           (4 * ((p / 32) % 2))) & 0xF;
+        const float d   = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        const float db  = d * static_cast<float>(1 + 2 * sc);
+        const auto grid = (detail::ggml_tables::iq3s_grid[index] >> (8 * (p % 4))) & 0xFF;
+        return static_cast<double>(db * static_cast<float>(grid) *
+                                   ((c[72 + p / 8] >> (p % 8)) & 1 ? -1.0F : 1.0F));
+    }
+
+    if (weight.qtype == QType::GGML_IQ2_XXS || weight.qtype == QType::GGML_IQ2_XS ||
+        weight.qtype == QType::GGML_IQ2_S) {
+        // ggml dequantize_row_iq2_xxs / _xs / _s: db = d * (0.5 + ls) * 0.25, db * grid * sign.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int p = column % 256, ib = p / 32, l = (p % 32) / 8;
+        const bool s2 = weight.qtype == QType::GGML_IQ2_S;
+        const auto* c = packed.payload.data() + blk * (s2 ? 72 : 64);
+        int index = 0, signs = 0, ls = 0;
+        std::uint64_t grid_word = 0;
+        if (weight.qtype == QType::GGML_IQ2_XXS) {
+            std::uint32_t aux[2];
+            std::memcpy(aux, c + 8 * ib, 8);
+            index     = static_cast<int>((aux[0] >> (8 * l)) & 0xFF);
+            signs     = detail::ggml_tables::ksigns_iq2xs[(aux[1] >> (7 * l)) & 127];
+            ls        = static_cast<int>(aux[1] >> 28);
+            grid_word = detail::ggml_tables::iq2xxs_grid[index];
+        } else {
+            const int sc = packed.payload[packed.high_plane_offset + blk * 8 + static_cast<std::size_t>(ib)];
+            ls           = (sc >> (4 * (l / 2))) & 0xF;
+            if (s2) {
+                index     = c[p / 8] | (((c[64 + ib] >> (2 * l)) & 3) << 8);
+                signs     = c[32 + p / 8];
+                grid_word = detail::ggml_tables::iq2s_grid[index];
+            } else {
+                const int e = c[2 * (p / 8)] | (c[2 * (p / 8) + 1] << 8);
+                index       = e & 511;
+                signs       = detail::ggml_tables::ksigns_iq2xs[e >> 9];
+                grid_word   = detail::ggml_tables::iq2xs_grid[index];
+            }
+        }
+        const float d  = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        const float db = d * (0.5F + static_cast<float>(ls)) * 0.25F;
+        const auto g   = static_cast<float>((grid_word >> (8 * (p % 8))) & 0xFF);
+        return static_cast<double>(db * g * ((signs >> (p % 8)) & 1 ? -1.0F : 1.0F));
+    }
+
+    if (weight.qtype == QType::GGML_IQ1_S || weight.qtype == QType::GGML_IQ1_M) {
+        // ggml dequantize_row_iq1_s / _m: dl = d * (2*ls + 1), dl * (grid + delta).
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int p = column % 256, ib = p / 32, l = (p % 32) / 8;
+        int index   = packed.payload[blk * 32 + static_cast<std::size_t>(4 * ib + l)];
+        bool minus  = false;
+        float dl    = 0.0F;
+        const std::size_t high = packed.high_plane_offset + blk * 16;
+        if (weight.qtype == QType::GGML_IQ1_S) {
+            const int h = detail::load_u16_le(packed.payload, high + 2 * static_cast<std::size_t>(ib));
+            index |= ((h >> (3 * l)) & 7) << 8;
+            minus    = (h & 0x8000) != 0;
+            const float d = detail::f16_to_f32(
+                detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+            dl = d * static_cast<float>(2 * ((h >> 12) & 7) + 1);
+        } else {
+            const int n = (packed.payload[high + static_cast<std::size_t>(2 * ib + l / 2)] >>
+                           (4 * (l % 2))) & 0xF;
+            index |= (n & 7) << 8;
+            minus    = (n & 8) != 0;
+            std::uint16_t sc[4];
+            for (int i = 0; i < 4; ++i) {
+                sc[i] = detail::load_u16_le(packed.payload,
+                                            packed.scale_plane_offset + blk * 8 + 2 * static_cast<std::size_t>(i));
+            }
+            const auto bits = static_cast<std::uint16_t>((sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) |
+                                                         ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000));
+            const float d = detail::f16_to_f32(bits);
+            dl = d * static_cast<float>(2 * ((sc[ib / 2] >> (6 * (ib % 2) + 3 * (l / 2))) & 7) + 1);
+        }
+        const auto g = static_cast<std::int8_t>(
+            (detail::ggml_tables::iq1s_grid[index] >> (8 * (p % 8))) & 0xFF);
+        return static_cast<double>(dl * (static_cast<float>(g) + (minus ? -0.125F : 0.125F)));
+    }
+
+    if (weight.qtype == QType::GGML_TQ1_0 || weight.qtype == QType::GGML_TQ2_0) {
+        // ggml dequantize_row_tq1_0 / tq2_0: (t - 1) * d.
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / 256) +
+                                static_cast<std::size_t>(column / 256);
+        const int v = column % 256;
+        int t       = 0;
+        if (weight.qtype == QType::GGML_TQ2_0) {
+            t = (packed.payload[blk * 64 + static_cast<std::size_t>(32 * (v / 128) + v % 32)] >>
+                 (2 * ((v % 128) / 32))) & 3;
+        } else {
+            const auto* c = packed.payload.data() + blk * 52;
+            int byte = 0, n = 0;
+            if (v < 160) {
+                byte = c[v % 32];
+                n    = v / 32;
+            } else if (v < 240) {
+                byte = c[32 + (v - 160) % 16];
+                n    = (v - 160) / 16;
+            } else {
+                byte = c[48 + (v - 240) % 4];
+                n    = (v - 240) / 4;
+            }
+            static constexpr int kPow3[5] = {1, 3, 9, 27, 81};
+            const int q = (byte * kPow3[n]) & 0xFF;
+            t           = (q * 3) >> 8;
+        }
+        const float d = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        return static_cast<double>(static_cast<float>(t - 1) * d);
+    }
+
+    if (weight.qtype == QType::GGML_Q1_0 || weight.qtype == QType::GGML_Q2_0) {
+        // ggml dequantize_row_q1_0: +d or -d by bit; q2_0: (q - 1) * d.
+        const bool one        = weight.qtype == QType::GGML_Q1_0;
+        const int values      = one ? 128 : 64;
+        const std::size_t blk = static_cast<std::size_t>(row) * (weight.k / values) +
+                                static_cast<std::size_t>(column / values);
+        const int v   = column % values;
+        const float d = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + blk * 2));
+        if (one) {
+            return static_cast<double>(((packed.payload[blk * 16 + static_cast<std::size_t>(v / 8)] >> (v % 8)) & 1) ? d : -d);
+        }
+        const int q = (packed.payload[blk * 16 + static_cast<std::size_t>(v / 4)] >> (2 * (v % 4))) & 3;
+        return static_cast<double>(static_cast<float>(q - 1) * d);
+    }
+
+    if (u4_zp_group(weight.qtype)) {
+        const auto group = static_cast<std::int32_t>(u4_zp_group(weight.qtype));
+        const std::uint8_t packed_codes =
+            packed.payload[static_cast<std::size_t>(row) * weight.k / 2 +
+                           static_cast<std::size_t>(column / 2)];
+        const int code  = (column & 1) == 0 ? (packed_codes & 0x0fU) : (packed_codes >> 4);
+        const auto at   = static_cast<std::size_t>(row) * (weight.k / group) +
+                          static_cast<std::size_t>(column / group);
+        const int zero  = packed.payload[packed.high_plane_offset + at];
+        const float scale = detail::f16_to_f32(
+            detail::load_u16_le(packed.payload, packed.scale_plane_offset + at * 2));
+        return static_cast<double>(static_cast<float>(code - zero) * scale);
+    }
+
+    if (weight.qtype == QType::MXFP4) {
+        const std::uint8_t packed_codes =
+            packed.payload[static_cast<std::size_t>(row) * weight.k / 2 +
+                           static_cast<std::size_t>(column / 2)];
+        const std::uint8_t code = (column & 1) == 0 ? (packed_codes & 0x0fU) : (packed_codes >> 4);
+        const std::uint8_t e    = packed.payload[packed.scale_plane_offset +
+                                              static_cast<std::size_t>(row) * (weight.k / 32) +
+                                              static_cast<std::size_t>(column / 32)];
+        if (e == 0xffU) { throw std::invalid_argument("quantized-weight fixture: E8M0 NaN"); }
+        return detail::decode_e2m1(code) * std::ldexp(1.0, static_cast<int>(e) - 127);
     }
 
     if (weight.qtype == QType::NVFP4) {
@@ -806,8 +1420,8 @@ inline PackedWeight pack_row_split_lowbit(const std::vector<float>& source, std:
     out.scale_plane_bytes = static_cast<std::uint64_t>(n) * static_cast<std::uint64_t>(kg) * 2ULL;
     out.payload.assign(static_cast<std::size_t>(out.scale_plane_offset + out.scale_plane_bytes), 0);
 
-    std::int8_t codes[64];
-    float vals[64];
+    std::int8_t codes[128];
+    float vals[128];
     for (std::int32_t row = 0; row < n; ++row) {
         for (std::int32_t g = 0; g < kg; ++g) {
             float maxabs = 0.0f;
@@ -885,4 +1499,4 @@ inline PackedWeight pack_q8_g32_row_split(const std::vector<float>& source, std:
     return pack_row_split_lowbit(source, n, k, QType::Q8_G32_FP16);
 }
 
-} // namespace ninfer::test::quantized_weight
+} // namespace ninferno::test::quantized_weight

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/execution.h"
 #include "runtime/engine/admission_policy.h"
 
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 template <class Request>
 class Scheduler {
@@ -148,7 +148,8 @@ public:
         RoundMembership membership;
         for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
             const auto& request = slots[lane];
-            if (request == nullptr || !request->is_decode_ready() || request->capture_pending) {
+            if (request == nullptr || !request->is_decode_ready() || request->capture_pending ||
+                request->lease_parked) {
                 continue;
             }
             if (!request->budget) {
@@ -233,37 +234,72 @@ public:
     [[nodiscard]] bool should_attempt_admission(bool have_pending, bool admission_check_pending,
                                                 bool have_decode, bool previous_unit_was_decode,
                                                 bool context_transaction) const noexcept {
-        return have_pending && admission_check_pending && !context_transaction && !prefill_lane_ &&
+        return have_pending && admission_check_pending && !context_transaction &&
+               (concurrent_prefill_ || prefill_lanes_ == 0) &&
                (!have_decode || previous_unit_was_decode);
     }
 
+    // decode_owed: under --concurrent-prefill the decoding requests are still owed GPU time for
+    // the last prefill chunk (fair_decode_seconds), so decode goes on before the next chunk.
     [[nodiscard]] ExecutionAction choose_execution(bool have_decode, bool prefill_runnable,
-                                                   bool previous_unit_was_decode) const noexcept {
+                                                   bool previous_unit_was_decode,
+                                                   bool decode_owed = false) const noexcept {
         if (prefill_runnable) {
-            return have_decode && !previous_unit_was_decode ? ExecutionAction::Decode
-                                                            : ExecutionAction::Prefill;
+            return have_decode && (!previous_unit_was_decode || decode_owed)
+                       ? ExecutionAction::Decode
+                       : ExecutionAction::Prefill;
         }
         return have_decode ? ExecutionAction::Decode : ExecutionAction::Wait;
     }
 
-    [[nodiscard]] std::optional<std::uint32_t> prefill_lane() const noexcept {
-        return prefill_lane_;
+    // --concurrent-prefill: a waiting request is admitted while others prefill, and the prefilling
+    // lanes take chunks in turn (each request's own chunks stay in order, so no output changes).
+    void allow_concurrent_prefill(bool allow) noexcept { concurrent_prefill_ = allow; }
+    [[nodiscard]] bool concurrent_prefill() const noexcept { return concurrent_prefill_; }
+
+    // Every active request gets an equal share of GPU time: a prefill chunk of `seconds` serving
+    // one of `prefilling` requests owes the `decoding` ones decode time in proportion. One decode
+    // round per chunk (the plain alternation) gave a decoding request a few tokens a second beside
+    // a long prompt's 2048-token chunks.
+    [[nodiscard]] static double fair_decode_seconds(double seconds, std::uint32_t decoding,
+                                                    std::uint32_t prefilling) noexcept {
+        return prefilling == 0 ? 0.0 : seconds * decoding / prefilling;
     }
+
+    [[nodiscard]] bool owns_prefill_lane(std::uint32_t lane) const noexcept {
+        return lane < kMaximumConcurrency && ((prefill_lanes_ >> lane) & 1U) != 0;
+    }
+
+    // The next prefilling lane `runnable` accepts, round robin from the one served last.
+    template <class Runnable>
+    [[nodiscard]] std::optional<std::uint32_t> next_prefill_lane(Runnable&& runnable) const {
+        for (std::uint32_t step = 1; step <= kMaximumConcurrency; ++step) {
+            const std::uint32_t lane = (last_prefill_lane_ + step) % kMaximumConcurrency;
+            if (owns_prefill_lane(lane) && runnable(lane)) { return lane; }
+        }
+        return std::nullopt;
+    }
+    void note_prefill_served(std::uint32_t lane) noexcept { last_prefill_lane_ = lane; }
 
     [[nodiscard]] std::optional<std::uint64_t> protection_epoch() const noexcept {
         return protection_ ? std::optional<std::uint64_t>(protection_->epoch_id) : std::nullopt;
     }
 
     void set_prefill_lane(std::uint32_t lane) {
-        if (prefill_lane_) { throw std::logic_error("multiple requests own staged prefill"); }
-        prefill_lane_ = lane;
+        if (lane >= kMaximumConcurrency || owns_prefill_lane(lane)) {
+            throw std::logic_error("lane already owns staged prefill");
+        }
+        if (!concurrent_prefill_ && prefill_lanes_ != 0) {
+            throw std::logic_error("multiple requests own staged prefill");
+        }
+        prefill_lanes_ |= 1U << lane;
     }
 
     void clear_prefill_lane(std::uint32_t lane) {
-        if (!prefill_lane_ || *prefill_lane_ != lane) {
+        if (!owns_prefill_lane(lane)) {
             throw std::logic_error("request does not own staged prefill");
         }
-        prefill_lane_.reset();
+        prefill_lanes_ &= ~(1U << lane);
     }
 
     void observe_fifo_head(std::optional<std::uint64_t> request_id) noexcept {
@@ -354,16 +390,19 @@ public:
     }
 
     void reset() noexcept {
-        prefill_lane_.reset();
+        prefill_lanes_     = 0;
+        last_prefill_lane_ = kMaximumConcurrency - 1;
         fifo_head_id_.reset();
         protection_.reset();
     }
 
 private:
-    std::optional<std::uint32_t> prefill_lane_;
+    std::uint32_t prefill_lanes_     = 0; // bit per lane owning staged prefill
+    std::uint32_t last_prefill_lane_ = kMaximumConcurrency - 1;
+    bool concurrent_prefill_         = false;
     std::optional<std::uint64_t> fifo_head_id_;
     std::optional<AdmissionProtection> protection_;
     std::uint64_t next_protection_epoch_ = 1;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

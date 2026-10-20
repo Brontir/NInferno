@@ -1,4 +1,4 @@
-// ninfer::ops - rope launcher: private token-count tuning and generic fallback.
+// ninferno::ops - rope launcher: private token-count tuning and generic fallback.
 #include "ops/launcher/rope.h"
 
 #include "core/device.h" // CUDA_CHECK
@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kLargeBlock               = 256;
@@ -14,6 +14,9 @@ constexpr int kFullChunkBlock           = 192;
 constexpr int kSmallBlock               = 128;
 constexpr int kDefaultChunkTargetTokens = 1024;
 // RTX 5090 has 170 SMs and admits six of these 256-thread CTAs per SM.
+// NINFERNO-SPECIAL(chip:gb202:170sm): a one-wave argument for 170 SMs that does not carry over by
+// the SM count: on an RTX 5080 (84 SMs, one wave = 504) the 256-thread block measured equal to or
+// faster than the 192-thread one through 1020 tokens, so the literal stays. Retune per GPU class.
 constexpr int kLargeBlockWaveCapacity = 1020;
 
 template <RopeKernelMode Mode>
@@ -42,7 +45,7 @@ void launch_fixed_block(const Tensor& positions, Tensor* q, Tensor* k, int block
 }
 
 template <RopeKernelMode Mode, int QHeads, int KHeads>
-void launch_fixed(const Tensor& positions, Tensor* q, Tensor* k, cudaStream_t stream) {
+void launch_fixed(const Tensor& positions, Tensor* q, Tensor* k, DeviceExecutionView execution) {
     const int tokens = positions.ne[0];
     int block        = kSmallBlock;
     if constexpr (kTextMode<Mode>) {
@@ -57,7 +60,7 @@ void launch_fixed(const Tensor& positions, Tensor* q, Tensor* k, cudaStream_t st
         if (block > head_warps) { block = head_warps; }
         if (block > 1024) { block = 1024; }
     }
-    launch_fixed_block<Mode, QHeads, KHeads>(positions, q, k, block, stream);
+    launch_fixed_block<Mode, QHeads, KHeads>(positions, q, k, block, execution.stream);
 }
 
 template <int HeadsPerBlock, int QHeads, int KHeads>
@@ -74,7 +77,8 @@ void launch_dflash_split(const Tensor& positions, Tensor* q, Tensor* k, cudaStre
 }
 
 bool launch_fixed_pair(const Tensor& positions, int rotary_dim, float theta, Tensor& q, Tensor& k,
-                       cudaStream_t stream) {
+                       DeviceExecutionView execution) {
+    const auto stream = execution.stream;
     if (!bf16x2_aligned(q) || !bf16x2_aligned(k)) { return false; }
     const int axes = positions.ne[1];
     if (axes == 1 && q.ne[0] == 128 && rotary_dim == 128 && theta == 1.0e7F && q.ne[1] == 32 &&
@@ -92,82 +96,89 @@ bool launch_fixed_pair(const Tensor& positions, int rotary_dim, float theta, Ten
     if (rotary_dim == 64 && theta == 1.0e7F) {
         if (q.ne[1] == 24 && k.ne[1] == 4) {
             if (axes == 1) {
-                launch_fixed<RopeKernelMode::Text1D, 24, 4>(positions, &q, &k, stream);
+                launch_fixed<RopeKernelMode::Text1D, 24, 4>(positions, &q, &k, execution);
                 return true;
             }
             if (axes == 3) {
-                launch_fixed<RopeKernelMode::TextMrope, 24, 4>(positions, &q, &k, stream);
+                launch_fixed<RopeKernelMode::TextMrope, 24, 4>(positions, &q, &k, execution);
                 return true;
             }
         }
-        if (q.ne[1] == 16 && k.ne[1] == 2) {
+        // Every Qwen3.5 attention geometry (rmsnorm_rope_text_heads): the fused qk-norm+rope is
+        // bit for bit this route.
+        const auto fixed = [&]<int Q, int K>() {
+            if (q.ne[1] != Q || k.ne[1] != K || (axes != 1 && axes != 3)) return false;
             if (axes == 1) {
-                launch_fixed<RopeKernelMode::Text1D, 16, 2>(positions, &q, &k, stream);
-                return true;
+                launch_fixed<RopeKernelMode::Text1D, Q, K>(positions, &q, &k, execution);
+            } else {
+                launch_fixed<RopeKernelMode::TextMrope, Q, K>(positions, &q, &k, execution);
             }
-            if (axes == 3) {
-                launch_fixed<RopeKernelMode::TextMrope, 16, 2>(positions, &q, &k, stream);
-                return true;
-            }
+            return true;
+        };
+        if (fixed.template operator()<16, 2>() || fixed.template operator()<8, 2>() ||
+            fixed.template operator()<16, 4>() || fixed.template operator()<32, 2>()) {
+            return true;
         }
     }
     if (axes == 2 && rotary_dim == 72 && theta == 10'000.0F && q.ne[1] == 16 && k.ne[1] == 16) {
-        launch_fixed<RopeKernelMode::Vision2D, 16, 16>(positions, &q, &k, stream);
+        launch_fixed<RopeKernelMode::Vision2D, 16, 16>(positions, &q, &k, execution);
         return true;
     }
     return false;
 }
 
 template <RopeKernelMode Mode, int Heads>
-void launch_fixed_single(const Tensor& positions, Tensor& x, cudaStream_t stream) {
-    launch_fixed<Mode, Heads, 0>(positions, &x, nullptr, stream);
+void launch_fixed_single(const Tensor& positions, Tensor& x, DeviceExecutionView execution) {
+    launch_fixed<Mode, Heads, 0>(positions, &x, nullptr, execution);
 }
 
 template <int Heads>
-bool launch_text_single(const Tensor& positions, int axes, Tensor& x, cudaStream_t stream) {
+bool launch_text_single(const Tensor& positions, int axes, Tensor& x,
+                        DeviceExecutionView execution) {
     if (x.ne[1] != Heads) { return false; }
     if (axes == 1) {
-        launch_fixed_single<RopeKernelMode::Text1D, Heads>(positions, x, stream);
+        launch_fixed_single<RopeKernelMode::Text1D, Heads>(positions, x, execution);
         return true;
     }
     if (axes == 3) {
-        launch_fixed_single<RopeKernelMode::TextMrope, Heads>(positions, x, stream);
+        launch_fixed_single<RopeKernelMode::TextMrope, Heads>(positions, x, execution);
         return true;
     }
     return false;
 }
 
 bool launch_fixed_single_dispatch(const Tensor& positions, int rotary_dim, float theta, Tensor& x,
-                                  cudaStream_t stream) {
+                                  DeviceExecutionView execution) {
     if (!bf16x2_aligned(x)) { return false; }
     const int axes = positions.ne[1];
     if (axes == 1 && x.ne[0] == 128 && rotary_dim == 128 && theta == 1.0e7F) {
         if (x.ne[1] == 32) {
-            launch_fixed_single<RopeKernelMode::DflashText1D, 32>(positions, x, stream);
+            launch_fixed_single<RopeKernelMode::DflashText1D, 32>(positions, x, execution);
             return true;
         }
         if (x.ne[1] == 8) {
-            launch_fixed_single<RopeKernelMode::DflashText1D, 8>(positions, x, stream);
+            launch_fixed_single<RopeKernelMode::DflashText1D, 8>(positions, x, execution);
             return true;
         }
     }
     if (rotary_dim == 64 && theta == 1.0e7F) {
-        if (launch_text_single<24>(positions, axes, x, stream) ||
-            launch_text_single<4>(positions, axes, x, stream) ||
-            launch_text_single<16>(positions, axes, x, stream) ||
-            launch_text_single<2>(positions, axes, x, stream)) {
+        if (launch_text_single<24>(positions, axes, x, execution) ||
+            launch_text_single<4>(positions, axes, x, execution) ||
+            launch_text_single<16>(positions, axes, x, execution) ||
+            launch_text_single<2>(positions, axes, x, execution)) {
             return true;
         }
     }
     if (axes == 2 && rotary_dim == 72 && theta == 10'000.0F && x.ne[1] == 16) {
-        launch_fixed_single<RopeKernelMode::Vision2D, 16>(positions, x, stream);
+        launch_fixed_single<RopeKernelMode::Vision2D, 16>(positions, x, execution);
         return true;
     }
     return false;
 }
 
 void launch_generic(const Tensor& positions, int rotary_dim, float theta, Tensor* q, Tensor* k,
-                    cudaStream_t stream) {
+                    cudaStream_t stream, const float* inverse_frequencies = nullptr,
+                    float coefficient_scale = 1.0F) {
     constexpr int block = 128;
     Tensor& sample      = q != nullptr ? *q : *k;
     const int tokens    = sample.ne[2];
@@ -176,25 +187,32 @@ void launch_generic(const Tensor& positions, int rotary_dim, float theta, Tensor
         q == nullptr ? nullptr : static_cast<__nv_bfloat16*>(q->data),
         k == nullptr ? nullptr : static_cast<__nv_bfloat16*>(k->data), sample.ne[0], rotary_dim,
         theta, q == nullptr ? 0 : q->ne[1], k == nullptr ? 0 : k->ne[1], tokens, token_stride(q),
-        token_stride(k));
+        token_stride(k), inverse_frequencies, coefficient_scale);
 }
 
 } // namespace
 
 void rope_launch(const Tensor& positions, int rotary_dim, float theta, Tensor& q, Tensor& k,
-                 cudaStream_t stream) {
-    if (!launch_fixed_pair(positions, rotary_dim, theta, q, k, stream)) {
-        launch_generic(positions, rotary_dim, theta, &q, &k, stream);
+                 DeviceExecutionView execution) {
+    if (!launch_fixed_pair(positions, rotary_dim, theta, q, k, execution)) {
+        launch_generic(positions, rotary_dim, theta, &q, &k, execution.stream);
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
 void rope_single_launch(const Tensor& positions, int rotary_dim, float theta, Tensor& x,
-                        cudaStream_t stream) {
-    if (!launch_fixed_single_dispatch(positions, rotary_dim, theta, x, stream)) {
-        launch_generic(positions, rotary_dim, theta, &x, nullptr, stream);
+                        DeviceExecutionView execution) {
+    if (!launch_fixed_single_dispatch(positions, rotary_dim, theta, x, execution)) {
+        launch_generic(positions, rotary_dim, theta, &x, nullptr, execution.stream);
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+void rope_scaled_launch(const Tensor& positions, int rotary_dim, const Tensor& inverse_frequencies,
+                        float attention_scale, Tensor* q, Tensor* k, cudaStream_t stream) {
+    launch_generic(positions, rotary_dim, 1.0F, q, k, stream,
+                   static_cast<const float*>(inverse_frequencies.data), attention_scale);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+} // namespace ninferno::ops::detail

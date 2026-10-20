@@ -6,11 +6,11 @@
 // captured per graph, and the reported node count is the captured graph's real node count.
 
 #include "core/weight.h"
-#include "ninfer/ops/linear.h"
-#include "ninfer/ops/linear_add.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/linear_add.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_runtime.h>
@@ -25,7 +25,7 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -33,10 +33,10 @@ constexpr std::int32_t kRows           = 5120;
 constexpr std::size_t kDefaultFlushMiB = 256;
 constexpr int kDefaultWarmup           = 5;
 constexpr int kDefaultRepeat           = 50;
-constexpr double kDramSpecGBs          = 1792.0;
+const double kDramSpecGBs          = bench::device_roofs().dram_gbs;
 // NVIDIA's GB202 table reports dense/sparse pairs at boost clock; keep the accumulator precision
 // explicit. SIMT and split-K routes report no Tensor Core ratio.
-constexpr double kBf16Fp32AccumulateTFLOPs = 209.5;
+const double kBf16Fp32AccumulateTFLOPs = bench::device_roofs().bf16_fp32acc_tflops;
 
 struct Options {
     std::int32_t hidden = 0;
@@ -162,15 +162,16 @@ int main(int argc, char** argv) {
 
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(options.flush_bytes);
-        DeviceBuffer input    = bench::make_bf16(static_cast<std::size_t>(options.hidden) * max_t);
-        DeviceBuffer residual = bench::make_bf16(static_cast<std::size_t>(kRows) * max_t);
+        bench::L2FlushBuffer flush(options.flush_bytes);
+        DeviceBuffer input =
+            bench::make_bf16(static_cast<std::size_t>(options.hidden) * max_t, 101U);
+        DeviceBuffer residual = bench::make_bf16(static_cast<std::size_t>(kRows) * max_t, 103U);
         // The same deterministic ramp, kept aside so every sample starts from identical residual
         // contents: LinearAdd accumulates, and an accumulated operand is not the operand the
         // benchmark claims to measure.
-        DeviceBuffer residual_init = bench::make_bf16(static_cast<std::size_t>(kRows) * max_t);
+        bench::SavedBuffer residual_initial(residual);
         bench::PackedQuantizedWeight packed = bench::make_row_split_weight(
-            QType::Q5_G64_FP16, kRows, options.hidden, options.hidden, {0x31, 0xa5, 0x3c00});
+            QType::Q5_G64_FP16, kRows, options.hidden, options.hidden, 501U);
 
         const std::size_t workspace_capacity = ops::linear_add_workspace_capacity_bytes(
             QType::Q5_G64_FP16, kRows, options.hidden, min_t, max_t);
@@ -209,10 +210,8 @@ int main(int argc, char** argv) {
         for (const std::int32_t tokens : options.tokens) {
             Tensor x(input.p, DType::BF16, {options.hidden, tokens});
             Tensor out(residual.p, DType::BF16, {kRows, tokens});
-            const std::size_t residual_bytes = static_cast<std::size_t>(kRows) * tokens * 2;
-            const auto restore               = [&](cudaStream_t prepare_stream) {
-                CUDA_CHECK(cudaMemcpyAsync(residual.p, residual_init.p, residual_bytes,
-                                                         cudaMemcpyDeviceToDevice, prepare_stream));
+            const auto restore = [&](cudaStream_t prepare_stream) {
+                residual_initial.restore(prepare_stream);
             };
             const auto body = [&](cudaStream_t launch_stream) {
                 ops::linear_add(x, packed.weight, out, ops::LinearPolicy::A16Only, workspace,
@@ -289,7 +288,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_q5_linear_add_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_q5_linear_add_bench: %s\n", error.what());
         return 1;
     }
 }

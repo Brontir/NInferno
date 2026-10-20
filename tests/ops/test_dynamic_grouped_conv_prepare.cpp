@@ -1,5 +1,5 @@
 #include "core/weight.h"
-#include "ninfer/ops/dynamic_grouped_conv.h"
+#include "ninferno/ops/dynamic_grouped_conv.h"
 #include "core/decode_graph.h"
 
 #include "ops/direct_bf16_weight.h"
@@ -16,8 +16,8 @@
 #include <thread>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 

@@ -1,9 +1,10 @@
 #include "models/qwen3_5/load/bindings.h"
+#include "models/common/config_json.h"
 
 #include <limits>
 #include <set>
 
-namespace ninfer::models::qwen3_5::loading {
+namespace ninferno::models::qwen3_5::loading {
 
 AttentionWeights bind_attention(Bindings& b, const TextConfig& config, const std::string& p) {
     const auto& a = config.attention.value();
@@ -132,15 +133,9 @@ ProposalWeights bind_proposal(Bindings& b, const artifact::Proposal& proposal,
         out.token_ids = b.direct("proposal/token_ids", {rows}, QType::INT32);
         out.global_token_ids =
             b.binder.values(b.at(*out.token_ids).reference.binding, QType::INT32).integers();
-        std::set<std::int32_t> unique;
-        for (const auto id : out.global_token_ids) {
-            if (id < 0 || std::uint32_t(id) >= public_tokens || !unique.insert(id).second) {
-                throw artifact::ArtifactError(
-                    "proposal token IDs must be unique and in the public domain");
-            }
-        }
+        validate_token_ids(out.global_token_ids, public_tokens, "proposal token IDs");
     }
     return out;
 }
 
-} // namespace ninfer::models::qwen3_5::loading
+} // namespace ninferno::models::qwen3_5::loading

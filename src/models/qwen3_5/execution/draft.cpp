@@ -1,34 +1,37 @@
 #include "models/qwen3_5/program/graph_execution.h"
+#include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "models/qwen3_5/execution/linear.h"
+#include <algorithm>
 #include <cmath>
 #include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/execution/workspace.h"
 
 #include "core/nvtx.h"
-#include "ninfer/ops/argmax.h"
-#include "ninfer/ops/dynamic_grouped_conv.h"
-#include "ninfer/ops/context_kv_materialize.h"
-#include "ninfer/ops/rmsnorm_rope.h"
-#include "ninfer/ops/rmsnorm_pack_tail.h"
-#include "ninfer/ops/linear_topk.h"
-#include "ninfer/ops/candidate_selector.h"
-#include "ninfer/ops/attn_input_proj.h"
-#include "ninfer/ops/embedding.h"
-#include "ninfer/ops/kv_cache_append.h"
-#include "ninfer/ops/linear.h"
-#include "ninfer/ops/linear_add.h"
-#include "ninfer/ops/linear_pair.h"
-#include "ninfer/ops/linear_swiglu.h"
-#include "ninfer/ops/prepare_masked_block.h"
-#include "ninfer/ops/prepare_ragged_prefix.h"
-#include "ninfer/ops/rmsnorm.h"
-#include "ninfer/ops/rope.h"
-#include "ninfer/ops/scalar.h"
-#include "ninfer/ops/scatter.h"
-#include "ninfer/ops/sliding_window_attention.h"
-#include "ninfer/ops/softmax_attention.h"
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/argmax.h"
+#include "ninferno/ops/dynamic_grouped_conv.h"
+#include "ninferno/ops/context_kv_materialize.h"
+#include "ninferno/ops/rmsnorm_rope.h"
+#include "ninferno/ops/rmsnorm_pack_tail.h"
+#include "ninferno/ops/linear_topk.h"
+#include "ninferno/ops/candidate_selector.h"
+#include "ninferno/ops/attn_input_proj.h"
+#include "ninferno/ops/embedding.h"
+#include "ninferno/ops/kv_cache_append.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/linear_add.h"
+#include "ninferno/ops/linear_pair.h"
+#include "ninferno/ops/segmented_projection.h"
+#include "ninferno/ops/linear_swiglu.h"
+#include "ninferno/ops/prepare_masked_block.h"
+#include "ninferno/ops/prepare_ragged_prefix.h"
+#include "ninferno/ops/rmsnorm.h"
+#include "ninferno/ops/rope.h"
+#include "ninferno/ops/scalar.h"
+#include "ninferno/ops/scatter.h"
+#include "ninferno/ops/sliding_window_attention.h"
+#include "ninferno/ops/softmax_attention.h"
+#include "ninferno/ops/speculative_round.h"
 
 #include <cuda_runtime.h>
 
@@ -36,13 +39,14 @@
 #include <stdexcept>
 #include <utility>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 namespace {
 
 using detail::DFlashPersistentState;
 
 void require_dflash_state(const PrefillContext& state) {
-    if (state.dflash == nullptr || !state.execution.parameters.draft.has_value()) {
+    if (state.dflash == nullptr ||
+        !qwen3_5::detail::qwen_parameters(state.execution).draft.has_value()) {
         throw std::logic_error("masked draft schedule requires its weights and state");
     }
 }
@@ -60,8 +64,9 @@ DFlashFeatureSink prefill_feature_sink_impl(PrefillContext& state,
                                             DFlashFeatureSink::PrefillConsumer consume_prefill) {
     {
         require_dflash_state(state);
-        const auto& target = state.execution.parameters.model.config().text;
-        const auto& config = *state.execution.parameters.model.config().draft;
+        const auto& target = qwen3_5::detail::qwen_parameters(state.execution).model.config().text;
+        const auto& config =
+            *qwen3_5::detail::qwen_parameters(state.execution).model.config().draft;
         return DFlashFeatureSink{
             .features        = &dflash_state(state).prefill_features,
             .positions       = &dflash_state(state).prefill_positions,
@@ -71,14 +76,21 @@ DFlashFeatureSink prefill_feature_sink_impl(PrefillContext& state,
     }
 }
 
+// The pending target features a round of this frame's width reads and writes.
+Tensor& pending_features_of(DFlashBatchContext& state) {
+    return state.frame.pending_features.data != nullptr ? state.frame.pending_features
+                                                         : dflash_state(state).pending_features;
+}
+
 DFlashFeatureSink batch_feature_sink_impl(DFlashBatchContext& state, const Tensor& lanes,
                                           const Tensor& valid_columns, std::int32_t width,
                                           std::int32_t batch_size) {
     {
-        const auto& target = state.execution.parameters.model.config().text;
-        const auto& config = *state.execution.parameters.model.config().draft;
+        const auto& target = qwen3_5::detail::qwen_parameters(state.execution).model.config().text;
+        const auto& config =
+            *qwen3_5::detail::qwen_parameters(state.execution).model.config().draft;
         return DFlashFeatureSink{
-            .batch_features      = &dflash_state(state).pending_features,
+            .batch_features      = &pending_features_of(state),
             .batch_lanes         = &lanes,
             .batch_valid_columns = &valid_columns,
             .batch_width         = width,
@@ -88,13 +100,27 @@ DFlashFeatureSink batch_feature_sink_impl(DFlashBatchContext& state, const Tenso
     }
 }
 
+// The fused DFlash2 kernels (context_kv_materialize, the Q8 Q/K/V projection) are registered for
+// RowSplit Q8_G32_FP16 matrices; a drafter stored in other formats (a published GGUF's Q4_0)
+// takes the generic projections with the same state effects.
+bool fused_q8(const Weight& weight) {
+    return weight.qtype == QType::Q8_G32_FP16 && weight.layout == QuantLayout::RowSplit;
+}
+
+bool fused_context(const DraftParameters& draft) {
+    return std::all_of(draft.layers.begin(), draft.layers.end(), [](const auto& layer) {
+        return fused_q8(layer.context_key.weight) && fused_q8(layer.context_value.weight);
+    });
+}
+
 template <class Context>
 void append_context_impl(Context& state, const Tensor& features, const Tensor& positions,
                          const Tensor& commit_counts, const Tensor& lanes, const Tensor& table_rows,
                          ops::KVCacheAppendPrefixExecutionEnvelope envelope) {
     {
-        const auto& target         = state.execution.parameters.model.config().text;
-        const auto& config         = *state.execution.parameters.model.config().draft;
+        const auto& target = qwen3_5::detail::qwen_parameters(state.execution).model.config().text;
+        const auto& config =
+            *qwen3_5::detail::qwen_parameters(state.execution).model.config().draft;
         const std::int32_t width   = features.ne[1];
         const std::int32_t batch   = features.ne[2];
         const std::int32_t columns = width * batch;
@@ -133,7 +159,7 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
             if (!state.execution.io.dflash_prefill) {
                 throw std::logic_error("DFlash prefill count storage is unavailable");
             }
-            local_counts = state.execution.io.dflash_prefill->produced_count;
+            local_counts = state.execution.io.dflash_prefill->local_append_count;
             ops::set_i32_scalar(local_counts, dimension(config.sliding_window.value_or(0)),
                                 state.execution.device.stream);
         }
@@ -149,12 +175,60 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
         project(input.view(
                     {dimension(target.hidden_size * std::uint64_t(config.target_layer_ids.size())),
                      projected_width * batch}),
-                state.execution.parameters.draft->feature_projection, projected,
-                state.execution.work, state.execution.device.stream);
-        ops::rmsnorm(projected, state.execution.parameters.draft->context_norm, config.rms_norm_eps,
-                     false, context, state.execution.device.stream);
+                qwen3_5::detail::qwen_parameters(state.execution).draft->feature_projection,
+                projected, state.execution.work, state.execution.device.stream);
+        ops::rmsnorm(projected,
+                     qwen3_5::detail::qwen_parameters(state.execution).draft->context_norm,
+                     config.rms_norm_eps, false, context, state.execution.device.stream);
 
-        if (config.dflash2) {
+        // The fused materialization writes a BF16/FP16 ring only; an int8 ring takes the per-layer
+        // path, whose append encodes.
+        const bool int8_ring = config.dflash2 && dflash_state(state).local_layer(0).int8;
+        if (config.dflash2 &&
+            (int8_ring ||
+             !fused_context(*qwen3_5::detail::qwen_parameters(state.execution).draft))) {
+            // Every DFlash2 layer is local and the context holds only the local window: per layer
+            // K/V projections, the key norm and RoPE, appended to the layer's cyclic cache.
+            const Tensor local_positions =
+                replace_local_window ? positions.slice(0, local_offset, local_width) : positions;
+            const int layer_columns = local_width * batch;
+            for (int layer = 0; layer < dimension(config.num_hidden_layers); ++layer) {
+                auto layer_scope   = state.execution.work.scope();
+                const auto& weight = qwen3_5::detail::qwen_parameters(state.execution)
+                                         .draft->layers.at(static_cast<std::size_t>(layer));
+                auto layer_roots = workspace::dflash_context_layer(state.execution.work, target,
+                                                                   config, layer_columns);
+                Tensor key_raw   = layer_roots.key_raw.view(
+                    {dimension(config.attention.head_dim),
+                       dimension(config.attention.num_key_value_heads), layer_columns});
+                Tensor value = layer_roots.value.view(
+                    {dimension(config.attention.head_dim),
+                     dimension(config.attention.num_key_value_heads), layer_columns});
+                Tensor key_flat =
+                    key_raw.view({dimension(config.attention.key_width()), layer_columns});
+                Tensor value_flat =
+                    value.view({dimension(config.attention.key_width()), layer_columns});
+                ops::linear_pair(context, weight.context_key.weight, weight.context_value.weight,
+                                 key_flat, value_flat, state.execution.device.stream);
+                Tensor key = layer_roots.key.view({dimension(config.attention.head_dim),
+                                                   dimension(config.attention.num_key_value_heads),
+                                                   layer_columns});
+                ops::rmsnorm(key_raw, weight.key_norm, config.rms_norm_eps, false, key,
+                             state.execution.device.stream);
+                ops::rope(local_positions.view({layer_columns}),
+                          dimension(config.attention.head_dim), config.rope_theta, key,
+                          state.execution.device.execution_view());
+                ops::kv_cache_append_prefix(
+                    key.view({dimension(config.attention.head_dim),
+                              dimension(config.attention.num_key_value_heads), local_width, batch}),
+                    value.view({dimension(config.attention.head_dim),
+                                dimension(config.attention.num_key_value_heads), local_width,
+                                batch}),
+                    local_positions.view({local_width, batch}), local_counts, lanes,
+                    local_envelope, dflash_state(state).local_layer(layer),
+                    state.execution.device.stream);
+            }
+        } else if (config.dflash2) {
             std::array<ops::ContextKVMaterializeLayerView, ops::kContextKVMaterializeLayers> layers;
             if (config.num_hidden_layers != layers.size() ||
                 config.local_layer_count() != layers.size() || config.rms_norm_eps != 1e-6F ||
@@ -163,7 +237,8 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
                     "masked draft context: config is outside the fused materialization contract");
             }
             for (int layer = 0; layer < dimension(config.num_hidden_layers); ++layer) {
-                const auto& weights = state.execution.parameters.draft->layers[layer];
+                const auto& weights =
+                    qwen3_5::detail::qwen_parameters(state.execution).draft->layers[layer];
                 layers[layer]       = {weights.context_key.weight, weights.context_value.weight,
                                        weights.key_norm, dflash_state(state).local_layer(layer)};
             }
@@ -176,8 +251,8 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
         } else {
             for (int layer = 0; layer < dimension(config.num_hidden_layers); ++layer) {
                 auto layer_scope = state.execution.work.scope();
-                const auto& weight =
-                    state.execution.parameters.draft->layers.at(static_cast<std::size_t>(layer));
+                const auto& weight = qwen3_5::detail::qwen_parameters(state.execution)
+                                         .draft->layers.at(static_cast<std::size_t>(layer));
                 const bool local_layer =
                     config.layer_types[layer] == DraftAttentionKind::SlidingAttention;
                 const int layer_width   = local_layer ? local_width : width;
@@ -210,7 +285,7 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
                              state.execution.device.stream);
                 ops::rope(layer_positions.view({layer_columns}),
                           dimension(config.attention.head_dim), config.rope_theta, key,
-                          state.execution.device.stream);
+                          state.execution.device.execution_view());
                 Tensor key_batch =
                     key.view({dimension(config.attention.head_dim),
                               dimension(config.attention.num_key_value_heads), layer_width, batch});
@@ -240,8 +315,8 @@ void prepare_dynamic_branch(ExecutionCore& execution, const Tensor& residual, co
     auto scope      = execution.work.scope();
     const int width = residual.ne[1], batch = residual.ne[2];
     WorkspaceArena scratch(execution.work.alloc_bytes(
-        ops::rmsnorm_dynamic_grouped_conv_prepare_workspace_capacity_bytes(width, width, batch,
-                                                                           batch)));
+        ops::rmsnorm_dynamic_grouped_conv_prepare_workspace_capacity_bytes(
+            weights.kernel_projection.weight.qtype, width, width, batch, batch)));
     ops::rmsnorm_dynamic_grouped_conv_prepare(
         residual, norm, eps, weights.base_kernel, weights.kernel_projection.weight, branch.prepared,
         branch.finish_delta, scratch, execution.device.stream);
@@ -254,16 +329,17 @@ void finish_dynamic_branch(ExecutionCore& execution, const Tensor& input,
     const int width = input.ne[1], batch = input.ne[2];
     WorkspaceArena scratch(
         execution.work.alloc_bytes(ops::linear_dynamic_grouped_conv_add_workspace_capacity_bytes(
-            input.ne[0], width, width, batch, batch)));
+            projection.weight.qtype, input.ne[0], width, width, batch, batch)));
     ops::linear_dynamic_grouped_conv_add(input, projection.weight, weights.base_kernel,
                                          finish_delta, residual, scratch, execution.device.stream);
 }
 
 void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& frame, int batch,
                            int k, DFlashEnvelopes envelopes) {
-    if (state.execution.parameters.model.config().draft->dflash2) {
-        const auto& target = state.execution.parameters.model.config().text;
-        const auto& config = *state.execution.parameters.model.config().draft;
+    if (qwen3_5::detail::qwen_parameters(state.execution).model.config().draft->dflash2) {
+        const auto& target = qwen3_5::detail::qwen_parameters(state.execution).model.config().text;
+        const auto& config =
+            *qwen3_5::detail::qwen_parameters(state.execution).model.config().draft;
         if (config.rms_norm_eps != 1e-6F || config.rope_theta != 1e7F) {
             throw std::invalid_argument(
                 "DFlash2: fused norm/RoPE requires epsilon=1e-6 and theta=1e7");
@@ -274,7 +350,7 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
         const int mask_columns         = k * batch;
         auto& work                     = state.execution.work;
         const cudaStream_t stream      = state.execution.device.stream;
-        const DraftParameters& weights = *state.execution.parameters.draft;
+        const DraftParameters& weights = *qwen3_5::detail::qwen_parameters(state.execution).draft;
         Tensor anchors                 = frame.anchors.slice(0, 0, batch);
         Tensor frontiers               = frame.execution_frontiers.slice(0, 0, batch);
         Tensor valid_columns           = frame.proposal_valid_columns.slice(0, 0, batch);
@@ -286,7 +362,8 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
                                   dimension(config.mask_token_id), ids, positions, stream);
         Tensor residual = work.alloc(DType::BF16, {dimension(target.hidden_size), width, batch});
         Tensor flat_residual = residual.view({dimension(target.hidden_size), columns});
-        ops::embedding(ids.view({columns}), state.execution.parameters.text.token_embedding,
+        ops::embedding(ids.view({columns}),
+                       qwen3_5::detail::qwen_parameters(state.execution).text.token_embedding,
                        flat_residual, stream);
         for (std::size_t layer_index = 0; layer_index < weights.layers.size(); ++layer_index) {
             const auto& layer = weights.layers[layer_index];
@@ -310,9 +387,20 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
                     query.view({dimension(config.attention.query_width()), columns});
                 Tensor key_flat   = key.view({dimension(config.attention.key_width()), columns});
                 Tensor value_flat = value.view({dimension(config.attention.key_width()), columns});
-                ops::attn_input_proj(branch.prepared.view({dimension(target.hidden_size), columns}),
-                                     layer.query_key_value.weight, query_flat, key_flat, value_flat,
-                                     stream);
+                if (fused_q8(layer.query_key_value.weight)) {
+                    ops::attn_input_proj(
+                        branch.prepared.view({dimension(target.hidden_size), columns}),
+                        layer.query_key_value.weight, query_flat, key_flat, value_flat, stream);
+                } else {
+                    const std::array<ops::ProjectionOutput, 3> outputs{{
+                        {&query_flat, 0, dimension(config.attention.query_width())},
+                        {&key_flat, 0, dimension(config.attention.key_width())},
+                        {&value_flat, 0, dimension(config.attention.key_width())},
+                    }};
+                    ops::segmented_projection(
+                        branch.prepared.view({dimension(target.hidden_size), columns}),
+                        layer.query_key_value_bank, outputs, work, stream);
+                }
                 ops::rmsnorm_rope(positions, layer.query_norm, layer.key_norm, query, key, stream);
                 Tensor attention = work.alloc(
                     DType::BF16, {dimension(config.attention.head_dim),
@@ -355,19 +443,22 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
             work.alloc(DType::FP32, {dimension(config.dflash2->selector_top_k), mask_columns});
         if (state.execution.proposal_head == ProposalHead::Full) {
             ops::linear_topk(
-                hidden, state.execution.parameters.draft->output_head.weight,
-                dimension(state.execution.parameters.model.resources().public_token_count),
+                hidden, qwen3_5::detail::qwen_parameters(state.execution).draft->output_head.weight,
+                dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                              .model.resources()
+                              .public_token_count),
                 ids_flat, scores, work, stream);
         } else {
-            const auto& head = *state.execution.parameters.proposal;
+            const auto& head = *qwen3_5::detail::qwen_parameters(state.execution).proposal;
             if (head.token_ids) {
                 ops::linear_topk(hidden, head.head.weight, *head.token_ids, ids_flat, scores, work,
                                  stream);
             } else {
-                ops::linear_topk(
-                    hidden, head.head.weight,
-                    dimension(state.execution.parameters.model.resources().public_token_count),
-                    ids_flat, scores, work, stream);
+                ops::linear_topk(hidden, head.head.weight,
+                                 dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                               .model.resources()
+                                               .public_token_count),
+                                 ids_flat, scores, work, stream);
             }
         }
         Tensor projected =
@@ -386,13 +477,14 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
 
 void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& frame,
                         std::int32_t batch_size, std::uint32_t k, DFlashEnvelopes envelopes) {
-    if (state.execution.parameters.model.config().draft->dflash2) {
+    if (qwen3_5::detail::qwen_parameters(state.execution).model.config().draft->dflash2) {
         nvtx::ScopedRange proposal_range(nvtx::Name::DFlashProposal, nvtx::Category::DFlash,
                                          static_cast<std::uint64_t>(k + 1U) * batch_size);
         propose_dflash2_batch(state, frame, batch_size, k, envelopes);
     } else {
-        const auto& target         = state.execution.parameters.model.config().text;
-        const auto& config         = *state.execution.parameters.model.config().draft;
+        const auto& target = qwen3_5::detail::qwen_parameters(state.execution).model.config().text;
+        const auto& config =
+            *qwen3_5::detail::qwen_parameters(state.execution).model.config().draft;
         const std::int32_t width   = static_cast<std::int32_t>(k) + 1;
         const std::int32_t columns = width * batch_size;
         nvtx::ScopedRange proposal_range(nvtx::Name::DFlashProposal, nvtx::Category::DFlash,
@@ -412,14 +504,15 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
                                   state.execution.device.stream);
         Tensor residual =
             state.execution.work.alloc(DType::BF16, {dimension(target.hidden_size), columns});
-        ops::embedding(ids.view({columns}), state.execution.parameters.text.token_embedding,
+        ops::embedding(ids.view({columns}),
+                       qwen3_5::detail::qwen_parameters(state.execution).text.token_embedding,
                        residual, state.execution.device.stream);
 
         for (int layer = 0; layer < dimension(config.num_hidden_layers); ++layer) {
             nvtx::ScopedRange layer_range(nvtx::Name::DFlashLayer, nvtx::Category::DFlash,
                                           static_cast<std::uint64_t>(layer));
-            const auto& weight =
-                state.execution.parameters.draft->layers.at(static_cast<std::size_t>(layer));
+            const auto& weight = qwen3_5::detail::qwen_parameters(state.execution)
+                                     .draft->layers.at(static_cast<std::size_t>(layer));
             {
                 nvtx::ScopedRange attention_range(nvtx::Name::DFlashAttention,
                                                   nvtx::Category::Attention,
@@ -455,7 +548,7 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
                 ops::rmsnorm(key_raw, weight.key_norm, config.rms_norm_eps, false, key,
                              state.execution.device.stream);
                 ops::rope(positions.view({columns}), dimension(config.attention.head_dim),
-                          config.rope_theta, query, key, state.execution.device.stream);
+                          config.rope_theta, query, key, state.execution.device.execution_view());
                 Tensor query_batch = query.view({dimension(config.attention.head_dim),
                                                  dimension(config.attention.num_attention_heads),
                                                  width, batch_size});
@@ -526,33 +619,37 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
         Tensor proposal_hidden =
             state.execution.work.alloc(DType::BF16, {dimension(target.hidden_size),
                                                      static_cast<std::int32_t>(k) * batch_size});
-        ops::rmsnorm(packed, state.execution.parameters.draft->final_norm, config.rms_norm_eps,
-                     false, proposal_hidden, state.execution.device.stream);
+        ops::rmsnorm(packed, qwen3_5::detail::qwen_parameters(state.execution).draft->final_norm,
+                     config.rms_norm_eps, false, proposal_hidden, state.execution.device.stream);
         Tensor flat_drafts = drafts.view({static_cast<std::int32_t>(k) * batch_size});
         if (state.execution.proposal_head == ProposalHead::Full) {
             Tensor logits = state.execution.work.alloc(
                 DType::BF16,
                 {dimension(target.vocab_size), static_cast<std::int32_t>(k) * batch_size});
-            project(proposal_hidden, state.execution.parameters.draft->output_head, logits,
+            project(proposal_hidden,
+                    qwen3_5::detail::qwen_parameters(state.execution).draft->output_head, logits,
                     state.execution.work, state.execution.device.stream);
             ops::argmax(logits, flat_drafts,
-                        dimension(state.execution.parameters.model.resources().public_token_count),
+                        dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                      .model.resources()
+                                      .public_token_count),
                         state.execution.device.stream);
         } else {
-            if (!state.execution.parameters.proposal.has_value()) {
+            if (!qwen3_5::detail::qwen_parameters(state.execution).proposal.has_value()) {
                 throw std::logic_error("optimized DFlash proposal head is unavailable");
             }
-            const auto& proposal = *state.execution.parameters.proposal;
+            const auto& proposal = *qwen3_5::detail::qwen_parameters(state.execution).proposal;
             Tensor logits        = state.execution.work.alloc(
                 DType::BF16, {dimension(proposal.rows), static_cast<std::int32_t>(k) * batch_size});
             project(proposal_hidden, proposal.head, logits, state.execution.work,
                     state.execution.device.stream);
-            ops::argmax(
-                logits, flat_drafts,
-                proposal.token_ids
-                    ? dimension(proposal.rows)
-                    : dimension(state.execution.parameters.model.resources().public_token_count),
-                state.execution.device.stream);
+            ops::argmax(logits, flat_drafts,
+                        proposal.token_ids
+                            ? dimension(proposal.rows)
+                            : dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                            .model.resources()
+                                            .public_token_count),
+                        state.execution.device.stream);
             if (proposal.token_ids)
                 ops::proposal_remap_token_ids(
                     flat_drafts, static_cast<const std::int32_t*>(proposal.token_ids->data),
@@ -602,22 +699,31 @@ auto dflash_decode_batch_body(DFlashBatchContext& state, std::int32_t batch_size
 
         state.execution.work.reset();
         Tensor compact_features = state.execution.work.alloc(
-            DType::BF16, {dimension(state.execution.parameters.draft->feature_projection.weight.k),
+            DType::BF16, {dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                        .draft->feature_projection.weight.k),
                           width, batch_size});
-        ops::prepare_ragged_prefix(dflash_state(state).pending_features, active_lanes,
-                                   context_starts, frontiers, compact_features, append_positions,
-                                   append_counts, state.execution.device.stream);
+        ops::prepare_ragged_prefix(pending_features_of(state), active_lanes, context_starts,
+                                   frontiers, compact_features, append_positions, append_counts,
+                                   state.execution.device.stream);
         append_context_impl(state, compact_features, append_positions, append_counts,
                             state_destinations, dflash_rows, envelopes.append);
 
         propose_batch_impl(state, frame, batch_size, k, envelopes);
         ops::speculative_prepare_verify_inputs(anchors, drafts, frontiers, extents, verify_ids,
                                                target_positions, state.execution.device.stream);
+        // The drafts reach the host now, stamped with the round's epoch, so the host computes a
+        // constrained row's verify masks along them while the target verifies.
+        ops::copy_to_pinned_host(state.host_egress.drafts.data(), drafts.data, drafts.bytes(),
+                                 state.execution.device.stream);
+        ops::copy_to_pinned_host(&state.host_egress.drafts_epoch,
+                                 static_cast<const unsigned char*>(frame.ingress.data) +
+                                     offsetof(qwen3_5::DFlashDecodeIngress, round_epoch),
+                                 sizeof(std::uint32_t), state.execution.device.stream);
 
-        TextContext card(state.execution.device, state.execution.parameters, state.execution.work,
-                         {}, state.execution.linear_attention, state.execution.io,
-                         state.execution.prefill_hidden, state.execution.prefill_chunk, 0, {},
-                         &state.text_cache);
+        TextContext card(state.execution.device, qwen3_5::detail::qwen_parameters(state.execution),
+                         state.execution.work, {}, state.execution.state_images.linear(),
+                         state.execution.io, state.execution.prefill_hidden,
+                         state.execution.prefill_chunk, 0, {}, &state.text_cache);
         DFlashFeatureSink sink =
             batch_feature_sink_impl(state, active_lanes, valid_columns, width, batch_size);
         {
@@ -655,9 +761,9 @@ auto dflash_decode_batch_body(DFlashBatchContext& state, std::int32_t batch_size
                 },
                 target_envelope);
         }
-        CUDA_CHECK(cudaMemcpyAsync(&state.host_egress, frame.egress.data,
-                                   sizeof(qwen3_5::DFlashDecodeEgress), cudaMemcpyDeviceToHost,
-                                   state.execution.device.stream));
+        ops::copy_to_pinned_host(&state.host_egress, frame.egress.data,
+                                 qwen3_5::kDFlashDecodeRoundEgressBytes,
+                                 state.execution.device.stream);
     };
 }
 
@@ -698,4 +804,4 @@ void dflash_decode_batch(DFlashBatchContext& state, std::int32_t batch_size, std
     run_prepared(state, executable, body);
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

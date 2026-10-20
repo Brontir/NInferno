@@ -14,7 +14,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kKVCacheInt8HeadDim = 256;
 inline constexpr int kKVCacheInt8Group   = 64;
@@ -66,19 +66,4 @@ __device__ __forceinline__ std::int8_t kv_cache_int8_quant_code(float x, float i
     return static_cast<std::int8_t>(q);
 }
 
-__device__ __forceinline__ int4 kv_cache_int8_dequant_i8x8_from(const std::int8_t* codes8,
-                                                                float s) {
-    const int2 raw       = load_vec<int2>(codes8);
-    const std::int8_t* c = reinterpret_cast<const std::int8_t*>(&raw);
-    unsigned packed[4];
-#pragma unroll
-    for (int i = 0; i < 4; ++i) {
-        const float x0 = static_cast<float>(c[2 * i]) * s;
-        const float x1 = static_cast<float>(c[2 * i + 1]) * s;
-        packed[i]      = pack_bf16x2(x0, x1);
-    }
-    return make_int4(static_cast<int>(packed[0]), static_cast<int>(packed[1]),
-                     static_cast<int>(packed[2]), static_cast<int>(packed[3]));
-}
-
-} // namespace ninfer::ops
+} // namespace ninferno::ops

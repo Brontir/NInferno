@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import socket
@@ -22,12 +21,13 @@ from tools.bench.ttft.cases import CASES, CaseDefinition
 from tools.bench.ttft.profiles import COMMON_ARGS, PROFILE_ARGS
 from tools.bench.ttft.render import write_campaign_summary
 from tools.bench.ttft.report import ReportError
+from tools.ninferno_serve.health import ServeNotReady, wait_healthy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SERVE = REPO_ROOT / "build/apps/ninfer-serve"
-WEIGHTS = REPO_ROOT / "out/qwen3_8_27b_nvfp4.ninfer"
-RAM_WEIGHTS_ROOT = Path("/dev/shm/ninfer-artifacts")
+SERVE = REPO_ROOT / "build/apps/ninferno-serve"
+WEIGHTS = REPO_ROOT / "out/qwen3_8_27b_nvfp4.ninferno"
+RAM_WEIGHTS_ROOT = Path("/dev/shm/ninferno-artifacts")
 RUNNER = REPO_ROOT / "tools/bench/run_serve_ttft.py"
 OUTPUT_ROOT = REPO_ROOT / "profiles/bench/ttft/qwen3_8_27b_nvfp4-fp8"
 HOST = "127.0.0.1"
@@ -102,7 +102,7 @@ def _stage_weights() -> tuple[Path, dict[str, Any]]:
     fingerprint = (
         f"{status.st_dev:x}-{status.st_ino:x}-{status.st_size:x}-{status.st_mtime_ns:x}"
     )
-    cached = RAM_WEIGHTS_ROOT / f"qwen3_8_27b_nvfp4-{fingerprint}.ninfer"
+    cached = RAM_WEIGHTS_ROOT / f"qwen3_8_27b_nvfp4-{fingerprint}.ninferno"
     record: dict[str, Any] = {
         "kind": "tmpfs",
         "source": str(source),
@@ -215,49 +215,22 @@ class RunningServe:
 
     def _wait_ready(self) -> None:
         if self.process is None:
-            raise CampaignError("ninfer-serve was not started")
+            raise CampaignError("ninferno-serve was not started")
         started = time.monotonic()
-        next_notice = started + 5.0
-        deadline = started + self.startup_timeout
-        while True:
-            returncode = self.process.poll()
-            if returncode is not None:
-                detail = _tail(self.log_path)
-                raise CampaignError(
-                    f"ninfer-serve exited during startup with status {returncode}"
-                    + (f"\n{detail}" if detail else "")
-                )
+        next_notice = 5.0
 
-            connection = http.client.HTTPConnection(HOST, PORT, timeout=1.0)
-            try:
-                connection.request("GET", "/health", headers={"Connection": "close"})
-                response = connection.getresponse()
-                body = response.read()
-                if response.status == 200:
-                    try:
-                        value = json.loads(body)
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        value = None
-                    if value == {"status": "ok"}:
-                        print(
-                            f"  serve ready in {time.monotonic() - started:.2f}s",
-                            flush=True,
-                        )
-                        return
-            except (OSError, http.client.HTTPException):
-                pass
-            finally:
-                connection.close()
+        def notice(elapsed: float) -> None:
+            nonlocal next_notice
+            if elapsed >= next_notice:
+                print(f"  loading serve: {elapsed:.0f}s", flush=True)
+                next_notice = elapsed + 5.0
 
-            now = time.monotonic()
-            if now >= deadline:
-                raise CampaignError(
-                    f"timed out waiting for ninfer-serve after {self.startup_timeout:.1f}s"
-                )
-            if now >= next_notice:
-                print(f"  loading serve: {now - started:.0f}s", flush=True)
-                next_notice = now + 5.0
-            time.sleep(0.1)
+        try:
+            wait_healthy(f"http://{HOST}:{PORT}", self.startup_timeout, self.process, notice)
+        except ServeNotReady as error:
+            detail = _tail(self.log_path)
+            raise CampaignError(str(error) + (f"\n{detail}" if detail else "")) from error
+        print(f"  serve ready in {time.monotonic() - started:.2f}s", flush=True)
 
     def stop(self) -> None:
         process = self.process
@@ -345,7 +318,7 @@ def _read_run(path: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise CampaignError(f"cannot read run artifact {path}: {error}") from error
-    if not isinstance(value, dict) or value.get("artifact_type") != "ninfer_serve_ttft_run":
+    if not isinstance(value, dict) or value.get("artifact_type") != "ninferno_serve_ttft_run":
         raise CampaignError(f"runner produced an invalid artifact: {path}")
     return value
 
@@ -449,7 +422,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
     manifest: dict[str, Any] = {
-        "artifact_type": "ninfer_serve_ttft_campaign",
+        "artifact_type": "ninferno_serve_ttft_campaign",
         "schema_version": 2,
         "status": "running",
         "created_at": dt.datetime.now().astimezone().isoformat(),

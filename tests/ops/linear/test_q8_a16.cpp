@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace {
-using namespace ninfer::test::linear;
+using namespace ninferno::test::linear;
 
 struct Geometry {
     std::int32_t n;
@@ -32,6 +32,25 @@ int q8_a16_conformance() {
                       64, 65, 79, 80, 81, 95, 96, 97, 127, 128, 129, 256, 1024}) {
             calls.push_back({t});
         }
+        if (shape.n == 2048 && shape.k == 4096) {
+            for (int t : {895, 896, 897}) calls.push_back({t});
+        }
+        if (shape.n == 6144 && shape.k == 5120) {
+            for (int t : {191, 192, 193}) calls.push_back({t});
+        }
+        if (shape.k == 4608) {
+            for (int t : {6, 11, 12, 13, 14, 19, 20, 21, 27, 28, 29}) calls.push_back({t});
+            if (shape.n == 2048) {
+                for (int t : {870, 871, 872}) calls.push_back({t});
+            }
+            if (shape.n == 4608) {
+                for (int t : {255, 257}) calls.push_back({t});
+            }
+        }
+        if (shape.n == 9216 && shape.k == 2048) {
+            for (int t : {12, 13, 14}) calls.push_back({t});
+        }
+        if (shape.n == 248320) calls.push_back({34});
         if (shape.n == 2048 && shape.k == 16384) {
             for (int t : {383,  384,  385,  479,  480,  481,  639,  640,  641,  703,
                           704,  705,  959,  960,  961,  1343, 1344, 1345, 1679, 1680,
@@ -40,11 +59,11 @@ int q8_a16_conformance() {
             }
         }
         for (int t : {1, 8, 16, 32, 48, 64, 65, 128}) {
-            calls.push_back({t, CallForm::Policy, ninfer::ops::LinearPolicy::A16Only, true});
+            calls.push_back({t, CallForm::Policy, ninferno::ops::LinearPolicy::A16Only, true});
         }
         for (int t : {1, 16, 64, 128}) calls.push_back({t, CallForm::A16Convenience});
-        calls.push_back({17, CallForm::Policy, ninfer::ops::LinearPolicy::AllowA8});
-        calls.push_back({64, CallForm::Policy, ninfer::ops::LinearPolicy::AllowA4});
+        calls.push_back({17, CallForm::Policy, ninferno::ops::LinearPolicy::AllowA8});
+        calls.push_back({64, CallForm::Policy, ninferno::ops::LinearPolicy::AllowA4});
         failures += run_shape("Q8_A16", ActivationCompute::A16, make_q8_g32_fp16_weight,
                               {shape.n, shape.k, shape.seed, Comparison::Sampled, true, calls});
     }
@@ -53,7 +72,7 @@ int q8_a16_conformance() {
 } // namespace
 
 int main() {
-    if (!ninfer::test::linear::cuda_available()) {
+    if (!ninferno::test::linear::cuda_available()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }

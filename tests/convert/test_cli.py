@@ -26,15 +26,15 @@ def test_cli_custom_sources_method_template_and_shards(tmp_path):
         "intermediate_size": 24,
         "rope_parameters": {"partial_rotary_factor": 0.5, "mrope_section": [1, 1, 0]},
     }
-    (source / "config.json").write_text(json.dumps(config))
+    (source / "config.json").write_text(json.dumps(config), encoding="utf-8")
     for name, value in {
         "tokenizer.json": {"model": {"vocab": {str(i): i for i in range(6)}}},
         "tokenizer_config.json": {},
         "generation_config.json": {},
     }.items():
-        (source / name).write_text(json.dumps(value))
+        (source / name).write_text(json.dumps(value), encoding="utf-8")
     template = tmp_path / "template.jinja"
-    template.write_text("custom {{ messages }}")
+    template.write_text("custom {{ messages }}", encoding="utf-8")
     recipe = tmp_path / "recipe.py"
     recipe.write_text("""import torch
 from tools.convert.sources.logical import array_source
@@ -49,8 +49,8 @@ def configure(model, recipe, sources):
     recipe.assign(("text/token_embedding", "text/layers/0/mlp/gate", "text/layers/0/mlp/up"), method=custom)
     for role, format in zip(("query", "key", "gate", "value"), ("q4_g64_fp16", "q5_g64_fp16", "q6_g64_fp16", "q8_g32_fp16")):
         recipe.assign("text/layers/0/attention/" + role, format=format, method="grouped_absmax")
-""")
-    output = tmp_path / "custom.ninfer"
+""", encoding="utf-8")
+    output = tmp_path / "custom.ninferno"
     command = [
         sys.executable,
         "-B",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import struct
 
@@ -66,11 +65,11 @@ def _rewrite(path: Path, directory: dict) -> None:
 
 
 def test_single_file_known_header_payload_and_refs(tmp_path):
-    path = tmp_path / "test.ninfer"
+    path = tmp_path / "test.ninferno"
     directory = _small(path)
     raw = path.read_bytes()
     magic, json_bytes, identity = HEADER.unpack(raw[:32])
-    assert magic == b"NINFER\0\3" and len(identity) == 16
+    assert magic == MAGIC and len(identity) == 16
     payload_offset = (32 + json_bytes + 4095) // 4096 * 4096
     assert payload_offset == 4096
     assert raw[payload_offset : payload_offset + 8] == struct.pack(
@@ -88,7 +87,7 @@ def test_single_file_known_header_payload_and_refs(tmp_path):
 
 
 def test_shards_use_recorded_names_and_open_only_when_needed(tmp_path):
-    path = tmp_path / "large.ninfer"
+    path = tmp_path / "large.ninferno"
     payload = bytes(range(251)) * 110
     specs = [ResourceSpec("data", len(payload))]
     with ArtifactWriter(
@@ -105,9 +104,9 @@ def test_shards_use_recorded_names_and_open_only_when_needed(tmp_path):
         identity = writer.artifact_id
     assert [f["path"] for f in directory["files"]] == [
         None,
-        "large.ninfer.part-0001",
-        "large.ninfer.part-0002",
-        "large.ninfer.part-0003",
+        "large.ninferno.part-0001",
+        "large.ninferno.part-0002",
+        "large.ninferno.part-0003",
     ]
     for index in range(1, 4):
         part = tmp_path / directory["files"][index]["path"]
@@ -133,7 +132,7 @@ def test_shards_use_recorded_names_and_open_only_when_needed(tmp_path):
 
 @pytest.mark.parametrize("failure", ["missing", "producer"])
 def test_incomplete_or_failed_output_is_not_published(tmp_path, failure):
-    path = tmp_path / "failed.ninfer"
+    path = tmp_path / "failed.ninferno"
     with pytest.raises((ArtifactError, RuntimeError)):
         with ArtifactWriter(
             path,
@@ -149,7 +148,7 @@ def test_incomplete_or_failed_output_is_not_published(tmp_path, failure):
 
 
 def test_existing_output_is_preserved(tmp_path):
-    path = tmp_path / "existing.ninfer"
+    path = tmp_path / "existing.ninferno"
     path.write_bytes(b"old")
     with pytest.raises(FileExistsError):
         _small(path)
@@ -169,14 +168,14 @@ def test_existing_output_is_preserved(tmp_path):
     ],
 )
 def test_directory_rejects_invalid_structure(tmp_path, change):
-    directory = _small(tmp_path / "base.ninfer")
+    directory = _small(tmp_path / "base.ninferno")
     change(directory)
     with pytest.raises(ArtifactError):
         parse_directory(directory)
 
 
 def test_unknown_codec_is_deferred_until_object_is_consumed(tmp_path):
-    path = tmp_path / "future.ninfer"
+    path = tmp_path / "future.ninferno"
     directory = _small(path)
     directory["objects"][0]["format"] = "future_codec"
     _rewrite(path, directory)
@@ -202,14 +201,14 @@ def test_default_file_limit_accounts_for_framing():
             }
         ],
     }
-    directory, _, start = layout_directory("large.ninfer", description, size)
+    directory, _, start = layout_directory("large.ninferno", description, size)
     assert len(directory.files) == 2
     assert start + directory.files[0].payload_bytes <= size
     assert 4096 + directory.files[1].payload_bytes <= size
     description["objects"][0]["bytes"] = size - start
     directory, _, same_start = layout_directory(
-        "small.ninfer", description, size - start
+        "small.ninferno", description, size - start
     )
     assert same_start == start and len(directory.files) == 1
     with pytest.raises(ArtifactError):
-        layout_directory("small.ninfer", description, 1 << 64)
+        layout_directory("small.ninferno", description, 1 << 64)

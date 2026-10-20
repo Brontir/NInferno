@@ -2,7 +2,7 @@
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/program/program.h"
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 // The common request controller is instantiated once for this concrete model implementation.
 struct RuntimeTypes {
@@ -42,4 +42,4 @@ struct RuntimeTypes {
     using Program                    = qwen3_5::Program;
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

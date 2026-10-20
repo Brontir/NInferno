@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 template <class Clock = std::chrono::steady_clock>
 [[nodiscard]] std::uint64_t planning_now_ns() noexcept {
@@ -127,4 +127,4 @@ private:
     MaterializationStopReason reason_ = MaterializationStopReason::TimeBudget;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

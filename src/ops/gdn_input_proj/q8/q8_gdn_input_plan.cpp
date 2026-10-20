@@ -1,39 +1,37 @@
-#include "core/weight.h"
 #include "ops/gdn_input_proj/q8/q8_gdn_input_plan.h"
+#include "core/weight.h"
 
+#include "ninferno/ops/prefill_routes.h"
+#include "ops/common/column_routes.h"
 #include "ops/gdn_input_proj/q8/q8_gdn_input_kernels.h"
 
 #include <array>
-#include <limits>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
-constexpr std::int32_t kAnyCols = std::numeric_limits<std::int32_t>::max();
-
-struct RouteSpec {
-    std::int32_t first;
-    std::int32_t last;
-    Q8GdnInputScheduleId schedule;
-};
+using RouteSpec = ColumnRoute<Q8GdnInputScheduleId>;
 
 constexpr std::array<RouteSpec, 3> kRoutes{{
     {1, 1, Q8GdnInputScheduleId::DecodeR8Direct},
     {2, 96, Q8GdnInputScheduleId::SplitKMmaDirect},
-    {97, kAnyCols, Q8GdnInputScheduleId::MmaR64C128},
+    {97, kAnyColumns, Q8GdnInputScheduleId::MmaR64C128},
 }};
 
-constexpr bool catalog_is_closed() {
-    std::int64_t expected = 1;
-    for (const RouteSpec& route : kRoutes) {
-        if (route.first != expected || route.first > route.last) { return false; }
-        expected = static_cast<std::int64_t>(route.last) + 1;
-    }
-    return expected == static_cast<std::int64_t>(kAnyCols) + 1;
-}
+// Prefill route profile. The split-K route sums a column's K in another order than the MMA
+// routes, so it is kept to the decode/verify widths (T <= 16): a prefill chunk of any size must
+// give a token the same bytes. The split-K band's prefill-sized calls take the MMA contraction on
+// a narrow tile instead.
+constexpr std::array<RouteSpec, 4> kPrefillRoutes{{
+    {1, 1, Q8GdnInputScheduleId::DecodeR8Direct},
+    {2, 16, Q8GdnInputScheduleId::SplitKMmaDirect},
+    {17, 96, Q8GdnInputScheduleId::MmaPrefillSmallT},
+    {97, kAnyColumns, Q8GdnInputScheduleId::MmaR64C128},
+}};
 
-static_assert(catalog_is_closed(), "Q8 GDN input routes must be exact and closed");
+static_assert(column_routes_closed(kRoutes) && column_routes_closed(kPrefillRoutes),
+              "Q8 GDN input routes must be exact and closed");
 
 bool supported_shape(const Q8GdnInputProblem& problem) noexcept {
     return problem.input_rows == 2048 && problem.qkv_rows == 8192 && problem.z_rows == 4096 &&
@@ -41,30 +39,6 @@ bool supported_shape(const Q8GdnInputProblem& problem) noexcept {
 }
 
 } // namespace
-
-const char* q8_gdn_input_schedule_name(Q8GdnInputScheduleId schedule) noexcept {
-    switch (schedule) {
-    case Q8GdnInputScheduleId::DecodeR8Direct:
-        return "gdn_input_proj.q8.decode.r8.direct.k2048.split2";
-    case Q8GdnInputScheduleId::SplitKMmaDirect:
-        return "gdn_input_proj.q8.mma.splitk.direct.k2048";
-    case Q8GdnInputScheduleId::MmaR64C128:
-        return "gdn_input_proj.q8.mma.r64.c128.split2";
-    }
-    return "gdn_input_proj.q8.unknown";
-}
-
-const char* q8_gdn_input_conv_schedule_name(Q8GdnInputConvScheduleId schedule) noexcept {
-    switch (schedule) {
-    case Q8GdnInputConvScheduleId::DecodeFused:
-        return "gdn_input_proj_conv.q8.decode.fused";
-    case Q8GdnInputConvScheduleId::SplitKMmaFused:
-        return "gdn_input_proj_conv.q8.mma.splitk.fused";
-    case Q8GdnInputConvScheduleId::Materialized:
-        return "gdn_input_proj_conv.q8.materialized";
-    }
-    return "gdn_input_proj_conv_snapshot.q8.unknown";
-}
 
 bool q8_gdn_input_admits(const Q8GdnInputProblem& problem) noexcept {
     return supported_shape(problem) && problem.cols > 0;
@@ -74,10 +48,11 @@ Q8GdnInputPlan q8_gdn_input_resolve_plan(const Q8GdnInputProblem& problem) {
     if (!q8_gdn_input_admits(problem)) {
         throw std::invalid_argument("Q8 GDN input: exact problem or column count is not admitted");
     }
-    for (const RouteSpec& route : kRoutes) {
-        if (problem.cols >= route.first && problem.cols <= route.last) { return {route.schedule}; }
-    }
-    throw std::logic_error("Q8 GDN input: admitted problem has no covering route");
+    const auto resolve_from = [&](const auto& routes) -> Q8GdnInputPlan {
+        return {column_route(routes, problem.cols,
+                             "Q8 GDN input: admitted problem has no covering route")};
+    };
+    return prefill_routes_active() ? resolve_from(kPrefillRoutes) : resolve_from(kRoutes);
 }
 
 Q8GdnInputConvPlan q8_gdn_input_conv_resolve_plan(const Q8GdnInputProblem& problem,
@@ -107,8 +82,11 @@ void q8_gdn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& qkv, T
     case Q8GdnInputScheduleId::MmaR64C128:
         q8_gdn_input_mma_r64_c128_launch(x, weight, qkv, z, stream);
         return;
+    case Q8GdnInputScheduleId::MmaPrefillSmallT:
+        q8_gdn_input_mma_prefill_small_t_launch(x, weight, qkv, z, stream);
+        return;
     }
     throw std::logic_error("Q8 GDN input: unknown schedule");
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

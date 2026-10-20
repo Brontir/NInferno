@@ -1,1 +1,1 @@
-"""Offline helpers for the ninfer_bench throughput tool (corpus baking)."""
+"""Offline helpers for the ninferno_bench throughput tool (corpus baking)."""

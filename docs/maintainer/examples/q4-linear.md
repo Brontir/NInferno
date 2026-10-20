@@ -1,119 +1,114 @@
-# Q4 Linear 性能报告：N=6144，K=5120
+# Q4 Linear Performance Report: N=6144, K=5120
 
-2026-09-15 测量。本文记录当前实现的完整 Linear Op 性能，供评估该 shape 和后续调优参考。
+Re-measured on 2026-09-26. This document records the full Linear Op performance after this phase's cleanup, for evaluating this shape and for later tuning.
 
-## 测量对象与条件
+## Measurement Target and Conditions
 
-| 项目 | 本次测量 |
+| Item | This measurement |
 |---|---|
-| 权重 | `Q4_G64_FP16`，row-split layout；每 64 个权重共享一个 FP16 scale |
-| 数学形状 | `W[6144,5120] × X[5120,T] → Y[6144,T]` |
-| 输入、输出与 policy | BF16 输入、BF16 输出，`A16Only` |
-| GPU / 工具链 | NVIDIA GeForce RTX 5090；CUDA 13.1，Release，`sm_120a` |
-| 计时入口 | `ninfer::ops::linear`；每个 CUDA Graph 包含一次完整 Op 调用 |
-| cache / 采样 | 每个样本前清除 256 MiB L2；5 次 warmup、50 次测量，报告 median |
-| 输入 fixture | 使用公开 bench 的 Q4 packed-weight 和 BF16 activation fixture；数值验证另用非均匀权重与 scale |
-| 覆盖 | T=1～128 每个整数；512、1024 两个大 T 锚点；另测部分区间交界 |
+| Weights | `Q4_G64_FP16`, row-split layout; every 64 weights share one FP16 scale |
+| Math shape | `W[6144,5120] × X[5120,T] → Y[6144,T]` |
+| Input, output and policy | BF16 input, BF16 output, `A16Only` |
+| GPU / driver | NVIDIA GeForce RTX 5090; 617.14 |
+| Build / CUDA | Release, `sm_120a`; runtime library 13.4, benchmark compiled with `CUDART_VERSION=13010` |
+| Timing entry | `ninferno::ops::linear`; each CUDA Graph contains one complete Op call |
+| Cache / sampling | 256 MiB L2 flushed before each sample; 5 warmups, 30 measurements, median reported |
+| Input fixture | Public bench Q4 packed-weight and BF16 activation fixture; numerical validation uses separate non-uniform weights and scales |
+| Coverage | Every integer T=1–128, plus 512 and 1024; 130 points in total |
 
-当前被测调用均只有一个 Graph kernel 节点，外部 workspace 为零。测量范围是纯 Linear Op。
+Every measured call has exactly one Graph kernel node and zero external workspace. The measurement scope is the pure Linear Op.
+This run reused incremental build artifacts; `cuda_runtime` in the bench log comes from the compile-time macro, and the actually loaded runtime library version is queried separately.
 
-## 最终耗时曲线
+## Final Latency Curve
 
-![Q4 Linear 最终耗时曲线](q4-linear.svg)
+![Q4 Linear final latency curve](q4-linear.svg)
 
-左图包含全部 128 个实测点，圆点标出重点 T，橙色强调 T=1、4、8。
-右图分别展示 512、1024；图中的 TC 百分比采用下文的逻辑算力口径。
-图中连线仅连接相邻实测点，重点点位及额外交界点的数据见下文。
+The left plot contains all 128 measured points; dots mark the key T values, and orange highlights T=1, 4, 8; lines connect only adjacent measured points.
+The right plot shows 512 and 1024 separately; the TC percentage uses the logical-throughput definition below.
 
-## 逻辑带宽与 Tensor Core 利用率
+## Logical Bandwidth and Tensor Core Utilization
 
-权重包含 `6144 × 5120 / 64 × 34 = 16,711,680` 字节的 code 和 scale。
-沿用 [Linear bench 指标定义](../linear-benchmark.md#5-数学工作量与-route-neutral-指标)：
+The weights contain `6144 × 5120 / 64 × 34 = 16,711,680` bytes of codes and scales.
+Following the [Linear bench metric definitions](../linear-benchmark.md#5-math-workload-and-route-neutral-metrics):
 
 ```text
 model_bytes = 16,711,680 + 2 × 5120 × T + 2 × 6144 × T
-逻辑带宽 GB/s = model_bytes / seconds / 1e9
-带宽利用率 = 逻辑带宽 / 1792 GB/s × 100%
+logical bandwidth GB/s = model_bytes / seconds / 1e9
+bandwidth utilization = logical bandwidth / 1792 GB/s × 100%
 
-有效算力 TFLOP/s = 2 × 6144 × 5120 × T / seconds / 1e12
-TC 利用率 = 有效算力 / 209.5 TFLOP/s × 100%
+effective throughput TFLOP/s = 2 × 6144 × 5120 × T / seconds / 1e12
+TC utilization = effective throughput / 209.5 TFLOP/s × 100%
 ```
 
-分母取自 bench 的 RTX 5090 固定规格常量。T=1 使用 GEMV，TC 利用率填 `—`；
-T≥2 的最终路径均使用 BF16 输入、FP32 累加的 dense MMA，使用对应的 **209.5 TFLOP/s** 峰值。
-Q4 权重格式不改变这个峰值的精度归属。当前 bench 的 Q4 行未填充 TC 字段，本文按上述公式
-补算；不加入解码、padding 或额外 tile 工作量。
+The denominators come from the bench's fixed RTX 5090 spec constants. T=1 uses GEMV, so TC utilization is `—`;
+all current paths for T≥2 use dense MMA with BF16 input and FP32 accumulation, matching the **209.5 TFLOP/s** peak.
+The bench's Q4 rows leave the TC fields empty; this document backfills them with the formulas above, without adding decode, padding, or extra tile work.
+These are utilizations under the logical-workload definition, not hardware-counter measurements, and the remaining percentage is not all recoverable time.
 
-这些百分比衡量完成逻辑工作量的效率。大 T 下逻辑带宽百分比下降，不单独作为访存效率不足的判断。
-T=1 的逻辑带宽为 **1071.6 GB/s，标称带宽利用率 59.80%**；若采用 bench 另列的
-1674.5 GB/s 实测持续读上限，则为 **64.00%**，对应 bench 的 `READ_%` 口径。
+At T=1 the logical bandwidth is **1069.4 GB/s, a nominal bandwidth utilization of 59.68%**; against the
+1674.5 GB/s sustained-read reference that the bench lists separately it is **63.86%**, corresponding to the `READ_%` definition.
 
-| T | 延迟 µs | 逻辑带宽 GB/s | 带宽利用率 | 有效算力 TFLOP/s | TC 利用率 |
+| T | Latency µs | Logical bandwidth GB/s | Bandwidth utilization | Effective throughput TFLOP/s | TC utilization |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 15.616 | 1071.6 | 59.80% | 4.03 | — |
-| 2 | 23.808 | 703.8 | 39.28% | 5.29 | 2.52% |
-| 3 | 23.808 | 704.8 | 39.33% | 7.93 | 3.78% |
-| 4 | 23.808 | 705.7 | 39.38% | 10.57 | 5.05% |
-| 5 | 23.808 | 706.7 | 39.43% | 13.21 | 6.31% |
+| 1 | 15.648 | 1069.4 | 59.68% | 4.02 | — |
+| 2 | 21.792 | 768.9 | 42.91% | 5.77 | 2.76% |
+| 3 | 21.696 | 773.4 | 43.16% | 8.70 | 4.15% |
+| 4 | 21.792 | 771.0 | 43.02% | 11.55 | 5.51% |
+| 5 | 23.552 | 714.3 | 39.86% | 13.36 | 6.38% |
 | 6 | 23.808 | 707.6 | 39.49% | 15.86 | 7.57% |
 | 7 | 23.808 | 708.6 | 39.54% | 18.50 | 8.83% |
-| 8 | 23.840 | 708.6 | 39.54% | 21.11 | 10.08% |
-| 12 | 27.904 | 608.6 | 33.96% | 27.06 | 12.91% |
-| 16 | 29.792 | 573.0 | 31.98% | 33.79 | 16.13% |
-| 20 | 38.176 | 449.6 | 25.09% | 32.96 | 15.73% |
-| 24 | 40.224 | 428.9 | 23.93% | 37.54 | 17.92% |
-| 28 | 54.240 | 319.7 | 17.84% | 32.48 | 15.50% |
-| 32 | 52.512 | 332.0 | 18.53% | 38.34 | 18.30% |
-| 40 | 58.656 | 300.3 | 16.76% | 42.90 | 20.48% |
-| 48 | 58.656 | 303.3 | 16.93% | 51.48 | 24.58% |
-| 56 | 60.288 | 298.1 | 16.64% | 58.44 | 27.89% |
-| 64 | 58.368 | 311.0 | 17.36% | 68.99 | 32.93% |
-| 80 | 66.880 | 276.8 | 15.45% | 75.26 | 35.92% |
-| 96 | 66.848 | 282.3 | 15.76% | 90.35 | 43.13% |
-| 112 | 75.040 | 256.3 | 14.30% | 93.90 | 44.82% |
-| 128 | 79.136 | 247.6 | 13.82% | 101.76 | 48.57% |
-| 512 | 212.224 | 133.1 | 7.43% | 151.78 | 72.45% |
-| 1024 | 382.240 | 104.1 | 5.81% | 168.54 | 80.45% |
+| 8 | 23.744 | 711.4 | 39.70% | 21.20 | 10.12% |
+| 12 | 27.936 | 607.9 | 33.92% | 27.03 | 12.90% |
+| 16 | 29.984 | 569.4 | 31.77% | 33.57 | 16.02% |
+| 20 | 34.304 | 500.3 | 27.92% | 36.68 | 17.51% |
+| 24 | 37.952 | 454.6 | 25.37% | 39.79 | 18.99% |
+| 28 | 38.208 | 453.9 | 25.33% | 46.11 | 22.01% |
+| 32 | 38.656 | 451.0 | 25.17% | 52.08 | 24.86% |
+| 40 | 46.112 | 382.0 | 21.31% | 54.58 | 26.05% |
+| 48 | 48.192 | 369.2 | 20.60% | 62.66 | 29.91% |
+| 56 | 48.416 | 371.2 | 20.72% | 72.77 | 34.73% |
+| 64 | 47.840 | 379.5 | 21.18% | 84.17 | 40.18% |
+| 80 | 60.704 | 305.0 | 17.02% | 82.91 | 39.58% |
+| 96 | 64.800 | 291.3 | 16.25% | 93.21 | 44.49% |
+| 112 | 77.088 | 249.5 | 13.92% | 91.41 | 43.63% |
+| 128 | 81.184 | 241.4 | 13.47% | 99.20 | 47.35% |
+| 512 | 212.192 | 133.1 | 7.43% | 151.81 | 72.46% |
+| 1024 | 381.696 | 104.2 | 5.82% | 168.78 | 80.57% |
 
-## 曲线解读与验证
+## Curve Interpretation and Validation
 
-[shape 实现](../../../src/ops/linear/q4/shapes/n6144_k5120.cu) 使用 GEMV、K-split 容量和分块 MMA：
+The [shape implementation](../../../src/ops/linear/q4/shapes/n6144_k5120.cu) chooses among GEMV, in-CTA sliced-K, and plain MMA;
+the source is authoritative for the exact configuration.
 
-- T=1 的 GEMV 为 15.616µs；T=2 为 23.808µs，是小 T 图中最大的相邻涨幅（52.46%）。
-  两者采用不同的计算组织，当前保留了更低延迟的单 token 专用路径。
-- T=2～24 采用容量 8、16、24 的 K-split。跨容量时会出现额外列计算的台阶；
-  T=25 起进入分块 MMA，T=24 的 40.224µs 上升到 T=25 的 52.480µs。
-- T=25～96 使用 32×32 输出 tile；T=97～192 使用 32×64。
-  T=96、97 分别为 66.848、75.008µs。
-  完整 tile、尾列和 CTA 数量变化仍使曲线出现台阶，调优并不要求每个 T 单独特化。
-- T=385～640 使用 64×64 输出 tile，其他更大区间使用 64×128。
-  T=512 为 **212.224µs、151.78 TFLOP/s、72.45% TC 利用率**；
-  T=1024 为 **382.240µs、168.54 TFLOP/s、80.45% TC 利用率**。
-  额外测得 T=384/385 为 130.304/187.488µs，T=640/641 为 251.200/271.648µs。
+- T=1→2 rises from 15.648 to 21.792 µs (+39.26%), the largest adjacent jump in the hot region,
+  corresponding to the switch from single-token GEMV to sliced-K.
+- T=64→65 rises from 47.840 to 57.120 µs (+19.40%); T=96→97 rises from
+  64.800 to 75.072 µs (+15.85%). These steps at production-route boundaries remain.
+  There are also steps within a single route, for example +14.57% at T=32→33; the plot keeps all measured changes.
+- T=512 is **212.192 µs, 151.81 TFLOP/s, 72.46% TC utilization**;
+  T=1024 is **381.696 µs, 168.78 TFLOP/s, 80.57% TC utilization**.
+  This round re-measured only the two large-T anchors; 129–511 and other large-T boundaries were not re-measured.
 
-T=1 的带宽效率和 T=512 的 TC 效率仍留有研究空间；当前数据不把剩余百分比直接解释为可追回的时间。
-较小 T 的 TC 百分比也不能单独说明实现优劣，需要结合其延迟、逻辑流量及并行规模判断。
+Numerical qualification reuses `ninferno_linear_q4_a16_test`, which already passed in this phase: it independently decodes the packed Q4 codes and
+FP16 scales, uses an FP64 matrix multiplication as the oracle, and, per the existing A16 standard, checks the public routes, representative boundaries, output guards,
+input preservation, and CUDA Graph replay with changed inputs. This run refreshed only timing and documentation; the numerical tests were not re-run.
 
-`ninfer_linear_q4_a16_test` 已通过。测试独立解码 packed Q4 code 与 FP16 scale，以 FP64
-矩阵乘法为 oracle，使用现有 A16 误差标准。该 shape 覆盖完整输出检查、容量与 MMA 分界、
-512/1024 及邻点、输出 guard、输入保持，以及改变输入后的 CUDA Graph 重放。
-数值检查不要求不同计算组织产生相同结果。共享 MMA launcher 的整理同时经过完整 Q4 测试集。
-
-## 复现
+## Reproduction
 
 ```bash
-cmake --build build -j --target ninfer_linear_bench ninfer_linear_q4_a16_test
-./build/tests/ninfer_linear_q4_a16_test
+cmake --build build -j --target ninferno_linear_bench
 
-./build/bench/ninfer_linear_bench \
+./build/bench/ninferno_linear_bench \
   --qtype q4 --policy a16 --n 6144 --k 5120 \
-  --sweep 1:128 --execution graph --warmup 5 --repeat 50 --flush-mib 256 \
-  --csv-out profiles/bench/q4_n6144_k5120/final_graph.csv
-./build/bench/ninfer_linear_bench \
+  --sweep 1:128:1 --execution graph --graph-calls 1 \
+  --warmup 5 --repeat 30 --flush-mib 256 \
+  --csv-out profiles/bench/q4_report_20260926/hot.csv
+./build/bench/ninferno_linear_bench \
   --qtype q4 --policy a16 --n 6144 --k 5120 \
-  --sweep 512:1024:512 --execution graph --warmup 5 --repeat 50 --flush-mib 256 \
-  --csv-out profiles/bench/q4_n6144_k5120/final_bulk.csv
+  --sweep 512:1024:512 --execution graph --graph-calls 1 \
+  --warmup 5 --repeat 30 --flush-mib 256 \
+  --csv-out profiles/bench/q4_report_20260926/bulk.csv
 ```
 
-继续调优时，按 [Linear 调优与报告规范](../linear-tuning.md) 选择候选、
-验证数值并收敛分派；本报告提供最终实现的测量结果与曲线，不承诺这些参数适用于其他 shape。
+To continue tuning, follow the [Linear tuning and reporting specification](../linear-tuning.md) to choose candidates, validate numerics, and converge the dispatch.
+This report describes only this shape under the measurement conditions above; it does not represent other shapes or end-to-end inference performance.

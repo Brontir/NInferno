@@ -1,4 +1,5 @@
 #include "core/device.h"
+#include "core/cuda_error.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 struct SyncSchedule {
@@ -23,23 +24,12 @@ constexpr SyncSchedule kSyncSchedules[] = {
 };
 
 unsigned int sync_schedule_from_environment() {
-    const char* value = std::getenv("NINFER_CUDA_SYNC");
+    const char* value = std::getenv("NINFERNO_CUDA_SYNC");
     if (value == nullptr) { return cudaDeviceScheduleSpin; }
     for (const auto& schedule : kSyncSchedules) {
         if (schedule.name == value) { return schedule.flags; }
     }
-    throw std::invalid_argument("NINFER_CUDA_SYNC must be spin, blocking, yield, or auto");
-}
-
-std::string cuda_error_message(const char* prefix, cudaError_t err) {
-    return std::string(prefix) + ": " + cudaGetErrorName(err) + ": " + cudaGetErrorString(err);
-}
-
-void log_cuda_error(const char* op, cudaError_t err) noexcept {
-    if (err != cudaSuccess) {
-        std::fprintf(stderr, "CUDA cleanup failed during %s: %s: %s\n", op, cudaGetErrorName(err),
-                     cudaGetErrorString(err));
-    }
+    throw std::invalid_argument("NINFERNO_CUDA_SYNC must be spin, blocking, yield, or auto");
 }
 
 void destroy_stream(cudaStream_t& stream) noexcept {
@@ -62,7 +52,17 @@ void cuda_check(cudaError_t err, const char* expr, const char* file, int line) {
     if (err == cudaSuccess) { return; }
     std::fprintf(stderr, "%s:%d: CUDA_CHECK(%s) failed: %s: %s\n", file, line, expr,
                  cudaGetErrorName(err), cudaGetErrorString(err));
-    std::abort();
+    throw CudaError(err, cuda_error_message("CUDA call failed", err));
+}
+
+void rethrow_with_context(const std::string& context) {
+    try {
+        throw;
+    } catch (const CudaError& error) {
+        throw CudaError(error.code(), context + ": " + error.what());
+    } catch (const std::exception& error) {
+        throw std::runtime_error(context + ": " + error.what());
+    }
 }
 
 DeviceContext::DeviceContext(int device_id) : device(device_id) {
@@ -86,6 +86,9 @@ DeviceContext::DeviceContext(int device_id) : device(device_id) {
     if (err != cudaSuccess) {
         throw std::runtime_error(cuda_error_message("cudaGetDeviceProperties failed", err));
     }
+    // Query the device facts now, outside any stream capture, so Ops only ever read the cache, and
+    // refuse a device this build carries no kernel image for before any kernel is launched.
+    require_device_support(::ninferno::device_class(device_id), {}, "NInferno");
 
     cudaStream_t compute = nullptr;
     cudaStream_t load    = nullptr;
@@ -139,7 +142,7 @@ DeviceContext& DeviceContext::operator=(DeviceContext&& other) noexcept {
 void DeviceContext::bind_to_current_thread() const {
     const cudaError_t err = cudaSetDevice(device);
     if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaSetDevice failed", err));
+        throw CudaError(err, cuda_error_message("cudaSetDevice failed", err));
     }
 }
 
@@ -150,6 +153,8 @@ void DeviceContext::bind_to_current_thread_noexcept() const noexcept {
 int DeviceContext::compute_capability() const noexcept { return props.major * 10 + props.minor; }
 
 int DeviceContext::multiprocessor_count() const noexcept { return props.multiProcessorCount; }
+
+const DeviceClass& DeviceContext::device_class() const { return ::ninferno::device_class(device); }
 
 DeviceExecutionView DeviceContext::execution_view() const noexcept {
     return {.stream = stream, .multiprocessor_count = multiprocessor_count()};
@@ -174,7 +179,8 @@ void DeviceContext::synchronize() const { CUDA_CHECK(cudaStreamSynchronize(strea
 
 CudaEventTimer::CudaEventTimer(const DeviceContext& ctx) : CudaEventTimer(ctx, ctx.stream) {}
 
-CudaEventTimer::CudaEventTimer(const DeviceContext& ctx, cudaStream_t stream) : stream_(stream) {
+CudaEventTimer::CudaEventTimer(const DeviceContext& ctx, cudaStream_t stream, bool blocking_stop)
+    : stream_(stream) {
     if (stream == nullptr) { throw std::invalid_argument("CUDA timer stream is null"); }
     ctx.bind_to_current_thread();
 
@@ -182,13 +188,13 @@ CudaEventTimer::CudaEventTimer(const DeviceContext& ctx, cudaStream_t stream) : 
     cudaEvent_t stop  = nullptr;
     cudaError_t err   = cudaEventCreate(&start);
     if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaEventCreate(start) failed", err));
+        throw CudaError(err, cuda_error_message("cudaEventCreate(start) failed", err));
     }
 
-    err = cudaEventCreate(&stop);
+    err = cudaEventCreateWithFlags(&stop, blocking_stop ? cudaEventBlockingSync : cudaEventDefault);
     if (err != cudaSuccess) {
         destroy_event(start);
-        throw std::runtime_error(cuda_error_message("cudaEventCreate(stop) failed", err));
+        throw CudaError(err, cuda_error_message("cudaEventCreate(stop) failed", err));
     }
 
     start_ = start;
@@ -227,6 +233,8 @@ void CudaEventTimer::start() { CUDA_CHECK(cudaEventRecord(start_, stream_)); }
 
 void CudaEventTimer::record_stop() { CUDA_CHECK(cudaEventRecord(stop_, stream_)); }
 
+void CudaEventTimer::wait_stop() const { CUDA_CHECK(cudaEventSynchronize(stop_)); }
+
 float CudaEventTimer::elapsed_ms() const {
     float ms = 0.0f;
     CUDA_CHECK(cudaEventElapsedTime(&ms, start_, stop_));
@@ -243,7 +251,7 @@ CudaCompletionEvent::CudaCompletionEvent(const DeviceContext& ctx) : device_(ctx
     ctx.bind_to_current_thread();
     const cudaError_t err = cudaEventCreateWithFlags(&event_, cudaEventDisableTiming);
     if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaEventCreateWithFlags failed", err));
+        throw CudaError(err, cuda_error_message("cudaEventCreateWithFlags failed", err));
     }
 }
 
@@ -288,4 +296,24 @@ void CudaCompletionEvent::synchronize() const {
     CUDA_CHECK(cudaEventSynchronize(event_));
 }
 
-} // namespace ninfer
+CudaStream::CudaStream(const DeviceContext& ctx) {
+    ctx.bind_to_current_thread();
+    const cudaError_t err = cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking);
+    if (err != cudaSuccess) {
+        throw CudaError(err, cuda_error_message("cudaStreamCreateWithFlags failed", err));
+    }
+}
+
+CudaStream::~CudaStream() { destroy_stream(stream_); }
+
+CudaStream::CudaStream(CudaStream&& other) noexcept
+    : stream_(std::exchange(other.stream_, nullptr)) {}
+
+CudaStream& CudaStream::operator=(CudaStream&& other) noexcept {
+    if (this == &other) { return *this; }
+    destroy_stream(stream_);
+    stream_ = std::exchange(other.stream_, nullptr);
+    return *this;
+}
+
+} // namespace ninferno

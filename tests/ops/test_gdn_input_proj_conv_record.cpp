@@ -1,8 +1,10 @@
 #include "core/weight.h"
 #include "core/device.h"
-#include "ninfer/ops/gdn_input_proj.h"
+#include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include "ops/input_projection_test_common.h"
+#include "ops/workspace_query.h"
 
 #include <cuda_runtime.h>
 
@@ -15,9 +17,9 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
-using namespace ninfer::test::input_projection;
+using namespace ninferno;
+using namespace ninferno::test;
+using namespace ninferno::test::input_projection;
 
 namespace {
 
@@ -90,7 +92,7 @@ int run_case(std::string_view label, std::int32_t hidden, std::int32_t value_row
              std::int32_t z_rows, std::int32_t width, std::int32_t batch,
              std::vector<std::int32_t> valid_columns, std::size_t snapshot_workspace_bytes,
              std::size_t record_workspace_bytes, SnapshotLaunch&& snapshot_launch,
-             RecordLaunch&& record_launch, std::uint32_t seed) {
+             RecordLaunch&& record_launch, std::uint32_t seed, bool qx_parents = false) {
     const std::int32_t channels          = kQueryRows + kKeyRows + value_rows;
     const std::int32_t aggregate_columns = width * batch;
     const std::int32_t source_slots      = 8;
@@ -235,12 +237,15 @@ int run_case(std::string_view label, std::int32_t hidden, std::int32_t value_row
     failures += record_value.verify_guards(std::string(label) + " record value");
     failures += record_z.verify_guards(std::string(label) + " record z");
     failures += conv_record.verify_guards(std::string(label) + " conv record");
+    // The Q4/Q5 parents (the only ones here with int8 prefill tiers, qx_query_covers_prefill_a8).
+    const bool covers = qx_parents && qx_query_covers_prefill_a8(QType::Q4_G64_FP16, width * batch);
     if (snapshot_workspace.used() != 0 ||
-        snapshot_workspace.peak_used() != snapshot_workspace_bytes) {
+        !workspace_query_holds(snapshot_workspace.peak_used(), snapshot_workspace_bytes, covers)) {
         std::cerr << label << ": snapshot workspace query/execution mismatch\n";
         ++failures;
     }
-    if (record_workspace.used() != 0 || record_workspace.peak_used() != record_workspace_bytes) {
+    if (record_workspace.used() != 0 ||
+        !workspace_query_holds(record_workspace.peak_used(), record_workspace_bytes, covers)) {
         std::cerr << label << ": record workspace query/execution mismatch\n";
         ++failures;
     }
@@ -287,7 +292,7 @@ int run_q4_q5() {
                                                 valid_columns, initial, record, q, k, v, z,
                                                 workspace, stream);
             },
-            seed);
+            seed, true);
     };
     for (int width = 2; width <= 16; ++width) {
         failures += run(width, 1, {}, 1400U + width);
@@ -322,7 +327,9 @@ int run_q8() {
         const std::size_t record_bytes = ops::gdn_input_proj_conv_record_workspace_capacity_bytes(
             kQueryRows, kKeyRows, kValueRows, batch, width, width);
         return run_case(
-            "Q8 B=" + std::to_string(batch) + " T=" + std::to_string(width), kHidden, kValueRows,
+            std::string(ops::invariant_routes_active() ? "Q8 exact B=" : "Q8 B=") +
+                std::to_string(batch) + " T=" + std::to_string(width),
+            kHidden, kValueRows,
             kZRows, width, batch, std::move(valid), snapshot_bytes, record_bytes,
             [&](const Tensor& x, const Tensor& conv, Tensor& state, const Tensor& valid_columns,
                 const Tensor& initial, const Tensor& snapshot_base, Tensor& q, Tensor& k, Tensor& v,
@@ -342,11 +349,20 @@ int run_q8() {
     failures += run(2, 1, {1}, 1511U);
     failures += run(16, 1, {}, 1521U);
     failures += run(16, 8, {16, 13, 9, 7, 5, 3, 2, 1}, 1531U);
+    {
+        // --activations exact: the projection is materialized through the generic path at every
+        // width, a single row's record included.
+        const ops::ScopedInvariantRoutes invariant(true);
+        failures += run(2, 1, {1}, 1541U);
+        failures += run(16, 1, {}, 1551U);
+        failures += run(16, 8, {16, 13, 9, 7, 5, 3, 2, 1}, 1561U);
+    }
     failures += parent.verify_preserved("Q8 record parent weight");
     return failures;
 }
 
 int run_nvfp4() {
+    if (!qtype_runs(QType::NVFP4, "gdn_input_proj_conv_record NVFP4")) return 0;
     constexpr std::int32_t kHidden    = 5120;
     constexpr std::int32_t kValueRows = 6144;
     constexpr std::int32_t kZRows     = 6144;

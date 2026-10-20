@@ -1,17 +1,19 @@
 #pragma once
 
-// Implements: include/ninfer/ops/argmax.h
+// Implements: include/ninferno/ops/argmax.h
 // Match: contiguous BF16 [physical_rows,C], valid_rows <= physical_rows, with
 // tuned routes qualified for the 248077-row and 131072-row vocabularies.
 // Algorithm assumptions: one CTA reduces each blockDim.x-row tile and an atomic
 // winner selects the exact value/lower-id maximum per column.
+
+#include "ops/common/score_id_order.cuh"
 
 #include <cuda_bf16.h>
 #include <cstdint>
 #include <climits>
 #include <math_constants.h>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 // Small-column execution uses 512 threads to reduce atomic contenders. Aggregate
 // execution dispatches registered vocab profiles to a smaller block so the much
@@ -19,8 +21,11 @@ namespace ninfer::ops {
 inline constexpr int kArgmaxBlock          = 512;
 inline constexpr int kArgmaxItemsPerThread = 1;
 
+// NaN ranks as -inf (rank_score), so every route selects the same id of a row with NaN logits.
 __device__ __forceinline__ bool argmax_better(float value, std::int32_t index, float best_value,
                                               std::int32_t best_index) {
+    value      = rank_score(value);
+    best_value = rank_score(best_value);
     return value > best_value || (value == best_value && index < best_index);
 }
 
@@ -127,4 +132,4 @@ __launch_bounds__(kArgmaxBlock) __global__
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

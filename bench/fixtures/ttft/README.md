@@ -29,13 +29,14 @@ The generated media consists of 56 deterministic, byte-distinct 1024×1024 PNGs.
 heavy inputs use disjoint sets of 28 images each. Every image expands to a 12 MiB Vision
 preprocessing patch tensor (this is media payload, not KV storage), so the files exercise media
 live-byte and preprocess-cache policy without creating large HTTP bodies. The 33-image input is an
-intentional aggregate Vision-envelope rejection.
+intentional aggregate Vision-envelope rejection. A rebuild keeps the committed images, since Pillow
+versions draw their label text differently; delete an image to draw it again.
 
 Regenerate only when a case contract changes, using a local tokenizer checkout:
 
 ```bash
 python3 tools/bench/ttft/build_fixtures.py \
-  --tokenizer /path/to/local/Qwen3.8-27B/tokenizer
+  --tokenizer /path/to/local/Qwen3.6-27B/tokenizer
 ```
 
 Verify committed files without loading a tokenizer:

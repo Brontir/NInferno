@@ -1,5 +1,6 @@
 #include "core/weight.h"
 #include "ops/linear_swiglu/linear_swiglu_test_common.h"
+#include "ops/op_tester.h"
 
 #include <array>
 #include <exception>
@@ -7,8 +8,8 @@
 #include <vector>
 
 int dflash2_conformance() {
-    using namespace ninfer;
-    using namespace ninfer::test::linear_swiglu;
+    using namespace ninferno;
+    using namespace ninferno::test::linear_swiglu;
     std::vector<std::int32_t> tokens;
     for (int t = 1; t <= 128; ++t) tokens.push_back(t);
     for (int t : {129, 256, 1024}) tokens.push_back(t);
@@ -20,8 +21,12 @@ int dflash2_conformance() {
 }
 
 int main() {
-    using namespace ninfer;
-    using namespace ninfer::test::linear_swiglu;
+    if (ninferno::test::cuda_unavailable()) {
+        std::cout << "SKIP: no usable CUDA device\n";
+        return 77;
+    }
+    using namespace ninferno;
+    using namespace ninferno::test::linear_swiglu;
 
     try {
         // One public numerical case begins each materially distinct Q8 implementation interval;

@@ -5,8 +5,7 @@
 
 #include <spdlog/logger.h>
 
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include "core/sys.h"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +16,7 @@
 #include <string>
 #include <utility>
 
-namespace ninfer::product {
+namespace ninferno::product {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -68,6 +67,8 @@ PhasePresentation phase_presentation(StartupPhase phase) noexcept {
         return {"pinning host KV", "host KV pinned", PhaseVisibility::Info, true, false};
     case StartupPhase::CudaGraphPrepare:
         return {"preparing CUDA graphs", "CUDA graphs ready", PhaseVisibility::Info, false, false};
+    case StartupPhase::KernelWarmUp:
+        return {"warming up kernels", "kernels warmed up", PhaseVisibility::Info, true, false};
     case StartupPhase::EngineFinalize:
         return {"finalizing engine", "engine finalized", PhaseVisibility::Debug, false, false};
     }
@@ -76,9 +77,8 @@ PhasePresentation phase_presentation(StartupPhase phase) noexcept {
 }
 
 std::size_t terminal_columns() noexcept {
-    winsize size{};
-    if (::ioctl(STDERR_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col != 0) { return size.ws_col; }
-    return 120;
+    const int columns = sys::terminal_columns();
+    return columns > 0 ? static_cast<std::size_t>(columns) : 120;
 }
 
 std::string progress_bar(double ratio, std::size_t width) {
@@ -205,6 +205,7 @@ struct StartupLogRenderer::Impl {
                               .sample_time      = now,
             };
             if (event.phase == StartupPhase::EngineStartup) {
+                failure_logged = false;
                 logger->info("starting engine");
             } else if (presentation.visibility == PhaseVisibility::Debug) {
                 logger->debug("{}", begin_line(presentation, event));
@@ -257,8 +258,12 @@ struct StartupLogRenderer::Impl {
             progress->clear();
             if (failure_logged) { return; }
             failure_logged = true;
-            logger->error("startup failed | {} | {}", presentation.active,
-                          format_pretty_duration(static_cast<double>(event.elapsed_ns) * 1.0e-9));
+            // An attempt, not the outcome: ninferno-serve builds the Engine again with less when
+            // one is refused for memory (a fit fallback, shallower drafts, plain decode), and an
+            // RTX 5090 with 19 GB taken started gemma-4-31B after an "ERROR startup failed" line.
+            // A start that fails for good ends with the application's own error and its reason.
+            logger->info("engine start refused | {} | {}", presentation.active,
+                         format_pretty_duration(static_cast<double>(event.elapsed_ns) * 1.0e-9));
             return;
         }
     }
@@ -289,6 +294,15 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     impl_->logger->info("engine ready | {} | total {} | weights {} | CUDA sync {}",
                         format_pretty_text(load.model_name), format_pretty_duration(total_seconds),
                         format_pretty_bytes(load.host_to_device_bytes), load.cuda_sync_mode);
+    // Which per-GPU-class tuning the routes run with: a refused or missing table is not silent.
+    if (!load.gpu_class.empty() || !load.route_table.empty()) {
+        impl_->logger->info("routes | gpu class {} | {}", format_pretty_text(load.gpu_class),
+                            format_pretty_text(load.route_table));
+    }
+    for (const auto& line : load.moe_tune) {
+        impl_->logger->info("routes | {}", format_pretty_text(line));
+    }
+    if (!load.drafter.empty()) { impl_->logger->info("drafter | {}", load.drafter); }
     impl_->logger->debug(
         "load detail | architecture {} | artifact read {} | H2D {} | staging peak {} | device "
         "objects {} | host objects {}",
@@ -296,10 +310,12 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
         format_pretty_bytes(load.host_to_device_bytes),
         format_pretty_bytes(load.peak_staging_bytes), format_pretty_count(load.device_object_count),
         format_pretty_count(load.host_object_count));
-    impl_->logger->debug("context cost | transfer {} | prefill {} | signature {}",
-                         context_cost_preset_source_name(load.context_cost.transfer_source),
-                         context_cost_preset_source_name(load.context_cost.prefill_source),
-                         load.prefill_signature);
+    impl_->logger->debug(
+        "context cost | transfer {} | prefill {} | signature {}{}",
+        context_cost_preset_source_name(load.context_cost.transfer_source),
+        context_cost_preset_source_name(load.context_cost.prefill_source), load.prefill_signature,
+        load.context_cost.similar_to.empty() ? std::string()
+                                             : " | similar to " + load.context_cost.similar_to);
 }
 
-} // namespace ninfer::product
+} // namespace ninferno::product

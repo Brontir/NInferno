@@ -1,5 +1,6 @@
 #pragma once
 
+#include "models/qwen3_5/frontend/vision_style.h"
 #include "runtime/contract/resources.h"
 
 #include "models/qwen3_5/frontend/frontend.h"
@@ -13,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 namespace frontend {
 struct ToolCallOutputContract;
@@ -65,6 +66,8 @@ struct VisionItem {
     VisionGrid grid;
     std::size_t patch_begin = 0;
     std::size_t patch_count = 0;
+    // Values per patch in this item's payload (the encoder input of its VisionStyle).
+    std::size_t patch_features = kPreparedVisionPatchFeatures;
     // SHA-256 of the owned encoded media bytes. Grid/modality/span identity is carried
     // separately so this digest binds the content without retaining the request payload.
     std::array<std::uint8_t, 32> content_digest{};
@@ -149,8 +152,11 @@ struct PreparedPromptData {
     std::vector<VisionItem> vision_items;
     PromptIdentity identity;
     PreparedContextCache context_cache;
-    std::shared_ptr<const frontend::ToolCallOutputContract> tool_call_output;
-    bool starts_in_reasoning = false;
+    std::shared_ptr<const chat::ToolCallOutputContract> tool_call_output;
+    bool starts_in_reasoning    = false;
+    bool reasoning_open_allowed = false;
+    bool reasoning_declined     = false;
+    bool thinking_budget_control = false;
     PrepareStats prepare;
 
     [[nodiscard]] std::span<const std::int32_t> position_axis(int axis) const;
@@ -171,4 +177,4 @@ public:
     [[nodiscard]] static PreparedPromptData take(PreparedPrompt&& prompt);
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

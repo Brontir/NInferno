@@ -8,7 +8,7 @@
 #include <span>
 #include <vector>
 
-namespace ninfer {
+namespace ninferno {
 
 // Existing dense Op ABI uses Weight axes directly; callers establish BF16/FP32 and layout.
 inline Tensor as_dense(const Weight& weight) {
@@ -47,10 +47,13 @@ struct WeightGeometry {
     std::uint64_t scale_offset        = 0;
     std::uint64_t scale_bytes         = 0;
     std::uint64_t divisor_offset      = 0;
+    std::uint64_t divisor_count       = 1;
+    std::uint64_t order_offset        = 0; // RowGroupZpOrdered: the K int32 column indices
 };
 
 [[nodiscard]] WeightGeometry weight_geometry(QType format, QuantLayout layout,
-                                             std::span<const std::uint64_t> shape);
+                                             std::span<const std::uint64_t> shape,
+                                             std::uint64_t divisors = 1);
 [[nodiscard]] std::uint64_t weight_element_count(std::span<const std::uint64_t> shape);
 
 struct WeightParent {
@@ -97,4 +100,4 @@ struct WeightRowPlanes {
 // Arbitrary FP8/NVFP4 regions use their explicit planes until a native consumer supports them.
 [[nodiscard]] Weight native_weight(const WeightView& view, float input_divisor = 0.0F);
 
-} // namespace ninfer
+} // namespace ninferno

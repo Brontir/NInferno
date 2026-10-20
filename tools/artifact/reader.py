@@ -1,4 +1,4 @@
-"""Demand-driven reads of a NInfer v3 entry and its recorded continuation files."""
+"""Demand-driven reads of a NInferno v3 entry and its recorded continuation files."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-from .framing import HEADER, MAGIC, PART_MAGIC, PAYLOAD_ALIGNMENT
+from .framing import (
+    HEADER,
+    MAGIC,
+    PART_MAGIC,
+    PAYLOAD_ALIGNMENT,
+)
 from .layouts import align_up
 from .file_io import discard_cached_pages, IO_CHUNK_BYTES
 from .schema import (
     ArtifactError,
     ArtifactObject,
     Directory,
-    ResourceObject,
-    TensorObject,
     decode_directory,
     integer,
     validate_encoding,
@@ -40,7 +43,7 @@ class Artifact:
                 raise ArtifactError("truncated v3 entry header")
             magic, json_bytes, self.artifact_id = HEADER.unpack(raw)
             if magic != MAGIC:
-                raise ArtifactError("expected NInfer v3 entry magic")
+                raise ArtifactError("expected NInferno v3 entry magic")
             integer(json_bytes, "json_bytes", positive=True)
             if json_bytes > entry_bytes - HEADER.size:
                 raise ArtifactError("directory JSON exceeds entry file")

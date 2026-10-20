@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/transfer_work.h"
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/resources.h"
 
 #include <array>
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 inline constexpr std::uint64_t kContextCostQ32One = 1ULL << 32U;
 
@@ -60,7 +60,7 @@ struct ContextMachineCostModel {
     std::array<ContextTransferCost, 3> transfer{};
     ContextPrefillCost prefill;
 
-    // max(batch + copy_operations * operation, payload_bytes * ns_per_byte)
+    // max(batch + copy_operations * operation, payload_bytes * ns_per_byte_q32 / 2^32)
     [[nodiscard]] std::uint64_t transfer_ns(ContextTransferDirection direction,
                                             TransferWork work) const noexcept;
     [[nodiscard]] std::uint64_t
@@ -93,6 +93,8 @@ price_materialization_machine_work(const ContextMachineCostModel& model,
 struct ContextCostIdentity {
     std::string hardware_class;
     std::string prefill_signature;
+    // Streaming multiprocessors of the device (0: unknown, and no similar machine stands in).
+    std::uint32_t sms = 0;
 };
 
 struct ContextPrefillPreset {
@@ -104,6 +106,15 @@ struct ContextCostMachinePreset {
     std::string hardware_class;
     std::optional<std::array<ContextTransferCost, 3>> transfer;
     std::vector<ContextPrefillPreset> prefill;
+    // A measured prefill of this machine that stands in for bindings it has no entry for. Without
+    // it an unmeasured binding on this machine is priced with the generic (RTX 5090) prefill,
+    // which misstates recomputation by the machine's own speed ratio.
+    std::optional<ContextPrefillCost> class_prefill;
+    // SM count of the measured card (0: none recorded). A machine of the same architecture ("-smXY"
+    // of hardware_class) that no preset names takes the compiled preset nearest to it by SM count:
+    // its transfer as measured (the host link bounds it), its prefill for the binding (or its
+    // class_prefill) scaled by this card's SMs over the machine's (prefill is compute-bound).
+    std::uint32_t sms = 0;
 };
 
 struct ResolvedContextMachineCost {
@@ -119,9 +130,18 @@ struct ResolvedContextMachineCost {
 parse_context_cost_presets(std::string_view json, std::string_view source_name);
 
 // Transfer and prefill are resolved independently. Generic numerical defaults always exist;
-// compiled hardware/model values and then matching external values override them.
+// compiled hardware/model values and then matching external values override them. A binding a
+// machine has no prefill entry for takes that machine's class_prefill before the generic one; a
+// machine no compiled preset names takes the most similar measured one (ContextCostMachinePreset::
+// sms) before the generic one.
 [[nodiscard]] ResolvedContextMachineCost
 resolve_context_machine_cost(const ContextCostIdentity& identity,
+                             const std::filesystem::path& external_preset_path = {});
+// The same resolution over an explicit compiled table; the overload above passes
+// compiled_context_cost_defaults().
+[[nodiscard]] ResolvedContextMachineCost
+resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compiled,
+                             const ContextCostIdentity& identity,
                              const std::filesystem::path& external_preset_path = {});
 
 // Calibration updates one independently measurable component and preserves every other component.
@@ -134,4 +154,4 @@ void upsert_context_prefill_cost_atomic(const std::filesystem::path& path,
                                         const ContextPrefillCost& prefill,
                                         std::string_view provenance_json);
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

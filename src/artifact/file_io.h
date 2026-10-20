@@ -5,10 +5,12 @@
 #include <filesystem>
 #include <span>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 // Direct reads require aligned offsets and buffers. A short final direct block is allowed;
-// read_exact always requires the complete requested byte range.
+// read_exact always requires the complete requested byte range. Payload ("direct") reads use
+// O_DIRECT on local file systems and the page cache on network, FUSE and host-shared ones;
+// NINFERNO_ARTIFACT_DIRECT_IO=1/0 forces either.
 class InputFile {
 public:
     explicit InputFile(std::filesystem::path path);
@@ -25,8 +27,9 @@ public:
 private:
     std::filesystem::path path_;
     int fd_                = -1;
-    mutable int direct_fd_ = -1;
+    mutable int direct_fd_     = -1;
+    mutable bool direct_mode_  = false; // direct_fd_ was opened with O_DIRECT
     std::uint64_t bytes_   = 0;
 };
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

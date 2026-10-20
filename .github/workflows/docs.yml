@@ -1,0 +1,21 @@
+name: docs
+
+on:
+  pull_request:
+    paths: ["docs/**", "README.md", "tools/docs/**"]
+  push:
+    branches: [main]
+    paths: ["docs/**", "README.md", "tools/docs/**"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Performance pages match their data
+        run: python3 tools/docs/gen_performance.py --check
+      - name: Links into Markdown headings resolve
+        run: python3 tools/docs/check_anchors.py .

@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::frontend {
+namespace ninferno::models::qwen3_5::frontend {
 
 class MediaPreprocessCache;
 
@@ -51,6 +51,7 @@ struct TokenSpan {
 
 struct VisionItem {
     Modality modality = Modality::Image;
+    VisionStyle style = VisionStyle::Qwen;
     VisionGrid grid;
     std::size_t patch_begin = 0;
     std::size_t patch_count = 0;
@@ -80,6 +81,7 @@ struct PreprocessStats {
 };
 
 struct ProcessorOptions {
+    VisionStyle style              = VisionStyle::Qwen;
     std::uint64_t image_min_pixels = 32ULL * 32ULL;
     std::uint64_t image_max_pixels = 1024ULL * 1024ULL;
     std::uint64_t video_min_pixels = 128ULL * 32ULL * 32ULL;
@@ -99,14 +101,16 @@ struct ProcessorOptions {
 };
 
 struct ProcessedInput {
-    bool starts_in_reasoning = false;
+    bool starts_in_reasoning    = false;
+    bool reasoning_open_allowed = false;
+    bool reasoning_declined     = false;
     std::vector<int> input_ids;
     std::vector<std::uint8_t> token_types;
     // Axis-major [3, input_ids.size()] in temporal, height, width order.
     std::vector<std::int32_t> positions;
     std::int32_t rope_delta = 0;
     std::vector<VisionItem> vision_items;
-    // One immutable row-major [raw_patches, 1536] payload per Vision item.
+    // One immutable row-major [raw_patches, vision_patch_features(style)] payload per item.
     std::vector<std::shared_ptr<const qwen3_5::PreparedMediaPayload>> media_payloads;
     std::optional<RewriteCheckpointSpec> rewrite_checkpoint;
     std::vector<std::uint32_t> rewrite_execution_frontiers;
@@ -134,13 +138,17 @@ struct EncodedChat {
     std::vector<std::optional<std::uint32_t>> cache_boundaries;
 };
 
+// Values per patch, and patches per soft-token side, of a style's encoder input.
+[[nodiscard]] std::size_t vision_patch_features(VisionStyle style) noexcept;
+[[nodiscard]] std::uint32_t vision_merge(VisionStyle style) noexcept;
+
 EncodedChat
-encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat& rendered,
+encode_rendered_chat(const text::TokenCodec& tokenizer, const RenderedChat& rendered,
                      std::size_t maximum_tokens = std::numeric_limits<std::size_t>::max());
 
 class Processor {
 public:
-    Processor(const Tokenizer& tokenizer, const CompiledChatTemplate& chat_template,
+    Processor(const text::TokenCodec& tokenizer, const CompiledChatTemplate& chat_template,
               ProcessorOptions options, std::shared_ptr<MediaPreprocessCache> media_cache);
 
     [[nodiscard]] std::size_t count_tokens(std::vector<ChatMessage> messages,
@@ -153,10 +161,10 @@ public:
             std::size_t maximum_prompt_tokens = std::numeric_limits<std::size_t>::max()) const;
 
 private:
-    const Tokenizer& tokenizer_;
+    const text::TokenCodec& tokenizer_;
     const CompiledChatTemplate& chat_template_;
     ProcessorOptions options_;
     std::shared_ptr<MediaPreprocessCache> media_cache_;
 };
 
-} // namespace ninfer::models::qwen3_5::frontend
+} // namespace ninferno::models::qwen3_5::frontend

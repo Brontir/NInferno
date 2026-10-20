@@ -1,9 +1,10 @@
 #include "models/qwen3_5/program/internal.h"
+#include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "models/qwen3_5/program/context.h"
-#include "ninfer/ops/scatter.h"
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/scatter.h"
+#include "ninferno/ops/speculative_round.h"
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 
 void target_verify_accept(ExecutionCore& execution, Tensor& continuation_hidden_store,
                           TextContext& card, TargetVerifyFrameView frame,
@@ -28,15 +29,17 @@ void target_verify_accept(ExecutionCore& execution, Tensor& continuation_hidden_
             frame.target_tokens, frame.target_logits, frame.drafts, frame.candidate_ids,
             frame.proposal_q, frame.current_extents, frame.frontiers, frame.anchors,
             frame.licensed_tokens, frame.licensed_counts, frame.accepted_drafts,
-            dimension(execution.parameters.model.resources().public_token_count), frame.sampling,
-            {false}, execution.work, execution.device.stream);
+            dimension(
+                qwen3_5::detail::qwen_parameters(execution).model.resources().public_token_count),
+            frame.sampling, {false}, execution.work, execution.device.stream);
     } else {
         ops::speculative_accept_greedy_drafts(
             frame.target_tokens, frame.target_logits, frame.drafts, frame.current_extents,
             frame.frontiers, frame.anchors, frame.licensed_tokens, frame.licensed_counts,
             frame.accepted_drafts,
-            dimension(execution.parameters.model.resources().public_token_count), frame.sampling,
-            execution.work, execution.device.stream);
+            dimension(
+                qwen3_5::detail::qwen_parameters(execution).model.resources().public_token_count),
+            frame.sampling, execution.work, execution.device.stream);
     }
     ops::speculative_select_accepted_hidden(frame.target_hidden, frame.accepted_drafts,
                                             frame.selected_hidden, execution.device.stream);
@@ -44,4 +47,4 @@ void target_verify_accept(ExecutionCore& execution, Tensor& continuation_hidden_
                  execution.device.stream);
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

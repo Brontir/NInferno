@@ -8,16 +8,24 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 enum class Q5LinearAddScheduleId {
     Split2ExactResidual,
-    MmaResidualR64C16,
-    MmaResidualR64C24,
-    MmaResidualR64C32S3,
-    MmaResidualR64C32S4,
-    MmaResidualR64C128,
-    MmaResidualR64C128Tail,
+    SlicedR16T8W4S2,
+    SlicedR16T8C4W8S2,
+    SlicedR16T16W4S2,
+    SlicedR16T24W4S2,
+    SlicedR32T32W4S2,
+    SlicedR32T24W4S2Pairwise,
+    SlicedR32T32W4S1,
+    SlicedR32T32W2S2,
+    SlicedR32T64W2S1,
+    MmaResidualR32T32K128,
+    MmaResidualR32T128,
+    MmaResidualR64T128,
+    MmaResidualR64T128Tail,
+    SmallTMmaResidual,
 };
 
 struct Q5LinearAddProblem {
@@ -32,8 +40,8 @@ struct Q5LinearAddPlan {
     std::size_t workspace_bytes;
 };
 
-const char* q5_linear_add_schedule_name(Q5LinearAddScheduleId schedule) noexcept;
-
+// The (rows, k) problems this plan registers; ops/wrapper/linear_add.cpp asks it.
+bool q5_linear_add_registered(std::int32_t rows, std::int32_t k) noexcept;
 bool q5_linear_add_admits(const Q5LinearAddProblem& problem) noexcept;
 Q5LinearAddPlan q5_linear_add_resolve_plan(const Q5LinearAddProblem& problem);
 
@@ -46,4 +54,4 @@ void q5_linear_add_execute_plan(const Q5LinearAddPlan& plan, const Tensor& x, co
 void q5_linear_add_dispatch(const Tensor& x, const Weight& w, Tensor& residual_out,
                             WorkspaceArena& ws, cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

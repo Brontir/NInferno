@@ -17,7 +17,7 @@
 #include <span>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 
 using detail::VisionWorkspacePlan;
 using detail::VisionPrefillPlan;
@@ -60,7 +60,7 @@ struct VisionChunk {
     Tensor embeddings;
 };
 
-class VisionPrefillSession {
+class VisionPrefillSession final : public VisionPrefill {
 public:
     VisionPrefillSession(DeviceContext& device, const execution::Parameters& parameters,
                          DeviceSpan workspace, const VisionWorkspacePlan& workspace_plan,
@@ -68,11 +68,11 @@ public:
                          std::size_t& handoff_peak_bytes);
 
     [[nodiscard]] VisionChunk prepare_chunk(std::uint32_t begin, std::uint32_t nominal_length);
-    void release_encoded_media_payloads() noexcept;
-    void retire_handoff() noexcept;
-    [[nodiscard]] double elapsed_seconds() const;
+    void release_encoded_media_payloads() noexcept override;
+    void retire_handoff() noexcept override;
+    [[nodiscard]] double elapsed_seconds() const override;
 
-    [[nodiscard]] std::size_t active_handoff_bytes() const noexcept {
+    [[nodiscard]] std::size_t active_handoff_bytes() const noexcept override {
         return active_handoff_bytes_;
     }
 
@@ -91,4 +91,4 @@ private:
     std::vector<CudaEventTimer> timers_;
 };
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

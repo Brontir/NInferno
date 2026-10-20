@@ -1,4 +1,4 @@
-#include "ninfer/ops/kv_cache_append.h"
+#include "ninferno/ops/kv_cache_append.h"
 #include "ops/op_tester.h"
 #include "core/decode_graph.h"
 #include "core/device.h"
@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -18,8 +19,8 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -144,8 +145,10 @@ float f16_bits_to_f32(std::uint16_t bits) {
     return negative ? -magnitude : magnitude;
 }
 
+// The BF16 V plane's f16 store: finite values saturate to the f16 range, NaN and infinities pass.
 std::uint16_t bf16_bits_to_f16_bits(std::uint16_t bits) {
-    return f32_to_f16_bits(bf16_to_f32(bits));
+    const float value = bf16_to_f32(bits);
+    return f32_to_f16_bits(std::isfinite(value) ? std::clamp(value, -65504.0f, 65504.0f) : value);
 }
 
 std::int32_t round_even_to_i32(float value) {
@@ -1362,6 +1365,240 @@ int cyclic_variable_prefix_tests() {
 
 } // namespace
 
+// KV-codec scales come from the token alone: no calibration, no dependence on what the
+// cache held or on how the tokens were batched. The same 40 tokens (two pages, two heads) are
+// appended three ways - one call into a zeroed cache; calls of 1, 7 and 32 tokens into a cache
+// filled with 0xFF (NaN codes and scales); after a warm-up append of other tokens at the same
+// positions, one token at a time in reverse order - and every written code and scale byte must be
+// identical. Control: one flipped byte in a written row must be seen.
+int order_independence_case(KvCacheStorage storage, const char* name) {
+    constexpr int kHeads = 2, kTokens = 40, kFirst = 40, kLogical = 2, kPhysical = 5;
+    const TestCacheLayout layout = test_cache_layout(storage);
+    const std::vector<std::int32_t> mapping{1, 3};
+    const std::size_t input_count = static_cast<std::size_t>(kFullHeadDim) * kHeads * kTokens;
+    const auto make_input         = [&](std::uint32_t seed, float range) {
+        std::vector<float> values(input_count);
+        fill_uniform(values, seed, -range, range);
+        std::vector<std::uint16_t> bits(input_count);
+        for (std::size_t i = 0; i < input_count; ++i) { bits[i] = f32_to_bf16(values[i]); }
+        return bits;
+    };
+    const auto real_k = make_input(0x5151u, 0.8F), real_v = make_input(0x6262u, 1.3F);
+    const auto warm_k = make_input(0x7373u, 30.0F), warm_v = make_input(0x8484u, 0.01F);
+    std::vector<std::int32_t> positions(kTokens);
+    for (int t = 0; t < kTokens; ++t) { positions[static_cast<std::size_t>(t)] = kFirst + t; }
+    DeviceBuffer d_real_k = to_device(real_k), d_real_v = to_device(real_v);
+    DeviceBuffer d_warm_k = to_device(warm_k), d_warm_v = to_device(warm_v);
+    DeviceBuffer d_positions = to_device(positions), d_mapping = to_device(mapping);
+    // Planes in order: K codes, V codes, K scales, V scales.
+    using PlaneSpec = std::pair<const TestVectorLayout*, bool>;
+    const std::array<PlaneSpec, 4> specs{
+        {{&layout.key, false}, {&layout.value, false}, {&layout.key, true}, {&layout.value, true}}};
+    const auto plane_bytes = [&](const TestVectorLayout& vector, bool scale) {
+        const int extent = scale ? vector.scale_extent : vector.code_extent;
+        return std::max<std::size_t>(
+            1, static_cast<std::size_t>(extent) * kPage * kHeads * kPhysical *
+                   dtype_size(scale ? vector.scale_dtype : vector.code_dtype));
+    };
+
+    struct Cache {
+        std::vector<DeviceBuffer> planes; // k codes, v codes, k scales, v scales
+    };
+
+    const auto make_cache = [&](int fill) {
+        Cache cache;
+        for (const auto& [vector, scale] : specs) {
+            cache.planes.emplace_back(plane_bytes(*vector, scale));
+            cache.planes.back().fill(fill);
+        }
+        return cache;
+    };
+    const auto view = [&](Cache& cache) {
+        PagedKVLayerView out{
+            .k_pages      = Tensor(cache.planes[0].p, layout.key.code_dtype,
+                                   {layout.key.code_extent, kPage, kHeads, kPhysical}),
+            .v_pages      = Tensor(cache.planes[1].p, layout.value.code_dtype,
+                                   {layout.value.code_extent, kPage, kHeads, kPhysical}),
+            .block_table  = Tensor(d_mapping.p, DType::I32, {kLogical}),
+            .head_dim     = kFullHeadDim,
+            .num_kv_heads = kHeads,
+            .storage      = storage,
+        };
+        out.k_scale_pages = Tensor(cache.planes[2].p, layout.key.scale_dtype,
+                                   {layout.key.scale_extent, kPage, kHeads, kPhysical});
+        out.v_scale_pages = Tensor(cache.planes[3].p, layout.value.scale_dtype,
+                                   {layout.value.scale_extent, kPage, kHeads, kPhysical});
+        return out;
+    };
+    const auto append = [&](Cache& cache, const DeviceBuffer& k, const DeviceBuffer& v, int first,
+                            int count) {
+        const std::size_t offset = static_cast<std::size_t>(first) * kFullHeadDim * kHeads;
+        Tensor kt(static_cast<std::uint16_t*>(k.p) + offset, DType::BF16,
+                  {kFullHeadDim, kHeads, count});
+        Tensor vt(static_cast<std::uint16_t*>(v.p) + offset, DType::BF16,
+                  {kFullHeadDim, kHeads, count});
+        Tensor pt(static_cast<std::int32_t*>(d_positions.p) + first, DType::I32, {count});
+        ops::kv_cache_append(kt, vt, pt, view(cache), nullptr);
+    };
+    Cache whole = make_cache(0), chunked = make_cache(0xff), reversed = make_cache(0x5a);
+    append(whole, d_real_k, d_real_v, 0, kTokens);
+    append(chunked, d_real_k, d_real_v, 0, 1);
+    append(chunked, d_real_k, d_real_v, 1, 7);
+    append(chunked, d_real_k, d_real_v, 8, 32);
+    append(reversed, d_warm_k, d_warm_v, 0, kTokens);
+    for (int t = kTokens - 1; t >= 0; --t) { append(reversed, d_real_k, d_real_v, t, 1); }
+    cuda_synchronize();
+
+    // Bytes of every written row, plane by plane, in one vector.
+    const auto written = [&](const Cache& cache) {
+        std::vector<std::uint8_t> out;
+        int plane = 0;
+        for (const auto& [vector, scale] : specs) {
+            const int extent       = scale ? vector->scale_extent : vector->code_extent;
+            const std::size_t word = dtype_size(scale ? vector->scale_dtype : vector->code_dtype);
+            const auto bytes       = from_device<std::uint8_t>(
+                cache.planes[static_cast<std::size_t>(plane++)], plane_bytes(*vector, scale));
+            if (extent == 0) { continue; }
+            for (const int position : positions) {
+                const int page = mapping[static_cast<std::size_t>(position / kPage)];
+                for (int head = 0; head < kHeads; ++head) {
+                    const std::size_t at =
+                        full_cache_index(extent, 0, head, position, page, kHeads) * word;
+                    out.insert(out.end(), bytes.begin() + static_cast<std::ptrdiff_t>(at),
+                               bytes.begin() + static_cast<std::ptrdiff_t>(at + extent * word));
+                }
+            }
+        }
+        return out;
+    };
+    const auto reference    = written(whole);
+    const auto count_differ = [&](const std::vector<std::uint8_t>& other) {
+        std::size_t differ = 0;
+        for (std::size_t i = 0; i < reference.size(); ++i) { differ += reference[i] != other[i]; }
+        return differ;
+    };
+    const std::size_t chunked_differ  = count_differ(written(chunked));
+    const std::size_t reversed_differ = count_differ(written(reversed));
+    // Control: flip one byte of the chunked cache's first written K code row.
+    {
+        const std::size_t at =
+            full_cache_index(layout.key.code_extent, 0, 0, kFirst, mapping[0], kHeads) *
+            dtype_size(layout.key.code_dtype);
+        std::uint8_t byte = 0;
+        cuda_check(cudaMemcpy(&byte, static_cast<std::uint8_t*>(chunked.planes[0].p) + at, 1,
+                              cudaMemcpyDeviceToHost),
+                   "read control byte");
+        byte ^= 0x01;
+        cuda_check(cudaMemcpy(static_cast<std::uint8_t*>(chunked.planes[0].p) + at, &byte, 1,
+                              cudaMemcpyHostToDevice),
+                   "write control byte");
+    }
+    const std::size_t control_differ = count_differ(written(chunked));
+    std::printf(
+        "KV ORDER %s: %zu written bytes; chunked 1+7+32 on a NaN cache: %zu differ, reversed "
+        "after a warm-up: %zu differ (must be 0); CONTROL one flipped byte: %zu differ "
+        "(must be 1)\n",
+        name, reference.size(), chunked_differ, reversed_differ, control_differ);
+    return (chunked_differ != 0) + (reversed_differ != 0) + (control_differ != 1) +
+           (reference.empty() ? 1 : 0);
+}
+
+// Paged prefix append at a registered head width (D=128, and D=64 for gpt-oss's DFlash drafter):
+// two rows through their own table rows, prefixes crossing a page boundary and, at D=64 (eight
+// tokens to a CTA), a CTA boundary. The exact oracle copies K and converts V to FP16.
+int paged_head_dim_case(int head_dim) {
+    constexpr int tokens = 11;
+    constexpr int batch  = 2;
+    const std::vector<std::int32_t> counts{11, 4};
+    const std::vector<std::int32_t> selectors{1, 0};
+    std::vector<std::int32_t> positions;
+    for (int t = 0; t < tokens; ++t) positions.push_back(58 + t);  // row 0: 58..68
+    for (int t = 0; t < tokens; ++t) positions.push_back(125 + t); // row 1: 125..135
+    const auto input_index_d = [&](int d, int head, int token) {
+        return static_cast<std::size_t>(d) +
+               static_cast<std::size_t>(head_dim) *
+                   (static_cast<std::size_t>(head) +
+                    static_cast<std::size_t>(kKVHeads) * static_cast<std::size_t>(token));
+    };
+    const auto cache_index_d = [&](int d, int head, int position,
+                                   const std::vector<std::int32_t>& mapping) {
+        const int physical_page = mapping.at(static_cast<std::size_t>(position / kPage));
+        return static_cast<std::size_t>(d) +
+               static_cast<std::size_t>(head_dim) *
+                   (static_cast<std::size_t>(position % kPage) +
+                    static_cast<std::size_t>(kPage) *
+                        (static_cast<std::size_t>(physical_page) +
+                         static_cast<std::size_t>(kPhysicalPages) * static_cast<std::size_t>(head)));
+    };
+    const std::size_t row_input_count = static_cast<std::size_t>(head_dim) * kKVHeads * tokens;
+    const std::size_t cache_count =
+        static_cast<std::size_t>(head_dim) * kKVHeads * kPage * kPhysicalPages;
+    const auto host_k    = patterned_bits(row_input_count * batch, 0x0badf00du);
+    const auto host_v    = finite_patterned_bf16_bits(row_input_count * batch, 0x0ddba11u);
+    const auto initial_k = patterned_bits(cache_count, 0x5eed1234u);
+    const auto initial_v = patterned_bits(cache_count, 0x5eed5678u);
+    const std::vector<std::int32_t> tables{0, 1, 2, 5, 3, 4};
+    auto expected_k = initial_k;
+    auto expected_v = initial_v;
+    for (int b = 0; b < batch; ++b) {
+        const int row = selectors[static_cast<std::size_t>(b)];
+        const std::vector<std::int32_t> mapping(
+            tables.begin() + static_cast<std::ptrdiff_t>(row * kLogicalPages),
+            tables.begin() + static_cast<std::ptrdiff_t>((row + 1) * kLogicalPages));
+        for (int token = 0; token < counts[static_cast<std::size_t>(b)]; ++token) {
+            const int position = positions[static_cast<std::size_t>(b * tokens + token)];
+            for (int head = 0; head < kKVHeads; ++head) {
+                for (int d = 0; d < head_dim; ++d) {
+                    const std::size_t src =
+                        static_cast<std::size_t>(b) * row_input_count + input_index_d(d, head, token);
+                    const std::size_t dst = cache_index_d(d, head, position, mapping);
+                    expected_k[dst]       = host_k[src];
+                    expected_v[dst]       = bf16_bits_to_f16_bits(host_v[src]);
+                }
+            }
+        }
+    }
+
+    DeviceBuffer d_k         = to_device(host_k);
+    DeviceBuffer d_v         = to_device(host_v);
+    DeviceBuffer d_positions = to_device(positions);
+    DeviceBuffer d_counts    = to_device(counts);
+    DeviceBuffer d_selectors = to_device(selectors);
+    DeviceBuffer d_tables    = to_device(tables);
+    GuardedDeviceBuffer cache_k(cache_count * sizeof(std::uint16_t));
+    GuardedDeviceBuffer cache_v(cache_count * sizeof(std::uint16_t));
+    cache_k.copy_from_host(initial_k.data(), cache_k.bytes());
+    cache_v.copy_from_host(initial_v.data(), cache_v.bytes());
+
+    Tensor k(d_k.p, DType::BF16, {head_dim, kKVHeads, tokens, batch});
+    Tensor v(d_v.p, DType::BF16, {head_dim, kKVHeads, tokens, batch});
+    Tensor position_tensor(d_positions.p, DType::I32, {tokens, batch});
+    Tensor count_tensor(d_counts.p, DType::I32, {batch});
+    Tensor selector_tensor(d_selectors.p, DType::I32, {batch});
+    const PagedKVBatchLayerView cache{
+        .k_pages      = Tensor(cache_k.data(), DType::BF16, {head_dim, kPage, kPhysicalPages, kKVHeads}),
+        .v_pages      = Tensor(cache_v.data(), DType::FP16, {head_dim, kPage, kPhysicalPages, kKVHeads}),
+        .block_tables = Tensor(d_tables.p, DType::I32, {kLogicalPages, batch}),
+        .head_dim     = head_dim,
+        .num_kv_heads = kKVHeads,
+        .storage      = KvCacheStorage::BFloat16,
+    };
+    ops::kv_cache_append_prefix(k, v, position_tensor, count_tensor, selector_tensor,
+                                {0, static_cast<std::uint32_t>(tokens)}, cache, nullptr);
+    cuda_synchronize();
+
+    const std::string label = "kv_cache_append_prefix paged D=" + std::to_string(head_dim) + " B=2";
+    int failures =
+        verify_exact((label + " k").c_str(),
+                     from_device<std::uint16_t>(cache_k.data(), expected_k.size()), expected_k);
+    failures +=
+        verify_exact((label + " v").c_str(),
+                     from_device<std::uint16_t>(cache_v.data(), expected_v.size()), expected_v);
+    failures += cache_k.verify_guards((label + " k guards").c_str());
+    failures += cache_v.verify_guards((label + " v guards").c_str());
+    return failures;
+}
+
 int main(int argc, char** argv) {
     if (cuda_unavailable()) {
         std::cout << "kv_cache_append: SKIP (CUDA unavailable)\n";
@@ -1371,7 +1608,7 @@ int main(int argc, char** argv) {
     const bool nvfp4_only = argc == 2 && std::string_view(argv[1]) == "--nvfp4-only";
     const bool k8v4_only  = argc == 2 && std::string_view(argv[1]) == "--k8v4-only";
     if (argc != 1 && !nvfp4_only && !k8v4_only) {
-        std::cerr << "usage: ninfer_kv_cache_append_test [--nvfp4-only|--k8v4-only]\n";
+        std::cerr << "usage: ninferno_kv_cache_append_test [--nvfp4-only|--k8v4-only]\n";
         return 2;
     }
 
@@ -1420,9 +1657,15 @@ int main(int argc, char** argv) {
     failures += paged_graph_replay_case();
     failures += batch_selector_case(true, kDFlashWindow);
     failures += batch_selector_case(false);
+    failures += paged_head_dim_case(128);
+    failures += paged_head_dim_case(64);
     failures += cyclic_decode_batch_case(kDFlashWindow);
     failures += cyclic_decode_batch_case(kDFlash2Window);
     failures += cyclic_variable_prefix_tests();
+    failures += order_independence_case(KvCacheStorage::Int8Group64, "int8-g64");
+    failures += order_independence_case(KvCacheStorage::Fp8KeyNvfp4Value, "k8v4");
+    failures += order_independence_case(KvCacheStorage::Fp8E4M3Row256, "fp8-row256");
+    failures += order_independence_case(KvCacheStorage::Nvfp4Group16, "nvfp4-g16");
 
     if (failures != 0) {
         std::cerr << "kv_cache_append failures=" << failures << '\n';

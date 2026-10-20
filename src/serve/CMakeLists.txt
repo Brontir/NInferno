@@ -1,10 +1,11 @@
-add_library(ninfer_serve STATIC
+add_library(ninferno_serve STATIC
   http_transport.cpp
   request_validation.cpp
   openai_chat_request.cpp
   openai_chat_response.cpp
   openai_chat_http.cpp
   openai_common.cpp
+  output_constraint_request.cpp
   openai_responses_request.cpp
   openai_responses_state.cpp
   openai_responses_response.cpp
@@ -20,8 +21,9 @@ add_library(ninfer_serve STATIC
   http_server.cpp
   openai_responses_http.cpp
   serve_options.cpp
+  model_source.cpp
 )
-ninfer_internal_includes(ninfer_serve)
-target_link_libraries(ninfer_serve
-  PUBLIC ninfer_engine Threads::Threads ninfer::json ninfer::httplib
-  PRIVATE ninfer_media_acquire ninfer_product_logging CUDA::cudart)
+ninferno_internal_includes(ninferno_serve)
+target_link_libraries(ninferno_serve
+  PUBLIC ninferno_engine ninferno_product_speculation Threads::Threads ninferno::json ninferno::httplib
+  PRIVATE ninferno_media_acquire ninferno_media_pdf ninferno_product_logging ninferno_convert ninferno::cudart)

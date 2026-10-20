@@ -1,4 +1,4 @@
-target_sources(ninfer_ops PRIVATE
+ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/fp8_format.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/fp8_a8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/fp8_dispatch.cpp"

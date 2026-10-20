@@ -1,4 +1,4 @@
-#include "ninfer/ops/rmsnorm_pack_tail.h"
+#include "ninferno/ops/rmsnorm_pack_tail.h"
 
 #include "ops/launcher/rmsnorm_pack_tail.h"
 
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 void require_bf16_contiguous_aligned(const Tensor& tensor, const char* name) {
@@ -15,12 +15,6 @@ void require_bf16_contiguous_aligned(const Tensor& tensor, const char* name) {
         throw std::invalid_argument(std::string("rmsnorm_pack_tail: ") + name +
                                     " must be contiguous 16-byte-aligned BF16");
     }
-}
-
-bool overlaps(const Tensor& lhs, const Tensor& rhs) {
-    const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs.data);
-    const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs.data);
-    return lhs_begin < rhs_begin + rhs.bytes() && rhs_begin < lhs_begin + lhs.bytes();
 }
 
 } // namespace
@@ -52,4 +46,4 @@ void rmsnorm_pack_tail(const Tensor& input, const Tensor& weight, Tensor& output
     detail::rmsnorm_pack_tail_launch(input, weight, output, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

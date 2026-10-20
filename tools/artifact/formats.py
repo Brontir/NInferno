@@ -1,4 +1,4 @@
-"""Closed registry of persistent NInfer tensor numeric formats."""
+"""Closed registry of persistent NInferno tensor numeric formats."""
 
 from __future__ import annotations
 
@@ -43,7 +43,61 @@ class Fp8RowFormat:
     name: str
 
 
-NumericFormat: TypeAlias = DirectFormat | QuantFormat | Nvfp4Format | Fp8RowFormat
+@dataclass(frozen=True, slots=True)
+class Fp8RowF32Format:
+    """E4M3FN weights with one binary32 multiplier per logical row."""
+
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class Fp8BlockFormat:
+    """E4M3FN weights with one binary32 multiplier per block_rows x block_k block."""
+
+    name: str
+    block_rows: int
+    block_k: int
+
+
+@dataclass(frozen=True, slots=True)
+class U4ZpFormat:
+    """Unsigned 4-bit codes with one zero point byte and one binary16 scale per group of K values:
+    w = (code - zero) * scale."""
+
+    name: str
+    group_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class GgmlKFormat:
+    """ggml blocks along K (ggml semantics), kept as published: the K-quant, i-quant and ternary
+    (TQ1_0, TQ2_0) superblocks of 256 values, the 32-value blocks of Q4_0, Q4_1, Q5_0, Q5_1 and
+    IQ4_NL, Q1_0 (128 values) and Q2_0 (64)."""
+
+    name: str
+    block_bytes: int
+    values: int = 256
+
+
+@dataclass(frozen=True, slots=True)
+class Mxfp4Format:
+    """OCP MXFP4: E2M1 weights with one E8M0 exponent per 32 K values, no global scale."""
+
+    name: str
+    group_size: int
+
+
+NumericFormat: TypeAlias = (
+    DirectFormat
+    | QuantFormat
+    | Nvfp4Format
+    | Fp8RowFormat
+    | Fp8RowF32Format
+    | Fp8BlockFormat
+    | Mxfp4Format
+    | U4ZpFormat
+    | GgmlKFormat
+)
 
 
 BF16 = DirectFormat("bf16", 2)
@@ -56,6 +110,38 @@ Q6_G64_FP16 = QuantFormat("q6_g64_fp16", 6, 64, -32, 31)
 Q8_G32_FP16 = QuantFormat("q8_g32_fp16", 8, 32, -127, 127)
 NVFP4 = Nvfp4Format("nvfp4", 16)
 FP8_E4M3FN_ROW_BF16 = Fp8RowFormat("fp8_e4m3fn_row_bf16")
+MXFP4 = Mxfp4Format("mxfp4", 32)
+FP8_E4M3FN_ROW_F32 = Fp8RowF32Format("fp8_e4m3fn_row_f32")
+FP8_E4M3FN_B128_F32 = Fp8BlockFormat("fp8_e4m3fn_b128_f32", 128, 128)
+U4_G128_ZP_FP16 = U4ZpFormat("u4_g128_zp_fp16", 128)
+U4_G32_ZP_FP16 = U4ZpFormat("u4_g32_zp_fp16", 32)
+U4_G64_ZP_FP16 = U4ZpFormat("u4_g64_zp_fp16", 64)
+GGML_Q4_K = GgmlKFormat("ggml_q4_k", 144)
+GGML_Q5_K = GgmlKFormat("ggml_q5_k", 176)
+GGML_Q6_K = GgmlKFormat("ggml_q6_k", 210)
+GGML_Q3_K = GgmlKFormat("ggml_q3_k", 110)
+GGML_Q2_K = GgmlKFormat("ggml_q2_k", 84)
+GGML_IQ4_XS = GgmlKFormat("ggml_iq4_xs", 136)
+GGML_IQ3_XXS = GgmlKFormat("ggml_iq3_xxs", 98)
+GGML_IQ3_S = GgmlKFormat("ggml_iq3_s", 110)
+GGML_Q4_0 = GgmlKFormat("ggml_q4_0", 18, 32)
+GGML_Q4_1 = GgmlKFormat("ggml_q4_1", 20, 32)
+GGML_Q5_0 = GgmlKFormat("ggml_q5_0", 22, 32)
+GGML_Q5_1 = GgmlKFormat("ggml_q5_1", 24, 32)
+GGML_IQ4_NL = GgmlKFormat("ggml_iq4_nl", 18, 32)
+GGML_IQ2_XXS = GgmlKFormat("ggml_iq2_xxs", 66)
+GGML_IQ2_XS = GgmlKFormat("ggml_iq2_xs", 74)
+GGML_IQ2_S = GgmlKFormat("ggml_iq2_s", 82)
+GGML_IQ1_S = GgmlKFormat("ggml_iq1_s", 50)
+GGML_IQ1_M = GgmlKFormat("ggml_iq1_m", 56)
+GGML_TQ1_0 = GgmlKFormat("ggml_tq1_0", 54)
+GGML_TQ2_0 = GgmlKFormat("ggml_tq2_0", 66)
+GGML_Q1_0 = GgmlKFormat("ggml_q1_0", 18, 128)
+GGML_Q2_0 = GgmlKFormat("ggml_q2_0", 18, 64)
+GGML_BLOCK_FORMATS = (GGML_Q4_K, GGML_Q5_K, GGML_Q6_K, GGML_Q3_K, GGML_Q2_K, GGML_IQ4_XS,
+                      GGML_IQ3_XXS, GGML_IQ3_S, GGML_Q4_0, GGML_Q4_1, GGML_Q5_0, GGML_Q5_1,
+                      GGML_IQ4_NL, GGML_IQ2_XXS, GGML_IQ2_XS, GGML_IQ2_S, GGML_IQ1_S,
+                      GGML_IQ1_M, GGML_TQ1_0, GGML_TQ2_0, GGML_Q1_0, GGML_Q2_0)
 
 
 DIRECT_FORMATS = MappingProxyType({item.name: item for item in (BF16, FP32, INT32)})
@@ -64,8 +150,44 @@ QUANT_FORMATS = MappingProxyType(
 )
 NVFP4_FORMATS = MappingProxyType({NVFP4.name: NVFP4})
 FP8_ROW_FORMATS = MappingProxyType({FP8_E4M3FN_ROW_BF16.name: FP8_E4M3FN_ROW_BF16})
+MXFP4_FORMATS = MappingProxyType({MXFP4.name: MXFP4})
+FP8_F32_FORMATS = MappingProxyType(
+    {item.name: item for item in (FP8_E4M3FN_ROW_F32, FP8_E4M3FN_B128_F32)}
+)
 NUMERIC_FORMATS = MappingProxyType(
-    {**DIRECT_FORMATS, **QUANT_FORMATS, **NVFP4_FORMATS, **FP8_ROW_FORMATS}
+    {
+        **DIRECT_FORMATS,
+        **QUANT_FORMATS,
+        **NVFP4_FORMATS,
+        **FP8_ROW_FORMATS,
+        **MXFP4_FORMATS,
+        **FP8_F32_FORMATS,
+        U4_G128_ZP_FP16.name: U4_G128_ZP_FP16,
+        U4_G32_ZP_FP16.name: U4_G32_ZP_FP16,
+        U4_G64_ZP_FP16.name: U4_G64_ZP_FP16,
+        GGML_Q4_K.name: GGML_Q4_K,
+        GGML_Q5_K.name: GGML_Q5_K,
+        GGML_Q6_K.name: GGML_Q6_K,
+        GGML_Q3_K.name: GGML_Q3_K,
+        GGML_Q2_K.name: GGML_Q2_K,
+        GGML_IQ4_XS.name: GGML_IQ4_XS,
+        GGML_IQ3_XXS.name: GGML_IQ3_XXS,
+        GGML_IQ3_S.name: GGML_IQ3_S,
+        GGML_Q4_0.name: GGML_Q4_0,
+        GGML_Q4_1.name: GGML_Q4_1,
+        GGML_Q5_0.name: GGML_Q5_0,
+        GGML_Q5_1.name: GGML_Q5_1,
+        GGML_IQ4_NL.name: GGML_IQ4_NL,
+        GGML_IQ2_XXS.name: GGML_IQ2_XXS,
+        GGML_IQ2_XS.name: GGML_IQ2_XS,
+        GGML_IQ2_S.name: GGML_IQ2_S,
+        GGML_IQ1_S.name: GGML_IQ1_S,
+        GGML_IQ1_M.name: GGML_IQ1_M,
+        GGML_TQ1_0.name: GGML_TQ1_0,
+        GGML_TQ2_0.name: GGML_TQ2_0,
+        GGML_Q1_0.name: GGML_Q1_0,
+        GGML_Q2_0.name: GGML_Q2_0,
+    }
 )
 
 
@@ -147,6 +269,42 @@ __all__ = [
     "Q8_G32_FP16",
     "NVFP4",
     "FP8_E4M3FN_ROW_BF16",
+    "MXFP4",
+    "MXFP4_FORMATS",
+    "FP8_E4M3FN_ROW_F32",
+    "FP8_E4M3FN_B128_F32",
+    "FP8_F32_FORMATS",
+    "U4_G128_ZP_FP16",
+    "U4_G32_ZP_FP16",
+    "U4_G64_ZP_FP16",
+    "U4ZpFormat",
+    "GGML_Q4_K",
+    "GGML_Q5_K",
+    "GGML_Q6_K",
+    "GGML_Q3_K",
+    "GGML_Q2_K",
+    "GGML_IQ4_XS",
+    "GGML_IQ3_XXS",
+    "GGML_IQ3_S",
+    "GGML_Q4_0",
+    "GGML_Q4_1",
+    "GGML_Q5_0",
+    "GGML_Q5_1",
+    "GGML_IQ4_NL",
+    "GGML_IQ2_XXS",
+    "GGML_IQ2_XS",
+    "GGML_IQ2_S",
+    "GGML_IQ1_S",
+    "GGML_IQ1_M",
+    "GGML_TQ1_0",
+    "GGML_TQ2_0",
+    "GGML_Q1_0",
+    "GGML_Q2_0",
+    "GGML_BLOCK_FORMATS",
+    "GgmlKFormat",
+    "Fp8RowF32Format",
+    "Fp8BlockFormat",
+    "Mxfp4Format",
     "DIRECT_FORMATS",
     "QUANT_FORMATS",
     "NVFP4_FORMATS",

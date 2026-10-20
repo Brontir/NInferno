@@ -1,4 +1,4 @@
-#include "ninfer/ops/rmsnorm.h"
+#include "ninferno/ops/rmsnorm.h"
 #include "ops/norm_test_common.h"
 #include "core/device.h"
 #include "core/decode_graph.h"
@@ -9,9 +9,9 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
-using namespace ninfer::test::norm;
+using namespace ninferno;
+using namespace ninferno::test;
+using namespace ninferno::test::norm;
 
 namespace {
 
@@ -130,6 +130,13 @@ int main() {
     failures += run_case("rmsnorm offset [256,2,1]", {256, 2}, true, 1105U);
     failures += run_case("rmsnorm offset [256,4,48]", {256, 4, 48}, true, 1106U);
     failures += run_case("rmsnorm plain [2048,1]", {2048, 1}, false, 1201U);
+    // Even widths that are not a multiple of the CTA vector span take the ragged CTA pass.
+    failures += run_case("rmsnorm offset [2816,1]", {2816, 1}, true, 1111U);
+    failures += run_case("rmsnorm plain [2816,33]", {2816, 33}, false, 1112U);
+    failures += run_case("rmsnorm offset [2880,5]", {2880, 5}, true, 1113U);
+    failures += run_case("rmsnorm plain [2688,17]", {2688, 17}, false, 1114U);
+    failures += run_case("rmsnorm offset [6656,3]", {6656, 3}, true, 1115U);
+    failures += run_case("rmsnorm plain [514,9]", {514, 9}, false, 1116U);
     failures += run_case("rmsnorm plain [2048,128]", {2048, 128}, false, 1202U);
     failures += run_case("rmsnorm plain [128,32,7]", {128, 32, 7}, false, 1203U);
     failures += run_case("rmsnorm plain [128,8,128]", {128, 8, 128}, false, 1204U);

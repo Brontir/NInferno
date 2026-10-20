@@ -1,7 +1,7 @@
+#include "ops/linear_swiglu/q4/q4_linear_swiglu_gemm_mma.cuh"
+
 #include "core/weight.h"
 #include "ops/linear_swiglu/q4/q4_linear_swiglu_kernels.h"
-
-#include "ops/linear_swiglu/q4/q4_linear_swiglu_gemm_mma.cuh"
 
 #include "core/device.h"
 #include "ops/common/math.h"
@@ -9,11 +9,11 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
-using GateUpC40Cfg  = GemmCfg<64, 40, 64, 64, 8, 2, 1, false, true, true>;
-using GateUpC128Cfg = GemmCfg<64, 128, 64, 64, 16, 2, 1, false, true, true>;
+using GateUpC40Cfg  = GemmCfg<64, 40, 64, 64, 8, 2, 1, true, true>;
+using GateUpC128Cfg = GemmCfg<64, 128, 64, 64, 16, 2, 1, true, true>;
 
 template <class Cfg, bool Full>
 void launch_folded(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
@@ -94,4 +94,4 @@ void q4_linear_swiglu_mma_split_half_pair_r32_c128_tail_launch(const Tensor& x,
     }
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -1,8 +1,8 @@
 #include "core/weight.h"
-#include "ninfer/ops/linear_swiglu.h"
+#include "ninferno/ops/linear_swiglu.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_profiler_api.h>
@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -108,10 +108,6 @@ Options parse_options(int argc, char** argv) {
     if (options.profile && options.t_sweep.size() != 1) {
         throw std::invalid_argument("--profile requires exactly one T");
     }
-    if (options.policy == ops::LinearPolicy::A16Only &&
-        *std::max_element(options.t_sweep.begin(), options.t_sweep.end()) > 16) {
-        throw std::invalid_argument("A16 policy is registered only through T=16");
-    }
     return options;
 }
 
@@ -140,6 +136,7 @@ void write_csv(const Options& options, const std::vector<Result>& results,
 } // namespace
 
 int main(int argc, char** argv) {
+    ninferno::bench::prefill_routes_from_env();
     try {
         const Options options = parse_options(argc, argv);
         const std::int32_t max_t =
@@ -148,8 +145,8 @@ int main(int argc, char** argv) {
             *std::min_element(options.t_sweep.begin(), options.t_sweep.end());
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
-        DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_t);
+        bench::L2FlushBuffer flush(kFlushBytes);
+        DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_t, 101U);
         DeviceBuffer output(static_cast<std::size_t>(kOutputRows) * max_t * sizeof(std::uint16_t));
         bench::PackedQuantizedWeight packed  = bench::make_nvfp4_weight(kGateUpRows, kHidden);
         const std::size_t workspace_capacity = ops::linear_swiglu_workspace_capacity_bytes(
@@ -209,7 +206,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_nvfp4_linear_swiglu_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_nvfp4_linear_swiglu_bench: %s\n", error.what());
         return 1;
     }
 }

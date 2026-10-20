@@ -1,10 +1,11 @@
 #include "models/qwen3_5/load/bindings.h"
 
 #include "artifact/views.h"
+#include "models/common/weight_use.h"
 
 #include <cmath>
 
-namespace ninfer::models::qwen3_5::loading {
+namespace ninferno::models::qwen3_5::loading {
 
 WeightUseId Bindings::use(WeightId id, std::string_view input) const {
     const auto& parameter = at(id);
@@ -24,34 +25,11 @@ WeightId Bindings::parameter(std::string name, artifact::Shape shape,
     pending.reference =
         binder.parameter(name, std::move(shape), artifact::Residency::Device, exact_format);
     for (const auto& input : inputs) {
-        const auto& use = binder.use(name, input);
-        if (!use.activation_policy) {
-            throw artifact::ArtifactError(name + "@" + input + ": missing activation policy");
-        }
+        const auto use = read_weight_use(binder, name, input);
         WeightUse result;
-        result.input = input;
-        switch (*use.activation_policy) {
-        case artifact::ActivationPolicy::A16Only:
-            result.policy = ops::LinearPolicy::A16Only;
-            break;
-        case artifact::ActivationPolicy::AllowA8:
-            result.policy = ops::LinearPolicy::AllowA8;
-            break;
-        case artifact::ActivationPolicy::AllowA4:
-            result.policy = ops::LinearPolicy::AllowA4;
-            break;
-        }
-        for (const auto& [role, binding] : use.auxiliaries) {
-            if (role != "activation_input_divisor") {
-                throw artifact::ArtifactError(name + "@" + input + ": unknown auxiliary " + role);
-            }
-            const auto value = binder.values(binding, QType::FP32).scalar_f32();
-            if (!std::isfinite(value) || value <= 0) {
-                throw artifact::ArtifactError(name + "@" + input +
-                                              ": activation divisor must be positive finite FP32");
-            }
-            result.activation_input_divisor = value;
-        }
+        result.input                    = input;
+        result.policy                   = use.policy;
+        result.activation_input_divisor = use.activation_input_divisor;
         pending.uses.push_back(std::move(result));
     }
     for (const auto& part : pending.reference.binding.parts) {
@@ -80,4 +58,4 @@ std::vector<BoundWeight> resolve_weights(std::vector<PendingWeight>&& pending,
     return out;
 }
 
-} // namespace ninfer::models::qwen3_5::loading
+} // namespace ninferno::models::qwen3_5::loading

@@ -1,5 +1,5 @@
-#include "ninfer/ops/gated_delta_net.h"
-#include "ninfer/ops/gdn_replay.h"
+#include "ninferno/ops/gated_delta_net.h"
+#include "ninferno/ops/gdn_replay.h"
 
 #include "ops/linear_attention/gated_delta_net/common.h"
 #include "ops/linear_attention/gated_delta_net/launch.h"
@@ -15,15 +15,11 @@
 #include <type_traits>
 #include <vector>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kStateDim    = detail::gated_delta_net::kStateDim;
 constexpr std::int32_t kMaximumRows = 8;
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 void require_tensor(const Tensor& tensor, DType dtype, std::initializer_list<std::int32_t> shape,
                     std::uintptr_t alignment, const char* op, const char* label) {
@@ -104,8 +100,8 @@ void validate_replay_record(const Tensor& q, const Tensor& k, const Tensor& v, c
     const std::int32_t value_heads = v.ne[1];
     const std::int32_t width       = q.ne[2];
     const std::int32_t rows        = q.ne[3];
-    const bool registered_heads    = qk_heads == 16 && (value_heads == 48 || value_heads == 32);
-    if (!registered_heads || width < 2 || width > 16 || rows <= 0 || rows > kMaximumRows) {
+    const bool heads_ok = qk_heads > 0 && value_heads > 0 && value_heads % qk_heads == 0;
+    if (!heads_ok || width < 2 || width > 16 || rows <= 0 || rows > kMaximumRows) {
         throw std::invalid_argument(std::string(kOp) + ": unsupported geometry");
     }
     if (states.ne[3] <= 0) {
@@ -117,7 +113,10 @@ void validate_replay_record(const Tensor& q, const Tensor& k, const Tensor& v, c
     require_tensor(v, DType::BF16, {kStateDim, value_heads, width, rows}, 2, kOp, "v");
     require_tensor(g, DType::FP32, {value_heads, width, rows}, 4, kOp, "g");
     require_tensor(beta, DType::FP32, {value_heads, width, rows}, 4, kOp, "beta");
-    require_tensor(states, DType::FP32, {kStateDim, kStateDim, value_heads, states.ne[3]}, 16, kOp,
+    if (states.dtype != DType::FP32 && states.dtype != DType::BF16 && states.dtype != DType::FP16) {
+        throw std::invalid_argument(std::string(kOp) + ": states must be FP32, BF16 or FP16");
+    }
+    require_tensor(states, states.dtype, {kStateDim, kStateDim, value_heads, states.ne[3]}, 16, kOp,
                    "states");
     require_tensor(initial_slots, DType::I32, {rows}, 4, kOp, "initial state slots");
     if (valid_columns.data != nullptr) {
@@ -151,12 +150,13 @@ void validate_replay_record(const Tensor& q, const Tensor& k, const Tensor& v, c
     require_pairwise_disjoint(ranges, "gated_delta_net_replay_record: tensors must not overlap");
 }
 
+// Any GDN stack the fold kernel can cover: whole 128-channel conv tiles, and no more conv tiles
+// than the grid's (value head, state tile) blocks that publish them.
 bool is_registered_fold_geometry(const GdnReplayRecordSpec& spec) {
-    const bool geometry_48 = spec.layers == 48 && spec.qk_heads == 16 && spec.value_heads == 48 &&
-                             spec.conv_channels == 10240;
-    const bool geometry_30 = spec.layers == 30 && spec.qk_heads == 16 && spec.value_heads == 32 &&
-                             spec.conv_channels == 8192;
-    return geometry_48 || geometry_30;
+    return spec.layers > 0 && spec.qk_heads > 0 && spec.value_heads > 0 &&
+           spec.value_heads % spec.qk_heads == 0 && spec.conv_channels > 0 &&
+           spec.conv_channels % 128 == 0 &&
+           spec.conv_channels / 128 <= spec.value_heads * (kStateDim / 16);
 }
 
 void validate_fold_records(const GdnReplayRecords& records) {
@@ -195,17 +195,21 @@ void validate_fold_states(const GdnReplayRecords& records,
         state.conv_channels != record.conv_channels || state.conv_width != 3 ||
         state.value_heads != record.value_heads || state.value_head_dim != kStateDim ||
         state.key_head_dim != kStateDim || state.slot_count <= 0 ||
-        state.conv_dtype != DType::BF16) {
+        state.conv_dtype != DType::BF16 ||
+        (state.recurrent_dtype != DType::FP32 && state.recurrent_dtype != DType::BF16 &&
+         state.recurrent_dtype != DType::FP16)) {
         throw std::invalid_argument(std::string(kOp) + ": state geometry does not match records");
     }
     require_tensor(states.conv_layer0, DType::BF16, {record.conv_channels, 3, state.slot_count},
                    256, kOp, "conv state layer 0");
-    require_tensor(states.recurrent_layer0, DType::FP32,
+    require_tensor(states.recurrent_layer0, state.recurrent_dtype,
                    {kStateDim, kStateDim, record.value_heads, state.slot_count}, 256, kOp,
                    "recurrent state layer 0");
     if (states.conv_layer_stride_bytes <= 0 || states.recurrent_layer_stride_bytes <= 0 ||
         states.conv_layer_stride_bytes % static_cast<std::int64_t>(sizeof(std::uint16_t)) != 0 ||
-        states.recurrent_layer_stride_bytes % static_cast<std::int64_t>(sizeof(float)) != 0 ||
+        states.recurrent_layer_stride_bytes %
+                static_cast<std::int64_t>(dtype_size(state.recurrent_dtype)) !=
+            0 ||
         static_cast<std::uint64_t>(states.conv_layer_stride_bytes) < states.conv_layer0.bytes() ||
         static_cast<std::uint64_t>(states.recurrent_layer_stride_bytes) <
             states.recurrent_layer0.bytes()) {
@@ -319,4 +323,4 @@ void GdnReplayFoldPlan::execute(std::span<const GdnReplayFoldRow> rows, cudaStre
                                                 static_cast<std::int32_t>(rows.size()), stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

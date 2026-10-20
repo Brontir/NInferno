@@ -1,11 +1,11 @@
 #include "models/qwen3_5/frontend/tokenizer.h"
 
+#include "core/parse.h"
 #include "text/unicode.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -19,11 +19,11 @@
 #include <unordered_set>
 #include <utility>
 
-namespace ninfer::models::qwen3_5::frontend {
+namespace ninferno::models::qwen3_5::frontend {
 namespace {
 
 using Json    = nlohmann::json;
-namespace uni = ninfer::text::unicode_internal;
+namespace uni = ninferno::text::unicode_internal;
 
 constexpr std::int64_t kMaxTokenId = 1'000'000;
 
@@ -238,14 +238,12 @@ bool same_added_token(const AddedToken& lhs, const AddedToken& rhs) noexcept {
 }
 
 int parse_added_token_decoder_id(std::string_view key, std::string_view label) {
-    std::int64_t parsed     = -1;
-    const auto [end, error] = std::from_chars(key.data(), key.data() + key.size(), parsed);
-    if (error != std::errc{} || end != key.data() + key.size() || parsed < 0 ||
-        parsed > kMaxTokenId || std::to_string(parsed) != key) {
+    const auto parsed = parse_exact<std::int64_t>(key);
+    if (!parsed || *parsed < 0 || *parsed > kMaxTokenId || std::to_string(*parsed) != key) {
         throw std::invalid_argument("added_tokens_decoder key must be a nonnegative token id in " +
                                     std::string(label));
     }
-    return static_cast<int>(parsed);
+    return static_cast<int>(*parsed);
 }
 
 std::vector<AddedToken>
@@ -286,6 +284,14 @@ void merge_added_tokens_decoder(const Json& root, std::string_view label,
                                 const std::unordered_set<int>& occupied_vocab_ids,
                                 const std::unordered_map<std::string, int>& occupied_vocab_tokens,
                                 std::vector<AddedToken>& tokens) {
+    const auto by_id = [](const AddedToken& lhs, const AddedToken& rhs) { return lhs.id < rhs.id; };
+    // transformers 5 saves every added token in tokenizer.json and none in tokenizer_config.json
+    // (it has no added_tokens_decoder): tokenizer.json's list is then the whole set, as it is for
+    // transformers 5's own TokenizersBackend.
+    if (root.is_object() && !root.contains("added_tokens_decoder")) {
+        std::sort(tokens.begin(), tokens.end(), by_id);
+        return;
+    }
     const Json& decoder = require_object_field(root, "added_tokens_decoder", label);
     std::unordered_map<int, std::size_t> token_by_id;
     std::unordered_map<std::string, int> token_by_content;
@@ -335,8 +341,7 @@ void merge_added_tokens_decoder(const Json& root, std::string_view label,
         token_by_content.emplace(token.content, id);
         tokens.push_back(std::move(token));
     }
-    std::sort(tokens.begin(), tokens.end(),
-              [](const AddedToken& lhs, const AddedToken& rhs) { return lhs.id < rhs.id; });
+    std::sort(tokens.begin(), tokens.end(), by_id);
 }
 
 std::vector<int> load_default_stop_token_ids(std::string_view contents) {
@@ -360,11 +365,6 @@ std::vector<int> load_default_stop_token_ids(std::string_view contents) {
     }
     throw std::invalid_argument(
         "field eos_token_id must be integer or array in generation_config.json");
-}
-
-std::uint64_t merge_pair_key(int left, int right) noexcept {
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(left)) << 32U) |
-           static_cast<std::uint32_t>(right);
 }
 
 BpeMergeTable load_bpe_merge_rules(const Json& model, std::string_view label,
@@ -406,8 +406,7 @@ BpeMergeTable load_bpe_merge_rules(const Json& model, std::string_view label,
                                         std::string(label));
         }
         const bool inserted =
-            rules.insert(merge_pair_key(left_id->second, right_id->second),
-                         BpeMergeRule{.rank = rank++, .result = result_id->second});
+            rules.insert(left_id->second, right_id->second, rank++, result_id->second);
         if (!inserted) { throw std::invalid_argument("duplicate merge pair in model.merges"); }
     }
     return rules;
@@ -593,15 +592,28 @@ std::array<int, 256> load_byte_token_ids(const std::unordered_map<std::string, i
     return ids;
 }
 
+// overflow_token_bytes, when not 0, is the most bytes one token covers: the rest of the text needs
+// at least its bytes / overflow_token_bytes tokens, so once that passes max_tokens the encoding
+// stops with max_tokens ids that are not its prefix (EncodeOptions::overflow_check_only).
 bool append_normalized_bpe_ids(std::vector<int>& ids, std::string_view normalized,
                                const BpeMergeTable& merge_rules,
                                const std::array<int, 256>& byte_token_ids, std::size_t max_tokens,
+                               std::size_t overflow_token_bytes,
                                std::vector<std::size_t>* token_ends = nullptr,
                                std::vector<BpeWordEnd>* word_ends   = nullptr) {
     if (normalized.empty()) { return true; }
     if (ids.size() == max_tokens) { return false; }
 
     for (std::size_t begin = 0; begin < normalized.size();) {
+        if (overflow_token_bytes != 0) {
+            const std::size_t rest  = normalized.size() - begin;
+            const std::size_t floor = (rest + overflow_token_bytes - 1) / overflow_token_bytes;
+            if (floor > max_tokens - ids.size()) {
+                ids.resize(max_tokens,
+                           byte_token_ids[static_cast<unsigned char>(normalized[begin])]);
+                return false;
+            }
+        }
         const std::size_t end = qwen_word_end(normalized, begin);
         const std::string_view word(normalized.data() + begin, end - begin);
         std::vector<BpeNode> nodes(word.size());
@@ -624,9 +636,9 @@ bool append_normalized_bpe_ids(std::vector<int>& ids, std::string_view normalize
             if (left < 0 || !nodes[static_cast<std::size_t>(left)].live) { return; }
             const int right = nodes[static_cast<std::size_t>(left)].next;
             if (right < 0) { return; }
-            const BpeMergeEntry* rule =
-                merge_rules.find(merge_pair_key(nodes[static_cast<std::size_t>(left)].symbol,
-                                                nodes[static_cast<std::size_t>(right)].symbol));
+            const BpeMergeTable::Entry* rule =
+                merge_rules.find(nodes[static_cast<std::size_t>(left)].symbol,
+                                 nodes[static_cast<std::size_t>(right)].symbol);
             if (rule == nullptr) { return; }
             queue.push(BpeCandidate{
                 .rank             = rule->rank,
@@ -687,7 +699,8 @@ struct IndexedByteBoundary {
 bool append_ordinary_text(BoundaryEncodedText& encoded, std::string_view text,
                           std::size_t text_offset, std::span<const IndexedByteBoundary> boundaries,
                           const BpeMergeTable& merge_rules,
-                          const std::array<int, 256>& byte_token_ids, std::size_t max_tokens) {
+                          const std::array<int, 256>& byte_token_ids, std::size_t max_tokens,
+                          std::size_t overflow_token_bytes) {
     const std::size_t token_base = encoded.input_ids.size();
     if (text.empty()) {
         for (const IndexedByteBoundary boundary : boundaries) {
@@ -707,7 +720,8 @@ bool append_ordinary_text(BoundaryEncodedText& encoded, std::string_view text,
     std::vector<BpeWordEnd> word_ends;
     if (has_internal_boundary) { token_ends.reserve(normalized.size()); }
     if (!append_normalized_bpe_ids(encoded.input_ids, normalized, merge_rules, byte_token_ids,
-                                   max_tokens, has_internal_boundary ? &token_ends : nullptr,
+                                   max_tokens, overflow_token_bytes,
+                                   has_internal_boundary ? &token_ends : nullptr,
                                    has_internal_boundary ? &word_ends : nullptr)) {
         return false;
     }
@@ -832,6 +846,11 @@ Tokenizer::Tokenizer(TokenizerResources resources) {
     bpe_merge_rules_        = load_bpe_merge_rules(model, tokenizer_label, vocab_token_to_id_);
     byte_token_ids_         = load_byte_token_ids(vocab_token_to_id_);
     default_stop_token_ids_ = load_default_stop_token_ids(resources.generation_config_json);
+    for (std::size_t index = 0; index < decoded_token_bytes_.size(); ++index) {
+        if (valid_token_ids_[index] && !added_token_ids[index]) {
+            max_token_bytes_ = std::max(max_token_bytes_, decoded_token_bytes_[index].size());
+        }
+    }
 }
 
 std::vector<int> Tokenizer::encode(std::string_view text, EncodeOptions options) const {
@@ -876,7 +895,8 @@ BoundaryEncodedText Tokenizer::encode_with_boundaries(
             append_ordinary_text(encoded, text.substr(begin, end - begin), begin,
                                  std::span<const IndexedByteBoundary>(boundaries)
                                      .subspan(boundary_cursor, request_end - boundary_cursor),
-                                 bpe_merge_rules_, byte_token_ids_, options.max_tokens);
+                                 bpe_merge_rules_, byte_token_ids_, options.max_tokens,
+                                 options.overflow_check_only ? max_token_bytes_ : 0);
         boundary_cursor = request_end;
         return complete;
     };
@@ -977,10 +997,19 @@ bool Tokenizer::is_valid_token(int id) const noexcept {
            valid_token_ids_[static_cast<std::size_t>(id)];
 }
 
+std::optional<int> Tokenizer::token_id(std::string_view content) const {
+    for (const AddedToken& token : added_tokens_) {
+        if (token.content == content) { return token.id; }
+    }
+    const std::vector<int> ids = encode(content, EncodeOptions{.parse_added_tokens = false});
+    if (ids.size() == 1 && decoded_token(ids.front()).bytes == content) { return ids.front(); }
+    return std::nullopt;
+}
+
 bool Tokenizer::has_exact_token_domain(std::size_t size) const noexcept {
     return valid_token_ids_.size() == size &&
            std::find(valid_token_ids_.begin(), valid_token_ids_.end(), false) ==
                valid_token_ids_.end();
 }
 
-} // namespace ninfer::models::qwen3_5::frontend
+} // namespace ninferno::models::qwen3_5::frontend

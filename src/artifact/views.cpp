@@ -1,6 +1,6 @@
 #include "artifact/views.h"
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 WeightView bind_view(const ParameterReference& reference,
                      const MaterializedArtifact& materialized) {
@@ -11,7 +11,7 @@ WeightView bind_view(const ParameterReference& reference,
     out.shape             = reference.shape;
     std::uint64_t covered = 0;
     for (const auto& part : reference.binding.parts) {
-        const auto& parent = reference.residency == Residency::Device
+        const auto& parent = reference.residency != Residency::Host
                                  ? materialized.device_parent(part.object)
                                  : materialized.host_parent(part.object);
         if (part.begin >= part.end || part.end > parent.geometry.elements) {
@@ -26,4 +26,4 @@ WeightView bind_view(const ParameterReference& reference,
     return out;
 }
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

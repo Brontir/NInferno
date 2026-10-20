@@ -3,7 +3,10 @@
 #include "core/device.h"
 #include "ops/kernel/scalar.cuh"
 
-namespace ninfer::ops::detail {
+#include <algorithm>
+#include <cstdint>
+
+namespace ninferno::ops::detail {
 
 void set_i32_scalar_launch(Tensor& destination, std::int32_t value, cudaStream_t stream) {
     set_i32_scalar_kernel<<<1, 1, 0, stream>>>(static_cast<std::int32_t*>(destination.data), value);
@@ -33,4 +36,25 @@ void increment_i64_scalar_launch(Tensor& scalar, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+void fill_i32_launch(Tensor& destination, std::int32_t value, cudaStream_t stream) {
+    constexpr std::int64_t kThreads = 256;
+    constexpr std::int64_t kBlocks  = 1024;
+    const std::int64_t count        = destination.ne[0];
+    const auto blocks = static_cast<unsigned>(std::min(kBlocks, (count + kThreads - 1) / kThreads));
+    fill_i32_kernel<<<blocks, kThreads, 0, stream>>>(static_cast<std::int32_t*>(destination.data),
+                                                     count, value);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void copy_to_pinned_host_launch(void* host, const void* device, std::size_t bytes,
+                                cudaStream_t stream) {
+    const bool wide =
+        ((reinterpret_cast<std::uintptr_t>(host) | reinterpret_cast<std::uintptr_t>(device)) &
+         15U) == 0U;
+    copy_bytes_kernel<<<1, 256, 0, stream>>>(static_cast<unsigned char*>(host),
+                                             static_cast<const unsigned char*>(device),
+                                             static_cast<std::int64_t>(bytes), wide);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+} // namespace ninferno::ops::detail

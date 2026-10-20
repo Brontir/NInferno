@@ -1,4 +1,6 @@
 #include "models/qwen3_5/program/vision_control.h"
+
+#include "core/checked.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -6,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 namespace {
 
 std::int32_t checked_i32(std::size_t value, const char* label) {
@@ -20,13 +22,6 @@ float coordinate(std::int32_t index, std::int32_t size, std::int32_t position_si
     return size <= 1 ? 0.0F
                      : static_cast<float>(index) * static_cast<float>(position_side - 1) /
                            static_cast<float>(size - 1);
-}
-
-std::size_t checked_mul(std::size_t left, std::size_t right, const char* label) {
-    if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
-        throw std::overflow_error(std::string("vision control ") + label + " exceeds size_t");
-    }
-    return left * right;
 }
 
 } // namespace
@@ -209,4 +204,4 @@ VisionControl build_vision_control(const PreparedPromptData& prompt, const Visio
     return out;
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

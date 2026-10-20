@@ -2,14 +2,18 @@
 
 #include "models/qwen3_5/state/state_image.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 class StateImageStore;
 
@@ -90,6 +94,22 @@ private:
     friend class StateImageStore;
 };
 
+// Whether a prompt-frontier capture forks its checkpoint on Device (a Device-to-Device copy now,
+// the same for a later restore) instead of snapshotting it to Host. A Device checkpoint of an
+// active lineage is not reclaimable by admission pressure (only catalogued continuations are),
+// so with a Host tier the fork must leave one free Device image for each request that waits for
+// admission and has an idle lane to take: otherwise the checkpoints of the first requests fill
+// the pool and the next request waits for a finish. Without a Host tier, or when the capture
+// recycles the lineage's own Device checkpoint, the fork is the only placement.
+[[nodiscard]] constexpr bool capture_prefers_device(std::uint32_t free_device_images,
+                                                    std::uint32_t idle_lanes,
+                                                    std::uint32_t waiting_admissions,
+                                                    bool host_tier,
+                                                    bool recycles_device_checkpoint) noexcept {
+    if (recycles_device_checkpoint || !host_tier) { return true; }
+    return free_device_images > std::min(idle_lanes, waiting_admissions);
+}
+
 // Program-private logical StateImage ownership. Logical identity is independent from Device and
 // Host replicas; published raw Tensor views are reconstructed only from an active Device binding.
 class StateImageStore {
@@ -149,7 +169,7 @@ public:
         return allocate(StateImageRole::ReservedDestination, false);
     }
 
-    [[nodiscard]] std::optional<StateImageHandle> reserve_reset(cudaStream_t stream = nullptr) {
+    [[nodiscard]] std::optional<StateImageHandle> reserve_reset(cudaStream_t stream) {
         std::optional<StateImageHandle> handle = allocate(StateImageRole::ActiveMutable, true);
         if (!handle) { return std::nullopt; }
         try {
@@ -163,7 +183,7 @@ public:
         return handle;
     }
 
-    void activate_reset(StateImageHandle handle, cudaStream_t stream = nullptr) {
+    void activate_reset(StateImageHandle handle, cudaStream_t stream) {
         Object& object = require(handle);
         if (object.role != StateImageRole::ReservedDestination || !object.device_slot ||
             object.source_pins != 0 || object.destination_pinned || has_pending_replica(object)) {
@@ -478,7 +498,7 @@ public:
                                   source);
     }
 
-    void enqueue_device_to_host(const StateImageTransfer& transfer, cudaStream_t stream = nullptr) {
+    void enqueue_device_to_host(const StateImageTransfer& transfer, cudaStream_t stream) {
         validate_transfer(transfer);
         Object& object = require(transfer.source_);
         if (transfer.direction_ != StateTransferDirection::DeviceToHost || host_ == nullptr ||
@@ -490,7 +510,7 @@ public:
     }
 
     [[nodiscard]] std::optional<StateImageTransfer>
-    begin_device_to_host(StateImageHandle source, cudaStream_t stream = nullptr) {
+    begin_device_to_host(StateImageHandle source, cudaStream_t stream) {
         std::optional<StateImageTransfer> transfer = reserve_device_to_host(source);
         if (!transfer) { return std::nullopt; }
         try {
@@ -503,7 +523,7 @@ public:
     }
 
     [[nodiscard]] std::optional<StateImageTransfer>
-    begin_host_to_device(StateImageHandle source, cudaStream_t stream = nullptr) {
+    begin_host_to_device(StateImageHandle source, cudaStream_t stream) {
         Object& object = require(source);
         if (host_ == nullptr || object.role != StateImageRole::CheckpointImmutable ||
             !object.host_slot || object.device_slot || has_pending_replica(object) ||
@@ -533,7 +553,7 @@ public:
 
     [[nodiscard]] std::optional<StateImageTransfer> begin_host_fork(StateImageHandle source,
                                                                     StateImageHandle destination,
-                                                                    cudaStream_t stream = nullptr) {
+                                                                    cudaStream_t stream) {
         Object& source_object      = require(source);
         Object& destination_object = require(destination);
         if (host_ == nullptr || source == destination ||
@@ -658,6 +678,16 @@ public:
         return true;
     }
 
+    // Debug poison (NINFERNO_DEBUG_POISON): every Device slot returned to the free list is filled
+    // with value on stream, after all work already ordered there, and the fill completes before
+    // the slot is reusable. An owner that reads a slot before resetting or copying into it then
+    // reads poison, not the previous owner's state.
+    void enable_debug_poison(unsigned char value, cudaStream_t stream) noexcept {
+        poison_value_  = value;
+        poison_stream_ = stream;
+        poison_        = true;
+    }
+
     [[nodiscard]] bool can_release(StateImageHandle handle) const noexcept {
         if (!valid(handle)) { return false; }
         const Object& object = objects_[handle.index_];
@@ -720,6 +750,23 @@ private:
     }
 
     void return_device_slot(std::int32_t slot) noexcept {
+        if (poison_) {
+            try {
+                device_->fill_slot(slot, poison_value_, poison_stream_);
+                // The next owner may write the slot from another stream (a host restore on the
+                // transfer stream) that is not ordered after this fill, so the fill must be
+                // complete before the slot becomes reusable.
+                const cudaError_t synced = cudaStreamSynchronize(poison_stream_);
+                if (synced != cudaSuccess) {
+                    throw std::runtime_error(cudaGetErrorString(synced));
+                }
+            } catch (const std::exception& error) {
+                std::fprintf(stderr,
+                             "NINFERNO_DEBUG_POISON: poisoning StateImage slot %d failed: %s\n",
+                             slot, error.what());
+                std::abort();
+            }
+        }
         free_device_slots_[free_device_count_++] = slot;
     }
 
@@ -772,6 +819,9 @@ private:
     std::uint32_t free_device_count_  = 0;
     std::uint64_t next_content_epoch_ = 0;
     std::uint64_t next_transfer_id_   = 0;
+    cudaStream_t poison_stream_       = nullptr;
+    unsigned char poison_value_       = 0;
+    bool poison_                      = false;
 };
 
 inline StateImageTransfer::~StateImageTransfer() {
@@ -806,4 +856,4 @@ struct ActiveStateBinding {
     }
 };
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

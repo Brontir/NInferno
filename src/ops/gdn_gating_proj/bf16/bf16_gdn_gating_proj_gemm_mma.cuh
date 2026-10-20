@@ -11,17 +11,20 @@
 // in-kernel cooperative grid reduction; the unsplit long-context route uses
 // eight warps for more independent MMA accumulators. One cooperative launch remains fused, while
 // its launcher may submit independent token-tile slices when the whole grid cannot reside.
+// Whatever the split, K is summed as kBf16GdnCanonicalSegments segments added in order, so every
+// route gives a token the same bytes.
 
 #include "ops/common/math.cuh"
 #include "ops/common/rowsplit_mma.cuh"
 #include "ops/common/warp.cuh"
+#include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_kernels.h"
 
 #include <cuda_bf16.h>
 #include <cooperative_groups.h>
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 inline constexpr int kBf16GdnBlockM     = 16;
 inline constexpr int kBf16GdnBlockK     = 64;
@@ -73,7 +76,16 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
     static_assert(Warps == 8 || Warps == 16);
     static_assert(kBf16GdnBlockN % Warps == 0);
     constexpr int kTilesPerSplit = kBf16GdnKTiles / SplitK;
-    constexpr int kKSubtiles     = kBf16GdnBlockK / 16;
+    // Canonical K segments (see kBf16GdnCanonicalSegments): a split CTA writes each of its
+    // segments as a partial of its own and the grid reduction adds the segments in order; the
+    // unsplit CTA adds its segments in the same order in registers.
+    constexpr int kSegments =
+        SplitK > kBf16GdnCanonicalSegments ? SplitK : kBf16GdnCanonicalSegments;
+    static_assert(kBf16GdnKTiles % kSegments == 0 && kSegments % SplitK == 0,
+                  "BF16 GDN canonical segments must tile K and the split");
+    constexpr int kTilesPerSegment  = kBf16GdnKTiles / kSegments;
+    constexpr int kSegmentsPerSplit = kSegments / SplitK;
+    constexpr int kKSubtiles        = kBf16GdnBlockK / 16;
     constexpr int kThreads       = Warps * 32;
     constexpr int kWarpN         = kBf16GdnBlockN / Warps;
     static_assert(kWarpN % 8 == 0);
@@ -130,6 +142,50 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
 
     float a_acc[kBf16GdnMFragments][kNFragments][4] = {};
     float b_acc[kBf16GdnMFragments][kNFragments][4] = {};
+    // Unsplit only: the segments added in order, as the grid reduction adds the partials.
+    float a_total[kBf16GdnMFragments][kNFragments][4] = {};
+    float b_total[kBf16GdnMFragments][kNFragments][4] = {};
+
+    // Ends a K segment: publishes its sums and restarts the accumulators from zero.
+    auto flush_segment = [&](int segment) {
+#pragma unroll
+        for (int mi = 0; mi < kBf16GdnMFragments; ++mi) {
+            const int row0 = head0 + mi * 16 + gid;
+            const int row1 = row0 + 8;
+#pragma unroll
+            for (int ni = 0; ni < kNFragments; ++ni) {
+                if constexpr (SplitK == 1) {
+#pragma unroll
+                    for (int r = 0; r < 4; ++r) {
+                        a_total[mi][ni][r] += a_acc[mi][ni][r];
+                        b_total[mi][ni][r] += b_acc[mi][ni][r];
+                    }
+                } else {
+                    const int col0 = token0 + warp * kWarpN + ni * 8 + 2 * lid;
+                    const int col1 = col0 + 1;
+                    auto put       = [&](int token, int row, float av, float bv) {
+                        const std::int64_t base =
+                            (static_cast<std::int64_t>(segment) * t + token) * kBf16GdnLogicalRows;
+                        partial[base + row]                 = av;
+                        partial[base + kBf16GdnHeads + row] = bv;
+                    };
+                    if (FullTokens || col0 < t) {
+                        put(col0, row0, a_acc[mi][ni][0], b_acc[mi][ni][0]);
+                        put(col0, row1, a_acc[mi][ni][2], b_acc[mi][ni][2]);
+                    }
+                    if (FullTokens || col1 < t) {
+                        put(col1, row0, a_acc[mi][ni][1], b_acc[mi][ni][1]);
+                        put(col1, row1, a_acc[mi][ni][3], b_acc[mi][ni][3]);
+                    }
+                }
+#pragma unroll
+                for (int r = 0; r < 4; ++r) {
+                    a_acc[mi][ni][r] = 0.0f;
+                    b_acc[mi][ni][r] = 0.0f;
+                }
+            }
+        }
+    };
 
     auto stage_load = [&](int stage, int kt) {
         const int k0 = kt * kBf16GdnBlockK;
@@ -194,7 +250,7 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
 #pragma unroll
     for (int stage = 0; stage < kBf16GdnStages; ++stage) {
         if (stage < kTilesPerSplit) { stage_load(stage, kt_begin + stage); }
-        ninfer::ops::cp_commit();
+        ninferno::ops::cp_commit();
     }
 
     // ldmatrix fragment lane offsets. A is [M,K], while the token-major x tile
@@ -209,7 +265,7 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
 #pragma unroll 1
     for (int it = 0; it < kTilesPerSplit; ++it) {
         const int stage = it & 1;
-        ninfer::ops::cp_wait<kBf16GdnStages - 1>();
+        ninferno::ops::cp_wait<kBf16GdnStages - 1>();
         __syncthreads();
 
 #pragma unroll
@@ -247,46 +303,38 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
             }
         }
 
+        if ((it + 1) % kTilesPerSegment == 0) {
+            flush_segment(split * kSegmentsPerSplit + (it + 1) / kTilesPerSegment - 1);
+        }
+
         __syncthreads();
         const int next = it + kBf16GdnStages;
         if (next < kTilesPerSplit) { stage_load(stage, kt_begin + next); }
-        ninfer::ops::cp_commit();
+        ninferno::ops::cp_commit();
     }
 
+    if constexpr (SplitK == 1) {
 #pragma unroll
-    for (int mi = 0; mi < kBf16GdnMFragments; ++mi) {
-        const int row0 = head0 + mi * 16 + gid;
-        const int row1 = row0 + 8;
+        for (int mi = 0; mi < kBf16GdnMFragments; ++mi) {
+            const int row0 = head0 + mi * 16 + gid;
+            const int row1 = row0 + 8;
 #pragma unroll
-        for (int ni = 0; ni < kNFragments; ++ni) {
-            const int col0 = token0 + warp * kWarpN + ni * 8 + 2 * lid;
-            const int col1 = col0 + 1;
-            auto store     = [&](int token, int row, float av, float bv) {
-                if constexpr (SplitK == 1) {
+            for (int ni = 0; ni < kNFragments; ++ni) {
+                const int col0 = token0 + warp * kWarpN + ni * 8 + 2 * lid;
+                const int col1 = col0 + 1;
+                auto store     = [&](int token, int row, float av, float bv) {
                     const std::int64_t out_i =
                         static_cast<std::int64_t>(token) * kBf16GdnHeads + row;
                     g[out_i]    = -expf(A_log[row]) * softplus(av + dt_bias[row]);
                     beta[out_i] = sigmoid(bv);
-                } else {
-                    const std::int64_t base =
-                        (static_cast<std::int64_t>(split) * t + token) * kBf16GdnLogicalRows;
-                    partial[base + row]                 = av;
-                    partial[base + kBf16GdnHeads + row] = bv;
+                };
+                if (FullTokens || col0 < t) {
+                    store(col0, row0, a_total[mi][ni][0], b_total[mi][ni][0]);
+                    store(col0, row1, a_total[mi][ni][2], b_total[mi][ni][2]);
                 }
-            };
-            if constexpr (FullTokens) {
-                store(col0, row0, a_acc[mi][ni][0], b_acc[mi][ni][0]);
-                store(col1, row0, a_acc[mi][ni][1], b_acc[mi][ni][1]);
-                store(col0, row1, a_acc[mi][ni][2], b_acc[mi][ni][2]);
-                store(col1, row1, a_acc[mi][ni][3], b_acc[mi][ni][3]);
-            } else {
-                if (col0 < t) {
-                    store(col0, row0, a_acc[mi][ni][0], b_acc[mi][ni][0]);
-                    store(col0, row1, a_acc[mi][ni][2], b_acc[mi][ni][2]);
-                }
-                if (col1 < t) {
-                    store(col1, row0, a_acc[mi][ni][1], b_acc[mi][ni][1]);
-                    store(col1, row1, a_acc[mi][ni][3], b_acc[mi][ni][3]);
+                if (FullTokens || col1 < t) {
+                    store(col1, row0, a_total[mi][ni][1], b_total[mi][ni][1]);
+                    store(col1, row1, a_total[mi][ni][3], b_total[mi][ni][3]);
                 }
             }
         }
@@ -325,7 +373,7 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
             float av        = 0.0f;
             float bv        = 0.0f;
 #pragma unroll
-            for (int s = 0; s < SplitK; ++s) {
+            for (int s = 0; s < kSegments; ++s) {
                 const std::int64_t base =
                     (static_cast<std::int64_t>(s) * t + token) * kBf16GdnLogicalRows;
                 av += partial[base + row];
@@ -349,4 +397,4 @@ __global__ __launch_bounds__(Warps * 32, 1) void bf16_gdn_gating_proj_gemm_mma_k
     }
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

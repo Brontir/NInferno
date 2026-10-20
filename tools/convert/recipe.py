@@ -262,6 +262,45 @@ class Recipe:
         self.aliases[parameter] = target
         self.selections[parameter] = list(self.selections[target])
 
+    def share_tied_head(self) -> bool:
+        """Bind a tied output head to the token embedding's objects (one copy).
+
+        Mirrors convert::share_tied_head: only when tie_word_embeddings is true and the head's
+        single selection encodes the same source values the same way as the embedding's (format,
+        layout, method, method parameters, source label and shape), neither is an alias or packed
+        with other parameters, and the head admits no A4 use of NVFP4 weights.
+        """
+        if self.model.config.get("tie_word_embeddings") is not True:
+            return False
+        embedding, head = "text/token_embedding", "text/output_head"
+        if embedding not in self.selections or head not in self.selections:
+            return False
+        if embedding in self.aliases or head in self.aliases:
+            return False
+        if len(self.selections[embedding]) != 1 or len(self.selections[head]) != 1:
+            return False
+        table, rows = self.selections[embedding][0], self.selections[head][0]
+        if (table.begin, table.end, table.format, table.layout, table.method, table.parameters) != (
+            rows.begin, rows.end, rows.format, rows.layout, rows.method, rows.parameters
+        ):
+            return False
+        if table.source is not rows.source and (
+            table.source.label != rows.source.label or table.source.shape != rows.source.shape
+        ):
+            return False
+        grouped = [tuple(group) for group in self.model.packing_groups]
+        grouped += [names for names, _ in self.explicit_groups]
+        if any(embedding in group or head in group for group in grouped):
+            return False
+        if isinstance(get_format(rows.format), Nvfp4Format) and any(
+            policy == "AllowA4"
+            for (name, _), policy in self.policies.items()
+            if name == head
+        ):
+            return False
+        self.share(head, embedding)
+        return True
+
     def prepare(self, *, device="cuda", rows_per_chunk=512) -> PreparedRecipe:
         weights = []
         fragments = {name: [] for name in self.selections}
@@ -303,6 +342,43 @@ class Recipe:
                 "grouped inputs need compatible rows or an explicit parent shape"
             )
 
+        def parent_divisors(sources, selection) -> int:
+            """How many NVFP4 divisors this parent stores: one per source, or one for all.
+
+            A parent whose sources were quantised apart has to keep each source's divisor, and the
+            stored plane addresses them by an equal share of its rows. That is a partition only if
+            the sources have equal row counts, so a parent that needs several divisors and cannot be
+            divided equally is refused here, where its shape is chosen, rather than part way through
+            writing it.
+            """
+            if selection.format != "nvfp4" or len(sources) < 2:
+                return 1
+            words = [
+                source.weight_divisor() if source.weight_divisor else None
+                for source in sources
+            ]
+            # A stack is only chosen when the sources are known to disagree. A divisor no source
+            # states at plan time is unknown, not different, and answering the source count there
+            # would mark a plane a stack that no dense route can execute.
+            if None in words or len(set(words)) == 1:
+                return 1
+            if any(len(source.shape) != 2 for source in sources) or (
+                len({source.shape[0] for source in sources}) != 1
+            ):
+                raise ValueError(
+                    "NVFP4 sources quantised against different divisors must be complete "
+                    "matrices with equal row counts"
+                )
+            # Each divisor covers its source's rows, and a 128-row scale tile may not span two
+            # of them (block_scale_k16_m128x4_v1).
+            if sources[0].shape[0] % 128:
+                raise ValueError(
+                    "NVFP4 sources quantised against different divisors must each be whole "
+                    "128-row scale tiles (a tile would span two divisors), not "
+                    f"{sources[0].shape[0]} rows"
+                )
+            return len(sources)
+
         def emit(items, chosen=None):
             if len({self.model.parameters[name].residency for name, _ in items}) > 1:
                 raise ValueError(
@@ -315,9 +391,10 @@ class Recipe:
             dims, sources = parent_shape(items, chosen)
             selection = items[0][1]
             layout = selection.layout or default_layout(selection.format)
-            encoded_size(layout, selection.format, dims)
+            divisors = parent_divisors(sources, selection)
+            encoded_size(layout, selection.format, dims, divisors)
             spec = TensorSpec(
-                f"weight/{len(weights):06d}", dims, selection.format, layout
+                f"weight/{len(weights):06d}", dims, selection.format, layout, divisors
             )
             inputs = tuple(
                 MethodInput(

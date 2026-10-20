@@ -1,4 +1,4 @@
-// Implements: include/ninfer/ops/sigmoid_mul.h
+// Implements: include/ninferno/ops/sigmoid_mul.h
 // Finite dispatch: aligned BF16x8 production route, BF16x2 fallback, then
 // scalar fallback for two-byte-aligned sliced storage.
 #include "ops/launcher/sigmoid_gate_mul.h"
@@ -9,8 +9,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 void sigmoid_gate_mul_bf16x8_launch(const Tensor& gate, Tensor& x, int block, cudaStream_t stream) {
     const std::int64_t packs = x.numel() / 8;
@@ -19,6 +20,23 @@ void sigmoid_gate_mul_bf16x8_launch(const Tensor& gate, Tensor& x, int block, cu
         kMaxGrid, std::max<std::int64_t>(1, div_up(packs, static_cast<std::int64_t>(block)))));
     sigmoid_gate_mul_bf16x8_kernel<<<grid, block, 0, stream>>>(
         static_cast<const Bf16x8Pack*>(gate.data), static_cast<Bf16x8Pack*>(x.data), packs);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void sigmoid_gate_mul_rows_launch(const Tensor& gate, Tensor& x, cudaStream_t stream) {
+    const auto addr =
+        reinterpret_cast<std::uintptr_t>(gate.data) | reinterpret_cast<std::uintptr_t>(x.data);
+    if ((addr & (alignof(Bf16x8Pack) - 1)) != 0 || gate.ne[0] % 8 != 0 || gate.nb[1] % 16 != 0) {
+        throw std::invalid_argument("sigmoid_mul: a strided gate needs 16-byte aligned rows");
+    }
+    const std::int64_t packs = x.numel() / 8;
+    constexpr int kBlock     = 256;
+    constexpr int kMaxGrid   = 4096;
+    const int grid           = static_cast<int>(std::min<std::int64_t>(
+        kMaxGrid, std::max<std::int64_t>(1, div_up(packs, static_cast<std::int64_t>(kBlock)))));
+    sigmoid_gate_mul_rows_bf16x8_kernel<<<grid, kBlock, 0, stream>>>(
+        static_cast<const Bf16x8Pack*>(gate.data), gate.nb[1] / 16,
+        static_cast<Bf16x8Pack*>(x.data), gate.ne[0] / 8, packs);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -51,4 +69,4 @@ void sigmoid_gate_mul_launch(const Tensor& gate, Tensor& x, cudaStream_t stream)
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

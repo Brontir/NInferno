@@ -1,6 +1,7 @@
-#include "ninfer/ops/sliding_window_attention.h"
+#include "ninferno/ops/sliding_window_attention.h"
 
 #include "core/layout.h"
+#include "ops/common/tensor_checks.h"
 #include "ops/softmax_attention/sliding_window/launch.h"
 
 #include <algorithm>
@@ -10,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kHeadDim = 128;
@@ -30,22 +31,6 @@ void require_profile(AttentionHeadGeometry geometry, std::uint32_t window, const
     }
 }
 
-void require_shape(const Tensor& tensor, std::int32_t n0, std::int32_t n1, std::int32_t n2,
-                   std::int32_t n3, const char* op, const char* name) {
-    if (tensor.ne[0] != n0 || tensor.ne[1] != n1 || tensor.ne[2] != n2 || tensor.ne[3] != n3) {
-        throw std::invalid_argument(std::string(op) + ": invalid shape for " + name);
-    }
-}
-
-void require_contiguous_nonnull(const Tensor& tensor, const char* op, const char* name) {
-    if (!tensor.is_contiguous()) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " must be contiguous");
-    }
-    if (tensor.data == nullptr) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " data must be non-null");
-    }
-}
-
 void validate_context(const CyclicKVCacheLayerView& context, std::uint32_t window, const char* op) {
     if (context.num_kv_heads != kKVHeads || context.head_dim != kHeadDim ||
         context.capacity != window || context.padded_capacity < context.capacity ||
@@ -57,11 +42,14 @@ void validate_context(const CyclicKVCacheLayerView& context, std::uint32_t windo
         throw std::overflow_error(std::string(op) + ": padded capacity exceeds int32");
     }
     const auto padded = static_cast<std::int32_t>(context.padded_capacity);
-    if (context.k.dtype != DType::BF16 || context.v.dtype != DType::FP16) {
-        throw std::invalid_argument(std::string(op) + ": context K/V must be BF16/FP16");
+    if (context.int8 ? (context.k.dtype != DType::I8 || context.v.dtype != DType::I8)
+                     : (context.k.dtype != DType::BF16 || context.v.dtype != DType::FP16)) {
+        throw std::invalid_argument(std::string(op) +
+                                    ": context K/V must be BF16/FP16 or Int8Group64 (I8)");
     }
-    require_shape(context.k, kHeadDim, padded, kKVHeads, context.lane_capacity, op, "context k");
-    require_shape(context.v, kHeadDim, padded, kKVHeads, context.lane_capacity, op, "context v");
+    const std::int32_t row = context.int8 ? cyclic_kv_int8_row_bytes(kHeadDim) : kHeadDim;
+    require_shape(context.k, row, padded, kKVHeads, context.lane_capacity, op, "context k");
+    require_shape(context.v, row, padded, kKVHeads, context.lane_capacity, op, "context v");
     require_contiguous_nonnull(context.k, op, "context k");
     require_contiguous_nonnull(context.v, op, "context v");
 }
@@ -172,4 +160,4 @@ void sliding_window_attention(const Tensor& q, const Tensor& query_k, const Tens
                                             out, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

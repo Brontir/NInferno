@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 constexpr std::size_t kRecordAlignment        = 256;
@@ -122,6 +122,21 @@ GdnReplayRecords::GdnReplayRecords(DeviceSpan backing, const GdnReplayRecordLayo
     validate_layout(layout);
 }
 
+GdnReplayRecords GdnReplayRecords::narrowed(std::int32_t width) const {
+    validate_spec(spec);
+    if (width < 2 || width > spec.width) {
+        throw std::invalid_argument("GDN replay records cannot be narrowed to that width");
+    }
+    const std::int32_t outer = spec.layers * spec.record_capacity;
+    GdnReplayRecords out     = *this;
+    out.spec.width           = width;
+    out.conv  = Tensor(conv.data, conv.dtype, {spec.conv_channels, width, outer});
+    out.key   = Tensor(key.data, key.dtype, {key.ne[0], spec.qk_heads, width, outer});
+    out.value = Tensor(value.data, value.dtype, {value.ne[0], spec.value_heads, width, outer});
+    out.gate  = Tensor(gate.data, gate.dtype, {2, spec.value_heads, width, outer});
+    return out;
+}
+
 GdnReplayRecordLayer GdnReplayRecords::layer(std::int32_t layer_index, std::int32_t rows) const {
     validate_spec(spec);
     if (layer_index < 0 || layer_index >= spec.layers) {
@@ -139,4 +154,4 @@ GdnReplayRecordLayer GdnReplayRecords::layer(std::int32_t layer_index, std::int3
     };
 }
 
-} // namespace ninfer
+} // namespace ninferno

@@ -1,29 +1,36 @@
-#include "core/weight.h"
 #include "ops/attn_input_proj/q8/q8_attn_input_plan.h"
+#include "core/weight.h"
 
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/attn_input_proj/q8/q8_attn_input_kernels.h"
+#include "ops/common/column_routes.h"
 
 #include <array>
-#include <limits>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 namespace {
 
-constexpr std::int32_t kAnyCols = std::numeric_limits<std::int32_t>::max();
-
-struct RouteSpec {
-    std::int32_t first;
-    std::int32_t last;
-    Q8AttnInputScheduleId schedule;
-};
+using RouteSpec = ColumnRoute<Q8AttnInputScheduleId>;
 
 constexpr std::array<RouteSpec, 4> kTargetRoutes{{
     {1, 1, Q8AttnInputScheduleId::DecodeR8Direct},
     {2, 64, Q8AttnInputScheduleId::SplitKMmaDirect},
     {65, 128, Q8AttnInputScheduleId::MmaR32C128},
-    {129, kAnyCols, Q8AttnInputScheduleId::MmaR64C128},
+    {129, kAnyColumns, Q8AttnInputScheduleId::MmaR64C128},
+}};
+
+// Prefill route profile. The split-K route sums a column's K in another order than the MMA
+// routes, whose results agree byte for byte with each other, so it is kept to the decode/verify
+// widths (T <= 16): a prefill chunk of any size must give a token the same bytes. The split-K
+// band's prefill-sized calls take the MMA contraction on a narrow tile instead.
+constexpr std::array<RouteSpec, 5> kTargetPrefillRoutes{{
+    {1, 1, Q8AttnInputScheduleId::DecodeR8Direct},
+    {2, 16, Q8AttnInputScheduleId::SplitKMmaDirect},
+    {17, 64, Q8AttnInputScheduleId::MmaPrefillSmallT},
+    {65, 128, Q8AttnInputScheduleId::MmaR32C128},
+    {129, kAnyColumns, Q8AttnInputScheduleId::MmaR64C128},
 }};
 
 constexpr std::array<RouteSpec, 9> kCompanionRoutes{{
@@ -35,7 +42,7 @@ constexpr std::array<RouteSpec, 9> kCompanionRoutes{{
     {321, 384, Q8AttnInputScheduleId::MmaR64C128},
     {385, 448, Q8AttnInputScheduleId::MmaR128C64},
     {449, 560, Q8AttnInputScheduleId::MmaR128C80},
-    {561, kAnyCols, Q8AttnInputScheduleId::MmaR64C128},
+    {561, kAnyColumns, Q8AttnInputScheduleId::MmaR64C128},
 }};
 
 constexpr std::array<RouteSpec, 6> kDFlash2Routes{{
@@ -44,24 +51,14 @@ constexpr std::array<RouteSpec, 6> kDFlash2Routes{{
     {64, 96, Q8AttnInputScheduleId::DFlash2MmaR32C32K128},
     {97, 128, Q8AttnInputScheduleId::DFlash2MmaR32C64K128},
     {129, 192, Q8AttnInputScheduleId::DFlash2MmaR32C64},
-    {193, kAnyCols, Q8AttnInputScheduleId::DFlash2MmaR64C128},
+    {193, kAnyColumns, Q8AttnInputScheduleId::DFlash2MmaR64C128},
 }};
 
-template <std::size_t N>
-constexpr bool catalog_is_closed(const std::array<RouteSpec, N>& routes) {
-    std::int64_t expected = 1;
-    for (const RouteSpec& route : routes) {
-        if (route.first != expected || route.first > route.last) { return false; }
-        expected = static_cast<std::int64_t>(route.last) + 1;
-    }
-    return expected == static_cast<std::int64_t>(kAnyCols) + 1;
-}
-
-static_assert(catalog_is_closed(kTargetRoutes),
+static_assert(column_routes_closed(kTargetRoutes) && column_routes_closed(kTargetPrefillRoutes),
               "Q8 target attention input routes must be exact and closed");
-static_assert(catalog_is_closed(kCompanionRoutes),
+static_assert(column_routes_closed(kCompanionRoutes),
               "Q8 companion attention input routes must be exact and closed");
-static_assert(catalog_is_closed(kDFlash2Routes),
+static_assert(column_routes_closed(kDFlash2Routes),
               "Q8 DFlash2 attention input routes must be exact and closed");
 
 bool is_companion_shape(const Q8AttnInputProblem& problem) noexcept {
@@ -83,44 +80,6 @@ bool supported_shape(const Q8AttnInputProblem& problem) noexcept {
 
 } // namespace
 
-const char* q8_attn_input_schedule_name(Q8AttnInputScheduleId schedule) noexcept {
-    switch (schedule) {
-    case Q8AttnInputScheduleId::DecodeR8Direct:
-        return "attn_input_proj.q8.decode.r8.direct.k2048";
-    case Q8AttnInputScheduleId::SplitKMmaDirect:
-        return "attn_input_proj.q8.splitk.mma.r16.direct";
-    case Q8AttnInputScheduleId::SimtR8C4:
-        return "attn_input_proj.q8.simt.r8.c4";
-    case Q8AttnInputScheduleId::MmaR32C64:
-        return "attn_input_proj.q8.mma.r32.c64";
-    case Q8AttnInputScheduleId::MmaR32C128:
-        return "attn_input_proj.q8.mma.r32.c128";
-    case Q8AttnInputScheduleId::MmaR64C64:
-        return "attn_input_proj.q8.mma.r64.c64";
-    case Q8AttnInputScheduleId::MmaR64C96:
-        return "attn_input_proj.q8.mma.r64.c96";
-    case Q8AttnInputScheduleId::MmaR64C128:
-        return "attn_input_proj.q8.mma.r64.c128";
-    case Q8AttnInputScheduleId::MmaR128C64:
-        return "attn_input_proj.q8.mma.r128.c64";
-    case Q8AttnInputScheduleId::MmaR128C80:
-        return "attn_input_proj.q8.mma.r128.c80";
-    case Q8AttnInputScheduleId::DFlash2SmallT:
-        return "attn_input_proj.q8.dflash2.small_t";
-    case Q8AttnInputScheduleId::DFlash2MmaR16C64K128:
-        return "attn_input_proj.q8.dflash2.mma.r16.c64.k128";
-    case Q8AttnInputScheduleId::DFlash2MmaR32C32K128:
-        return "attn_input_proj.q8.dflash2.mma.r32.c32.k128";
-    case Q8AttnInputScheduleId::DFlash2MmaR32C64K128:
-        return "attn_input_proj.q8.dflash2.mma.r32.c64.k128";
-    case Q8AttnInputScheduleId::DFlash2MmaR32C64:
-        return "attn_input_proj.q8.dflash2.mma.r32.c64";
-    case Q8AttnInputScheduleId::DFlash2MmaR64C128:
-        return "attn_input_proj.q8.dflash2.mma.r64.c128";
-    }
-    return "attn_input_proj.q8.unknown";
-}
-
 bool q8_attn_input_admits(const Q8AttnInputProblem& problem) noexcept {
     return supported_shape(problem) && problem.cols > 0;
 }
@@ -131,16 +90,13 @@ Q8AttnInputPlan q8_attn_input_resolve_plan(const Q8AttnInputProblem& problem) {
             "Q8 attention input: exact problem or column count is not admitted");
     }
     const auto resolve_from = [&](const auto& routes) -> Q8AttnInputPlan {
-        for (const RouteSpec& route : routes) {
-            if (problem.cols >= route.first && problem.cols <= route.last) {
-                return {route.schedule};
-            }
-        }
-        throw std::logic_error("Q8 attention input: admitted problem has no covering route");
+        return {column_route(routes, problem.cols,
+                             "Q8 attention input: admitted problem has no covering route")};
     };
     if (is_dflash2_shape(problem)) { return resolve_from(kDFlash2Routes); }
     if (is_companion_shape(problem)) { return resolve_from(kCompanionRoutes); }
-    return resolve_from(kTargetRoutes);
+    return prefill_routes_active() ? resolve_from(kTargetPrefillRoutes)
+                                   : resolve_from(kTargetRoutes);
 }
 
 void q8_attn_input_execute_plan(const Q8AttnInputPlan& plan, const Tensor& x, const Weight& weight,
@@ -169,6 +125,9 @@ void q8_attn_input_execute_plan(const Q8AttnInputPlan& plan, const Tensor& x, co
         return;
     case Q8AttnInputScheduleId::MmaR64C128:
         q8_attn_input_mma_r64_c128_launch(x, weight, q, gate, k, v, stream);
+        return;
+    case Q8AttnInputScheduleId::MmaPrefillSmallT:
+        q8_attn_input_mma_prefill_small_t_launch(x, weight, q, gate, k, v, stream);
         return;
     case Q8AttnInputScheduleId::MmaR32C64:
     case Q8AttnInputScheduleId::MmaR64C64:
@@ -267,6 +226,8 @@ void q8_attn_input_execute_plan(const Q8AttnInputPlan& plan, const Tensor& x, co
     case Q8AttnInputScheduleId::DFlash2MmaR32C32K128:
     case Q8AttnInputScheduleId::DFlash2MmaR32C64K128:
         throw std::logic_error("Q8 attention input: DFlash2 schedule in companion plan");
+    case Q8AttnInputScheduleId::MmaPrefillSmallT:
+        throw std::logic_error("Q8 attention input: four-output schedule in companion plan");
     }
     throw std::logic_error("Q8 attention input: unknown schedule");
 }
@@ -278,4 +239,4 @@ void q8_attn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& q, Te
     q8_attn_input_execute_plan(q8_attn_input_resolve_plan(problem), x, weight, q, k, v, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

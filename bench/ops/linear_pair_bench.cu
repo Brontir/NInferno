@@ -1,10 +1,10 @@
 // Cold-cache benchmark for the two registered public Q8 LinearPair geometries.
 
 #include "core/weight.h"
-#include "ninfer/ops/linear_pair.h"
+#include "ninferno/ops/linear_pair.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_runtime.h>
@@ -21,16 +21,16 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
-constexpr std::int32_t kParentRows  = 6144;
-constexpr std::int32_t kFirstRow    = 4096;
-constexpr std::int32_t kSecondRow   = 5120;
-constexpr std::int32_t kRows        = 1024;
-constexpr double kRtx5090ReadGBs    = 1674.5;
-constexpr double kRtx5090Bf16Tflops = 209.5;
+constexpr std::int32_t kParentRows = 6144;
+constexpr std::int32_t kFirstRow   = 4096;
+constexpr std::int32_t kSecondRow  = 5120;
+constexpr std::int32_t kRows       = 1024;
+const double kDeviceReadGBs        = bench::device_roofs().read_gbs;
+const double kDeviceBf16Tflops     = bench::device_roofs().bf16_fp32acc_tflops;
 
 enum class Execution : std::uint8_t { Eager, Graph };
 
@@ -201,12 +201,13 @@ int main(int argc, char** argv) {
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-        DeviceBuffer flush(options.flush_bytes);
-        DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(options.k) * maximum_tokens);
+        bench::L2FlushBuffer flush(options.flush_bytes);
+        DeviceBuffer input =
+            bench::make_bf16(static_cast<std::size_t>(options.k) * maximum_tokens, 101U);
         DeviceBuffer first_output(static_cast<std::size_t>(kRows) * maximum_tokens * 2);
         DeviceBuffer second_output(static_cast<std::size_t>(kRows) * maximum_tokens * 2);
         bench::PackedQuantizedWeight parent = bench::make_row_split_weight(
-            QType::Q8_G32_FP16, kParentRows, options.k, options.k, {0x31, 0x00, 0x3c00});
+            QType::Q8_G32_FP16, kParentRows, options.k, options.k, 501U);
         const Weight first_weight  = bench::row_view(parent.weight, kFirstRow, kRows);
         const Weight second_weight = bench::row_view(parent.weight, kSecondRow, kRows);
 
@@ -215,7 +216,7 @@ int main(int argc, char** argv) {
                     "bf16_tc_reference=%.1f_TFLOP/s\n",
                     properties.name, options.k,
                     options.execution == Execution::Graph ? "graph_replay" : "eager",
-                    kRtx5090ReadGBs, kRtx5090Bf16Tflops);
+                    kDeviceReadGBs, kDeviceBf16Tflops);
 
         double t1_median = std::numeric_limits<double>::quiet_NaN();
         for (const std::int32_t tokens : options.tokens) {
@@ -248,11 +249,11 @@ int main(int argc, char** argv) {
             std::printf("T=%-3d median=%8.3f us min=%8.3f us p95=%8.3f us "
                         "effective=%7.1f GB/s READ=%5.1f%% logical=%6.2f TFLOP/s ",
                         tokens, timing.median_us, timing.min_us, timing.p95_us, gbs,
-                        100.0 * gbs / kRtx5090ReadGBs, tflops);
+                        100.0 * gbs / kDeviceReadGBs, tflops);
             if (tokens == 1) {
                 std::printf("TC=n/a ");
             } else {
-                std::printf("TC=%5.1f%% ", 100.0 * tflops / kRtx5090Bf16Tflops);
+                std::printf("TC=%5.1f%% ", 100.0 * tflops / kDeviceBf16Tflops);
             }
             if (std::isnan(extrapolation)) {
                 std::printf("T1_linear=n/a\n");
@@ -264,7 +265,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_linear_pair_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_linear_pair_bench: %s\n", error.what());
         return 1;
     }
 }

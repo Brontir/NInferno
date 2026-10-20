@@ -1,8 +1,10 @@
 #pragma once
 
 #include "core/device.h"
-#include "ninfer/types.h"
+#include "ninferno/score_detail.h"
+#include "ninferno/types.h"
 #include "runtime/engine/kv_capacity.h"
+#include "runtime/engine/memory_summary.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -15,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 // Single-owner execution core for offline causal scoring. It deliberately has no request queue,
 // Scheduler, ResourceManager, continuation catalog, or batching policy.
@@ -59,12 +61,16 @@ public:
     CausalScoreCore(const CausalScoreCore&)            = delete;
     CausalScoreCore& operator=(const CausalScoreCore&) = delete;
 
-    [[nodiscard]] std::vector<float> score(PreparedPrompt prompt, std::uint32_t first_target) {
+    // `request` and `detail` belong to the caller, which waits here until the job is done.
+    [[nodiscard]] std::vector<float> score(PreparedPrompt prompt, std::uint32_t first_target,
+                                           const ScoreDetailRequest& request, ScoreDetail& detail) {
         // One synchronous public call owns the sole job slot until its result is delivered.
         std::scoped_lock call_lock(call_mutex_);
         auto job                               = std::make_unique<Job>();
         job->prompt                            = std::move(prompt);
         job->first_target                      = first_target;
+        job->request                           = &request;
+        job->detail                            = &detail;
         std::future<std::vector<float>> result = job->promise.get_future();
         {
             std::lock_guard queue_lock(queue_mutex_);
@@ -80,19 +86,7 @@ public:
 
     [[nodiscard]] MemorySummary memory_summary() const {
         std::scoped_lock lock(execution_mutex_);
-        MemorySummary out                      = instance_.program->memory_summary();
-        const KvCapacityResolution& resolution = instance_.kv_capacity_resolution;
-        out.kv_capacity_mode                   = resolution.mode;
-        out.kv_capacity_page_groups            = resolution.main_page_groups;
-        out.kv_capacity_max_page_groups        = resolution.maximum_main_page_groups;
-        out.minimum_runtime_reservation_bytes  = resolution.minimum_runtime_reservation_bytes;
-        out.kv_capacity_increment_bytes        = resolution.bytes_per_additional_main_page_group;
-        out.runtime_reservation_bytes          = resolution.runtime_reservation_bytes;
-        out.available_after_weights_bytes      = resolution.available_after_weights_bytes;
-        out.available_after_startup_bytes      = resolution.available_after_startup_bytes;
-        out.kv_capacity_headroom_bytes         = resolution.automatic_headroom_bytes;
-        out.planned_slack_bytes                = resolution.planned_slack_bytes;
-        return out;
+        return summarize_memory(instance_);
     }
 
     [[nodiscard]] RuntimeStats runtime_stats() const noexcept { return {}; }
@@ -112,7 +106,9 @@ public:
 private:
     struct Job {
         PreparedPrompt prompt;
-        std::uint32_t first_target = 0;
+        std::uint32_t first_target        = 0;
+        const ScoreDetailRequest* request = nullptr;
+        ScoreDetail* detail               = nullptr;
         std::promise<std::vector<float>> promise;
     };
 
@@ -132,8 +128,8 @@ private:
                 std::vector<float> result;
                 {
                     std::scoped_lock lock(execution_mutex_);
-                    result =
-                        instance_.program->causal_score(std::move(job->prompt), job->first_target);
+                    result = instance_.program->causal_score(
+                        std::move(job->prompt), job->first_target, *job->request, *job->detail);
                 }
                 job->promise.set_value(std::move(result));
             } catch (...) {
@@ -155,4 +151,4 @@ private:
     std::thread worker_;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

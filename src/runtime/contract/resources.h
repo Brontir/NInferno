@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/checked.h"
+
 #include "runtime/contract/request.h"
 #include "core/transfer_work.h"
 #include <array>
@@ -9,7 +11,7 @@
 #include <optional>
 #include <span>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 // Exact features for the startup-selected static prefill cost model. They describe only the
 // suffix rebuilt after a selected prefix and remain separate from Scheduler service work.
@@ -36,15 +38,12 @@ struct PrefillWork {
     result.tokens                       = suffix_tokens;
     result.vision_items                 = vision_items;
     result.vision_patches               = vision_patches;
-    const unsigned __int128 suffix      = suffix_tokens;
-    const unsigned __int128 linear      = static_cast<unsigned __int128>(prefix_tokens) * suffix;
-    const unsigned __int128 triangular  = suffix * (suffix + 1U) / 2U;
-    constexpr unsigned __int128 maximum = ~static_cast<unsigned __int128>(0);
-    const unsigned __int128 attention =
-        triangular > maximum - linear ? maximum : linear + triangular;
-    result.attention_pairs = attention > std::numeric_limits<std::uint64_t>::max()
-                                 ? std::numeric_limits<std::uint64_t>::max()
-                                 : static_cast<std::uint64_t>(attention);
+    // prefix * suffix + suffix * (suffix + 1) / 2, exact in 128 bits, saturated to 64.
+    const std::uint64_t suffix = suffix_tokens;
+    const Wide linear          = mul_wide(prefix_tokens, suffix);
+    const Wide triangular      = suffix % 2U == 0U ? mul_wide(suffix / 2U, suffix + 1U)
+                                                   : mul_wide(suffix, suffix / 2U + 1U);
+    result.attention_pairs     = saturating_u64(linear, triangular);
     return result;
 }
 
@@ -397,6 +396,11 @@ struct KvCapacityResolution {
     std::size_t available_after_startup_bytes        = 0;
     std::size_t automatic_headroom_bytes             = 0;
     std::size_t planned_slack_bytes                  = 0;
+    // Cached Device StateImages of the context cache (beyond one per active request), resolved
+    // with the KV capacity: configured, or chosen automatically from [1, default] by memory.
+    std::uint32_t cached_device_states         = 0;
+    std::uint32_t cached_device_states_default = 0;
+    bool cached_device_states_automatic        = false;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

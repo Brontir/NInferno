@@ -1,5 +1,5 @@
 #include "core/weight.h"
-#include "ninfer/ops/linear_topk.h"
+#include "ninferno/ops/linear_topk.h"
 
 #include "core/device.h"
 #include "ops/op_tester.h"
@@ -16,8 +16,8 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 constexpr std::int32_t kHidden    = 5120;
 constexpr std::int32_t kFullRows  = 248320;

@@ -1,6 +1,6 @@
 #include "models/qwen3_5/load/bindings.h"
 
-namespace ninfer::models::qwen3_5::loading {
+namespace ninferno::models::qwen3_5::loading {
 
 VisionWeights bind_vision(Bindings& b, const VisionConfig& config, const TextConfig& target) {
     const auto h            = config.hidden_size;
@@ -42,4 +42,4 @@ VisionWeights bind_vision(Bindings& b, const VisionConfig& config, const TextCon
     return out;
 }
 
-} // namespace ninfer::models::qwen3_5::loading
+} // namespace ninferno::models::qwen3_5::loading

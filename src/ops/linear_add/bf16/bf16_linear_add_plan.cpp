@@ -1,13 +1,17 @@
-#include "core/weight.h"
 #include "ops/linear_add/bf16/bf16_linear_add_plan.h"
+#include "core/weight.h"
 
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
+
+bool bf16_linear_add_registered(std::int32_t rows, std::int32_t k) noexcept {
+    return rows == 5120 && k == 6144;
+}
 
 bool bf16_linear_add_admits(std::int32_t output_rows, std::int32_t input_rows,
                             std::int32_t tokens) noexcept {
-    return output_rows == 5120 && input_rows == 6144 && tokens > 0;
+    return bf16_linear_add_registered(output_rows, input_rows) && tokens > 0;
 }
 
 Bf16LinearAddScheduleId bf16_linear_add_select(std::int32_t output_rows, std::int32_t input_rows,
@@ -54,4 +58,4 @@ void bf16_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& res
     throw std::logic_error("bf16 linear_add: unknown schedule");
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -1,5 +1,5 @@
-// Implements: include/ninfer/ops/mtp_round.h
-// Match: validated request-major K=1..5 MTP round transition.
+// Implements: include/ninferno/ops/mtp_round.h
+// Match: validated request-major K=1..15 MTP round transition.
 #include "ops/launcher/mtp_round.h"
 
 #include "core/device.h"
@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 void mtp_prepare_next_round_launch(const Tensor& verify_ids, const Tensor& next_anchors,
                                    const Tensor& accepted, const Tensor& updated_frontiers,
@@ -15,7 +15,8 @@ void mtp_prepare_next_round_launch(const Tensor& verify_ids, const Tensor& next_
                                    const Tensor& rope_deltas, Tensor& alignment_ids,
                                    Tensor& next_extents, Tensor& ar_positions,
                                    Tensor& ar_rope_positions, Tensor& ar_valid_columns,
-                                   std::int32_t max_context, cudaStream_t stream) {
+                                   std::int32_t max_context, std::int32_t draft_depth,
+                                   cudaStream_t stream) {
     constexpr int kBlock = 32;
     const int k          = verify_ids.ne[0] - 1;
     const int batch      = verify_ids.ne[1];
@@ -35,8 +36,9 @@ void mtp_prepare_next_round_launch(const Tensor& verify_ids, const Tensor& next_
         static_cast<std::int32_t*>(next_extents.data),
         static_cast<std::int32_t*>(ar_positions.data),
         static_cast<std::int32_t*>(ar_rope_positions.data),
-        static_cast<std::int32_t*>(ar_valid_columns.data), k, ar_step_stride, max_context);
+        static_cast<std::int32_t*>(ar_valid_columns.data), k, draft_depth, ar_step_stride,
+        max_context);
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

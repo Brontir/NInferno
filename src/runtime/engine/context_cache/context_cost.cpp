@@ -1,20 +1,26 @@
 #include "runtime/engine/context_cache/context_cost.h"
+#include "core/checked.h"
+
+#include "core/cache_file.h"
+#include "core/device_class.h"
+#include "core/file_io.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <fstream>
-#include <iterator>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 const std::array<ContextTransferCost, 3>& generic_context_transfer_cost();
 const ContextPrefillCost& generic_context_prefill_cost();
@@ -23,31 +29,27 @@ const std::vector<ContextCostMachinePreset>& compiled_context_cost_defaults();
 namespace {
 
 using Json = nlohmann::json;
-using U128 = unsigned __int128;
 
 constexpr std::size_t direction_index(ContextTransferDirection direction) noexcept {
     return static_cast<std::size_t>(direction);
 }
 
-std::uint64_t saturating_add(std::uint64_t left, std::uint64_t right) noexcept {
-    return right > std::numeric_limits<std::uint64_t>::max() - left
-               ? std::numeric_limits<std::uint64_t>::max()
-               : left + right;
-}
-
 std::uint64_t saturating_product(std::uint64_t left, std::uint64_t right) noexcept {
-    const U128 product = static_cast<U128>(left) * right;
-    return product > std::numeric_limits<std::uint64_t>::max()
-               ? std::numeric_limits<std::uint64_t>::max()
-               : static_cast<std::uint64_t>(product);
+    const Wide product = mul_wide(left, right);
+    return product.high != 0 ? std::numeric_limits<std::uint64_t>::max() : product.low;
 }
 
 std::uint64_t q32_product_ns(std::uint64_t coefficient, std::uint64_t units) noexcept {
     if (coefficient == 0 || units == 0) { return 0; }
-    const U128 product        = static_cast<U128>(coefficient) * units;
-    const U128 maximum_scaled = static_cast<U128>(std::numeric_limits<std::uint64_t>::max()) << 32U;
-    if (product >= maximum_scaled) { return std::numeric_limits<std::uint64_t>::max(); }
-    return static_cast<std::uint64_t>((product + kContextCostQ32One - 1U) >> 32U);
+    // ceil(product / 2^32), saturated where it passes 64 bits: product >= (2^64 - 1) * 2^32.
+    const Wide product = mul_wide(coefficient, units);
+    if (product.high > 0xFFFFFFFFULL ||
+        (product.high == 0xFFFFFFFFULL && product.low >= 0xFFFFFFFF00000000ULL)) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    const std::uint64_t rounded = product.low + (kContextCostQ32One - 1U);
+    const std::uint64_t high    = product.high + (rounded < product.low ? 1U : 0U);
+    return (high << 32U) | (rounded >> 32U);
 }
 
 void require_object(const Json& value, std::string_view context) {
@@ -177,14 +179,6 @@ Json prefill_json(const ContextPrefillCost& value) {
                 {"vision_patch_ns_q32", value.vision_patch_ns_q32}};
 }
 
-std::string read_text_file(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("failed to open context-cost preset file: " + path.string());
-    }
-    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-}
-
 Json parse_document(std::string_view text, std::string_view source_name) {
     try {
         return Json::parse(text.begin(), text.end());
@@ -211,6 +205,87 @@ const ContextPrefillPreset* find_prefill(const ContextCostMachinePreset& machine
     return found == machine.prefill.end() ? nullptr : &*found;
 }
 
+// "sm89" of "nvidia-geforce-rtx-4090-sm89" ("" when the class carries none).
+std::string_view architecture_of(std::string_view hardware_class) noexcept {
+    const auto at = hardware_class.rfind("-sm");
+    return at == std::string_view::npos ? std::string_view() : hardware_class.substr(at + 1);
+}
+
+// Compute capability of "sm86" ({8, 6}; "sm120" {12, 0}), or {0, 0}.
+std::pair<int, int> compute_capability(std::string_view architecture) noexcept {
+    if (architecture.size() < 4 || architecture.substr(0, 2) != "sm") { return {0, 0}; }
+    int value = 0;
+    for (const char c : architecture.substr(2)) {
+        if (c < '0' || c > '9') { return {0, 0}; }
+        value = value * 10 + (c - '0');
+    }
+    return {value / 10, value % 10};
+}
+
+// The same major and the same feature row (sm_80 and sm_86, sm_121 and sm_120), as
+// gpu_similar_chips borrows across them.
+bool sibling_architecture(std::string_view a, std::string_view b) noexcept {
+    const auto [a_major, a_minor] = compute_capability(a);
+    const auto [b_major, b_minor] = compute_capability(b);
+    if (a_major == 0 || a_major != b_major || a_minor == b_minor) { return false; }
+    const DeviceFeatures fa = device_features_for(a_major, a_minor);
+    const DeviceFeatures fb = device_features_for(b_major, b_minor);
+    return has_features(fa, fb) && has_features(fb, fa);
+}
+
+// The compiled preset nearest to the device by SM count on a log scale (ties: the larger card),
+// for a machine no preset names: of its own architecture, else of a sibling architecture
+// (`sibling` set; its prefill only, since the host links belong to the machine); nullptr
+// without one.
+const ContextCostMachinePreset*
+similar_machine(const std::vector<ContextCostMachinePreset>& presets,
+                const ContextCostIdentity& identity, bool& sibling) noexcept {
+    sibling                 = false;
+    const auto architecture = architecture_of(identity.hardware_class);
+    if (identity.sms == 0 || architecture.empty()) { return nullptr; }
+    const auto nearest = [&](const auto& admits) {
+        const ContextCostMachinePreset* best = nullptr;
+        double best_distance                 = 0.0;
+        for (const auto& preset : presets) {
+            if (preset.sms == 0 || !admits(architecture_of(preset.hardware_class))) { continue; }
+            const double distance =
+                std::abs(std::log2(static_cast<double>(preset.sms) / identity.sms));
+            if (best == nullptr || distance < best_distance ||
+                (distance == best_distance && preset.sms > best->sms)) {
+                best          = &preset;
+                best_distance = distance;
+            }
+        }
+        return best;
+    };
+    if (const auto* own = nearest([&](std::string_view a) { return a == architecture; })) {
+        return own;
+    }
+    const auto* other =
+        nearest([&](std::string_view a) { return sibling_architecture(a, architecture); });
+    sibling = other != nullptr;
+    return other;
+}
+
+std::uint64_t scaled_cost(std::uint64_t value, double scale) noexcept {
+    const double out = std::round(static_cast<double>(value) * scale);
+    if (out >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    return std::max<std::uint64_t>(1, static_cast<std::uint64_t>(out));
+}
+
+// A prefill measured on another card, for one with `scale` times its per-SM work.
+ContextPrefillCost scaled_prefill(const ContextPrefillCost& cost, double scale) noexcept {
+    return {
+        .chunk_ns              = scaled_cost(cost.chunk_ns, scale),
+        .token_ns_q32          = scaled_cost(cost.token_ns_q32, scale),
+        .attention_pair_ns_q32 = scaled_cost(cost.attention_pair_ns_q32, scale),
+        .vision_item_ns        = scaled_cost(cost.vision_item_ns, scale),
+        .vision_patch_ns_q32   = scaled_cost(cost.vision_patch_ns_q32, scale),
+    };
+}
+
 void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
                       std::string_view context) {
     for (std::size_t machine_index = 0; machine_index < presets.size(); ++machine_index) {
@@ -223,7 +298,10 @@ void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
         if (machine.transfer) {
             validate_transfer(*machine.transfer, machine_context + ".transfer");
         }
-        if (!machine.transfer && machine.prefill.empty()) {
+        if (machine.class_prefill) {
+            validate_prefill(*machine.class_prefill, machine_context + ".class_prefill");
+        }
+        if (!machine.transfer && machine.prefill.empty() && !machine.class_prefill) {
             throw std::invalid_argument(machine_context + " contains no cost data");
         }
         for (std::size_t prior = 0; prior < machine_index; ++prior) {
@@ -268,10 +346,10 @@ Json parse_provenance(std::string_view provenance_json) {
 Json load_or_create_document(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
         return Json{{"schema_version", 3},
-                    {"artifact_type", "ninfer_context_cost_presets"},
+                    {"artifact_type", "ninferno_context_cost_presets"},
                     {"machines", Json::array()}};
     }
-    const std::string text = read_text_file(path);
+    const std::string text = read_file(path, "context-cost preset file");
     (void)parse_context_cost_presets(text, path.string());
     return parse_document(text, path.string());
 }
@@ -291,30 +369,8 @@ Json& find_or_append_machine(Json& document, std::string_view hardware_class) {
 void write_document_atomic(const std::filesystem::path& path, const Json& document) {
     const std::string serialized = document.dump(2) + '\n';
     (void)parse_context_cost_presets(serialized, "generated context-cost presets");
-    if (!path.parent_path().empty()) { std::filesystem::create_directories(path.parent_path()); }
-
-    std::filesystem::path temporary = path;
-    temporary += ".tmp." + std::to_string(static_cast<long long>(::getpid())) + "." +
-                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    try {
-        {
-            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-            if (!output) {
-                throw std::runtime_error("failed to open temporary context-cost preset: " +
-                                         temporary.string());
-            }
-            output.write(serialized.data(), static_cast<std::streamsize>(serialized.size()));
-            if (!output) {
-                throw std::runtime_error("failed to write temporary context-cost preset: " +
-                                         temporary.string());
-            }
-        }
-        std::filesystem::rename(temporary, path);
-    } catch (...) {
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-        throw;
-    }
+    create_parent_directories(path);
+    write_file_atomic(path, serialized);
 }
 
 } // namespace
@@ -491,7 +547,7 @@ std::vector<ContextCostMachinePreset> parse_context_cost_presets(std::string_vie
     }
     if (require_nonempty_string(document.at("artifact_type"),
                                 std::string(source_name) + ".artifact_type") !=
-        "ninfer_context_cost_presets") {
+        "ninferno_context_cost_presets") {
         throw std::invalid_argument("invalid context-cost artifact_type in " +
                                     std::string(source_name));
     }
@@ -548,6 +604,14 @@ std::vector<ContextCostMachinePreset> parse_context_cost_presets(std::string_vie
 ResolvedContextMachineCost
 resolve_context_machine_cost(const ContextCostIdentity& identity,
                              const std::filesystem::path& external_preset_path) {
+    return resolve_context_machine_cost(compiled_context_cost_defaults(), identity,
+                                        external_preset_path);
+}
+
+ResolvedContextMachineCost
+resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compiled,
+                             const ContextCostIdentity& identity,
+                             const std::filesystem::path& external_preset_path) {
     if (identity.hardware_class.empty() || identity.prefill_signature.empty()) {
         throw std::invalid_argument("context-cost identity contains an empty component");
     }
@@ -556,10 +620,32 @@ resolve_context_machine_cost(const ContextCostIdentity& identity,
                                   .prefill  = generic_context_prefill_cost()};
     ContextCostPresetSource transfer_source = ContextCostPresetSource::GenericDefault;
     ContextCostPresetSource prefill_source  = ContextCostPresetSource::GenericDefault;
+    std::string similar_to;
 
-    const auto& compiled = compiled_context_cost_defaults();
     validate_presets(compiled, "compiled context-cost defaults");
-    if (const ContextCostMachinePreset* machine = find_machine(compiled, identity.hardware_class)) {
+    const ContextCostMachinePreset* machine = find_machine(compiled, identity.hardware_class);
+    if (machine == nullptr) {
+        bool sibling = false;
+        if (const ContextCostMachinePreset* similar =
+                similar_machine(compiled, identity, sibling)) {
+            similar_to = similar->hardware_class;
+            if (similar->transfer && !sibling) {
+                model.transfer  = *similar->transfer;
+                transfer_source = ContextCostPresetSource::SimilarMachine;
+            }
+            const ContextPrefillPreset* prefill =
+                find_prefill(*similar, identity.prefill_signature);
+            const ContextPrefillCost* base =
+                prefill != nullptr ? &prefill->cost
+                                   : (similar->class_prefill ? &*similar->class_prefill : nullptr);
+            if (base != nullptr) {
+                model.prefill =
+                    scaled_prefill(*base, static_cast<double>(similar->sms) / identity.sms);
+                prefill_source = ContextCostPresetSource::SimilarMachine;
+            }
+        }
+    }
+    if (machine != nullptr) {
         if (machine->transfer) {
             model.transfer  = *machine->transfer;
             transfer_source = ContextCostPresetSource::CompiledDefault;
@@ -568,12 +654,16 @@ resolve_context_machine_cost(const ContextCostIdentity& identity,
                 find_prefill(*machine, identity.prefill_signature)) {
             model.prefill  = prefill->cost;
             prefill_source = ContextCostPresetSource::CompiledDefault;
+        } else if (machine->class_prefill) {
+            model.prefill  = *machine->class_prefill;
+            prefill_source = ContextCostPresetSource::CompiledDefault;
         }
     }
 
     if (!external_preset_path.empty()) {
-        const auto external = parse_context_cost_presets(read_text_file(external_preset_path),
-                                                         external_preset_path.string());
+        const auto external =
+            parse_context_cost_presets(read_file(external_preset_path, "context-cost preset file"),
+                                       external_preset_path.string());
         if (const ContextCostMachinePreset* machine =
                 find_machine(external, identity.hardware_class)) {
             if (machine->transfer) {
@@ -597,6 +687,10 @@ resolve_context_machine_cost(const ContextCostIdentity& identity,
                 .hardware_class    = identity.hardware_class,
                 .prefill_signature = identity.prefill_signature,
                 .preset_path       = external_preset_path,
+                .similar_to        = transfer_source == ContextCostPresetSource::SimilarMachine ||
+                                      prefill_source == ContextCostPresetSource::SimilarMachine
+                                         ? similar_to
+                                         : std::string(),
             },
     };
 }
@@ -644,4 +738,4 @@ void upsert_context_prefill_cost_atomic(const std::filesystem::path& path,
     write_document_atomic(path, document);
 }
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

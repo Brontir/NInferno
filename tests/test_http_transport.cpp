@@ -1,9 +1,12 @@
 #include "serve/http_transport.h"
+#include "text/jinja.h"
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(__linux__)
@@ -16,8 +19,8 @@
 
 namespace {
 
-using ninfer::serve::ClientDisconnected;
-using ninfer::serve::SseTransport;
+using ninferno::serve::ClientDisconnected;
+using ninferno::serve::SseTransport;
 
 int check(bool condition, const char* message) {
     if (condition) { return 0; }
@@ -60,6 +63,21 @@ int test_sse_transport() {
                           writes.back() == SseTransport::kHeartbeatComment,
                       "quiet SSE output did not resume heartbeats after a data event");
 
+    // Anthropic Messages streams heartbeat with the protocol's ping event instead of a comment.
+    std::vector<std::string> ping_writes;
+    httplib::DataSink ping_sink;
+    ping_sink.write = [&](const char* data, std::size_t size) {
+        ping_writes.emplace_back(data, size);
+        return true;
+    };
+    ping_sink.is_writable = [] { return true; };
+    std::atomic<bool> ping_cancelled{false};
+    SseTransport ping_transport(ping_sink, ping_cancelled, 5s, start, SseTransport::kAnthropicPing);
+    failures += check(
+        !ping_transport.poll(start + 5s) &&
+            ping_writes == std::vector<std::string>{"event: ping\ndata: {\"type\":\"ping\"}\n\n"},
+        "Anthropic SSE transport did not heartbeat with a ping event");
+
     transport.write(std::vector<std::string>{"data: one\n\n", "data: two\n\n"}, start + 16s);
     failures +=
         check(writes.size() == 5 && writes[3] == "data: one\n\n" && writes[4] == "data: two\n\n",
@@ -101,9 +119,45 @@ int test_sse_transport() {
     return failures;
 }
 
+// A body nested past the limit is a 400, not a walk that overflows the stack; the chat template
+// refuses deep input of its own (a tool call's arguments in history arrive as a string). JSON a
+// field carries as text (a schema, a structural tag) has the same limit (test_openai_schema).
+int test_json_nesting_limit() {
+    const auto nested = [](std::size_t levels) {
+        return std::string(levels, '[') + std::string(levels, ']');
+    };
+    const auto parses = [](std::string body) {
+        httplib::Request request;
+        request.body = std::move(body);
+        try {
+            (void)ninferno::serve::parse_json_body(request);
+            return true;
+        } catch (const std::exception&) { return false; }
+    };
+    int failures = 0;
+    failures += check(parses(nested(128)), "a body nested 128 levels was refused");
+    failures += check(!parses(nested(129)), "a body nested 129 levels was accepted");
+    failures += check(!parses(nested(200000)), "a body nested 200,000 levels was accepted");
+
+    const ninferno::text::JinjaTemplate jinja("{{ x | tojson }}", "depth");
+    nlohmann::ordered_json deep = nullptr;
+    for (int level = 0; level < 300; ++level) { deep = nlohmann::ordered_json::array({deep}); }
+    bool refused = false;
+    try {
+        (void)jinja.render(nlohmann::ordered_json{{"x", deep}}, {});
+    } catch (const std::invalid_argument&) { refused = true; }
+    failures += check(refused, "a template context nested 300 levels was rendered");
+    bool rendered = false;
+    try {
+        rendered = !jinja.render(nlohmann::ordered_json{{"x", {{"a", {1, 2}}}}}, {}).text.empty();
+    } catch (const std::exception&) {}
+    failures += check(rendered, "a shallow template context was refused");
+    return failures;
+}
+
 int test_sse_response_headers() {
     httplib::Response response;
-    ninfer::serve::prepare_sse_response(response);
+    ninferno::serve::prepare_sse_response(response);
     return check(response.get_header_value("Cache-Control") == "no-cache" &&
                      response.get_header_value("X-Accel-Buffering") == "no",
                  "SSE response lost its no-cache or anti-buffering header");
@@ -114,7 +168,7 @@ int test_prompt_json_member_order() {
     request.body =
         R"({"model":"claude-local","tools":[{"name":"probe","input_schema":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}}}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"probe","input":{"zeta":"last","alpha":{"yankee":2,"bravo":true}}}]}],"max_tokens":32})";
 
-    const auto parsed = ninfer::serve::parse_json_body(request);
+    const auto parsed = ninferno::serve::parse_json_body(request);
     return check(
         parsed.at("tools").at(0).at("input_schema").at("properties").dump() ==
                 R"({"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}})" &&
@@ -153,7 +207,7 @@ int test_inherited_socket_liveness() {
     int failures = 0;
     Socket listener(::socket(AF_INET, SOCK_STREAM, 0));
     if (listener.get() < 0) { return check(false, "failed to create HTTP listener test socket"); }
-    ninfer::serve::configure_http_server_socket(listener.get());
+    ninferno::serve::configure_http_server_socket(listener.get());
 
     sockaddr_in address{};
     address.sin_family      = AF_INET;
@@ -189,15 +243,178 @@ int test_inherited_socket_liveness() {
         "accepted HTTP socket did not inherit TCP_USER_TIMEOUT");
     return failures;
 }
+
+using SocketSetup = void (*)(int);
+
+void configure_http_listener(int socket) { ninferno::serve::configure_http_server_socket(socket); }
+
+// The listener setup of servers such as llama.cpp and uvicorn.
+void reuse_address_only(int socket) {
+    const int enabled = 1;
+    (void)::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+}
+
+// Leaves a server-closed connection in TIME_WAIT on a loopback port whose
+// listener was prepared by `setup`, and closes that listener. Returns the
+// port's address, or a zero port on failure.
+sockaddr_in leave_server_time_wait(SocketSetup setup) {
+    sockaddr_in address{};
+    address.sin_family      = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    Socket listener(::socket(AF_INET, SOCK_STREAM, 0));
+    if (listener.get() < 0) { return {}; }
+    setup(listener.get());
+    socklen_t address_size = sizeof(address);
+    if (::bind(listener.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0 ||
+        ::listen(listener.get(), 1) != 0 ||
+        ::getsockname(listener.get(), reinterpret_cast<sockaddr*>(&address), &address_size) != 0) {
+        return {};
+    }
+    Socket client(::socket(AF_INET, SOCK_STREAM, 0));
+    if (client.get() < 0 || ::connect(client.get(), reinterpret_cast<const sockaddr*>(&address),
+                                      sizeof(address)) != 0) {
+        return {};
+    }
+    {
+        // The server closes first, so its side of the connection enters TIME_WAIT.
+        Socket accepted(::accept(listener.get(), nullptr, nullptr));
+        if (accepted.get() < 0) { return {}; }
+    }
+    char byte = 0;
+    if (::recv(client.get(), &byte, 1, 0) != 0) { return {}; }
+    return address;
+}
+
+bool successor_binds(const sockaddr_in& address, SocketSetup setup) {
+    Socket successor(::socket(AF_INET, SOCK_STREAM, 0));
+    if (successor.get() < 0) { return false; }
+    setup(successor.get());
+    return ::bind(successor.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) ==
+           0;
+}
+
+int test_successor_binds_over_time_wait() {
+    struct Case {
+        SocketSetup previous;
+        SocketSetup next;
+        const char* message;
+    };
+
+    const Case cases[] = {
+        {configure_http_listener, reuse_address_only,
+         "a SO_REUSEADDR server could not bind over the HTTP listener's TIME_WAIT connection"},
+        {reuse_address_only, configure_http_listener,
+         "the HTTP listener could not bind over a SO_REUSEADDR server's TIME_WAIT connection"},
+        {configure_http_listener, configure_http_listener,
+         "the HTTP listener could not bind over its own TIME_WAIT connection"},
+    };
+    int failures = 0;
+    for (const Case& test_case : cases) {
+        const sockaddr_in address = leave_server_time_wait(test_case.previous);
+        if (address.sin_port == 0) {
+            failures += check(false, "failed to leave a TIME_WAIT test connection");
+            continue;
+        }
+        failures += check(successor_binds(address, test_case.next), test_case.message);
+    }
+    return failures;
+}
 #endif
 
 } // namespace
 
+#if defined(__linux__)
+// Overload is an honest 429/503 from the Engine's admission, never a connection
+// the HTTP layer closes without a response. Found by the chaos harness: 64 simultaneous requests
+// against max_concurrency 4 + max_pending 8 left 22 clients with "Remote end closed connection
+// without response", because the worker pool (C+P+1 threads, C+P queued) closed every accepted
+// socket beyond that. Idle keep-alive sockets hold workers the same way. Here idle connections
+// occupy every worker of the planned pool and more; one real request must still be answered.
+int test_worker_plan_answers_every_connection() {
+    const ninferno::serve::HttpWorkerPlan plan = ninferno::serve::plan_http_workers(1, 1);
+    int failures = check(plan.threads >= 2 && plan.max_queued == 0,
+                         "HTTP worker plan does not queue every accepted connection");
+
+    httplib::Server server;
+    server.new_task_queue = [plan] {
+        return new httplib::ThreadPool(plan.threads, plan.threads, plan.max_queued);
+    };
+    server.set_read_timeout(1, 0);
+    server.set_keep_alive_timeout(1);
+    server.Get("/ping", [](const httplib::Request&, httplib::Response& response) {
+        response.set_content("pong", "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    if (port <= 0) { return failures + check(false, "test HTTP server could not bind"); }
+    std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    std::vector<int> idle;
+    for (std::size_t i = 0; i < plan.threads + 8; ++i) {
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_port        = htons(static_cast<std::uint16_t>(port));
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (fd >= 0 &&
+            ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
+            idle.push_back(fd);
+        } else if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+    httplib::Client client("127.0.0.1", port);
+    client.set_connection_timeout(10, 0);
+    client.set_read_timeout(10, 0);
+    const httplib::Result result = client.Get("/ping");
+    failures += check(result && result->status == 200 && result->body == "pong",
+                      "an HTTP request behind saturated workers was dropped without a response");
+    for (const int fd : idle) { ::close(fd); }
+    server.stop();
+    listener.join();
+    return failures;
+}
+#endif
+
+// /health reports a stalled executor. Busy without progress for the threshold is a stall;
+// progress, or having no work, clears it; a zero threshold disables the check.
+int test_executor_stall_monitor() {
+    using namespace std::chrono_literals;
+    using Monitor = ninferno::serve::ExecutorStallMonitor;
+    const Monitor::Clock::time_point t0{};
+    int failures = 0;
+    ninferno::RuntimeStats busy;
+    busy.running_requests = 2;
+    Monitor monitor(3000ms);
+    failures += check(!monitor.update(busy, t0), "first observation is not a stall");
+    failures += check(!monitor.update(busy, t0 + 2999ms), "busy below the threshold");
+    failures += check(monitor.update(busy, t0 + 3000ms), "busy without progress for 3 s stalls");
+    ninferno::RuntimeStats moved       = busy;
+    moved.committed_decode_tokens    = 5;
+    failures += check(!monitor.update(moved, t0 + 3100ms), "progress clears the stall at once");
+    failures += check(!monitor.update(moved, t0 + 6000ms), "the clock restarts at progress");
+    failures += check(monitor.update(moved, t0 + 6100ms), "and a stall is reported again after it");
+    ninferno::RuntimeStats idle = moved;
+    idle.running_requests     = 0;
+    failures += check(!monitor.update(idle, t0 + 20000ms), "an idle engine is never stalled");
+    ninferno::RuntimeStats queued = idle;
+    queued.waiting_requests     = 1;
+    failures += check(!monitor.update(queued, t0 + 20001ms), "queued work starts a new window");
+    failures += check(monitor.update(queued, t0 + 23001ms), "queued work that is never admitted stalls");
+    Monitor off(0ms);
+    failures += check(!off.update(busy, t0) && !off.update(busy, t0 + 3600s),
+                      "a zero threshold disables the check");
+    return failures;
+}
+
 int main() {
-    int failures =
-        test_sse_transport() + test_sse_response_headers() + test_prompt_json_member_order();
+    int failures = test_sse_transport() + test_sse_response_headers() +
+                   test_prompt_json_member_order() + test_executor_stall_monitor() +
+                   test_json_nesting_limit();
 #if defined(__linux__)
     failures += test_inherited_socket_liveness();
+    failures += test_worker_plan_answers_every_connection();
+    failures += test_successor_binds_over_time_wait();
 #endif
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

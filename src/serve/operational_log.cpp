@@ -1,17 +1,24 @@
 #include "serve/operational_log.h"
+#include "serve/generation_service.h"
 
 #include "product/logging/pretty_format.h"
+#include "product/activation_options.h"
 #include "product/speculative_options.h"
 
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/logger.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <utility>
+#include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 const char* phase_name(RequestFailurePhase phase) noexcept {
@@ -68,37 +75,19 @@ OperationalSeverity failure_severity(RequestFailureClass classification) noexcep
     return OperationalSeverity::Error;
 }
 
-const char* finish_reason_name(ninfer::FinishReason reason) noexcept {
-    switch (reason) {
-    case ninfer::FinishReason::None:
-        return "none";
-    case ninfer::FinishReason::OutputLimit:
-        return "output limit";
-    case ninfer::FinishReason::ContextCapacity:
-        return "context capacity";
-    case ninfer::FinishReason::StopToken:
-        return "stop token";
-    case ninfer::FinishReason::StopString:
-        return "stop string";
-    case ninfer::FinishReason::Cancelled:
-        return "cancelled";
-    }
-    return "unknown";
-}
-
-const char* prefix_reuse_path_name(ninfer::PrefixReusePath path) noexcept {
+const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) noexcept {
     switch (path) {
-    case ninfer::PrefixReusePath::Root:
+    case ninferno::PrefixReusePath::Root:
         return "root";
-    case ninfer::PrefixReusePath::PrivateEndpoint:
+    case ninferno::PrefixReusePath::PrivateEndpoint:
         return "private endpoint";
-    case ninfer::PrefixReusePath::PrivateTurnClosure:
+    case ninferno::PrefixReusePath::PrivateTurnClosure:
         return "turn closure";
-    case ninfer::PrefixReusePath::PrivateResponseReplay:
+    case ninferno::PrefixReusePath::PrivateResponseReplay:
         return "response replay";
-    case ninfer::PrefixReusePath::PrivateLongAnchor:
+    case ninferno::PrefixReusePath::PrivateLongAnchor:
         return "long anchor";
-    case ninfer::PrefixReusePath::SharedStablePrefix:
+    case ninferno::PrefixReusePath::SharedStablePrefix:
         return "shared prefix";
     }
     return "unknown";
@@ -106,7 +95,7 @@ const char* prefix_reuse_path_name(ninfer::PrefixReusePath path) noexcept {
 
 std::string_view requested_effort_name(const RequestLogContext& context) noexcept {
     if (context.requested_reasoning_effort)
-        return requested_reasoning_effort_name(*context.requested_reasoning_effort);
+        return ninferno::reasoning_effort_name(*context.requested_reasoning_effort);
     return "template default";
 }
 
@@ -119,30 +108,21 @@ const char* protocol_name(std::string_view protocol) noexcept {
     return "http";
 }
 
-const char* kv_cache_name(ninfer::KvCacheStorage storage) noexcept {
-    switch (storage) {
-    case ninfer::KvCacheStorage::BFloat16:
-        return "bf16";
-    case ninfer::KvCacheStorage::Int8Group64:
-        return "int8";
-    case ninfer::KvCacheStorage::Fp8E4M3Row256:
-        return "fp8";
-    case ninfer::KvCacheStorage::Nvfp4Group16:
-        return "nvfp4";
-    case ninfer::KvCacheStorage::Fp8KeyNvfp4Value:
-        return "k8v4";
-    }
-    return "unknown";
-}
-
-const char* kv_capacity_mode_name(ninfer::KvCapacityMode mode) noexcept {
-    return mode == ninfer::KvCapacityMode::Automatic ? "auto" : "explicit";
-}
-
 void append_clause(std::ostringstream& out, std::string_view clause) { out << " | " << clause; }
 
 void append_counted_clause(std::ostringstream& out, std::string_view label, std::uint64_t count) {
     out << " | " << label << ' ' << product::format_pretty_count(count);
+}
+
+// The kernel warm-up's widths in one clause: "1..48 + 142 class widths (190 of 1024)", or
+// "1..1024 (1024 of 1024)" when every width ran. The server-start JSON lists them all.
+std::string warm_up_widths_summary(const std::vector<std::uint32_t>& run, std::uint32_t range) {
+    if (run.empty()) { return "1.." + std::to_string(range); }
+    std::size_t exact = 0;
+    while (exact < run.size() && run[exact] == exact + 1) { ++exact; }
+    const std::string total = fmt::format("({} of {})", run.size(), range);
+    if (exact == run.size()) { return fmt::format("1..{} {}", exact, total); }
+    return fmt::format("1..{} + {} class widths {}", exact, run.size() - exact, total);
 }
 
 std::string pretty_code(std::string_view code) {
@@ -158,8 +138,8 @@ T monotonic_delta(T previous, T current) noexcept {
 }
 
 std::uint64_t host_active_ns(const ThroughputReport& report) noexcept {
-    const ninfer::RuntimeHostWorkStats& previous = report.previous.host_work;
-    const ninfer::RuntimeHostWorkStats& current  = report.current.host_work;
+    const ninferno::RuntimeHostWorkStats& previous = report.previous.host_work;
+    const ninferno::RuntimeHostWorkStats& current  = report.current.host_work;
     return monotonic_delta(previous.engine_boundary_ns, current.engine_boundary_ns) +
            monotonic_delta(previous.program_submit_ns, current.program_submit_ns) +
            monotonic_delta(previous.program_post_ns, current.program_post_ns) +
@@ -181,8 +161,11 @@ void append_failure_fields(std::ostringstream& out, const RequestFailure& failur
 OperationalRecord render_request_start(const RequestLogContext& context) {
     std::ostringstream out;
     out << "req#" << context.id << " started | " << protocol_name(context.protocol) << ' '
-        << (context.stream ? "stream" : "non-stream") << " | "
-        << product::format_pretty_count(context.message_count)
+        << (context.stream ? "stream" : "non-stream") << " | ";
+    if (!context.http_request_id.empty()) {
+        out << "request " << product::format_pretty_text(context.http_request_id) << " | ";
+    }
+    out << product::format_pretty_count(context.message_count)
         << (context.message_count == 1 ? " message" : " messages") << " | max output "
         << product::format_pretty_count(
                static_cast<std::uint64_t>(std::max(context.requested_output_tokens, 0)));
@@ -203,7 +186,10 @@ OperationalRecord render_request_start(const RequestLogContext& context) {
     }
     if (context.tool_count != 0) { append_counted_clause(out, "tools", context.tool_count); }
     if (context.preserve_thinking == true) { append_clause(out, "preserve thinking"); }
-    return {.severity = OperationalSeverity::Info, .message = out.str()};
+    for (const std::string& note : context.notes) { append_clause(out, note); }
+    return {.severity =
+                context.notes.empty() ? OperationalSeverity::Info : OperationalSeverity::Warning,
+            .message = out.str()};
 }
 
 OperationalRecord render_request_rejected(const RequestRejectionLogContext& context) {
@@ -238,7 +224,7 @@ OperationalRecord render_request_done(const RequestLogContext& context,
     std::ostringstream out;
     out << "req#" << context.id << " done | " << protocol_name(context.protocol) << " | ";
     if (outcome.tool_calls.empty()) {
-        out << finish_reason_name(outcome.finish_reason);
+        out << pretty_code(ninferno::finish_reason_name(outcome.finish_reason));
     } else {
         out << "tool calls " << product::format_pretty_count(outcome.tool_calls.size());
     }
@@ -254,7 +240,7 @@ OperationalRecord render_request_done(const RequestLogContext& context,
                                    : 0.0;
     out << " | cache " << product::format_pretty_count(metrics.prefix_cache_hit_tokens) << " ("
         << product::format_pretty_percent(cache_ratio);
-    if (metrics.prefix_reuse_path != ninfer::PrefixReusePath::Root) {
+    if (metrics.prefix_reuse_path != ninferno::PrefixReusePath::Root) {
         out << ", " << prefix_reuse_path_name(metrics.prefix_reuse_path);
     }
     out << ") | TTFT " << product::format_pretty_duration(metrics.ttft_seconds) << " | total "
@@ -272,6 +258,9 @@ OperationalRecord render_request_done(const RequestLogContext& context,
         out << " | decode "
             << product::format_pretty_rate(decode_tokens / metrics.decode_seconds, "tok");
     }
+    if (!metrics.speculative_config.empty()) {
+        out << " | " << metrics.speculative_config << " (" << metrics.speculative_selection << ')';
+    }
     if (metrics.speculative_draft_tokens != 0) {
         const double acceptance = static_cast<double>(metrics.speculative_accepted_tokens) /
                                   static_cast<double>(metrics.speculative_draft_tokens);
@@ -279,6 +268,30 @@ OperationalRecord render_request_done(const RequestLogContext& context,
             << " accepted " << product::format_pretty_count(metrics.speculative_accepted_tokens)
             << '/' << product::format_pretty_count(metrics.speculative_draft_tokens) << " ("
             << product::format_pretty_percent(acceptance) << ')';
+    }
+    if (metrics.speculative_step_downs != 0) {
+        out << " | stepped down " << metrics.speculative_step_downs << "x to depth "
+            << metrics.speculative_final_draft_window;
+    }
+    if (metrics.speculative_watchdog_tripped) {
+        out << " | watchdog at round " << metrics.speculative_watchdog_round << ", plain "
+            << product::format_pretty_count(metrics.speculative_plain_steps);
+    }
+    if (metrics.speculative_trips_held != 0) {
+        out << " | watchdog held by the batch "
+            << product::format_pretty_count(metrics.speculative_trips_held) << "x";
+    }
+    if (metrics.speculative_capped_rounds != 0) {
+        out << " | load-capped " << product::format_pretty_count(metrics.speculative_capped_rounds)
+            << " rounds";
+    }
+    if (metrics.speculative_copy_rounds != 0) {
+        out << " | copies " << product::format_pretty_count(metrics.speculative_copy_rounds)
+            << " rounds, " << product::format_pretty_count(metrics.speculative_copy_accepted)
+            << " accepted";
+    }
+    if (metrics.speculative_load_plain) {
+        out << " | load plain " << product::format_pretty_count(metrics.speculative_plain_steps);
     }
     if (outcome.thinking.configured_budget) {
         out << " | thinking "
@@ -293,15 +306,15 @@ OperationalRecord render_request_done(const RequestLogContext& context,
 
 std::optional<OperationalRecord> render_tool_call_fallback(const RequestLogContext& context,
                                                            const GenerationOutcome& outcome) {
-    const ninfer::ToolCallParseFallbackReason reason = outcome.tool_call_parse.fallback_reason;
+    const ninferno::ToolCallParseFallbackReason reason = outcome.tool_call_parse.fallback_reason;
     if (!outcome.tool_call_parse.marker_seen ||
-        reason == ninfer::ToolCallParseFallbackReason::None) {
+        reason == ninferno::ToolCallParseFallbackReason::None) {
         return std::nullopt;
     }
     return OperationalRecord{
         .severity = OperationalSeverity::Warning,
         .message  = "req#" + std::to_string(context.id) + " tool markup returned as text | " +
-                   pretty_code(ninfer::tool_call_parse_fallback_reason_name(reason)),
+                   pretty_code(ninferno::tool_call_parse_fallback_reason_name(reason)),
     };
 }
 
@@ -321,6 +334,31 @@ OperationalRecord render_response_failure(std::uint64_t request_id, const Reques
     out << "req#" << request_id << " response failed during " << phase_name(failure.phase);
     append_failure_fields(out, failure);
     return {.severity = failure_severity(failure.classification), .message = out.str()};
+}
+
+std::optional<OperationalRecord> render_kv_shortfall(const ninferno::MemorySummary& memory,
+                                                     std::uint32_t max_concurrency) {
+    if (memory.kv_capacity_mode != ninferno::KvCapacityMode::Automatic ||
+        memory.max_context_automatic || memory.kv_capacity_page_groups == 0 ||
+        memory.kv_capacity_page_groups >= memory.kv_capacity_max_page_groups) {
+        return std::nullopt;
+    }
+    // The pool is planned in whole pages: every slot's context rounded up to its pages, so the
+    // pool that did not fit (and one page group short of it) can hold more tokens than C x ctx.
+    const std::uint64_t page_tokens = memory.kv_capacity / memory.kv_capacity_page_groups;
+    const std::uint64_t wanted      = page_tokens * memory.kv_capacity_max_page_groups;
+    const std::uint64_t contexts    = std::uint64_t{max_concurrency} * memory.max_context;
+    return OperationalRecord{
+        .severity = OperationalSeverity::Info,
+        .message  = fmt::format(
+            "capacity | KV {} of {} tokens (auto: --max-concurrency {} x --max-context {}{} does "
+            "not fit the {} free after weights; the most that does, at least one context): a "
+            "request waits while the pool is full",
+            product::format_pretty_count(memory.kv_capacity),
+            product::format_pretty_count(wanted), max_concurrency,
+            product::format_pretty_count(memory.max_context),
+            wanted != contexts ? fmt::format(" in whole pages of {}", page_tokens) : std::string(),
+            product::format_pretty_bytes(memory.available_after_weights_bytes))};
 }
 
 OperationalRecord render_throughput(const ThroughputReport& report) {
@@ -424,6 +462,14 @@ void OperationalLog::response_failure(std::uint64_t request_id,
     write(render_response_failure(request_id, failure));
 }
 
+void OperationalLog::response_not_stored(std::uint64_t request_id,
+                                         std::size_t store_capacity_bytes) const {
+    logger_->warn(
+        "request {} | response not stored: it is larger than the response store ({} MiB) "
+        "| answered with store:false; raise --response-store-max-mib to keep such answers",
+        request_id, store_capacity_bytes >> 20);
+}
+
 void OperationalLog::throughput(const ThroughputReport& report) const {
     write(render_throughput(report));
 }
@@ -439,48 +485,265 @@ void OperationalLog::http_failure(std::string_view endpoint, const RequestFailur
 }
 
 void OperationalLog::engine_capacity(const GenerationService& service) const {
-    const ninfer::MemorySummary memory            = service.memory_summary();
-    const ninfer::EngineOptions& engine           = service.engine_options();
-    const ninfer::ContextCacheOptions& cache      = engine.context_cache;
-    const ninfer::ContextCostSummary context_cost = service.load_summary().context_cost;
+    const ninferno::MemorySummary memory            = service.memory_summary();
+    const ninferno::EngineOptions& engine           = service.engine_options();
+    const ninferno::ContextCacheOptions& cache      = engine.context_cache;
+    const ninferno::ContextCostSummary context_cost = service.load_summary().context_cost;
 
-    logger_->info("capacity | KV {} tokens, {}, {} | pages {}/{} | runtime {} | free {}",
-                  product::format_pretty_count(memory.kv_capacity), kv_cache_name(memory.kv_cache),
-                  kv_capacity_mode_name(memory.kv_capacity_mode),
+    {
+        const std::string native = product::format_pretty_count(memory.max_context_native);
+        std::string origin;
+        if (!memory.max_context_automatic) {
+            origin = "--max-context; the model's own is " + native;
+        } else if (memory.max_context == memory.max_context_native) {
+            origin = "auto: the model's own";
+        } else if (engine.kv_capacity.mode == ninferno::KvCapacityMode::Explicit) {
+            origin = "auto: the model's own " + native + ", bounded by --kv-capacity";
+        } else {
+            origin = "auto: the model's own " + native + " does not fit the " +
+                     product::format_pretty_bytes(memory.available_after_weights_bytes) +
+                     " free after weights; the largest that does";
+        }
+        logger_->info("context | {} tokens per request ({})",
+                      product::format_pretty_count(memory.max_context), origin);
+        if (!memory.lower_concurrency_fits.empty()) {
+            std::string fits;
+            for (const ninferno::ConcurrencyFit& fit : memory.lower_concurrency_fits) {
+                fits += (fits.empty() ? "" : "; ") + std::string("--max-concurrency ") +
+                        std::to_string(fit.max_concurrency) + " fits " +
+                        product::format_pretty_count(fit.max_context);
+            }
+            logger_->warn("context | {} tokens at --max-concurrency {} is below the automatic "
+                          "context's floor (each slot keeps its own StateImage): {}",
+                          product::format_pretty_count(memory.max_context),
+                          engine.max_concurrency, fits);
+        }
+        if (engine.prefill_chunk != service.options().prefill_chunk) {
+            logger_->info("prefill | chunk {} tokens (auto: with {} the context does not fit or "
+                          "stays below its floor; a narrower chunk takes less workspace and "
+                          "StateImage)",
+                          product::format_pretty_count(engine.prefill_chunk),
+                          product::format_pretty_count(service.options().prefill_chunk));
+        }
+    }
+
+    if (memory.moe_offload_mode != ninferno::MoeOffloadMode::Off) {
+        const auto bytes = [](std::uint64_t value) {
+            return product::format_pretty_bytes(static_cast<std::size_t>(value));
+        };
+        if (memory.moe_offload_layers == 0) {
+            logger_->info("moe offload | auto: the model has no routed experts; nothing offloaded");
+        } else {
+            const std::string origin =
+                memory.moe_offload_mode == ninferno::MoeOffloadMode::Layers
+                    ? std::string("--moe-offload ") + std::to_string(memory.moe_offload_offloaded)
+                    : "auto: the fewest that fit " +
+                          product::format_pretty_count(memory.moe_offload_target_context) +
+                          " tokens of context";
+            logger_->info("moe offload | experts of {} of {} MoE layers in pinned Host memory ({}) "
+                          "| {} resident on the GPU ({}) | staging {} | {}",
+                          memory.moe_offload_offloaded, memory.moe_offload_layers,
+                          bytes(memory.moe_offload_pinned_bytes),
+                          memory.moe_offload_layers - memory.moe_offload_offloaded,
+                          bytes(memory.moe_offload_resident_bytes),
+                          bytes(memory.moe_offload_staging_bytes), origin);
+            if (memory.moe_offload_offloaded > 0) {
+                if (memory.moe_offload_compute == ninferno::MoeOffloadCompute::Cpu) {
+                    logger_->info("moe offload | decode experts on the CPU ({} threads, {}) | "
+                                  "prefill streams layers to the GPU | {}",
+                                  memory.moe_offload_cpu_threads, memory.moe_offload_cpu_isa,
+                                  memory.moe_offload_compute_reason);
+                } else {
+                    logger_->info("moe offload | decode experts on the GPU over PCIe | {}",
+                                  memory.moe_offload_compute_reason);
+                }
+            }
+        }
+    }
+
+    logger_->info("capacity | KV {} tokens, {}{}, {} | activations {}{} | pages {}/{} | runtime {} | "
+                  "free {}",
+                  product::format_pretty_count(memory.kv_capacity),
+                  ninferno::kv_cache_storage_name(memory.kv_cache),
+                  engine.sliding_kv_cache == ninferno::KvCacheStorage::BFloat16
+                      ? ""
+                      : std::string(", sliding rings ") +
+                            std::string(ninferno::kv_cache_storage_name(engine.sliding_kv_cache)),
+                  ninferno::kv_capacity_mode_name(memory.kv_capacity_mode),
+                  product::activation_mode_name(engine.activations),
+                  engine.recurrent_state == ninferno::RecurrentStateStorage::FP32
+                      ? std::string()
+                      : std::string(", state ") + std::string(ninferno::recurrent_state_storage_name(
+                                                      engine.recurrent_state)),
                   product::format_pretty_count(memory.kv_capacity_page_groups),
                   product::format_pretty_count(memory.kv_capacity_max_page_groups),
                   product::format_pretty_bytes(memory.runtime_reservation_bytes),
                   product::format_pretty_bytes(memory.available_after_startup_bytes));
+    // An explicit context with an automatic KV capacity (several slots, no --kv-capacity): every
+    // slot's full context when it fits, else the most that does.
+    if (const auto shortfall = render_kv_shortfall(memory, engine.max_concurrency)) {
+        write(*shortfall);
+    }
+    if (memory.kernel_warm_up) {
+        logger_->info("kernel warm-up | prefill widths 1..{} | ran {} | decode graphs {} {} | "
+                      "{:.1f}s | kept {} (kernel code, stack, graphs) | stack {} B per thread "
+                      "(driver default {} B{}) | Host tier pinning takes {} | graphs given back {}",
+                      memory.kernel_warm_up_prefill_widths,
+                      warm_up_widths_summary(memory.kernel_warm_up_widths_run,
+                                             memory.kernel_warm_up_prefill_widths),
+                      memory.kernel_warm_up_graph_passes,
+                      memory.kernel_warm_up_graph_passes == 1 ? "pass" : "passes",
+                      memory.kernel_warm_up_seconds,
+                      product::format_pretty_bytes(memory.kernel_warm_up_lasting_bytes),
+                      memory.stack_limit_bytes, memory.stack_limit_before_bytes,
+                      memory.stack_limit_source.empty()
+                          ? std::string()
+                          : "; raised last by " + memory.stack_limit_source,
+                      product::format_pretty_bytes(memory.host_pin_device_bytes),
+                      product::format_pretty_bytes(memory.graph_returned_bytes));
+    }
+
+    {
+        const ninferno::ModelSamplingDefaults sampling = service.sampling_defaults();
+        const auto preset = [](const ninferno::SamplingPreset& p) {
+            return fmt::format("temperature {:g}, top_k {}, top_p {:g}, min_p {:g}, presence {:g}, "
+                               "frequency {:g}",
+                               p.temperature, p.top_k, p.top_p, p.min_p, p.presence_penalty,
+                               p.frequency_penalty);
+        };
+        logger_->info("sampling | defaults: {} | thinking: {} | non-thinking: {}{}",
+                      sampling.source.empty() ? std::string("unspecified") : sampling.source,
+                      preset(sampling.thinking), preset(sampling.non_thinking),
+                      service.options().greedy ? " | --greedy: temperature 0" : "");
+        for (const auto& note : sampling.notes) { logger_->warn("sampling | {}", note); }
+    }
+
+    if (!service.draft_depth_source().empty()) {
+        logger_->info("speculation | --draft-tokens {} from {}",
+                      service.engine_options().speculative.draft_tokens,
+                      service.draft_depth_source());
+    }
+    if (const auto& served = service.served_speculation()) {
+        const auto label = [](const spec::MenuChoice& c) {
+            return c.config.enabled() ? c.config.label() : std::string("plain");
+        };
+        std::string depths;
+        for (const std::int32_t depth : served->menu.depths()) {
+            depths += (depths.empty() ? "" : ",") + std::to_string(depth);
+        }
+        logger_->info("speculation | {} | default {} | depths {} | {} | load {}", served->source,
+                      label(served->menu.primary), depths.empty() ? "none" : depths,
+                      service.options().per_request_speculation ? "by thinking flag" : "fixed",
+                      product::speculation_load_label(served->engine.load));
+        for (const auto& note : served->notes) { logger_->info("speculation | {}", note); }
+        if (!memory.speculative_graph_windows.empty()) {
+            // An explicit plan reserves an allowance per window; an automatic one reserves none,
+            // since the kernel warm-up measured the graphs' memory before the fit.
+            std::string windows;
+            bool reserved = false;
+            for (const auto& window : memory.speculative_graph_windows) {
+                if (window.first_batch == 0) { continue; } // no batch captures it
+                windows += fmt::format("{}depth {} batches {}-{}", windows.empty() ? "" : ", ",
+                                       window.draft_tokens, window.first_batch, window.last_batch);
+                if (window.allowance_bytes > 0) {
+                    windows += " " + product::format_pretty_bytes(window.allowance_bytes);
+                    reserved = true;
+                }
+            }
+            logger_->info("speculation | graphs {}{}", windows,
+                          reserved ? "" : " (memory measured by the kernel warm-up)");
+        }
+        if (!served->fit_fallback.empty()) {
+            logger_->warn("speculation | fit fallback: {}; running {}", served->fit_fallback,
+                          label(served->menu.primary));
+        }
+    } else if (!service.speculation_plain_reason().empty()) {
+        logger_->warn("speculation | {}", service.speculation_plain_reason());
+    } else if (service.options().speculation_from_profile) {
+        std::string why;
+        for (const auto& note : service.speculation_absent_notes()) {
+            why += (why.empty() ? " (" : "; ") + note;
+        }
+        const std::string line =
+            fmt::format("speculation | the model came with no profile for this GPU: plain decode{}",
+                        why.empty() ? std::string() : why + ")");
+        // Asked for by --spec auto: a warning; by default: what a model without one does.
+        if (service.options().speculation_by_default) {
+            logger_->info("{}", line);
+        } else {
+            logger_->warn("{}", line);
+        }
+    }
 
     if (cache.enabled) {
+        std::string cached = std::to_string(*cache.device_state_slots);
+        if (memory.cached_device_states_automatic) {
+            // With an automatic KV capacity fewer states are kept for the pool (kv_capacity.h).
+            const std::string fewer =
+                memory.kv_capacity_mode == ninferno::KvCapacityMode::Automatic
+                    ? " would leave the KV pool fewer whole slot contexts)"
+                    : " does not fit in free memory)";
+            cached += memory.cached_device_states < memory.cached_device_states_default
+                          ? " (auto: the default " +
+                                std::to_string(memory.cached_device_states_default) + fewer
+                          : " (auto)";
+        }
+        std::string host = std::to_string(cache.host_state_slots) + " states, " +
+                           product::format_pretty_bytes(cache.host_kv_capacity_bytes) + " KV";
+        if (memory.host_tier_automatic) {
+            host += memory.host_tier_reduced
+                        ? " (auto: the default " + std::to_string(memory.host_state_slots_default) +
+                              " states, " +
+                              product::format_pretty_bytes(memory.host_kv_capacity_default_bytes) +
+                              " KV does not fit the " +
+                              product::format_pretty_bytes(memory.host_tier_budget_bytes) +
+                              " this host can pin for it)"
+                        : " (auto)";
+        }
         logger_->info(
-            "context cache | {} active + {} cached device states | host {} states, {} KV | "
+            "context cache | {} active + {} cached device states | host {} | "
             "private {} | shared {} | anchors {}",
-            engine.max_concurrency, *cache.device_state_slots, cache.host_state_slots,
-            product::format_pretty_bytes(cache.host_kv_capacity_bytes),
-            *cache.max_private_continuations, *cache.max_shared_prefixes,
-            *cache.max_long_anchors_per_continuation);
+            engine.max_concurrency, cached, host, *cache.max_private_continuations,
+            *cache.max_shared_prefixes, *cache.max_long_anchors_per_continuation);
     } else {
         logger_->info("context cache | root only");
     }
 
     if (service.options().enable_vision) {
-        const ninfer::MediaCacheSummary media = service.media_cache_summary();
+        const ninferno::MediaCacheSummary media = service.media_cache_summary();
         logger_->info("media | {} preprocess workers | cache {} | live {}",
                       media.preprocess_threads, product::format_pretty_bytes(media.capacity_bytes),
                       product::format_pretty_bytes(media.live_capacity_bytes));
     }
 
+    // What startup took beyond the planned reservation (graphs, driver and module state): the
+    // planned slack plus the graph allowance, less what is still free. Above the allowance plus
+    // the headroom, the plan under-counted.
+    const auto unplanned = static_cast<std::int64_t>(memory.planned_slack_bytes) +
+                           static_cast<std::int64_t>(memory.cuda_graph_allowance_bytes) -
+                           static_cast<std::int64_t>(memory.available_after_startup_bytes);
     logger_->debug("memory ledger | after weights {} | after startup {} | headroom {} | slack {} | "
-                   "CUDA graphs {}",
+                   "CUDA graphs {} planned, {}{} taken with the driver's",
                    product::format_pretty_bytes(memory.available_after_weights_bytes),
                    product::format_pretty_bytes(memory.available_after_startup_bytes),
                    product::format_pretty_bytes(memory.kv_capacity_headroom_bytes),
                    product::format_pretty_bytes(memory.planned_slack_bytes),
-                   product::format_pretty_bytes(memory.cuda_graph_allowance_bytes));
+                   product::format_pretty_bytes(memory.cuda_graph_allowance_bytes),
+                   unplanned < 0 ? "-" : "",
+                   product::format_pretty_bytes(static_cast<std::size_t>(
+                       unplanned < 0 ? -unplanned : unplanned)));
+    // Under WSL 2 Windows shares the card and WDDM pages Device memory out to Host memory when it
+    // fills: a pool left this close to full prefilled 4x slower (runtime/engine/kv_capacity.h).
+    if (std::error_code error; std::filesystem::exists("/dev/dxg", error) &&
+                               memory.available_after_startup_bytes < (256ULL << 20)) {
+        logger_->warn("memory | {} left on a GPU Windows shares (WSL 2): when the card fills, "
+                      "Windows pages memory out and prefill slows several times; a smaller "
+                      "--max-context or --kv-capacity leaves room",
+                      product::format_pretty_bytes(memory.available_after_startup_bytes));
+    }
     logger_->debug("context cost | transfer {} | prefill {} | hardware {} | prefill signature {}",
-                   ninfer::context_cost_preset_source_name(context_cost.transfer_source),
-                   ninfer::context_cost_preset_source_name(context_cost.prefill_source),
+                   ninferno::context_cost_preset_source_name(context_cost.transfer_source),
+                   ninferno::context_cost_preset_source_name(context_cost.prefill_source),
                    product::format_pretty_text(context_cost.hardware_class),
                    product::format_pretty_text(context_cost.prefill_signature));
 }
@@ -517,9 +780,31 @@ void OperationalLog::server_ready(std::string_view host, int port, std::string_v
 
 void OperationalLog::server_stopped() const { logger_->info("server stopped"); }
 
+void OperationalLog::drain_started(std::uint32_t in_flight) const {
+    logger_->info("draining | {} requests in flight | /health and new requests answer 503",
+                  in_flight);
+}
+
+void OperationalLog::drain_finished(std::string_view reason, double seconds) const {
+    logger_->info("drain finished | {} | {}", reason, product::format_pretty_duration(seconds));
+}
+
+void OperationalLog::executor_stall(bool stalled) const {
+    if (stalled) {
+        logger_->error("engine stalled | work is held and no progress was made | /health 503");
+    } else {
+        logger_->warn("engine progressing again | /health 200");
+    }
+}
+
+void OperationalLog::engine_failed() const {
+    logger_->critical("engine failed | it does not recover | draining, then exiting with status 1 "
+                      "for the supervisor to restart the server");
+}
+
 void OperationalLog::server_failure(bool serving, std::string_view detail) const {
     logger_->critical("server failed during {} | {}", serving ? "serving" : "startup",
                       product::format_pretty_text(detail));
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

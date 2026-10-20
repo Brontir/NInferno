@@ -1,5 +1,6 @@
 #include "core/weight.h"
 #include "ops/linear/linear_test_common.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/fp8/fp8_format.h"
 
 #include <array>
@@ -10,15 +11,18 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::test::linear;
+using namespace ninferno;
+using namespace ninferno::test::linear;
 
 std::vector<Invocation> a16_capacity_calls() {
     std::vector<Invocation> calls;
     for (int t = 1; t <= 33; ++t) calls.push_back({t});
+    for (int t : {63, 64, 65, 95, 96, 97, 127, 128, 129, 512, 1024}) calls.push_back({t});
     for (int t : {3, 7, 11, 15, 19, 23, 25, 33})
         calls.push_back({t, CallForm::Policy, ops::LinearPolicy::A16Only, true});
     calls.push_back({1, CallForm::A16Convenience});
+    for (int t : {64, 97, 129})
+        calls.push_back({t, CallForm::Policy, ops::LinearPolicy::A16Only, true});
     return calls;
 }
 
@@ -73,8 +77,12 @@ int run_fp8_a16() {
         try {
             const std::size_t capacity = ops::linear_workspace_capacity_bytes(
                 QType::FP8_E4M3FN_ROW_BF16, 248320, 5120, policy, 1, 2048);
-            if (capacity != 0) {
-                std::cerr << "FP8 vocabulary A16 route reported nonzero workspace\n";
+            // Only Volta's prefill weight decode for CUTLASS (zero elsewhere).
+            const std::size_t volta = ops::detail::generic::volta_prefill_workspace_bytes(
+                QType::FP8_E4M3FN_ROW_BF16, 248320, 5120, 2048, false);
+            if (capacity != volta) {
+                std::cerr << "FP8 vocabulary A16 route reported workspace " << capacity
+                          << " beyond the Volta weight decode " << volta << '\n';
                 ++failures;
             }
         } catch (const std::exception& error) {
@@ -123,7 +131,7 @@ int run_fp8_a16() {
 } // namespace
 
 int main() {
-    if (!ninfer::test::linear::cuda_available()) {
+    if (!ninferno::test::linear::cuda_available()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }

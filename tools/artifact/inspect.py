@@ -1,4 +1,4 @@
-"""Inspect NInfer v3 configurations, objects, bindings and files without numerical libraries."""
+"""Inspect NInferno v3 configurations, objects, bindings and files without numerical libraries."""
 
 from __future__ import annotations
 

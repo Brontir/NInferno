@@ -1,0 +1,130 @@
+# Global loads that PDL consumer kernels may issue before griddepcontrol.wait (ACQBULK),
+# checked by tools/pdl_sass_audit.py (ctest ninferno_pdl_sass_audit_test).
+#
+# One rule a line: <regex over the demangled kernel name, without parameters> <offsets>
+# Offsets are byte offsets of kernel parameters from the parameter base (c[0x0][0x380]) that a
+# pre-wait load's address depends on; '?' allows an address that depends on a loaded value.
+# A load before the wait is correct only for memory complete before the producer ran: the call's
+# inputs and the weights. Every entry says why; a new pair fails the audit until reviewed here.
+
+# Gemma 4 MoE decode: x (0) is the call's expert input, staged to shared memory while the router
+# kernel still runs; the router partials, ids and weights are read after the wait.
+gemma4::decode_gate_up_kernel< 0
+
+# Generic MoE SIMT router (moe_router_simt.cu): the first steps of each warp's router row, the
+# router weight - its codes (24) at a row stride of K (12) - load before the wait; x, the bias, the
+# logits and the fold's buffers are touched after it.
+moe::router_simt_kernel< 12,24
+
+# Qwen3.5 sparse MoE D3 (decode, path-tiled): x (0) is the call's input; the shared expert's
+# plane - codes (56), scales (72), NVFP4 divisors (80) and divisor_rows (88) - is a weight. The
+# routed paths read S2's ids (8) and the routed plane (16..48) after the wait. The shared path
+# never waits (its output lies beyond the scratch S2 may still read; see the kernel).
+sparse_moe_d3_(nine_warp|path_tiled)_kernel<.*Nvfp4Codec 0,56,72,80,88
+sparse_moe_d3_(nine_warp|path_tiled)_kernel<ninferno::ops::detail::Q 0,56,72
+
+# Qwen3.5 GDN input projection (q4_a16_*, q5_a16_*): the Q4 and Q5 GEMV/SIMT kernels are
+# independent of each other and join PDL only at their end - the JoinPdl instantiations, last
+# template argument true, whose wait is the kernel's last instruction - so every load is before
+# it by design. They read x (0), their codes and scales, and the conv epilogue's call inputs - conv
+# weight, conv state, initial slot, valid columns and the ints and publish buffers after them;
+# '?' is the slot-indexed conv-state row. The Q4 SIMT store variant (LinearIdentityEpilogue)
+# reads x (0) and its weight plane (56).
+q4_a16_gemv_kernel<.*Q4GdnDecodeEpilogue.*, true>$ 0,8,16,40,48,56,64,96,112,120,136,148,152,156,160,?
+q4_a16_simt_kernel<.*Q4GdnSmallTEpilogue.*, true>$ 0,40,48,56,64,96,112,120,136,148,156,?
+q4_a16_simt_kernel<.*LinearIdentityEpilogue.*, true>$ 0,56,?
+q5_a16_gemv_kernel<.*Q5GdnProjectionEpilogue.*, true>$ 0,40,48,56,64,96,112,120,136,?
+q5_a16_direct_simt_kernel<.*Q5GdnProjectionEpilogue.*, true>$ 0,8,16,24,40,48,56,64,96,112,120,136,156,164,?
+
+# Generic register-MMA projection, Store epilogue (generic_gemm.cuh): a call with join_previous
+# (generic::Call; segmented_projection.cpp sets it on every call after the first) runs alongside
+# the call before it and waits only as its last instruction, so every load is before the wait by
+# design. The call before it read the same x and writes rows this call neither reads nor writes;
+# x (0) with its token stride (8) and K (12), the weight planes - codes (24), high bits (32),
+# scales (40) with groups_per_row (48) and scale_tiles (52), NVFP4's per-row-block divisors (64)
+# with divisor_rows (72) - and row_begin (76) were complete before that call started. '?' is a
+# codebook entry indexed by a loaded weight code. The Add and SwiGLU epilogues, which read the
+# output or pair rows, have no wait and never join.
+# A decode-width call that does not join (GemmArgs::pdl_prefetch, every epilogue) waits instead
+# after the weight ring's first steps: its pre-wait loads are the weight planes above, rows (80) and
+# SwiGLU's up_offset (84); x and the AddResidual output are read after the wait (checked in the SASS
+# of the NVFP4 w1x8 kernels: every LDG through x's c[0x0][0x380] follows ACQBULK). The audit
+# cannot tell that path from the one without pdl_prefetch, where the wait is skipped and nothing
+# is a producer's (a plain launch; a joined call as above), so x (0, 8, 12) is listed for every
+# epilogue. 160 and 164 (release_next, pdl_prefetch) reach a table-staging address only through the
+# thread index the release predicate is combined with.
+generic::rmma_kernel<.*Epilogue\)0> 0,8,12,24,32,40,48,52,64,72,76,168,172,?
+generic::rmma_kernel<.*Epilogue\)[12]> 0,8,12,24,32,40,48,52,64,72,76,80,84,168,172,?
+
+# Generic R8 (W8A8 decode, generic_r8.cuh), Store epilogue: joins like the register MMA above and
+# waits as its last instruction. It quantizes x (0; token stride 8, K 12) into shared memory and
+# streams the weight planes - codes (24), high bits (32), scales (40), groups_per_row (48) - from
+# row_begin (76); all complete before the call it joins started. '?' is a codebook grid entry
+# indexed by a loaded weight code.
+# (The kernel's last template argument is kPre: "Epilogue)0, false>".)
+# rows (80) bounds the weight loads of the ring (the IQ3_S codec's address slice reaches it: a
+# row past the call's rows loads nothing); it is a call scalar, set before the launch.
+# A decode-width call that does not join (GemmArgs::pdl_prefetch, every epilogue) launches as a
+# programmatic dependent and waits after its weight ring is filled: its pre-wait loads are the
+# weight planes above, rows (80) and SwiGLU's up_offset (84); x is quantized after the wait. As for
+# the register MMA, the audit cannot tell that path from a plain or joined launch, so x (0, 8, 12)
+# is listed for every epilogue.
+generic::r8_kernel<.*Epilogue\)[0-2], false> 0,8,12,24,32,40,48,76,80,84,?
+# kPre (the verify-width call on a pre-quantized activation, W4a8Activation after GemmArgs:
+# codes 176, scales 184, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 192) always
+# launches in stream order (r8_launch_tokens), so every load reads memory complete before it
+# started; its waits return at once. It reads K (12), the weight planes above and
+# the activation planes. The activation offsets move with sizeof(GemmArgs).
+generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,76,80,84,184,192,200,?
+
+# Decode A16 GEMVs (nvfp4_a16_gemv.cuh): launched as programmatic dependents where the device has
+# PDL, they fill their code ring - codes (8) and scales (16), this layer's weights - before the
+# wait; x (0) and what the epilogue reads come after it.
+nvfp4_a16_gemv_kernel<.*> 8,16
+# GDN decode state update (recurrent.cuh): recurrent_batch_update_kernel launches as a programmatic
+# dependent of the fused input projection and loads the state before the wait - states_read (40)
+# through the source slot (56) with the slot stride (104); written by this layer's update one
+# token back. q, k, v, g and beta (0..32) are read after the wait. '?' is a state address formed
+# from a loaded slot.
+gated_delta_net::recurrent_batch_update_kernel<.*> 40,56,104,?
+# The verify round's recurrence (recurrent_record_kernel) launches as a programmatic dependent of
+# the projected conv and loads its state tile before the wait the same way: states (40) through the
+# initial slot (56) with the slot stride (120), the last fold's state, older than the conv. q, k,
+# v, g, beta and the valid columns are read after the wait.
+gated_delta_net::recurrent_record_kernel<.*> 40,56,120,?
+
+# Mamba2 decode (mamba2.cu). conv_kernel launches as a programmatic dependent of a releasing input
+# projection (mamba2_conv's join_previous) and waits before it reads x (0, ldx 8): the weights (16),
+# bias (24), the state window (32; the previous token's, written by this layer's conv one step
+# back) through the row's slot (40), and channels (48) are older. '?' is a state address formed
+# from a loaded slot.
+ops::conv_kernel$ 16,24,32,40,48,?
+# scan_kernel launches as a programmatic dependent of the conv (ScanArgs::pdl) and waits before
+# it reads xbc (0) or dt (16): dt_bias (32), a_log (40), d (48), the state (56) through the row's
+# slot (64), heads (88), head_dim (92) and state (100) are older than the conv. '?' is a state
+# address formed from a loaded slot.
+scan_kernel<.*> 32,40,48,56,64,88,92,100,?
+# gated_norm_warp_kernel launches as a programmatic dependent of the scan and waits before it reads
+# y (0) or z (8): only the gain (24, a weight) at the group's offset (group 36) loads before it.
+gated_norm_warp_kernel<.*> 24,36
+
+# Gemma 4 q/k/v preparation joined to the last projection (perf/gemma4-norm-join): the RoPE angle
+# table is built before the wait from positions (64), a call input uploaded before the step, and
+# the host-formed inverse frequencies ('?'); the q/k/v sources are read after the wait.
+gemma4_qkv_prepare_kernel< 64,?
+
+# Gemma 4 residual norm (vector schedule) joined to the output projection: before the wait it
+# loads only the norm weights - a_weight (16), b_weight (32), post_weight (40), out_weight1 (48),
+# out_weight2 (64), out_weight3 (80); '?' is the same weight address selected by the null tests.
+# x, a and b, the projection's outputs, are read after the wait.
+gemma4_residual_norm_vector_kernel< 16,32,40,48,64,80,?
+
+# Q4 K-split MMA (q4_ksplit_mma.cuh): with a row map that reads no memory, group 0's weight codes
+# and scales stream into shared memory (cp.async) before the wait; x and every later group follow
+# it. The audit does not trace those cp.async addresses through the row map to a parameter: '?'.
+q4_ksplit_mma_kernel<.*> ?
+
+# ggml vector kernels (ggml_vec.cu vec_kernel): before the wait each CTA copies its type's codebook
+# (Decoder<type>::table(), a static device table complete before any call) into shared memory; '?'
+# is that table's address. The activations, the weight and the outputs are read after the wait.
+ggml_mmq::detail::vec_kernel< ?

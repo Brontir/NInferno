@@ -8,6 +8,9 @@ cmake-build-*/
 *.a
 compile_commands.json
 CMakeUserPresets.json
+# Release packaging (package.sh, package-native.ps1) and vcpkg's manifest-mode tree
+dist/
+vcpkg_installed/
 .cache/
 
 # CUDA / profiling artifacts
@@ -29,8 +32,8 @@ venv/
 *.bin
 *.safetensors
 *.gguf
-*.ninfer
-*.ninfer.conversion.json
+*.ninferno
+*.ninferno.conversion.json
 /models/
 out/
 

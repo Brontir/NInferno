@@ -10,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace ninfer::product {
+namespace ninferno::product {
 namespace {
 
 using Json = nlohmann::ordered_json;
@@ -162,11 +162,8 @@ std::vector<ToolCall> parse_tool_calls(const Json& value, std::size_t message_in
         if (arguments.is_object()) {
             call.arguments_json = arguments.dump();
         } else if (arguments.is_string()) {
+            // Text that is not a JSON object renders under "raw" (render_chat), as in serve.
             call.arguments_json = arguments.get<std::string>();
-            const Json parsed   = Json::parse(call.arguments_json, nullptr, false);
-            if (parsed.is_discarded() || !parsed.is_object()) {
-                throw std::invalid_argument("tool call arguments string must contain an object");
-            }
         } else {
             throw std::invalid_argument("tool call arguments must be an object or JSON string");
         }
@@ -273,4 +270,4 @@ PromptInput prompt_from_messages(const std::filesystem::path& path,
     return input;
 }
 
-} // namespace ninfer::product
+} // namespace ninferno::product

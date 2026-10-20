@@ -1,50 +1,50 @@
-#include "core/weight.h"
 #include "ops/linear_add/nvfp4/nvfp4_linear_add_plan.h"
+#include "core/weight.h"
 
-#include "ops/linear/nvfp4/nvfp4_config.h"
+#include "ops/common/route_probe.h"
+#include "ops/linear/nvfp4/nvfp4_layout.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 enum class Nvfp4LinearAddRoute : std::uint8_t {
     A16,
-    W4A4,
+    A16Exact, // A16Only: tensor-core A16 invariant in T (nvfp4_a16_exact.cuh)
+    A4,
 };
+
+// A16Only is the exact contract (ActivationMode::Exact): one token-invariant A16 route at every
+// width. AllowA8 has no 8-bit form on NVFP4 and keeps the tuned A16 routes.
+
+// Speculative verify of 2..8 tokens takes the exact family's reg_mma route: RTX 5090, Qwen3.8-27B
+// NVFP4 (an nsys census, MTP3 at 24K): SwiGLU 34816x5120 at T = 4 64.8 us against the small-T fused
+// 69.2, down 5120x17408 34.1 against SIMT 41.9. Serve (two rounds each): MTP3 24K
+// 174.9 -> 182.8 t/s, MTP3 C1 (T = 4) +5 %, DFlash 5 C1 (T = 6) +6 %; at T = 16 (MTP3 C4) it
+// lost 5 %, so wider calls keep their routes.
+// A route probe forcing the quantized route keeps it (fused activation routes test).
+bool nvfp4_verify_exact(std::int32_t tokens) {
+    return tokens >= 2 && tokens <= 8 && route_probe_state.quantized_act != 1;
+}
 
 Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_rows,
                                   LinearPolicy policy, std::int32_t tokens) {
-    if (tokens <= 0 || output_rows != 5120 || (input_rows != 6144 && input_rows != 17408)) {
+    if (tokens <= 0 || !nvfp4_linear_add_registered(output_rows, input_rows)) {
         throw std::invalid_argument("nvfp4 linear_add: unsupported shape");
     }
-    if (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8) {
-        return Nvfp4LinearAddRoute::A16;
+    if (policy == LinearPolicy::A16Only || nvfp4_verify_exact(tokens)) {
+        return Nvfp4LinearAddRoute::A16Exact;
     }
+    if (policy == LinearPolicy::AllowA8) { return Nvfp4LinearAddRoute::A16; }
     if (!allows_a4(policy)) { throw std::invalid_argument("nvfp4 linear_add: unsupported policy"); }
-    const std::int32_t first_w4a4 = input_rows == 6144 ? 7 : 8;
-    return tokens >= first_w4a4 ? Nvfp4LinearAddRoute::W4A4 : Nvfp4LinearAddRoute::A16;
+    const std::int32_t first_a4 = input_rows == 6144 ? 17 : 8;
+    return route_quantized_activations(tokens >= first_a4) ? Nvfp4LinearAddRoute::A4
+                                                           : Nvfp4LinearAddRoute::A16;
 }
 
-void launch_a16(const Tensor& x, const Weight& weight, Tensor& residual, cudaStream_t stream) {
-    constexpr std::int32_t kChunk = 32;
-    for (std::int32_t token_begin = 0; token_begin < x.ne[1]; token_begin += kChunk) {
-        const std::int32_t active = std::min(kChunk, x.ne[1] - token_begin);
-        auto* input               = static_cast<std::uint8_t*>(x.data) +
-                      static_cast<std::int64_t>(token_begin) * weight.k * sizeof(std::uint16_t);
-        auto* output = static_cast<std::uint8_t*>(residual.data) +
-                       static_cast<std::int64_t>(token_begin) * weight.n * sizeof(std::uint16_t);
-        Tensor input_chunk(input, DType::BF16, {weight.k, active});
-        Tensor residual_chunk(output, DType::BF16, {weight.n, active});
-        if (active == 1) {
-            nvfp4_linear_add_decode_launch(input_chunk, weight, residual_chunk, stream);
-        } else {
-            nvfp4_linear_add_small_t_launch(input_chunk, weight, residual_chunk, stream);
-        }
-    }
-}
 
 } // namespace
 
@@ -56,21 +56,26 @@ std::size_t nvfp4_linear_add_workspace_capacity_bytes(std::int32_t output_rows,
         throw std::invalid_argument("nvfp4 linear_add workspace: invalid token interval");
     }
     (void)resolve_route(output_rows, input_rows, policy, min_tokens);
-    return resolve_route(output_rows, input_rows, policy, max_tokens) == Nvfp4LinearAddRoute::W4A4
-               ? nvfp4_w4a4_workspace_capacity_bytes(max_tokens, input_rows)
+    return resolve_route(output_rows, input_rows, policy, max_tokens) == Nvfp4LinearAddRoute::A4
+               ? nvfp4_a4_workspace_capacity_bytes(max_tokens, input_rows)
                : 0;
 }
 
 void nvfp4_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& residual,
                                LinearPolicy policy, WorkspaceArena& workspace,
                                cudaStream_t stream) {
-    if (resolve_route(weight.n, weight.k, policy, x.ne[1]) == Nvfp4LinearAddRoute::A16) {
-        launch_a16(x, weight, residual, stream);
+    const Nvfp4LinearAddRoute route = resolve_route(weight.n, weight.k, policy, x.ne[1]);
+    if (route == Nvfp4LinearAddRoute::A16Exact) {
+        nvfp4_linear_add_exact_launch(x, weight, residual, stream);
         return;
     }
-    auto scope                       = workspace.scope();
-    const Nvfp4W4a4Workspace scratch = allocate_nvfp4_w4a4_workspace(workspace, x.ne[1], weight.k);
-    nvfp4_linear_add_w4a4_launch(x, weight, residual, scratch, stream);
+    if (route == Nvfp4LinearAddRoute::A16) {
+        nvfp4_linear_add_a16_launch(x, weight, residual, stream);
+        return;
+    }
+    auto scope                     = workspace.scope();
+    const Nvfp4A4Workspace scratch = allocate_nvfp4_a4_workspace(workspace, x.ne[1], weight.k);
+    nvfp4_linear_add_a4_launch(x, weight, residual, scratch, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

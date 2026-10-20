@@ -2,17 +2,20 @@
 
 #include "core/layout.h"
 #include "core/tensor.h"
-#include "ninfer/ops/sampling.h"
-#include "ninfer/types.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/types.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
-inline constexpr std::uint32_t kMtpDecodeMaximumDrafts    = 5;
+// The Program's MTP round domain: transfer formats, envelopes and round state hold up to the widest
+// verify it runs (15 drafts, 16 columns: DFlash's as well). A family's own MTP may draft fewer
+// (validate_program_options: Qwen 3.5's MTP layer stops at kMaximumMtpDraftTokens).
+inline constexpr std::uint32_t kMtpDecodeMaximumDrafts    = 15;
 inline constexpr std::uint32_t kMtpDecodeMaximumWidth     = kMtpDecodeMaximumDrafts + 1;
 inline constexpr std::uint32_t kDFlashDecodeMaximumDrafts = 15;
 inline constexpr std::uint32_t kDFlashDecodeMaximumWidth  = kDFlashDecodeMaximumDrafts + 1;
@@ -26,8 +29,11 @@ struct RoundStateSpec {
     bool causal_scoring          = false;
 };
 
+// The most ordinary decode steps one round runs back to back (ProgramImpl::launch_ordinary).
+inline constexpr std::uint32_t kMaximumOrdinaryDecodeSteps = 32;
+
 // Stable pinned/device transfer format for ordinary decode. The full fixed-size object is copied
-// once per round; only its exact-B prefixes are consumed by the model schedule.
+// once per step; only its exact-B prefixes are consumed by the model schedule.
 struct OrdinaryDecodeIngress {
     std::array<TokenId, kMaximumConcurrency> tokens{};
     std::array<std::int32_t, kMaximumConcurrency> cache_positions{};
@@ -38,9 +44,23 @@ struct OrdinaryDecodeIngress {
     std::array<ops::SamplingConfig, kMaximumConcurrency> sampling{};
 };
 
+// sampled_tokens holds the last step's tokens. A round of several steps records step
+// j < steps - 1 in step_tokens[j * kMaximumConcurrency + row] as the next step takes it as input.
 struct OrdinaryDecodeEgress {
     std::array<TokenId, kMaximumConcurrency> sampled_tokens{};
+    std::array<TokenId, kMaximumConcurrency*(kMaximumOrdinaryDecodeSteps - 1)> step_tokens{};
 };
+
+// The ingress prefix each later step of a multi-step round takes from the device: its tokens and
+// cache and RoPE positions, contiguous at the start of the ingress.
+inline constexpr std::size_t kOrdinaryDecodeFeedBytes =
+    offsetof(OrdinaryDecodeIngress, text_kv_table_rows);
+static_assert(offsetof(OrdinaryDecodeIngress, tokens) == 0 &&
+              offsetof(OrdinaryDecodeIngress, cache_positions) ==
+                  sizeof(OrdinaryDecodeIngress::tokens) &&
+              offsetof(OrdinaryDecodeIngress, rope_positions) +
+                      sizeof(OrdinaryDecodeIngress::rope_positions) ==
+                  kOrdinaryDecodeFeedBytes);
 
 // Stable pinned/device transfer formats for concurrent MTP decode. The arrays use the maximum
 // product domain; RoundState binds only the configured [K,C] and [K+1,C] prefixes.
@@ -69,6 +89,13 @@ struct MtpDecodeEgress {
     std::array<std::int32_t, kMaximumConcurrency> next_extents{};
 };
 
+// Prefill binds the current chunk independently of the compact decode batch.
+struct DFlashPrefillIngress {
+    std::int32_t append_count           = 0;
+    std::int32_t state_destination_slot = 0;
+    std::int32_t full_kv_table_row      = 0;
+};
+
 // Stable pinned/device transfer formats for one exact-B DFlash transaction. The proposal is
 // produced and verified in the same round, so no draft state crosses the round boundary.
 struct DFlashDecodeIngress {
@@ -88,13 +115,22 @@ struct DFlashDecodeIngress {
     std::array<std::int32_t, kMaximumConcurrency> state_source_slots{};
     std::array<std::int32_t, kMaximumConcurrency> state_destination_slots{};
     std::array<ops::SamplingConfig, kMaximumConcurrency> sampling{};
+    // Stamped on the round's drafts when they reach the host (DFlashDecodeEgress::drafts).
+    std::uint32_t round_epoch = 0;
 };
 
 struct DFlashDecodeEgress {
     std::array<TokenId, kMaximumConcurrency * kDFlashDecodeMaximumWidth> licensed_tokens{};
     std::array<std::int32_t, kMaximumConcurrency> licensed_counts{};
     std::array<std::int32_t, kMaximumConcurrency> accepted_drafts{};
+    // Mid-round, before the target verifies: the drafts (row r's k drafts at r * k), then the
+    // ingress round_epoch, so a constrained row's verify masks can follow them along its grammar.
+    // Not part of the copy at the round's end (kDFlashDecodeRoundEgressBytes).
+    std::array<TokenId, kMaximumConcurrency * kDFlashDecodeMaximumDrafts> drafts{};
+    std::uint32_t drafts_epoch = 0;
 };
+
+inline constexpr std::size_t kDFlashDecodeRoundEgressBytes = offsetof(DFlashDecodeEgress, drafts);
 
 struct OrdinaryDecodeStateLayout {
     LayoutRegion ingress;
@@ -112,7 +148,8 @@ struct MtpPrefillStateLayout {
 };
 
 struct DFlashPrefillStateLayout {
-    TensorRegion produced_count;
+    LayoutRegion ingress;
+    TensorRegion local_append_count;
 };
 
 struct MtpDecodeStateLayout {
@@ -180,6 +217,7 @@ struct OrdinaryDecodeState {
     Tensor state_destination_slots;
     const ops::SamplingConfig* sampling = nullptr;
     Tensor sampled_tokens;
+    Tensor step_tokens; // I32 [kMaximumConcurrency * (kMaximumOrdinaryDecodeSteps - 1)]
     Tensor logits;
     Tensor hidden;
 
@@ -207,7 +245,12 @@ struct MtpPrefillState {
 };
 
 struct DFlashPrefillState {
-    Tensor produced_count;
+    DeviceSpan ingress;
+    Tensor append_count;
+    Tensor state_destination_slot;
+    Tensor full_kv_table_row;
+    // Oversized chunks retain only their tail locally; full KV still uses append_count.
+    Tensor local_append_count;
 
     DFlashPrefillState() = default;
     DFlashPrefillState(DeviceSpan backing, const DFlashPrefillStateLayout& layout);
@@ -252,6 +295,16 @@ struct MtpDecodeState {
     MtpDecodeState() = default;
     MtpDecodeState(DeviceSpan backing, const MtpDecodeStateLayout& layout,
                    std::uint32_t batch_capacity, std::uint32_t draft_window);
+
+    // The same frame for a narrower draft window (at most this one's): every draft- or
+    // column-shaped tensor re-viewed as a contiguous prefix of its storage, so a round launched at
+    // that window reads and writes a dense [window + 1, batch] layout. Host ingress rows and egress
+    // rows are strided by the narrower window as well.
+    [[nodiscard]] MtpDecodeState narrowed(std::uint32_t draft_window) const;
+
+    // The same frame for its first `rows` batch rows: every batch-shaped tensor sliced along its
+    // batch axis (what one decode body of that batch size reads and writes).
+    [[nodiscard]] MtpDecodeState rows(std::int32_t rows) const;
 };
 
 struct DFlashDecodeState {
@@ -286,10 +339,16 @@ struct DFlashDecodeState {
     Tensor target_logits;
     Tensor target_hidden;
     Tensor target_continuation_hidden;
+    // The drafter's per-lane pending target features ([features, window + 1, lanes], a view of
+    // DFlashPersistentState::pending_features at this frame's width); unset: the whole buffer.
+    Tensor pending_features;
 
     DFlashDecodeState() = default;
     DFlashDecodeState(DeviceSpan backing, const DFlashDecodeStateLayout& layout,
                       std::uint32_t batch_capacity, std::uint32_t draft_window);
+
+    // As MtpDecodeState::narrowed().
+    [[nodiscard]] DFlashDecodeState narrowed(std::uint32_t draft_window) const;
 };
 
 struct RoundState {
@@ -310,4 +369,4 @@ struct RoundState {
     RoundState(DeviceSpan backing, const RoundStateLayout& layout);
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

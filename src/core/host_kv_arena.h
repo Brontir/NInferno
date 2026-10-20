@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer {
+namespace ninferno {
 
 struct HostKVPlaneLayout {
     std::size_t offset             = 0;
@@ -172,10 +172,6 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return owner_ != nullptr; }
 
-    [[nodiscard]] std::size_t release_count() const noexcept { return releases_.size(); }
-
-    [[nodiscard]] std::size_t allocation_count() const noexcept { return targets_.size(); }
-
 private:
     struct Target {
         std::uint32_t layout = 0;
@@ -275,4 +271,4 @@ private:
     std::uint64_t revision_ = 1;
 };
 
-} // namespace ninfer
+} // namespace ninferno

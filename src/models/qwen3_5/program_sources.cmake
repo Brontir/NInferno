@@ -1,4 +1,4 @@
-target_sources(ninfer_model_runtime PRIVATE
+target_sources(ninferno_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/measurement.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/storage/draft_context.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/state/decoder_state.cpp"
@@ -8,6 +8,8 @@ target_sources(ninfer_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/graph_profiles.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program_impl.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/program/numeric_status.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/program/qwen3_5_execution.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/context_work.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/pressure.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/checkpoint_recovery.cpp"

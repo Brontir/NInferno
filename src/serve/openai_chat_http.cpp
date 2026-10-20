@@ -3,6 +3,7 @@
 #include "serve/http_transport.h"
 #include "serve/openai_chat.h"
 #include "serve/openai_common.h"
+#include "serve/request_validation.h"
 
 #include <atomic>
 #include <cstddef>
@@ -13,11 +14,13 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
+// An error after the stream started: its error object, then [DONE] as every Chat stream ends (as
+// vLLM ends one), so a client reading to the sentinel does not wait for the close.
 std::string sse_error_event(const ApiError& error) {
-    return "data: " + make_error_body(error) + "\n\n";
+    return "data: " + make_error_body(error) + "\n\ndata: [DONE]\n\n";
 }
 
 } // namespace
@@ -25,12 +28,11 @@ std::string sse_error_event(const ApiError& error) {
 void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::Response& res) {
     OpenAIChatRequest request;
     try {
-        RequestLimits limits;
-        limits.default_max_tokens = options_.default_max_tokens;
-        request                   = parse_chat_completion_request(parse_json_body(req), limits);
-        validate_openai_model(request.model, public_model_id_);
+        const RequestLimits limits = request_limits();
+        request                    = parse_chat_completion_request(parse_json_body(req), limits,
+                                                                   options_.auto_system_shared_prefix);
     } catch (const ApiException& exception) {
-        write_openai_error(res, exception.error());
+        refuse(req, res, exception.error());
         return;
     }
 
@@ -40,7 +42,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                                       .output_tokens_explicit = request.output_tokens_explicit};
     PreparedRequest prepared;
     try {
-        const ninfer::GenerationObservationOptions observation{
+        const ninferno::GenerationObservationOptions observation{
             .phase_timings   = true,
             .live_timings    = request.stream && request.timings_per_token,
             .prompt_progress = request.stream && request.return_progress,
@@ -55,19 +57,23 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
         write_openai_error(res, exception.error());
         return;
     } catch (const std::exception& exception) {
-        ApiError error;
-        error.status  = 500;
-        error.type    = "internal_error";
-        error.message = exception.what();
+        ApiError error = internal_error(exception.what());
         record_request_rejected(make_request_rejection_log_context(
             req_id, "openai_chat_completions", request.generation, metadata, error));
         write_openai_error(res, error);
         return;
     }
 
-    const OpenAIChatResponseIdentity identity = make_openai_chat_response_identity(request.model);
-    auto lifecycle                            = begin_request(make_request_log_context(
-        req_id, "openai_chat_completions", request.generation, metadata, prepared));
+    OpenAIChatResponseIdentity identity = make_openai_chat_response_identity(request.model);
+    for (const ToolDefinition& tool : request.generation.tools) {
+        if (tool.custom) { identity.custom_tools.push_back(tool.name); }
+    }
+    auto lifecycle = begin_request(make_request_log_context(req_id, "openai_chat_completions",
+                                                            request.generation, metadata, prepared),
+                                   res);
+    if (const std::string warning = notes_header_value(request.generation); !warning.empty()) {
+        res.set_header("X-NInferno-Warning", warning);
+    }
 
     if (!request.stream) {
         GenerationOutcome outcome;
@@ -81,24 +87,35 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
             const RequestFailure failure =
                 make_internal_request_failure(RequestFailurePhase::Generation, exception.what());
             lifecycle->failure(failure);
-            ApiError error;
-            error.status  = 500;
-            error.type    = "internal_error";
-            error.message = exception.what();
+            ApiError error = internal_error(exception.what());
             write_openai_error(res, error);
             return;
         }
         lifecycle->done(outcome);
+        // A client that went away cancelled the run: there is no connection left to answer (the
+        // streamed path's rule).
+        if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
+            client_disconnected(req)) {
+            lifecycle->response_failure(
+                make_client_disconnected_failure(RequestFailurePhase::Transport));
+            return;
+        }
+        // The server gave the run up (drain timeout, second signal): the text is cut short, so
+        // the client is told to retry rather than handed it as a finished answer.
+        if (outcome.finish_reason == ninferno::FinishReason::Cancelled && service_->aborting()) {
+            const ApiError error = server_draining_error();
+            lifecycle->response_failure(
+                make_request_failure(RequestFailurePhase::Generation, error));
+            write_openai_error(res, error);
+            return;
+        }
         try {
             set_owned_json_content(res, make_chat_completion_response(identity, outcome),
                                    prepared.lifetime);
         } catch (const std::exception& exception) {
             lifecycle->response_failure(make_internal_request_failure(
                 RequestFailurePhase::ResponseRender, exception.what()));
-            ApiError error;
-            error.status  = 500;
-            error.type    = "internal_error";
-            error.message = exception.what();
+            ApiError error = internal_error(exception.what());
             write_openai_error(res, error);
         }
         return;
@@ -108,8 +125,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
         const bool return_progress   = request.return_progress;
         const bool timings_per_token = request.timings_per_token;
         auto stream                  = std::make_shared<HttpGenerationStream>(std::move(prepared));
-        auto encoder = std::make_shared<OpenAIChatStream>(identity, request.include_usage,
-                                                          timings_per_token, return_progress);
+        auto encoder =
+            std::make_shared<OpenAIChatStream>(identity, request.include_usage, timings_per_token,
+                                               return_progress, options_.usage_chunk_choice);
 
         prepare_sse_response(res);
         res.set_chunked_content_provider(
@@ -145,17 +163,14 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 } catch (const ResponseRenderFailure& exception) {
                     lifecycle->failure(make_internal_request_failure(
                         RequestFailurePhase::ResponseRender, exception.what()));
-                    ApiError error;
-                    error.status  = 500;
-                    error.type    = "internal_error";
-                    error.message = exception.what();
+                    ApiError error = internal_error(exception.what());
                     return send_error(error);
                 }
 
                 GenerationOutcome outcome;
                 try {
                     StreamSink output;
-                    output.on_start = [&](const ninfer::GenerationStart& start) {
+                    output.on_start = [&](const ninferno::GenerationStart& start) {
                         encoder->note_start(start);
                         if (return_progress) {
                             render_and_write(transport,
@@ -163,15 +178,16 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                         }
                     };
                     if (return_progress) {
-                        output.on_progress = [&](const ninfer::PromptProgress& progress) {
+                        output.on_progress = [&](const ninferno::PromptProgress& progress) {
                             render_and_write(transport,
                                              [&] { return encoder->prompt_progress(progress); });
                         };
                     }
                     if (timings_per_token) {
-                        output.on_timing = [&](const ninfer::GenerationTimingObservation& timing) {
-                            encoder->note_timing(timing);
-                        };
+                        output.on_timing =
+                            [&](const ninferno::GenerationTimingObservation& timing) {
+                                encoder->note_timing(timing);
+                            };
                     }
                     output.on_content = [&](const std::string& text) {
                         render_and_write(transport, [&] { return encoder->content_delta(text); });
@@ -189,10 +205,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 } catch (const ResponseRenderFailure& exception) {
                     lifecycle->failure(make_internal_request_failure(
                         RequestFailurePhase::ResponseRender, exception.what()));
-                    ApiError error;
-                    error.status  = 500;
-                    error.type    = "internal_error";
-                    error.message = exception.what();
+                    ApiError error = internal_error(exception.what());
                     return send_error(error);
                 } catch (const ApiException& exception) {
                     lifecycle->failure(make_generation_request_failure(exception.error()));
@@ -200,24 +213,26 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 } catch (const std::exception& exception) {
                     lifecycle->failure(make_internal_request_failure(
                         RequestFailurePhase::Generation, exception.what()));
-                    ApiError error;
-                    error.status  = 500;
-                    error.type    = "internal_error";
-                    error.message = exception.what();
+                    ApiError error = internal_error(exception.what());
                     return send_error(error);
                 }
 
                 lifecycle->done(outcome);
+                // A client that went away cancelled the run, before its first token as often as
+                // not: there is nothing to render its end to, and no stream it was started on.
+                if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
+                    transport.poll()) {
+                    lifecycle->response_failure(
+                        make_client_disconnected_failure(RequestFailurePhase::Transport));
+                    return false;
+                }
                 std::vector<std::string> terminal;
                 try {
                     terminal = encoder->finish(outcome);
                 } catch (const std::exception& exception) {
                     lifecycle->response_failure(make_internal_request_failure(
                         RequestFailurePhase::ResponseRender, exception.what()));
-                    ApiError error;
-                    error.status  = 500;
-                    error.type    = "internal_error";
-                    error.message = exception.what();
+                    ApiError error = internal_error(exception.what());
                     return send_error(error);
                 }
                 try {
@@ -240,12 +255,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
     } catch (const std::exception& exception) {
         lifecycle->failure(
             make_internal_request_failure(RequestFailurePhase::ResponseRender, exception.what()));
-        ApiError error;
-        error.status  = 500;
-        error.type    = "internal_error";
-        error.message = exception.what();
+        ApiError error = internal_error(exception.what());
         write_openai_error(res, error);
     }
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

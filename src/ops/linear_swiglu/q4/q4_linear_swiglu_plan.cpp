@@ -1,66 +1,58 @@
-#include "core/weight.h"
 #include "ops/linear_swiglu/q4/q4_linear_swiglu_plan.h"
+#include "core/weight.h"
 
-#include "ninfer/ops/linear.h"
-#include "ninfer/ops/silu_mul.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/silu_mul.h"
+#include "core/device_class.h"
 #include "core/layout.h"
+#include "ops/common/column_routes.h"
 #include "ops/linear_swiglu/q4/q4_linear_swiglu_kernels.h"
 
 #include <algorithm>
 #include <array>
-#include <limits>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
-constexpr std::int32_t kAnyCols = std::numeric_limits<std::int32_t>::max();
-
-struct ColsSet {
-    std::int32_t first;
-    std::int32_t last;
-
-    constexpr bool contains(std::int32_t cols) const noexcept {
-        return cols >= first && cols <= last;
-    }
-};
-
-struct RouteSpec {
-    ColsSet cols;
-    Q4LinearSwiGluScheduleId schedule;
-};
+using RouteSpec = ColumnRoute<Q4LinearSwiGluScheduleId>;
 
 constexpr Q4LinearSwiGluProblem kShape{34816, 17408, 5120, 5120, 1};
 
 constexpr std::array<RouteSpec, 10> kRoutes{{
-    {{1, 1}, Q4LinearSwiGluScheduleId::GemvPair},
-    {{2, 32}, Q4LinearSwiGluScheduleId::SmallTTiled},
-    {{33, 128}, Q4LinearSwiGluScheduleId::Materialized},
-    {{129, 168}, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128Tail},
-    {{169, 224}, Q4LinearSwiGluScheduleId::Materialized},
-    {{225, 256}, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
-    {{257, 384}, Q4LinearSwiGluScheduleId::Materialized},
-    {{385, 512}, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
-    {{513, 640}, Q4LinearSwiGluScheduleId::Materialized},
-    {{641, kAnyCols}, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
+    {1, 1, Q4LinearSwiGluScheduleId::GemvPair},
+    {2, 32, Q4LinearSwiGluScheduleId::SmallTTiled},
+    {33, 128, Q4LinearSwiGluScheduleId::Materialized},
+    {129, 168, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128Tail},
+    {169, 224, Q4LinearSwiGluScheduleId::Materialized},
+    {225, 256, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
+    {257, 384, Q4LinearSwiGluScheduleId::Materialized},
+    {385, 512, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
+    {513, 640, Q4LinearSwiGluScheduleId::Materialized},
+    {641, kAnyColumns, Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128},
 }};
 
-constexpr bool catalog_is_closed() noexcept {
-    std::int64_t expected = 1;
-    for (const RouteSpec& route : kRoutes) {
-        if (route.cols.first != expected || route.cols.last < route.cols.first) { return false; }
-        expected = static_cast<std::int64_t>(route.cols.last) + 1;
-    }
-    return kRoutes.back().cols.last == kAnyCols &&
-           expected == static_cast<std::int64_t>(kAnyCols) + 1;
-}
-
-static_assert(catalog_is_closed(), "Q4 LinearSwiGLU routes must be exact, contiguous, and closed");
+static_assert(column_routes_closed(kRoutes),
+              "Q4 LinearSwiGLU routes must be exact, contiguous, and closed");
 
 bool supported_shape(const Q4LinearSwiGluProblem& problem) noexcept {
     return problem.gate_up_rows == kShape.gate_up_rows &&
            problem.output_rows == kShape.output_rows && problem.k == kShape.k &&
            problem.padded_k == kShape.padded_k;
+}
+
+// Without tensor mma.sync (Volta's build: ops/common/mma.cuh computes the fragments on FP32 FMAs)
+// the small-T tile's paired rows run on emulated MMA (27B MTP verify, T = 5, V100: 1378 us a
+// layer); materialized, the projection's linear takes the SIMT tiles its sliced-K launches
+// redirect to there (through 16 tokens: from 17 the projection's linear takes the tiled route,
+// whose workspace the plan does not hold).
+Q4LinearSwiGluScheduleId device_schedule(Q4LinearSwiGluScheduleId schedule,
+                                         std::int32_t cols) noexcept {
+    if (schedule == Q4LinearSwiGluScheduleId::SmallTTiled && cols <= 16 &&
+        !build_features().mma_tensor) {
+        return Q4LinearSwiGluScheduleId::Materialized;
+    }
+    return schedule;
 }
 
 template <class Allocator>
@@ -76,20 +68,8 @@ std::size_t materialized_workspace_bytes(std::int32_t rows, std::int32_t cols) {
 
 } // namespace
 
-const char* q4_linear_swiglu_schedule_name(Q4LinearSwiGluScheduleId schedule) noexcept {
-    switch (schedule) {
-    case Q4LinearSwiGluScheduleId::GemvPair:
-        return "linear_swiglu.q4.gemv.paired_rows";
-    case Q4LinearSwiGluScheduleId::SmallTTiled:
-        return "linear_swiglu.q4.mma.small_t.tiled";
-    case Q4LinearSwiGluScheduleId::Materialized:
-        return "linear_swiglu.q4.materialized";
-    case Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128:
-        return "linear_swiglu.q4.mma.split_half_pair.r32.c128";
-    case Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128Tail:
-        return "linear_swiglu.q4.mma.split_half_pair.r32.c128.narrow_tail";
-    }
-    return "linear_swiglu.q4.unknown";
+bool q4_linear_swiglu_registered(std::int32_t gate_up_rows, std::int32_t k) noexcept {
+    return gate_up_rows == kShape.gate_up_rows && k == kShape.k;
 }
 
 bool q4_linear_swiglu_admits(const Q4LinearSwiGluProblem& problem) noexcept {
@@ -103,12 +83,12 @@ Q4LinearSwiGluPlan q4_linear_swiglu_resolve_plan(const Q4LinearSwiGluProblem& pr
     }
 
     for (const RouteSpec& route : kRoutes) {
-        if (!route.cols.contains(problem.cols)) { continue; }
+        if (!route.contains(problem.cols)) { continue; }
         Q4LinearSwiGluPlan plan{
-            route.schedule,
+            device_schedule(route.schedule, problem.cols),
             0,
         };
-        switch (route.schedule) {
+        switch (plan.schedule) {
         case Q4LinearSwiGluScheduleId::GemvPair:
         case Q4LinearSwiGluScheduleId::SmallTTiled:
         case Q4LinearSwiGluScheduleId::MmaSplitHalfPairR32C128:
@@ -134,8 +114,8 @@ std::size_t q4_linear_swiglu_capacity_workspace_bytes(std::int32_t gate_up_rows,
 
     std::size_t maximum = 0;
     for (const RouteSpec& route : kRoutes) {
-        if (route.cols.last < min_cols || route.cols.first > max_cols) { continue; }
-        const std::int32_t endpoint = std::min(route.cols.last, max_cols);
+        if (route.last < min_cols || route.first > max_cols) { continue; }
+        const std::int32_t endpoint = std::min(route.last, max_cols);
         maximum                     = std::max(maximum, q4_linear_swiglu_resolve_plan(
                                         {gate_up_rows, output_rows, k, padded_k, endpoint})
                                                             .workspace_bytes);
@@ -183,4 +163,4 @@ void q4_linear_swiglu_dispatch(const Tensor& x, const Weight& w, Tensor& out, Wo
     q4_linear_swiglu_execute_plan(plan, x, w, out, ws, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

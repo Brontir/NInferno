@@ -1,7 +1,12 @@
-// Public-Op benchmark for variable-width DFlash2 pair and context-K RMSNorm+RoPE profiles.
-#include "ninfer/ops/rmsnorm_rope.h"
+// Public-Op benchmark for the variable-width DFlash2 pair, context-K and text RMSNorm+RoPE
+// profiles. The text profile carries both routes: the three calls the model issues today, and the
+// fused Op that replaces them.
+#include "ninferno/ops/rmsnorm_rope.h"
 
-#include "ninfer_bench_common.h"
+#include "ninferno/ops/rmsnorm.h"
+#include "ninferno/ops/rope.h"
+
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
@@ -14,7 +19,7 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
@@ -22,7 +27,14 @@ constexpr int kHeadDim    = 128;
 constexpr int kQueryHeads = 32;
 constexpr int kKeyHeads   = 8;
 
-enum class Form : std::uint8_t { Pair, Single };
+// The text profile, as the Op's contract states it.
+constexpr int kTextHeadDim    = 256;
+constexpr int kTextRotaryDim  = 64;
+constexpr float kTextRopeBase = 1.0e7F;
+constexpr float kTextEps      = 1.0e-6F;
+
+enum class Form : std::uint8_t { Pair, Single, Text };
+enum class Route : std::uint8_t { Split, Fused };
 enum class Execution : std::uint8_t { Eager, Graph };
 
 struct Options {
@@ -34,12 +46,14 @@ struct Options {
     int warmup   = 20;
     int repeat   = 200;
     bool profile = false;
+    Route route  = Route::Fused;
 };
 
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_rmsnorm_rope_bench --form pair|single "
+                 "usage: ninferno_rmsnorm_rope_bench --form pair|single|text "
+                 "[--route split|fused] "
                  "[--widths W,...] [--batches B,...] [--tokens T,...] [--execution eager|graph] "
                  "[--warmup N] [--repeat N] [--profile]\n",
                  message);
@@ -85,8 +99,18 @@ Options parse_options(int argc, char** argv) {
                 options.form = Form::Pair;
             else if (value == "single")
                 options.form = Form::Single;
+            else if (value == "text")
+                options.form = Form::Text;
             else
-                usage("--form expects pair or single");
+                usage("--form expects pair, single or text");
+        } else if (argument == "--route") {
+            const std::string_view value(next("--route requires a value"));
+            if (value == "split")
+                options.route = Route::Split;
+            else if (value == "fused")
+                options.route = Route::Fused;
+            else
+                usage("--route expects split or fused");
         } else if (argument == "--widths") {
             options.widths = parse_list(next("--widths requires a value"), 2, 16, "--widths");
         } else if (argument == "--batches") {
@@ -126,24 +150,21 @@ std::vector<std::int32_t> host_positions(int tokens) {
     return values;
 }
 
-bench::Result measure(const Options& options, const bench::launch_fn& launch, double bytes,
-                      cudaStream_t stream) {
-    if (options.execution == Execution::Eager) {
-        return bench::bench_loop(launch, bytes, options.warmup, options.repeat, 100);
-    }
-    constexpr int repetitions = 32;
+bench::Result measure(const Options& options, const bench::launch_fn& restore,
+                      const bench::launch_fn& launch, double bytes, cudaStream_t stream) {
     bench::TimedGraph graph;
-    graph.capture(stream, [&](cudaStream_t) {
-        for (int i = 0; i < repetitions; ++i) launch(stream);
-    });
-    const auto timing = bench::measure_graph(graph, stream, options.warmup, options.repeat);
+    if (options.execution == Execution::Graph) graph.capture(stream, launch);
+    const auto timing =
+        options.execution == Execution::Graph
+            ? bench::measure_graph_prepared(restore, graph, stream, options.warmup, options.repeat)
+            : bench::measure_launch_prepared(restore, launch, stream, options.warmup,
+                                             options.repeat);
     bench::Result result;
-    result.n_runs      = options.repeat;
-    result.inner_iters = repetitions;
-    result.median_us   = timing.median_us / repetitions;
-    result.min_us      = timing.min_us / repetitions;
-    result.p95_us      = timing.p95_us / repetitions;
-    result.gbs         = bytes / result.median_us / 1.0e3;
+    result.n_runs    = options.repeat;
+    result.median_us = timing.median_us;
+    result.min_us    = timing.min_us;
+    result.p95_us    = timing.p95_us;
+    result.gbs       = bytes / timing.median_us / 1.0e3;
     return result;
 }
 
@@ -152,10 +173,18 @@ void run_pair(const Options& options, int width, int batch, cudaStream_t stream)
     const auto positions_host = host_positions(tokens);
     DeviceBuffer positions(positions_host.size() * sizeof(std::int32_t));
     positions.copy_from_host(positions_host.data(), positions.bytes);
-    DeviceBuffer q = bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kQueryHeads * tokens);
-    DeviceBuffer k = bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kKeyHeads * tokens);
-    DeviceBuffer q_weight = bench::make_bf16(kHeadDim);
-    DeviceBuffer k_weight = bench::make_bf16(kHeadDim);
+    DeviceBuffer q =
+        bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kQueryHeads * tokens, 101U);
+    DeviceBuffer k =
+        bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kKeyHeads * tokens, 103U);
+    DeviceBuffer q_weight = bench::make_bf16(kHeadDim, 105U, .8F, 1.2F);
+    DeviceBuffer k_weight = bench::make_bf16(kHeadDim, 107U, .8F, 1.2F);
+    bench::SavedBuffer initial_q(q);
+    bench::SavedBuffer initial_k(k);
+    const auto restore = [&](cudaStream_t stream) {
+        initial_q.restore(stream);
+        initial_k.restore(stream);
+    };
     Tensor t_positions(positions.p, DType::I32, {width, batch});
     Tensor t_q(q.p, DType::BF16, {kHeadDim, kQueryHeads, width, batch});
     Tensor t_k(k.p, DType::BF16, {kHeadDim, kKeyHeads, width, batch});
@@ -165,7 +194,12 @@ void run_pair(const Options& options, int width, int batch, cudaStream_t stream)
         ops::rmsnorm_rope(t_positions, t_q_weight, t_k_weight, t_q, t_k, launch_stream);
     };
     if (options.profile) {
-        for (int index = 0; index < options.warmup; ++index) launch(stream);
+        for (int index = 0; index < options.warmup; ++index) {
+            restore(stream);
+            launch(stream);
+        }
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        restore(stream);
         CUDA_CHECK(cudaStreamSynchronize(stream));
         CUDA_CHECK(cudaProfilerStart());
         launch(stream);
@@ -175,25 +209,86 @@ void run_pair(const Options& options, int width, int batch, cudaStream_t stream)
     }
     const double bytes =
         2.0 * static_cast<double>(kHeadDim) * (kQueryHeads + kKeyHeads) * tokens * 2.0;
-    const bench::Result timing = measure(options, launch, bytes, stream);
+    const bench::Result timing = measure(options, restore, launch, bytes, stream);
     std::printf("form=pair W=%d B=%d T=%d heads_per_cta=8 execution=%s median=%.3f us min=%.3f us "
                 "p95=%.3f us useful=%.1f GB/s graph_repetitions=%d cache=warm\n",
                 width, batch, tokens, options.execution == Execution::Graph ? "graph" : "eager",
-                timing.median_us, timing.min_us, timing.p95_us, timing.gbs,
-                options.execution == Execution::Graph ? 32 : 1);
+                timing.median_us, timing.min_us, timing.p95_us, timing.gbs, 1);
 }
 
 void run_single(const Options& options, int tokens, cudaStream_t stream) {
     const auto positions_host = host_positions(tokens);
     DeviceBuffer positions(positions_host.size() * sizeof(std::int32_t));
     positions.copy_from_host(positions_host.data(), positions.bytes);
-    DeviceBuffer x      = bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kKeyHeads * tokens);
-    DeviceBuffer weight = bench::make_bf16(kHeadDim);
+    DeviceBuffer x =
+        bench::make_bf16(static_cast<std::size_t>(kHeadDim) * kKeyHeads * tokens, 109U);
+    DeviceBuffer weight = bench::make_bf16(kHeadDim, 111U, .8F, 1.2F);
+    bench::SavedBuffer initial_x(x);
+    const auto restore = [&](cudaStream_t stream) { initial_x.restore(stream); };
     Tensor t_positions(positions.p, DType::I32, {tokens});
     Tensor t_x(x.p, DType::BF16, {kHeadDim, kKeyHeads, tokens});
     Tensor t_weight(weight.p, DType::BF16, {kHeadDim});
     const auto launch = [&](cudaStream_t launch_stream) {
         ops::rmsnorm_rope(t_positions, t_weight, t_x, launch_stream);
+    };
+    if (options.profile) {
+        for (int index = 0; index < options.warmup; ++index) {
+            restore(stream);
+            launch(stream);
+        }
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        restore(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaProfilerStart());
+        launch(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaProfilerStop());
+        return;
+    }
+    const double bytes         = 2.0 * static_cast<double>(kHeadDim) * kKeyHeads * tokens * 2.0;
+    const bench::Result timing = measure(options, restore, launch, bytes, stream);
+    std::printf("form=single T=%d heads_per_cta=8 execution=%s median=%.3f us min=%.3f us "
+                "p95=%.3f us useful=%.1f GB/s graph_repetitions=%d cache=warm\n",
+                tokens, options.execution == Execution::Graph ? "graph" : "eager", timing.median_us,
+                timing.min_us, timing.p95_us, timing.gbs, 1);
+}
+
+// The text profile of the two registered geometries. `split` is what every full-attention layer
+// issues today: normalize q, normalize k, rotate both. `fused` is the Op that replaces the three.
+void run_text(const Options& options, int query_heads, int key_heads, int tokens,
+              cudaStream_t stream) {
+    const auto positions_host = host_positions(tokens);
+    DeviceBuffer positions(positions_host.size() * sizeof(std::int32_t));
+    positions.copy_from_host(positions_host.data(), positions.bytes);
+    const std::size_t q_elements = static_cast<std::size_t>(kTextHeadDim) * query_heads * tokens;
+    const std::size_t k_elements = static_cast<std::size_t>(kTextHeadDim) * key_heads * tokens;
+    DeviceBuffer q               = bench::make_bf16(q_elements, 111U);
+    DeviceBuffer k               = bench::make_bf16(k_elements, 113U);
+    DeviceBuffer qn              = bench::make_bf16(q_elements, 115U);
+    DeviceBuffer kn              = bench::make_bf16(k_elements, 117U);
+    DeviceBuffer q_weight        = bench::make_bf16(kTextHeadDim, 119U, .8F, 1.2F);
+    DeviceBuffer k_weight        = bench::make_bf16(kTextHeadDim, 121U, .8F, 1.2F);
+    Tensor t_positions(positions.p, DType::I32, {tokens});
+    Tensor t_q(q.p, DType::BF16, {kTextHeadDim, query_heads, tokens});
+    Tensor t_k(k.p, DType::BF16, {kTextHeadDim, key_heads, tokens});
+    Tensor t_qn(qn.p, DType::BF16, {kTextHeadDim, query_heads, tokens});
+    Tensor t_kn(kn.p, DType::BF16, {kTextHeadDim, key_heads, tokens});
+    Tensor t_q_weight(q_weight.p, DType::BF16, {kTextHeadDim});
+    Tensor t_k_weight(k_weight.p, DType::BF16, {kTextHeadDim});
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    int sms = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+    const auto launch = [&](cudaStream_t launch_stream) {
+        if (options.route == Route::Fused) {
+            ops::rmsnorm_rope(t_positions, t_q_weight, t_k_weight, t_q, t_k, t_qn, t_kn,
+                              launch_stream);
+            return;
+        }
+        ops::rmsnorm(t_q, t_q_weight, kTextEps, true, t_qn, launch_stream);
+        ops::rmsnorm(t_k, t_k_weight, kTextEps, true, t_kn, launch_stream);
+        ops::rope(t_positions, kTextRotaryDim, kTextRopeBase, t_qn, t_kn,
+                  DeviceExecutionView{launch_stream, sms});
     };
     if (options.profile) {
         for (int index = 0; index < options.warmup; ++index) launch(stream);
@@ -204,11 +299,13 @@ void run_single(const Options& options, int tokens, cudaStream_t stream) {
         CUDA_CHECK(cudaProfilerStop());
         return;
     }
-    const double bytes         = 2.0 * static_cast<double>(kHeadDim) * kKeyHeads * tokens * 2.0;
-    const bench::Result timing = measure(options, launch, bytes, stream);
-    std::printf("form=single T=%d heads_per_cta=8 execution=%s median=%.3f us min=%.3f us "
+    // Read in, write out, for both operands; the norms rewrite the rope inputs every launch.
+    const double bytes         = 2.0 * 2.0 * static_cast<double>(q_elements + k_elements);
+    const bench::Result timing = measure(options, [](cudaStream_t) {}, launch, bytes, stream);
+    std::printf("form=text route=%s Q=%d K=%d T=%d execution=%s median=%.3f us min=%.3f us "
                 "p95=%.3f us useful=%.1f GB/s graph_repetitions=%d cache=warm\n",
-                tokens, options.execution == Execution::Graph ? "graph" : "eager", timing.median_us,
+                options.route == Route::Fused ? "fused" : "split", query_heads, key_heads, tokens,
+                options.execution == Execution::Graph ? "graph" : "eager", timing.median_us,
                 timing.min_us, timing.p95_us, timing.gbs,
                 options.execution == Execution::Graph ? 32 : 1);
 }
@@ -228,13 +325,18 @@ int main(int argc, char** argv) {
         if (options.form == Form::Pair) {
             for (int width : options.widths)
                 for (int batch : options.batches) run_pair(options, width, batch, stream);
-        } else {
+        } else if (options.form == Form::Single) {
             for (int tokens : options.tokens) run_single(options, tokens, stream);
+        } else {
+            for (int tokens : options.tokens) {
+                run_text(options, 16, 2, tokens, stream);
+                run_text(options, 24, 4, tokens, stream);
+            }
         }
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_rmsnorm_rope_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_rmsnorm_rope_bench: %s\n", error.what());
         return 1;
     }
 }

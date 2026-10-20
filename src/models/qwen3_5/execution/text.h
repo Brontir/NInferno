@@ -1,5 +1,6 @@
 #pragma once
 #include "models/qwen3_5/program/internal.h"
+#include "models/qwen3_5/execution/prefill_calls.h"
 
 
 #include "core/arena.h"
@@ -8,9 +9,9 @@
 #include "core/linear_attention_state.h"
 #include "core/tensor.h"
 #include "core/weight.h"
-#include "ninfer/ops/sampling.h"
-#include "ninfer/ops/softmax_attention.h"
-#include "ninfer/ops/sparse_moe.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/ops/softmax_attention.h"
+#include "ninferno/ops/sparse_moe.h"
 #include "models/qwen3_5/state/decoder_state.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 #include "models/qwen3_5/program/round_buffers.h"
@@ -22,7 +23,7 @@
 #include <span>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 
 using Phase = qwen3_5::TextPhase;
 
@@ -102,10 +103,6 @@ public:
     void set_gdn_state_action(GdnStateAction action, const GdnReplayRecords* replay_records);
 
     [[nodiscard]] const LinearParameters* proposal_head() const noexcept { return proposal_head_; }
-
-    [[nodiscard]] const std::int32_t* proposal_head_ids() const noexcept {
-        return proposal_head_ids_;
-    }
 
     [[nodiscard]] int proposal_head_n() const noexcept { return proposal_head_n_; }
 
@@ -250,4 +247,4 @@ private:
     const MtpParameters* mtp_                   = nullptr;
 };
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

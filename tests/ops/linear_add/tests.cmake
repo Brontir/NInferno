@@ -1,29 +1,32 @@
-add_library(ninfer_linear_add_test_support STATIC
+add_library(ninferno_linear_add_test_support STATIC
   "${CMAKE_CURRENT_LIST_DIR}/linear_add_test_common.cpp")
-ninfer_test_includes(ninfer_linear_add_test_support)
-ninfer_op_oracle_options(ninfer_linear_add_test_support)
-target_link_libraries(ninfer_linear_add_test_support PUBLIC ninfer_ops)
+ninferno_test_includes(ninferno_linear_add_test_support)
+ninferno_op_oracle_options(ninferno_linear_add_test_support)
+ninferno_link_ops(ninferno_linear_add_test_support PUBLIC)
 
-ninfer_add_op_test(ninfer_linear_add_q4_a16_test
+ninferno_add_op_test(ninferno_linear_add_q4_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q4_a16.cpp"
-  LIBRARIES ninfer_linear_add_test_support)
+  LIBRARIES ninferno_linear_add_test_support)
 
-ninfer_add_op_test(ninfer_linear_add_q5_a16_test
+ninferno_add_op_test(ninferno_linear_add_q5_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q5_a16.cpp"
-  LIBRARIES ninfer_linear_add_test_support)
+  LIBRARIES ninferno_linear_add_test_support)
 
-ninfer_add_op_test(ninfer_linear_add_bf16_a16_test
+ninferno_add_op_test(ninferno_linear_add_bf16_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_bf16_a16.cpp"
-  LIBRARIES ninfer_linear_add_test_support)
+  LIBRARIES ninferno_linear_add_test_support)
 
-ninfer_add_op_test(ninfer_linear_add_q8_a16_test
+ninferno_add_op_test(ninferno_linear_add_q8_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q8_a16.cpp"
-  LIBRARIES ninfer_linear_add_test_support)
+  LIBRARIES ninferno_linear_add_test_support)
 
-ninfer_add_op_test(ninfer_linear_add_nvfp4_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_nvfp4.cpp"
-  LIBRARIES ninfer_ops)
+# NVFP4 kernels ship only in the 120a build.
+if(NINFERNO_WITH_NVFP4)
+  ninferno_add_op_test(ninferno_linear_add_nvfp4_test
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_nvfp4.cpp"
+    LIBRARIES ninferno_ops)
+endif()
 
-ninfer_add_op_test(ninfer_linear_add_fp8_test
+ninferno_add_op_test(ninferno_linear_add_fp8_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_fp8.cpp"
-  LIBRARIES ninfer_ops)
+  LIBRARIES ninferno_ops)

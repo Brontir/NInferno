@@ -11,18 +11,25 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kSamplerBlock               = 256;
 inline constexpr int kSamplerTileItems           = 256;
 inline constexpr int kSamplerItemsPerThread      = 2;
 inline constexpr int kSamplerPartialTileItems    = kSamplerBlock * kSamplerItemsPerThread;
-inline constexpr int kSamplerGroupBlock          = 256;
+// A partial tile's warps each sort 64 values, so a tile keeps up to 64 candidates (top_k up to
+// kMaximumTopK = 64: clients send 40, 50 or 64). A group merges 32 tiles' candidates in one
+// 2048-key tile, and the final merge 32 groups': 32 x 32 x 512 = 524288 tokens of vocabulary.
+inline constexpr int kSamplerGroupBlock          = 1024;
 inline constexpr int kSamplerGroupItemsPerThread = 2;
 inline constexpr int kSamplerGroupTileItems      = kSamplerGroupBlock * kSamplerGroupItemsPerThread;
-inline constexpr int kSamplerPartialsPerGroup    = 25;
+inline constexpr int kSamplerCandidateCap        = 64;
+inline constexpr int kSamplerPartialsPerGroup    = kSamplerGroupTileItems / kSamplerCandidateCap;
+// The single-block fallback (a vocabulary within one tile, or a launch without the multi-block
+// workspace) keeps a per-thread top list in registers and shared memory, which holds 20: a top_k
+// above it is served at 20 there. ops::sample runs a call of more than sixteen columns as slices of
+// the multi-block route, not through it.
 inline constexpr int kSamplerFastCandidates      = 20;
-inline constexpr int kSamplerCandidateCap        = kSamplerFastCandidates;
 inline constexpr int kSamplerMaxColumns          = 16;
 
 static_assert(kSamplerPartialsPerGroup * kSamplerCandidateCap <= kSamplerGroupTileItems,
@@ -109,4 +116,4 @@ inline SamplingWorkspaceLayout make_sampling_workspace_layout(std::int32_t token
     return out;
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

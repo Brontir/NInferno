@@ -1,0 +1,69 @@
+NInferno
+
+This product is derived from ninfer (https://github.com/Neroued/ninfer), Copyright 2026 Neroued and
+contributors, licensed under the Apache License, Version 2.0. Files carried over from ninfer have
+been modified; the git history records every change.
+
+Several kernels come from ninfer-all (https://github.com/iamwavecut/ninfer-all), a fork of ninfer
+by Valeriy Selitskiy that consolidates ashalliants/ninfer-3090
+(https://github.com/ashalliants/ninfer-3090) and the work of its contributors, under the Apache
+License, Version 2.0:
+- src/ops/linear/q5/q5_small_t_mma.cuh, src/ops/linear/q4/q4_ksplit_mma.cuh,
+  src/ops/common/small_t_layout.cuh, src/ops/common/small_t_split_store.cuh,
+  src/ops/attn_input_proj/q4_q5/q4_q5_attn_input_small_t_mma.cu,
+  src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_small_t.cu and
+  src/ops/linear_add/q5/q5_linear_add_small_t.cu: its small-T tensor-core kernels for verify and
+  cohort widths (by ashalliants);
+- src/ops/linear/q5/q5_rowsplit_gemm_simt.cuh: ninfer's row-split SIMT kernel as ninfer-all kept it;
+- src/ops/common/rowsplit_a8_mma.cuh and src/ops/linear_swiglu/q4a8/ (q4a8_linear_swiglu,
+  a8_linear_add, a8_input_proj, after its q4_q5 attention- and GDN-input a8 routes): the
+  integer-activation prefill GEMMs over row-split Q4/Q5 weights (by Warlax);
+- src/ops/generic/ggml_mmq/ (ggml_mmq.h, ggml_mmq.cu, ggml_mmq_internal.cuh, ggml_vec.cu and the
+  per-format instances): after its ggml bridge (src/ops/linear/gguf/ggml_bridge.cu,
+  ggml_bridge_mmq.cuh, ggml_bridge_vec.cuh in ninfer-all);
+- src/ops/linear_attention/gated_delta_net/recurrent.cuh and recurrent.cu, in part: the FP16
+  state, the staged record window and the compile-time fold geometry;
+- src/ops/softmax_attention/dense/causal_cache/int8/prompt_fast.cuh: after its int8 prompt
+  attention kernel (prompt_i8_fast.cuh, by Ian Ranson).
+
+Volta (sm_70) attention kernels come from ninfer-v100-sm70
+(https://github.com/Flo5k5/ninfer-v100-sm70), a fork of ninfer by Flo5k5 (Nourrisse Florian),
+under the Apache License, Version 2.0:
+- third_party/sm70_flash_d256: vendored from it (its own provenance and licenses are in that
+  directory);
+- src/ops/softmax_attention/dense/causal_cache/int8/volta_splitd.cu: after its split-D launcher
+  (src/ops/launcher/gqa_attention_volta_splitd.cu), for the int8 cache;
+- src/ops/softmax_attention/dense/causal_cache/int8/key_major_kt.cuh: after its transposed int8
+  small-T kernel (small_t_i8_volta_kt).
+
+Each file carries the changes made here in the git history.
+
+The components under third_party/ keep their own licenses and notices (see each directory; a
+release or an installation carries them in share/licenses/<component>):
+
+- cpp-httplib (MIT), nlohmann/json (MIT), spdlog with its bundled fmt (MIT), utf8proc (MIT and
+  the Unicode license);
+- from llama.cpp (MIT): the ggml quantization formats and integer matrix kernel (ggml-quants,
+  modified as its README.ninferno.md lists), the Jinja template engine (llama-jinja), and the chat
+  window ninferno-ui serves (llama-ui, src/ui/third_party);
+- XGrammar (Apache 2.0, with its NOTICE; it carries picojson and dlpack);
+- the Volta d256 flash-attention kernel (sm70_flash_d256: Apache 2.0, MIT and BSD 3-Clause, with
+  its NOTICE and AUTHORS);
+- CUTLASS (BSD 3-Clause), fetched at build time and compiled into the sm_70 engine.
+
+tools/chat_templates/qwen3_6.jinja and qwen3_8.jinja are derived from the chat templates of
+Qwen/Qwen3.6-27B and Qwen/Qwen3.8-27B (Apache 2.0).
+
+The evaluation texts under eval/corpora (Wikipedia, PG-19, WikiText and others) keep their own
+licenses, listed in eval/corpora/perplexity-1m/THIRD_PARTY_NOTICES.md.
+
+Release archives also carry the shared libraries their binaries load (FFmpeg, curl, OpenSSL and
+their dependencies on Linux; the vcpkg-built DLLs and the Visual C++ runtime on Windows), each
+with its copyright file in share/licenses/<package>. Their sources are those of the distribution
+or vcpkg port they were built from.
+
+pdfium (https://pdfium.googlesource.com/pdfium), as built by bblanchon/pdfium-binaries
+(https://github.com/bblanchon/pdfium-binaries), is shipped in release archives and loaded at run
+time to read PDF documents. pdfium is under the BSD 3-Clause and Apache 2.0 licenses, its build
+under the MIT license; the texts, with those of the libraries pdfium includes, are in
+share/licenses/pdfium.

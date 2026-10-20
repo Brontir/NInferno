@@ -1,0 +1,3 @@
+# Allow file for tests/ops/pdl_audit_sabotage.cu: both consumers may read their weights
+# (parameter 8) before griddepcontrol.wait; nothing else.
+pdl_audit_(hoisted|waiting)_consumer 8

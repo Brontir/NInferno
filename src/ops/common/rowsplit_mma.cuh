@@ -1,16 +1,17 @@
 #pragma once
 
 #include "ops/common/mma.cuh"
+#include "ops/common/arch_limits.h"
 
 #include <cuda_bf16.h>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 // Stable CUDA mechanics shared by semantically separate row-split and fused
 // kernels. Format and semantic-Op backends own their codecs, kernel bodies,
 // schedules, and route selection.
 template <int BM_, int BN_, int BK_, int WM_, int WN_, int STAGES_, int MIN_BLOCKS_ = 1,
-          bool FRAG_DBUF_ = true, bool CG_LOAD_ = false, bool SCALE_PAIR_LOAD_ = false>
+          bool CG_LOAD_ = false, bool SCALE_PAIR_LOAD_ = false>
 struct GemmCfg {
     static constexpr int BM               = BM_;
     static constexpr int BN               = BN_;
@@ -25,7 +26,6 @@ struct GemmCfg {
     static constexpr int THREADS          = WARPS * 32;
     static constexpr int MT               = WM_ / 16;
     static constexpr int NT               = WN_ / 8;
-    static constexpr bool FRAG_DBUF       = FRAG_DBUF_;
     static constexpr bool CG_LOAD         = CG_LOAD_;
     static constexpr bool SCALE_PAIR_LOAD = SCALE_PAIR_LOAD_;
 
@@ -43,7 +43,8 @@ struct GemmCfg {
                   "GemmCfg: block tile must divide into warp tiles");
     static_assert(WM_ % 16 == 0 && WN_ % 8 == 0, "GemmCfg: warp tile must use m16n8 multiples");
     static_assert(WARPS >= 1 && THREADS <= 1024, "GemmCfg: invalid thread count");
-    static_assert(smem_est_bytes <= 48 * 1024, "GemmCfg: staged shared exceeds 48 KiB");
+    static_assert(smem_est_bytes <= kStaticSharedBytesPerBlock,
+                  "GemmCfg: staged shared exceeds 48 KiB");
 };
 
 template <int Bytes, class Cfg>
@@ -59,4 +60,4 @@ __device__ __forceinline__ int gemm_swz64(int row, int col) {
     return (((col >> 3) ^ (row & 7)) << 3) | (col & 7);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

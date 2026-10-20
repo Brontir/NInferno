@@ -7,13 +7,14 @@
 #include "ops/common/score_id_order.cuh"
 #include "ops/linear/fp8/fp8_a16_codec.cuh"
 #include "ops/linear_topk/linear_topk_workspace.h"
+#include "ops/common/arch_limits.h"
 
 #include <cub/warp/warp_merge_sort.cuh>
 
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 
@@ -51,10 +52,6 @@ union alignas(16) Fp8M64ReusableStorage {
     Fp8M64MainloopStorage<TileColumns, kBlockK> mainloop;
     Fp8M64ReductionStorage<TileColumns, kBlockK> reduction;
 };
-
-__device__ __forceinline__ int swizzle_128(int row, int column) {
-    return (((column >> 3) ^ (row & 7)) << 3) | (column & 7);
-}
 
 template <int TileColumns, int kBlockK = 128>
 __global__
@@ -263,7 +260,7 @@ template <int TileColumns, int kBlockK = 128>
 void launch_tile(const Tensor& hidden, const Weight& head, std::int32_t valid_rows,
                  const LinearTopKWorkspace& workspace, cudaStream_t stream) {
     constexpr int shared_bytes = sizeof(Fp8M64ReusableStorage<TileColumns, kBlockK>);
-    if constexpr (shared_bytes > 48 * 1024) {
+    if constexpr (shared_bytes > kStaticSharedBytesPerBlock) {
         CUDA_CHECK(cudaFuncSetAttribute(fp8_m64_linear_topk_kernel<TileColumns, kBlockK>,
                                         cudaFuncAttributeMaxDynamicSharedMemorySize, shared_bytes));
     }
@@ -306,4 +303,4 @@ void linear_topk_fp8_m64_launch(const Tensor& hidden, const Weight& head, std::i
     }
     throw std::invalid_argument("invalid linear_topk MMA tile");
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

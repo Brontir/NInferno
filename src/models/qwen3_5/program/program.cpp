@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 
 SequencePlan::SequencePlan(std::unique_ptr<detail::SequencePlanImpl> impl) noexcept
@@ -49,6 +49,12 @@ SequencePlanner::~SequencePlanner() = default;
 const runtime::SequenceCapacityCurve& SequencePlanner::capacity_curve() const noexcept {
     static const runtime::SequenceCapacityCurve empty;
     return impl_ != nullptr ? impl_->curve : empty;
+}
+
+std::size_t SequencePlanner::host_state_image_bytes() const noexcept {
+    return impl_ != nullptr && impl_->minimum != nullptr
+               ? impl_->minimum->persistent.state_images.host.image_bytes
+               : 0;
 }
 
 SequencePlan SequencePlanner::finalize(std::uint32_t main_page_groups) && {
@@ -251,8 +257,10 @@ RequestBasePlan Program::plan_request(const PreparedPrompt& prompt,
     return impl_->plan_request(PreparedPromptAccess::view(prompt), options);
 }
 
-std::vector<float> Program::causal_score(PreparedPrompt&& prompt, std::uint32_t first_target) {
-    return impl_->causal_score(PreparedPromptAccess::take(std::move(prompt)), first_target);
+std::vector<float> Program::causal_score(PreparedPrompt&& prompt, std::uint32_t first_target,
+                                         const ScoreDetailRequest& request, ScoreDetail& detail) {
+    return impl_->causal_score(PreparedPromptAccess::take(std::move(prompt)), first_target, request,
+                               detail);
 }
 
 std::optional<AdmissionCandidate> Program::inspect_admission(
@@ -343,18 +351,24 @@ void Program::finalize_context_transaction() noexcept { impl_->finalize_context_
 
 bool Program::has_context_transaction() const noexcept { return impl_->has_context_transaction(); }
 
+bool Program::has_unsettled_state_fork() const noexcept {
+    return impl_->has_unsettled_state_fork();
+}
+
 PrefillProgress Program::advance_prefill(SequenceHandle sequence,
-                                         runtime::ExecutionTiming* failed_timing) {
-    return impl_->advance_prefill(sequence, failed_timing);
+                                         runtime::ExecutionTiming* failed_timing,
+                                         runtime::TokenMaskSource* masks) {
+    return impl_->advance_prefill(sequence, failed_timing, masks);
 }
 
 CaptureAssessment
 Program::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle* exact_shared,
                          const SharedPrefixHandle* replacement,
                          std::optional<runtime::CheckpointRef> private_replacement,
-                         bool permit_shared_publication) const {
+                         bool permit_shared_publication,
+                         std::uint32_t waiting_admissions) const {
     return impl_->inspect_capture(offer, exact_shared, replacement, private_replacement,
-                                  permit_shared_publication);
+                                  permit_shared_publication, waiting_admissions);
 }
 
 std::vector<runtime::CheckpointRecoveryAlternativeWork>
@@ -399,29 +413,32 @@ Program::reserve_active_capture(CaptureOffer&& offer, const SharedPrefixHandle* 
                                 const SharedPrefixHandle* replacement,
                                 std::optional<runtime::CheckpointRef> private_replacement,
                                 bool permit_shared_publication,
+                                std::uint32_t waiting_admissions,
                                 runtime::CancellationFlagView cancellation) {
     return impl_->reserve_active_capture(std::move(offer), exact_shared, replacement,
                                          private_replacement, permit_shared_publication,
-                                         cancellation);
+                                         waiting_admissions, cancellation);
 }
 
 runtime::ContextTransactionReserveStatus Program::reserve_active_capture_with_pressure(
     CaptureOffer&& offer, const SharedPrefixHandle* exact_shared,
     const SharedPrefixHandle* replacement,
     std::optional<runtime::CheckpointRef> private_replacement, bool permit_shared_publication,
-    CapturePressurePlan&& pressure, runtime::CancellationFlagView cancellation) {
+    std::uint32_t waiting_admissions, CapturePressurePlan&& pressure,
+    runtime::CancellationFlagView cancellation) {
     if (pressure.revision_.value == 0 || pressure.revision_ != impl_->resource_revision()) {
         return runtime::ContextTransactionReserveStatus::Aborted;
     }
     return impl_->reserve_active_capture_with_pressure(
         std::move(offer), exact_shared, replacement, private_replacement, permit_shared_publication,
-        std::move(pressure.pressure_), cancellation);
+        waiting_admissions, std::move(pressure.pressure_), cancellation);
 }
 
 PendingBatch Program::decode(std::span<const SequenceHandle> sequences,
                              std::span<const runtime::RoundBudget> budgets,
-                             runtime::ExecutionTiming* failed_timing) {
-    return impl_->decode(sequences, budgets, failed_timing);
+                             runtime::ExecutionTiming* failed_timing,
+                             runtime::TokenMaskSource* masks) {
+    return impl_->decode(sequences, budgets, failed_timing, masks);
 }
 
 runtime::ExecutionTiming
@@ -446,7 +463,31 @@ DiscardResult Program::abort_pending(PendingBatch&& pending) noexcept {
 
 FinishResult Program::finish(SequenceHandle sequence) noexcept { return impl_->finish(sequence); }
 
+FinishResult Program::finish_cancelled(SequenceHandle sequence) noexcept {
+    return impl_->finish_cancelled(sequence);
+}
+
 AbortResult Program::abort(SequenceHandle sequence) noexcept { return impl_->abort(sequence); }
+
+std::optional<std::uint32_t>
+Program::device_kv_lease_settlement_tokens(SequenceHandle sequence,
+                                           std::uint32_t forced_span_tokens) const noexcept {
+    return impl_->device_kv_lease_settlement_tokens(sequence, forced_span_tokens);
+}
+
+std::optional<DeviceKVLeaseShortfall>
+Program::device_kv_lease_shortfall(SequenceHandle sequence) const noexcept {
+    return impl_->device_kv_lease_shortfall(sequence);
+}
+
+bool Program::resume_device_kv_lease(SequenceHandle sequence) noexcept {
+    return impl_->resume_device_kv_lease(sequence);
+}
+
+DeviceKVPages
+Program::retained_device_kv_pages(const ContinuationHandle& continuation) const noexcept {
+    return impl_->retained_device_kv_pages(continuation);
+}
 
 ReleaseResult Program::release_continuation(ContinuationHandle&& continuation) noexcept {
     return impl_->release_continuation(std::move(continuation));
@@ -472,27 +513,35 @@ MemorySummary Program::memory_summary() const noexcept { return impl_->memory_su
 
 void Program::reset_memory_peaks() noexcept { impl_->reset_memory_peaks(); }
 
-SequencePlanner make_sequence_planner(const execution::Parameters& parameters,
-                                      DeviceContext& device, const EngineOptions& options) {
-    return SequencePlanner(detail::make_sequence_planner_impl(parameters, device, options));
+SequencePlanner make_sequence_planner(const detail::ModelExecution& model, DeviceContext& device,
+                                      const EngineOptions& options) {
+    return SequencePlanner(detail::make_sequence_planner_impl(model, device, options));
 }
 
-std::unique_ptr<Program> create_program(const execution::Parameters& parameters,
-                                        SequencePlan&& plan, DeviceContext& device,
+SequencePlanner make_sequence_planner(const detail::ModelExecution& model, DeviceContext& device,
+                                      const EngineOptions& options, bool graph_memory_held) {
+    return SequencePlanner(
+        detail::make_sequence_planner_impl(model, device, options, graph_memory_held));
+}
+
+std::unique_ptr<Program> create_program(const detail::ModelExecution& model, SequencePlan&& plan,
+                                        DeviceContext& device,
                                         const StartupObserver& startup_observer) {
     if (plan.impl_ == nullptr) { throw std::invalid_argument("sequence plan is empty"); }
-    if (plan.impl_->parameters != &parameters) {
+    if (plan.impl_->model != &model) {
         throw std::invalid_argument("sequence plan belongs to another model instance");
     }
-    auto impl =
-        std::make_unique<detail::ProgramImpl>(parameters, *plan.impl_, device, startup_observer);
+    if (plan.impl_->multiprocessor_count != device.multiprocessor_count()) {
+        throw std::invalid_argument("sequence plan device capacity does not match execution");
+    }
+    auto impl = std::make_unique<detail::ProgramImpl>(model, *plan.impl_, device, startup_observer);
     plan.impl_.reset();
     return std::unique_ptr<Program>(new Program(std::move(impl)));
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 CaptureAssessment::CaptureAssessment()
     : implementation(std::make_shared<detail::CaptureAssessmentImpl>()) {}
@@ -529,4 +578,4 @@ AdmissionCandidate::identity_assessment() const noexcept {
     return impl_ != nullptr ? impl_->identity_assessment : empty;
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

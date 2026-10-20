@@ -1,10 +1,16 @@
-target_sources(ninfer_ops PRIVATE
+target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/weight_input.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/prefill_routes.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_table.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/dense_fused/dense_fused.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/gemma4_fused/gemma4_fused.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/gemma4_vision/gemma4_vision.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/add_bias.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/argmax.cu"
-  "${CMAKE_CURRENT_LIST_DIR}/launcher/cast.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/causal_conv1d.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/embed_gather.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/launcher/embed_gather_generic.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/launcher/finite_check.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/gdn_gating.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/gelu.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/l2norm.cu"
@@ -18,6 +24,7 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/launcher/residual_add.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/rmsnorm.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/rmsnorm_pack_tail.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/launcher/logit_softcap.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/rope.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/sampling.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/scalar.cu"
@@ -25,12 +32,13 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/launcher/sigmoid_gate_mul.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/silu_and_mul.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/target_logprobs.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/launcher/token_distribution.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/vision_pos_embed.cu"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/add_bias.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/argmax.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/wrapper/cast.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/causal_conv1d_silu.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/embedding.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/wrapper/finite_check.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/gdn_gating.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/gelu.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/l2norm.cpp"
@@ -44,6 +52,7 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/residual_add.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/rmsnorm.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/rmsnorm_pack_tail.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/wrapper/logit_softcap.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/rope.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/sampling.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/scalar.cpp"
@@ -51,5 +60,14 @@ target_sources(ninfer_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/sigmoid_mul.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/silu_mul.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/target_logprobs.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/wrapper/token_distribution.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wrapper/vision_pos_embed.cpp"
 )
+
+# The per-GPU-class route table (routes/<class key>.json, include/ninferno/ops/route_table.h): one
+# loader for the generic path's bands and the shape-owned tables' route_as overrides.
+target_link_libraries(ninferno_ops PRIVATE ninferno::json)
+if(NINFERNO_SOURCE_TREE_PATHS)
+  set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/route_table.cpp" PROPERTIES
+    COMPILE_DEFINITIONS "NINFERNO_DEFAULT_ROUTE_DIR=\"${PROJECT_SOURCE_DIR}/routes\"")
+endif()

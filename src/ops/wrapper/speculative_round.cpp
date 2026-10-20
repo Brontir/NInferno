@@ -1,4 +1,6 @@
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/speculative_round.h"
+#include "ops/common/sampling_workspace.h"
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/speculative_round.h"
 
 #include <algorithm>
@@ -6,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kSparseMaxDrafts    = 15;
@@ -14,15 +16,6 @@ constexpr std::int32_t kSparseCandidates   = 16;
 constexpr std::int32_t kSparsePhysicalRows = 248320;
 constexpr std::int32_t kSparseTokenDomain  = 248077;
 constexpr std::int32_t kSparseMaxBatch     = 8;
-
-void require_contiguous_nonnull(const Tensor& t, const char* op, const char* name) {
-    if (!t.is_contiguous()) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " must be contiguous");
-    }
-    if (t.data == nullptr) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " data must be non-null");
-    }
-}
 
 void require_dtype(const Tensor& t, DType dtype, const char* op, const char* name) {
     if (t.dtype != dtype) {
@@ -66,6 +59,18 @@ void require_tensor3(const Tensor& t, DType dtype, std::int32_t n0, std::int32_t
 
 } // namespace
 
+namespace {
+
+// One row's sampler workspace: the accept kernels take the multi-block route only for a row of
+// at most kSamplerMaxColumns (drafts + 1) candidates, and the single-block one past it.
+std::size_t accept_row_bytes(std::int32_t token_domain, std::int32_t min_drafts,
+                             std::int32_t max_drafts) {
+    if (min_drafts + 1 > kSamplerMaxColumns) { return 0; }
+    return sampling_workspace_capacity_bytes(token_domain, min_drafts + 1, max_drafts + 1);
+}
+
+} // namespace
+
 std::size_t speculative_accept_greedy_drafts_workspace_capacity_bytes(std::int32_t token_domain,
                                                                       std::int32_t min_drafts,
                                                                       std::int32_t max_drafts,
@@ -75,8 +80,7 @@ std::size_t speculative_accept_greedy_drafts_workspace_capacity_bytes(std::int32
         max_batch < min_batch || max_drafts == std::numeric_limits<std::int32_t>::max()) {
         throw std::invalid_argument("speculative accept workspace: invalid draft interval");
     }
-    const std::size_t row_bytes =
-        sampling_workspace_capacity_bytes(token_domain, min_drafts + 1, max_drafts + 1);
+    const std::size_t row_bytes = accept_row_bytes(token_domain, min_drafts, max_drafts);
     if (row_bytes != 0 &&
         static_cast<std::size_t>(max_batch) > std::numeric_limits<std::size_t>::max() / row_bytes) {
         throw std::overflow_error("speculative accept workspace capacity overflows size_t");
@@ -93,8 +97,7 @@ std::size_t speculative_accept_sparse_drafts_workspace_capacity_bytes(
         throw std::invalid_argument("sparse speculative accept workspace: unsupported profile");
     }
     if (envelope.all_rows_greedy_without_penalties) { return 0; }
-    const std::size_t row_bytes =
-        sampling_workspace_capacity_bytes(token_domain, min_drafts + 1, max_drafts + 1);
+    const std::size_t row_bytes = accept_row_bytes(token_domain, min_drafts, max_drafts);
     return row_bytes * static_cast<std::size_t>(max_batch);
 }
 
@@ -252,4 +255,4 @@ void proposal_remap_token_ids(Tensor& proposal_tokens, const std::int32_t* id_ma
     detail::proposal_remap_token_ids_launch(proposal_tokens, id_map, n, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

@@ -8,7 +8,14 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
+
+// The MMA routes sum a column's K as this many equal segments, each from a zero accumulator,
+// added in order - whatever their split: the split only decides which CTA computes which segment.
+// Every split route and the unsplit one then give a token the same bytes, so the split can follow
+// T for speed while a token's g and beta do not. A split wider than this (the decode-width
+// routes) uses its own segment count.
+inline constexpr int kBf16GdnCanonicalSegments = 8;
 
 void bf16_gdn_norm_gating_proj_27_launch(const Tensor& x, const Tensor& norm_weight, float eps,
                                          Tensor& h, const Weight& a_weight, const Weight& b_weight,
@@ -88,4 +95,4 @@ void bf16_gdn_gating_proj_35_mma_unsplit_launch(Bf16GdnGatingTokenVariant varian
                                                 const Tensor& A_log, const Tensor& dt_bias,
                                                 Tensor& g, Tensor& beta, cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -2,7 +2,7 @@
 
 import struct
 
-MAGIC = b"NINFER\x00\x03"
-PART_MAGIC = b"NINPRT\x00\x03"
+MAGIC = b"NInferno"
+PART_MAGIC = b"NInfPart"
 HEADER = struct.Struct("<8sQ16s")
 PAYLOAD_ALIGNMENT = 4096

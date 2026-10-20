@@ -1,10 +1,13 @@
-#include "core/weight.h"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_kernels.h"
+
+#include "core/per_device.h"
+#include "core/weight.h"
 
 #include "ops/common/math.cuh"
 #include "ops/common/memory.cuh"
 #include "ops/common/warp.cuh"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_gemm_mma.cuh"
+#include "ops/common/arch_limits.h"
 
 #include "core/device.h" // CUDA_CHECK
 
@@ -17,7 +20,7 @@
 #include <string>
 #include <type_traits>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kN                  = 48;
@@ -257,21 +260,29 @@ void require_shape35(const Weight& w, const char* name) {
     }
 }
 
-template <class Geometry, int SplitK>
-constexpr std::int32_t cooperative_resident_ctas_per_sm() noexcept {
+// Resident CTAs per SM of the cooperative instance, read from the compiled kernel: registers and
+// shared memory are properties of the object the toolkit produced, so a table written for one
+// build misstates another (the 35B BN64 split-2/4 instances compile to 67 registers under CUDA
+// 13.1, three CTAs per SM, where a table said four). Both token variants share one grid plan, so
+// the plan takes the smaller residency of the two.
+template <class Geometry, int SplitK, int Warps, bool NormalizeInput, int NormTokenCapacity>
+std::int32_t cooperative_resident_ctas_per_sm() {
     static_assert(SplitK > 1);
-    if constexpr (std::is_same_v<Geometry, Bf16Gdn27Geometry>) {
-        static_assert(SplitK == 8 || SplitK == 4 || SplitK == 2);
-        // Qualified on the sm_120a build: BN128 split-8 uses 256 threads and split-4/2 use
-        // 512 threads; registers and 40-KiB shared memory admit two resident CTAs per SM.
-        return 2;
-    } else {
-        static_assert(std::is_same_v<Geometry, Bf16Gdn35Geometry>);
-        static_assert(SplitK == 32 || SplitK == 16 || SplitK == 8 || SplitK == 4 || SplitK == 2);
-        // BN64 split-32 is register-limited to two resident CTAs per SM. The remaining
-        // specializations admit four. These are kernel facts, not a device-wide SM-count policy.
-        return SplitK == 32 ? 2 : 4;
-    }
+    constexpr int kSmemBytes = kBf16GdnSmemBytes<Geometry::kBlockN>;
+    const auto resident      = [](const void* kernel) {
+        if constexpr (kSmemBytes > kStaticSharedBytesPerBlock) {
+            CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                            kSmemBytes));
+        }
+        return kernel_resident_ctas_per_sm(kernel, Warps * 32, kSmemBytes);
+    };
+    return std::min(
+        resident(reinterpret_cast<const void*>(
+            bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, true, Warps, NormalizeInput,
+                                                 NormTokenCapacity>)),
+        resident(reinterpret_cast<const void*>(
+            bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, false, Warps, NormalizeInput,
+                                                 NormTokenCapacity>)));
 }
 
 template <class Geometry, int SplitK, int Warps = kBf16GdnWarps, bool NormalizeInput = false,
@@ -292,11 +303,8 @@ bool launch_bf16_prefill_mma(Bf16GdnGatingTokenVariant variant, const Tensor& x,
                         static_cast<unsigned>(SplitK));
         auto launch = [&](auto full_tokens) {
             constexpr bool FullTokens     = decltype(full_tokens)::value;
-            static const cudaError_t attr = cudaFuncSetAttribute(
-                bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, FullTokens, Warps,
-                                                     NormalizeInput, NormTokenCapacity>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemBytes);
-            CUDA_CHECK(attr);
+            static ::ninferno::PerDevice<bool> attr;
+            ::ninferno::allow_dynamic_smem(attr, bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, FullTokens, Warps, NormalizeInput, NormTokenCapacity>, kSmemBytes);
             if constexpr (SplitK > 1) {
                 cudaLaunchConfig_t config{};
                 config.gridDim          = grid;
@@ -357,10 +365,11 @@ bool launch_bf16_prefill_mma(Bf16GdnGatingTokenVariant variant, const Tensor& x,
     } else {
         constexpr std::int64_t kCtasPerTokenTile =
             static_cast<std::int64_t>(Geometry::kHeads / kBf16GdnBlockM) * SplitK;
-        constexpr std::int32_t kResidentCtasPerSm =
-            cooperative_resident_ctas_per_sm<Geometry, SplitK>();
+        const std::int32_t resident_ctas_per_sm =
+            cooperative_resident_ctas_per_sm<Geometry, SplitK, Warps, NormalizeInput,
+                                             NormTokenCapacity>();
         const std::int64_t resident_ctas =
-            static_cast<std::int64_t>(multiprocessor_count) * kResidentCtasPerSm;
+            static_cast<std::int64_t>(multiprocessor_count) * resident_ctas_per_sm;
         const std::int64_t max_token_tiles = resident_ctas / kCtasPerTokenTile;
         if (max_token_tiles < 1) { return false; }
 
@@ -625,4 +634,4 @@ void bf16_gdn_gating_proj_35_mma_unsplit_launch(Bf16GdnGatingTokenVariant varian
                                                            nullptr, g, beta, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -1,11 +1,13 @@
 #include "serve/openai_responses_store.h"
 
+#include "core/checked.h"
+
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 std::size_t estimate_turn_bytes(const ChatTurn& turn) {
@@ -31,23 +33,21 @@ std::size_t record_envelope_bytes(const StoredOpenAIResponse& record) {
     return bytes;
 }
 
-std::size_t checked_add(std::size_t left, std::size_t right, const char* label) {
-    if (right > std::numeric_limits<std::size_t>::max() - left) {
-        throw std::overflow_error(label);
-    }
-    return left + right;
-}
-
-[[noreturn]] void throw_store_capacity() {
-    ApiError error;
-    error.status  = 500;
-    error.type    = "server_error";
-    error.code    = "response_store_capacity_exceeded";
-    error.message = "response exceeds the configured local response store capacity";
-    throw ApiException(std::move(error));
-}
-
 } // namespace
+
+std::size_t openai_response_input_bytes(const OpenAIResponseContext& previous,
+                                        const std::vector<ChatTurn>& input_turns,
+                                        const std::vector<nlohmann::json>& items) {
+    std::size_t bytes = sizeof(StoredOpenAIResponse) + sizeof(OpenAIResponseContextNode);
+    if (previous) { bytes = checked_add(bytes, previous->cumulative_bytes, "input accounting"); }
+    for (const ChatTurn& turn : input_turns) {
+        bytes = checked_add(bytes, estimate_turn_bytes(turn), "input accounting");
+    }
+    for (const nlohmann::json& item : items) {
+        bytes = checked_add(bytes, sizeof(nlohmann::json) + item.dump().size(), "input accounting");
+    }
+    return bytes;
+}
 
 OpenAIResponseContext append_openai_response_context(OpenAIResponseContext parent,
                                                      std::vector<ChatTurn> turns) {
@@ -93,7 +93,20 @@ std::shared_ptr<const StoredOpenAIResponse> OpenAIResponsesStore::get(const std:
     return found->second.response;
 }
 
-void OpenAIResponsesStore::put(StoredOpenAIResponse response) {
+void OpenAIResponsesStore::admit(std::size_t input_bytes) const {
+    if (input_bytes <= max_bytes_) { return; }
+    ApiError error;
+    error.code    = "response_store_capacity_exceeded";
+    error.message = "the request's input and previous_response_id context take " +
+                    std::to_string((input_bytes + (1U << 20) - 1) >> 20) +
+                    " MiB, more than the local response " + "store's capacity of " +
+                    std::to_string(max_bytes_ >> 20) +
+                    " MiB; send store:false, or start the server with a larger "
+                    "--response-store-max-mib";
+    throw ApiException(std::move(error));
+}
+
+bool OpenAIResponsesStore::put(StoredOpenAIResponse response) {
     if (response.id.empty() || response.session_key.empty() ||
         response.session_key.size() > kMaximumContextCacheSessionKeyBytes ||
         !response.response.is_object()) {
@@ -103,7 +116,7 @@ void OpenAIResponsesStore::put(StoredOpenAIResponse response) {
     const std::size_t envelope_bytes = record_envelope_bytes(response);
     const std::size_t context_bytes  = response.context ? response.context->cumulative_bytes : 0;
     if (envelope_bytes > max_bytes_ || context_bytes > max_bytes_ - envelope_bytes) {
-        throw_store_capacity();
+        return false;
     }
 
     auto owned = std::make_shared<const StoredOpenAIResponse>(std::move(response));
@@ -135,12 +148,14 @@ void OpenAIResponsesStore::put(StoredOpenAIResponse response) {
         if (lru_.empty()) { throw std::logic_error("response store LRU is empty"); }
         auto victim = std::prev(lru_.end());
         if (*victim == owned->id) {
-            if (victim == lru_.begin()) { throw_store_capacity(); }
+            // The new record alone fits (checked above): it is never the only one over.
+            if (victim == lru_.begin()) { throw std::logic_error("response store over capacity"); }
             --victim;
         }
         const std::string victim_id = *victim;
         erase_locked(victim_id);
     }
+    return true;
 }
 
 bool OpenAIResponsesStore::erase(const std::string& id) {
@@ -245,4 +260,4 @@ void OpenAIResponsesStore::erase_locked(const std::string& id) {
     records_.erase(found);
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

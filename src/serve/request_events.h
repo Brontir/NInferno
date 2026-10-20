@@ -8,10 +8,11 @@
 #include <optional>
 #include <string>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 
 struct RequestLogContext {
     std::uint64_t id = 0;
+    std::string http_request_id; // the response's x-request-id (OpenAI) or request-id (Anthropic)
     std::string protocol;
     std::string model;
     bool stream                             = false;
@@ -24,12 +25,13 @@ struct RequestLogContext {
     bool has_tool_history = false;
     bool enable_thinking  = true;
     std::optional<std::uint32_t> thinking_budget;
-    std::optional<RequestedReasoningEffort> requested_reasoning_effort;
+    std::optional<ninferno::ReasoningEffort> requested_reasoning_effort;
     std::optional<bool> preserve_thinking;
     bool preserve_thinking_semantic_change = false;
-    ninfer::ResolvedSamplingParameters sampling;
+    ninferno::ResolvedSamplingParameters sampling;
     double acquisition_seconds = 0.0;
-    ninfer::PromptPreparationStats preparation;
+    ninferno::PromptPreparationStats preparation;
+    std::vector<std::string> notes;
 };
 
 struct RequestLogMetadata {
@@ -53,7 +55,7 @@ struct RequestRejectionLogContext {
     std::size_t tool_count                  = 0;
     ToolChoice tool_choice;
     bool has_tool_history = false;
-    std::optional<RequestedReasoningEffort> requested_reasoning_effort;
+    std::optional<ninferno::ReasoningEffort> requested_reasoning_effort;
     ApiError error;
 };
 
@@ -94,8 +96,8 @@ struct ThroughputReport {
     std::uint64_t committed_decode_tokens = 0;
     std::uint64_t decode_rounds           = 0;
     std::uint64_t decode_row_rounds       = 0;
-    ninfer::RuntimeStats previous;
-    ninfer::RuntimeStats current;
+    ninferno::RuntimeStats previous;
+    ninferno::RuntimeStats current;
 };
 
 RequestLogContext make_request_log_context(std::uint64_t id, std::string protocol,
@@ -114,4 +116,4 @@ RequestRejectionLogContext make_request_rejection_log_context(std::uint64_t id,
                                                            std::string machine_message);
 [[nodiscard]] RequestFailure make_client_disconnected_failure(RequestFailurePhase phase);
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

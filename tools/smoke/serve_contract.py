@@ -1,14 +1,20 @@
-"""Exercise the implemented NInfer HTTP product contract with the standard library."""
+"""Exercise the implemented NInferno HTTP product contract with the standard library."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import time
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.ninferno_serve.health import ServeNotReady, wait_healthy  # noqa: E402
 
 # A one-pixel PNG. The target frontend performs its normal resize/patch expansion.
 _IMAGE_DATA_URI = (
@@ -69,21 +75,6 @@ def json_response(
     if not isinstance(value, dict):
         raise ContractError(f"{method} {path} did not return a JSON object")
     return value
-
-
-def wait_for_health(base_url: str, timeout: float) -> None:
-    deadline = time.monotonic() + timeout
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            if json_response(base_url, "GET", "/health") == {"status": "ok"}:
-                return
-        except (ContractError, urllib.error.URLError) as error:
-            last_error = error
-        time.sleep(0.25)
-    raise ContractError(
-        f"server did not become healthy within {timeout:g}s: {last_error}"
-    )
 
 
 def require_usage(usage: Any, prompt_key: str, completion_key: str) -> tuple[int, int]:
@@ -149,7 +140,8 @@ def parse_openai_stream(response: Response) -> tuple[str, str, str, dict[str, An
     saw_role = False
     saw_done = False
     for block in response.body.decode("utf-8").replace("\r\n", "\n").split("\n\n"):
-        if not block:
+        # An SSE comment (the server opens a stream with ": stream") carries no event.
+        if not block or all(line.startswith(":") for line in block.splitlines()):
             continue
         lines = [line[6:] for line in block.splitlines() if line.startswith("data: ")]
         if len(lines) != 1:
@@ -316,7 +308,8 @@ def parse_responses_stream(response: Response) -> tuple[str, str, dict[str, Any]
     terminal: dict[str, Any] | None = None
     expected_sequence = 0
     for block in response.body.decode("utf-8").replace("\r\n", "\n").split("\n\n"):
-        if not block:
+        # An SSE comment (the server opens a stream with ": stream") carries no event.
+        if not block or all(line.startswith(":") for line in block.splitlines()):
             continue
         event_lines = [
             line[7:] for line in block.splitlines() if line.startswith("event: ")
@@ -375,9 +368,9 @@ def exercise(base_url: str, model: str) -> dict[str, Any]:
         or len(entries) != 1
     ):
         raise ContractError("model-list response has the wrong shape")
-    if entries[0].get("id") != model or entries[0].get("owned_by") != "ninfer":
+    if entries[0].get("id") != model or entries[0].get("owned_by") != "ninferno":
         raise ContractError(
-            "model-list response does not identify the configured NInfer model"
+            "model-list response does not identify the configured NInferno model"
         )
     single_model = json_response(base_url, "GET", f"/v1/models/{model}")
     if single_model.get("id") != model:
@@ -396,7 +389,7 @@ def exercise(base_url: str, model: str) -> dict[str, Any]:
         raise ContractError("count_tokens returned a non-positive input_tokens value")
 
     messages = [{"role": "user", "content": "Reply with a single short word."}]
-    stops = ["__NINFER_SMOKE_UNLIKELY_STOP__"]
+    stops = ["__NINFERNO_SMOKE_UNLIKELY_STOP__"]
     nonstream = openai_nonstream(base_url, model, messages, max_tokens=4, stop=stops)
     message = nonstream["choices"][0]["message"]
     if nonstream["usage"]["completion_tokens"] <= 0:
@@ -514,14 +507,21 @@ def exercise(base_url: str, model: str) -> dict[str, Any]:
             ],
         }
     ]
-    image_response = openai_nonstream(base_url, model, image_messages, max_tokens=2)
-    image_prompt_tokens, _ = require_usage(
-        image_response.get("usage"), "prompt_tokens", "completion_tokens"
-    )
-    if image_prompt_tokens <= input_tokens:
-        raise ContractError(
-            "image request did not expand the prompt through the Vision frontend"
+    # A server started without --vision answers the image 400 vision_disabled; the check needs one.
+    image_prompt_tokens: int | None = None
+    try:
+        image_response = openai_nonstream(base_url, model, image_messages, max_tokens=2)
+    except ContractError as error:
+        if '"vision_disabled"' not in str(error):
+            raise
+    else:
+        image_prompt_tokens, _ = require_usage(
+            image_response.get("usage"), "prompt_tokens", "completion_tokens"
         )
+        if image_prompt_tokens <= input_tokens:
+            raise ContractError(
+                "image request did not expand the prompt through the Vision frontend"
+            )
 
     anthropic = json_response(base_url, "POST", "/v1/messages", anthropic_prompt)
     if anthropic.get("type") != "message" or anthropic.get("role") != "assistant":
@@ -540,7 +540,7 @@ def exercise(base_url: str, model: str) -> dict[str, Any]:
         raise ContractError("Anthropic usage input_tokens differs from count_tokens")
 
     return {
-        "format": "ninfer_serve_contract_v2",
+        "format": "ninferno_serve_contract_v2",
         "model": model,
         "count_tokens": input_tokens,
         "openai_finish_reason": stream_finish,
@@ -560,7 +560,10 @@ def main() -> None:
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    wait_for_health(base_url, args.health_timeout)
+    try:
+        wait_healthy(base_url, args.health_timeout)
+    except ServeNotReady as error:
+        raise SystemExit(f"serve_contract: {error}") from error
     print(json.dumps(exercise(base_url, args.model), ensure_ascii=False, indent=2))
 
 

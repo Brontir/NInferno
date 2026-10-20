@@ -2,10 +2,10 @@
 // Production dispatch is owned exclusively by gdn_input_proj().
 
 #include "core/weight.h"
-#include "ninfer/ops/gdn_input_proj.h"
+#include "ninferno/ops/gdn_input_proj.h"
 
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 #include "quantized_weight.cuh"
 
 #include <cuda_profiler_api.h>
@@ -25,17 +25,17 @@
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 
 constexpr std::size_t kFlushBytes = std::size_t{256} << 20;
-constexpr double kRtx5090DramGBs  = 1792.0;
+const double kDeviceDramGBs       = bench::device_roofs().dram_gbs;
 
 enum class Format : std::uint8_t { Q4Q5, Q8, Nvfp4, Fp8, All };
-enum class CacheMode : std::uint8_t { Cold, Warm, Both };
-enum class CacheState : std::uint8_t { Cold, Warm };
-
+using bench::CacheMode;
+using bench::CacheState;
+using bench::cache_name;
 struct Options {
     Format format                  = Format::All;
     ops::LinearPolicy nvfp4_policy = ops::LinearPolicy::AllowA4;
@@ -69,7 +69,7 @@ struct Measurement {
 [[noreturn]] void usage(const char* message) {
     std::fprintf(stderr,
                  "error: %s\n"
-                 "usage: ninfer_gdn_input_proj_bench "
+                 "usage: ninferno_gdn_input_proj_bench "
                  "[--format q4q5|q8|nvfp4|fp8|all] [--nvfp4-policy a16|a4] "
                  "[--fp8-policy a16|a8] "
                  "[--tokens T,...] [--cache cold|warm|both] [--execution eager|graph] "
@@ -184,8 +184,6 @@ Options parse_options(int argc, char** argv) {
     return options;
 }
 
-const char* cache_name(CacheState cache) { return cache == CacheState::Cold ? "cold" : "warm"; }
-
 const char* policy_name(ops::LinearPolicy policy) {
     switch (policy) {
     case ops::LinearPolicy::A16Only:
@@ -199,7 +197,7 @@ const char* policy_name(ops::LinearPolicy policy) {
 }
 
 template <class Launch>
-Measurement measure_public(Launch&& launch, CacheState cache, DeviceBuffer& flush,
+Measurement measure_public(Launch&& launch, CacheState cache, bench::L2FlushBuffer& flush,
                            cudaStream_t stream, int warmup, int repeat, bool graph) {
     if (graph) {
         bench::TimedGraph captured;
@@ -218,7 +216,7 @@ Measurement measure_public(Launch&& launch, CacheState cache, DeviceBuffer& flus
 
 template <class Launch>
 void profile_public(Launch&& launch, const char* format, const char* policy, CacheState cache,
-                    DeviceBuffer& flush, cudaStream_t stream, int warmup, bool graph) {
+                    bench::L2FlushBuffer& flush, cudaStream_t stream, int warmup, bool graph) {
     bench::TimedGraph captured;
     if (graph) { captured.capture(stream, launch); }
     const auto invoke = [&] {
@@ -258,8 +256,7 @@ void report(const Result& result) {
                 result.format, result.policy, cache_name(result.cache),
                 result.graph_nodes ? "graph" : "eager", result.graph_nodes, result.tokens,
                 result.workspace_bytes, result.timing.median_us, result.timing.min_us,
-                result.timing.p95_us, gbps, gbps / kRtx5090DramGBs * 100.0, kRtx5090DramGBs,
-                tflops);
+                result.timing.p95_us, gbps, gbps / kDeviceDramGBs * 100.0, kDeviceDramGBs, tflops);
 }
 
 void append_result(std::vector<Result>& results, const char* format, const char* policy,
@@ -276,7 +273,8 @@ template <class WorkspaceCapacity, class Launch>
 void measure_points(const Options& options, const char* format, const char* policy,
                     std::int32_t hidden, std::int32_t output_rows, std::uint64_t weight_bytes,
                     WorkspaceCapacity&& workspace_capacity, Launch&& make_launch,
-                    DeviceBuffer& flush, cudaStream_t stream, std::vector<Result>& results) {
+                    bench::L2FlushBuffer& flush, cudaStream_t stream,
+                    std::vector<Result>& results) {
     const CacheState profile_cache =
         options.cache == CacheMode::Cold ? CacheState::Cold : CacheState::Warm;
     for (const std::int32_t tokens : options.tokens) {
@@ -303,7 +301,7 @@ void measure_points(const Options& options, const char* format, const char* poli
     }
 }
 
-void run_q4q5(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
+void run_q4q5(const Options& options, bench::L2FlushBuffer& flush, cudaStream_t stream,
               std::vector<Result>& results) {
     constexpr std::int32_t kHidden     = 5120;
     constexpr std::int32_t kQkRows     = 4096;
@@ -311,11 +309,11 @@ void run_q4q5(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
     constexpr std::int32_t kZRows      = 6144;
     constexpr std::int32_t kOutputRows = kQkRows + kValueRows + kZRows;
     const std::int32_t max_tokens = *std::max_element(options.tokens.begin(), options.tokens.end());
-    bench::PackedQuantizedWeight qk = bench::make_row_split_weight(
-        QType::Q4_G64_FP16, kQkRows, kHidden, kHidden, {0x31, 0x00, 0x3c00});
+    bench::PackedQuantizedWeight qk =
+        bench::make_row_split_weight(QType::Q4_G64_FP16, kQkRows, kHidden, kHidden, 501U);
     bench::PackedQuantizedWeight value_z = bench::make_row_split_weight(
-        QType::Q5_G64_FP16, kValueRows + kZRows, kHidden, kHidden, {0x31, 0xa5, 0x3c00});
-    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens);
+        QType::Q5_G64_FP16, kValueRows + kZRows, kHidden, kHidden, 503U);
+    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens, 101U);
     DeviceBuffer qkv(static_cast<std::size_t>(kQkRows + kValueRows) * max_tokens * 2);
     DeviceBuffer z(static_cast<std::size_t>(kZRows) * max_tokens * 2);
     const auto make_launch = [&](std::int32_t tokens) {
@@ -332,16 +330,16 @@ void run_q4q5(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
         [](std::int32_t) { return std::size_t{0}; }, make_launch, flush, stream, results);
 }
 
-void run_q8(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
+void run_q8(const Options& options, bench::L2FlushBuffer& flush, cudaStream_t stream,
             std::vector<Result>& results) {
     constexpr std::int32_t kHidden     = 2048;
     constexpr std::int32_t kQkvRows    = 8192;
     constexpr std::int32_t kZRows      = 4096;
     constexpr std::int32_t kOutputRows = kQkvRows + kZRows;
     const std::int32_t max_tokens = *std::max_element(options.tokens.begin(), options.tokens.end());
-    bench::PackedQuantizedWeight parent = bench::make_row_split_weight(
-        QType::Q8_G32_FP16, kOutputRows, kHidden, kHidden, {0x31, 0x00, 0x3c00});
-    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens);
+    bench::PackedQuantizedWeight parent =
+        bench::make_row_split_weight(QType::Q8_G32_FP16, kOutputRows, kHidden, kHidden, 505U);
+    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens, 103U);
     DeviceBuffer qkv(static_cast<std::size_t>(kQkvRows) * max_tokens * 2);
     DeviceBuffer z(static_cast<std::size_t>(kZRows) * max_tokens * 2);
     const auto make_launch = [&](std::int32_t tokens) {
@@ -360,7 +358,7 @@ void run_q8(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
                    workspace_capacity, make_launch, flush, stream, results);
 }
 
-void run_nvfp4(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
+void run_nvfp4(const Options& options, bench::L2FlushBuffer& flush, cudaStream_t stream,
                std::vector<Result>& results) {
     constexpr std::int32_t kHidden     = 5120;
     constexpr std::int32_t kQkvRows    = 10240;
@@ -371,7 +369,7 @@ void run_nvfp4(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
     const std::size_t maximum_workspace = ops::gdn_input_proj_workspace_capacity_bytes(
         QType::NVFP4, kOutputRows, kHidden, options.nvfp4_policy, max_tokens, max_tokens);
     WorkspaceArena workspace(std::max<std::size_t>(maximum_workspace, 256));
-    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens);
+    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens, 105U);
     DeviceBuffer qkv(static_cast<std::size_t>(kQkvRows) * max_tokens * 2);
     DeviceBuffer z(static_cast<std::size_t>(kZRows) * max_tokens * 2);
     const auto make_launch = [&](std::int32_t tokens) {
@@ -392,7 +390,7 @@ void run_nvfp4(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
                    results);
 }
 
-void run_fp8(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
+void run_fp8(const Options& options, bench::L2FlushBuffer& flush, cudaStream_t stream,
              std::vector<Result>& results) {
     constexpr std::int32_t kHidden     = 5120;
     constexpr std::int32_t kQkvRows    = 10240;
@@ -403,7 +401,7 @@ void run_fp8(const Options& options, DeviceBuffer& flush, cudaStream_t stream,
     const std::size_t maximum_workspace = ops::gdn_input_proj_workspace_capacity_bytes(
         QType::FP8_E4M3FN_ROW_BF16, kOutputRows, kHidden, options.fp8_policy, 1, max_tokens);
     WorkspaceArena workspace(std::max<std::size_t>(maximum_workspace, 256));
-    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens);
+    DeviceBuffer input = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_tokens, 107U);
     DeviceBuffer qkv(static_cast<std::size_t>(kQkvRows) * max_tokens * 2);
     DeviceBuffer z(static_cast<std::size_t>(kZRows) * max_tokens * 2);
     const auto make_launch = [&](std::int32_t tokens) {
@@ -449,6 +447,7 @@ bool selected(Format configured, Format candidate) {
 } // namespace
 
 int main(int argc, char** argv) {
+    ninferno::bench::prefill_routes_from_env();
     try {
         int devices = 0;
         if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
@@ -458,7 +457,7 @@ int main(int argc, char** argv) {
         const Options options = parse_options(argc, argv);
         cudaStream_t stream   = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(kFlushBytes);
+        bench::L2FlushBuffer flush(kFlushBytes);
         std::vector<Result> results;
 
         if (selected(options.format, Format::Q4Q5)) { run_q4q5(options, flush, stream, results); }
@@ -470,7 +469,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamDestroy(stream));
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "ninfer_gdn_input_proj_bench: %s\n", error.what());
+        std::fprintf(stderr, "ninferno_gdn_input_proj_bench: %s\n", error.what());
         return 1;
     }
 }

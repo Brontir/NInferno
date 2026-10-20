@@ -2,9 +2,9 @@
 // [D,heads,T]=[128,16,T], with T=1..6 for decode/verification and T=1024 for prefill.
 //
 // Narrow one-case profiling example:
-//   ./ninfer_l2norm_bench --tokens 1024
-#include "ninfer/ops/l2norm.h"
-#include "ninfer_bench_common.h"
+//   ./ninferno_l2norm_bench --tokens 1024
+#include "ninferno/ops/l2norm.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_bf16.h>
 
@@ -12,8 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -33,7 +33,7 @@ __global__ void l2norm_payload_control(const __nv_bfloat162* x, __nv_bfloat162* 
 void run(int d, int heads, int tokens, bool control) {
     const int rows   = heads * tokens;
     const auto n     = static_cast<std::size_t>(d) * static_cast<std::size_t>(rows);
-    DeviceBuffer x   = make_bf16(n);
+    DeviceBuffer x   = make_bf16(n, 101U);
     DeviceBuffer out = make_zeros(n * 2);
 
     Tensor tx(x.p, DType::BF16, {d, heads, tokens});

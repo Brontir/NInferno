@@ -103,7 +103,7 @@ cudaError_t CUDARTAPI __wrap_cudaStreamSynchronize(cudaStream_t stream) {
 }
 }
 
-namespace ninfer::test {
+namespace ninferno::test {
 
 void materialization_cuda_errors(DeviceContext& device) {
     using namespace artifact;
@@ -142,4 +142,4 @@ void materialization_cuda_errors(DeviceContext& device) {
             "successful loading after CUDA failure changed weight bytes");
 }
 
-} // namespace ninfer::test
+} // namespace ninferno::test

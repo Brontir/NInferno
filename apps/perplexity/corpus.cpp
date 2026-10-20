@@ -1,5 +1,7 @@
 #include "corpus.h"
 
+#include "core/file_io.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -9,21 +11,14 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace ninfer::perplexity {
+namespace ninferno::perplexity {
 namespace {
 
 using json = nlohmann::json;
 
 std::string read_bytes(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) { throw std::runtime_error("cannot open text file: " + path.string()); }
-    input.seekg(0, std::ios::end);
-    const std::streamoff size = input.tellg();
-    if (size <= 0) { throw std::runtime_error("text file is empty: " + path.string()); }
-    input.seekg(0, std::ios::beg);
-    std::string bytes(static_cast<std::size_t>(size), '\0');
-    input.read(bytes.data(), size);
-    if (!input) { throw std::runtime_error("cannot read text file: " + path.string()); }
+    std::string bytes = read_file(path, "text file");
+    if (bytes.empty()) { throw std::runtime_error("text file is empty: " + path.string()); }
     return bytes;
 }
 
@@ -180,4 +175,4 @@ CorpusSelection load_custom_text(const std::filesystem::path& path) {
     return result;
 }
 
-} // namespace ninfer::perplexity
+} // namespace ninferno::perplexity

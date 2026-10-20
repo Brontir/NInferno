@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace ninfer {
+namespace ninferno {
 
 struct LinearAttentionStatePoolSpec {
     std::uint32_t layers        = 0;
@@ -20,6 +20,8 @@ struct LinearAttentionStatePoolSpec {
     std::int32_t key_head_dim   = 0;
     std::int32_t slot_count     = 1;
     DType conv_dtype            = DType::BF16;
+    // FP32, BF16 or FP16 (RecurrentStateStorage).
+    DType recurrent_dtype = DType::FP32;
 };
 
 struct LinearAttentionStatePoolLayout {
@@ -39,16 +41,6 @@ struct LinearAttentionStateAllLayersView {
 struct LinearAttentionStateLayerView {
     Tensor conv;
     Tensor recurrent;
-};
-
-struct LinearAttentionStateSlotView {
-    Tensor conv_layer0;
-    Tensor recurrent_layer0;
-    std::size_t conv_layer_bytes               = 0;
-    std::size_t recurrent_layer_bytes          = 0;
-    std::ptrdiff_t conv_layer_pitch_bytes      = 0;
-    std::ptrdiff_t recurrent_layer_pitch_bytes = 0;
-    std::uint32_t layers                       = 0;
 };
 
 [[nodiscard]] LinearAttentionStatePoolLayout
@@ -75,14 +67,15 @@ public:
     [[nodiscard]] std::uint32_t layer_count() const noexcept;
     [[nodiscard]] std::int32_t slot_count() const noexcept;
     [[nodiscard]] LinearAttentionStateLayerView layer_view(std::uint32_t layer) const;
-    [[nodiscard]] LinearAttentionStateSlotView slot_view(std::int32_t slot) const;
     [[nodiscard]] LinearAttentionStateAllLayersView all_layers_view() const;
     [[nodiscard]] Tensor conv_slot(std::uint32_t layer, std::int32_t slot) const;
     [[nodiscard]] Tensor recurrent_slot(std::uint32_t layer, std::int32_t slot) const;
 
-    void copy_slot(std::int32_t src, std::int32_t dst, cudaStream_t stream = nullptr);
-    void zero_slot(std::int32_t slot, cudaStream_t stream = nullptr);
-    void zero_all(cudaStream_t stream = nullptr);
+    void copy_slot(std::int32_t src, std::int32_t dst, cudaStream_t stream);
+    void zero_slot(std::int32_t slot, cudaStream_t stream);
+    // Sets every byte of one slot (all layers) to value.
+    void fill_slot(std::int32_t slot, unsigned char value, cudaStream_t stream);
+    void zero_all(cudaStream_t stream);
 
 private:
     std::vector<Tensor> conv_;
@@ -90,4 +83,4 @@ private:
     LinearAttentionStatePoolSpec spec_;
 };
 
-} // namespace ninfer
+} // namespace ninferno

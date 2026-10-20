@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-server_bin="${repo_dir}/build/apps/ninfer-serve"
-artifact="${repo_dir}/out/qwen3_8_27b.ninfer"
+server_bin="${repo_dir}/build/apps/ninferno-serve"
+artifact="${repo_dir}/out/qwen3_8_27b.ninferno"
 config="${repo_dir}/eval/configs/qwen3_8_27b_groupwise_reasoning.yaml"
 eval_python="${repo_dir}/eval/.venv/bin/python"
 log_dir="${repo_dir}/eval/server-logs"
@@ -59,7 +59,7 @@ esac
 if [[ "${plan_only}" -eq 1 ]]; then
     for step in "${steps[@]}"; do
         IFS=$'\t' read -r suite _ _ _ <<<"$(step_config "${step}")"
-        PYTHONPATH="${repo_dir}/eval" "${eval_python}" -m ninfer_eval plan \
+        PYTHONPATH="${repo_dir}/eval" "${eval_python}" -m ninferno_eval plan \
             --config "${config}" --suite "${suite}" --check-runtime
     done
     exit 0
@@ -72,7 +72,7 @@ for required_file in "${server_bin}" "${artifact}" "${config}" "${eval_python}";
     fi
 done
 if [[ ! -x "${server_bin}" || ! -x "${eval_python}" ]]; then
-    echo "ninfer-serve and the evaluation Python must be executable" >&2
+    echo "ninferno-serve and the evaluation Python must be executable" >&2
     exit 1
 fi
 if ! command -v curl >/dev/null 2>&1; then
@@ -142,13 +142,13 @@ run_step() {
         fi
         if ! kill -0 "${server_pid}" 2>/dev/null; then
             wait "${server_pid}" || true
-            echo "ninfer-serve exited before becoming ready; see ${server_log}" >&2
+            echo "ninferno-serve exited before becoming ready; see ${server_log}" >&2
             exit 1
         fi
         sleep 1
     done
     if [[ "${ready}" -ne 1 ]]; then
-        echo "ninfer-serve did not become ready within 120 seconds; see ${server_log}" >&2
+        echo "ninferno-serve did not become ready within 120 seconds; see ${server_log}" >&2
         exit 1
     fi
 
@@ -156,7 +156,7 @@ run_step() {
     echo "request log: ${request_log}"
     echo "running ${description}"
 
-    PYTHONPATH="${repo_dir}/eval" "${eval_python}" -m ninfer_eval run \
+    PYTHONPATH="${repo_dir}/eval" "${eval_python}" -m ninferno_eval run \
         --config "${config}" --suite "${suite}"
 
     cleanup

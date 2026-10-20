@@ -1,6 +1,7 @@
-// ninfer::ops - embedding launcher: variant grid/block/stream setup.
-#include "core/weight.h"
+// ninferno::ops - embedding launcher: variant grid/block/stream setup.
 #include "ops/launcher/embed_gather.h"
+
+#include "core/weight.h"
 
 #include "ops/common/math.h"
 #include "ops/kernel/embed_gather.cuh"
@@ -9,7 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kBlock          = 128;
@@ -54,18 +55,6 @@ int grid_for_q6_grouped(std::int32_t d, std::int32_t T) {
 }
 
 } // namespace
-
-const char* q8_embed_route_name(Q8EmbedRoute route) {
-    switch (route) {
-    case Q8EmbedRoute::Auto:
-        return "auto";
-    case Q8EmbedRoute::Grouped:
-        return "grouped-b32";
-    case Q8EmbedRoute::Row:
-        return "row-b256";
-    }
-    return "unknown";
-}
 
 void embed_gather_q8_2048_launch(const Tensor& ids, const Weight& table, Tensor& out,
                                  Q8EmbedRoute route, cudaStream_t stream) {
@@ -159,4 +148,4 @@ void embed_gather_fp8_launch(const Tensor& ids, const Weight& table, Tensor& out
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

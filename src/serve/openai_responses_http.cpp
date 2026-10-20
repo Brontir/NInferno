@@ -1,5 +1,6 @@
 #include "serve/http_server.h"
 
+#include "core/parse.h"
 #include "serve/http_transport.h"
 #include "serve/openai_common.h"
 #include "serve/openai_responses.h"
@@ -9,7 +10,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 using Json = nlohmann::json;
@@ -49,21 +49,13 @@ ApiError responses_error(ApiError error) {
     return error;
 }
 
-ApiError internal_error(const std::exception& exception) {
-    ApiError error;
-    error.status  = 500;
-    error.type    = "server_error";
-    error.message = exception.what();
-    return error;
-}
-
 ApiError response_not_found(const std::string& id) {
     ApiError error;
     error.status  = 404;
     error.type    = "invalid_request_error";
     error.param   = "response_id";
     error.code    = "response_not_found";
-    error.message = "response '" + id + "' not found";
+    error.message = "response '" + ascii_preview(id) + "' not found";
     return error;
 }
 
@@ -75,11 +67,13 @@ OpenAIResponseContext terminal_context(OpenAIResponseContext previous,
     return append_openai_response_context(std::move(input), std::move(output_history));
 }
 
-void commit_stored_response(OpenAIResponsesStore& store, PendingResponseStorage pending,
+// Whether the Response is stored (or was not asked to be): false when it alone is more than the
+// store holds.
+bool commit_stored_response(OpenAIResponsesStore& store, PendingResponseStorage pending,
                             std::string id, const Json& response,
                             std::vector<ChatTurn> output_history,
                             std::optional<bool> preserve_thinking) {
-    if (!pending.enabled) { return; }
+    if (!pending.enabled) { return true; }
     if (pending.session_key.empty()) {
         throw std::logic_error("stored Response has no Engine session key");
     }
@@ -91,7 +85,7 @@ void commit_stored_response(OpenAIResponsesStore& store, PendingResponseStorage 
     stored.context           = terminal_context(std::move(pending.previous_context),
                                                 std::move(pending.input_turns), std::move(output_history));
     stored.preserve_thinking = preserve_thinking;
-    store.put(std::move(stored));
+    return store.put(std::move(stored));
 }
 
 OpenAIResponsesRuntimeValues runtime_values(const PreparedRequest& prepared,
@@ -115,7 +109,8 @@ void reject_unknown_query(const httplib::Request& request,
     for (const auto& [key, value] : request.params) {
         (void)value;
         if (std::find(allowed.begin(), allowed.end(), key) == allowed.end()) {
-            invalid_query("unknown query parameter: " + key, key, "unknown_parameter");
+            invalid_query("unknown query parameter: " + ascii_preview(key), key,
+                          "unknown_parameter");
         }
     }
 }
@@ -168,10 +163,8 @@ std::string path_response_id(const httplib::Request& request) {
 int parse_limit(const httplib::Request& request) {
     if (!request.has_param("limit")) { return 20; }
     const std::string value = request.get_param_value("limit");
-    int parsed              = 0;
-    const auto result       = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed < 1 ||
-        parsed > 100) {
+    const auto parsed       = parse_exact<int>(value);
+    if (!parsed || *parsed < 1 || *parsed > 100) {
         ApiError error;
         error.status  = 400;
         error.param   = "limit";
@@ -179,7 +172,7 @@ int parse_limit(const httplib::Request& request) {
         error.message = "limit must be an integer in [1,100]";
         throw ApiException(std::move(error));
     }
-    return parsed;
+    return *parsed;
 }
 
 Json paginated_input_items(const httplib::Request& request, const std::vector<Json>& stored_items) {
@@ -243,14 +236,17 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
     OpenAIResponsesResolvedPrompt resolved;
     const std::string id = new_openai_response_id();
     try {
-        RequestLimits limits;
-        limits.default_max_tokens = options_.default_max_tokens;
-        request = parse_openai_responses_create_request(parse_json_body(req), limits);
-        validate_openai_model(request.prompt.model, public_model_id_);
+        const RequestLimits limits = request_limits();
+        request  = parse_openai_responses_create_request(parse_json_body(req), limits,
+                                                         options_.auto_system_shared_prefix);
         resolved = resolve_openai_responses_prompt(request.prompt, openai_responses_store_, id,
                                                    request.store);
+        if (request.store) {
+            openai_responses_store_.admit(openai_response_input_bytes(
+                resolved.parent, request.prompt.input_turns, request.prompt.input_items));
+        }
     } catch (const ApiException& exception) {
-        write_openai_error(res, responses_error(exception.error()));
+        refuse(req, res, responses_error(exception.error()));
         return;
     } catch (const std::exception& exception) {
         operational_log_.http_failure(
@@ -288,8 +284,13 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
     }
 
     const std::int64_t created = unix_time_now();
-    auto lifecycle             = begin_request(make_request_log_context(
-        req_id, "openai_responses", resolved.generation, metadata, prepared));
+    auto lifecycle =
+        begin_request(make_request_log_context(req_id, "openai_responses", resolved.generation,
+                                               metadata, prepared),
+                      res);
+    if (const std::string warning = notes_header_value(resolved.generation); !warning.empty()) {
+        res.set_header("X-NInferno-Warning", warning);
+    }
     resolved.generation.messages.clear();
 
     if (!request.stream) {
@@ -308,6 +309,23 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
             return;
         }
         lifecycle->done(outcome);
+        // A client that went away cancelled the run: nothing is left to answer, and a truncated
+        // response is not stored (the other dialects' and the streamed path's rule).
+        if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
+            client_disconnected(req)) {
+            lifecycle->response_failure(
+                make_client_disconnected_failure(RequestFailurePhase::Transport));
+            return;
+        }
+        // The server gave the run up (drain timeout, second signal): the text is cut short, so
+        // the client is told to retry rather than handed it as a finished answer.
+        if (outcome.finish_reason == ninferno::FinishReason::Cancelled && service_->aborting()) {
+            const ApiError error = server_draining_error();
+            lifecycle->response_failure(
+                make_request_failure(RequestFailurePhase::Generation, error));
+            write_openai_error(res, error);
+            return;
+        }
 
         std::optional<BuiltOpenAIResponse> response;
         try {
@@ -333,8 +351,12 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
         if (resolved.session_key) { storage.session_key = std::move(*resolved.session_key); }
         storage.enabled = request.store;
         try {
-            commit_stored_response(openai_responses_store_, std::move(storage), id, response->body,
-                                   std::move(response->output_history), prepared.preserve_thinking);
+            if (!commit_stored_response(openai_responses_store_, std::move(storage), id,
+                                        response->body, std::move(response->output_history),
+                                        prepared.preserve_thinking)) {
+                response->body["store"] = false;
+                lifecycle->response_not_stored(openai_responses_store_.capacity_bytes());
+            }
         } catch (const ApiException& exception) {
             const ApiError error = responses_error(exception.error());
             lifecycle->response_failure(
@@ -443,6 +465,14 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
                 }
 
                 lifecycle->done(outcome);
+                // A client that went away cancelled the run, before its first token as often as
+                // not: there is nothing to render its end to, and no stream it was started on.
+                if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
+                    transport.poll()) {
+                    lifecycle->response_failure(
+                        make_client_disconnected_failure(RequestFailurePhase::Transport));
+                    return false;
+                }
                 std::optional<OpenAIResponsesStreamFinish> finished;
                 try {
                     finished.emplace(stream->encoder->finish(outcome));
@@ -459,10 +489,13 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
                 }
 
                 try {
-                    commit_stored_response(openai_responses_store_, std::move(stream->storage), id,
-                                           finished->response.body,
-                                           std::move(finished->response.output_history),
-                                           stream->prepared.preserve_thinking);
+                    if (!commit_stored_response(openai_responses_store_, std::move(stream->storage),
+                                                id, finished->response.body,
+                                                std::move(finished->response.output_history),
+                                                stream->prepared.preserve_thinking)) {
+                        finished->response.body["store"] = false;
+                        lifecycle->response_not_stored(openai_responses_store_.capacity_bytes());
+                    }
                 } catch (const ApiException& exception) {
                     const ApiError error = responses_error(exception.error());
                     lifecycle->response_failure(
@@ -511,18 +544,16 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
 
 void HttpServer::handle_response_input_tokens(const httplib::Request& req, httplib::Response& res) {
     try {
-        RequestLimits limits;
-        limits.default_max_tokens = options_.default_max_tokens;
+        const RequestLimits limits = request_limits();
         OpenAIResponsesPromptRequest request =
             parse_openai_responses_input_tokens_request(parse_json_body(req), limits);
-        validate_openai_model(request.model, public_model_id_);
         OpenAIResponsesResolvedPrompt resolved =
             resolve_openai_responses_prompt(request, openai_responses_store_, std::nullopt, false);
         const int tokens = service_->count_prompt_tokens(
             resolved.generation, [&req] { return client_disconnected(req); });
         res.set_content(make_openai_response_input_tokens_body(tokens), "application/json");
     } catch (const ApiException& exception) {
-        write_openai_error(res, responses_error(exception.error()));
+        refuse(req, res, responses_error(exception.error()));
     } catch (const std::exception& exception) {
         operational_log_.http_failure(
             "openai_responses_input_tokens",
@@ -579,7 +610,7 @@ void HttpServer::handle_response_cancel(const httplib::Request& req, httplib::Re
     error.status  = 400;
     error.type    = "invalid_request_error";
     error.code    = "background_not_supported";
-    error.message = "only background responses can be cancelled; NInfer does not support "
+    error.message = "only background responses can be cancelled; NInferno does not support "
                     "background execution";
     write_openai_error(res, error);
 }
@@ -594,4 +625,4 @@ void HttpServer::handle_response_compact(const httplib::Request&, httplib::Respo
     write_openai_error(res, error);
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

@@ -1,9 +1,10 @@
 #include "ops/linear/q6/q6_dispatch.h"
 #include "ops/linear/q6/q6_shapes.h"
+#include "ops/common/shape_routes.h"
 #include <array>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 struct ShapeEntry {
     std::int32_t n, k;
@@ -14,13 +15,19 @@ constexpr std::array kShapes{
     ShapeEntry{248320, 5120, select_q6_n248320_k5120},
     ShapeEntry{248320, 2048, select_q6_n248320_k2048},
     ShapeEntry{1152, 1536, select_q6_n1152_k1536},
+    ShapeEntry{262144, 2816, select_q6_n262144_k2816},
+    ShapeEntry{262144, 5376, select_q6_n262144_k5376},
 };
 } // namespace
 
+bool q6_linear_registered(std::int32_t n, std::int32_t k) {
+    return find_shape(kShapes, n, k) != nullptr;
+}
+
 Q6Launch select_q6_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
     if (t <= 0) throw std::invalid_argument("q6 linear: T must be positive");
-    for (const auto& entry : kShapes) {
-        if (entry.n == n && entry.k == k) return entry.select(t);
+    if (const auto* entry = find_shape(kShapes, n, k)) {
+        return entry->select(route_tokens({QType::Q6_G64_FP16, ShapeCompute::A16, n, k}, t));
     }
     throw std::invalid_argument("q6 linear: unsupported shape");
 }
@@ -34,4 +41,4 @@ void q6_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPolic
                  cudaStream_t stream) {
     select_q6_launch(weight.n, weight.k, x.ne[1], policy)(x, weight, out, stream);
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

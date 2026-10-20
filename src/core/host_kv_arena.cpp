@@ -1,5 +1,6 @@
 #include "core/host_kv_arena.h"
 
+#include "core/checked.h"
 #include "core/dtype.h"
 
 #include <algorithm>
@@ -9,33 +10,10 @@
 #include <string>
 #include <utility>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 constexpr std::size_t kHostKVAlignment = 256;
-
-std::size_t checked_add(std::size_t a, std::size_t b, const char* label) {
-    if (b > std::numeric_limits<std::size_t>::max() - a) { throw std::overflow_error(label); }
-    return a + b;
-}
-
-std::size_t checked_mul(std::size_t a, std::size_t b, const char* label) {
-    if (b != 0 && a > std::numeric_limits<std::size_t>::max() / b) {
-        throw std::overflow_error(label);
-    }
-    return a * b;
-}
-
-std::size_t align_up(std::size_t value, std::size_t alignment, const char* label) {
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
-        throw std::invalid_argument(std::string(label) + " alignment must be a power of two");
-    }
-    const std::size_t mask = alignment - 1;
-    if (value > std::numeric_limits<std::size_t>::max() - mask) {
-        throw std::overflow_error(std::string(label) + " alignment overflow");
-    }
-    return (value + mask) & ~mask;
-}
 
 void increment_generation(std::uint32_t& generation) noexcept {
     ++generation;
@@ -261,11 +239,24 @@ const HostKVPageLayout* HostKVArena::layout_for(const KVPageGeometry& geometry) 
     return layout == layouts_.end() ? nullptr : &*layout;
 }
 
-std::optional<std::size_t> HostKVArena::find_free_extent(std::size_t bytes) const noexcept {
-    for (std::size_t index = 0; index < free_extents_.size(); ++index) {
-        if (free_extents_[index].bytes >= bytes) { return index; }
+// Best fit: the smallest free extent that holds `bytes`, the lowest such on a tie. First fit carved
+// every allocation from the lowest large extent, so after weeks of mixed context lengths the large
+// extents were split into gaps no long context fits. Allocation and the eviction recipe's
+// simulation both take it, so a recipe lands where the allocation will.
+template <typename Extents>
+std::optional<std::size_t> best_fit_extent(const Extents& extents, std::size_t bytes) noexcept {
+    std::optional<std::size_t> best;
+    for (std::size_t index = 0; index < extents.size(); ++index) {
+        if (extents[index].bytes >= bytes && (!best || extents[index].bytes < extents[*best].bytes)) {
+            best = index;
+            if (extents[index].bytes == bytes) break;
+        }
     }
-    return std::nullopt;
+    return best;
+}
+
+std::optional<std::size_t> HostKVArena::find_free_extent(std::size_t bytes) const noexcept {
+    return best_fit_extent(free_extents_, bytes);
 }
 
 bool HostKVArena::can_allocate(const HostKVPageLayout& layout, std::uint32_t pages) const noexcept {
@@ -366,10 +357,9 @@ std::optional<HostKVAllocationRecipe> HostKVArena::plan_after_releases(
         }
         const std::size_t bytes =
             request.layout->page_stride * static_cast<std::size_t>(request.pages);
-        const auto extent =
-            std::find_if(simulated.begin(), simulated.end(),
-                         [&](const FreeExtent& free) { return free.bytes >= bytes; });
-        if (extent == simulated.end()) { return std::nullopt; }
+        const std::optional<std::size_t> fit = best_fit_extent(simulated, bytes);
+        if (!fit) { return std::nullopt; }
+        const auto extent = simulated.begin() + static_cast<std::ptrdiff_t>(*fit);
         const std::size_t offset = extent->offset;
         extent->offset += bytes;
         extent->bytes -= bytes;
@@ -658,4 +648,4 @@ void HostKVArena::bump_revision() noexcept {
     if (revision_ == 0) { ++revision_; }
 }
 
-} // namespace ninfer
+} // namespace ninferno

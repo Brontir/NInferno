@@ -1,13 +1,13 @@
 #pragma once
 
 #include "core/dtype.h"
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer {
+namespace ninferno {
 
 inline constexpr std::int32_t kD256KVCacheHeadDim = 256;
 
@@ -48,10 +48,6 @@ struct PagedKVStorageLayout {
         return 2ULL * logical_vector_bytes();
     }
 
-    [[nodiscard]] std::size_t physical_bytes_per_token_head() const {
-        return key.physical_bytes() + value.physical_bytes();
-    }
-
     friend bool operator==(const PagedKVStorageLayout&, const PagedKVStorageLayout&) = default;
 };
 
@@ -70,6 +66,8 @@ struct PagedKVStorageLayout {
                 {DType::FP16, head_dim, DType::U8, 0}};
     case KvCacheStorage::Int8Group64:
         if (head_dim == kD256KVCacheHeadDim) { return symmetric({DType::I8, 256, DType::FP16, 4}); }
+        // The DFlash drafters' full layers (D128): the same per-token G64 codec, two groups.
+        if (head_dim == 128) { return symmetric({DType::I8, 128, DType::FP16, 2}); }
         break;
     case KvCacheStorage::Fp8E4M3Row256:
         if (head_dim == kD256KVCacheHeadDim) {
@@ -91,4 +89,4 @@ struct PagedKVStorageLayout {
     throw std::invalid_argument("unsupported paged KV-cache storage geometry");
 }
 
-} // namespace ninfer
+} // namespace ninferno

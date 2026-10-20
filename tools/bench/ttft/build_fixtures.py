@@ -11,18 +11,14 @@ import argparse
 import copy
 import hashlib
 import json
-import math
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPO_ROOT / "bench" / "fixtures" / "ttft"
 TEXT_ROOT = FIXTURE_ROOT / "text"
 MEDIA_ROOT = FIXTURE_ROOT / "media"
-DEFAULT_TOKENIZER = Path(
-    "/home/neroued/models/llm/qwen/Qwen3.8-27B/base-hf-bf16"
-)
 IMAGE_SIZE = 1024
 IMAGE_VISION_TOKENS = 1024
 MANY_IMAGE_COUNT = 28
@@ -34,6 +30,12 @@ ROTATION_55K_SECOND_LABELS = ("OMEGA", "SIGMA", "VIOLET", "THETA", "APPLE", "CHA
 
 def _json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+def _write_text(path: Path, text: str) -> None:
+    """UTF-8 with LF line ends on every platform, so a rebuild reproduces the committed hashes."""
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
 
 
 def _sha256(path: Path) -> str:
@@ -56,11 +58,17 @@ def _load_tokenizer(path: Path) -> Any:
     )
 
 
-def _template_ids(tokenizer: Any, messages: Sequence[dict[str, Any]], *, tools: Any = None) -> list[int]:
+def _template_ids(
+    tokenizer: Any,
+    messages: Sequence[dict[str, Any]],
+    *,
+    tools: Any = None,
+    enable_thinking: bool = False,
+) -> list[int]:
     kwargs: dict[str, Any] = {
         "tokenize": True,
         "add_generation_prompt": True,
-        "enable_thinking": False,
+        "enable_thinking": enable_thinking,
     }
     if tools is not None:
         kwargs["tools"] = tools
@@ -339,7 +347,7 @@ def _draw_image(index: int) -> Any:
             width=12,
         )
     draw.rectangle((24, 24, 310, 112), fill=(245, 245, 245), outline=(10, 10, 10), width=5)
-    draw.text((42, 46), f"NINFER TTFT IMAGE {index:02d}", fill=(5, 5, 5))
+    draw.text((42, 46), f"NINFERNO TTFT IMAGE {index:02d}", fill=(5, 5, 5))
     return image
 
 
@@ -348,7 +356,10 @@ def _write_images() -> list[Path]:
     paths = []
     for index in range(GENERATED_IMAGE_COUNT):
         path = MEDIA_ROOT / f"load_{index:02d}.png"
-        _draw_image(index).save(path, format="PNG", optimize=True, compress_level=9)
+        # Committed images stay: Pillow versions draw the label text differently, and the text
+        # fixtures change without them. Delete an image to draw it again.
+        if not path.is_file():
+            _draw_image(index).save(path, format="PNG", optimize=True, compress_level=9)
         paths.append(path)
     return paths
 
@@ -376,7 +387,7 @@ def _expanded_media_tokens(tokenizer: Any, paths: Sequence[Path], prompt: str) -
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json_text(value), encoding="utf-8")
+    _write_text(path, _json_text(value))
 
 
 def _file_record(path: Path, **facts: Any) -> dict[str, Any]:
@@ -557,8 +568,8 @@ def build(tokenizer_path: Path) -> None:
     )
     system_a_path = TEXT_ROOT / "shared_system_a.txt"
     system_b_path = TEXT_ROOT / "shared_system_b.txt"
-    system_a_path.write_text(system_a, encoding="utf-8")
-    system_b_path.write_text(system_b, encoding="utf-8")
+    _write_text(system_a_path, system_a)
+    _write_text(system_b_path, system_b)
 
     tools = _client_tools()
     tool_frontier, tool_prompt = _tool_frontier(tokenizer, tools)
@@ -597,7 +608,7 @@ def build(tokenizer_path: Path) -> None:
         raise RuntimeError("28-image fixture exceeds the encoded-media byte limit")
 
     manifest: dict[str, Any] = {
-        "artifact_type": "ninfer_serve_ttft_corpus",
+        "artifact_type": "ninferno_serve_ttft_corpus",
         "schema_version": 1,
         "tokenizer": {
             "identity": "Qwen/Qwen3.6-family",
@@ -738,7 +749,7 @@ def build(tokenizer_path: Path) -> None:
 def check() -> None:
     manifest_path = FIXTURE_ROOT / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("artifact_type") != "ninfer_serve_ttft_corpus":
+    if manifest.get("artifact_type") != "ninferno_serve_ttft_corpus":
         raise RuntimeError("TTFT corpus manifest has the wrong artifact_type")
 
     records: list[dict[str, Any]] = []
@@ -815,13 +826,15 @@ def check() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tokenizer", type=Path, default=DEFAULT_TOKENIZER)
+    parser.add_argument("--tokenizer", type=Path, help="a local Qwen3.6 tokenizer checkout")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
     if args.check:
         check()
         print("TTFT fixtures OK")
         return 0
+    if args.tokenizer is None:
+        parser.error("--tokenizer is required to build")
     build(args.tokenizer.expanduser().resolve())
     check()
     print(f"wrote TTFT fixtures under {_relative(FIXTURE_ROOT)}")

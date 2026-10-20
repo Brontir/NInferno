@@ -11,13 +11,60 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kContextQueryHeadDim  = 128;
 inline constexpr int kContextQueryQHeads   = 32;
 inline constexpr int kContextQueryKVHeads  = 8;
-inline constexpr int kContextQueryGroup    = 4;
-inline constexpr int kContextQueryMaxSplit = 85;
+
+// The compile-time head geometry of a context-query profile: the head width and the query and
+// key/value head counts (the GQA group is their ratio). A CTA holds every query row of one
+// key/value head (Tokens x Group rows, 16 to a warp).
+template <int HeadDim, int QHeads, int KVHeads>
+struct ContextQueryGeometry {
+    static constexpr int D     = HeadDim;
+    static constexpr int Hq    = QHeads;
+    static constexpr int Hkv   = KVHeads;
+    static constexpr int Group = QHeads / KVHeads;
+    static_assert(HeadDim == 64 || HeadDim == 128);
+    static_assert(QHeads % KVHeads == 0);
+};
+// The DFlash drafters of Qwen, Gemma 4 and Muse Glimmer (D128, 32/8), and gpt-oss's (D64, 64/8).
+using ContextQueryD128 =
+    ContextQueryGeometry<kContextQueryHeadDim, kContextQueryQHeads, kContextQueryKVHeads>;
+using ContextQueryD64 = ContextQueryGeometry<64, 64, 8>;
+
+template <class Geo, int Tokens>
+inline constexpr int kContextQueryWarps = (Tokens * Geo::Group + 15) / 16;
+
+// Eight signed int8 codes of one G64 group, times its scale, as eight BF16 (K) or FP16 (V) values.
+__device__ __forceinline__ int4 context_query_i8x8_bf16(const std::int8_t* codes, float s) {
+    const int2 raw       = load_vec<int2>(codes);
+    const std::int8_t* c = reinterpret_cast<const std::int8_t*>(&raw);
+    unsigned packed[4];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        const __nv_bfloat162 h = __floats2bfloat162_rn(static_cast<float>(c[2 * i]) * s,
+                                                       static_cast<float>(c[2 * i + 1]) * s);
+        packed[i]              = *reinterpret_cast<const unsigned*>(&h);
+    }
+    return make_int4(static_cast<int>(packed[0]), static_cast<int>(packed[1]),
+                     static_cast<int>(packed[2]), static_cast<int>(packed[3]));
+}
+
+__device__ __forceinline__ int4 context_query_i8x8_f16(const std::int8_t* codes, float s) {
+    const int2 raw       = load_vec<int2>(codes);
+    const std::int8_t* c = reinterpret_cast<const std::int8_t*>(&raw);
+    unsigned packed[4];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        const __half2 h = __floats2half2_rn(static_cast<float>(c[2 * i]) * s,
+                                            static_cast<float>(c[2 * i + 1]) * s);
+        packed[i]       = *reinterpret_cast<const unsigned*>(&h);
+    }
+    return make_int4(static_cast<int>(packed[0]), static_cast<int>(packed[1]),
+                     static_cast<int>(packed[2]), static_cast<int>(packed[3]));
+}
 
 __device__ __forceinline__ int context_query_swz(int row, int col) {
     return (((col >> 3) ^ (row & 7)) << 3) | (col & 7);
@@ -28,51 +75,126 @@ __device__ __forceinline__ unsigned context_query_swz_addr(unsigned lane_base, u
     return lane_base + ((ck | as) ^ r);
 }
 
+template <class Geo = ContextQueryD128>
 __device__ __forceinline__ std::int64_t context_query_q_index(int q_head, int d, int token) {
     return static_cast<std::int64_t>(d) +
-           static_cast<std::int64_t>(kContextQueryHeadDim) *
-               (static_cast<std::int64_t>(q_head) +
-                static_cast<std::int64_t>(kContextQueryQHeads) * token);
+           static_cast<std::int64_t>(Geo::D) *
+               (static_cast<std::int64_t>(q_head) + static_cast<std::int64_t>(Geo::Hq) * token);
 }
 
+template <class Geo = ContextQueryD128>
 __device__ __forceinline__ std::int64_t context_query_query_kv_index(int kv_head, int d,
                                                                      int token) {
     return static_cast<std::int64_t>(d) +
-           static_cast<std::int64_t>(kContextQueryHeadDim) *
-               (static_cast<std::int64_t>(kv_head) +
-                static_cast<std::int64_t>(kContextQueryKVHeads) * token);
+           static_cast<std::int64_t>(Geo::D) *
+               (static_cast<std::int64_t>(kv_head) + static_cast<std::int64_t>(Geo::Hkv) * token);
 }
 
-template <int Tokens>
+template <int Tokens, class Geo = ContextQueryD128>
 __device__ __forceinline__ std::int64_t context_query_partial_index(int q_head, int d, int token,
                                                                     int split) {
     return static_cast<std::int64_t>(d) +
-           static_cast<std::int64_t>(kContextQueryHeadDim) *
+           static_cast<std::int64_t>(Geo::D) *
                (static_cast<std::int64_t>(q_head) +
-                static_cast<std::int64_t>(kContextQueryQHeads) *
+                static_cast<std::int64_t>(Geo::Hq) *
                     (static_cast<std::int64_t>(token) + static_cast<std::int64_t>(Tokens) * split));
 }
 
-template <int Tokens>
+template <int Tokens, class Geo = ContextQueryD128>
 __device__ __forceinline__ std::int64_t context_query_stat_index(int q_head, int token, int split) {
     return static_cast<std::int64_t>(q_head) +
-           static_cast<std::int64_t>(kContextQueryQHeads) *
+           static_cast<std::int64_t>(Geo::Hq) *
                (static_cast<std::int64_t>(token) + static_cast<std::int64_t>(Tokens) * split);
 }
 
+template <class Geo = ContextQueryD128>
 __device__ __forceinline__ void context_query_row_to_qt(int row, int kv_head, int& q_head,
                                                         int& token) {
-    token             = row / kContextQueryGroup;
-    const int q_local = row - token * kContextQueryGroup;
-    q_head            = kv_head * kContextQueryGroup + q_local;
+    token             = row / Geo::Group;
+    const int q_local = row - token * Geo::Group;
+    q_head            = kv_head * Geo::Group + q_local;
 }
 
+// Raw shared staging of an int8 context tile: [KeyBlock][D] codes, then [KeyBlock][2] FP16 G64
+// scales, for K and again for V, after the BF16 K and FP16 V tiles.
+template <int D, int KeyBlock>
+inline constexpr std::size_t kContextQueryInt8StageBytes =
+    2u * (static_cast<std::size_t>(KeyBlock) * D + static_cast<std::size_t>(KeyBlock) * 2u * 2u);
+
+// An int8 context tile goes to the raw buffers by cp.async (the codes 8 at a time, each row's two
+// G64 scales as one 4-byte copy), so the copy overlaps compute like a BF16 tile's; it is decoded
+// into the MMA tile after the barrier that publishes it (context_query_decode_i8).
 template <typename ContextPolicy, int KeyBlock, int Threads>
 __device__ __forceinline__ void
-context_query_stage_tile(__nv_bfloat16* dst, const __nv_bfloat16* context,
-                         const __nv_bfloat16* query, int key0, int valid_keys, bool query_tile,
-                         int kv_head, int physical_page, ContextPolicy& policy, int tid) {
-    constexpr int VecsPerRow        = kContextQueryHeadDim / 8;
+context_query_stage_i8_raw(std::int8_t* raw, __half* raw_scale, const std::int8_t* context,
+                           const __half* scales, int key0, int valid_keys, int kv_head,
+                           int physical_page, ContextPolicy& policy, int tid) {
+    using Geo                       = typename ContextPolicy::Geo;
+    constexpr int Vecs              = Geo::D / 8;
+    const std::int64_t context_tile = policy.context_tile(kv_head, key0, physical_page);
+    for (int chunk = tid; chunk < KeyBlock * Vecs; chunk += Threads) {
+        const int row      = chunk / Vecs;
+        const int d        = (chunk - row * Vecs) * 8;
+        const bool live    = row < valid_keys;
+        const int safe_row = live ? row : 0;
+        cp_async_zfill<8>(raw + row * Geo::D + d,
+                          context +
+                              policy.context_index(context_tile, d, key0 + safe_row, safe_row),
+                          live ? 8 : 0);
+        if (d == 0) {
+            const __half* scale =
+                scales + policy.scale_index(kv_head, key0, physical_page, safe_row, 0);
+            if constexpr (Geo::D == 128) {
+                cp_async_zfill<4>(raw_scale + 2 * row, scale, live ? 4 : 0);
+            } else {
+                // One G64 scale a row (D = 64) is 2 bytes, below cp.async's 4: a plain copy,
+                // published by the same barrier.
+                raw_scale[2 * row] = live ? *scale : __float2half(0.0f);
+            }
+        }
+    }
+}
+
+// The raw int8 tile as the MMA operand tile (BF16 for K, FP16 for V), swizzled like a cp.async
+// tile; rows past valid_keys are zero.
+template <int D, int KeyBlock, int Threads, typename T>
+__device__ __forceinline__ void context_query_decode_i8(T* dst, const std::int8_t* raw,
+                                                        const __half* raw_scale, int valid_keys,
+                                                        int tid) {
+    constexpr int Vecs = D / 8;
+    for (int chunk = tid; chunk < KeyBlock * Vecs; chunk += Threads) {
+        const int row = chunk / Vecs;
+        const int d   = (chunk - row * Vecs) * 8;
+        int4 values   = make_int4(0, 0, 0, 0);
+        if (row < valid_keys) {
+            const float s = __half2float(raw_scale[2 * row + (d >> 6)]);
+            if constexpr (std::is_same_v<T, __nv_bfloat16>) {
+                values = context_query_i8x8_bf16(raw + row * D + d, s);
+            } else {
+                values = context_query_i8x8_f16(raw + row * D + d, s);
+            }
+        }
+        store_vec(&dst[row * D + context_query_swz(row, d)], values);
+    }
+}
+
+template <typename ContextPolicy, int KeyBlock, int Threads, typename KT>
+__device__ __forceinline__ void
+context_query_stage_tile(__nv_bfloat16* dst, const KT* context, const __nv_bfloat16* query,
+                         int key0, int valid_keys, bool query_tile, int kv_head, int physical_page,
+                         ContextPolicy& policy, int tid, std::int8_t* raw = nullptr,
+                         __half* raw_scale = nullptr) {
+    using Geo = typename ContextPolicy::Geo;
+    if constexpr (std::is_same_v<KT, std::int8_t>) {
+        // The query tile stays BF16 (cp.async straight into the MMA tile, below).
+        if (!query_tile) {
+            context_query_stage_i8_raw<ContextPolicy, KeyBlock, Threads>(
+                raw, raw_scale, context, policy.k_scale, key0, valid_keys, kv_head, physical_page,
+                policy, tid);
+            return;
+        }
+    }
+    constexpr int VecsPerRow        = Geo::D / 8;
     const std::int64_t context_tile = policy.context_tile(kv_head, key0, physical_page);
     for (int chunk = tid; chunk < KeyBlock * VecsPerRow; chunk += Threads) {
         const int row      = chunk / VecsPerRow;
@@ -80,65 +202,77 @@ context_query_stage_tile(__nv_bfloat16* dst, const __nv_bfloat16* context,
         const bool live    = row < valid_keys;
         const int safe_row = live ? row : 0;
         const std::int64_t src_index =
-            query_tile ? context_query_query_kv_index(kv_head, d, safe_row)
+            query_tile ? context_query_query_kv_index<Geo>(kv_head, d, safe_row)
                        : policy.context_index(context_tile, d, live ? key0 + row : 0, safe_row);
-        const __nv_bfloat16* src = query_tile ? query + src_index : context + src_index;
-        __nv_bfloat16* smem      = &dst[row * kContextQueryHeadDim + context_query_swz(row, d)];
+        const __nv_bfloat16* src =
+            query_tile ? query + src_index
+                       : reinterpret_cast<const __nv_bfloat16*>(context) + src_index;
+        __nv_bfloat16* smem      = &dst[row * Geo::D + context_query_swz(row, d)];
         cp_async_zfill<16, Cache::cg>(smem, src, live ? 16 : 0);
     }
 }
 
-template <typename ContextPolicy, int KeyBlock, int Threads>
+template <typename ContextPolicy, int KeyBlock, int Threads, typename VT>
 __device__ __forceinline__ void
-context_query_stage_v_tile(__half* dst, const __half* context, const __nv_bfloat16* query, int key0,
+context_query_stage_v_tile(__half* dst, const VT* context, const __nv_bfloat16* query, int key0,
                            int valid_keys, bool query_tile, int kv_head, int physical_page,
-                           ContextPolicy& policy, int tid) {
-    constexpr int VecsPerRow = kContextQueryHeadDim / 8;
+                           ContextPolicy& policy, int tid, std::int8_t* raw = nullptr,
+                           __half* raw_scale = nullptr) {
+    using Geo                = typename ContextPolicy::Geo;
+    constexpr int VecsPerRow = Geo::D / 8;
     if (query_tile) {
         for (int chunk = tid; chunk < KeyBlock * VecsPerRow; chunk += Threads) {
             const int row                = chunk / VecsPerRow;
             const int d                  = (chunk - row * VecsPerRow) * 8;
             const bool live              = row < valid_keys;
-            const std::int64_t src_index = context_query_query_kv_index(kv_head, d, live ? row : 0);
+            const std::int64_t src_index =
+                context_query_query_kv_index<Geo>(kv_head, d, live ? row : 0);
             const int4 values = live ? bf16x8_bits_to_f16x8_bits(load_vec<int4>(query + src_index))
                                      : make_int4(0, 0, 0, 0);
-            store_vec(&dst[row * kContextQueryHeadDim + context_query_swz(row, d)], values);
+            store_vec(&dst[row * Geo::D + context_query_swz(row, d)], values);
         }
         return;
     }
 
     const std::int64_t context_tile = policy.context_tile(kv_head, key0, physical_page);
-    for (int chunk = tid; chunk < KeyBlock * VecsPerRow; chunk += Threads) {
-        const int row      = chunk / VecsPerRow;
-        const int d        = (chunk - row * VecsPerRow) * 8;
-        const bool live    = row < valid_keys;
-        const int safe_row = live ? row : 0;
-        const std::int64_t src_index =
-            policy.context_index(context_tile, d, live ? key0 + row : 0, safe_row);
-        __half* smem = &dst[row * kContextQueryHeadDim + context_query_swz(row, d)];
-        cp_async_zfill<16, Cache::cg>(smem, context + src_index, live ? 16 : 0);
+    if constexpr (std::is_same_v<VT, std::int8_t>) {
+        (void)context_tile;
+        context_query_stage_i8_raw<ContextPolicy, KeyBlock, Threads>(
+            raw, raw_scale, context, policy.v_scale, key0, valid_keys, kv_head, physical_page,
+            policy, tid);
+    } else {
+        for (int chunk = tid; chunk < KeyBlock * VecsPerRow; chunk += Threads) {
+            const int row      = chunk / VecsPerRow;
+            const int d        = (chunk - row * VecsPerRow) * 8;
+            const bool live    = row < valid_keys;
+            const int safe_row = live ? row : 0;
+            const std::int64_t src_index =
+                policy.context_index(context_tile, d, live ? key0 + row : 0, safe_row);
+            __half* smem = &dst[row * Geo::D + context_query_swz(row, d)];
+            cp_async_zfill<16, Cache::cg>(smem, context + src_index, live ? 16 : 0);
+        }
     }
 }
 
 template <typename ContextPolicy, int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput,
-          typename Partial>
+          typename Partial, typename KT = __nv_bfloat16, typename VT = __half>
 __device__ __forceinline__ void context_query_split_partial_body(
     const __nv_bfloat16* __restrict__ q, const __nv_bfloat16* __restrict__ query_k,
     const __nv_bfloat16* __restrict__ query_v, const std::int32_t* __restrict__ valid_columns,
-    const __nv_bfloat16* __restrict__ context_k, const __half* __restrict__ context_v,
-    ContextPolicy policy, int length, int max_context, int split_capacity, float scale,
-    Partial* __restrict__ partial_acc, float* __restrict__ partial_m, float* __restrict__ partial_l,
-    __nv_bfloat16* __restrict__ out) {
+    const KT* __restrict__ context_k, const VT* __restrict__ context_v, ContextPolicy policy,
+    int length, int max_context, int split_capacity, float scale, Partial* __restrict__ partial_acc,
+    float* __restrict__ partial_m, float* __restrict__ partial_l, __nv_bfloat16* __restrict__ out) {
     static_assert(std::is_same_v<Partial, float> || std::is_same_v<Partial, __nv_bfloat16>);
+    using Geo = typename ContextPolicy::Geo;
     static_assert(Tokens >= 1 && Tokens <= 16);
-    static_assert(WarpsPerCta == (Tokens + 3) / 4);
+    static_assert(WarpsPerCta == kContextQueryWarps<Geo, Tokens>);
     static_assert(KeyBlock == 32 || KeyBlock == 64);
 
-    constexpr int D             = kContextQueryHeadDim;
+    constexpr int D             = Geo::D;
     constexpr int Wc            = WarpsPerCta;
     constexpr int Threads       = Wc * 32;
     constexpr int Br            = Wc * 16;
-    constexpr int RowCount      = Tokens * kContextQueryGroup;
+    constexpr int RowCount      = Tokens * Geo::Group;
     constexpr int QKNt          = KeyBlock / 8;
     constexpr int QKKs          = D / 16;
     constexpr int PVNt          = D / 8;
@@ -156,12 +290,10 @@ __device__ __forceinline__ void context_query_split_partial_body(
     const int warp    = tid >> 5;
     const int lane    = tid & 31;
 
-    constexpr std::int64_t QueryElements =
-        static_cast<std::int64_t>(D) * kContextQueryQHeads * Tokens;
-    constexpr std::int64_t QueryKvElements =
-        static_cast<std::int64_t>(D) * kContextQueryKVHeads * Tokens;
+    constexpr std::int64_t QueryElements   = static_cast<std::int64_t>(D) * Geo::Hq * Tokens;
+    constexpr std::int64_t QueryKvElements = static_cast<std::int64_t>(D) * Geo::Hkv * Tokens;
     constexpr std::int64_t PartialElements = QueryElements;
-    constexpr std::int64_t StatElements = static_cast<std::int64_t>(kContextQueryQHeads) * Tokens;
+    constexpr std::int64_t StatElements    = static_cast<std::int64_t>(Geo::Hq) * Tokens;
     q += QueryElements * batch;
     query_k += QueryKvElements * batch;
     query_v += QueryKvElements * batch;
@@ -172,20 +304,20 @@ __device__ __forceinline__ void context_query_split_partial_body(
         partial_l += StatElements * split_capacity * batch;
     }
     const int valid = valid_columns[batch];
-    if (kv_head >= kContextQueryKVHeads || split >= split_capacity || length < 0 ||
+    if (kv_head >= Geo::Hkv || split >= split_capacity || length < 0 ||
         length > max_context || valid < 0 || valid > Tokens) {
         return;
     }
     if (valid == 0) {
         if constexpr (DirectOutput) {
-            constexpr int VecsPerKVHead = D * kContextQueryGroup / 8;
+            constexpr int VecsPerKVHead = D * Geo::Group / 8;
             constexpr int OutputVecs    = Tokens * VecsPerKVHead;
-            constexpr int TokenStride   = D * kContextQueryQHeads;
+            constexpr int TokenStride   = D * Geo::Hq;
             for (int unit = tid; unit < OutputVecs; unit += Threads) {
                 const int token  = unit / VecsPerKVHead;
                 const int vector = unit - token * VecsPerKVHead;
                 const int offset =
-                    token * TokenStride + kv_head * (D * kContextQueryGroup) + vector * 8;
+                    token * TokenStride + kv_head * (D * Geo::Group) + vector * 8;
                 store_vec(&out[offset], make_int4(0, 0, 0, 0));
             }
         }
@@ -212,6 +344,13 @@ __device__ __forceinline__ void context_query_split_partial_body(
     extern __shared__ __align__(16) __nv_bfloat16 shared[];
     __nv_bfloat16* k_s = shared;
     __half* v_s        = reinterpret_cast<__half*>(shared + KeyBlock * D);
+    // Int8 context: the raw tiles after the two operand tiles (kContextQueryInt8StageBytes).
+    constexpr bool Int8Context = std::is_same_v<KT, std::int8_t>;
+    static_assert(Int8Context == std::is_same_v<VT, std::int8_t>);
+    std::int8_t* k_raw  = reinterpret_cast<std::int8_t*>(shared + 2 * KeyBlock * D);
+    std::int8_t* v_raw  = k_raw + KeyBlock * D;
+    __half* k_raw_scale = reinterpret_cast<__half*>(v_raw + KeyBlock * D);
+    __half* v_raw_scale = k_raw_scale + 2 * KeyBlock;
 
     // The two K/V buffers together hold at least Br rows. Use them once as Q staging, then retain
     // all Q MMA fragments in registers for the complete split.
@@ -219,10 +358,10 @@ __device__ __forceinline__ void context_query_split_partial_body(
         const int row = chunk / (D / 8);
         const int d   = (chunk - row * (D / 8)) * 8;
         int q_head = 0, token = 0;
-        context_query_row_to_qt(row, kv_head, q_head, token);
+        context_query_row_to_qt<Geo>(row, kv_head, q_head, token);
         const bool live = row < RowCount && token < valid;
         const __nv_bfloat16* src =
-            q + context_query_q_index(live ? q_head : 0, d, live ? token : 0);
+            q + context_query_q_index<Geo>(live ? q_head : 0, d, live ? token : 0);
         __nv_bfloat16* dst = &shared[row * D + context_query_swz(row, d)];
         cp_async_zfill<16, Cache::cg>(dst, src, live ? 16 : 0);
     }
@@ -243,8 +382,8 @@ __device__ __forceinline__ void context_query_split_partial_body(
     const int warp_row0   = warp * 16;
     const int row0        = warp_row0 + gid;
     const int row1        = row0 + 8;
-    const int q_position0 = policy.query_position(row0 < RowCount ? row0 / kContextQueryGroup : 0);
-    const int q_position1 = policy.query_position(row1 < RowCount ? row1 / kContextQueryGroup : 0);
+    const int q_position0 = policy.query_position(row0 < RowCount ? row0 / Geo::Group : 0);
+    const int q_position1 = policy.query_position(row1 < RowCount ? row1 / Geo::Group : 0);
     unsigned af_q[QKKs][4];
 #pragma unroll
     for (int ks = 0; ks < QKKs; ++ks) {
@@ -293,7 +432,7 @@ __device__ __forceinline__ void context_query_split_partial_body(
     }
     context_query_stage_tile<ContextPolicy, KeyBlock, Threads>(
         k_s, context_k, query_k, current_key0, current_valid, current_is_query, kv_head,
-        current_page, policy, tid);
+        current_page, policy, tid, k_raw, k_raw_scale);
     cp_commit();
 
     for (int iteration = 0; iteration < iterations; ++iteration) {
@@ -302,8 +441,17 @@ __device__ __forceinline__ void context_query_split_partial_body(
 
         context_query_stage_v_tile<ContextPolicy, KeyBlock, Threads>(
             v_s, context_v, query_v, current_key0, current_valid, current_is_query, kv_head,
-            current_page, policy, tid);
+            current_page, policy, tid, v_raw, v_raw_scale);
         cp_commit();
+        if constexpr (Int8Context) {
+            // The raw K tile (published by the barrier above) becomes the MMA tile while the V
+            // copy is in flight.
+            if (!current_is_query) {
+                context_query_decode_i8<D, KeyBlock, Threads>(k_s, k_raw, k_raw_scale,
+                                                              current_valid, tid);
+            }
+            __syncthreads();
+        }
 
         float score[QKNt][4];
 #pragma unroll
@@ -339,8 +487,16 @@ __device__ __forceinline__ void context_query_split_partial_body(
             }
             context_query_stage_tile<ContextPolicy, KeyBlock, Threads>(
                 k_s, context_k, query_k, next_key0, next_valid, next_is_query, kv_head, next_page,
-                policy, tid);
+                policy, tid, k_raw, k_raw_scale);
             cp_commit();
+        }
+        if constexpr (Int8Context) {
+            // The raw V tile as the PV operand, while the next K copy is in flight.
+            if (!current_is_query) {
+                context_query_decode_i8<D, KeyBlock, Threads>(v_s, v_raw, v_raw_scale,
+                                                              current_valid, tid);
+            }
+            __syncthreads();
         }
 
         float block_m0 = -CUDART_INF_F;
@@ -349,8 +505,8 @@ __device__ __forceinline__ void context_query_split_partial_body(
         for (int nt = 0; nt < QKNt; ++nt) {
             const int col0       = nt * 8 + 2 * lid;
             const int col1       = col0 + 1;
-            const bool row0_live = row0 < RowCount && row0 / kContextQueryGroup < valid;
-            const bool row1_live = row1 < RowCount && row1 / kContextQueryGroup < valid;
+            const bool row0_live = row0 < RowCount && row0 / Geo::Group < valid;
+            const bool row1_live = row1 < RowCount && row1 / Geo::Group < valid;
             const bool allow00 =
                 row0_live && col0 < current_valid &&
                 (current_is_query || policy.allow_context(q_position0, current_key0 + col0));
@@ -457,15 +613,15 @@ __device__ __forceinline__ void context_query_split_partial_body(
             const int row1 = row0 + 8;
             if (row0 < RowCount) {
                 int q_head = 0, token = 0;
-                context_query_row_to_qt(row0, kv_head, q_head, token);
-                partial_m[context_query_stat_index<Tokens>(q_head, token, split)] = m0;
-                partial_l[context_query_stat_index<Tokens>(q_head, token, split)] = l0;
+                context_query_row_to_qt<Geo>(row0, kv_head, q_head, token);
+                partial_m[context_query_stat_index<Tokens, Geo>(q_head, token, split)] = m0;
+                partial_l[context_query_stat_index<Tokens, Geo>(q_head, token, split)] = l0;
             }
             if (row1 < RowCount) {
                 int q_head = 0, token = 0;
-                context_query_row_to_qt(row1, kv_head, q_head, token);
-                partial_m[context_query_stat_index<Tokens>(q_head, token, split)] = m1;
-                partial_l[context_query_stat_index<Tokens>(q_head, token, split)] = l1;
+                context_query_row_to_qt<Geo>(row1, kv_head, q_head, token);
+                partial_m[context_query_stat_index<Tokens, Geo>(q_head, token, split)] = m1;
+                partial_l[context_query_stat_index<Tokens, Geo>(q_head, token, split)] = l1;
             }
         }
     }
@@ -477,13 +633,13 @@ __device__ __forceinline__ void context_query_split_partial_body(
         const int row1 = row0 + 8;
         if (row0 < RowCount) {
             int q_head = 0, token = 0;
-            context_query_row_to_qt(row0, kv_head, q_head, token);
+            context_query_row_to_qt<Geo>(row0, kv_head, q_head, token);
             if constexpr (DirectOutput) {
                 const float inv_l = l0 > 0.0f ? 1.0f / l0 : 0.0f;
-                const auto dst    = context_query_q_index(q_head, d0, token);
+                const auto dst    = context_query_q_index<Geo>(q_head, d0, token);
                 store_vec(&out[dst], pack_bf16x2(acc[n][0] * inv_l, acc[n][1] * inv_l));
             } else {
-                const auto dst = context_query_partial_index<Tokens>(q_head, d0, token, split);
+                const auto dst = context_query_partial_index<Tokens, Geo>(q_head, d0, token, split);
                 if constexpr (std::is_same_v<Partial, float>)
                     store_vec(&partial_acc[dst], make_float2(acc[n][0], acc[n][1]));
                 else
@@ -492,13 +648,13 @@ __device__ __forceinline__ void context_query_split_partial_body(
         }
         if (row1 < RowCount) {
             int q_head = 0, token = 0;
-            context_query_row_to_qt(row1, kv_head, q_head, token);
+            context_query_row_to_qt<Geo>(row1, kv_head, q_head, token);
             if constexpr (DirectOutput) {
                 const float inv_l = l1 > 0.0f ? 1.0f / l1 : 0.0f;
-                const auto dst    = context_query_q_index(q_head, d0, token);
+                const auto dst    = context_query_q_index<Geo>(q_head, d0, token);
                 store_vec(&out[dst], pack_bf16x2(acc[n][2] * inv_l, acc[n][3] * inv_l));
             } else {
-                const auto dst = context_query_partial_index<Tokens>(q_head, d0, token, split);
+                const auto dst = context_query_partial_index<Tokens, Geo>(q_head, d0, token, split);
                 if constexpr (std::is_same_v<Partial, float>)
                     store_vec(&partial_acc[dst], make_float2(acc[n][2], acc[n][3]));
                 else
@@ -508,7 +664,7 @@ __device__ __forceinline__ void context_query_split_partial_body(
     }
 }
 
-template <int Tokens, int KeyBlock>
+template <int Tokens, int KeyBlock, class Geo = ContextQueryD128>
 __device__ __forceinline__ void
 context_query_reduce_body(const __nv_bfloat16* __restrict__ partial_acc,
                           const float* __restrict__ partial_m, const float* __restrict__ partial_l,
@@ -519,17 +675,16 @@ context_query_reduce_body(const __nv_bfloat16* __restrict__ partial_acc,
     const int token  = static_cast<int>(blockIdx.y);
     const int batch  = static_cast<int>(blockIdx.z);
     const int tid    = static_cast<int>(threadIdx.x);
-    constexpr std::int64_t QueryElements =
-        static_cast<std::int64_t>(kContextQueryHeadDim) * kContextQueryQHeads * Tokens;
-    constexpr std::int64_t StatElements = static_cast<std::int64_t>(kContextQueryQHeads) * Tokens;
+    constexpr std::int64_t QueryElements = static_cast<std::int64_t>(Geo::D) * Geo::Hq * Tokens;
+    constexpr std::int64_t StatElements  = static_cast<std::int64_t>(Geo::Hq) * Tokens;
     partial_acc += QueryElements * split_capacity * batch;
     partial_m += StatElements * split_capacity * batch;
     partial_l += StatElements * split_capacity * batch;
     out += QueryElements * batch;
-    if (q_head >= kContextQueryQHeads || token >= Tokens) { return; }
+    if (q_head >= Geo::Hq || token >= Tokens) { return; }
     if (length < 0 || length > max_context || token >= valid_columns[batch]) {
-        if (tid < kContextQueryHeadDim) {
-            out[context_query_q_index(q_head, tid, token)] = __float2bfloat16(0.0f);
+        if (tid < Geo::D) {
+            out[context_query_q_index<Geo>(q_head, tid, token)] = __float2bfloat16(0.0f);
         }
         return;
     }
@@ -540,7 +695,7 @@ context_query_reduce_body(const __nv_bfloat16* __restrict__ partial_acc,
 
     float local_m = -CUDART_INF_F;
     for (int split = tid; split < active_splits; split += blockDim.x) {
-        local_m = fmaxf(local_m, partial_m[context_query_stat_index<Tokens>(q_head, token, split)]);
+        local_m = fmaxf(local_m, partial_m[context_query_stat_index<Tokens, Geo>(q_head, token, split)]);
     }
     reduce[tid] = local_m;
     __syncthreads();
@@ -553,7 +708,7 @@ context_query_reduce_body(const __nv_bfloat16* __restrict__ partial_acc,
 
     float local_l = 0.0f;
     for (int split = tid; split < active_splits; split += blockDim.x) {
-        const auto idx = context_query_stat_index<Tokens>(q_head, token, split);
+        const auto idx = context_query_stat_index<Tokens, Geo>(q_head, token, split);
         local_l += partial_l[idx] * expf(partial_m[idx] - global_m);
     }
     reduce[tid] = local_l;
@@ -564,19 +719,19 @@ context_query_reduce_body(const __nv_bfloat16* __restrict__ partial_acc,
     }
     const float global_l = reduce[0];
 
-    if (tid < kContextQueryHeadDim) {
+    if (tid < Geo::D) {
         float numerator = 0.0f;
         for (int split = 0; split < active_splits; ++split) {
-            const auto stat    = context_query_stat_index<Tokens>(q_head, token, split);
+            const auto stat    = context_query_stat_index<Tokens, Geo>(q_head, token, split);
             const float weight = expf(partial_m[stat] - global_m);
             numerator +=
                 __bfloat162float(
-                    partial_acc[context_query_partial_index<Tokens>(q_head, tid, token, split)]) *
+                    partial_acc[context_query_partial_index<Tokens, Geo>(q_head, tid, token, split)]) *
                 weight;
         }
         const float value = global_l > 0.0f ? numerator / global_l : 0.0f;
-        out[context_query_q_index(q_head, tid, token)] = __float2bfloat16(value);
+        out[context_query_q_index<Geo>(q_head, tid, token)] = __float2bfloat16(value);
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 // Concrete allocator quantities remain inside the Program boundary. These values describe one
 // complete physical state or transition; ResourceManager never observes or reconstructs them.
@@ -74,4 +74,4 @@ struct PressureTargetProjection {
     operator==(const PressureTargetProjection&, const PressureTargetProjection&) noexcept = default;
 };
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

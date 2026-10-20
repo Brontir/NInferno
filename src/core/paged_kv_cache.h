@@ -11,11 +11,29 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
-namespace ninfer {
+namespace ninferno {
 
 inline constexpr std::int32_t kPagedKVPageSize = 64;
+
+// The pages that hold `tokens` tokens (none for none).
+[[nodiscard]] inline constexpr std::uint32_t paged_kv_pages(std::uint32_t tokens) noexcept {
+    return tokens == 0 ? 0U : 1U + (tokens - 1U) / static_cast<std::uint32_t>(kPagedKVPageSize);
+}
+
+// The pages of a cache of `capacity` tokens; a cache holds at least one.
+[[nodiscard]] inline std::uint32_t paged_kv_capacity_pages(std::uint32_t capacity) {
+    if (capacity == 0) { throw std::invalid_argument("Paged KV capacity must be positive"); }
+    return paged_kv_pages(capacity);
+}
+
+// The keys of one block-table row (block_tables [pages per row, rows]): every call of a session
+// reads rows of this width (CausalKvPartition::aligned_to_row).
+inline int paged_kv_row_keys(const Tensor& block_tables) {
+    return static_cast<int>(block_tables.ne[0]) * kPagedKVPageSize;
+}
 
 /** Non-owning, single-sequence view consumed by growing-cache Ops. */
 struct PagedKVLayerView {
@@ -92,8 +110,6 @@ struct DeviceKVPagePoolLayout {
 struct KVExecutionTableLayout {
     KVExecutionTableSpec spec;
     TensorRegion block_tables;
-
-    [[nodiscard]] std::size_t metadata_bytes() const noexcept;
 };
 
 [[nodiscard]] DeviceKVPagePoolLayout plan_device_kv_page_pool(LayoutBuilder& builder,
@@ -227,15 +243,15 @@ public:
                        std::vector<DeviceKVPageLease>& source);
     void dematerialize_one(DeviceKVPageReservation& reservation, DeviceKVPageLease&& page);
 
-    void zero_pages(std::span<const DeviceKVPageHandle> pages, cudaStream_t stream = nullptr) const;
+    void zero_pages(std::span<const DeviceKVPageHandle> pages, cudaStream_t stream) const;
     void copy_page(DeviceKVPageHandle source, DeviceKVPageHandle destination,
-                   cudaStream_t stream = nullptr) const;
+                   cudaStream_t stream) const;
 
     void copy_to_host(std::span<const DeviceKVPageHandle> source, HostKVAllocationView destination,
-                      cudaStream_t stream = nullptr) const;
+                      cudaStream_t stream) const;
     void copy_from_host(HostKVAllocationConstView source,
                         std::span<const DeviceKVPageHandle> destination,
-                        cudaStream_t stream = nullptr) const;
+                        cudaStream_t stream) const;
 
 private:
     friend class DeviceKVPageLease;
@@ -332,6 +348,7 @@ class KVExecutionTablePool {
 public:
     KVExecutionTablePool(DeviceSpan backing, const KVExecutionTableLayout& layout,
                          const DeviceKVPagePool& pages);
+    ~KVExecutionTablePool();
 
     KVExecutionTablePool(const KVExecutionTablePool&)            = delete;
     KVExecutionTablePool& operator=(const KVExecutionTablePool&) = delete;
@@ -343,11 +360,11 @@ public:
     [[nodiscard]] KVExecutionRowLease acquire(std::int32_t row);
 
     void publish(KVExecutionRowHandle row, std::uint32_t logical_begin,
-                 std::span<const DeviceKVPageHandle> pages, cudaStream_t stream = nullptr);
+                 std::span<const DeviceKVPageHandle> pages, cudaStream_t stream);
     void publish(KVExecutionRowHandle row, std::uint32_t logical_begin,
-                 std::span<const DeviceKVPageLease> pages, cudaStream_t stream = nullptr);
+                 std::span<const DeviceKVPageLease> pages, cudaStream_t stream);
     void publish_repeated(KVExecutionRowHandle row, DeviceKVPageHandle page, std::uint32_t count,
-                          cudaStream_t stream = nullptr);
+                          cudaStream_t stream);
 
     [[nodiscard]] Tensor row(KVExecutionRowHandle handle) const;
 
@@ -356,8 +373,22 @@ public:
 private:
     friend class KVExecutionRowLease;
 
+    // A publication's H2D copy reads its row's pinned shadow slice when the stream reaches it,
+    // not when it is enqueued. The fence records the entries a row's queued copies still read, so
+    // a later publication - by the same owner or by the next owner of a released row - waits for
+    // them before rewriting any of those entries. Disjoint entries are written without waiting.
+    struct RowFence {
+        cudaEvent_t event   = nullptr;
+        cudaStream_t stream = nullptr;
+        std::uint32_t begin = 0;
+        std::uint32_t end   = 0;
+    };
+
     [[nodiscard]] bool valid_handle(KVExecutionRowHandle handle) const noexcept;
     bool release_row(std::int32_t row, std::uint32_t generation) noexcept;
+    [[nodiscard]] std::int32_t* writable_shadow(KVExecutionRowHandle row,
+                                                std::uint32_t logical_begin, std::size_t count,
+                                                cudaStream_t stream);
     void publish_indices(KVExecutionRowHandle row, std::uint32_t logical_begin,
                          std::span<const std::int32_t> indices, cudaStream_t stream);
 
@@ -367,6 +398,7 @@ private:
     PinnedHostBuffer host_shadow_;
     std::vector<bool> row_in_use_;
     std::vector<std::uint32_t> row_generations_;
+    std::vector<RowFence> row_fences_;
 };
 
-} // namespace ninfer
+} // namespace ninferno

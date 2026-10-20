@@ -1,15 +1,15 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <filesystem>
 #include <string>
 
-namespace ninfer::product {
+namespace ninferno::product {
 
 [[nodiscard]] PromptInput prompt_from_text(std::string text, std::optional<bool> enable_thinking);
 [[nodiscard]] PromptInput prompt_from_messages(const std::filesystem::path& path,
                                                std::optional<bool> enable_thinking,
                                                bool vision_enabled);
 
-} // namespace ninfer::product
+} // namespace ninferno::product

@@ -3,11 +3,12 @@
 // Build:
 //   nvcc -O3 -std=c++17 -arch=sm_120a tools/hbm_bandwidth_probe.cu -o hbm_bandwidth_probe
 //
-// The "bus GB/s" column counts physical streaming traffic: N bytes for a
+// The "bus GB/s" column counts logical streaming traffic: N bytes for a
 // read or write and 2N bytes for a copy (N read + N written). This is the
-// column to compare with the advertised memory-bus bandwidth.
+// rate to compare with the advertised bandwidth; it is not a measured DRAM counter.
 
 #include <cuda_runtime.h>
+#include "../bench/common/fixture_data.cuh"
 
 #include <algorithm>
 #include <cmath>
@@ -33,7 +34,6 @@
 namespace {
 
 constexpr int kThreads                 = 256;
-constexpr double kDefaultPeakGBps      = 1792.0;
 constexpr double kDefaultTrialSeconds  = 0.25;
 constexpr int kDefaultTrials           = 5;
 constexpr std::size_t kDefaultMaxBytes = std::size_t{4} << 30;
@@ -42,7 +42,7 @@ struct Options {
     double size_gib  = 0.0; // 0 selects min(4 GiB, 20% of currently free memory).
     double seconds   = kDefaultTrialSeconds;
     int trials       = kDefaultTrials;
-    double peak_gbps = kDefaultPeakGBps;
+    double peak_gbps = 0.0; // 0 derives it from the device: memory clock x bus width.
 };
 
 struct Result {
@@ -98,7 +98,11 @@ private:
 __global__ void write_u128_kernel(uint4* __restrict__ dst, std::size_t count, uint4 value) {
     const std::size_t tid    = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const std::size_t stride = static_cast<std::size_t>(gridDim.x) * blockDim.x;
-    for (std::size_t i = tid; i < count; i += stride) { dst[i] = value; }
+    for (std::size_t i = tid; i < count; i += stride) {
+        const auto offset = static_cast<std::uint32_t>(i);
+        dst[i] = make_uint4(value.x ^ (offset * 0x9e3779b9U), value.y ^ (offset * 0x85ebca6bU),
+                            value.z ^ (offset * 0xc2b2ae35U), value.w ^ (offset * 0x27d4eb2fU));
+    }
 }
 
 // The block checksum makes every load observable while adding only one tiny
@@ -187,9 +191,10 @@ void print_help(const char* argv0) {
                 "  --size-gib N    bytes per large buffer (default: min(4, 20%% free))\n"
                 "  --seconds N     target duration of each timed trial (default: %.2f)\n"
                 "  --trials N      timed trials per method (default: %d)\n"
-                "  --peak-gbps N   advertised bus bandwidth (default: %.0f)\n"
+                "  --peak-gbps N   advertised bus bandwidth (default: the device's\n"
+                "                  memory clock x bus width)\n"
                 "  --help          show this text\n",
-                argv0, kDefaultTrialSeconds, kDefaultTrials, kDefaultPeakGBps);
+                argv0, kDefaultTrialSeconds, kDefaultTrials);
 }
 
 Options parse_options(int argc, char** argv) {
@@ -281,12 +286,21 @@ void print_result(const Result& result) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const Options options = parse_options(argc, argv);
+    Options options = parse_options(argc, argv);
 
     int device = 0;
     CUDA_CHECK(cudaGetDevice(&device));
     cudaDeviceProp prop{};
     CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+    if (options.peak_gbps <= 0.0) {
+        // cudaDeviceProp lost its memory clock and bus fields in CUDA 13; the attributes remain.
+        // GDDR moves two transfers per reported memory clock across the bus.
+        int memory_clock_khz = 0;
+        int bus_bits         = 0;
+        CUDA_CHECK(cudaDeviceGetAttribute(&memory_clock_khz, cudaDevAttrMemoryClockRate, device));
+        CUDA_CHECK(cudaDeviceGetAttribute(&bus_bits, cudaDevAttrGlobalMemoryBusWidth, device));
+        options.peak_gbps = 2.0 * memory_clock_khz * 1.0e3 * (bus_bits / 8) / 1.0e9;
+    }
 
     std::size_t free_bytes  = 0;
     std::size_t total_bytes = 0;
@@ -342,10 +356,7 @@ int main(int argc, char** argv) {
     cudaStream_t stream{};
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-    const uint4 source_value = make_uint4(0x13579bdfu, 0x2468ace0u, 0xdeadbeefu, 0x10203040u);
-    write_u128_kernel<<<write_grid, kThreads, 0, stream>>>(source.get(), vector_count,
-                                                           source_value);
-    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(ninferno::bench::fixture::fill_bytes(source.get(), bytes, 101U, stream));
 
     // Long preconditioning phase: make the first reported method independent
     // of idle P-state ramp-up.

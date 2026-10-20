@@ -8,12 +8,16 @@ import subprocess
 import sys
 import unittest
 
-from jinja2.sandbox import ImmutableSandboxedEnvironment
+try:
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+except ImportError:
+    print("SKIP chat templates: the Python jinja2 package is not installed")
+    sys.exit(77)
 
 ROOT = Path(__file__).resolve().parents[2]
-RENDERER = ROOT / "build" / "tests" / "ninfer_jinja_test"
+RENDERER = ROOT / "build" / "tests" / "ninferno_jinja_test"
 SOURCES = {
-    version: (ROOT / "tools" / "chat_templates" / f"{version}.jinja").read_text()
+    version: (ROOT / "tools" / "chat_templates" / f"{version}.jinja").read_text(encoding="utf-8")
     for version in ("qwen3_6", "qwen3_8")
 }
 

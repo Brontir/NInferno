@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kHidden           = 2048;
@@ -21,12 +21,35 @@ constexpr int kRouterRows       = 257;
 constexpr int kTopK             = 8;
 constexpr int kRouterPartitions = 4;
 constexpr int kRouterWarps      = 4;
+// The widest window whose selection S1's last block can run instead of S2 (one warp a token).
+constexpr int kS1SelectMax = 8;
 
-template <int Tokens>
-__global__ void sparse_moe_small_t_s1_kernel(const __nv_bfloat16* __restrict__ x,
-                                             const __nv_bfloat16* __restrict__ router,
-                                             float* __restrict__ partial_scores) {
+// A token's router score of one row: its four partitions, summed in partition order. Read
+// through L2, since in S1's last block other blocks of the same grid wrote them.
+__device__ __forceinline__ float token_router_score(const float* partial_scores, int token,
+                                                    int row) {
+    float sum = 0.0f;
+#pragma unroll
+    for (int partition = 0; partition < kRouterPartitions; ++partition) {
+        sum += __ldcg(partial_scores +
+                      (static_cast<std::int64_t>(token) * kRouterRows + row) * kRouterPartitions +
+                      partition);
+    }
+    return sum;
+}
+
+// Ticket for the last-arriving S1 block, as D1's: atomicInc wraps at gridDim.x-1, so the counter
+// returns to zero on its own.
+__device__ unsigned int g_sparse_moe_small_t_route_ticket = 0;
+
+template <int Tokens, bool Select>
+__global__ void
+sparse_moe_small_t_s1_kernel(const __nv_bfloat16* __restrict__ x,
+                             const __nv_bfloat16* __restrict__ router,
+                             float* __restrict__ partial_scores, int* __restrict__ token_ids,
+                             float* __restrict__ token_alpha, float* __restrict__ shared_scale) {
     static_assert(Tokens >= 1 && Tokens <= kSparseMoeSmallTMax);
+    static_assert(!Select || Tokens <= kS1SelectMax);
     __shared__ float partial[kRouterWarps][Tokens];
     if (threadIdx.x == 0) { pdl::trigger_dependents(); }
     const int row       = static_cast<int>(blockIdx.x) / kRouterPartitions;
@@ -71,6 +94,35 @@ __global__ void sparse_moe_small_t_s1_kernel(const __nv_bfloat16* __restrict__ x
                            partition] = sum;
         }
     }
+
+    if constexpr (Select) {
+        // S2's selection used to be a launch of its own, a graph node that costs more than its
+        // work where no programmatic launch hides it. The block that arrives last runs it instead,
+        // one warp a token: the same scores summed in the same order and the same routine, so the
+        // routing is bit-identical.
+        __shared__ float scores[kRouterWarps][kRouterRows];
+        __shared__ float selected_logits[kRouterWarps][kTopK];
+        __shared__ bool is_last_block;
+        __threadfence();
+        __syncthreads();
+        if (threadIdx.x == 0) {
+            const unsigned int ticket =
+                atomicInc(&g_sparse_moe_small_t_route_ticket, gridDim.x - 1u);
+            is_last_block = ticket == gridDim.x - 1u;
+        }
+        __syncthreads();
+        if (!is_last_block) { return; }
+        for (int token = warp; token < Tokens; token += kRouterWarps) {
+            for (int r = lane; r < kRouterRows; r += 32) {
+                scores[warp][r] = token_router_score(partial_scores, token, r);
+            }
+            __syncwarp();
+            sparse_moe_select_top8_warp(scores[warp], token_ids + token * kTopK,
+                                        token_alpha + token * kTopK, shared_scale + token,
+                                        selected_logits[warp]);
+            __syncwarp();
+        }
+    }
 }
 
 // S2 runs one CTA per token: the router scores of a single token take 1 060 B of shared
@@ -88,14 +140,7 @@ __global__ void sparse_moe_small_t_s2_kernel(const float* __restrict__ partial_s
     if (tid == 0) { pdl::trigger_dependents(); }
     pdl::wait_for_dependencies();
     for (int row = tid; row < kRouterRows; row += kS2Threads) {
-        float sum = 0.0f;
-#pragma unroll
-        for (int partition = 0; partition < kRouterPartitions; ++partition) {
-            sum += partial_scores[((static_cast<std::int64_t>(token) * kRouterRows + row) *
-                                   kRouterPartitions) +
-                                  partition];
-        }
-        scores[row] = sum;
+        scores[row] = token_router_score(partial_scores, token, row);
     }
     __syncthreads();
 
@@ -105,12 +150,14 @@ __global__ void sparse_moe_small_t_s2_kernel(const float* __restrict__ partial_s
     }
 }
 
-template <int Tokens>
+template <int Tokens, bool Select>
 void launch_s1(const __nv_bfloat16* x, const __nv_bfloat16* router, float* partial_scores,
-               cudaStream_t stream) {
-    sparse_moe_small_t_s1_kernel<Tokens>
-        <<<kRouterRows * kRouterPartitions, kRouterWarps * 32, 0, stream>>>(x, router,
-                                                                            partial_scores);
+               const SparseMoeSmallTWorkspace& workspace, cudaStream_t stream) {
+    sparse_moe_small_t_s1_kernel<Tokens, Select>
+        <<<kRouterRows * kRouterPartitions, kRouterWarps * 32, 0, stream>>>(
+            x, router, partial_scores, static_cast<int*>(workspace.token_ids.data),
+            static_cast<float*>(workspace.token_alpha.data),
+            static_cast<float*>(workspace.shared_scale.data));
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -290,17 +337,29 @@ void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
 void sparse_moe_small_t_launch(const Tensor& x, const SparseMoeWeights& weights,
                                Tensor& destination, const SparseMoeSmallTPlan& plan,
                                const SparseMoeSmallTWorkspace& workspace, cudaStream_t stream) {
+    // S1's last block selects for a window of at most kS1SelectMax tokens: one launch fewer on
+    // every card, with or without programmatic launch (greedy A/B, the same text in every run).
+    const bool select = plan.tokens <= kS1SelectMax;
     dispatch_tokens(plan.tokens, [&]<int Tokens>() {
-        launch_s1<Tokens>(static_cast<const __nv_bfloat16*>(x.data),
-                          static_cast<const __nv_bfloat16*>(weights.router_shared_gate.qdata),
-                          static_cast<float*>(workspace.scratch.data), stream);
+        const auto* input  = static_cast<const __nv_bfloat16*>(x.data);
+        const auto* router = static_cast<const __nv_bfloat16*>(weights.router_shared_gate.qdata);
+        auto* partial      = static_cast<float*>(workspace.scratch.data);
+        if constexpr (Tokens <= kS1SelectMax) {
+            if (select) {
+                launch_s1<Tokens, true>(input, router, partial, workspace, stream);
+                return;
+            }
+        }
+        launch_s1<Tokens, false>(input, router, partial, workspace, stream);
     });
-    launch_s2(static_cast<const float*>(workspace.scratch.data),
-              static_cast<int*>(workspace.token_ids.data),
-              static_cast<float*>(workspace.token_alpha.data),
-              static_cast<float*>(workspace.shared_scale.data), plan.tokens, stream);
+    if (!select) {
+        launch_s2(static_cast<const float*>(workspace.scratch.data),
+                  static_cast<int*>(workspace.token_ids.data),
+                  static_cast<float*>(workspace.token_alpha.data),
+                  static_cast<float*>(workspace.shared_scale.data), plan.tokens, stream);
+    }
     launch_s3_tiled(x, weights, plan, workspace, stream);
     launch_s4_tiled(weights, destination, plan, workspace, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

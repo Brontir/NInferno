@@ -12,7 +12,7 @@
 #include <string_view>
 #include <utility>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 using Json = nlohmann::json;
@@ -36,6 +36,11 @@ struct CompletionTimings {
     double predicted_per_second    = 0.0;
     std::uint64_t draft_n          = 0;
     std::uint64_t draft_n_accepted = 0;
+    // Constrained decoding only: mask rows computed on the host and the host time they took.
+    std::uint64_t constraint_masked_n = 0;
+    double constraint_mask_ms         = 0.0;
+    // --spec auto: the speculation the request ran (config, selection, floor, ...).
+    Json speculation;
 };
 
 double finite_nonnegative(double value) {
@@ -85,26 +90,70 @@ Json timings_json(const CompletionTimings& timings) {
         output["draft_n"]          = timings.draft_n;
         output["draft_n_accepted"] = timings.draft_n_accepted;
     }
+    if (!timings.speculation.is_null()) { output["speculation"] = timings.speculation; }
+    if (timings.constraint_masked_n != 0) {
+        output["constraint_masked_n"] = timings.constraint_masked_n;
+        output["constraint_mask_ms"]  = timings.constraint_mask_ms;
+    }
     return output;
 }
 
 CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
-    return make_completion_timings(
+    CompletionTimings timings = make_completion_timings(
         static_cast<std::uint32_t>(std::max(0, outcome.prompt_tokens)),
         outcome.metrics.prefix_cache_hit_tokens,
         static_cast<std::uint32_t>(std::max(0, outcome.completion_tokens)),
         outcome.metrics.prompt_wall_seconds * 1000.0,
         outcome.metrics.generation_wall_seconds * 1000.0, outcome.metrics.speculative_draft_tokens,
         outcome.metrics.speculative_accepted_tokens);
+    timings.constraint_masked_n = outcome.metrics.constraint_masked_positions;
+    if (!outcome.metrics.speculative_config.empty()) {
+        timings.speculation =
+            Json{{"config", outcome.metrics.speculative_config},
+                 {"selection", outcome.metrics.speculative_selection},
+                 {"floor", outcome.metrics.speculative_floor},
+                 {"watchdog_tripped", outcome.metrics.speculative_watchdog_tripped},
+                 {"step_downs", outcome.metrics.speculative_step_downs},
+                 {"final_draft_window", outcome.metrics.speculative_final_draft_window},
+                 {"plain_steps", outcome.metrics.speculative_plain_steps},
+                 {"wide_rounds", outcome.metrics.speculative_wide_rounds},
+                 {"ungraphed_rounds", outcome.metrics.speculative_ungraphed},
+                 {"capped_rounds", outcome.metrics.speculative_capped_rounds},
+                 {"copy_rounds", outcome.metrics.speculative_copy_rounds},
+                 {"copy_accepted_tokens", outcome.metrics.speculative_copy_accepted},
+                 {"shared_trip_deferrals", outcome.metrics.speculative_trips_held},
+                 {"load_plain", outcome.metrics.speculative_load_plain}};
+    }
+    timings.constraint_mask_ms =
+        finite_nonnegative(outcome.metrics.constraint_mask_host_seconds * 1000.0);
+    return timings;
 }
 
 CompletionTimings observation_timings(std::uint32_t prompt_tokens, std::uint32_t cached_tokens,
-                                      const ninfer::GenerationTimingObservation& observation) {
+                                      const ninferno::GenerationTimingObservation& observation) {
     constexpr double kNanosecondsToMilliseconds = 1.0e-6;
     return make_completion_timings(
         prompt_tokens, cached_tokens, observation.generated_tokens,
         static_cast<double>(observation.prompt_elapsed_ns) * kNanosecondsToMilliseconds,
         static_cast<double>(observation.generation_elapsed_ns) * kNanosecondsToMilliseconds);
+}
+
+// Prompt-only live snapshot for prompt-progress chunks: no output token is committed yet, so the
+// predicted fields stay zero and the prompt rates span the processed suffix, not the full prompt.
+CompletionTimings progress_timings(std::uint32_t total_tokens, std::uint32_t cached_tokens,
+                                   std::uint32_t processed_tokens, std::uint64_t elapsed_ns) {
+    constexpr double kNanosecondsToMilliseconds = 1.0e-6;
+    CompletionTimings timings;
+    timings.cache_n        = std::min(cached_tokens, total_tokens);
+    timings.prompt_n       = total_tokens - timings.cache_n;
+    const double prompt_ms =
+        finite_nonnegative(static_cast<double>(elapsed_ns) * kNanosecondsToMilliseconds);
+    const std::uint32_t processed_suffix =
+        processed_tokens > timings.cache_n ? processed_tokens - timings.cache_n : 0;
+    timings.prompt_ms           = prompt_ms;
+    timings.prompt_per_token_ms = milliseconds_per_token(processed_suffix, prompt_ms);
+    timings.prompt_per_second   = tokens_per_second(processed_suffix, prompt_ms);
+    return timings;
 }
 
 Json prompt_progress_json(std::uint32_t total, std::uint32_t cached, std::uint32_t processed,
@@ -115,39 +164,42 @@ Json prompt_progress_json(std::uint32_t total, std::uint32_t cached, std::uint32
                 {"time_ms", elapsed_ns / 1000000ULL}};
 }
 
-const char* finish_reason(ninfer::FinishReason reason) {
+const char* finish_reason(ninferno::FinishReason reason) {
     switch (reason) {
-    case ninfer::FinishReason::OutputLimit:
-    case ninfer::FinishReason::ContextCapacity:
+    case ninferno::FinishReason::OutputLimit:
+    case ninferno::FinishReason::ContextCapacity:
+    case ninferno::FinishReason::Repetition:
         return "length";
-    case ninfer::FinishReason::None:
-    case ninfer::FinishReason::StopToken:
-    case ninfer::FinishReason::StopString:
-    case ninfer::FinishReason::Cancelled:
+    case ninferno::FinishReason::None:
+    case ninferno::FinishReason::StopToken:
+    case ninferno::FinishReason::StopString:
+    case ninferno::FinishReason::Cancelled:
         return "stop";
     }
     return "stop";
 }
 
 std::vector<ToolCall>
-materialize_tool_calls(const std::vector<ninfer::GeneratedToolCall>& generated) {
-    std::vector<ToolCall> calls;
-    calls.reserve(generated.size());
-    for (const ninfer::GeneratedToolCall& call : generated) {
-        calls.push_back(ToolCall{.id             = new_openai_chat_tool_call_id(),
-                                 .name           = call.name,
-                                 .arguments_json = call.arguments_json});
-    }
-    return calls;
+materialize_tool_calls(const std::vector<ninferno::GeneratedToolCall>& generated) {
+    return tool_calls_of(generated, [](std::size_t) { return new_openai_chat_tool_call_id(); });
 }
 
-Json tool_calls_json(const std::vector<ToolCall>& calls, bool include_index) {
+Json tool_calls_json(const std::vector<ToolCall>& calls, bool include_index,
+                     const std::vector<std::string>& custom_tools) {
     Json output = Json::array();
     for (std::size_t index = 0; index < calls.size(); ++index) {
         const ToolCall& call = calls[index];
-        Json value           = {{"id", call.id},
-                                {"type", "function"},
-                                {"function", Json{{"name", call.name}, {"arguments", call.arguments_json}}}};
+        const bool custom =
+            std::find(custom_tools.begin(), custom_tools.end(), call.name) != custom_tools.end();
+        Json value =
+            custom
+                ? Json{{"id", call.id},
+                       {"type", "custom"},
+                       {"custom", Json{{"name", call.name},
+                                       {"input", custom_tool_call_input(call.arguments_json)}}}}
+                : Json{{"id", call.id},
+                       {"type", "function"},
+                       {"function", Json{{"name", call.name}, {"arguments", call.arguments_json}}}};
         if (include_index) { value["index"] = static_cast<int>(index); }
         output.push_back(std::move(value));
     }
@@ -199,9 +251,9 @@ std::string chunk(const OpenAIChatResponseIdentity& identity, Json delta, Json f
 }
 
 std::string usage_chunk(const OpenAIChatResponseIdentity& identity, const CompletionUsage& usage,
-                        Json timings) {
+                        Json timings, bool with_choice) {
     Json payload       = base_payload(identity, "chat.completion.chunk");
-    payload["choices"] = Json::array();
+    payload["choices"] = with_choice ? Json::array({stream_choice(Json::object())}) : Json::array();
     payload["usage"]   = usage_json(usage);
     payload["timings"] = std::move(timings);
     return event(std::move(payload));
@@ -233,7 +285,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
     if (has_tool_calls) {
         const std::vector<ToolCall> calls = materialize_tool_calls(outcome.tool_calls);
         message["content"]    = outcome.text.empty() ? Json(nullptr) : Json(outcome.text);
-        message["tool_calls"] = tool_calls_json(calls, false);
+        message["tool_calls"]             = tool_calls_json(calls, false, identity.custom_tools);
     }
 
     Json payload       = base_payload(identity, "chat.completion");
@@ -249,17 +301,36 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
 }
 
 OpenAIChatStream::OpenAIChatStream(OpenAIChatResponseIdentity identity, bool include_usage,
-                                   bool timings_per_token, bool return_progress)
+                                   bool timings_per_token, bool return_progress,
+                                   bool usage_chunk_choice)
     : identity_(std::move(identity)), include_usage_(include_usage),
-      timings_per_token_(timings_per_token), return_progress_(return_progress) {}
+      timings_per_token_(timings_per_token), return_progress_(return_progress),
+      usage_chunk_choice_(usage_chunk_choice) {}
 
+// The stream opens with an SSE comment, which sends the headers at once and which clients skip.
+// The assistant role travels in the first event's delta: with the first token (vLLM, SGLang and
+// llama.cpp send it then), or with the first prompt-progress chunk when the client asked for
+// progress. A role chunk before prefill made clients that time the first chunk (llama-benchy)
+// report prefill orders of magnitude too fast.
 std::string OpenAIChatStream::start() {
     if (started_ || finished_) { throw std::logic_error("OpenAI Chat stream already started"); }
     started_ = true;
-    return chunk(identity_, Json{{"role", "assistant"}, {"content", ""}}, nullptr, include_usage_);
+    return ": stream\n\n";
 }
 
-void OpenAIChatStream::note_start(const ninfer::GenerationStart& start) {
+Json OpenAIChatStream::opening(Json delta) {
+    if (role_sent_) { return delta; }
+    role_sent_    = true;
+    delta["role"] = "assistant";
+    return delta;
+}
+
+std::string OpenAIChatStream::stream_event(Json delta, Json finish_reason, Json timings) {
+    return chunk(identity_, opening(std::move(delta)), std::move(finish_reason), include_usage_,
+                 std::move(timings));
+}
+
+void OpenAIChatStream::note_start(const ninferno::GenerationStart& start) {
     if (!started_ || admitted_ || finished_ ||
         start.reused_prompt_tokens > start.prompt.prompt_tokens) {
         throw std::logic_error("invalid OpenAI Chat generation-start state");
@@ -277,14 +348,18 @@ std::string OpenAIChatStream::initial_prompt_progress() {
     last_progress_tokens_     = cached_tokens_;
     last_progress_elapsed_ns_ = 0;
     Json payload              = base_payload(identity_, "chat.completion.chunk");
-    payload["choices"]        = Json::array({stream_choice(Json::object())});
+    payload["choices"]        = Json::array({stream_choice(opening(Json::object()))});
     if (include_usage_) { payload["usage"] = nullptr; }
     payload["prompt_progress"] =
         prompt_progress_json(prompt_tokens_, cached_tokens_, cached_tokens_, 0);
+    if (timings_per_token_) {
+        payload["timings"] =
+            timings_json(progress_timings(prompt_tokens_, cached_tokens_, cached_tokens_, 0));
+    }
     return event(std::move(payload));
 }
 
-std::string OpenAIChatStream::prompt_progress(const ninfer::PromptProgress& progress) {
+std::string OpenAIChatStream::prompt_progress(const ninferno::PromptProgress& progress) {
     if (!return_progress_ || !started_ || !admitted_ || !progress_started_ || finished_ ||
         progress.total_prompt_tokens != prompt_tokens_ ||
         progress.reused_prompt_tokens != cached_tokens_ ||
@@ -301,10 +376,15 @@ std::string OpenAIChatStream::prompt_progress(const ninfer::PromptProgress& prog
     payload["prompt_progress"] =
         prompt_progress_json(progress.total_prompt_tokens, progress.reused_prompt_tokens,
                              progress.processed_prompt_tokens, progress.elapsed_ns);
+    if (timings_per_token_) {
+        payload["timings"] = timings_json(progress_timings(
+            progress.total_prompt_tokens, progress.reused_prompt_tokens,
+            progress.processed_prompt_tokens, progress.elapsed_ns));
+    }
     return event(std::move(payload));
 }
 
-void OpenAIChatStream::note_timing(const ninfer::GenerationTimingObservation& timing) {
+void OpenAIChatStream::note_timing(const ninferno::GenerationTimingObservation& timing) {
     if (!timings_per_token_ || !started_ || !admitted_ || finished_ ||
         timing.generated_tokens == 0) {
         throw std::logic_error("invalid OpenAI Chat live-timing state");
@@ -330,8 +410,7 @@ std::string OpenAIChatStream::reasoning_delta(const std::string& text) {
         throw std::logic_error("invalid OpenAI Chat reasoning delta state");
     }
     reasoning_ += text;
-    return chunk(identity_, Json{{"reasoning_content", text}}, nullptr, include_usage_,
-                 live_timings_json());
+    return stream_event(Json{{"reasoning_content", text}}, nullptr, live_timings_json());
 }
 
 std::string OpenAIChatStream::content_delta(const std::string& text) {
@@ -340,7 +419,7 @@ std::string OpenAIChatStream::content_delta(const std::string& text) {
     }
     content_started_ = true;
     content_ += text;
-    return chunk(identity_, Json{{"content", text}}, nullptr, include_usage_, live_timings_json());
+    return stream_event(Json{{"content", text}}, nullptr, live_timings_json());
 }
 
 std::vector<std::string> OpenAIChatStream::finish(const GenerationOutcome& outcome) {
@@ -359,30 +438,31 @@ std::vector<std::string> OpenAIChatStream::finish(const GenerationOutcome& outco
         if (content_started_) {
             throw std::logic_error("terminal reasoning appeared after streamed content");
         }
-        events.push_back(chunk(identity_, Json{{"reasoning_content", reasoning_suffix}}, nullptr,
-                               include_usage_, output_timings));
+        events.push_back(
+            stream_event(Json{{"reasoning_content", reasoning_suffix}}, nullptr, output_timings));
     }
     const std::string content_suffix = outcome.text.substr(content_.size());
     if (!content_suffix.empty()) {
-        events.push_back(chunk(identity_, Json{{"content", content_suffix}}, nullptr,
-                               include_usage_, output_timings));
+        events.push_back(stream_event(Json{{"content", content_suffix}}, nullptr, output_timings));
     }
 
     if (!outcome.tool_calls.empty()) {
         const std::vector<ToolCall> calls = materialize_tool_calls(outcome.tool_calls);
-        events.push_back(chunk(identity_, Json{{"tool_calls", tool_calls_json(calls, true)}},
-                               nullptr, include_usage_, output_timings));
-        events.push_back(chunk(identity_, Json::object(), "tool_calls", include_usage_,
-                               include_usage_ ? Json(nullptr) : final_timings));
-    } else {
-        events.push_back(chunk(identity_, Json::object(), finish_reason(outcome.finish_reason),
-                               include_usage_, include_usage_ ? Json(nullptr) : final_timings));
+        events.push_back(
+            stream_event(Json{{"tool_calls", tool_calls_json(calls, true, identity_.custom_tools)}},
+                         nullptr, output_timings));
     }
+    // The terminal event carries the final timings unless the usage chunk that follows does.
+    const char* reason =
+        outcome.tool_calls.empty() ? finish_reason(outcome.finish_reason) : "tool_calls";
+    events.push_back(
+        stream_event(Json::object(), reason, include_usage_ ? Json(nullptr) : final_timings));
     if (include_usage_) {
-        events.push_back(usage_chunk(identity_, usage_from(outcome), final_timings));
+        events.push_back(
+            usage_chunk(identity_, usage_from(outcome), final_timings, usage_chunk_choice_));
     }
     events.emplace_back("data: [DONE]\n\n");
     return events;
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

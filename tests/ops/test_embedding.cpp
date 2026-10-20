@@ -1,5 +1,5 @@
 #include "core/weight.h"
-#include "ninfer/ops/embedding.h"
+#include "ninferno/ops/embedding.h"
 #include "ops/op_tester.h"
 #include "core/device.h"
 #include "core/decode_graph.h"
@@ -13,11 +13,12 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -334,11 +335,16 @@ struct Q8Row {
 
 class Q8Table {
 public:
-    explicit Q8Table(std::int32_t d)
-        : d_(d), groups_(d / kQ8Group), code_plane_bytes_(static_cast<std::size_t>(kVocab) * d),
+    explicit Q8Table(std::int32_t d, std::int32_t vocab = kVocab,
+                     const std::vector<std::int32_t>& fixture_ids = {})
+        : d_(d), vocab_(vocab), groups_(d / kQ8Group),
+          code_plane_bytes_(static_cast<std::size_t>(vocab) * d),
           scale_offset_(align_up(code_plane_bytes_, 256)),
-          payload_(scale_offset_ + static_cast<std::size_t>(kVocab) * groups_ * 2) {
-        for (const std::int32_t row : d == 5120 ? dflash2_fixture_ids() : repeated_ids(8)) {
+          payload_(scale_offset_ + static_cast<std::size_t>(vocab) * groups_ * 2) {
+        const std::vector<std::int32_t> rows = !fixture_ids.empty() ? fixture_ids
+                                               : d == 5120          ? dflash2_fixture_ids()
+                                                                    : repeated_ids(8);
+        for (const std::int32_t row : rows) {
             if (find(row) == nullptr) add_row(row);
         }
     }
@@ -358,11 +364,11 @@ public:
         result.group_size       = kQ8Group;
         result.group            = kQ8Group;
         result.ndim             = 2;
-        result.shape[0]         = kVocab;
+        result.shape[0]         = vocab_;
         result.shape[1]         = d_;
-        result.padded_shape[0]  = kVocab;
+        result.padded_shape[0]  = vocab_;
         result.padded_shape[1]  = d_;
-        result.n                = kVocab;
+        result.n                = vocab_;
         result.k                = d_;
         return result;
     }
@@ -433,6 +439,7 @@ private:
     }
 
     std::int32_t d_;
+    std::int32_t vocab_;
     std::int32_t groups_;
     std::size_t code_plane_bytes_;
     std::size_t scale_offset_;
@@ -640,6 +647,36 @@ int test_q8() {
     return failures;
 }
 
+// Gemma 4 ties its output head to a Q8 table of 262144 rows: [262144,2816] for 26B-A4B and
+// [262144,5376] for 31B. The ids reach past the 248320 rows of the other registered tables, so a
+// launcher that assumed that vocabulary would read the wrong rows or none.
+constexpr std::int32_t kGemma4Vocab = 262144;
+
+std::vector<std::int32_t> gemma4_ids(std::size_t count) {
+    constexpr std::int32_t values[] = {
+        0, 1, 2, 106, 248319, 248320, 255999, kGemma4Vocab - 1, 131072, 7,
+    };
+    std::vector<std::int32_t> result(count);
+    for (std::size_t i = 0; i < count; ++i) result[i] = values[(i * 7) % std::size(values)];
+    return result;
+}
+
+int test_q8_gemma4() {
+    int failures = 0;
+    for (const std::int32_t d : {2816, 5376}) {
+        Q8Table table(d, kGemma4Vocab, gemma4_ids(10));
+        for (const std::size_t t : {1u, 6u, 7u, 16u, 129u, 1024u}) {
+            const std::string label = "embedding Q8 [262144," + std::to_string(d) +
+                                      "] T=" + std::to_string(static_cast<unsigned long long>(t));
+            failures += run_quantized_case(label.c_str(), table, gemma4_ids(t), d);
+        }
+        // An odd output offset keeps the scalar reader honest about two-byte alignment.
+        failures += run_quantized_case("embedding Q8 Gemma 4 offset output", table, gemma4_ids(5),
+                                       d, false, 2);
+    }
+    return failures;
+}
+
 int test_fp8() {
     Fp8Table table;
     int failures = 0;
@@ -709,6 +746,21 @@ int test_dense() {
     failures += device_table.verify_guards("embedding BF16 table");
     failures += verify_exact("embedding BF16 table",
                              guarded_to_host<std::uint16_t>(device_table, table.size()), table);
+    // A table format no path reads names itself (here a number no QType holds), so the load error
+    // says what to fix.
+    weight.qtype = static_cast<QType>(250);
+    try {
+        ops::embedding(input, weight, result, nullptr);
+        std::cerr << "embedding accepted a table of an unknown format\n";
+        ++failures;
+    } catch (const std::invalid_argument& error) {
+        if (std::string_view(error.what()).find("stored as unknown (format 250)") ==
+            std::string_view::npos) {
+            std::cerr << "embedding unsupported-table error does not name it: " << error.what()
+                      << "\n";
+            ++failures;
+        }
+    }
     return failures;
 }
 
@@ -725,6 +777,7 @@ int main() {
         failures += test_dense();
         failures += test_q6();
         failures += test_q8();
+        failures += test_q8_gemma4();
         failures += test_fp8();
     } catch (const std::exception& error) {
         std::cerr << "embedding test exception: " << error.what() << '\n';

@@ -2,10 +2,13 @@
 #include "core/device.h"
 #include "ops/linear_add/linear_add_test_common.h"
 
-#include "ninfer/ops/linear_add.h"
+#include "ninferno/ops/linear_add.h"
 #include "ops/direct_bf16_weight.h"
+#include "ninferno/ops/prefill_routes.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
+#include "ops/workspace_query.h"
 
 #include <cuda_runtime.h>
 
@@ -24,7 +27,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::test::linear_add {
+namespace ninferno::test::linear_add {
 namespace {
 
 constexpr std::size_t kOutputScanWords = 1U << 20;
@@ -214,9 +217,14 @@ OutputRead read_output(const void* device, std::int32_t n, std::int32_t t,
     return result;
 }
 
+// A Q8 call whose policy allows A8 takes the int8 tiers from 17 tokens (q8_prefill_a8); its
+// activations are quantized, so it meets the A8 criterion of the linear tests.
+constexpr ReductionCriterion kLinearAddA8Tolerance{0.04, kBf16UnitRoundoff, 1.5 * 0.04};
+
 int compare_output(std::string_view label, std::span<const double> actual,
-                   std::span<const double> reference) {
-    return verify_reduction(label, actual, reference, kLinearAddA16Tolerance);
+                   std::span<const double> reference, bool a8 = false) {
+    return verify_reduction(label, actual, reference,
+                            a8 ? kLinearAddA8Tolerance : kLinearAddA16Tolerance);
 }
 
 int verify_preserved(const test::GuardedDeviceBuffer& device,
@@ -329,12 +337,23 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
     device_weight.copy_from_host(host_payload.data(), host_payload.size());
     const Weight weight = make_device_weight_view(host_weight, device_weight.data());
 
-    const std::size_t workspace_bytes =
-        ops::linear_add_workspace_capacity_bytes(qtype, shape.n, shape.k, 1, maximum_t);
+    // Sized for every policy the cases below call with: an A4/A8 call may take the generic int8
+    // tiers (a Q8 call of 17 tokens or more), whose workspace an A16 sizing leaves out.
+    std::size_t workspace_bytes = 0;
+    for (const ops::LinearPolicy policy :
+         {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8, ops::LinearPolicy::AllowA4}) {
+        workspace_bytes =
+            std::max(workspace_bytes, ops::linear_add_workspace_capacity_bytes(
+                                          qtype, shape.n, shape.k, policy, 1, maximum_t));
+    }
     WorkspaceArena workspace(std::max<std::size_t>(workspace_bytes, 256));
+    // The A16 interval is witnessed by its widest call; a permissive call by its own exact query.
+    std::size_t witness_bytes =
+        ops::linear_add_workspace_capacity_bytes(qtype, shape.n, shape.k, 1, maximum_t);
 
     int failures              = 0;
     std::size_t executed_peak = 0;
+    bool covered_prefill_a8   = false; // a width whose query covers the int8 prefill tiers (peak may stay below it)
     for (const std::int32_t t : tokens) {
         const std::size_t output_words = checked_elements(shape.n, t, "output");
         test::GuardedDeviceBuffer output(output_words * sizeof(std::uint16_t));
@@ -347,7 +366,11 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
 
         const std::string case_label = std::string(label) + " [" + std::to_string(shape.n) + "," +
                                        std::to_string(shape.k) + "] T=" + std::to_string(t);
-        const auto verify_result = [&] {
+        // The int8 tiers of a Q8 call are a prefill route (q8_prefill_a8): the widths that take
+        // them run under the prefill route profile.
+        const ops::ScopedPrefillRoutes prefill(weight.qtype == QType::Q8_G32_FP16 &&
+                                               t >= ops::detail::generic::kQ8PrefillA8Tokens);
+        const auto verify_result = [&](ops::LinearPolicy policy) {
             failures += output.verify_guards(case_label.c_str());
             const std::vector<std::int32_t> columns = all_indices(t);
             const OutputRead actual =
@@ -358,12 +381,14 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
                                std::span<const double>(
                                    full_reference.data(),
                                    checked_elements(static_cast<std::int32_t>(oracle_rows.size()),
-                                                    t, "reference")));
+                                                    t, "reference")),
+                               ops::detail::generic::q8_prefill_a8(weight, policy, t));
         };
+        bool permissive = false;
         try {
             ops::linear_add(input, weight, residual_out, workspace, nullptr);
             test::cuda_check(cudaDeviceSynchronize(), "synchronize linear_add");
-            verify_result();
+            verify_result(ops::LinearPolicy::A16Only);
             if ((t == 128 && format == WeightFormat::Q5G64F16S) ||
                 std::find(shape.graph_tokens.begin(), shape.graph_tokens.end(), t) !=
                     shape.graph_tokens.end()) {
@@ -387,7 +412,7 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
                                                cudaMemcpyHostToDevice, stream));
                     CUDA_CHECK(cudaGraphLaunch(executable, stream));
                     CUDA_CHECK(cudaStreamSynchronize(stream));
-                    if (replay != 1) { verify_result(); }
+                    if (replay != 1) { verify_result(ops::LinearPolicy::AllowA4); }
                     if (replay == 1) {
                         // For X=0, the independent mathematical result is the original residual.
                         std::vector<std::uint16_t> actual(output_words);
@@ -410,22 +435,36 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
                 ops::linear_add(input, weight, residual_out, ops::LinearPolicy::AllowA8, workspace,
                                 nullptr);
                 test::cuda_check(cudaDeviceSynchronize(), "synchronize permissive A16 linear_add");
-                verify_result();
+                verify_result(ops::LinearPolicy::AllowA8);
+                permissive = true;
             }
         } catch (const std::exception& error) {
             std::cerr << case_label << ": unexpected exception: " << error.what() << '\n';
             ++failures;
             continue;
         }
-        const std::size_t exact_workspace =
+        std::size_t exact_workspace =
             ops::linear_add_workspace_capacity_bytes(qtype, shape.n, shape.k, t, t);
-        if (workspace.used() != 0 || workspace.peak_used() != exact_workspace) {
-            std::cerr << case_label << ": exact workspace query/execution high-water mismatch\n";
+        if (permissive) {
+            for (const ops::LinearPolicy policy :
+                 {ops::LinearPolicy::AllowA4, ops::LinearPolicy::AllowA8}) {
+                exact_workspace =
+                    std::max(exact_workspace, ops::linear_add_workspace_capacity_bytes(
+                                                  qtype, shape.n, shape.k, policy, t, t));
+            }
+        }
+        if (workspace.used() != 0 ||
+            !test::workspace_query_holds(workspace.peak_used(), exact_workspace,
+                                         test::qx_query_covers_prefill_a8(qtype, t))) {
+            std::cerr << case_label << ": exact workspace query/execution high-water mismatch (used " << workspace.used()
+                      << ", peak " << workspace.peak_used() << ", query " << exact_workspace << ")\n";
             ++failures;
         }
+        covered_prefill_a8 = covered_prefill_a8 || test::qx_query_covers_prefill_a8(qtype, t);
         executed_peak = std::max(executed_peak, workspace.peak_used());
+        if (permissive) witness_bytes = std::max(witness_bytes, exact_workspace);
     }
-    if (executed_peak != workspace_bytes) {
+    if (covered_prefill_a8 ? executed_peak > witness_bytes : executed_peak != witness_bytes) {
         std::cerr << label << ": interval workspace capacity has no executed high-water witness\n";
         ++failures;
     }
@@ -441,4 +480,4 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
     return failures;
 }
 
-} // namespace ninfer::test::linear_add
+} // namespace ninferno::test::linear_add

@@ -1,6 +1,7 @@
-// ninfer::ops - l2norm wrapper: public api validation and launcher dispatch.
-#include "ninfer/ops/l2norm.h"
+// ninferno::ops - l2norm wrapper: public api validation and launcher dispatch.
+#include "ninferno/ops/l2norm.h"
 
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/l2norm.h" // detail::l2norm_launch
 
 #include <cmath>
@@ -9,29 +10,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t, const char* label) {
-    bool has_zero = false;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument(std::string("l2norm: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { has_zero = true; }
-    }
-    if (has_zero) { return 0; }
-
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("l2norm: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
 
 void require_same_shape(const Tensor& a, const Tensor& b) {
     for (int d = 0; d < 4; ++d) {
@@ -49,8 +29,8 @@ void l2norm(const Tensor& x, float eps, Tensor& out, cudaStream_t stream) {
         throw std::invalid_argument("l2norm: eps must be positive and finite");
     }
 
-    const std::int64_t n = numel_allow_zero(x, "x");
-    (void)numel_allow_zero(out, "out");
+    const std::int64_t n = numel_allow_zero(x, "l2norm", "x");
+    (void)numel_allow_zero(out, "l2norm", "out");
     require_same_shape(x, out);
     if (n == 0) { return; }
 
@@ -69,4 +49,4 @@ void l2norm(const Tensor& x, float eps, Tensor& out, cudaStream_t stream) {
     detail::l2norm_launch(x, eps, out, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

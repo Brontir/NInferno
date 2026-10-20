@@ -1,10 +1,13 @@
 #include "core/weight.h"
-#include "ninfer/ops/sparse_moe.h"
+#include "ops/common/native_nvfp4.h"
+#include "ninferno/ops/sparse_moe.h"
 
 #include "core/nvtx.h"
+#include "ops/linear/nvfp4/nvfp4_format.h"
 #include "ops/sparse_moe/decode/sparse_moe_decode.h"
 #include "ops/sparse_moe/prefill/sparse_moe_prefill.h"
 #include "ops/sparse_moe/small_t/sparse_moe_small_t.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kHidden         = 2048;
@@ -30,10 +33,6 @@ struct AddressRange {
     std::uintptr_t end   = 0;
     std::string name;
 };
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 AddressRange address_range(const void* pointer, std::size_t bytes, std::string name) {
     if (pointer == nullptr || bytes == 0) {
@@ -137,8 +136,54 @@ void require_quantized(const Weight& weight, std::int32_t n, std::int32_t k, con
     ranges.push_back(address_range(weight.scales, scale_bytes, std::string(name) + " scales"));
 }
 
+// The NVFP4 profile is all four expert matrices together: the gate/up epilogue emits the
+// encoded intermediate `down` consumes, so the two cannot be mixed with a groupwise codec.
+bool nvfp4_profile(const SparseMoeWeights& weights) {
+    return weights.routed_gate_up.qtype == QType::NVFP4 &&
+           weights.routed_down.qtype == QType::NVFP4 &&
+           weights.shared_gate_up.qtype == QType::NVFP4 &&
+           weights.shared_down.qtype == QType::NVFP4;
+}
+
+// The parameters go unused on the build without native NVFP4, which refuses the weights.
+void require_nvfp4([[maybe_unused]] const Weight& weight, [[maybe_unused]] std::int32_t n,
+                   [[maybe_unused]] std::int32_t k, const char* name,
+                   [[maybe_unused]] std::vector<AddressRange>& ranges) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+    detail::no_native_nvfp4("sparse_moe", name);
+#else
+    require_matrix_metadata(weight, n, k, name);
+    // Every expert matrix was quantised on its own, so each of these planes is a stack.
+    const detail::Nvfp4WeightGeometry geometry =
+        detail::validate_nvfp4_weight(weight, (std::string("sparse_moe ") + name).c_str(), true);
+    ranges.push_back(
+        address_range(weight.qdata, geometry.code_plane_bytes, std::string(name) + " code"));
+    ranges.push_back(
+        address_range(weight.scales, geometry.scale_plane_bytes, std::string(name) + " scales"));
+#endif
+}
+
 void validate_weights(const SparseMoeWeights& weights, std::vector<AddressRange>& ranges) {
     require_router(weights.router_shared_gate, ranges);
+    if (nvfp4_profile(weights)) {
+        require_nvfp4(weights.routed_gate_up, kRoutedGateRows, kHidden, "routed_gate_up", ranges);
+        require_nvfp4(weights.routed_down, kRoutedDownRows, kIntermediate, "routed_down", ranges);
+        require_nvfp4(weights.shared_gate_up, kSharedGateRows, kHidden, "shared_gate_up", ranges);
+        require_nvfp4(weights.shared_down, kHidden, kIntermediate, "shared_down", ranges);
+        // The prefill route encodes the hidden state once and both gate/up GEMMs read that one
+        // plane, each dividing by its own bank's activation divisor. Two different divisors would
+        // scale the shared expert's whole contribution by their ratio, silently.
+        if (weights.routed_gate_up.input_scale_divisor !=
+            weights.shared_gate_up.input_scale_divisor) {
+            throw std::invalid_argument(
+                "sparse_moe: routed and shared experts must share one activation divisor");
+        }
+        return;
+    }
+    if (weights.routed_gate_up.qtype == QType::NVFP4 || weights.routed_down.qtype == QType::NVFP4 ||
+        weights.shared_gate_up.qtype == QType::NVFP4 || weights.shared_down.qtype == QType::NVFP4) {
+        throw std::invalid_argument("sparse_moe: NVFP4 requires all four expert matrices");
+    }
     if (weights.routed_gate_up.qtype != QType::Q4_G64_FP16 &&
         weights.routed_gate_up.qtype != QType::Q8_G32_FP16) {
         throw std::invalid_argument("sparse_moe: routed_gate_up must be Q4 or Q8");
@@ -167,38 +212,46 @@ std::size_t sparse_moe_workspace_capacity_bytes(QType routed_gate_up, QType rout
     }
     (void)detail::resolve_sparse_moe_decode_plan(routed_gate_up, routed_down);
 
-    const bool q8_profile =
-        routed_gate_up == QType::Q8_G32_FP16 && routed_down == QType::Q8_G32_FP16;
+    const bool nvfp4_profile = routed_gate_up == QType::NVFP4 && routed_down == QType::NVFP4;
+    // For the active route profile, like the dispatch.
     const std::int32_t prefill_first =
-        q8_profile ? detail::kSparseMoePrefillQ8Q8Min
-                   : (routed_down == QType::Q5_G64_FP16 ? detail::kSparseMoePrefillQ4Q5Min
-                                                        : detail::kSparseMoePrefillQ4Q6Min);
+        detail::sparse_moe_prefill_min_tokens(routed_gate_up, routed_down, prefill_routes_active());
+    const std::int32_t small_t_end = prefill_first;
 
     std::size_t required = 0;
     if (min_tokens == 1) { required = detail::sparse_moe_decode_workspace_bytes(); }
 
     const std::int32_t small_first = std::max(min_tokens, detail::kSparseMoeSmallTMin);
     const std::int32_t small_last =
-        std::min({max_tokens, detail::kSparseMoeSmallTMax, prefill_first - 1});
+        std::min({max_tokens, detail::kSparseMoeSmallTMax, small_t_end - 1});
     if (small_first <= small_last) {
         required = std::max(required, detail::sparse_moe_small_t_workspace_bytes(small_last));
     }
 
     const std::int32_t prefill_interval_first = std::max(min_tokens, prefill_first);
     if (prefill_interval_first <= max_tokens) {
-        required = std::max(required, detail::sparse_moe_prefill_workspace_bytes(max_tokens));
+        // The prefill workspace query has a floor of its own, and the plan allocates to it, so an
+        // interval whose top is below that floor still has to promise what execution will take.
+        required =
+            std::max(required, detail::sparse_moe_prefill_workspace_bytes(
+                                   std::max(max_tokens, detail::kSparseMoePrefillWorkspaceMin),
+                                   nvfp4_profile));
     }
     return required;
 }
 
 void sparse_moe(const Tensor& x, const SparseMoeWeights& weights, SparseMoeEpilogue epilogue,
-                Tensor& destination, WorkspaceArena& workspace, cudaStream_t stream) {
-    sparse_moe(x, weights, epilogue, destination, SparseMoeHints{}, workspace, stream);
+                Tensor& destination, WorkspaceArena& workspace, DeviceExecutionView execution) {
+    sparse_moe(x, weights, epilogue, destination, SparseMoeHints{}, workspace, execution);
 }
 
 void sparse_moe(const Tensor& x, const SparseMoeWeights& weights, SparseMoeEpilogue epilogue,
                 Tensor& destination, const SparseMoeHints& hints, WorkspaceArena& workspace,
-                cudaStream_t stream) {
+                DeviceExecutionView execution) {
+    if (execution.multiprocessor_count <= 0) {
+        throw std::invalid_argument("sparse_moe: physical SM count must be positive");
+    }
+    const cudaStream_t stream = execution.stream;
     if (epilogue != SparseMoeEpilogue::AddResidual) {
         throw std::invalid_argument("sparse_moe: unsupported epilogue");
     }
@@ -246,8 +299,8 @@ void sparse_moe(const Tensor& x, const SparseMoeWeights& weights, SparseMoeEpilo
         const detail::SparseMoePrefillPlan plan = detail::resolve_sparse_moe_prefill_plan(
             tokens, weights.routed_gate_up.qtype, weights.routed_down.qtype);
         const detail::SparseMoePrefillWorkspace views =
-            detail::allocate_sparse_moe_prefill_workspace(workspace, plan.slice_tokens);
-        detail::sparse_moe_prefill_launch(x, weights, destination, plan, views, stream);
+            detail::allocate_sparse_moe_prefill_workspace(workspace, plan.slice_tokens, plan.nvfp4);
+        detail::sparse_moe_prefill_launch(x, weights, destination, plan, views, execution);
         return;
     }
     if (use_small_t) {
@@ -271,4 +324,4 @@ void sparse_moe(const Tensor& x, const SparseMoeWeights& weights, SparseMoeEpilo
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

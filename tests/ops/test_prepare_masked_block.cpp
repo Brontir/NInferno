@@ -1,6 +1,6 @@
 #include "core/device.h"
 #include <algorithm>
-#include "ninfer/ops/prepare_masked_block.h"
+#include "ninferno/ops/prepare_masked_block.h"
 #include "ops/op_tester.h"
 
 #include <array>
@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 

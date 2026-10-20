@@ -14,7 +14,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 template <typename Geometry>
 __device__ __forceinline__ void
@@ -130,6 +130,34 @@ __launch_bounds__(256) __global__
                                            physical_page, position & kPagedKVPageMask, lane);
 }
 
+// Independent request rows share physical planes, but select separate input and table rows.
+template <typename Geometry, bool Masked>
+__launch_bounds__(256) __global__
+    void kv_cache_append_full_fp8_batch_kernel(const __nv_bfloat16* k, const __nv_bfloat16* v,
+                                               const std::int32_t* positions,
+                                               PagedKVBatchMetadata<Masked> metadata,
+                                               std::uint8_t* cache_k, std::uint8_t* cache_v,
+                                               __half* scale_k, __half* scale_v,
+                                               std::int32_t width) {
+    const int batch = blockIdx.z;
+    metadata.table_rows += batch;
+    if constexpr (Masked) metadata.valid_columns += batch;
+    const int tokens = metadata.valid_tokens(width);
+    const int unit   = blockIdx.x * 8 + (threadIdx.x >> 5);
+    if (unit >= tokens * Geometry::KVHeads) return;
+    const int token         = unit / Geometry::KVHeads;
+    const int kv_head       = unit % Geometry::KVHeads;
+    const int lane          = threadIdx.x & 31;
+    const auto input_offset = static_cast<std::int64_t>(batch) * width * 256 * Geometry::KVHeads;
+    const int position      = positions[batch * width] + token;
+    const auto* table       = metadata.block_table();
+    int page                = lane == 0 ? paged_kv_physical_page(table, position) : 0;
+    page                    = __shfl_sync(0xffffffffU, page, 0);
+    kv_cache_append_full_fp8_row<Geometry>(k + input_offset, v + input_offset, cache_k, cache_v,
+                                           scale_k, scale_v, token, kv_head, page,
+                                           position & kPagedKVPageMask, lane);
+}
+
 template <typename Geometry, typename Metadata>
 __launch_bounds__(256) __global__
     void kv_cache_append_full_fp8_page_kernel(const __nv_bfloat16* __restrict__ k,
@@ -163,7 +191,7 @@ __launch_bounds__(256) __global__
                                            physical_page, position & kPagedKVPageMask, lane);
 }
 
-template <typename Geometry, typename Metadata>
+template <typename Geometry, typename Metadata, bool MultiBatch = false>
 __launch_bounds__(256) __global__
     void kv_cache_append_full_i8_kernel(const __nv_bfloat16* __restrict__ k,
                                         const __nv_bfloat16* __restrict__ v,
@@ -172,6 +200,15 @@ __launch_bounds__(256) __global__
                                         std::int8_t* __restrict__ cache_v,
                                         __half* __restrict__ scale_k, __half* __restrict__ scale_v,
                                         std::int32_t width) {
+    if constexpr (MultiBatch) {
+        const int batch = blockIdx.z;
+        metadata.table_rows += batch;
+        if (metadata.valid_columns) metadata.valid_columns += batch;
+        const auto offset = static_cast<std::int64_t>(batch) * width * 256 * Geometry::KVHeads;
+        k += offset;
+        v += offset;
+        positions += batch * width;
+    }
     constexpr int Warps         = 8;
     constexpr unsigned FullMask = 0xffffffffu;
     const int tokens            = metadata.valid_tokens(width);
@@ -323,20 +360,21 @@ __device__ __forceinline__ void kv_cache_append_prefix_copy_cyclic_unit(
     *reinterpret_cast<int4*>(&cache_v[dst]) = value;
 }
 
+template <int HeadDim>
 __device__ __forceinline__ void kv_cache_append_prefix_copy_paged_unit(
     const __nv_bfloat16* __restrict__ k, const __nv_bfloat16* __restrict__ v,
     __nv_bfloat16* __restrict__ cache_k, __half* __restrict__ cache_v, int token, int unit_in_token,
     int page_offset, int physical_page, int physical_pages) {
     constexpr int ElementsPerUnit = 16;
-    constexpr int UnitsPerHead    = kKVCacheAppendPrefixHeadDim / ElementsPerUnit;
+    constexpr int UnitsPerHead    = HeadDim / ElementsPerUnit;
     const int kv_head             = unit_in_token / UnitsPerHead;
     const int d                   = (unit_in_token - kv_head * UnitsPerHead) * ElementsPerUnit;
-    const std::int64_t src =
-        static_cast<std::int64_t>(d) + static_cast<std::int64_t>(kKVCacheAppendPrefixHeadDim) *
-                                           (kv_head + kKVCacheAppendPrefixHeads * token);
+    const std::int64_t src        = static_cast<std::int64_t>(d) +
+                             static_cast<std::int64_t>(HeadDim) *
+                                 (kv_head + kKVCacheAppendPrefixHeads * token);
     const std::int64_t dst =
         static_cast<std::int64_t>(d) +
-        static_cast<std::int64_t>(kKVCacheAppendPrefixHeadDim) *
+        static_cast<std::int64_t>(HeadDim) *
             (page_offset + kKVCacheAppendPrefixPage * (physical_page + physical_pages * kv_head));
 
     const int4 k0 = *reinterpret_cast<const int4*>(&k[src]);
@@ -382,22 +420,179 @@ __global__ void kv_cache_append_prefix_cyclic_kernel(
                                             padded_capacity);
 }
 
+// Int8Group64 at D=128 (the DFlash drafters' full layers): a unit is 16 values of one head, four
+// consecutive units are one G64 group, so the group's absmax is two xor shuffles; the stored scale
+// is FP16-RNE(absmax / 127) and the codes use the reciprocal of that represented value, as the
+// target's int8 codec does.
+__device__ __forceinline__ void
+kv_cache_append_prefix_i8_unit(const __nv_bfloat16* __restrict__ src, std::int8_t* __restrict__ dst,
+                               __half* __restrict__ scale_dst, bool active, bool writes_scale) {
+    float x[16];
+    if (active) {
+        const int4 a             = *reinterpret_cast<const int4*>(src);
+        const int4 b             = *reinterpret_cast<const int4*>(src + 8);
+        const __nv_bfloat162* ha = reinterpret_cast<const __nv_bfloat162*>(&a);
+        const __nv_bfloat162* hb = reinterpret_cast<const __nv_bfloat162*>(&b);
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            const float2 fa  = __bfloat1622float2(ha[i]);
+            const float2 fb  = __bfloat1622float2(hb[i]);
+            x[2 * i]         = fa.x;
+            x[2 * i + 1]     = fa.y;
+            x[8 + 2 * i]     = fb.x;
+            x[8 + 2 * i + 1] = fb.y;
+        }
+    } else {
+#pragma unroll
+        for (int i = 0; i < 16; ++i) x[i] = 0.0f;
+    }
+    float m = 0.0f;
+#pragma unroll
+    for (int i = 0; i < 16; ++i) m = fmaxf(m, fabsf(x[i]));
+    m                   = fmaxf(m, __shfl_xor_sync(0xffffffffu, m, 1));
+    m                   = fmaxf(m, __shfl_xor_sync(0xffffffffu, m, 2));
+    const __half scale  = __float2half_rn(m > 0.0f ? m / 127.0f : 0.0f);
+    const float shown   = __half2float(scale);
+    const float inverse = shown > 0.0f ? 1.0f / shown : 0.0f;
+    if (!active) return;
+    alignas(16) std::int8_t codes[16];
+#pragma unroll
+    for (int i = 0; i < 16; ++i) {
+        const int q = inverse == 0.0f ? 0 : max(-127, min(127, __float2int_rn(x[i] * inverse)));
+        codes[i]    = static_cast<std::int8_t>(q);
+    }
+    *reinterpret_cast<int4*>(dst) = *reinterpret_cast<const int4*>(codes);
+    if (writes_scale) *scale_dst = scale;
+}
+
+__global__ void kv_cache_append_prefix_paged_i8_kernel(
+    const __nv_bfloat16* __restrict__ k, const __nv_bfloat16* __restrict__ v,
+    const std::int32_t* __restrict__ positions, const std::int32_t* __restrict__ counts,
+    const std::int32_t* __restrict__ table_rows, std::int8_t* __restrict__ cache_k,
+    std::int8_t* __restrict__ cache_v, __half* __restrict__ scale_k, __half* __restrict__ scale_v,
+    const std::int32_t* __restrict__ block_tables, int physical_pages, int logical_pages,
+    int min_count, int max_count, int width) {
+    constexpr int HeadDim        = 128;
+    constexpr int Groups         = HeadDim / 64;
+    constexpr int UnitsPerHead   = HeadDim / 16;
+    constexpr int UnitsPerToken  = kKVCacheAppendPrefixHeads * UnitsPerHead;
+    constexpr int TokensPerBlock = 256 / UnitsPerToken;
+    const int batch              = static_cast<int>(blockIdx.y);
+    const int count              = counts[batch];
+    if (count < min_count || count > max_count) return;
+
+    constexpr std::int64_t ElementsPerToken = HeadDim * kKVCacheAppendPrefixHeads;
+    const std::int64_t input_offset         = ElementsPerToken * width * batch;
+    k += input_offset;
+    v += input_offset;
+    positions += static_cast<std::int64_t>(width) * batch;
+    const std::int32_t* block_table =
+        block_tables + static_cast<std::int64_t>(logical_pages) * table_rows[batch];
+
+    const int local         = static_cast<int>(threadIdx.x);
+    const int local_token   = local / UnitsPerToken;
+    const int unit_in_token = local - local_token * UnitsPerToken;
+    const int lane          = local & 31;
+    const int token         = static_cast<int>(blockIdx.x) * TokensPerBlock + local_token;
+    int position            = 0;
+    int physical_page       = 0;
+    if (lane == 0 && token < count) {
+        position      = positions[token];
+        physical_page = block_table[position >> 6];
+    }
+    position      = __shfl_sync(0xffffffffu, position, 0);
+    physical_page = __shfl_sync(0xffffffffu, physical_page, 0);
+    // Every lane takes part in the group shuffles; only live tokens store.
+    const bool active  = token < count;
+    const int kv_head  = unit_in_token / UnitsPerHead;
+    const int d        = (unit_in_token - kv_head * UnitsPerHead) * 16;
+    const int page_off = position & (kKVCacheAppendPrefixPage - 1);
+    const std::int64_t src =
+        static_cast<std::int64_t>(d) +
+        static_cast<std::int64_t>(HeadDim) * (kv_head + kKVCacheAppendPrefixHeads * token);
+    const std::int64_t slot =
+        page_off + static_cast<std::int64_t>(kKVCacheAppendPrefixPage) *
+                       (physical_page + static_cast<std::int64_t>(physical_pages) * kv_head);
+    const std::int64_t dst       = d + HeadDim * slot;
+    const std::int64_t scale_off = (d >> 6) + Groups * slot;
+    const bool writes_scale      = (d & 63) == 0;
+    kv_cache_append_prefix_i8_unit(k + (active ? src : 0), cache_k + dst, scale_k + scale_off,
+                                   active, writes_scale);
+    kv_cache_append_prefix_i8_unit(v + (active ? src : 0), cache_v + dst, scale_v + scale_off,
+                                   active, writes_scale);
+}
+
+// Int8Group64 cyclic ring at D=128 (core/cyclic_kv_cache.h): per lane the codes [128] x padded x
+// heads, then the FP16 group scales [2] x padded x heads. A token is 64 units of 16 values; four
+// consecutive units (lanes) are one G64 group, as in the paged int8 append.
+template <int Capacity>
+__global__ void kv_cache_append_prefix_cyclic_i8_kernel(
+    const __nv_bfloat16* __restrict__ k, const __nv_bfloat16* __restrict__ v,
+    const std::int32_t* __restrict__ positions, const std::int32_t* __restrict__ counts,
+    const std::int32_t* __restrict__ lanes, std::int8_t* __restrict__ cache_k,
+    std::int8_t* __restrict__ cache_v, int min_count, int max_count, int width,
+    int padded_capacity) {
+    static_assert(Capacity == 2048 || Capacity == 4096);
+    constexpr int HeadDim        = kKVCacheAppendPrefixHeadDim;
+    constexpr int Heads          = kKVCacheAppendPrefixHeads;
+    constexpr int Groups         = HeadDim / 64;
+    constexpr int UnitsPerHead   = HeadDim / 16;
+    constexpr int UnitsPerToken  = Heads * UnitsPerHead;
+    constexpr int TokensPerBlock = 256 / UnitsPerToken;
+    const int batch              = static_cast<int>(blockIdx.y);
+    const int count              = counts[batch];
+    if (count < min_count || count > max_count) return;
+
+    constexpr std::int64_t ElementsPerToken = HeadDim * Heads;
+    const std::int64_t input_offset         = ElementsPerToken * width * batch;
+    k += input_offset;
+    v += input_offset;
+    positions += static_cast<std::int64_t>(width) * batch;
+    const std::int64_t rows       = static_cast<std::int64_t>(padded_capacity) * Heads;
+    const std::int64_t lane_bytes = rows * (HeadDim + 2 * Groups);
+    cache_k += lane_bytes * lanes[batch];
+    cache_v += lane_bytes * lanes[batch];
+    __half* scale_k = reinterpret_cast<__half*>(cache_k + rows * HeadDim);
+    __half* scale_v = reinterpret_cast<__half*>(cache_v + rows * HeadDim);
+
+    const int local         = static_cast<int>(threadIdx.x);
+    const int local_token   = local / UnitsPerToken;
+    const int unit_in_token = local - local_token * UnitsPerToken;
+    const int token         = static_cast<int>(blockIdx.x) * TokensPerBlock + local_token;
+    // Every lane takes part in the group shuffles; only live tokens store.
+    const bool active      = token < count;
+    const int slot         = active ? positions[token] & (Capacity - 1) : 0;
+    const int kv_head      = unit_in_token / UnitsPerHead;
+    const int d            = (unit_in_token - kv_head * UnitsPerHead) * 16;
+    const std::int64_t src = static_cast<std::int64_t>(d) +
+                             static_cast<std::int64_t>(HeadDim) * (kv_head + Heads * token);
+    const std::int64_t row       = slot + static_cast<std::int64_t>(padded_capacity) * kv_head;
+    const std::int64_t dst       = d + HeadDim * row;
+    const std::int64_t scale_off = (d >> 6) + Groups * row;
+    const bool writes_scale      = (d & 63) == 0;
+    kv_cache_append_prefix_i8_unit(k + (active ? src : 0), cache_k + dst, scale_k + scale_off,
+                                   active, writes_scale);
+    kv_cache_append_prefix_i8_unit(v + (active ? src : 0), cache_v + dst, scale_v + scale_off,
+                                   active, writes_scale);
+}
+
+// A token's units are whole warps (lane 0 reads its position and page): D=128 and D=64 at Hkv=8.
+template <int HeadDim>
 __global__ void kv_cache_append_prefix_paged_kernel(
     const __nv_bfloat16* __restrict__ k, const __nv_bfloat16* __restrict__ v,
     const std::int32_t* __restrict__ positions, const std::int32_t* __restrict__ counts,
     const std::int32_t* __restrict__ table_rows, __nv_bfloat16* __restrict__ cache_k,
     __half* __restrict__ cache_v, const std::int32_t* __restrict__ block_tables, int physical_pages,
     int logical_pages, int min_count, int max_count, int width) {
-    constexpr int UnitsPerToken  = kKVCacheAppendPrefixHeads * 8;
+    constexpr int UnitsPerToken  = kKVCacheAppendPrefixHeads * HeadDim / 16;
     constexpr int TokensPerBlock = 256 / UnitsPerToken;
-    static_assert(TokensPerBlock * UnitsPerToken == 256);
+    static_assert(TokensPerBlock * UnitsPerToken == 256 && UnitsPerToken % 32 == 0);
     const int batch = static_cast<int>(blockIdx.y);
     const int count = counts[batch];
     if (count < min_count || count > max_count) return;
 
-    constexpr std::int64_t ElementsPerToken =
-        kKVCacheAppendPrefixHeadDim * kKVCacheAppendPrefixHeads;
-    const std::int64_t input_offset = ElementsPerToken * width * batch;
+    constexpr std::int64_t ElementsPerToken = HeadDim * kKVCacheAppendPrefixHeads;
+    const std::int64_t input_offset         = ElementsPerToken * width * batch;
     k += input_offset;
     v += input_offset;
     positions += static_cast<std::int64_t>(width) * batch;
@@ -418,10 +613,11 @@ __global__ void kv_cache_append_prefix_paged_kernel(
     position      = __shfl_sync(0xffffffffu, position, 0);
     physical_page = __shfl_sync(0xffffffffu, physical_page, 0);
     if (token < count) {
-        kv_cache_append_prefix_copy_paged_unit(k, v, cache_k, cache_v, token, unit_in_token,
+        kv_cache_append_prefix_copy_paged_unit<HeadDim>(k, v, cache_k, cache_v, token,
+                                                        unit_in_token,
                                                position & (kKVCacheAppendPrefixPage - 1),
                                                physical_page, physical_pages);
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

@@ -1,20 +1,23 @@
-// ninfer::ops - sample wrapper: public api validation and dispatch.
-#include "ninfer/ops/sampling.h"
+// ninferno::ops - sample wrapper: public api validation and dispatch.
+#include "ninferno/ops/sampling.h"
 
 #include "ops/common/sampling_workspace.h"
 #include "ops/launcher/sampling.h" // detail::sample_batch_launch
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 std::size_t sampling_workspace_capacity_bytes(std::int32_t token_domain, std::int32_t min_lanes,
                                               std::int32_t max_lanes) {
     if (token_domain <= 0 || min_lanes <= 0 || max_lanes < min_lanes) {
         throw std::invalid_argument("sampling workspace: invalid profile or lane interval");
     }
-    if (token_domain <= kSamplerTileItems || min_lanes > kSamplerMaxColumns) { return 0; }
+    // A call of more than kSamplerMaxColumns lanes runs in slices of that many (sample()), each in
+    // the workspace of one slice.
+    if (token_domain <= kSamplerTileItems) { return 0; }
     return detail::sampling_workspace_exact_bytes(token_domain,
                                                   std::min(max_lanes, kSamplerMaxColumns));
 }
@@ -52,11 +55,30 @@ void sample(const Tensor& logits, Tensor& out, std::int32_t token_domain,
     if (configs == nullptr) { throw std::invalid_argument("sample: configs must be non-null"); }
 
     auto scratch_scope = workspace.scope();
-    const std::size_t bytes =
-        sampling_workspace_capacity_bytes(token_domain, logits.ne[1], logits.ne[1]);
+    const std::int32_t lanes = logits.ne[1];
+    const std::size_t bytes  = sampling_workspace_capacity_bytes(token_domain, lanes, lanes);
     const DeviceSpan scratch = bytes == 0 ? DeviceSpan{} : workspace.alloc_bytes(bytes);
-    detail::sample_batch_launch(logits, out, token_domain, configs, logical_positions, purpose,
-                                scratch, stream);
+    if (bytes == 0 || lanes <= kSamplerMaxColumns) {
+        detail::sample_batch_launch(logits, out, token_domain, configs, logical_positions, purpose,
+                                    scratch, stream);
+        return;
+    }
+    // Past kSamplerMaxColumns lanes (a decode of more than sixteen sequences) the multi-block
+    // route runs slice by slice instead of the single-block fallback, whose register list holds
+    // only 20 candidates: every lane keeps the whole top-kMaximumTopK domain. A lane's draw is
+    // keyed by its seed, position and purpose, not by its index, so slicing changes no token.
+    const std::int32_t rows = logits.ne[0];
+    for (std::int32_t first = 0; first < lanes; first += kSamplerMaxColumns) {
+        const std::int32_t n = std::min(kSamplerMaxColumns, lanes - first);
+        const Tensor slice_logits(static_cast<std::uint16_t*>(logits.data) +
+                                      static_cast<std::int64_t>(rows) * first,
+                                  DType::BF16, {rows, n});
+        Tensor slice_out(static_cast<std::int32_t*>(out.data) + first, DType::I32, {n});
+        const Tensor slice_positions(static_cast<std::int32_t*>(logical_positions.data) + first,
+                                     DType::I32, {n});
+        detail::sample_batch_launch(slice_logits, slice_out, token_domain, configs + first,
+                                    slice_positions, purpose, scratch, stream);
+    }
 }
 
 void increment_token_counts(const Tensor& token_ids, Tensor& token_counts, cudaStream_t stream) {
@@ -75,4 +97,4 @@ void increment_token_counts(const Tensor& token_ids, Tensor& token_counts, cudaS
     detail::increment_token_counts_launch(token_ids, token_counts, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

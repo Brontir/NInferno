@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 The files below are evaluation inputs. They retain the licenses and attribution requirements of
-their sources and are not relicensed as NInfer source code.
+their sources and are not relicensed as NInferno source code.
 
 ## WikiText-2 raw test
 
@@ -41,7 +41,7 @@ applicable independently of the source texts' public-domain status in the United
 PG-19 includes historical language and biases. Inclusion is solely for language-model evaluation
 and does not imply endorsement.
 
-## NInfer source
+## Original ninfer source
 
-`data/ninfer/` is derived from the NInfer revision recorded in `provenance/ninfer.jsonl` and remains
-covered by the repository's Apache License 2.0.
+`data/source/` is derived from the ninfer (github.com/Neroued/ninfer) revision recorded in `provenance/source.jsonl`: Copyright 2026 Neroued and
+contributors, under the Apache License, Version 2.0 (see the repository's NOTICE).

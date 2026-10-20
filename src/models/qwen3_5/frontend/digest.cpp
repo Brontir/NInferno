@@ -1,4 +1,6 @@
 #include "models/qwen3_5/frontend/digest.h"
+#include "core/hex.h"
+#include "core/units.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +10,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::frontend {
+namespace ninferno::models::qwen3_5::frontend {
 namespace {
 
 constexpr std::array<std::uint32_t, 64> kRound{
@@ -94,7 +96,7 @@ Sha256Digest sha256(std::span<const std::uint8_t> input, const std::function<voi
                                        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U};
     std::size_t offset = 0;
     while (input.size() - offset >= 64) {
-        if (checkpoint && offset % (1ULL << 20) == 0) { checkpoint(); }
+        if (checkpoint && offset % kMiB == 0) { checkpoint(); }
         process_block(state, input.data() + offset);
         offset += 64;
     }
@@ -122,13 +124,7 @@ Sha256Digest sha256(std::string_view input) {
 }
 
 std::string sha256_hex(const Sha256Digest& digest) {
-    constexpr char hex[] = "0123456789abcdef";
-    std::string result(digest.size() * 2, '\0');
-    for (std::size_t i = 0; i < digest.size(); ++i) {
-        result[2 * i]     = hex[digest[i] >> 4U];
-        result[2 * i + 1] = hex[digest[i] & 0x0fU];
-    }
-    return result;
+    return hex_encode(digest.data(), digest.size());
 }
 
-} // namespace ninfer::models::qwen3_5::frontend
+} // namespace ninferno::models::qwen3_5::frontend

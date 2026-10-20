@@ -1,4 +1,4 @@
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/speculative_round.h"
 #include "ops/op_tester.h"
 #include "core/decode_graph.h"
 #include "core/device.h"
@@ -16,8 +16,8 @@
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -982,6 +982,50 @@ int deterministic_sampling_case() {
                                token_counts, expected);
 }
 
+// top_k past the single-block cap of 20 (0 = the full 64) on a 248K vocabulary: the multi-block
+// route keeps 64 candidates per partial, group and final merge. One logit dominates, so the
+// sample is the oracle's.
+int deterministic_wide_topk_case(int top_k) {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    constexpr int k             = 5;
+    constexpr int accepted      = 2;
+    const std::vector<std::int32_t> drafts{17, 7919, 65537, 131071, 200003};
+    std::vector<std::int32_t> targets(static_cast<std::size_t>(k + 1));
+    for (int i = 0; i <= k; ++i) targets[static_cast<std::size_t>(i)] = 101 + i;
+    constexpr std::int32_t correction = 150001;
+
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * (k + 1), -20.0f);
+    for (int col = 0; col <= k; ++col) {
+        const std::size_t base = static_cast<std::size_t>(col) * physical_rows;
+        const int winner =
+            col < accepted ? drafts[static_cast<std::size_t>(col)] : correction + col - accepted;
+        logits[base + static_cast<std::size_t>(winner)] = 20.0f;
+        logits[base + token_domain]                     = 100.0f;
+        logits[base + physical_rows - 1]                = 200.0f;
+    }
+    round_to_bf16(logits);
+    std::vector<std::uint16_t> logits_bits(logits.size());
+    for (std::size_t i = 0; i < logits.size(); ++i) logits_bits[i] = f32_to_bf16(logits[i]);
+
+    const std::int32_t initial_length = 4093;
+    const auto expected = accept_state_oracle(drafts, accepted, correction, initial_length);
+    std::vector<std::int32_t> token_counts(token_domain, 0);
+    token_counts[static_cast<std::size_t>(drafts[0])]  = 3;
+    token_counts[static_cast<std::size_t>(drafts[1])]  = 5;
+    token_counts[static_cast<std::size_t>(correction)] = 7;
+
+    ops::SamplingConfig config{};
+    config.temperature = 1.0f;
+    config.top_k       = top_k;
+    config.top_p       = 1.0f;
+    config.min_p       = 0.0f;
+    config.seed        = 0x123456789abcdef0ull;
+    return execute_accept_case("speculative sampling wide top_k", targets, logits_bits,
+                               physical_rows, drafts, initial_length, token_domain, config,
+                               token_counts, expected);
+}
+
 int greedy_penalty_case(int token_domain) {
     constexpr int k = 2;
     const std::vector<std::int32_t> drafts{1, 1};
@@ -1004,6 +1048,107 @@ int greedy_penalty_case(int token_domain) {
     return execute_accept_case(
         "speculative greedy penalty token-domain=" + std::to_string(token_domain), raw_targets,
         bits, token_domain, drafts, 100, token_domain, config, counts, expected);
+}
+
+// A verify column of NaN logits (a numerically failed forward) still selects an id of the domain:
+// NaN ranks as -inf, so the correction is id 0 and the count it increments stays in its buffer.
+int greedy_nan_column_case(int token_domain) {
+    constexpr int k = 2;
+    const std::vector<std::int32_t> drafts{1, 1};
+    const std::vector<std::int32_t> raw_targets{1, 1, 3};
+    std::vector<std::uint16_t> bits(static_cast<std::size_t>(token_domain) * (k + 1),
+                                    f32_to_bf16(-20.0F));
+    std::fill(bits.begin(), bits.begin() + token_domain, std::uint16_t{0x7fc0u});
+    ops::SamplingConfig config{};
+    config.temperature      = 0.0F;
+    config.presence_penalty = 1.0F;
+    const std::vector<std::int32_t> counts(static_cast<std::size_t>(token_domain), 0);
+    const auto expected = accept_state_oracle(drafts, 0, 0, 100);
+    return execute_accept_case(
+        "speculative greedy NaN column token-domain=" + std::to_string(token_domain), raw_targets,
+        bits, token_domain, drafts, 100, token_domain, config, counts, expected);
+}
+
+// Per-column allowed-token masks on the verify columns. The raw target argmax is deliberately
+// wrong for the masked row: column 0's raw winner is disallowed (so the draft that matches the
+// masked choice must be accepted) and a draft equal to column 2's raw winner is disallowed (so it
+// must be rejected and replaced by the masked correction).
+class MappedMaskWords {
+public:
+    explicit MappedMaskWords(std::size_t count) {
+        cuda_check(cudaHostAlloc(reinterpret_cast<void**>(&host_), count * sizeof(std::uint32_t),
+                                 cudaHostAllocMapped),
+                   "cudaHostAlloc mapped");
+        std::fill(host_, host_ + count, 0u);
+        cuda_check(cudaHostGetDevicePointer(reinterpret_cast<void**>(&device_), host_, 0),
+                   "cudaHostGetDevicePointer");
+    }
+    ~MappedMaskWords() { cudaFreeHost(host_); }
+    MappedMaskWords(const MappedMaskWords&)            = delete;
+    MappedMaskWords& operator=(const MappedMaskWords&) = delete;
+    [[nodiscard]] std::uint32_t* host() const noexcept { return host_; }
+    [[nodiscard]] std::uint32_t* device() const noexcept { return device_; }
+
+private:
+    std::uint32_t* host_   = nullptr;
+    std::uint32_t* device_ = nullptr;
+};
+
+int masked_accept_case(int physical_rows, int token_domain, float temperature,
+                       bool all_drafts_valid) {
+    constexpr int k       = 3;
+    constexpr int columns = k + 1;
+    const int words       = ((((token_domain + 31) / 32) + 7) & ~7);
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * columns, -10.0f);
+    const auto set = [&](int column, int token, float value) {
+        logits[static_cast<std::size_t>(column) * physical_rows + token] = value;
+    };
+    set(0, 5, 9.0f);
+    set(0, 6, 8.0f);
+    set(1, 7, 9.0f);
+    set(2, 9, 9.0f);
+    set(2, 10, 8.0f);
+    set(2, 11, 7.0f);
+    set(3, 13, 9.0f);
+    std::vector<std::uint16_t> bits(logits.size());
+    for (std::size_t i = 0; i < logits.size(); ++i) { bits[i] = f32_to_bf16(logits[i]); }
+    const std::vector<std::int32_t> raw_targets{5, 7, 9, 13};
+
+    MappedMaskWords masks(static_cast<std::size_t>(words) * columns);
+    MappedMaskWords release(1);
+    for (int column = 0; column < columns; ++column) {
+        std::uint32_t* row = masks.host() + static_cast<std::size_t>(column) * words;
+        for (int token = 0; token < token_domain; ++token) { row[token >> 5] |= 1u << (token & 31); }
+    }
+    const auto disallow = [&](int column, int token) {
+        masks.host()[static_cast<std::size_t>(column) * words + (token >> 5)] &=
+            ~(1u << (token & 31));
+    };
+    disallow(0, 5);
+    disallow(2, 9);
+    disallow(2, 10);
+    __atomic_store_n(release.host(), 3u, __ATOMIC_RELEASE);
+
+    ops::SamplingConfig config{};
+    config.temperature        = temperature;
+    config.top_k              = 1;
+    config.seed               = 0x5eed;
+    config.token_mask         = masks.device();
+    config.token_mask_release = release.device();
+    config.token_mask_epoch   = 3;
+    config.token_mask_words   = words;
+
+    const std::vector<std::int32_t> drafts =
+        all_drafts_valid ? std::vector<std::int32_t>{6, 7, 11} : std::vector<std::int32_t>{6, 7, 9};
+    const std::int32_t accepted = all_drafts_valid ? 3 : 2;
+    const std::int32_t terminal = all_drafts_valid ? 13 : 11;
+    const auto expected         = accept_state_oracle(drafts, accepted, terminal, 500);
+    const std::vector<std::int32_t> counts(static_cast<std::size_t>(token_domain), 0);
+    return execute_accept_case("speculative masked domain=" + std::to_string(token_domain) +
+                                   " T=" + std::to_string(temperature) +
+                                   (all_drafts_valid ? " bonus" : " reject"),
+                               raw_targets, bits, physical_rows, drafts, 500, token_domain, config,
+                               counts, expected);
 }
 
 int batched_sampling_workspace_stride_case() {
@@ -1202,7 +1347,7 @@ int main(int argc, char** argv) {
     }
 
     if (argc > 2 || (argc == 2 && std::string_view(argv[1]) != "--transforms-only")) {
-        std::cerr << "usage: ninfer_speculative_round_test [--transforms-only]\n";
+        std::cerr << "usage: ninferno_speculative_round_test [--transforms-only]\n";
         return 2;
     }
     int failures = transforms_conformance();
@@ -1231,8 +1376,20 @@ int main(int argc, char** argv) {
     failures += greedy_accept_case(15, 7, 257);
     failures += greedy_penalty_case(64);
     failures += greedy_penalty_case(257);
+    failures += greedy_nan_column_case(64);
+    failures += greedy_nan_column_case(257);
     failures += deterministic_sampling_case();
+    failures += deterministic_wide_topk_case(0);
+    failures += deterministic_wide_topk_case(40);
     failures += batched_sampling_workspace_stride_case();
+    for (const auto& [physical_rows, token_domain] :
+         std::vector<std::pair<int, int>>{{64, 64}, {248320, 248077}}) {
+        for (float temperature : {0.0f, 1.0f}) {
+            for (bool all_valid : {false, true}) {
+                failures += masked_accept_case(physical_rows, token_domain, temperature, all_valid);
+            }
+        }
+    }
     std::size_t sparse_peak = 0;
     for (int k = 1; k <= 15; ++k) {
         for (int batch = 1; batch <= 8; ++batch) {

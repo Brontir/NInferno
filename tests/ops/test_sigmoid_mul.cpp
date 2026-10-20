@@ -1,5 +1,5 @@
 #include "core/device.h"
-#include "ninfer/ops/sigmoid_mul.h"
+#include "ninferno/ops/sigmoid_mul.h"
 #include "ops/op_tester.h"
 
 #include <cmath>
@@ -7,8 +7,8 @@
 #include <iostream>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -112,6 +112,44 @@ int run_edge_case() {
     return failures;
 }
 
+// The gate as rows [offset, offset + rows) of a [plane, columns] buffer (a packed projection).
+int run_rows_case(const char* label, std::int32_t rows, std::int32_t plane, std::int32_t offset,
+                  std::int32_t columns, std::uint32_t seed) {
+    const std::size_t count = static_cast<std::size_t>(rows) * columns;
+    const std::size_t total = static_cast<std::size_t>(plane) * columns;
+    std::vector<float> wide(total), x(count), gate(count);
+    fill_uniform(wide, seed, -12.0f, 12.0f);
+    fill_uniform(x, seed + 1, -8.0f, 8.0f);
+    round_to_bf16(wide);
+    round_to_bf16(x);
+    for (std::int32_t c = 0; c < columns; ++c) {
+        for (std::int32_t r = 0; r < rows; ++r) {
+            gate[std::size_t(c) * rows + r] = wide[std::size_t(c) * plane + offset + r];
+        }
+    }
+    const auto expected  = sigmoid_mul_oracle(gate, x);
+    const auto wide_bits = encode_bf16(wide);
+    const auto x_bits    = encode_bf16(x);
+    GuardedDeviceBuffer device_wide(total * sizeof(std::uint16_t));
+    GuardedDeviceBuffer device_x(count * sizeof(std::uint16_t));
+    device_wide.copy_from_host(wide_bits.data(), device_wide.bytes());
+    device_x.copy_from_host(x_bits.data(), device_x.bytes());
+
+    const Tensor wide_tensor(device_wide.data(), DType::BF16, {plane, columns});
+    const Tensor gate_tensor = wide_tensor.slice(0, offset, rows);
+    Tensor x_tensor(device_x.data(), DType::BF16, {rows, columns});
+    ops::sigmoid_mul(gate_tensor, x_tensor, nullptr);
+    cuda_synchronize();
+
+    int failures = verify_pointwise(label, from_device_bf16(device_x.data(), count), expected,
+                                    sigmoid_mul_bf16_criterion());
+    failures += verify_exact("sigmoid_mul rows plane unchanged",
+                             from_device<std::uint16_t>(device_wide.data(), total), wide_bits);
+    failures += device_wide.verify_guards("sigmoid_mul rows plane");
+    failures += device_x.verify_guards("sigmoid_mul rows x");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -127,6 +165,11 @@ int main() {
     failures += run_case("sigmoid_mul [4096,17]", 4096, 17, 201u);
     failures += run_case("sigmoid_mul [4096,128]", 4096, 128, 301u);
     failures += run_edge_case();
+    // Muse Glimmer's [q; k; gate; v] (q 4096, kv 512) at decode widths and a prefill chunk.
+    for (int columns : {1, 4, 33})
+        failures += run_rows_case("sigmoid_mul rows of [q;k;gate;v]", 4096, 9216, 4608, columns,
+                                  401u + columns);
+    failures += run_rows_case("sigmoid_mul rows of [q;k;gate]", 4096, 8704, 4608, 16, 501u);
     std::cout << (failures ? "FAIL" : "OK") << " sigmoid_mul\n";
     return failures ? 1 : 0;
 }

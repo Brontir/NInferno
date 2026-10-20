@@ -6,8 +6,8 @@
 #include <iostream>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 int main() {
     if (cuda_unavailable()) {

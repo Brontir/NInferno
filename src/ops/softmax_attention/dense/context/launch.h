@@ -1,26 +1,35 @@
 #pragma once
 
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/softmax_attention.h"
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 enum class ContextAttentionRoute {
     Direct,
     SplitKv,
 };
 
-struct ContextAttentionPlan {
-    ContextAttentionRoute route = ContextAttentionRoute::SplitKv;
-    std::int32_t tokens         = 0;
-    std::int32_t warps          = 0;
-    std::int32_t key_block      = 0;
-    std::int32_t split_capacity = 0;
+// The registered head geometries: [D, Hq, Hkv] = [128, 32, 8] (group 4) and [64, 64, 8] (group 8).
+enum class ContextAttentionProfile {
+    D128Q32K8,
+    D64Q64K8,
 };
 
-[[nodiscard]] ContextAttentionPlan
-context_attention_resolve_plan(std::int32_t tokens, ContextAttentionExecutionEnvelope envelope);
+struct ContextAttentionPlan {
+    ContextAttentionProfile profile = ContextAttentionProfile::D128Q32K8;
+    ContextAttentionRoute route     = ContextAttentionRoute::SplitKv;
+    std::int32_t tokens             = 0;
+    std::int32_t warps              = 0;
+    std::int32_t key_block          = 0;
+    std::int32_t split_capacity     = 0;
+};
 
-[[nodiscard]] const char* context_attention_route_name(ContextAttentionRoute route);
+// The registered profile of `geometry`; throws for any other.
+[[nodiscard]] ContextAttentionProfile context_attention_profile(AttentionHeadGeometry geometry);
+
+[[nodiscard]] ContextAttentionPlan
+context_attention_resolve_plan(ContextAttentionProfile profile, std::int32_t tokens,
+                               ContextAttentionExecutionEnvelope envelope);
 
 void context_attention_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
                               const Tensor& context_lengths, const Tensor& valid_columns,
@@ -30,4 +39,4 @@ void context_attention_launch(const Tensor& q, const Tensor& query_k, const Tens
                               Tensor& partial_m, Tensor& partial_l, Tensor& out,
                               cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

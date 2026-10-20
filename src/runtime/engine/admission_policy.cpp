@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 namespace {
 
 [[nodiscard]] bool contains(std::span<const std::uint64_t> ids, std::uint64_t id) noexcept {
@@ -109,4 +109,4 @@ bool persistent_backfill_is_authorized(const AdmissionProtection& protection,
     return true;
 }
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

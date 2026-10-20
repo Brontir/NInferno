@@ -1,11 +1,11 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include <atomic>
 #include <cstdint>
 #include <optional>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 // Engine has already selected the model/mode preset, applied every explicit override,
 // and validated these values before constructing the runtime request.
@@ -14,12 +14,14 @@ struct ResolvedExecutionOptions {
     std::uint32_t requested_output_tokens = 0;
     bool allow_prefix_reuse               = true;
     ThinkingControlOptions thinking;
+    std::optional<RequestSpeculation> speculation;
 };
 
 struct ResolvedRequestOptions {
     ResolvedExecutionOptions execution;
     StopPolicy stop;
     OutputOptions output;
+    OutputConstraintOptions constraint;
 };
 
 enum class ContinuationAction : std::uint8_t {
@@ -60,4 +62,4 @@ struct RequestPlanSummary {
     bool publish_continuation             = true;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

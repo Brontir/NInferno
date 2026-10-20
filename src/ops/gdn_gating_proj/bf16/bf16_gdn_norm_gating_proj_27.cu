@@ -1,3 +1,4 @@
+#include "core/pdl.cuh"
 #include "core/weight.h"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_kernels.h"
 #include "core/device.h"
@@ -7,7 +8,7 @@
 
 #include <cuda_bf16.h>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 // Each head computes both control dots and the complete norm. RMS scaling can be
 // applied after the dots; h is independently rounded from the full normalized input.
@@ -16,6 +17,9 @@ __global__ __launch_bounds__(Threads) void gdn_norm_gating_27_simt(
     const __nv_bfloat16* x, const __nv_bfloat16* nw, const __nv_bfloat16* aw,
     const __nv_bfloat16* bw, const float* alog, const float* bias, __nv_bfloat16* h, float* g,
     float* beta, int tokens, float eps) {
+    // A programmatic dependent (the GDN input projection, which reads h) may launch now: it waits
+    // for this kernel before it reads, and streams its weights meanwhile.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
     constexpr int D = 5120, H = 48, Warps = Threads / 32;
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5, head = blockIdx.x,
               first = blockIdx.y * Tile;
@@ -118,4 +122,4 @@ void bf16_gdn_norm_gating_proj_27_launch(const Tensor& x, const Tensor& norm_wei
         launch.template operator()<4, 256>();
     CUDA_CHECK(cudaGetLastError());
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

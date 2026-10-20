@@ -1,15 +1,20 @@
 #include "core/weight.h"
 #include "ops/sparse_moe/decode/sparse_moe_decode.h"
 
+#include "core/device_class.h"
 #include "core/layout.h"
 
+#include <algorithm>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
-// The D4 epilogue warms at most this many bytes of the next consumer's weights: far below the
-// 96 MiB L2, so the warmed block cannot evict what it was meant to help.
-constexpr std::size_t kNextWeightPrefetchLimit = std::size_t{8} << 20;
+// The D4 epilogue warms at most 8 MiB of the next consumer's weights, and never more than an
+// eighth of the device's L2, so the warmed block cannot evict what it was meant to help (both
+// bounds give 8 MiB on 64 and 96 MiB parts).
+std::size_t next_weight_prefetch_limit() {
+    return std::min(std::size_t{8} << 20, device_class().l2_bytes / 8);
+}
 } // namespace
 
 std::size_t sparse_moe_decode_workspace_bytes() {
@@ -25,7 +30,11 @@ SparseMoeDecodePlan resolve_sparse_moe_decode_plan(QType routed_gate_up, QType r
         (routed_down == QType::Q5_G64_FP16 || routed_down == QType::Q6_G64_FP16);
     const bool mtp_profile =
         routed_gate_up == QType::Q8_G32_FP16 && routed_down == QType::Q8_G32_FP16;
-    if (!main_profile && !mtp_profile) {
+    // The decode kernels are CUDA-core dot products, so NVFP4 is read here against represented
+    // BF16 activations: four-bit activations buy no arithmetic on this path and would cost a
+    // quantiser kernel of their own.
+    const bool nvfp4_profile = routed_gate_up == QType::NVFP4 && routed_down == QType::NVFP4;
+    if (!main_profile && !mtp_profile && !nvfp4_profile) {
         throw std::invalid_argument("sparse_moe: unsupported routed codec profile");
     }
 
@@ -34,11 +43,9 @@ SparseMoeDecodePlan resolve_sparse_moe_decode_plan(QType routed_gate_up, QType r
     if (hints.next_weight_prefetch != nullptr) {
         plan.next_weight_prefetch = hints.next_weight_prefetch;
         plan.next_weight_prefetch_bytes =
-            hints.next_weight_prefetch_bytes < kNextWeightPrefetchLimit
-                ? hints.next_weight_prefetch_bytes
-                : kNextWeightPrefetchLimit;
+            std::min(hints.next_weight_prefetch_bytes, next_weight_prefetch_limit());
     }
     return plan;
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

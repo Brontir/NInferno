@@ -1,7 +1,7 @@
 <!--
 One PR should complete one agreed change, including its implementation, verification and report.
-Keep independent changes in separate PRs. Follow the applicable verification guidance:
-https://github.com/Neroued/ninfer/blob/master/CONTRIBUTING.md#pull-request-description
+Keep independent changes in separate PRs. Follow the applicable verification guidance in
+CONTRIBUTING.md ("Pull request description").
 -->
 
 ## Problem and scope
@@ -18,5 +18,6 @@ Related Issue:
 
 <!--
 Provide reproduction commands and summarized results, or a report containing them.
+Name the GPU model(s) the change was tested on.
 State any relevant behavior that remains unverified.
 -->

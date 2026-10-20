@@ -5,21 +5,26 @@
 // distribution oracle built from the BF16 values represented at the public
 // input.  The test never reproduces the device RNG algorithm or uses another
 // production path as a golden.
-#include "ninfer/ops/sampling.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/types.h"
 #include "ops/op_tester.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -97,8 +102,9 @@ Distribution distribution_oracle(const std::vector<float>& column, int token_dom
         return a.token < b.token;
     });
 
-    int cap = 20;
-    if (config.top_k > 0 && config.top_k < 20) { cap = config.top_k; }
+    // The multi-block route's candidate cap (kMaximumTopK); the tests' launches take that route.
+    int cap = ninferno::kMaximumTopK;
+    if (config.top_k > 0 && config.top_k < cap) { cap = config.top_k; }
     cap = std::min(cap, token_domain);
     candidates.resize(static_cast<std::size_t>(cap));
 
@@ -324,10 +330,10 @@ int verify_distribution(const char* label, const std::vector<int>& samples,
     return 0;
 }
 
-int greedy_contract() {
-    constexpr int physical_rows = 248320;
-    constexpr int token_domain  = 248077;
-    constexpr int batch         = 8;
+// physical_rows == token_domain: the logits of a head whose rows end inside a 128-row tile
+// (nvidia/Muse-Glimmer-30B-NVFP4's 202048-row NVFP4 head), no rows past the token domain.
+int greedy_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 8;
     std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, -9.0f);
     for (int row = 0; row < batch; ++row) {
         const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
@@ -335,10 +341,12 @@ int greedy_contract() {
         int second             = token_domain - 1 - ((31 + 65537 * row) % token_domain);
         if (second == first) { second = (first + 1) % token_domain; }
         if (second < first) { std::swap(first, second); }
-        logits[base + first]             = row == 0 ? -0.0f : 16.0f + row;
-        logits[base + second]            = row == 0 ? 0.0f : 16.0f + row;
-        logits[base + token_domain]      = 100.0f;
-        logits[base + physical_rows - 1] = 200.0f;
+        logits[base + first]  = row == 0 ? -0.0f : 16.0f + row;
+        logits[base + second] = row == 0 ? 0.0f : 16.0f + row;
+        if (token_domain < physical_rows) {
+            logits[base + token_domain]      = 100.0f;
+            logits[base + physical_rows - 1] = 200.0f;
+        }
     }
     round_to_bf16(logits);
 
@@ -364,6 +372,38 @@ int greedy_contract() {
         ++expected_counts[static_cast<std::size_t>(result.tokens[row])];
         failures += verify_exact("sample greedy increments selected token", result.counts[row],
                                  expected_counts);
+    }
+    return failures;
+}
+
+// A row of NaN logits (a numerically failed forward) still selects an id of its domain on every
+// route: NaN ranks as -inf, so greedy takes id 0 and sampling one of the domain, and the token
+// count it increments stays in its buffer. Row 1 keeps one finite logit among NaNs, which wins.
+int nan_row_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 4;
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch,
+                              std::numeric_limits<float>::quiet_NaN());
+    logits[static_cast<std::size_t>(physical_rows) + token_domain / 2] = -3.0f;
+    round_to_bf16(logits);
+    int failures = 0;
+    for (const float temperature : {0.0f, 0.8f}) {
+        ops::SamplingConfig config;
+        config.temperature = temperature;
+        config.seed        = 7;
+        const std::vector<int> counts(static_cast<std::size_t>(token_domain), 0);
+        const RunResult result =
+            run_homogeneous_batch(logits, physical_rows, token_domain, batch, config, 77,
+                                  ops::kSamplePurposeDecode, &counts);
+        failures += result.integrity_failures;
+        for (int row = 0; row < batch; ++row) {
+            const int token    = result.tokens[static_cast<std::size_t>(row)];
+            const int expected = row == 1 ? token_domain / 2 : 0;
+            if (token >= 0 && token < token_domain && (temperature > 0.0f || token == expected))
+                continue;
+            std::cerr << "sample NaN row domain=" << token_domain << " T=" << temperature << " row "
+                      << row << ": token " << token << "\n";
+            ++failures;
+        }
     }
     return failures;
 }
@@ -485,19 +525,21 @@ int filtered_distribution_contract() {
 }
 
 int capped_distribution_contract() {
-    std::vector<float> column(24, 0.0f);
-    for (int token = 0; token < 24; ++token) {
-        column[static_cast<std::size_t>(token)] = 2.0f - 0.1f * token;
+    // The widest public top_k over a few more candidates than it keeps.
+    constexpr int columns = kMaximumTopK + 8;
+    std::vector<float> column(columns, 0.0f);
+    for (int token = 0; token < columns; ++token) {
+        column[static_cast<std::size_t>(token)] = 2.0f - 0.05f * token;
     }
     round_to_bf16(column);
     ops::SamplingConfig config;
     config.temperature = 1.1f;
-    config.top_k       = 64;
+    config.top_k       = kMaximumTopK;
     config.seed        = 884422;
 
     const Distribution oracle =
         distribution_oracle(column, static_cast<int>(column.size()), config);
-    if (oracle.tokens.size() != 20) {
+    if (oracle.tokens.size() != static_cast<std::size_t>(kMaximumTopK)) {
         std::cerr << "top-k cap oracle fixture has unexpected support\n";
         return 1;
     }
@@ -507,6 +549,34 @@ int capped_distribution_contract() {
                                           config, 900, ops::kSamplePurposePrefill);
     return result.integrity_failures +
            verify_distribution("sample top-k public cap", result.tokens, oracle);
+}
+
+// More lanes than one multi-block launch takes (sixteen): sample() runs them in slices, so every
+// lane keeps the whole top-kMaximumTopK domain (the single-block fallback would keep 20).
+int sliced_lanes_distribution_contract() {
+    constexpr int vocab   = 1024;
+    constexpr int columns = kMaximumTopK + 8;
+    std::vector<float> column(vocab, -30.0f);
+    for (int token = 0; token < columns; ++token) {
+        column[static_cast<std::size_t>(token)] = 2.0f - 0.05f * token;
+    }
+    round_to_bf16(column);
+    ops::SamplingConfig config;
+    config.temperature = 1.1f;
+    config.top_k       = kMaximumTopK;
+    config.seed        = 551177;
+
+    const Distribution oracle = distribution_oracle(column, vocab, config);
+    if (oracle.tokens.size() != static_cast<std::size_t>(kMaximumTopK)) {
+        std::cerr << "sliced lanes oracle fixture has unexpected support\n";
+        return 1;
+    }
+    constexpr int lanes   = 20;
+    constexpr int samples = 16380; // a multiple of the lanes
+    const RunResult result =
+        run_repeated(column, vocab, samples, lanes, config, 1300, ops::kSamplePurposeDecode);
+    return result.integrity_failures +
+           verify_distribution("sample twenty lanes keep the top-64 domain", result.tokens, oracle);
 }
 
 int real_shape_distribution_contract() {
@@ -612,6 +682,435 @@ int increment_counts_contract() {
     return failures;
 }
 
+// ---- Allowed-token masks ----------------------------------------------------------------------
+
+// Device-mapped pinned host words: the storage the structured-output runtime uses for masks and
+// the release counter.
+class MappedWords {
+public:
+    explicit MappedWords(std::size_t count) : count_(count) {
+        cuda_check(cudaHostAlloc(reinterpret_cast<void**>(&host_), count * sizeof(std::uint32_t),
+                                 cudaHostAllocMapped),
+                   "cudaHostAlloc mapped");
+        std::fill(host_, host_ + count, 0u);
+        cuda_check(cudaHostGetDevicePointer(reinterpret_cast<void**>(&device_), host_, 0),
+                   "cudaHostGetDevicePointer");
+    }
+    ~MappedWords() { cudaFreeHost(host_); }
+    MappedWords(const MappedWords&)            = delete;
+    MappedWords& operator=(const MappedWords&) = delete;
+
+    [[nodiscard]] std::uint32_t* host() const noexcept { return host_; }
+    [[nodiscard]] std::uint32_t* device() const noexcept { return device_; }
+
+    void store_release(std::uint32_t value) const noexcept {
+        __atomic_store_n(host_, value, __ATOMIC_RELEASE);
+    }
+
+private:
+    std::size_t count_     = 0;
+    std::uint32_t* host_   = nullptr;
+    std::uint32_t* device_ = nullptr;
+};
+
+int mask_words(int token_domain) { return (((token_domain + 31) / 32) + 7) & ~7; }
+
+void set_allowed(std::uint32_t* words, int token, bool allowed) {
+    if (allowed) {
+        words[token >> 5] |= 1u << (token & 31);
+    } else {
+        words[token >> 5] &= ~(1u << (token & 31));
+    }
+}
+
+std::vector<bool> allowed_set(const std::uint32_t* words, int token_domain) {
+    std::vector<bool> out(static_cast<std::size_t>(token_domain));
+    for (int token = 0; token < token_domain; ++token) {
+        out[static_cast<std::size_t>(token)] = ((words[token >> 5] >> (token & 31)) & 1u) != 0u;
+    }
+    return out;
+}
+
+int masked_argmax(const std::vector<float>& logits, std::size_t base, int token_domain,
+                  const std::vector<bool>& allowed) {
+    int best = -1;
+    for (int token = 0; token < token_domain; ++token) {
+        if (!allowed[static_cast<std::size_t>(token)]) { continue; }
+        if (best < 0 || logits[base + token] > logits[base + best]) { best = token; }
+    }
+    return best;
+}
+
+Distribution masked_distribution_oracle(const std::vector<float>& column, int token_domain,
+                                        const ops::SamplingConfig& config,
+                                        const std::vector<bool>& allowed) {
+    std::vector<int> tokens;
+    for (int token = 0; token < token_domain; ++token) {
+        if (allowed[static_cast<std::size_t>(token)]) { tokens.push_back(token); }
+    }
+    std::vector<float> compact;
+    compact.reserve(tokens.size());
+    for (int token : tokens) { compact.push_back(column[static_cast<std::size_t>(token)]); }
+    Distribution compact_oracle =
+        distribution_oracle(compact, static_cast<int>(compact.size()), config);
+    for (int& token : compact_oracle.tokens) { token = tokens[static_cast<std::size_t>(token)]; }
+    return compact_oracle;
+}
+
+// Greedy and stochastic rows under per-row masks, including a null-mask row in the same call,
+// at the registered token domain (multi-block route) and at a single-block domain.
+int masked_greedy_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 4;
+    const int words     = mask_words(token_domain);
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, -9.0f);
+    std::uint32_t lcg = 12345;
+    for (float& value : logits) {
+        lcg   = lcg * 1664525u + 1013904223u;
+        value = static_cast<float>(lcg >> 9) / static_cast<float>(1u << 23) * 8.0f - 4.0f;
+    }
+    for (int row = 0; row < batch; ++row) {
+        const std::size_t base           = static_cast<std::size_t>(row) * physical_rows;
+        logits[base + physical_rows - 1] = 200.0f; // outside the token domain
+    }
+    round_to_bf16(logits);
+
+    MappedWords masks(static_cast<std::size_t>(words) * batch);
+    MappedWords release(1);
+    std::vector<ops::SamplingConfig> configs(batch);
+    std::vector<int> expected(batch);
+    for (int row = 0; row < batch; ++row) {
+        std::uint32_t* row_mask = masks.host() + static_cast<std::size_t>(row) * words;
+        // Row r admits every (7+r)-th token plus one: the unmasked argmax is excluded unless it
+        // happens to be admitted.
+        for (int token = 0; token < token_domain; token += 7 + row) {
+            set_allowed(row_mask, token, true);
+        }
+        set_allowed(row_mask, token_domain - 1, true);
+        const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
+        if (row == 2) {
+            configs[row].token_mask = nullptr; // unconstrained row in a masked call
+            std::vector<bool> all(static_cast<std::size_t>(token_domain), true);
+            expected[row] = masked_argmax(logits, base, token_domain, all);
+        } else {
+            configs[row].token_mask         = masks.device() + static_cast<std::size_t>(row) * words;
+            configs[row].token_mask_release = release.device();
+            configs[row].token_mask_epoch   = 1;
+            configs[row].token_mask_words   = words;
+            expected[row] = masked_argmax(logits, base, token_domain,
+                                          allowed_set(row_mask, token_domain));
+        }
+        configs[row].temperature = 0.0f;
+    }
+    configs[3].temperature = 0.7f; // top_k=1 stochastic row: support is the masked argmax
+    configs[3].top_k       = 1;
+    configs[3].seed        = 77;
+    release.store_release(1);
+
+    std::vector<int> positions{3, 4, 5, 6};
+    const RunResult result = run_batch(logits, physical_rows, token_domain, configs, positions,
+                                       ops::kSamplePurposeDecode);
+    return result.integrity_failures +
+           verify_exact(("sample masked greedy domain=" + std::to_string(token_domain)).c_str(),
+                        result.tokens, expected);
+}
+
+// A masked positive-temperature row matches the FP64 oracle restricted to allowed tokens: the
+// top-k cut is taken among allowed tokens and the support is renormalized over them.
+int masked_distribution_contract() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, -20.0f);
+    const int ids[]     = {17, 7919, 65537, 131071, 200003, 248076};
+    const float value[] = {6.0f, 3.0f, 2.5f, 2.0f, 1.5f, 1.0f};
+    for (int i = 0; i < 6; ++i) { column[static_cast<std::size_t>(ids[i])] = value[i]; }
+    round_to_bf16(column);
+
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    // The best token (17) is disallowed; so are two filler tokens, which leaves four allowed
+    // tokens plus the -20 background.
+    for (int token = 0; token < token_domain; ++token) { set_allowed(masks.host(), token, true); }
+    set_allowed(masks.host(), 17, false);
+    set_allowed(masks.host(), 65537, false);
+    release.store_release(5);
+
+    ops::SamplingConfig config;
+    config.temperature        = 1.0f;
+    config.top_k              = 3;
+    config.seed               = 99173;
+    config.token_mask         = masks.device();
+    config.token_mask_release = release.device();
+    config.token_mask_epoch   = 5;
+    config.token_mask_words   = words;
+    const Distribution oracle = masked_distribution_oracle(
+        column, token_domain, config, allowed_set(masks.host(), token_domain));
+    constexpr int samples = 4096;
+    const RunResult result =
+        run_repeated(column, token_domain, samples, 8, config, 5000, ops::kSamplePurposeDecode);
+    return result.integrity_failures +
+           verify_distribution("sample masked distribution", result.tokens, oracle);
+}
+
+// All-allowed masks leave greedy and stochastic results bit-identical to the unmasked route.
+int all_allowed_mask_identity_contract() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, 0.0f);
+    std::uint32_t lcg = 4242;
+    for (float& value : column) {
+        lcg   = lcg * 1664525u + 1013904223u;
+        value = static_cast<float>(lcg >> 9) / static_cast<float>(1u << 23) * 6.0f - 3.0f;
+    }
+    round_to_bf16(column);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    std::fill(masks.host(), masks.host() + words, 0xffffffffu);
+    release.store_release(9);
+
+    int failures = 0;
+    for (float temperature : {0.0f, 0.9f}) {
+        ops::SamplingConfig plain;
+        plain.temperature = temperature;
+        plain.top_k       = 20;
+        plain.top_p       = 0.95f;
+        plain.seed        = 31337;
+        ops::SamplingConfig masked      = plain;
+        masked.token_mask               = masks.device();
+        masked.token_mask_release       = release.device();
+        masked.token_mask_epoch         = 9;
+        masked.token_mask_words         = words;
+        const RunResult unmasked_result = run_repeated(column, token_domain, 256, 8, plain, 70,
+                                                       ops::kSamplePurposeDecode);
+        const RunResult masked_result   = run_repeated(column, token_domain, 256, 8, masked, 70,
+                                                       ops::kSamplePurposeDecode);
+        failures += unmasked_result.integrity_failures + masked_result.integrity_failures;
+        failures += verify_exact("sample all-allowed mask is the unmasked result",
+                                 masked_result.tokens, unmasked_result.tokens);
+    }
+    return failures;
+}
+
+// The overlap protocol: the host writes the mask and releases its epoch after the launch. The
+// kernel must wait and then observe the late mask, not the stale contents present at launch.
+int late_release_contract() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, -5.0f);
+    column[100]    = 9.0f;
+    column[200]    = 8.0f;
+    column[300]    = 7.0f;
+    const auto bits = bf16_bits(column);
+    DeviceBuffer device_logits = to_device(bits);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    MappedWords fault(1);
+    set_allowed(masks.host(), 100, true); // stale contents: admits the unmasked argmax
+    release.store_release(41);
+
+    ops::SamplingConfig config;
+    config.token_mask         = masks.device();
+    config.token_mask_release = release.device();
+    config.token_mask_fault   = fault.device();
+    config.token_mask_epoch   = 42;
+    config.token_mask_words   = words;
+    DeviceBuffer device_config    = to_device(std::vector<ops::SamplingConfig>{config});
+    DeviceBuffer device_positions = to_device(std::vector<int>{1});
+    GuardedDeviceBuffer device_out(sizeof(std::int32_t));
+    Tensor logits_tensor(device_logits.p, DType::BF16, {physical_rows, 1});
+    Tensor out_tensor(device_out.data(), DType::I32, {1});
+    Tensor positions_tensor(device_positions.p, DType::I32, {1});
+    WorkspaceArena workspace(
+        std::max<std::size_t>(256, ops::sampling_workspace_capacity_bytes(token_domain, 1, 1)));
+    ops::sample(logits_tensor, out_tensor, token_domain,
+                static_cast<const ops::SamplingConfig*>(device_config.p), positions_tensor,
+                ops::kSamplePurposeDecode, workspace, nullptr);
+    (void)cudaStreamQuery(nullptr); // submit the launch before the host writes the mask
+    // Give the launch time to reach the wait; the release happens strictly afterwards.
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+    while (std::chrono::steady_clock::now() < until) {}
+    std::fill(masks.host(), masks.host() + words, 0u);
+    set_allowed(masks.host(), 300, true);
+    release.store_release(42);
+    cuda_synchronize();
+    int failures = verify_exact("sample late-released mask", from_device<int>(device_out.data(), 1),
+                                std::vector<int>{300});
+    failures += verify_exact("sample late release raised no fault",
+                             std::vector<std::uint32_t>{fault.host()[0]},
+                             std::vector<std::uint32_t>{0u});
+    return failures;
+}
+
+// A mask that is never released cannot hang the device: the bounded wait raises the fault flag.
+int unreleased_mask_fault_contract() {
+    constexpr int token_domain = 248077;
+    const int words            = mask_words(token_domain);
+    std::vector<float> column(248320, 0.0f);
+    column[5] = 3.0f;
+    const auto bits = bf16_bits(column);
+    DeviceBuffer device_logits = to_device(bits);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    MappedWords fault(1);
+    std::fill(masks.host(), masks.host() + words, 0xffffffffu);
+    ops::SamplingConfig config;
+    config.token_mask         = masks.device();
+    config.token_mask_release = release.device();
+    config.token_mask_fault   = fault.device();
+    config.token_mask_epoch   = 1;
+    config.token_mask_words   = words;
+    DeviceBuffer device_config    = to_device(std::vector<ops::SamplingConfig>{config});
+    DeviceBuffer device_positions = to_device(std::vector<int>{1});
+    GuardedDeviceBuffer device_out(sizeof(std::int32_t));
+    Tensor logits_tensor(device_logits.p, DType::BF16, {248320, 1});
+    Tensor out_tensor(device_out.data(), DType::I32, {1});
+    Tensor positions_tensor(device_positions.p, DType::I32, {1});
+    WorkspaceArena workspace(
+        std::max<std::size_t>(256, ops::sampling_workspace_capacity_bytes(token_domain, 1, 1)));
+    const auto started = std::chrono::steady_clock::now();
+    ops::sample(logits_tensor, out_tensor, token_domain,
+                static_cast<const ops::SamplingConfig*>(device_config.p), positions_tensor,
+                ops::kSamplePurposeDecode, workspace, nullptr);
+    cuda_synchronize();
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    std::cout << "    unreleased mask wait returned after " << seconds << " s\n";
+    return verify_exact("sample unreleased mask raises the fault flag",
+                        std::vector<std::uint32_t>{fault.host()[0]},
+                        std::vector<std::uint32_t>{1u});
+}
+
+// A host that keeps computing masks for longer than the silent-host bound is waited for: each
+// advance of the progress counter renews the bound, and the late mask is applied without a fault.
+int progressing_host_wait_contract() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, -5.0f);
+    column[100]                = 9.0f;
+    column[300]                = 7.0f;
+    const auto bits            = bf16_bits(column);
+    DeviceBuffer device_logits = to_device(bits);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    MappedWords fault(1);
+    MappedWords progress(1);
+    set_allowed(masks.host(), 100, true); // stale contents: admits the unmasked argmax
+    release.store_release(6);
+
+    ops::SamplingConfig config;
+    config.token_mask             = masks.device();
+    config.token_mask_release     = release.device();
+    config.token_mask_fault       = fault.device();
+    config.token_mask_progress    = progress.device();
+    config.token_mask_epoch       = 7;
+    config.token_mask_words       = words;
+    DeviceBuffer device_config    = to_device(std::vector<ops::SamplingConfig>{config});
+    DeviceBuffer device_positions = to_device(std::vector<int>{1});
+    GuardedDeviceBuffer device_out(sizeof(std::int32_t));
+    Tensor logits_tensor(device_logits.p, DType::BF16, {physical_rows, 1});
+    Tensor out_tensor(device_out.data(), DType::I32, {1});
+    Tensor positions_tensor(device_positions.p, DType::I32, {1});
+    WorkspaceArena workspace(
+        std::max<std::size_t>(256, ops::sampling_workspace_capacity_bytes(token_domain, 1, 1)));
+    ops::sample(logits_tensor, out_tensor, token_domain,
+                static_cast<const ops::SamplingConfig*>(device_config.p), positions_tensor,
+                ops::kSamplePurposeDecode, workspace, nullptr);
+    (void)cudaStreamQuery(nullptr);
+    // Twice the silent-host bound, with an advance every 200 ms.
+    const auto wait  = std::chrono::nanoseconds(2 * ops::kTokenMaskReleaseWaitNs);
+    const auto until = std::chrono::steady_clock::now() + wait;
+    while (std::chrono::steady_clock::now() < until) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        __atomic_fetch_add(progress.host(), 1u, __ATOMIC_RELAXED);
+    }
+    std::fill(masks.host(), masks.host() + words, 0u);
+    set_allowed(masks.host(), 300, true);
+    release.store_release(7);
+    cuda_synchronize();
+    int failures = verify_exact("sample mask released by a progressing host",
+                                from_device<int>(device_out.data(), 1), std::vector<int>{300});
+    failures +=
+        verify_exact("progressing host raised no fault",
+                     std::vector<std::uint32_t>{fault.host()[0]}, std::vector<std::uint32_t>{0u});
+    return failures;
+}
+
+// Diagnostic, run only with NINFERNO_SAMPLING_MASK_BENCH=1: device time per sample() call for one
+// 248077-token row, unmasked vs masked with the mask in mapped host memory vs device memory.
+void mask_route_timing() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, 0.0f);
+    std::uint32_t lcg = 777;
+    for (float& value : column) {
+        lcg   = lcg * 1664525u + 1013904223u;
+        value = static_cast<float>(lcg >> 9) / static_cast<float>(1u << 23) * 6.0f - 3.0f;
+    }
+    const auto bits            = bf16_bits(column);
+    DeviceBuffer device_logits = to_device(bits);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    for (int token = 0; token < token_domain; token += 3) { set_allowed(masks.host(), token, true); }
+    release.store_release(1);
+    std::vector<std::uint32_t> device_words(masks.host(), masks.host() + words);
+    DeviceBuffer device_mask    = to_device(device_words);
+    DeviceBuffer device_release = to_device(std::vector<std::uint32_t>{1u});
+    DeviceBuffer device_positions = to_device(std::vector<int>{1});
+    GuardedDeviceBuffer device_out(sizeof(std::int32_t));
+    Tensor logits_tensor(device_logits.p, DType::BF16, {physical_rows, 1});
+    Tensor out_tensor(device_out.data(), DType::I32, {1});
+    Tensor positions_tensor(device_positions.p, DType::I32, {1});
+    WorkspaceArena workspace(
+        std::max<std::size_t>(256, ops::sampling_workspace_capacity_bytes(token_domain, 1, 1)));
+    for (float temperature : {0.0f, 0.7f}) {
+        for (int route = 0; route < 4; ++route) {
+            ops::SamplingConfig config;
+            config.temperature = temperature;
+            config.top_k       = 20;
+            config.seed        = 5;
+            if (route > 0) {
+                config.token_mask = route == 1 ? masks.device()
+                                               : static_cast<std::uint32_t*>(device_mask.p);
+                config.token_mask_release =
+                    route == 3 ? static_cast<const std::uint32_t*>(device_release.p)
+                               : release.device();
+                config.token_mask_epoch   = 1;
+                config.token_mask_words   = words;
+            }
+            DeviceBuffer device_config = to_device(std::vector<ops::SamplingConfig>{config});
+            const auto launch          = [&] {
+                ops::sample(logits_tensor, out_tensor, token_domain,
+                            static_cast<const ops::SamplingConfig*>(device_config.p),
+                            positions_tensor, ops::kSamplePurposeDecode, workspace, nullptr);
+            };
+            for (int i = 0; i < 20; ++i) { launch(); }
+            cuda_synchronize();
+            cudaEvent_t start = nullptr;
+            cudaEvent_t stop  = nullptr;
+            cudaEventCreate(&start);
+            cudaEventCreate(&stop);
+            constexpr int calls = 200;
+            cudaEventRecord(start, nullptr);
+            for (int i = 0; i < calls; ++i) { launch(); }
+            cudaEventRecord(stop, nullptr);
+            cudaEventSynchronize(stop);
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, start, stop);
+            cudaEventDestroy(start);
+            cudaEventDestroy(stop);
+            const char* names[] = {"unmasked", "mask and release in mapped host memory",
+                                   "mask in device memory, release mapped",
+                                   "mask and release in device memory"};
+            std::cout << "    timing temperature=" << temperature << " " << names[route] << ": "
+                      << 1000.0f * ms / calls << " us per call\n";
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -619,11 +1118,15 @@ int main() {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }
+    if (const char* bench = std::getenv("NINFERNO_SAMPLING_MASK_BENCH"); bench && bench[0] == '1') {
+        mask_route_timing();
+        return 0;
+    }
 
     int failures            = 0;
     const std::size_t at_16 = ops::sampling_workspace_capacity_bytes(257, 16, 16);
     if (ops::sampling_workspace_capacity_bytes(256, 1, 16) != 0 || at_16 == 0 ||
-        ops::sampling_workspace_capacity_bytes(257, 17, 17) != 0 ||
+        ops::sampling_workspace_capacity_bytes(257, 17, 17) != at_16 || // seventeen: two slices
         ops::sampling_workspace_capacity_bytes(257, 1, 17) != at_16) {
         std::cerr << "sampling workspace route boundary contract failed\n";
         ++failures;
@@ -633,15 +1136,26 @@ int main() {
         std::cerr << "sampling workspace accepted an invalid lane interval\n";
         ++failures;
     } catch (const std::invalid_argument&) {}
-    failures += greedy_contract();
+    failures += greedy_contract(248320, 248077);
+    failures += greedy_contract(202048, 202048);
+    failures += nan_row_contract(248320, 248077);
+    failures += nan_row_contract(260, 200);
     failures += deterministic_stochastic_contract();
     failures += heterogeneous_batch_contract();
     failures += filtered_distribution_contract();
     failures += capped_distribution_contract();
+    failures += sliced_lanes_distribution_contract();
     failures += real_shape_distribution_contract();
     failures += rng_key_contract();
     failures += workspace_route_boundary_contract();
     failures += increment_counts_contract();
+    failures += masked_greedy_contract(248320, 248077);
+    failures += masked_greedy_contract(260, 200);
+    failures += masked_distribution_contract();
+    failures += all_allowed_mask_identity_contract();
+    failures += late_release_contract();
+    failures += unreleased_mask_fault_contract();
+    failures += progressing_host_wait_contract();
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " sample public contract\n";
     return failures == 0 ? 0 : 1;

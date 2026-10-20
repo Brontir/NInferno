@@ -1,0 +1,73 @@
+# ninferno-ui: the local web page that picks, downloads and starts models on the machine's GPUs.
+# No CUDA code of its own: the GPUs are read through NVML at run time, and models run in
+# ninferno-serve processes (the converter it links still brings the CUDA runtime).
+# The page and the catalog are compiled in.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/page.html
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/catalog.json)
+foreach(item "page.html;PageHtml;embedded_page.h" "data/catalog.json;CatalogJson;embedded_catalog.h")
+  list(GET item 0 NINFERNO_UI_SOURCE)
+  list(GET item 1 NINFERNO_UI_NAME)
+  list(GET item 2 header)
+  ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/${NINFERNO_UI_SOURCE} NINFERNO_UI_TEXT NINFERNO_UI_TEXT)
+  configure_file(embedded.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/ui/${header} @ONLY)
+endforeach()
+
+# The chat window: llama.cpp's llama-ui (MIT, ggml authors), the prebuilt bundle its own build
+# downloads, pinned by version and SHA-256, fetched for a build of the programs
+# (NINFERNO_BUILD_APPS; a tests-only tree has no page to put it in). Off, or offline at configure
+# time: the page has no chat window.
+option(NINFERNO_UI_CHAT "Fetch llama-ui's prebuilt bundle for ninferno-ui's chat window" ON)
+set(NINFERNO_UI_CHAT_VERSION "b11321")
+set(NINFERNO_UI_CHAT_SHA256 "7eded73a49e382ce6aee12773deaa871e792e0f7f7165abe2ce4ff93e83fe665")
+set(NINFERNO_UI_CHAT_DIR "${CMAKE_BINARY_DIR}/llama-ui-${NINFERNO_UI_CHAT_VERSION}")
+if(NINFERNO_UI_CHAT AND NINFERNO_BUILD_APPS AND NOT EXISTS "${NINFERNO_UI_CHAT_DIR}/index.html")
+  set(archive "${CMAKE_BINARY_DIR}/llama-ui-${NINFERNO_UI_CHAT_VERSION}.tar.gz")
+  # The hash is checked after the download: file(DOWNLOAD ... EXPECTED_HASH) stops the configure
+  # when the download itself fails (offline machine) instead of reporting it in STATUS.
+  file(DOWNLOAD
+    "https://huggingface.co/buckets/ggml-org/llama-ui/resolve/${NINFERNO_UI_CHAT_VERSION}/dist.tar.gz"
+    "${archive}" STATUS status TIMEOUT 300)
+  list(GET status 0 code)
+  if(code EQUAL 0)
+    file(SHA256 "${archive}" fetched)
+    if(NOT fetched STREQUAL NINFERNO_UI_CHAT_SHA256)
+      set(code 1)
+      set(status "1;SHA-256 ${fetched}, expected ${NINFERNO_UI_CHAT_SHA256}")
+    endif()
+  endif()
+  if(code EQUAL 0)
+    file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${NINFERNO_UI_CHAT_DIR}")
+    file(REMOVE "${archive}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama-ui/LICENSE" DESTINATION "${NINFERNO_UI_CHAT_DIR}")
+  else()
+    message(WARNING "ninferno-ui: llama-ui ${NINFERNO_UI_CHAT_VERSION} not fetched (${status}); the chat "
+                    "window is left out of this build")
+    file(REMOVE "${archive}")
+  endif()
+endif()
+
+add_library(ninferno_ui STATIC
+  access.cpp
+  app.cpp
+  browser.cpp
+  catalog.cpp
+  chat_ui.cpp
+  gpu_stats.cpp
+  processes.cpp
+)
+ninferno_internal_includes(ninferno_ui)
+target_include_directories(ninferno_ui PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+if(NINFERNO_SOURCE_TREE_PATHS AND NINFERNO_UI_CHAT AND EXISTS "${NINFERNO_UI_CHAT_DIR}/index.html")
+  target_compile_definitions(ninferno_ui PRIVATE NINFERNO_UI_CHAT_BUILD_DIR="${NINFERNO_UI_CHAT_DIR}")
+endif()
+target_link_libraries(ninferno_ui PUBLIC ninferno::json ninferno::httplib Threads::Threads ninferno_product_update
+  PRIVATE ninferno_convert ${CMAKE_DL_LIBS})
+# Installed beside the data, where ninferno-ui looks first after its own directory (chat_ui.cpp).
+if(NINFERNO_UI_CHAT AND EXISTS "${NINFERNO_UI_CHAT_DIR}/index.html")
+  include(GNUInstallDirs)
+  install(DIRECTORY "${NINFERNO_UI_CHAT_DIR}/" DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/llama-ui)
+  # Its license with the other components' (NOTICE: share/licenses/<component>).
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama-ui/LICENSE"
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/llama-ui)
+endif()

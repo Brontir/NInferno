@@ -4,9 +4,10 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 void set_i32_scalar_launch(Tensor& destination, std::int32_t value, cudaStream_t stream);
 void assign_i32_scalar_launch(const Tensor& source, Tensor& destination, cudaStream_t stream);
@@ -14,5 +15,8 @@ void add_i32_scalars_launch(const Tensor& lhs, const Tensor& rhs, Tensor& destin
                             cudaStream_t stream);
 void increment_i32_scalar_launch(Tensor& scalar, cudaStream_t stream);
 void increment_i64_scalar_launch(Tensor& scalar, cudaStream_t stream);
+void fill_i32_launch(Tensor& destination, std::int32_t value, cudaStream_t stream);
+void copy_to_pinned_host_launch(void* host, const void* device, std::size_t bytes,
+                                cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

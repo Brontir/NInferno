@@ -4,9 +4,10 @@
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/decode_graph.h"
-#include "ninfer/ops/linear_swiglu.h"
+#include "ninferno/ops/linear_swiglu.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
+#include "ops/workspace_query.h"
 
 #include <cuda_runtime.h>
 
@@ -26,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::test::linear_swiglu {
+namespace ninferno::test::linear_swiglu {
 namespace {
 
 // The criterion belongs to the activation-compute profile, not the weight storage format or a
@@ -128,18 +129,88 @@ index_nonzero_activations(const std::vector<std::uint16_t>& activation, std::int
     return by_column;
 }
 
+// Round-to-nearest-even onto a sorted non-negative grid, saturating at its top: the host image of
+// cvt.rn.satfinite to e2m1 and to e4m3.
+float round_to_grid(float magnitude, const std::vector<float>& grid) {
+    if (magnitude >= grid.back()) { return grid.back(); }
+    const auto upper = std::lower_bound(grid.begin(), grid.end(), magnitude);
+    if (*upper == magnitude || upper == grid.begin()) { return *upper; }
+    const auto lower  = upper - 1;
+    const float below = magnitude - *lower;
+    const float above = *upper - magnitude;
+    if (below != above) { return below < above ? *lower : *upper; }
+    return ((lower - grid.begin()) % 2) == 0 ? *lower : *upper;
+}
+
+const std::vector<float>& e2m1_grid() {
+    static const std::vector<float> grid{0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
+    return grid;
+}
+
+const std::vector<float>& e4m3_grid() {
+    static const std::vector<float> grid = [] {
+        std::vector<float> values;
+        for (int exponent = 0; exponent < 16; ++exponent) {
+            for (int mantissa = 0; mantissa < 8; ++mantissa) {
+                if (exponent == 15 && mantissa == 7) { continue; } // NaN
+                values.push_back(
+                    exponent == 0
+                        ? std::ldexp(static_cast<float>(mantissa) / 8.0F, -6)
+                        : std::ldexp(1.0F + static_cast<float>(mantissa) / 8.0F, exponent - 7));
+            }
+        }
+        return values;
+    }();
+    return grid;
+}
+
+// The activation as the NVFP4 W4A4 routes see it: every group of 16 quantized to e2m1 codes under
+// an e4m3 block scale, as quantize_nvfp4_k16_bits does it, and decoded back. An oracle over these
+// values and the logical weights differs from the kernel only by accumulation order and the
+// epilogue's roundings, so it can hold an A4 route to an A16 bound.
+std::vector<double> nvfp4_a4_activation(const std::vector<std::uint16_t>& activation,
+                                        float input_scale_divisor) {
+    std::vector<double> decoded(activation.size(), 0.0);
+    for (std::size_t group = 0; group < activation.size(); group += 16) {
+        float max_abs = 0.0F;
+        for (std::size_t i = 0; i < 16; ++i) {
+            max_abs = std::max(max_abs, std::fabs(test::bf16_to_f32(activation[group + i])));
+        }
+        const float scale = round_to_grid((input_scale_divisor * max_abs) / 6.0F, e4m3_grid());
+        if (scale == 0.0F) { continue; }
+        for (std::size_t i = 0; i < 16; ++i) {
+            const float value = test::bf16_to_f32(activation[group + i]);
+            const float code =
+                round_to_grid(std::fabs((value * input_scale_divisor) / scale), e2m1_grid());
+            decoded[group + i] =
+                std::copysign(static_cast<double>(code), static_cast<double>(value)) *
+                static_cast<double>(scale) / static_cast<double>(input_scale_divisor);
+        }
+    }
+    return decoded;
+}
+
+// One token's silu(gate) * up and silu(up) * gate over an activation given as doubles.
+void order_oracle_fp64(const Profile& profile, const quantized_weight::PackedWeight& weight,
+                       const std::vector<double>& x, std::vector<double>& direct,
+                       std::vector<double>& swapped);
+
 double silu_fp64(double value) {
     if (value >= 0.0) { return value / (1.0 + std::exp(-value)); }
     const double exponential = std::exp(value);
     return value * exponential / (1.0 + exponential);
 }
 
+// `swapped`, when given, receives silu(up) * gate: the control for the [gate; up] row order the
+// converter writes and the kernel reads.
 std::vector<double> linear_swiglu_oracle_fp64(const Profile& profile,
                                               const quantized_weight::PackedWeight& weight,
                                               const std::vector<std::uint16_t>& activation,
-                                              std::int32_t tokens) {
+                                              std::int32_t tokens,
+                                              std::vector<double>* swapped = nullptr) {
     const auto active_by_column = index_nonzero_activations(activation, profile.input_rows, tokens);
     std::vector<double> output(checked_elements(profile.output_rows, tokens, "oracle output size"));
+    if (swapped) { swapped->assign(output.size(), 0.0); }
 
     const unsigned hardware_threads = std::max(1U, std::thread::hardware_concurrency());
     const std::int32_t thread_count =
@@ -173,12 +244,50 @@ std::vector<double> linear_swiglu_oracle_fp64(const Profile& profile,
                     const double fused = silu_fp64(gate[static_cast<std::size_t>(token)]) *
                                          up[static_cast<std::size_t>(token)];
                     output[static_cast<std::size_t>(token) * profile.output_rows + row] = fused;
+                    if (swapped) {
+                        (*swapped)[static_cast<std::size_t>(token) * profile.output_rows + row] =
+                            silu_fp64(up[static_cast<std::size_t>(token)]) *
+                            gate[static_cast<std::size_t>(token)];
+                    }
                 }
             }
         });
     }
     for (std::thread& worker : workers) { worker.join(); }
     return output;
+}
+
+void order_oracle_fp64(const Profile& profile, const quantized_weight::PackedWeight& weight,
+                       const std::vector<double>& x, std::vector<double>& direct,
+                       std::vector<double>& swapped) {
+    direct.assign(static_cast<std::size_t>(profile.output_rows), 0.0);
+    swapped.assign(direct.size(), 0.0);
+    const unsigned hardware_threads = std::max(1U, std::thread::hardware_concurrency());
+    const std::int32_t thread_count =
+        std::min(profile.output_rows, static_cast<std::int32_t>(hardware_threads));
+    std::vector<std::thread> workers;
+    for (std::int32_t thread = 0; thread < thread_count; ++thread) {
+        const std::int32_t row_begin = static_cast<std::int32_t>(
+            static_cast<std::int64_t>(profile.output_rows) * thread / thread_count);
+        const std::int32_t row_end = static_cast<std::int32_t>(
+            static_cast<std::int64_t>(profile.output_rows) * (thread + 1) / thread_count);
+        workers.emplace_back([&, row_begin, row_end] {
+            for (std::int32_t row = row_begin; row < row_end; ++row) {
+                double gate = 0.0;
+                double up   = 0.0;
+                for (std::int32_t column = 0; column < profile.input_rows; ++column) {
+                    const double value = x[static_cast<std::size_t>(column)];
+                    gate += quantized_weight::logical_weight_fp64(weight, row, column) * value;
+                    up += quantized_weight::logical_weight_fp64(weight, profile.output_rows + row,
+                                                                column) *
+                          value;
+                }
+                direct[static_cast<std::size_t>(row)]  = silu_fp64(gate) * up;
+                swapped[static_cast<std::size_t>(row)] = silu_fp64(up) * gate;
+            }
+        });
+    }
+    for (std::thread& worker : workers) { worker.join(); }
 }
 
 std::vector<double> read_bf16_output(const test::GuardedDeviceBuffer& output,
@@ -275,8 +384,9 @@ int run_profile(std::string_view label, const Profile& profile,
     quantized_weight::PackedWeight host_weight = quantized_weight::make_patterned_weight(
         profile.qtype, profile.gate_up_rows, profile.input_rows, profile.seed, weight_options);
     const std::vector<std::uint16_t> host_activation = make_activation(profile, maximum_tokens);
-    const std::vector<double> reference =
-        linear_swiglu_oracle_fp64(profile, host_weight, host_activation, maximum_tokens);
+    std::vector<double> swapped_reference;
+    const std::vector<double> reference = linear_swiglu_oracle_fp64(
+        profile, host_weight, host_activation, maximum_tokens, &swapped_reference);
     std::vector<std::uint16_t> negative_activation;
     std::vector<double> negative_reference;
     std::optional<DeviceContext> graph_context;
@@ -343,14 +453,33 @@ int run_profile(std::string_view label, const Profile& profile,
                 const auto exact = ops::linear_swiglu_workspace_capacity_bytes(
                     profile.qtype, profile.gate_up_rows, profile.input_rows, policy, tokens,
                     tokens);
-                if (workspace.used() != 0 || workspace.peak_used() != exact) {
-                    std::cerr << label_case << ": exact workspace query/execution mismatch\n";
+                if (workspace.used() != 0 ||
+                    !test::workspace_query_holds(
+                        workspace.peak_used(), exact,
+                        test::qx_query_covers_prefill_a8(profile.qtype, tokens))) {
+                    std::cerr << label_case << ": exact workspace query/execution mismatch (used " << workspace.used()
+                              << ", peak " << workspace.peak_used() << ", query " << exact << ")\n";
                     ++failures;
                 }
                 failures += output.verify_guards(label_case);
                 const auto actual = read_bf16_output(output, elements);
                 failures +=
                     compare_output(label_case, actual, expected.data(), profile.activation_compute);
+                if (!replay) {
+                    // How far silu(up) * gate is from this case's output. Reported only: with
+                    // the fixture's small projections the two orders can agree to within a
+                    // bound (the A4 bound is 0.16); the order case below must fail.
+                    const ReductionStats control =
+                        compute_reduction_stats(actual.data(), swapped_reference.data(),
+                                                static_cast<std::int64_t>(actual.size()));
+                    const bool passes =
+                        reduction_passes(control, static_cast<std::int64_t>(actual.size()),
+                                         tolerance_for(profile.activation_compute));
+                    std::printf("  SWAP %s silu(up)*gate: rel_l2 vs output=%.4e %s\n",
+                                label_case.c_str(), control.relative_l2,
+                                passes ? "(within the bound: this case cannot see the order)"
+                                       : "(outside the bound)");
+                }
                 if (replay)
                     failures += verify_unchanged(label_case + " input", device_activation,
                                                  input_bits.data(),
@@ -369,6 +498,118 @@ int run_profile(std::string_view label, const Profile& profile,
                                      host_activation.size() * sizeof(std::uint16_t));
     }
     for (int tokens : graph_cases) run_case(tokens, true);
+
+    // The [gate; up] order case. The fixture's activations keep the projections small,
+    // where silu(g)*u and silu(u)*g agree to the first order (silu(z) = z/2 + z^2/4 + ...), so a
+    // wide bound (A4) cannot see a swapped plane. Here the dense token is rescaled so the gate
+    // projections have an RMS of 2, where the two orders differ by far more than any profile's
+    // bound; every token of the case is that token. The output must meet the bound against
+    // silu(gate)*up and fail it against silu(up)*gate, at T=1, T=8 and, on the A4 profile, on
+    // the W4A4 routes (T=8 fused, T=129 Linear-then-SiLU, T=256 TMA). A W4A4 route is held to
+    // the A16 bound against an oracle over the activation it quantizes (nvfp4_a4_activation).
+    {
+        quantized_weight::PatternedWeightOptions order_options = weight_options;
+        // The NVFP4 pattern repeats every 16 rows and each half has 17408 rows, a multiple of 16:
+        // with one seed the gate and up halves are the same plane and no input can tell the two
+        // orders apart. The main cases above keep that fixture; this one seeds the up half apart.
+        if (profile.qtype == QType::NVFP4) { order_options.upper_half_seed = 5U; }
+        const quantized_weight::PackedWeight order_host = quantized_weight::make_patterned_weight(
+            profile.qtype, profile.gate_up_rows, profile.input_rows, profile.seed, order_options);
+        test::GuardedDeviceBuffer order_weight_buffer(order_host.payload.size());
+        order_weight_buffer.copy_from_host(order_host.payload.data(), order_host.payload.size());
+        const Weight order_weight = order_host.device_weight(order_weight_buffer.data());
+
+        std::vector<std::uint16_t> order_activation(host_activation.begin(),
+                                                    host_activation.begin() + profile.input_rows);
+        double square = 0.0;
+        for (std::int32_t row = 0; row < profile.output_rows; row += 17) {
+            double gate = 0.0;
+            for (std::int32_t column = 0; column < profile.input_rows; ++column) {
+                gate += quantized_weight::logical_weight_fp64(order_host, row, column) *
+                        static_cast<double>(test::bf16_to_f32(order_activation[column]));
+            }
+            square += gate * gate;
+        }
+        const double rms = std::sqrt(square / static_cast<double>((profile.output_rows + 16) / 17));
+        const float factor = static_cast<float>(2.0 / std::max(rms, 1e-30));
+        for (auto& bits : order_activation) {
+            bits = test::f32_to_bf16(test::bf16_to_f32(bits) * factor);
+        }
+        std::vector<double> plain(order_activation.size());
+        for (std::size_t i = 0; i < plain.size(); ++i) {
+            plain[i] = static_cast<double>(test::bf16_to_f32(order_activation[i]));
+        }
+        std::vector<double> plain_direct, plain_swapped, a4_direct, a4_swapped;
+        order_oracle_fp64(profile, order_host, plain, plain_direct, plain_swapped);
+        const bool a4 = profile.activation_compute == ActivationCompute::A4;
+        if (a4) {
+            order_oracle_fp64(
+                profile, order_host,
+                nvfp4_a4_activation(order_activation, weight_options.input_scale_divisor),
+                a4_direct, a4_swapped);
+        }
+
+        std::vector<std::int32_t> order_tokens{1, 8};
+        if (a4) { order_tokens.insert(order_tokens.end(), {129, 256}); }
+        for (const std::int32_t tokens : order_tokens) {
+            if (tokens > maximum_tokens) { continue; }
+            const std::size_t elements = checked_elements(profile.output_rows, tokens, "order");
+            std::vector<std::uint16_t> input;
+            input.reserve(static_cast<std::size_t>(tokens) * order_activation.size());
+            for (std::int32_t token = 0; token < tokens; ++token) {
+                input.insert(input.end(), order_activation.begin(), order_activation.end());
+            }
+            test::GuardedDeviceBuffer order_input(input.size() * sizeof(std::uint16_t));
+            order_input.copy_from_host(input.data(), input.size() * sizeof(std::uint16_t));
+            test::GuardedDeviceBuffer order_output(elements * sizeof(std::uint16_t));
+            Tensor x(order_input.data(), DType::BF16, {profile.input_rows, tokens});
+            Tensor destination(order_output.data(), DType::BF16, {profile.output_rows, tokens});
+            workspace.reset();
+            ops::linear_swiglu(x, order_weight, destination, policy, workspace, nullptr);
+            test::cuda_check(cudaDeviceSynchronize(), "synchronize LinearSwiGLU order case");
+            const auto actual = read_bf16_output(order_output, elements);
+
+            // The NVFP4 A4 profile quantizes the activation from T=9 on: T = 1 runs the fused
+            // decode route and speculative verify (2..8 tokens) the exact one, both A16.
+            const bool quantized    = a4 && tokens >= 9;
+            const auto& one_direct  = quantized ? a4_direct : plain_direct;
+            const auto& one_swapped = quantized ? a4_swapped : plain_swapped;
+            std::vector<double> direct_reference, swapped_reference_t;
+            for (std::int32_t token = 0; token < tokens; ++token) {
+                direct_reference.insert(direct_reference.end(), one_direct.begin(),
+                                        one_direct.end());
+                swapped_reference_t.insert(swapped_reference_t.end(), one_swapped.begin(),
+                                           one_swapped.end());
+            }
+            const ActivationCompute bound =
+                quantized ? ActivationCompute::A16 : profile.activation_compute;
+            const std::string tag = std::string(label) + " order case T=" + std::to_string(tokens) +
+                                    " (gate RMS " + std::to_string(rms * factor) +
+                                    (quantized ? ", oracle over the A4-quantized input" : "") + ")";
+            failures += compare_output(tag, actual, direct_reference.data(), bound);
+            const ReductionStats control = compute_reduction_stats(
+                actual.data(), swapped_reference_t.data(), static_cast<std::int64_t>(elements));
+            const ReductionStats direct = compute_reduction_stats(
+                actual.data(), direct_reference.data(), static_cast<std::int64_t>(elements));
+            const bool passes = reduction_passes(control, static_cast<std::int64_t>(elements),
+                                                 tolerance_for(bound));
+            std::printf("  ORDER %s: rel_l2 vs silu(gate)*up=%.4e, vs silu(up)*gate=%.4e %s\n",
+                        tag.c_str(), direct.relative_l2, control.relative_l2,
+                        passes ? "CONTROL PASSED - the bound cannot see a swapped plane"
+                               : "(control fails as it must)");
+            if (quantized) {
+                // How far the oracle over the unquantized input is: this input's A4 error.
+                const ReductionStats unquantized =
+                    compute_reduction_stats(actual.data(), plain_direct.data(),
+                                            static_cast<std::int64_t>(profile.output_rows));
+                std::printf("        token 0 vs the oracle over the unquantized input: rel_l2 "
+                            "%.4e, max abs %.4e\n",
+                            unquantized.relative_l2, unquantized.maximum_absolute_error);
+            }
+            failures += passes ? 1 : 0;
+            failures += order_output.verify_guards(tag);
+        }
+    }
     const auto& final_input = graph_cases.empty() ? host_activation : negative_activation;
     failures += device_activation.verify_guards(std::string(label) + " activation");
     failures += device_weight.verify_guards(std::string(label) + " weight");
@@ -379,4 +620,4 @@ int run_profile(std::string_view label, const Profile& profile,
     return failures;
 }
 
-} // namespace ninfer::test::linear_swiglu
+} // namespace ninferno::test::linear_swiglu

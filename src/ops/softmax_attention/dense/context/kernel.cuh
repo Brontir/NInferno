@@ -2,9 +2,11 @@
 
 #include "ops/softmax_attention/common/context_query.cuh"
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
+template <class Geometry>
 struct ContextAttentionPolicy {
+    using Geo                        = Geometry;
     static constexpr bool PageMapped = true;
 
     const std::int32_t* block_table;
@@ -12,6 +14,18 @@ struct ContextAttentionPolicy {
     int logical_pages;
     int table_group     = -1;
     int table_lane_page = 0;
+    // Int8Group64 context only: the per-token G64 scales of K and V, [D/64, 64, pages, Hkv].
+    const __half* k_scale = nullptr;
+    const __half* v_scale = nullptr;
+
+    __device__ __forceinline__ std::int64_t scale_index(int kv_head, int key0, int physical_page,
+                                                        int row, int d) const {
+        constexpr int Page   = 64;
+        constexpr int Groups = Geo::D / 64;
+        return static_cast<std::int64_t>(Groups) *
+                   ((key0 & (Page - 1)) + row + Page * (physical_page + physical_pages * kv_head)) +
+               (d >> 6);
+    }
 
     __device__ __forceinline__ int context_count(int value) const { return value; }
 
@@ -22,13 +36,13 @@ struct ContextAttentionPolicy {
     __device__ __forceinline__ std::int64_t context_tile(int kv_head, int key0,
                                                          int physical_page) const {
         constexpr int Page = 64;
-        return static_cast<std::int64_t>(kContextQueryHeadDim) *
+        return static_cast<std::int64_t>(Geo::D) *
                ((key0 & (Page - 1)) + Page * (physical_page + physical_pages * kv_head));
     }
 
     __device__ __forceinline__ std::int64_t context_index(std::int64_t tile, int d, int,
                                                           int row) const {
-        return tile + d + static_cast<std::int64_t>(kContextQueryHeadDim) * row;
+        return tile + d + static_cast<std::int64_t>(Geo::D) * row;
     }
 
     template <int Tokens, int KeyBlock>
@@ -67,28 +81,32 @@ struct ContextAttentionPolicy {
     }
 };
 
-template <int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput>
+template <class Geo, int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput,
+          typename KT = __nv_bfloat16, typename VT = __half>
 __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_attention_split_partial_kernel(
     const __nv_bfloat16* __restrict__ q, const __nv_bfloat16* __restrict__ query_k,
     const __nv_bfloat16* __restrict__ query_v, const std::int32_t* __restrict__ context_length,
     const std::int32_t* __restrict__ valid_columns, const std::int32_t* __restrict__ table_rows,
-    const __nv_bfloat16* __restrict__ context_k, const __half* __restrict__ context_v,
+    const KT* __restrict__ context_k, const VT* __restrict__ context_v,
+    const __half* __restrict__ context_k_scale, const __half* __restrict__ context_v_scale,
     const std::int32_t* __restrict__ block_tables, int physical_pages, int logical_pages,
     int max_context, int split_capacity, float scale, __nv_bfloat16* __restrict__ partial_acc,
     float* __restrict__ partial_m, float* __restrict__ partial_l, __nv_bfloat16* __restrict__ out) {
     const int batch = static_cast<int>(blockIdx.z);
-    ContextAttentionPolicy policy{
+    ContextAttentionPolicy<Geo> policy{
         .block_table = block_tables + static_cast<std::int64_t>(logical_pages) * table_rows[batch],
         .physical_pages = physical_pages,
         .logical_pages  = logical_pages,
+        .k_scale        = context_k_scale,
+        .v_scale        = context_v_scale,
     };
-    context_query_split_partial_body<ContextAttentionPolicy, Tokens, WarpsPerCta, KeyBlock,
+    context_query_split_partial_body<ContextAttentionPolicy<Geo>, Tokens, WarpsPerCta, KeyBlock,
                                      DirectOutput>(
         q, query_k, query_v, valid_columns, context_k, context_v, policy, context_length[batch],
         max_context, split_capacity, scale, partial_acc, partial_m, partial_l, out);
 }
 
-template <int Tokens, int KeyBlock>
+template <class Geo, int Tokens, int KeyBlock>
 __launch_bounds__(128, 2) __global__
     void context_attention_reduce_kernel(const __nv_bfloat16* __restrict__ partial_acc,
                                          const float* __restrict__ partial_m,
@@ -98,8 +116,8 @@ __launch_bounds__(128, 2) __global__
                                          int max_context, int split_capacity,
                                          __nv_bfloat16* __restrict__ out) {
     const int length = context_length[static_cast<int>(blockIdx.z)];
-    context_query_reduce_body<Tokens, KeyBlock>(partial_acc, partial_m, partial_l, length, length,
+    context_query_reduce_body<Tokens, KeyBlock, Geo>(partial_acc, partial_m, partial_l, length, length,
                                                 valid_columns, max_context, split_capacity, out);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

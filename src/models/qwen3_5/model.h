@@ -2,20 +2,20 @@
 
 #include "artifact/framing.h"
 #include "artifact/materializer.h"
+#include "core/arena.h"
 #include "models/qwen3_5/config.h"
 #include "models/qwen3_5/frontend/resources.h"
 #include "models/qwen3_5/weights.h"
-#include "ninfer/ops/weight_input.h"
+#include "ninferno/ops/weight_input.h"
 
 #include <memory>
 #include <span>
 #include <string>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 struct InstanceInfo {
     std::string name;
-    std::string metadata_json;
     std::string provenance_json;
     artifact::ArtifactId artifact_id{};
 };
@@ -51,14 +51,21 @@ public:
         return backing_.stats();
     }
 
+    // The routed experts under MoE expert offload (null when off).
+    [[nodiscard]] ExpertResidency* expert_residency() const noexcept {
+        return backing_.expert_residency();
+    }
+
 private:
     friend std::unique_ptr<Model> materialize_model(LoadPlan&&, DeviceContext&,
                                                     const StartupObserver*);
     Model(Config config, LoadOptions options, ModelWeights weights, std::vector<BoundWeight> bound,
-          FrontendResources resources, InstanceInfo info, artifact::MaterializedArtifact backing);
+          FrontendResources resources, InstanceInfo info, artifact::MaterializedArtifact backing,
+          DeviceBuffer yarn_frequencies);
 
     // Destroy all borrowers before backing. The caller keeps DeviceContext alive through cleanup.
     artifact::MaterializedArtifact backing_;
+    DeviceBuffer yarn_frequencies_; // RopeConfig::yarn_frequencies points into it
     Config config_;
     LoadOptions options_;
     ModelWeights weights_;
@@ -67,4 +74,4 @@ private:
     InstanceInfo info_;
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

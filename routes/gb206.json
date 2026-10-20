@@ -1,0 +1,3289 @@
+{
+ "entries": [
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "bf16",
+   "k": 2880,
+   "n": 2880,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n1.w1x8.c8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2048,
+   "n": 1,
+   "prefill": "staged.64x64.w2x2.s3",
+   "prefill_bands": [
+    [
+     512,
+     1023,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     8192,
+     16777216,
+     "staged.64x128.w1x4.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     3,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 4096,
+   "n": 1024,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     511,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.256x128.w4x2.s2"
+    ],
+    [
+     2048,
+     4095,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     3,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     5,
+     5,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     6,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 5120,
+   "n": 1024,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     511,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.256x128.w4x2.s2"
+    ],
+    [
+     2048,
+     4095,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 5632,
+   "n": 1024,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     511,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.256x128.w4x2.s2"
+    ],
+    [
+     2048,
+     4095,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     3,
+     4,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     5,
+     6,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     7,
+     7,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     8,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 8192,
+   "n": 1024,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     511,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.256x128.w4x2.s2"
+    ],
+    [
+     2048,
+     4095,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2880,
+   "n": 15360,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s4"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2880,
+   "n": 201088,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     2,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 1024,
+   "n": 2816,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2880,
+   "n": 2880,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 4096,
+   "n": 2880,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 7680,
+   "n": 2880,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     3,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 1024,
+   "n": 4096,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
+     255,
+     "staged.128x128.w2x4.s3"
+    ],
+    [
+     256,
+     511,
+     "staged.256x128.w4x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 25600,
+   "n": 5120,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     2048,
+     4095,
+     "staged.256x128.w4x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     3,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2880,
+   "n": 5120,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
+     255,
+     "staged.128x64.w2x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 4096,
+   "n": 5120,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.128x64.w2x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     511,
+     "staged.128x128.w2x4.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 1024,
+   "n": 8192,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     64,
+     127,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     128,
+     255,
+     "staged.256x128.w4x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 2880,
+   "n": 8192,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
+     511,
+     "staged.256x128.w4x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 1024,
+   "n": 98304,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     64,
+     127,
+     "staged.128x64.w2x2.s4"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "bf16",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     64,
+     127,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "bf16",
+   "k": 1024,
+   "n": 8192,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.128x64.w2x2.s2"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq1m",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq1m",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m2.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq1s",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq1s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w8x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq1s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq2s",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     11,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     12,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq2s",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     7,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2s",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     64,
+     127,
+     "rmma.m1.n8.w8x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     7,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2s",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m2.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq2s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq2xs",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     1023,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xs",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq2xxs",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq2xxs",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xxs",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xxs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xxs",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq2xxs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     3,
+     5,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     6,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq3s",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq3s",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 1024,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     5,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 13312,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     4,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 16384,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     3,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     5,
+     5,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     6,
+     6,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     7,
+     7,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq3s",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq3xxs",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq3xxs",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3xxs",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3xxs",
+   "k": 5120,
+   "n": 16384,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     64,
+     127,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3xxs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     64,
+     255,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq3xxs",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq3xxs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq4xs",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "iq4xs",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq4xs",
+   "k": 5120,
+   "n": 1024,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     2,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq4xs",
+   "k": 5120,
+   "n": 16384,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     5,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq4xs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq4xs",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     512,
+     1023,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "iq4xs",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     3,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q2k",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     6,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     7,
+     7,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     13,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     14,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q2k",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     3,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     15,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     16,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q2k",
+   "k": 5120,
+   "n": 16384,
+   "prefill": "rmma.m2.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     3,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     5,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q2k",
+   "k": 5120,
+   "n": 6144,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     2,
+     6,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     7,
+     7,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q3k",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m2.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q3k",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q3k",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     2,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q4k",
+   "k": 17408,
+   "n": 5120,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     13,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     14,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q4k",
+   "k": 6144,
+   "n": 5120,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 5120,
+   "n": 1024,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 5120,
+   "n": 17408,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 5120,
+   "n": 248320,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 5120,
+   "n": 1024,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q6k",
+   "k": 4096,
+   "n": 2048,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     5,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     6,
+     6,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     7,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2048,
+   "n": 12288,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     4,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     5,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     11,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     12,
+     13,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     14,
+     16777216,
+     "rmma.m1.n1.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 512,
+   "n": 2048,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2048,
+   "n": 248320,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     64,
+     127,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     6,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     7,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2816,
+   "n": 262144,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 2816,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 8192,
+   "n": 2816,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     11,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     12,
+     13,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     14,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2816,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     3,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     5,
+     6,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     7,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2048,
+   "n": 9216,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2816,
+   "n": 9216,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     7,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     8,
+     9,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q6k",
+   "k": 2816,
+   "n": 2112,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m1.n8.w8x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     5,
+     9,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     10,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q6k",
+   "k": 2048,
+   "n": 512,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 2112,
+   "n": 2816,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 8192,
+   "n": 2816,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     16777216,
+     "rmma.m1.n1.w1x8.c8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 5120,
+   "n": 48,
+   "prefill": "rmma.m1.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     2047,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     8192,
+     16777216,
+     "rmma.m2.n8.w2x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 2816,
+   "n": 9216,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n8.w8x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     9,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     10,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q8",
+   "k": 2816,
+   "n": 2112,
+   "prefill": "rmma.m1.n8.w8x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  }
+ ],
+ "gpu": {
+  "class": "gb206",
+  "name": "NVIDIA GeForce RTX 5060 Ti",
+  "board": {"cc": 120, "sms": 36, "l2_mib": 32, "dram_gbps": 448}
+ },
+ "schema": "ninferno-route-table/1",
+ "moe": [
+  {
+   "format": "iq3s",
+   "down_format": "q8",
+   "experts": 128,
+   "top_k": 8,
+   "hidden": 2816,
+   "inter": 704,
+   "tuned_on": "Qwen3.6-35B-A3B IQ3, Gemma 4 26B-A4B IQ3, gpt-oss-20b MXFP4",
+   "bands": [
+    [
+     1,
+     1,
+     "r8.w4r1|r8.w8r1"
+    ],
+    [
+     2,
+     2,
+     "r8.w2r1|r8.w4r1"
+    ],
+    [
+     3,
+     3,
+     "r8.w2r1|r8.w2r1"
+    ],
+    [
+     4,
+     4,
+     "r8.w2r1|r8.w4r1"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     117.76000213623047,
+     92.16000366210938
+    ],
+    [
+     2,
+     212.99200439453125,
+     164.447998046875
+    ],
+    [
+     3,
+     286.11199951171875,
+     239.1999969482422
+    ],
+    [
+     4,
+     357.3760070800781,
+     300.6399841308594
+    ]
+   ]
+  },
+  {
+   "format": "iq2s",
+   "down_format": "iq4xs",
+   "experts": 256,
+   "top_k": 8,
+   "hidden": 2048,
+   "inter": 512,
+   "tuned_on": "Qwen3.6-35B-A3B IQ3, Gemma 4 26B-A4B IQ3, gpt-oss-20b MXFP4",
+   "bands": [
+    [
+     1,
+     1,
+     "r8.w4r1|r8.w8r1"
+    ],
+    [
+     2,
+     2,
+     "r8.w2r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     3,
+     3,
+     "r8.w4r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     4,
+     4,
+     "r8.w2r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     5,
+     16,
+     "rmma.m1.n1.w1x8|rmma.m1.n1.w4x1"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     73.7280044555664,
+     57.76000213623047
+    ],
+    [
+     2,
+     118.78400421142578,
+     92.16000366210938
+    ],
+    [
+     3,
+     157.6959991455078,
+     135.16799926757812
+    ],
+    [
+     4,
+     190.46400451660156,
+     161.7919921875
+    ],
+    [
+     5,
+     225.27999877929688,
+     210.94400024414062
+    ]
+   ]
+  },
+  {
+   "format": "iq2s",
+   "down_format": "iq3xxs",
+   "experts": 256,
+   "top_k": 8,
+   "hidden": 2048,
+   "inter": 512,
+   "tuned_on": "Qwen3.6-35B-A3B IQ3, Gemma 4 26B-A4B IQ3, gpt-oss-20b MXFP4",
+   "bands": [
+    [
+     1,
+     1,
+     "r8.w4r1|r8.w4r1"
+    ],
+    [
+     2,
+     2,
+     "r8.w2r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     3,
+     3,
+     "r8.w4r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     4,
+     4,
+     "r8.w2r1|rmma.m1.n1.w4x1"
+    ],
+    [
+     5,
+     16,
+     "rmma.m1.n1.w1x8|rmma.m1.n1.w4x1"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     74.14399719238281,
+     55.29600143432617
+    ],
+    [
+     2,
+     110.59200286865234,
+     81.91999816894531
+    ],
+    [
+     3,
+     153.60000610351562,
+     122.87999725341797
+    ],
+    [
+     4,
+     190.8800048828125,
+     153.60000610351562
+    ],
+    [
+     5,
+     227.74400329589844,
+     210.94400024414062
+    ]
+   ]
+  },
+  {
+   "format": "iq2s",
+   "down_format": "iq4nl",
+   "experts": 128,
+   "top_k": 8,
+   "hidden": 2816,
+   "inter": 704,
+   "tuned_on": "Qwen3.6-35B-A3B IQ3, Gemma 4 26B-A4B IQ3, gpt-oss-20b MXFP4",
+   "bands": [
+    [
+     1,
+     1,
+     "r8.w4r1|r8.w4r1"
+    ],
+    [
+     2,
+     2,
+     "r8.w2r1|r8.w4r1"
+    ],
+    [
+     3,
+     3,
+     "r8.w2r1|r8.w4r2"
+    ],
+    [
+     4,
+     4,
+     "r8.w2r1|r8.w4r1"
+    ],
+    [
+     6,
+     8,
+     "rmma.m1.n1.w1x8|rmma.m1.n1.w2x2"
+    ],
+    [
+     9,
+     16,
+     "rmma.m1.n1.w1x8|rmma.m1.n1.w4x1"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     95.23200225830078,
+     73.7280044555664
+    ],
+    [
+     2,
+     163.83999633789062,
+     125.3759994506836
+    ],
+    [
+     3,
+     224.25599670410156,
+     194.1439971923828
+    ],
+    [
+     4,
+     316.4159851074219,
+     258.0480041503906
+    ],
+    [
+     6,
+     407.552001953125,
+     395.2640075683594
+    ],
+    [
+     9,
+     565.2479858398438,
+     545.7919921875
+    ]
+   ]
+  },
+  {
+   "format": "mxfp4",
+   "experts": 32,
+   "top_k": 4,
+   "hidden": 2880,
+   "inter": 2880,
+   "tuned_on": "Qwen3.6-35B-A3B IQ3, Gemma 4 26B-A4B IQ3, gpt-oss-20b MXFP4",
+   "bands": [
+    [
+     1,
+     1,
+     "r8.w4r1|rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
+     3,
+     "r8.w4r1|rmma.m1.n1.w1x8"
+    ],
+    [
+     4,
+     4,
+     "r8.w4r2|rmma.m1.n1.w1x8"
+    ],
+    [
+     7,
+     16,
+     "rmma.m1.n1.w1x4|rmma.m1.n1.w1x4"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     154.01600646972656,
+     144.38400268554688
+    ],
+    [
+     2,
+     282.656005859375,
+     270.33599853515625
+    ],
+    [
+     4,
+     507.90399169921875,
+     492.54400634765625
+    ],
+    [
+     7,
+     710.656005859375,
+     688.1279907226562
+    ]
+   ]
+  }
+ ]
+}

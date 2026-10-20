@@ -1,6 +1,6 @@
-# NInfer Persistent Tensor Numeric Formats
+# NInferno Persistent Tensor Numeric Formats
 
-This reference defines the nine persistent numeric tensor formats accepted by current `.ninfer`
+This reference defines the nine persistent numeric tensor formats accepted by current `.ninferno`
 artifacts: their logical words, quantization semantics, canonical reference encoders where
 applicable, and conformance boundaries. [Container framing](artifact-container.md),
 [physical layouts](storage-layouts.md), weight recipes and runtime-state codecs are defined
@@ -8,7 +8,7 @@ separately.
 
 ## 1. Registered formats
 
-NInfer has exactly nine persistent numeric tensor formats in four categories.
+NInferno has exactly nine persistent numeric tensor formats in four categories.
 
 Direct scalar formats preserve one logical scalar word per tensor element:
 
@@ -31,13 +31,49 @@ The block-scaled floating-point weight format is:
 
 | Canonical name | Code | K group | Block scale | Global field |
 |---|---|---:|---|---|
-| `nvfp4` | E2M1, 4 bits/weight | 16 | one E4M3FN word/group | one positive FP32 weight divisor |
+| `nvfp4` | E2M1, 4 bits/weight | 16 | one E4M3FN word/group | one positive FP32 weight divisor per stacked source matrix |
+| `mxfp4` | E2M1, 4 bits/weight | 32 | one E8M0 exponent/group | none (OCP MX) |
 
-The row-scaled floating-point weight format is:
+The row- and block-scaled floating-point weight formats are:
 
 | Canonical name | Code | Scale granularity | Scale |
 |---|---|---|---|
 | `fp8_e4m3fn_row_bf16` | E4M3FN, 8 bits/weight | one multiplier per logical row | BF16 |
+| `fp8_e4m3fn_row_f32` | E4M3FN, 8 bits/weight | one multiplier per logical row | binary32 |
+| `fp8_e4m3fn_b128_f32` | E4M3FN, 8 bits/weight | one multiplier per 128 rows x 128 K values | binary32 |
+
+The zero-point integer weight format is:
+
+| Canonical name | Code | K group | Zero point | Scale |
+|---|---|---:|---|---|
+| `u4_g128_zp_fp16` | unsigned 4-bit, 0..15 | 128 | one byte/group | one binary16 word/group |
+
+The ggml block formats (ggml's own semantics, kept as published from GGUF) are:
+
+| Canonical name | Superblock | Codes | Scales |
+|---|---|---|---|
+| `ggml_q4_k` | 256 K values, 144 bytes | 4-bit | 6-bit scale and min per 32 values; binary16 d, dmin |
+| `ggml_q5_k` | 256 K values, 176 bytes | 5-bit | as `ggml_q4_k` |
+| `ggml_q6_k` | 256 K values, 210 bytes | 6-bit | int8 scale per 16 values; binary16 d |
+| `ggml_q3_k` | 256 K values, 110 bytes | 3-bit (2 + high bit) | 6-bit scale per 16 values; binary16 d |
+| `ggml_q2_k` | 256 K values, 84 bytes | 2-bit | 4-bit scale and min per 16 values; binary16 d, dmin |
+| `ggml_iq4_xs` | 256 K values, 136 bytes | 4-bit index into `kvalues_iq4nl` | 6-bit scale per 32 values; binary16 d |
+| `ggml_iq3_xxs` | 256 K values, 98 bytes | 8-bit index into `iq3xxs_grid` per 4 values, 7-bit sign pattern per 8 | 4-bit scale per 32 values; binary16 d |
+| `ggml_iq3_s` | 256 K values, 110 bytes | 9-bit index into `iq3s_grid` per 4 values, a sign bit per value | 4-bit scale per 32 values; binary16 d |
+| `ggml_q4_0` | 32 K values, 18 bytes | 4-bit | binary16 d |
+| `ggml_q4_1` | 32 K values, 20 bytes | 4-bit | binary16 d, m |
+| `ggml_q5_0` | 32 K values, 22 bytes | 5-bit (4 + a bit of the qh word) | binary16 d |
+| `ggml_q5_1` | 32 K values, 24 bytes | 5-bit | binary16 d, m |
+| `ggml_iq4_nl` | 32 K values, 18 bytes | 4-bit index into `kvalues_iq4nl` | binary16 d |
+| `ggml_iq2_xxs` | 256 K values, 66 bytes | 8-bit index into `iq2xxs_grid` per 8 values, 7-bit sign pattern per 8 | 4-bit scale per 32 values; binary16 d |
+| `ggml_iq2_xs` | 256 K values, 74 bytes | 9-bit index into `iq2xs_grid` per 8 values, 7-bit sign pattern per 8 | 4-bit scale per 16 values; binary16 d |
+| `ggml_iq2_s` | 256 K values, 82 bytes | 10-bit index into `iq2s_grid` per 8 values, a sign bit per value | 4-bit scale per 16 values; binary16 d |
+| `ggml_iq1_s` | 256 K values, 50 bytes | 11-bit index into `iq1s_grid` (-1, 0, 1) per 8 values | 3-bit scale and a delta sign per 32 values; binary16 d |
+| `ggml_iq1_m` | 256 K values, 56 bytes | 11-bit index into `iq1s_grid` per 8 values, a delta sign per 8 | 3-bit scale per 16 values; binary16 d in the scales' top nibbles |
+| `ggml_tq1_0` | 256 K values, 54 bytes | base-3 digit (5 per byte), -1 .. 1 | binary16 d |
+| `ggml_tq2_0` | 256 K values, 66 bytes | 2-bit, -1 .. 2 | binary16 d |
+| `ggml_q1_0` | 128 K values, 18 bytes | 1-bit sign | binary16 d |
+| `ggml_q2_0` | 64 K values, 18 bytes | 2-bit, -1 .. 2 | binary16 d |
 
 Each name fixes a code and scale contract. The format registry is implemented in
 [`tools/artifact/formats.py`](../../tools/artifact/formats.py) and
@@ -89,7 +125,7 @@ may preserve an already encoded source or quantize floating-point values.
 The built-in `grouped_absmax` method implements the reference encoder in Section 7 for all four
 grouped integer formats. `fp8_row_maxabs` rounds source values to BF16 and quantizes each row to
 E4M3FN codes with a BF16 multiplier. `import_encoded` preserves compatible FP8 or NVFP4 codes,
-scales, and, for NVFP4, the matrix weight divisor. NInfer currently provides no built-in
+scales, and, for NVFP4, the weight divisor of the row's own source matrix. NInferno currently provides no built-in
 floating-point-to-NVFP4 quantizer.
 
 A recipe can supply a Python callable as its method. Different methods can produce different
@@ -226,8 +262,11 @@ abbreviations; artifacts store the complete canonical names.
 
 `nvfp4` is a block-scaled floating-point weight representation, not a signed-integer
 `QuantFormat`. For a logical matrix `[N,K]`, every K-axis group contains 16 E2M1 code words and one
-E4M3FN scale word. The representation also contains one FP32 serialized weight divisor `d_w` for
-the complete matrix.
+E4M3FN scale word. The representation also contains one FP32 serialized weight divisor `d_w` per
+source matrix stacked into the plane: a plane quantized as one matrix holds one, and a plane
+assembled from several matrices that were quantized apart holds one for each, covering
+`N / divisors` consecutive rows in the order the sources are stacked. `divisors` is the tensor
+object's member of that name.
 
 An E2M1 word has sign bit 3, exponent bits 2:1, and mantissa bit 0. Positive code words `0..7`
 decode to:
@@ -250,13 +289,13 @@ e == 15, m == 7: NaN
 ```
 
 Stored NVFP4 weight scales admit only sign-zero finite words, including positive zero. Negative
-values, negative zero, and both NaN words are invalid. The serialized binary32 word `d_w` must be
+values, negative zero, and both NaN words are invalid. Every serialized binary32 word of `d_w` must be
 finite and strictly positive.
 
 For code `c[n,k]`, scale word `s[n,g]`, and `g=floor(k/16)`, the exact represented weight is:
 
 ```text
-W[n,k] = decode_e2m1(c[n,k]) * decode_e4m3fn(s[n,g]) / d_w
+W[n,k] = decode_e2m1(c[n,k]) * decode_e4m3fn(s[n,g]) / d_w[floor(n / (N / divisors))]
 ```
 
 `import_encoded` copies all three fields without requantizing or canonicalizing them. Activation
@@ -297,6 +336,144 @@ The format does not define how a floating-point source is assigned a scale or ro
 A recipe either preserves already selected code and scale words exactly or names its
 conversion method. Activation quantization and activation scales are separate compute or runtime-state
 concerns and are not persistent fields of this format.
+
+### 3.5 `mxfp4`
+
+`mxfp4` is the OCP Microscaling FP4 weight representation as published checkpoints carry it
+(gpt-oss `*_blocks`/`*_scales`, compressed-tensors MXFP4): a rank-two matrix `[N,K]` with `K`
+divisible by 32. Every logical weight owns one E2M1 code word (Section 3.3); every run of 32
+consecutive K values of a row owns one E8M0 exponent word `e` with value `2^(e-127)`. The word
+`0xff` (NaN) is invalid; there is no global divisor. For code `c[n,k]` and exponent `e[n,k/32]`:
+
+```text
+w_hat[n,k] = binary32(exact_e2m1(c[n,k]) * 2^(e[n,floor(k/32)] - 127))
+```
+
+The product is exact in binary32 for every exponent above 2^-126 and in BF16 for every exponent the
+BF16 range holds. The storage layout is `block_scale_k32_e8m0_v1`: codes `[N,K/2]` (element `2i` in
+the low nibble), then at the next 256-byte boundary the exponents `[N,K/32]`, row-major, one byte
+each. Rows are intrinsic, so a row range of a plane is itself a valid `mxfp4` matrix. A converter
+keeps a checkpoint's MXFP4 words unchanged; mapping them onto `nvfp4` is lossless only when every
+exponent of the matrix fits one divisor's E4M3 window, which the engine format does not require.
+
+### 3.6 `fp8_e4m3fn_row_f32` and `fp8_e4m3fn_b128_f32`
+
+Published FP8 checkpoints whose scales a BF16 word cannot hold are kept as published in these two
+formats instead of rounding their multipliers. Codes follow Section 3.4 (E4M3FN, `0x7f`/`0xff`
+invalid). `fp8_e4m3fn_row_f32` carries one nonnegative finite binary32 multiplier `s[n]` per row
+(a per-tensor scale is that scale on every row); its layout is `row_scale_v1` with four-byte scale
+words. `fp8_e4m3fn_b128_f32` carries one nonnegative finite binary32 multiplier per block of 128
+rows by 128 K values (the DeepSeek/Qwen block-quantized FP8 checkpoints, whose BF16 or binary32
+`weight_scale_inv` is exact in binary32); its layout `block_scale_128x128_f32_v1` stores codes
+`[N,K]` row-major, then at the next 256-byte boundary the multipliers
+`[ceil(N/128), ceil(K/128)]` row-major. For code `c[n,k]`:
+
+```text
+w_hat[n,k] = binary32(exact_e4m3(c[n,k]) * s[n])                       (row_f32)
+w_hat[n,k] = binary32(exact_e4m3(c[n,k]) * s[floor(n/128), floor(k/128)])  (b128_f32)
+```
+
+A block spans 128 rows, so a row range of a `b128_f32` plane is not itself a plane; consumers read
+a packed parent whole (with a row offset into it), as they do NVFP4 and row-scaled FP8. A converter
+packs matrices into one `b128_f32` parent only when every member but the last has whole 128-row
+blocks.
+
+### 3.7 `u4_g128_zp_fp16`
+
+The AWQ, GPTQ and compressed-tensors int4 checkpoints with 128-value groups along K are kept as
+published: unsigned code `u[n,k]` in 0..15, zero point `z[n,g]` in 0..127 and binary16 scale
+`s[n,g]` for group `g = floor(k/128)`:
+
+```text
+w_hat[n,k] = binary32((u[n,k] - z[n,g]) * s[n,g])
+```
+
+A symmetric checkpoint has `z = 8`; compressed-tensors' signed codes and zero points are stored
+plus 8; GPTQ's v1 zero points are stored plus one (so `z` may be 16). `u - z` is an integer in
+-127..15, exact in BF16, so consumers feed it to the MMA unscaled and apply `s` to each group's
+FP32 partial; `128 + z` is exact in BF16 too (the kernels turn a code byte into `128 + u` by
+setting the exponent byte and subtract `128 + z`). K must be a multiple of 128. Checkpoints with
+act-order (a `g_idx` other than `k / 128`), other widths or groups, or scales binary16 does not
+hold exactly are not this format.
+Layout `row_group_zp_v1`: codes `[N, K/2]` row-major (element `2i` in the low nibble of byte `i`),
+then at the next 256-byte boundary the zero points `[N, K/128]` (one byte each), then at the next
+256-byte boundary the scales `[N, K/128]` little-endian. Every plane is row-major with whole rows,
+so a row range of a parent is a plane of its own.
+
+### 3.8 `ggml_q2_k` .. `ggml_q6_k`
+
+GGUF's K-quants run as published, with ggml's definitions (`dequantize_row_q2_K` .. `_q6_K`):
+for sub-block `j` of a superblock, `w = (d * sc[j]) * q - (dmin * m[j])` (Q4_K, Q5_K with 6-bit
+`sc`, `m` per 32 values; Q2_K with 4-bit `sc`, `m` per 16 values; the products are exact in
+binary32), `w = d * sc[j] * (q - 32)` (Q6_K, int8 `sc` per 16 values) and
+`w = d * (sc[j] - 32) * q` (Q3_K, 6-bit `sc` per 16 values, `q` in [-4, 3]). K must be a
+multiple of 256. Layout `ggml_blocks_v1` (Q4_K, Q5_K) stores every row's superblocks unchanged,
+one plane. Layout `ggml_planes_v1` (Q6_K, Q3_K, Q2_K) splits every block into its code bytes
+(Q6_K `ql`, `qh`: 192; Q3_K `hmask`, `qs`: 96; Q2_K `qs`: 64; code plane `[N, K/256*c]`), its
+scale bytes (Q6_K 16 int8; Q3_K 12 packed; Q2_K 16 nibble pairs; next 256-byte boundary) and its
+binary16 `d` (Q2_K `d`, `dmin`; next 256-byte boundary), so every plane is aligned; the bytes
+themselves are unchanged. Rows are whole, so a row range of a parent is a plane of its own.
+Consumers feed the integer codes to the MMA and apply each sub-block's scale to its FP32 partial;
+the min term is `dmin * m[j]` times the sub-block's activation sum. A GGUF matrix whose columns the
+converter would reorder (Qwen3.5 GDN `ssm_out`, value heads of fewer than 256 values) is kept in
+its stored column order and the model config records it (`linear_output_head_order`), never
+repacked: a superblock's `d` and `dmin` cover columns that the logical order separates.
+
+### 3.9 `ggml_q4_0` .. `ggml_q5_1`, `ggml_iq4_nl`, `ggml_iq4_xs`, `ggml_iq3_xxs`, `ggml_iq3_s`
+
+GGUF's 32-value block formats and i-quants run as published too, with ggml's definitions
+(`dequantize_row_q4_0` .. `_q5_1`, `_iq4_nl`, `_iq4_xs`, `_iq3_xxs`, `_iq3_s`):
+`w = q * d` with `q = code - 8` (Q4_0) or `code - 16` (Q5_0, the fifth bit from the block's `qh`
+word), `w = code * d + m` (Q4_1, Q5_1), `w = d * kvalues_iq4nl[code]` (IQ4_NL),
+`w = (d * (ls - 32)) * kvalues_iq4nl[code]` (IQ4_XS, 6-bit `ls` per 32 values),
+`w = (d * (0.5 + ls) * 0.5) * grid * sign` (IQ3_XXS: one `iq3xxs_grid` word of four magnitudes
+per index byte, signs from `ksigns_iq2xs` per 8 values, 4-bit `ls` per 32 values) and
+`w = (d * (1 + 2 ls)) * grid * sign` (IQ3_S: 9-bit indices into `iq3s_grid`, a sign bit per
+value). Every code, codebook entry and signed grid magnitude is an integer exact in BF16. K must
+be a whole number of blocks. Layout `ggml_planes_v1` splits every block, bytes unchanged, into
+its code bytes (`qs`; IQ3_S `qs`, `qh`, `signs`: 104), its high bytes (Q5_0/Q5_1 `qh` 4, IQ4_XS
+`scales_l` 4, IQ3_XXS `scales_and_signs` 32, IQ3_S `scales` 4; none for Q4_0, Q4_1, IQ4_NL) and
+its scale bytes (binary16 `d`; Q4_1/Q5_1 `d`, `m`; IQ4_XS `d`, `scales_h`), each plane at a
+256-byte boundary. Consumers feed the codebook values (IQ3: sign-applied grid magnitudes, the
+grids staged in shared memory) to the MMA and apply each 32-value group's scale to its FP32
+partial; Q4_1/Q5_1 add `m` times the group's activation sum. The device's scalar decode follows
+ggml's operation order, so its values are bit-exact with ggml's (`ninferno_ggml_decode_test`).
+
+### 3.10 `ggml_iq2_xxs` .. `ggml_iq1_m`, `ggml_tq1_0`, `ggml_tq2_0`, `ggml_q1_0`, `ggml_q2_0`
+
+The 2- and 1-bit i-quants, the ternary formats and Q1_0/Q2_0 follow the same rules, with ggml's
+definitions: `w = (d * (0.5 + ls) * 0.25) * grid * sign` (IQ2_XXS: an index byte per 8 values
+into `iq2xxs_grid`, signs from `ksigns_iq2xs`, 4-bit `ls` per 32 values; IQ2_XS: 9-bit indices
+into `iq2xs_grid`, 4-bit `ls` per 16 values; IQ2_S: 10-bit indices into `iq2s_grid`, a sign bit
+per value), `w = (d * (2 ls + 1)) * (grid + delta)` (IQ1_S: 11-bit indices into `iq1s_grid` of
+-1, 0, 1, `delta` = +-1/8 and 3-bit `ls` per 32 values; IQ1_M: `delta` per 8 values, 3-bit `ls`
+per 16, the binary16 `d` assembled from the top nibbles of the four scale words),
+`w = (t - 1) * d` (TQ1_0: base-3 digits `t`, five per byte of `qs` and four per byte of `qh`;
+TQ2_0: 2-bit `t`), `w = +-d` by one bit per value (Q1_0, 128-value blocks) and `w = (q - 1) * d`
+(Q2_0, 64-value blocks). Planes: IQ2_XXS `qs` 64 / none / `d`; IQ2_XS `qs` 64 / `scales` 8 /
+`d`; IQ2_S `qs`, `signs`, `qh` 72 / `scales` 8 / `d`; IQ1_S `qs` 32 / `qh` 16 / `d`; IQ1_M `qs`
+32 / `qh` 16 / `scales` 8; TQ1_0 `qs`, `qh` 52 / none / `d`; TQ2_0 `qs` 64 / none / `d`; Q1_0,
+Q2_0 `qs` 16 / none / `d`. The grids (IQ2 two words per entry, IQ1 a nibble per value) are staged
+in shared memory. Every MMA operand is exact in BF16: signed grid magnitudes, `grid + delta`
+(multiples of 1/8 below 1.25), `t - 1`, `+-1`.
+
+A routed-expert bank of Q4_0, Q4_K, IQ3_XXS or IQ2_S may instead be stored in layout
+`ggml_frag_v1`: the published layout with each row's code bytes permuted into the order the
+grouped MoE kernel reads them ([`storage-layouts.md`](storage-layouts.md), Section 7). The
+format, its values and its decode are unchanged.
+
+### 3.11 A8 consumers of the integer formats
+
+Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL, IQ4_XS, Q4_K, Q5_K and `u4_g128_zp_fp16` are, per 32 values,
+integer codes that fit int8 (`q - 8`, `q`, `q - 16`, `kvalues_iq4nl[q]`, `q - zero`) times one
+scale (Q4_K/Q5_K `d * sc`, IQ4_XS `d * (ls - 32)`, u4 its group's scale on
+each of the group's four 32-value blocks), plus a min for Q4_1, Q5_1 (`m`) and Q4_K, Q5_K
+(`-dmin * m`). Under `AllowA8` the generic W4A8 route quantizes each token's activation per 32
+values to int8 (`rint(x * 127 / amax)`, FP32 scale `s_x = amax / 127`) and keeps the quantized
+block's sum `s_x * sum(q_x)`; one int8 MMA (m16n8k32) per 32-value block gives `dot(q_w, q_x)`, and
+the block adds `s_w * s_x * dot + min * s_x * sum(q_x)` to the FP32 accumulator, which is
+`sum(w * x_q)`: the weight is the exact decode and the activation error enters as
+`sum(w * (x_q - x))` with or without a min (as with ggml's Q8_1 sum).
 
 ## 4. Grouped signed-integer tensor model
 
@@ -451,7 +628,7 @@ logical_bits_per_weight = b + 16 / G
 
 This produces the values in Section 1. It excludes partial-group overhead, tensor metadata, physical
 padding, alignment, indexes, integrity data, and layout-specific duplication. It must not be quoted
-as the exact `.ninfer` artifact size.
+as the exact `.ninferno` artifact size.
 
 The 16-bit scale contributes 0.5 bit per weight at G32 and 0.25 bit per weight at G64. The choice
 of format for a model parameter belongs to its recipe.
@@ -552,8 +729,8 @@ A conforming producer must:
 - for a quantized format, preserve the logical shape and last-axis group rule;
 - for a grouped signed-integer format, emit one valid binary16 scale per logical group and only
   legal signed codes, including never emitting Q8 `-128`;
-- for `nvfp4`, emit only valid E2M1 code words, nonnegative finite E4M3FN scale words, and one finite
-  positive FP32 weight divisor under Section 3.3;
+- for `nvfp4`, emit only valid E2M1 code words, nonnegative finite E4M3FN scale words, and one
+  finite positive FP32 weight divisor per stacked source matrix under Section 3.3;
 - for `fp8_e4m3fn_row_bf16`, emit only finite E4M3FN code words and valid BF16 row multipliers,
   with signed-zero codes as the only legal codes in a positive-zero-scale row under Section 3.4;
 - record enough conversion provenance for the artifact producer to identify how the values
@@ -572,7 +749,7 @@ quantization scheme, but it cannot change their registered meaning.
 
 ### 8.2 Container and layout
 
-The `.ninfer` container and each registered storage layout must:
+The `.ninferno` container and each registered storage layout must:
 
 - identify the numeric format unambiguously;
 - preserve logical shape separately from any physical padded extent;
@@ -580,8 +757,8 @@ The `.ninfer` container and each registered storage layout must:
 - for grouped signed-integer formats, make the number and ownership of logical groups unambiguous
   and reconstruct every signed code and binary16 scale without inference from a kernel
   implementation;
-- for `nvfp4`, reconstruct every E2M1 code word, natural E4M3FN scale word, and the matrix FP32
-  divisor under Section 3.3;
+- for `nvfp4`, reconstruct every E2M1 code word, natural E4M3FN scale word, and the FP32 divisor
+  of the row's own source matrix under Section 3.3;
 - for `fp8_e4m3fn_row_bf16`, reconstruct every E4M3FN code word and its owning BF16 row multiplier
   under Section 3.4;
 - define its canonical physical-padding contents and producer responsibilities, if it materializes
@@ -632,7 +809,7 @@ enum spellings or private kernel layout. The retained codec and encoder evidence
 - Q4, Q5, Q6, and Q8 plane bit order, legal interval endpoints, encoded-size geometry, partial-K zero
   padding, consecutive row views, and arbitrary row gathers;
 - all 16 E2M1 words, all 256 E4M3FN words, NVFP4 scale/divisor validity, the exact divisor-based
-  reconstruction equation, and known block-scale swizzle offsets;
+  reconstruction equation for a plane of one source, and known block-scale swizzle offsets;
 - finite E4M3FN weight-code validity, BF16 row-scale validity, signed-zero rows, exact code/scale
   plane round trips, and the row-multiplier reconstruction equation for
   `fp8_e4m3fn_row_bf16`;

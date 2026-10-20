@@ -1,24 +1,22 @@
-#include "ninfer/ops/candidate_selector.h"
+#include "ninferno/ops/candidate_selector.h"
 
+#include "core/weight.h"
 #include "ops/candidate_selector/bf16/candidate_selector_path_plan.h"
+#include "ops/common/tensor_checks.h"
+#include "ops/generic/generic_gemm.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 constexpr std::int32_t kCandidates   = 16;
 constexpr std::int32_t kRank         = 256;
 constexpr std::int32_t kCodebookRows = 248320;
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 void require_tensor(const Tensor& tensor, DType dtype, std::int32_t d0, std::int32_t d1,
                     std::int32_t d2, std::int32_t d3, const char* label) {
@@ -28,49 +26,28 @@ void require_tensor(const Tensor& tensor, DType dtype, std::int32_t d0, std::int
     }
 }
 
-struct Range {
-    const void* pointer;
-    std::size_t bytes;
-    const char* label;
-};
-
-bool overlaps(const Range& lhs, const Range& rhs) {
-    const std::uintptr_t lhs_begin = reinterpret_cast<std::uintptr_t>(lhs.pointer);
-    const std::uintptr_t rhs_begin = reinterpret_cast<std::uintptr_t>(rhs.pointer);
-    if (lhs.bytes > std::numeric_limits<std::uintptr_t>::max() - lhs_begin ||
-        rhs.bytes > std::numeric_limits<std::uintptr_t>::max() - rhs_begin) {
-        throw std::overflow_error("candidate_selector_path: operand range overflows");
-    }
-    return lhs_begin < rhs_begin + rhs.bytes && rhs_begin < lhs_begin + lhs.bytes;
-}
-
 void require_nonoverlap(const Tensor& candidate_ids, const Tensor& unary_scores,
                         const Tensor& projected_hidden, const Tensor& anchors,
-                        const Tensor& predecessor_codebook, const Tensor& successor_codebook,
+                        const detail::SelectorCodebook& predecessor_codebook,
+                        const detail::SelectorCodebook& successor_codebook,
                         const Tensor& base_positions, const SamplingConfig* configs,
                         const Tensor& drafts, const Tensor& proposal_q) {
-    const std::array<Range, 10> ranges{{
+    const std::array<OperandRange, 10> ranges{{
         {candidate_ids.data, candidate_ids.bytes(), "candidate_ids"},
         {unary_scores.data, unary_scores.bytes(), "unary_scores"},
         {projected_hidden.data, projected_hidden.bytes(), "projected_hidden"},
         {anchors.data, anchors.bytes(), "anchors"},
-        {predecessor_codebook.data, predecessor_codebook.bytes(), "predecessor_codebook"},
-        {successor_codebook.data, successor_codebook.bytes(), "successor_codebook"},
+        {predecessor_codebook.begin, predecessor_codebook.bytes, "predecessor_codebook"},
+        {successor_codebook.begin, successor_codebook.bytes, "successor_codebook"},
         {base_positions.data, base_positions.bytes(), "base_positions"},
         {configs, static_cast<std::size_t>(candidate_ids.ne[2]) * sizeof(SamplingConfig),
          "configs"},
         {drafts.data, drafts.bytes(), "drafts"},
         {proposal_q.data, proposal_q.bytes(), "proposal_q"},
     }};
-    for (std::size_t first = 0; first < ranges.size(); ++first) {
-        for (std::size_t second = first + 1; second < ranges.size(); ++second) {
-            if (overlaps(ranges[first], ranges[second])) {
-                throw std::invalid_argument(std::string("candidate_selector_path: ") +
-                                            ranges[first].label + " overlaps " +
-                                            ranges[second].label);
-            }
-        }
-    }
+    // The two codebooks are read-only and may share storage.
+    constexpr std::pair<std::size_t, std::size_t> kCodebooks[] = {{4, 5}};
+    require_disjoint(ranges, "candidate_selector_path", kCodebooks);
 }
 
 } // namespace
@@ -90,12 +67,13 @@ std::size_t candidate_selector_path_workspace_capacity_bytes(int min_steps, int 
     return layout.peak_bytes();
 }
 
-void candidate_selector_path(const Tensor& candidate_ids, const Tensor& unary_scores,
-                             const Tensor& projected_hidden, const Tensor& anchors,
-                             const Tensor& predecessor_codebook, const Tensor& successor_codebook,
-                             const Tensor& base_positions, const SamplingConfig* configs,
-                             Tensor& drafts, Tensor& proposal_q, WorkspaceArena& workspace,
-                             cudaStream_t stream) {
+namespace {
+
+void run(const Tensor& candidate_ids, const Tensor& unary_scores, const Tensor& projected_hidden,
+         const Tensor& anchors, const detail::SelectorCodebook& predecessor_codebook,
+         const detail::SelectorCodebook& successor_codebook, const Tensor& base_positions,
+         const SamplingConfig* configs, Tensor& drafts, Tensor& proposal_q,
+         WorkspaceArena& workspace, cudaStream_t stream) {
     const std::int32_t batch_size = candidate_ids.ne[2];
     const std::int32_t kSteps     = candidate_ids.ne[1];
     if (kSteps < 1 || kSteps > 15)
@@ -107,10 +85,6 @@ void candidate_selector_path(const Tensor& candidate_ids, const Tensor& unary_sc
     require_tensor(unary_scores, DType::FP32, kCandidates, kSteps, batch_size, 1, "unary_scores");
     require_tensor(projected_hidden, DType::BF16, kRank, kSteps, batch_size, 1, "projected_hidden");
     require_tensor(anchors, DType::I32, batch_size, 1, 1, 1, "anchors");
-    require_tensor(predecessor_codebook, DType::BF16, kRank, kCodebookRows, 1, 1,
-                   "predecessor_codebook");
-    require_tensor(successor_codebook, DType::BF16, kRank, kCodebookRows, 1, 1,
-                   "successor_codebook");
     require_tensor(base_positions, DType::I32, batch_size, 1, 1, 1, "base_positions");
     require_tensor(drafts, DType::I32, kSteps, batch_size, 1, 1, "drafts");
     require_tensor(proposal_q, DType::FP32, kCandidates, kSteps, batch_size, 1, "proposal_q");
@@ -125,4 +99,69 @@ void candidate_selector_path(const Tensor& candidate_ids, const Tensor& unary_sc
         successor_codebook, base_positions, configs, drafts, proposal_q, workspace, stream);
 }
 
-} // namespace ninfer::ops
+detail::SelectorCodebook bf16_codebook(const Tensor& tensor, const char* label) {
+    require_tensor(tensor, DType::BF16, kRank, kCodebookRows, 1, 1, label);
+    detail::SelectorCodebook out;
+    out.bf16  = tensor.data;
+    out.begin = tensor.data;
+    out.bytes = tensor.bytes();
+    return out;
+}
+
+// A codebook Weight [248320,256]: contiguous BF16 keeps the BF16 kernels; any other format the
+// generic decode reads is read element by element as its FP32 dequantized value.
+detail::SelectorCodebook weight_codebook(const Weight& weight, const char* label) {
+    if (weight.ndim != 2 || weight.n != kCodebookRows || weight.k != kRank ||
+        weight.payload == nullptr) {
+        throw std::invalid_argument(std::string("candidate_selector_path: invalid ") + label);
+    }
+    detail::SelectorCodebook out;
+    out.begin = weight.payload;
+    out.bytes = weight.payload_bytes;
+    if (weight.qtype == QType::BF16 && weight.layout == QuantLayout::Contiguous) {
+        if (!aligned_to(weight.qdata, 16)) {
+            throw std::invalid_argument(std::string("candidate_selector_path: invalid ") + label);
+        }
+        out.bf16 = weight.qdata;
+        return out;
+    }
+    if (!detail::generic::supports(weight)) {
+        throw std::invalid_argument(std::string("candidate_selector_path: ") + label +
+                                    ": no decode reads its format");
+    }
+    out.generic = true;
+    out.args    = detail::generic::weight_args(weight);
+    out.codec   = detail::generic::codec_of(weight);
+    return out;
+}
+
+} // namespace
+
+void candidate_selector_path(const Tensor& candidate_ids, const Tensor& unary_scores,
+                             const Tensor& projected_hidden, const Tensor& anchors,
+                             const Tensor& predecessor_codebook, const Tensor& successor_codebook,
+                             const Tensor& base_positions, const SamplingConfig* configs,
+                             Tensor& drafts, Tensor& proposal_q, WorkspaceArena& workspace,
+                             cudaStream_t stream) {
+    run(candidate_ids, unary_scores, projected_hidden, anchors,
+        bf16_codebook(predecessor_codebook, "predecessor_codebook"),
+        bf16_codebook(successor_codebook, "successor_codebook"), base_positions, configs, drafts,
+        proposal_q, workspace, stream);
+}
+
+void candidate_selector_path(const Tensor& candidate_ids, const Tensor& unary_scores,
+                             const Tensor& projected_hidden, const Tensor& anchors,
+                             const Weight& predecessor_codebook, const Weight& successor_codebook,
+                             const Tensor& base_positions, const SamplingConfig* configs,
+                             Tensor& drafts, Tensor& proposal_q, WorkspaceArena& workspace,
+                             cudaStream_t stream) {
+    const auto predecessor = weight_codebook(predecessor_codebook, "predecessor_codebook");
+    const auto successor   = weight_codebook(successor_codebook, "successor_codebook");
+    if (predecessor.generic != successor.generic) {
+        throw std::invalid_argument("candidate_selector_path: one codebook BF16, the other not");
+    }
+    run(candidate_ids, unary_scores, projected_hidden, anchors, predecessor, successor,
+        base_positions, configs, drafts, proposal_q, workspace, stream);
+}
+
+} // namespace ninferno::ops

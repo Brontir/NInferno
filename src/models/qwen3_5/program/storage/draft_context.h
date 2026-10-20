@@ -8,17 +8,19 @@
 
 #include <cstdint>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 struct DFlashPersistentState {
-    CyclicKVCache& local;
+    // The drafter's sliding layers as rings of the state images; null for a drafter without one
+    // (gpt-oss's: full layers only).
+    CyclicKVCache* local;
     std::optional<qwen3_5::PagedKVCache> full;
     Tensor prefill_features;
     Tensor prefill_positions;
     Tensor pending_features;
 
     DFlashPersistentState(DeviceSpan backing, const DFlashPersistentLayout& layout,
-                          CyclicKVCache& local_state);
+                          CyclicKVCache* local_state);
 
     [[nodiscard]] CyclicKVCacheLayerView local_layer(std::uint32_t layer) const;
     [[nodiscard]] PagedKVBatchLayerView full_batch_layer(std::uint32_t layer) const;
@@ -26,4 +28,4 @@ struct DFlashPersistentState {
                                  cudaStream_t stream);
 };
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

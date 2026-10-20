@@ -13,7 +13,7 @@
 #include <utility>
 #include <variant>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 bool ProgramImpl::valid_sequence(SequenceHandle handle) const noexcept {
     if (ContractAccess::owner(handle) != this) { return false; }
@@ -123,16 +123,6 @@ const SequenceState& ProgramImpl::active_sequence(std::uint32_t lane) const {
         throw std::logic_error("active lane has no continuation binding");
     }
     return continuation_states[index];
-}
-
-std::optional<std::uint32_t> ProgramImpl::allocate_continuation_slot() noexcept {
-    for (std::uint32_t index = 0; index < continuation_capacity; ++index) {
-        if (continuation_slots[index].role == ContinuationSlotRole::Free) {
-            continuation_slots[index].role = ContinuationSlotRole::Active;
-            return index;
-        }
-    }
-    return std::nullopt;
 }
 
 bool ProgramImpl::can_release_continuation_slot_strict(std::uint32_t index) const {
@@ -512,6 +502,30 @@ bool ProgramImpl::physical_peak_fits(detail::PhysicalResources peak) const noexc
            fits_size(occupied.host.kv_bytes, peak.host.kv_bytes, limits.host.kv_bytes);
 }
 
+bool ProgramImpl::checkpoint_tail_hidden_valid(const SequenceState& sequence,
+                                               std::optional<runtime::CheckpointRef> checkpoint) {
+    if (!checkpoint) { throw std::logic_error("private restore has no selected checkpoint"); }
+    switch (checkpoint->kind) {
+    case runtime::CheckpointKind::SessionEndpoint:
+        return sequence.endpoint_valid && sequence.tail_hidden_valid;
+    case runtime::CheckpointKind::TurnClosure:
+    case runtime::CheckpointKind::ResponseReplay:
+        return sequence.rewrite_checkpoint.valid &&
+               sequence.rewrite_checkpoint.frontier == checkpoint->frontier &&
+               sequence.rewrite_checkpoint.tail_hidden_valid;
+    case runtime::CheckpointKind::LongAnchor:
+        for (const LongAnchorCheckpoint& anchor : sequence.long_anchors) {
+            if (anchor.frontier == checkpoint->frontier && anchor.ordinal == checkpoint->ordinal) {
+                return anchor.tail_hidden_valid;
+            }
+        }
+        return false;
+    case runtime::CheckpointKind::SharedStablePrefix:
+        break;
+    }
+    throw std::logic_error("private restore selected a shared checkpoint");
+}
+
 StateImageHandle
 ProgramImpl::selected_state(const SequenceState& sequence, ReusePath reuse,
                             std::optional<runtime::CheckpointRef> checkpoint) const {
@@ -584,6 +598,21 @@ bool ProgramImpl::selected_state_requires_fork(const SequenceState& sequence, Re
                                               reuse_base);
 }
 
+// Every lane admits into a Device state slot of its own (a restore or a prefill). An optional state
+// that an active lane keeps on the Device (a retained rewrite checkpoint, a sparse anchor) is no
+// pressure victim while the lane runs, so it holds its slot against the free lanes. Gemma 4 31B at
+// C=4 on a 16 GB card has as many Device state slots as lanes: its first restore kept the rewrite
+// copy on the Device, and the fourth request waited 2-3 s for a running one to end.
+bool ProgramImpl::device_slot_spare_for_optional_state() const noexcept {
+    std::uint64_t held = static_cast<std::uint64_t>(max_concurrency) + 1U;
+    for (const RequestControl& request : requests) {
+        if (request.lifecycle != Lifecycle::Empty) {
+            held += request.optional_resources.device.state_slots;
+        }
+    }
+    return held <= state_images->slot_count();
+}
+
 bool ProgramImpl::can_retain_rewrite_checkpoint(const PreparedPromptData& prompt,
                                                 const RewriteCheckpointSpec& desired,
                                                 const SequenceState& sequence, ReusePath reuse,
@@ -602,7 +631,7 @@ bool ProgramImpl::can_retain_rewrite_checkpoint(const PreparedPromptData& prompt
 std::uint32_t ProgramImpl::device_kv_prefix_pages(const KVAddressSpaceStore& addresses,
                                                   KVAddressSpaceHandle address,
                                                   std::uint32_t frontier) const {
-    const std::uint32_t required = kv_pages_for_frontier(frontier);
+    const std::uint32_t required = paged_kv_pages(frontier);
     if (required > addresses.mapped_pages(address)) {
         throw std::logic_error("checkpoint KV requirement exceeds address membership");
     }
@@ -618,7 +647,7 @@ std::uint32_t ProgramImpl::device_kv_prefix_pages(const KVAddressSpaceStore& add
 std::uint32_t ProgramImpl::shared_kv_prefix_pages(const KVAddressSpaceStore& addresses,
                                                   KVAddressSpaceHandle address,
                                                   std::uint32_t frontier) const {
-    const std::uint32_t required = kv_pages_for_frontier(frontier);
+    const std::uint32_t required = paged_kv_pages(frontier);
     if (required > addresses.mapped_pages(address)) {
         throw std::logic_error("checkpoint KV requirement exceeds address membership");
     }
@@ -638,7 +667,7 @@ std::uint32_t ProgramImpl::shared_kv_prefix_pages(const KVAddressSpaceStore& add
 std::uint32_t ProgramImpl::shared_device_kv_prefix_pages(const KVAddressSpaceStore& addresses,
                                                          KVAddressSpaceHandle address,
                                                          std::uint32_t frontier) const {
-    const std::uint32_t required = kv_pages_for_frontier(frontier);
+    const std::uint32_t required = paged_kv_pages(frontier);
     if (required > addresses.mapped_pages(address)) {
         throw std::logic_error("checkpoint KV requirement exceeds address membership");
     }
@@ -658,7 +687,7 @@ bool ProgramImpl::partial_tail_cow_required(const KVAddressSpaceStore& addresses
     if (frontier == 0 || frontier % static_cast<std::uint32_t>(kPagedKVPageSize) == 0) {
         return false;
     }
-    const std::uint32_t required = kv_pages_for_frontier(frontier);
+    const std::uint32_t required = paged_kv_pages(frontier);
     if (required > addresses.mapped_pages(address)) {
         throw std::logic_error("checkpoint KV requirement exceeds address membership");
     }
@@ -672,7 +701,7 @@ std::uint32_t
 ProgramImpl::missing_shared_device_kv_prefix_pages(const KVAddressSpaceStore& addresses,
                                                    KVAddressSpaceHandle address,
                                                    std::uint32_t frontier) const {
-    const std::uint32_t required = kv_pages_for_frontier(frontier);
+    const std::uint32_t required = paged_kv_pages(frontier);
     if (required > addresses.mapped_pages(address)) {
         throw std::logic_error("checkpoint KV requirement exceeds address membership");
     }
@@ -693,7 +722,7 @@ std::size_t ProgramImpl::host_kv_prefix_bytes(const KVAddressSpaceStore& address
     try {
         const LogicalKVPageStore& pages =
             (&addresses == text_kv_addresses.get()) ? *text_kv_pages : *backend_kv_pages;
-        const std::uint32_t required_pages = kv_pages_for_frontier(frontier);
+        const std::uint32_t required_pages = paged_kv_pages(frontier);
         if (required_pages > addresses.mapped_pages(address)) { return 0; }
         std::size_t bytes = 0;
         for (std::uint32_t page = 0; page < required_pages; ++page) {
@@ -741,10 +770,7 @@ ProgramImpl::checkpoint_summary(const SequenceState& sequence, runtime::Checkpoi
     } else if (state_location != StateReplicaResidency::DeviceOnly) {
         throw std::logic_error("checkpoint StateImage has no published replica");
     }
-    const std::uint32_t backend_frontier =
-        speculative_backend == SpeculativeBackend::Mtp      ? checkpoint.frontier - 1U
-        : speculative_backend == SpeculativeBackend::DFlash ? checkpoint.frontier
-                                                            : 0U;
+    const std::uint32_t backend_frontier = backend_kv_frontier(checkpoint.frontier);
     const std::uint32_t identity_tag = static_cast<std::uint32_t>(speculative_backend) |
                                        (static_cast<std::uint32_t>(proposal_head) << 8U) |
                                        (static_cast<std::uint32_t>(kv_storage) << 16U);
@@ -762,8 +788,8 @@ ProgramImpl::checkpoint_summary(const SequenceState& sequence, runtime::Checkpoi
             {
                 .main_frontier    = checkpoint.frontier,
                 .backend_frontier = backend_frontier,
-                .main_pages       = kv_pages_for_frontier(checkpoint.frontier),
-                .backend_pages    = kv_pages_for_frontier(backend_frontier),
+                .main_pages       = paged_kv_pages(checkpoint.frontier),
+                .backend_pages    = paged_kv_pages(backend_frontier),
             },
         .rebuild_work = validated_rebuild_work(rebuild_work, checkpoint.frontier),
     };
@@ -858,8 +884,8 @@ ProgramImpl::shared_prefix_summary(const SharedPrefixState& shared) const {
                     {
                         .main_frontier    = shared.frontier,
                         .backend_frontier = shared.backend_frontier,
-                        .main_pages       = kv_pages_for_frontier(shared.frontier),
-                        .backend_pages    = kv_pages_for_frontier(shared.backend_frontier),
+                        .main_pages       = paged_kv_pages(shared.frontier),
+                        .backend_pages    = paged_kv_pages(shared.backend_frontier),
                     },
                 .rebuild_work = validated_rebuild_work(shared.rebuild_work, shared.frontier),
             },
@@ -868,10 +894,16 @@ ProgramImpl::shared_prefix_summary(const SharedPrefixState& shared) const {
 }
 
 PrefillProgress ProgramImpl::advance_prefill(SequenceHandle sequence,
-                                             runtime::ExecutionTiming* failed_timing) {
+                                             runtime::ExecutionTiming* failed_timing,
+                                             runtime::TokenMaskSource* masks) {
     if (pending_transaction_ || !valid_sequence(sequence)) {
         throw std::logic_error("prefill sequence capability is invalid");
     }
+    struct ActiveMaskScope {
+        ProgramImpl& program;
+        ~ActiveMaskScope() { program.active_masks = nullptr; }
+    } mask_scope{*this};
+    active_masks = masks;
     const std::uint32_t lane = ContractAccess::lane(sequence).value;
     if (requests[lane].lifecycle != Lifecycle::Prefilling) {
         throw std::logic_error("prefill advance requires a prefilling sequence");
@@ -879,7 +911,11 @@ PrefillProgress ProgramImpl::advance_prefill(SequenceHandle sequence,
     try {
         runtime::PrefillStepResult step = advance_prefill_raw(lane, failed_timing);
         if (failed_timing != nullptr) { *failed_timing += step.timing; }
-        return wrap_prefill(lane, std::move(step));
+        PrefillProgress progress = wrap_prefill(lane, std::move(step));
+        const auto& staged       = requests[lane].prefill;
+        progress.holds_vision_handoff = !progress.complete && staged && staged->vision &&
+                                        staged->vision->active_handoff_bytes() != 0;
+        return progress;
     } catch (...) {
         const Clock::time_point cleanup_started = Clock::now();
         clear_execution_failure_lanes(std::span<const std::uint32_t>(&lane, 1));
@@ -1017,6 +1053,11 @@ bool ProgramImpl::clear_lane_strict(SequenceState& sequence, RequestControl& req
     request.active_resources     = {};
     request.optional_resources   = {};
     request.publish_continuation = true;
+    request.lease_ceiling        = 0;
+    request.lease_settled        = false;
+    request.lease_space_limited  = false;
+    request.lease_full_target    = {};
+    request.lease_minimum_target = {};
     return true;
 }
 
@@ -1041,6 +1082,11 @@ void ProgramImpl::clear_lane_best_effort(SequenceState& sequence,
     request.active_resources     = {};
     request.optional_resources   = {};
     request.publish_continuation = true;
+    request.lease_ceiling        = 0;
+    request.lease_settled        = false;
+    request.lease_space_limited  = false;
+    request.lease_full_target    = {};
+    request.lease_minimum_target = {};
     const auto* begin            = continuation_states.data();
     const auto* end              = begin + continuation_capacity;
     if (&sequence >= begin && &sequence < end) {
@@ -1358,10 +1404,18 @@ const qwen3_5::PagedKVCache* ProgramImpl::backend_kv_cache() const noexcept {
     return nullptr;
 }
 
+std::uint32_t ProgramImpl::backend_kv_frontier(std::uint32_t main_frontier) const noexcept {
+    return backend_kv_cache() != nullptr
+               ? detail::backend_frontier_at(speculative_backend, main_frontier)
+               : 0U;
+}
+
 std::uint32_t ProgramImpl::backend_kv_valid(const SequenceState& sequence) const noexcept {
-    if (speculative_backend == SpeculativeBackend::Mtp) { return sequence.mtp_kv_valid; }
+    if (speculative_backend == SpeculativeBackend::Mtp) {
+        return backend_kv_cache() != nullptr ? sequence.mtp_kv_valid : 0U;
+    }
     if (speculative_backend == SpeculativeBackend::DFlash) {
-        return sequence.dflash_context_frontier;
+        return backend_kv_cache() != nullptr ? sequence.dflash_context_frontier : 0U;
     }
     return 0;
 }
@@ -1390,17 +1444,15 @@ void ProgramImpl::bind_sequence_kv(SequenceState& sequence) {
     try {
         if (!text_active) {
             text_kv_addresses->activate(sequence.kv->text,
-                                        text_kv_addresses->mapped_pages(sequence.kv->text), row);
+                                        text_kv_addresses->mapped_pages(sequence.kv->text), row,
+                                        device.stream);
             if (sequence.kv->backend) {
                 backend_kv_addresses->activate(
                     *sequence.kv->backend,
-                    backend_kv_addresses->mapped_pages(*sequence.kv->backend), row);
+                    backend_kv_addresses->mapped_pages(*sequence.kv->backend), row, device.stream);
             }
         }
-        set_device_i32(io.text_kv_table_row, text_kv_addresses->bound_row(sequence.kv->text));
-        set_device_i32(io.backend_kv_table_row,
-                       sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
-                                            : 0);
+        publish_kv_rows(sequence);
     } catch (...) {
         if (!text_active) {
             if (sequence.kv->backend && backend_kv_addresses->active(*sequence.kv->backend)) {
@@ -1412,6 +1464,17 @@ void ProgramImpl::bind_sequence_kv(SequenceState& sequence) {
         }
         throw;
     }
+}
+
+void ProgramImpl::publish_kv_rows(const SequenceState& sequence) {
+    if (!sequence.kv || !text_kv_addresses->active(sequence.kv->text)) {
+        throw std::logic_error("sequence has no active KV execution mapping");
+    }
+    const std::int32_t row = text_kv_addresses->bound_row(sequence.kv->text);
+    const std::int32_t backend_row =
+        sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend) : 0;
+    set_device_i32(io.text_kv_table_row, row);
+    set_device_i32(io.backend_kv_table_row, backend_row);
 }
 
 void ProgramImpl::unbind_sequence_kv(SequenceState& sequence) noexcept {
@@ -1428,6 +1491,173 @@ void ProgramImpl::unbind_sequence_kv(SequenceState& sequence) noexcept {
     } catch (...) {}
 }
 
+void ProgramImpl::ensure_sequence_kv_lease(SequenceState& sequence, std::uint32_t main_tokens,
+                                           std::uint32_t backend_tokens) {
+    // Only a decoding sequence grows its lease: admission and prefill hold exactly the
+    // entitlement their plan declared. A settled lease waits for resume_device_kv_lease.
+    RequestControl& request = requests[sequence.lane];
+    if (kv_lease_window == 0 || request.lifecycle != Lifecycle::Active || request.lease_settled) {
+        return;
+    }
+    const std::uint32_t cushion    = kv_lease_cushion_pages();
+    const std::uint32_t text_pages = text_kv_addresses->entitlement(sequence.kv->text);
+    const std::uint32_t backend_pages =
+        sequence.kv->backend ? backend_kv_addresses->entitlement(*sequence.kv->backend) : 0U;
+    // The most the sequence can use: every frontier up to its ceiling, and the drafts a round may
+    // still verify past it. A lease holding that needs no cushion beyond it.
+    const std::uint32_t backend_ceiling = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        capacity, static_cast<std::uint64_t>(request.lease_ceiling) + 2ULL * draft_window + 1ULL));
+    const std::uint32_t reach           = paged_kv_pages(backend_ceiling);
+    const bool main_thin = text_pages < reach && paged_kv_pages(main_tokens) + cushion > text_pages;
+    const bool backend_thin = sequence.kv->backend.has_value() && backend_tokens != 0 &&
+                              backend_pages < reach &&
+                              paged_kv_pages(backend_tokens) + cushion > backend_pages;
+    if (!main_thin && !backend_thin) { return; }
+
+    const auto target = [reach](std::uint32_t pool, std::uint32_t held, std::uint32_t wanted) {
+        return std::min(pool, std::max(held, std::min(reach, wanted)));
+    };
+    const auto targets = [&](std::uint32_t extra_tokens) {
+        qwen3_5::DeviceKVPages out;
+        out.main = target(
+            text_kv_pages->physical_pool().capacity_pages(), text_pages,
+            paged_kv_pages(std::min(request.lease_ceiling, main_tokens + extra_tokens)) + cushion);
+        if (sequence.kv->backend) {
+            out.backend =
+                backend_thin
+                    ? target(
+                          backend_kv_pages->physical_pool().capacity_pages(), backend_pages,
+                          paged_kv_pages(std::min(backend_ceiling, backend_tokens + extra_tokens)) +
+                              cushion)
+                    : backend_pages;
+        }
+        return out;
+    };
+    const auto grow = [&](qwen3_5::DeviceKVPages wanted) {
+        if ((main_thin && wanted.main <= text_pages) ||
+            (backend_thin && wanted.backend <= backend_pages)) {
+            return false;
+        }
+        resize_sequence_kv_entitlement(sequence, wanted.main, wanted.backend);
+        // The extended lease is this owner's resource effect: the population proofs read it.
+        request.active_resources.device.main_kv_pages += wanted.main - text_pages;
+        request.active_resources.device.backend_kv_pages += wanted.backend - backend_pages;
+        return true;
+    };
+    // A full window first; a pool that cannot spare one may still spare two page groups or one.
+    // While an admission is in flight its planned pages stay its own: the lease settles as one the
+    // pools cannot extend, and resumes once the admission has reserved them.
+    const auto page                  = static_cast<std::uint32_t>(kPagedKVPageSize);
+    const bool admission_in_flight   = has_context_transaction();
+    bool space_limited               = admission_in_flight;
+    for (const std::uint32_t extra_tokens : {std::max(kv_lease_window, prefill_chunk), 2U * page,
+                                             page}) {
+        if (admission_in_flight) { break; }
+        try {
+            if (grow(targets(extra_tokens))) { return; }
+        } catch (const std::bad_alloc&) { space_limited = true; }
+    }
+    // A lease that already holds what the request reserves without one (kv_lease_window 0: its
+    // prompt and every output token, and an MTP head's draft lookahead, as request_plan sizes
+    // them) decodes as it would there: its growth past that is cushion the pools could not spare,
+    // not a shortfall, and must not end the answer before its output limit. Under a context cache
+    // that fills the pool (one 24K request at C1, 32K pages) it did, 1 to 19 tokens short.
+    const std::uint32_t unleased_main = paged_kv_pages(request.lease_ceiling);
+    std::uint32_t unleased_backend    = 0;
+    if (sequence.kv->backend) {
+        unleased_backend =
+            paged_kv_pages(speculative_backend == SpeculativeBackend::Mtp
+                               ? static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                                     capacity, static_cast<std::uint64_t>(request.lease_ceiling) +
+                                                   draft_window - 1ULL))
+                               : request.lease_ceiling);
+    }
+    if (text_pages >= unleased_main && backend_pages >= unleased_backend) { return; }
+    // The pools cannot extend it: the sequence settles where its lease still covers a launch
+    // (device_kv_lease_settlement_tokens), unless the engine frees cached context first.
+    request.lease_settled        = true;
+    request.lease_space_limited  = space_limited;
+    request.lease_full_target    = targets(std::max(kv_lease_window, prefill_chunk));
+    request.lease_minimum_target = targets(page);
+}
+
+std::optional<std::uint32_t>
+ProgramImpl::device_kv_lease_settlement_tokens(SequenceHandle sequence,
+                                               std::uint32_t forced_span_tokens) const noexcept {
+    if (!valid_sequence(sequence)) { return std::nullopt; }
+    const std::uint32_t lane = ContractAccess::lane(sequence).value;
+    if (lane >= max_concurrency || !requests[lane].lease_settled) { return std::nullopt; }
+    const SequenceState& state = active_sequence(lane);
+    if (!state.kv) { return std::nullopt; }
+    // Kept unused: the widest launch past the frontier, and a forced control span.
+    const std::uint32_t step = std::max(draft_window + 1U, forced_span_tokens);
+    const auto covered_tokens = [](std::uint32_t pages) {
+        return pages * static_cast<std::uint32_t>(kPagedKVPageSize);
+    };
+    std::uint32_t covered = covered_tokens(text_kv_addresses->entitlement(state.kv->text));
+    if (state.kv->backend) {
+        // The backend runs a draft window ahead of the text frontier.
+        const std::uint32_t backend =
+            covered_tokens(backend_kv_addresses->entitlement(*state.kv->backend));
+        covered = std::min(covered, backend > draft_window ? backend - draft_window : 0U);
+    }
+    const std::uint32_t frontier = state.execution_frontier;
+    const std::uint32_t slack    = covered > frontier + step ? covered - frontier - step : 0U;
+    const std::uint32_t forced   = forced_span_tokens == 0 ? 0U : forced_span_tokens + 1U;
+    return std::max({1U, slack, forced});
+}
+
+std::optional<qwen3_5::DeviceKVLeaseShortfall>
+ProgramImpl::device_kv_lease_shortfall(SequenceHandle sequence) const noexcept {
+    if (!valid_sequence(sequence)) { return std::nullopt; }
+    const std::uint32_t lane = ContractAccess::lane(sequence).value;
+    if (lane >= max_concurrency) { return std::nullopt; }
+    const RequestControl& request = requests[lane];
+    if (!request.lease_settled || !request.lease_space_limited) { return std::nullopt; }
+    const SequenceState& state = active_sequence(lane);
+    if (!state.kv) { return std::nullopt; }
+    const auto missing = [](std::uint32_t wanted, std::uint32_t held, std::uint32_t free) {
+        const std::uint32_t need = wanted > held ? wanted - held : 0U;
+        return need > free ? need - free : 0U;
+    };
+    qwen3_5::DeviceKVLeaseShortfall out;
+    const std::uint32_t text_held = text_kv_addresses->entitlement(state.kv->text);
+    const std::uint32_t text_free = text_kv_pages->physical_pool().available_pages();
+    out.full.main    = missing(request.lease_full_target.main, text_held, text_free);
+    out.minimum.main = missing(request.lease_minimum_target.main, text_held, text_free);
+    if (state.kv->backend) {
+        const std::uint32_t held = backend_kv_addresses->entitlement(*state.kv->backend);
+        const std::uint32_t free = backend_kv_pages->physical_pool().available_pages();
+        out.full.backend    = missing(request.lease_full_target.backend, held, free);
+        out.minimum.backend = missing(request.lease_minimum_target.backend, held, free);
+    }
+    return out;
+}
+
+bool ProgramImpl::resume_device_kv_lease(SequenceHandle sequence) noexcept {
+    const std::optional<qwen3_5::DeviceKVLeaseShortfall> shortfall =
+        device_kv_lease_shortfall(sequence);
+    if (!shortfall || shortfall->minimum.main != 0 || shortfall->minimum.backend != 0) {
+        return false;
+    }
+    RequestControl& request      = requests[ContractAccess::lane(sequence).value];
+    request.lease_settled        = false;
+    request.lease_space_limited  = false;
+    request.lease_full_target    = {};
+    request.lease_minimum_target = {};
+    return true;
+}
+
+qwen3_5::DeviceKVPages
+ProgramImpl::retained_device_kv_pages(const ContinuationHandle& continuation) const noexcept {
+    if (!valid_continuation(continuation)) { return {}; }
+    try {
+        const detail::PhysicalResources owned =
+            owner_exclusive_resources(continuation_states[ContractAccess::index(continuation)]);
+        return {.main = owned.device.main_kv_pages, .backend = owned.device.backend_kv_pages};
+    } catch (...) { return {}; }
+}
+
 void ProgramImpl::ensure_sequence_kv_mapped(SequenceState& sequence, std::uint32_t main_tokens,
                                             std::uint32_t backend_tokens) {
     if (!sequence.kv || main_tokens > capacity || backend_tokens > capacity) {
@@ -1436,6 +1666,7 @@ void ProgramImpl::ensure_sequence_kv_mapped(SequenceState& sequence, std::uint32
     if (backend_tokens != 0 && !sequence.kv->backend) {
         throw std::logic_error("backend KV materialization requested without an allocation");
     }
+    ensure_sequence_kv_lease(sequence, main_tokens, backend_tokens);
     text_kv_addresses->ensure_mapped_to_tokens(sequence.kv->text, main_tokens, device.stream);
     if (backend_tokens != 0) {
         backend_kv_addresses->ensure_mapped_to_tokens(*sequence.kv->backend, backend_tokens,
@@ -1531,8 +1762,11 @@ qwen3_5::PagedKVCacheView ProgramImpl::text_kv_view(const SequenceState& sequenc
 }
 
 qwen3_5::PagedKVCacheView ProgramImpl::mtp_kv_view(const SequenceState& sequence) const {
-    if (speculative_backend != SpeculativeBackend::Mtp) { return {}; }
-    if (decoder->mtp_cache() == nullptr || !sequence.kv || !sequence.kv->backend ||
+    // A drafter that reads the target's KV (Gemma 4's assistant) has no MTP KV of its own to view.
+    if (speculative_backend != SpeculativeBackend::Mtp || decoder->mtp_cache() == nullptr) {
+        return {};
+    }
+    if (!sequence.kv || !sequence.kv->backend ||
         !backend_kv_addresses->active(*sequence.kv->backend)) {
         throw std::logic_error("sequence has no active MTP KV execution mapping");
     }
@@ -1566,4 +1800,4 @@ void ProgramImpl::ordered_reset(SequenceState& sequence) {
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

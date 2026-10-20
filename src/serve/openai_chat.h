@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 
 struct GenerationOutcome;
 
@@ -24,18 +24,22 @@ struct OpenAIChatRequest {
     bool include_usage          = false;
     bool output_tokens_explicit = false;
     // llama.cpp-compatible response observations. Final timings remain unconditional;
-    // timings_per_token controls only cumulative timing snapshots on streamed output chunks.
+    // timings_per_token controls cumulative timing snapshots on streamed output chunks and,
+    // together with return_progress, on prompt-progress chunks.
     bool timings_per_token = false;
     bool return_progress   = false;
 };
 
 OpenAIChatRequest parse_chat_completion_request(const RequestJson& body,
-                                                const RequestLimits& limits);
+                                                const RequestLimits& limits,
+                                                bool auto_system_shared_prefix = true);
 
 struct OpenAIChatResponseIdentity {
     std::string id;
     std::string model;
     std::int64_t created = 0;
+    // The request's custom tools: their calls are answered as {"type": "custom", "custom": {...}}.
+    std::vector<std::string> custom_tools;
 };
 
 OpenAIChatResponseIdentity make_openai_chat_response_identity(std::string model);
@@ -45,24 +49,30 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
 class OpenAIChatStream {
 public:
     OpenAIChatStream(OpenAIChatResponseIdentity identity, bool include_usage,
-                     bool timings_per_token = false, bool return_progress = false);
+                     bool timings_per_token = false, bool return_progress = false,
+                     bool usage_chunk_choice = false);
 
     std::string start();
-    void note_start(const ninfer::GenerationStart& start);
+    void note_start(const ninferno::GenerationStart& start);
     std::string initial_prompt_progress();
-    std::string prompt_progress(const ninfer::PromptProgress& progress);
-    void note_timing(const ninfer::GenerationTimingObservation& timing);
+    std::string prompt_progress(const ninferno::PromptProgress& progress);
+    void note_timing(const ninferno::GenerationTimingObservation& timing);
     std::string reasoning_delta(const std::string& text);
     std::string content_delta(const std::string& text);
     std::vector<std::string> finish(const GenerationOutcome& outcome);
 
 private:
     nlohmann::json live_timings_json() const;
+    // The first event's delta also carries the assistant role.
+    nlohmann::json opening(nlohmann::json delta);
+    // One stream event: its delta goes through opening(), so no event path can drop the role.
+    std::string stream_event(nlohmann::json delta, nlohmann::json finish_reason,
+                             nlohmann::json timings);
 
     OpenAIChatResponseIdentity identity_;
     std::string reasoning_;
     std::string content_;
-    std::optional<ninfer::GenerationTimingObservation> live_timing_;
+    std::optional<ninferno::GenerationTimingObservation> live_timing_;
     std::uint32_t prompt_tokens_            = 0;
     std::uint32_t cached_tokens_            = 0;
     std::uint32_t last_progress_tokens_     = 0;
@@ -70,11 +80,13 @@ private:
     bool include_usage_                     = false;
     bool timings_per_token_                 = false;
     bool return_progress_                   = false;
+    bool usage_chunk_choice_                = false;
     bool started_                           = false;
+    bool role_sent_                         = false;
     bool admitted_                          = false;
     bool progress_started_                  = false;
     bool content_started_                   = false;
     bool finished_                          = false;
 };
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

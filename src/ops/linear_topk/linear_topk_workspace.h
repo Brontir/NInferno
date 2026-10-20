@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 inline constexpr std::int32_t kLinearTopK                = 16;
 inline constexpr std::int32_t kLinearTopKMaxChunkColumns = 128;
@@ -16,6 +16,8 @@ inline constexpr std::int32_t kLinearTopKFullRows        = 248320;
 inline constexpr std::int32_t kLinearTopKFullValidRows   = 248077;
 inline constexpr std::int32_t kLinearTopKOptimizedRows   = 131072;
 inline constexpr std::int32_t kLinearTopKHidden          = 5120;
+// Rows one producer CTA of the projected route (logits from Linear) sorts.
+inline constexpr std::int32_t kLinearTopKProjectedRows   = 1024;
 
 struct LinearTopKWorkspace {
     std::int32_t tile_columns = 0;
@@ -58,4 +60,4 @@ allocate_linear_topk_workspace(Allocator& allocator, std::int32_t head_rows, std
     return out;
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

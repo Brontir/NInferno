@@ -82,10 +82,10 @@ int main() {
     {
         StderrCapture capture;
         {
-            ninfer::product::LoggingRuntime logging(
-                {.logger_name  = "ninfer-serve",
-                 .color        = ninfer::product::LogColorMode::Auto,
-                 .presentation = ninfer::product::LogPresentation::Service});
+            ninferno::product::LoggingRuntime logging(
+                {.logger_name  = "ninferno-serve",
+                 .color        = ninferno::product::LogColorMode::Auto,
+                 .presentation = ninferno::product::LogPresentation::Service});
             logging.logger()->info("throughput | sample");
             logging.flush();
         }
@@ -97,7 +97,7 @@ int main() {
             std::regex(
                 R"(^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}  INFO  throughput \| sample\n$)")),
         "service pretty prefix mismatch");
-    failures += check(service_output.find("ninfer-serve") == std::string::npos,
+    failures += check(service_output.find("ninferno-serve") == std::string::npos,
                       "service pretty output repeated the executable name");
     failures += check(service_output.find("\x1b[") == std::string::npos,
                       "redirected service output contains ANSI escapes");
@@ -106,42 +106,44 @@ int main() {
     {
         StderrCapture capture;
         {
-            ninfer::product::LoggingRuntime logging(
-                {.logger_name  = "ninfer-serve",
-                 .color        = ninfer::product::LogColorMode::Never,
-                 .presentation = ninfer::product::LogPresentation::Service});
-            ninfer::product::StartupLogRenderer startup(logging);
-            ninfer::StartupObserver observer = startup.observer();
-            observer.callback({.phase  = ninfer::StartupPhase::EngineStartup,
-                               .status = ninfer::StartupStatus::Begin});
-            observer.callback({.phase  = ninfer::StartupPhase::CudaInitialize,
-                               .status = ninfer::StartupStatus::Begin});
-            observer.callback({.phase      = ninfer::StartupPhase::CudaInitialize,
-                               .status     = ninfer::StartupStatus::Complete,
+            ninferno::product::LoggingRuntime logging(
+                {.logger_name  = "ninferno-serve",
+                 .color        = ninferno::product::LogColorMode::Never,
+                 .presentation = ninferno::product::LogPresentation::Service});
+            ninferno::product::StartupLogRenderer startup(logging);
+            ninferno::StartupObserver observer = startup.observer();
+            observer.callback({.phase  = ninferno::StartupPhase::EngineStartup,
+                               .status = ninferno::StartupStatus::Begin});
+            observer.callback({.phase  = ninferno::StartupPhase::CudaInitialize,
+                               .status = ninferno::StartupStatus::Begin});
+            observer.callback({.phase      = ninferno::StartupPhase::CudaInitialize,
+                               .status     = ninferno::StartupStatus::Complete,
                                .elapsed_ns = 1'000'000'000});
-            observer.callback({.phase         = ninfer::StartupPhase::WeightsMaterialize,
-                               .status        = ninfer::StartupStatus::Begin,
-                               .progress_unit = ninfer::StartupProgressUnit::Bytes,
+            observer.callback({.phase         = ninferno::StartupPhase::WeightsMaterialize,
+                               .status        = ninferno::StartupStatus::Begin,
+                               .progress_unit = ninferno::StartupProgressUnit::Bytes,
                                .total         = 16ULL << 30});
-            observer.callback({.phase         = ninfer::StartupPhase::WeightsMaterialize,
-                               .status        = ninfer::StartupStatus::Complete,
-                               .progress_unit = ninfer::StartupProgressUnit::Bytes,
+            observer.callback({.phase         = ninferno::StartupPhase::WeightsMaterialize,
+                               .status        = ninferno::StartupStatus::Complete,
+                               .progress_unit = ninferno::StartupProgressUnit::Bytes,
                                .current       = 16ULL << 30,
                                .total         = 16ULL << 30,
                                .elapsed_ns    = 2'000'000'000});
-            observer.callback({.phase      = ninfer::StartupPhase::EngineStartup,
-                               .status     = ninfer::StartupStatus::Complete,
+            observer.callback({.phase      = ninferno::StartupPhase::EngineStartup,
+                               .status     = ninferno::StartupStatus::Complete,
                                .elapsed_ns = 3'000'000'000});
             startup.engine_ready({.model_name           = "qwen3.6-27b",
                                   .cuda_sync_mode       = "blocking",
                                   .weight_formats       = {"q4_g64_fp16", "q8_g32_fp16"},
+                                  .gpu_class            = "gb202:170sm",
+                                  .route_table          = "route table t.json refused (x)",
                                   .host_to_device_bytes = 16ULL << 30});
             logging.flush();
         }
         startup_output = capture.finish();
     }
     failures += check(
-        line_count(startup_output) == 4 &&
+        line_count(startup_output) == 5 &&
             startup_output.find("starting engine") != std::string::npos &&
             startup_output.find("loading weights | 16.0 GiB") != std::string::npos &&
             startup_output.find("weights ready | 16.0 GiB | 2.0s | 8.00 GiB/s") !=
@@ -149,6 +151,10 @@ int main() {
             startup_output.find("engine ready | qwen3.6-27b | total 3.0s | weights 16.0 GiB") !=
                 std::string::npos &&
             startup_output.find("CUDA sync blocking") != std::string::npos &&
+            // The route table's state is part of startup, refused or not.
+            startup_output.find(
+                "routes | gpu class gb202:170sm | route table t.json refused (x)") !=
+                std::string::npos &&
             startup_output.find("CUDA initialized") == std::string::npos,
         "normal startup pretty output is noisy or incomplete");
 
@@ -156,10 +162,10 @@ int main() {
     {
         StderrCapture capture;
         {
-            ninfer::product::LoggingRuntime logging(
-                {.logger_name  = "ninfer",
-                 .color        = ninfer::product::LogColorMode::Never,
-                 .presentation = ninfer::product::LogPresentation::Tool});
+            ninferno::product::LoggingRuntime logging(
+                {.logger_name  = "ninferno",
+                 .color        = ninferno::product::LogColorMode::Never,
+                 .presentation = ninferno::product::LogPresentation::Tool});
             logging.logger()->info("engine ready");
             logging.logger()->error("failed");
             logging.flush();

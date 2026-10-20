@@ -7,10 +7,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace ninfer::models::qwen3_5 {
-
-inline constexpr std::int32_t kKvInt8QuantGroup = 64;
-inline constexpr std::int32_t kKvFp8QuantGroup  = 256;
+namespace ninferno::models::qwen3_5 {
 
 struct DecoderStateSpec {
     std::uint32_t full_attention_layers     = 0;
@@ -23,6 +20,10 @@ struct DecoderStateSpec {
     std::int32_t kv_table_rows              = 1;
     std::uint32_t text_physical_page_groups = 0;
     std::uint32_t mtp_physical_page_groups  = 0;
+    // A family whose attention reads another layer layout names it here; empty: the profile of
+    // kv_storage that the Qwen 3.5 Ops read. plane_order is the pool's device plane order.
+    std::optional<PagedKVStorageLayout> layer_storage;
+    PagedKVPlaneOrder plane_order = PagedKVPlaneOrder::PageMajor;
 };
 
 struct PagedKVCacheLayout {
@@ -114,4 +115,4 @@ struct DecoderState {
     [[nodiscard]] const PagedKVCache* mtp_cache() const noexcept;
 };
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

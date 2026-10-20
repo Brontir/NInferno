@@ -4,7 +4,7 @@
 #include "ops/common/math.h"
 #include "ops/kernel/position.cuh"
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 void fill_i32_positions_launch(Tensor& positions, std::int32_t start, cudaStream_t stream) {
     constexpr int block = 256;
@@ -28,4 +28,16 @@ void offset_i32_positions_block_launch(const Tensor& source, const Tensor& delta
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+void feed_sampled_tokens_launch(const Tensor& sampled, Tensor& record, Tensor& tokens,
+                                Tensor& cache_positions, Tensor& rope_positions,
+                                cudaStream_t stream) {
+    constexpr int block = 256;
+    const int grid      = div_up(sampled.ne[0], block);
+    feed_sampled_tokens_kernel<<<grid, block, 0, stream>>>(
+        static_cast<const std::int32_t*>(sampled.data), static_cast<std::int32_t*>(record.data),
+        static_cast<std::int32_t*>(tokens.data), static_cast<std::int32_t*>(cache_positions.data),
+        static_cast<std::int32_t*>(rope_positions.data), sampled.ne[0]);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+} // namespace ninferno::ops::detail

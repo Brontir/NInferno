@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <type_traits>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 namespace {
 
 constexpr std::size_t kArenaAlign = 256;
@@ -13,6 +13,15 @@ constexpr std::size_t kArenaAlign = 256;
 TensorRegion add_tensor(LayoutBuilder& builder, DType dtype,
                         std::initializer_list<std::int32_t> shape, const char* label) {
     return builder.add_tensor(dtype, shape, kArenaAlign, label);
+}
+
+// A contiguous prefix of `tensor`'s storage viewed with `shape` (at most as many elements).
+Tensor prefix_view(const Tensor& tensor, std::initializer_list<std::int32_t> shape) {
+    Tensor out(tensor.data, tensor.dtype, shape);
+    if (!tensor.is_contiguous() || out.numel() > tensor.numel()) {
+        throw std::logic_error("narrowed decode frame exceeds its storage");
+    }
+    return out;
 }
 
 std::int32_t checked_i32(std::uint64_t value, const char* label) {
@@ -55,7 +64,9 @@ RoundStateLayout begin_round_state_layout(LayoutBuilder& builder, const RoundSta
     validate_spec(spec);
     RoundStateLayout layout;
     layout.spec = spec;
-    if (!spec.causal_scoring && spec.backend == SpeculativeBackend::None) {
+    // Every generation engine has the ordinary decode frame: a speculative engine runs its plain
+    // rows (a request whose acceptance watchdog tripped) through it.
+    if (!spec.causal_scoring) {
         OrdinaryDecodeStateLayout& ordinary = layout.ordinary.emplace();
         ordinary.ingress =
             builder.add(sizeof(OrdinaryDecodeIngress), 256, "ordinary decode ingress");
@@ -116,6 +127,11 @@ OrdinaryDecodeState::OrdinaryDecodeState(DeviceSpan backing,
     sampled_tokens = Tensor(static_cast<unsigned char*>(egress.data) +
                                 offsetof(OrdinaryDecodeEgress, sampled_tokens),
                             DType::I32, {count});
+    step_tokens    = Tensor(static_cast<unsigned char*>(egress.data) +
+                                offsetof(OrdinaryDecodeEgress, step_tokens),
+                            DType::I32,
+                            {static_cast<std::int32_t>(kMaximumConcurrency *
+                                                       (kMaximumOrdinaryDecodeSteps - 1U))});
     logits         = layout.logits.bind(backing);
     hidden         = layout.hidden.bind(backing);
 }
@@ -182,8 +198,11 @@ void complete_round_state_layout(LayoutBuilder& builder, RoundStateLayout& layou
                                               "MTP decode autoregressive valid columns");
     }
     if (is_masked_draft_backend(layout.spec.backend)) {
-        layout.dflash_prefill.emplace().produced_count = i32(1, "DFlash prefill produced count");
-        DFlashDecodeStateLayout& decode                = layout.dflash_decode.emplace();
+        DFlashPrefillStateLayout& prefill = layout.dflash_prefill.emplace();
+        prefill.ingress =
+            builder.add(sizeof(DFlashPrefillIngress), kArenaAlign, "DFlash prefill ingress");
+        prefill.local_append_count      = i32(1, "DFlash prefill local append count");
+        DFlashDecodeStateLayout& decode = layout.dflash_decode.emplace();
         decode.ingress =
             builder.add(sizeof(DFlashDecodeIngress), kArenaAlign, "DFlash decode ingress");
         decode.egress =
@@ -229,7 +248,16 @@ MtpPrefillState::MtpPrefillState(DeviceSpan backing, const MtpPrefillStateLayout
       target_positions(layout.target_positions.bind(backing)) {}
 
 DFlashPrefillState::DFlashPrefillState(DeviceSpan backing, const DFlashPrefillStateLayout& layout)
-    : produced_count(layout.produced_count.bind(backing)) {}
+    : ingress(layout.ingress.bind(backing)),
+      local_append_count(layout.local_append_count.bind(backing)) {
+    static_assert(std::is_standard_layout_v<DFlashPrefillIngress>);
+    const auto scalar = [&](std::size_t offset) {
+        return Tensor(static_cast<unsigned char*>(ingress.data) + offset, DType::I32, {1});
+    };
+    append_count           = scalar(offsetof(DFlashPrefillIngress, append_count));
+    state_destination_slot = scalar(offsetof(DFlashPrefillIngress, state_destination_slot));
+    full_kv_table_row      = scalar(offsetof(DFlashPrefillIngress, full_kv_table_row));
+}
 
 MtpDecodeState::MtpDecodeState(DeviceSpan backing, const MtpDecodeStateLayout& layout,
                                std::uint32_t batch_capacity, std::uint32_t draft_window) {
@@ -373,6 +401,100 @@ DFlashDecodeState::DFlashDecodeState(DeviceSpan backing, const DFlashDecodeState
     target_continuation_hidden = layout.target_continuation_hidden.bind(backing);
 }
 
+MtpDecodeState MtpDecodeState::narrowed(std::uint32_t draft_window) const {
+    const std::int32_t batch = anchors.ne[0];
+    if (draft_window == 0 || static_cast<std::int32_t>(draft_window) > current_drafts.ne[0]) {
+        throw std::invalid_argument("MTP decode frame cannot widen");
+    }
+    const auto drafts = static_cast<std::int32_t>(draft_window);
+    const auto width  = drafts + 1;
+    const auto steps  = std::max(drafts - 1, 1);
+    MtpDecodeState out    = *this;
+    out.current_drafts        = prefix_view(current_drafts, {drafts, batch});
+    out.target_rope_positions = prefix_view(target_rope_positions, {width, batch});
+    out.licensed_tokens       = prefix_view(licensed_tokens, {width, batch});
+    // Step-major [batch, drafts]: the narrower window keeps the first steps.
+    out.next_drafts      = prefix_view(next_drafts, {batch, drafts});
+    out.verify_ids       = prefix_view(verify_ids, {width, batch});
+    out.target_positions = prefix_view(target_positions, {width, batch});
+    out.target_argmax    = prefix_view(target_argmax, {width, batch});
+    out.target_logits    = prefix_view(target_logits, {target_logits.ne[0], width, batch});
+    out.target_hidden    = prefix_view(target_hidden, {target_hidden.ne[0], width, batch});
+    out.alignment_ids    = prefix_view(alignment_ids, {width, batch});
+    out.alignment_hidden = prefix_view(alignment_hidden, {alignment_hidden.ne[0], width, batch});
+    out.ar_positions      = prefix_view(ar_positions, {batch, steps});
+    out.ar_rope_positions = prefix_view(ar_rope_positions, {batch, steps});
+    out.ar_valid_columns  = prefix_view(ar_valid_columns, {batch, steps});
+    return out;
+}
+
+MtpDecodeState MtpDecodeState::rows(std::int32_t rows) const {
+    const auto cut = [rows](const Tensor& t, int axis) {
+        return t.data == nullptr ? t : t.slice(axis, 0, rows);
+    };
+    MtpDecodeState out             = *this;
+    out.anchors                    = cut(anchors, 0);
+    out.base_frontiers             = cut(base_frontiers, 0);
+    out.remaining_budgets          = cut(remaining_budgets, 0);
+    out.current_extents            = cut(current_extents, 0);
+    out.target_valid_columns       = cut(target_valid_columns, 0);
+    out.text_kv_table_rows         = cut(text_kv_table_rows, 0);
+    out.mtp_kv_table_rows          = cut(mtp_kv_table_rows, 0);
+    out.state_source_slots         = cut(state_source_slots, 0);
+    out.state_destination_slots    = cut(state_destination_slots, 0);
+    out.rope_deltas                = cut(rope_deltas, 0);
+    out.licensed_counts            = cut(licensed_counts, 0);
+    out.accepted_drafts            = cut(accepted_drafts, 0);
+    out.next_extents               = cut(next_extents, 0);
+    out.ar_positions               = cut(ar_positions, 0);
+    out.ar_rope_positions          = cut(ar_rope_positions, 0);
+    out.ar_valid_columns           = cut(ar_valid_columns, 0);
+    out.next_drafts                = cut(next_drafts, 0);
+    out.current_drafts             = cut(current_drafts, 1);
+    out.target_rope_positions      = cut(target_rope_positions, 1);
+    out.verify_ids                 = cut(verify_ids, 1);
+    out.target_positions           = cut(target_positions, 1);
+    out.target_argmax              = cut(target_argmax, 1);
+    out.target_continuation_hidden = cut(target_continuation_hidden, 1);
+    out.licensed_tokens            = cut(licensed_tokens, 1);
+    out.alignment_ids              = cut(alignment_ids, 1);
+    out.ar_hidden                  = cut(ar_hidden, 1);
+    out.next_hidden                = cut(next_hidden, 1);
+    out.proposal_logits            = cut(proposal_logits, 1);
+    out.target_logits              = cut(target_logits, 2);
+    out.target_hidden              = cut(target_hidden, 2);
+    out.alignment_hidden           = cut(alignment_hidden, 2);
+    return out;
+}
+
+DFlashDecodeState DFlashDecodeState::narrowed(std::uint32_t draft_window) const {
+    const std::int32_t batch = anchors.ne[0];
+    if (draft_window == 0 || static_cast<std::int32_t>(draft_window) > draft_tokens.ne[0]) {
+        throw std::invalid_argument("DFlash decode frame cannot widen");
+    }
+    const auto drafts = static_cast<std::int32_t>(draft_window);
+    const auto width  = drafts + 1;
+    DFlashDecodeState out     = *this;
+    out.target_rope_positions = prefix_view(target_rope_positions, {width, batch});
+    out.licensed_tokens       = prefix_view(licensed_tokens, {width, batch});
+    out.proposal_ids          = prefix_view(proposal_ids, {width, batch});
+    out.proposal_positions    = prefix_view(proposal_positions, {width, batch});
+    out.verify_positions      = prefix_view(verify_positions, {width, batch});
+    if (candidate_ids.data) {
+        out.candidate_ids = prefix_view(candidate_ids, {candidate_ids.ne[0], drafts, batch});
+    }
+    if (proposal_q.data) {
+        out.proposal_q = prefix_view(proposal_q, {proposal_q.ne[0], drafts, batch});
+    }
+    out.append_positions = prefix_view(append_positions, {width, batch});
+    out.draft_tokens     = prefix_view(draft_tokens, {drafts, batch});
+    out.verify_ids       = prefix_view(verify_ids, {width, batch});
+    out.target_argmax    = prefix_view(target_argmax, {width, batch});
+    out.target_logits    = prefix_view(target_logits, {target_logits.ne[0], width, batch});
+    out.target_hidden    = prefix_view(target_hidden, {target_hidden.ne[0], width, batch});
+    return out;
+}
+
 RoundState::RoundState(DeviceSpan backing, const RoundStateLayout& layout) {
     if (!layout.complete) { throw std::invalid_argument("RoundState layout is incomplete"); }
     if (layout.ordinary) {
@@ -399,4 +521,4 @@ RoundState::RoundState(DeviceSpan backing, const RoundStateLayout& layout) {
     }
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

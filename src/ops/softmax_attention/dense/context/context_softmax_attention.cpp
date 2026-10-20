@@ -1,6 +1,7 @@
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/softmax_attention.h"
 
 #include "core/layout.h"
+#include "ops/common/tensor_checks.h"
 #include "ops/softmax_attention/dense/context/launch.h"
 
 #include <algorithm>
@@ -10,40 +11,27 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
-constexpr std::int32_t kHeadDim = 128;
-constexpr std::int32_t kQHeads  = 32;
-constexpr std::int32_t kKVHeads = 8;
-constexpr float kExpectedScale  = 0.08838834764831844055f;
-
-void require_profile(AttentionHeadGeometry geometry, const char* op) {
-    if (!valid_attention_head_geometry(geometry) || geometry.head_dim != kHeadDim ||
-        geometry.query_heads != kQHeads || geometry.kv_heads != kKVHeads) {
+detail::ContextAttentionProfile require_profile(AttentionHeadGeometry geometry, const char* op) {
+    if (!valid_attention_head_geometry(geometry)) {
+        throw std::invalid_argument(std::string(op) + ": unsupported head geometry");
+    }
+    try {
+        return detail::context_attention_profile(geometry);
+    } catch (const std::invalid_argument&) {
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry");
     }
 }
 
-void require_shape(const Tensor& tensor, std::int32_t n0, std::int32_t n1, std::int32_t n2,
-                   std::int32_t n3, const char* op, const char* name) {
-    if (tensor.ne[0] != n0 || tensor.ne[1] != n1 || tensor.ne[2] != n2 || tensor.ne[3] != n3) {
-        throw std::invalid_argument(std::string(op) + ": invalid shape for " + name);
-    }
-}
-
-void require_contiguous_nonnull(const Tensor& tensor, const char* op, const char* name) {
-    if (!tensor.is_contiguous()) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " must be contiguous");
-    }
-    if (tensor.data == nullptr) {
-        throw std::invalid_argument(std::string(op) + ": " + name + " data must be non-null");
-    }
-}
-
-std::uint32_t validate_context(const PagedKVBatchLayerView& context, const char* op) {
-    if (context.storage != KvCacheStorage::BFloat16 || context.num_kv_heads != kKVHeads ||
-        context.head_dim != kHeadDim) {
+std::uint32_t validate_context(const PagedKVBatchLayerView& context, AttentionHeadGeometry geometry,
+                               const char* op) {
+    const std::int32_t head_dim = geometry.head_dim;
+    const std::int32_t kv_heads = geometry.kv_heads;
+    const bool int8             = context.storage == KvCacheStorage::Int8Group64 && head_dim == 128;
+    if ((context.storage != KvCacheStorage::BFloat16 && !int8) ||
+        context.num_kv_heads != kv_heads || context.head_dim != head_dim) {
         throw std::invalid_argument(std::string(op) + ": invalid context geometry or dtype");
     }
     const std::int32_t physical_pages = context.k_pages.ne[2];
@@ -51,12 +39,13 @@ std::uint32_t validate_context(const PagedKVBatchLayerView& context, const char*
         context.block_tables.ne[0] <= 0 || context.block_tables.ne[1] <= 0) {
         throw std::invalid_argument(std::string(op) + ": invalid context capacity");
     }
-    if (context.k_pages.dtype != DType::BF16 || context.v_pages.dtype != DType::FP16) {
-        throw std::invalid_argument(std::string(op) + ": context K/V must be BF16");
+    if (int8 ? (context.k_pages.dtype != DType::I8 || context.v_pages.dtype != DType::I8)
+             : (context.k_pages.dtype != DType::BF16 || context.v_pages.dtype != DType::FP16)) {
+        throw std::invalid_argument(std::string(op) + ": context K/V dtype does not match storage");
     }
-    require_shape(context.k_pages, kHeadDim, kPagedKVPageSize, physical_pages, kKVHeads, op,
+    require_shape(context.k_pages, head_dim, kPagedKVPageSize, physical_pages, kv_heads, op,
                   "context k pages");
-    require_shape(context.v_pages, kHeadDim, kPagedKVPageSize, physical_pages, kKVHeads, op,
+    require_shape(context.v_pages, head_dim, kPagedKVPageSize, physical_pages, kv_heads, op,
                   "context v pages");
     require_contiguous_nonnull(context.k_pages, op, "context k pages");
     require_contiguous_nonnull(context.v_pages, op, "context v pages");
@@ -66,7 +55,16 @@ std::uint32_t validate_context(const PagedKVBatchLayerView& context, const char*
         throw std::invalid_argument(std::string(op) + ": context block tables must be I32");
     }
     require_contiguous_nonnull(context.block_tables, op, "context block tables");
-    if (context.k_scale_pages.data != nullptr || context.v_scale_pages.data != nullptr) {
+    if (int8) {
+        for (const Tensor* s : {&context.k_scale_pages, &context.v_scale_pages}) {
+            if (s->dtype != DType::FP16) {
+                throw std::invalid_argument(std::string(op) + ": int8 context scales must be FP16");
+            }
+            require_shape(*s, head_dim / 64, kPagedKVPageSize, physical_pages, kv_heads, op,
+                          "context scale pages");
+            require_contiguous_nonnull(*s, op, "context scale pages");
+        }
+    } else if (context.k_scale_pages.data != nullptr || context.v_scale_pages.data != nullptr) {
         throw std::invalid_argument(std::string(op) + ": BF16 context must not have scales");
     }
     const std::uint64_t logical_capacity =
@@ -84,12 +82,14 @@ struct PartialWorkspace {
 };
 
 template <class Allocator>
-PartialWorkspace allocate_workspace(Allocator& workspace, std::int32_t tokens, std::int32_t splits,
+PartialWorkspace allocate_workspace(Allocator& workspace, AttentionHeadGeometry geometry,
+                                    std::int32_t tokens, std::int32_t splits,
                                     std::int32_t batch_size) {
+    const std::int32_t d = geometry.head_dim, hq = geometry.query_heads;
     return {
-        workspace.alloc(DType::BF16, {kHeadDim, kQHeads, tokens, splits * batch_size}),
-        workspace.alloc(DType::FP32, {kQHeads, tokens, splits * batch_size}),
-        workspace.alloc(DType::FP32, {kQHeads, tokens, splits * batch_size}),
+        workspace.alloc(DType::BF16, {d, hq, tokens, splits * batch_size}),
+        workspace.alloc(DType::FP32, {hq, tokens, splits * batch_size}),
+        workspace.alloc(DType::FP32, {hq, tokens, splits * batch_size}),
     };
 }
 
@@ -98,7 +98,7 @@ PartialWorkspace allocate_workspace(Allocator& workspace, std::int32_t tokens, s
 std::size_t context_softmax_attention_workspace_capacity_bytes(
     AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
     std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size) {
-    require_profile(geometry, "context_softmax_attention workspace");
+    const auto profile = require_profile(geometry, "context_softmax_attention workspace");
     if (min_tokens < 1 || max_tokens < min_tokens || max_tokens > 16 || batch_size < 1 ||
         batch_size > 8 || envelope.min_context > envelope.max_context ||
         envelope.max_context >
@@ -107,9 +107,9 @@ std::size_t context_softmax_attention_workspace_capacity_bytes(
             "context_softmax_attention workspace: invalid envelope or token interval");
     }
     const auto endpoint_capacity = [&](std::int32_t tokens) {
-        const auto plan = detail::context_attention_resolve_plan(tokens, envelope);
+        const auto plan = detail::context_attention_resolve_plan(profile, tokens, envelope);
         WorkspaceLayoutBuilder layout;
-        (void)allocate_workspace(layout, tokens, plan.split_capacity, batch_size);
+        (void)allocate_workspace(layout, geometry, tokens, plan.split_capacity, batch_size);
         return layout.peak_bytes(1);
     };
 
@@ -125,8 +125,11 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
                                float scale, const PagedKVBatchLayerView& context,
                                ContextAttentionExecutionEnvelope envelope,
                                WorkspaceArena& workspace, Tensor& out, cudaStream_t stream) {
-    constexpr const char* op = "context_softmax_attention";
-    require_profile(geometry, op);
+    constexpr const char* op    = "context_softmax_attention";
+    const auto profile          = require_profile(geometry, op);
+    const std::int32_t head_dim = geometry.head_dim;
+    const std::int32_t q_heads  = geometry.query_heads;
+    const std::int32_t kv_heads = geometry.kv_heads;
     if (q.dtype != DType::BF16 || query_k.dtype != DType::BF16 || query_v.dtype != DType::BF16 ||
         out.dtype != DType::BF16) {
         throw std::invalid_argument("context_softmax_attention: q/k/v/out must be BF16");
@@ -144,13 +147,13 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
     if (batch < 1 || batch > 8) {
         throw std::invalid_argument("context_softmax_attention: B must be 1..8");
     }
-    require_shape(q, kHeadDim, kQHeads, tokens, batch, op, "q");
-    require_shape(query_k, kHeadDim, kKVHeads, tokens, batch, op, "query k");
-    require_shape(query_v, kHeadDim, kKVHeads, tokens, batch, op, "query v");
+    require_shape(q, head_dim, q_heads, tokens, batch, op, "q");
+    require_shape(query_k, head_dim, kv_heads, tokens, batch, op, "query k");
+    require_shape(query_v, head_dim, kv_heads, tokens, batch, op, "query v");
     require_shape(context_lengths, batch, 1, 1, 1, op, "context lengths");
     require_shape(valid_columns, batch, 1, 1, 1, op, "valid columns");
     require_shape(table_rows, batch, 1, 1, 1, op, "table rows");
-    require_shape(out, kHeadDim, kQHeads, tokens, batch, op, "out");
+    require_shape(out, head_dim, q_heads, tokens, batch, op, "out");
     require_contiguous_nonnull(q, op, "q");
     require_contiguous_nonnull(query_k, op, "query k");
     require_contiguous_nonnull(query_v, op, "query v");
@@ -158,20 +161,22 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
     require_contiguous_nonnull(valid_columns, op, "valid columns");
     require_contiguous_nonnull(table_rows, op, "table rows");
     require_contiguous_nonnull(out, op, "out");
-    const std::uint32_t logical_capacity = validate_context(context, op);
+    const std::uint32_t logical_capacity = validate_context(context, geometry, op);
     if (envelope.min_context > envelope.max_context || envelope.max_context > logical_capacity) {
         throw std::invalid_argument("context_softmax_attention: invalid execution envelope");
     }
-    if (!std::isfinite(scale) || std::abs(scale - kExpectedScale) > 1e-7f) {
-        throw std::invalid_argument("context_softmax_attention: scale must be 1/sqrt(128)");
+    const float expected_scale = 1.0F / std::sqrt(static_cast<float>(head_dim));
+    if (!std::isfinite(scale) || std::abs(scale - expected_scale) > 1e-7f) {
+        throw std::invalid_argument("context_softmax_attention: scale must be 1/sqrt(head_dim)");
     }
 
     auto scope               = workspace.scope();
-    const auto plan          = detail::context_attention_resolve_plan(tokens, envelope);
-    PartialWorkspace partial = allocate_workspace(workspace, tokens, plan.split_capacity, batch);
+    const auto plan = detail::context_attention_resolve_plan(profile, tokens, envelope);
+    PartialWorkspace partial =
+        allocate_workspace(workspace, geometry, tokens, plan.split_capacity, batch);
     detail::context_attention_launch(q, query_k, query_v, context_lengths, valid_columns,
                                      table_rows, scale, context, plan, partial.acc, partial.m,
                                      partial.l, out, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

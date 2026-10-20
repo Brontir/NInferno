@@ -1,7 +1,7 @@
-# NInfer Persistent Storage Layouts
+# NInferno Persistent Storage Layouts
 
 This reference records the persistent tensor layouts and resource encoding used by current
-`.ninfer` artifacts, including alignment, byte order, padding, encoded-size rules, and logical
+`.ninferno` artifacts, including alignment, byte order, padding, encoded-size rules, and logical
 decode. Numeric semantics come from [`tensor-formats.md`](tensor-formats.md); framing and object
 ranges come from [`artifact-container.md`](artifact-container.md).
 
@@ -13,14 +13,17 @@ The storage registry contains exactly these identities:
 |---|---|---|---|---:|
 | `contiguous_le_v1` | tensor layout | `bf16`, `fp32`, `int32` | rank `0..16` | 256 bytes |
 | `row_split_k128_v1` | tensor layout | `q4_g64_fp16`, `q5_g64_fp16`, `q6_g64_fp16`, `q8_g32_fp16` | rank 2 `[N,K]` | 256 bytes |
-| `block_scale_k16_m128x4_v1` | tensor layout | `nvfp4` | rank 2 `[N,K]`, `N % 128 == 0`, `K % 64 == 0` | 256 bytes |
+| `block_scale_k16_m128x4_v1` | tensor layout | `nvfp4` | rank 2 `[N,K]`, `K % 64 == 0` | 256 bytes |
 | `row_scale_v1` | tensor layout | `fp8_e4m3fn_row_bf16` | rank 2 `[N,K]` | 256 bytes |
+| `ggml_frag_v1` | tensor layout | `ggml_q4_0`, `ggml_q4_k`, `ggml_iq3_xxs`, `ggml_iq2_s` | rank 2 `[N,K]`, routed-expert banks | 256 bytes |
 | `raw_bytes_v1` | resource encoding | not applicable | nonempty byte string | 1 byte |
 
-These format/layout pairs define the current codec support. Native consumer requirements are
-covered separately in Section 8.
+These format/layout pairs define the current codec support. The published GGUF layouts
+`ggml_blocks_v1` and `ggml_planes_v1` are defined with their formats in
+[`tensor-formats.md`](tensor-formats.md) (Sections 3.8 to 3.10). Native consumer requirements are
+covered separately in Section 9.
 
-Object alignment applies to the object's payload-relative `offset` in the `.ninfer` JSON. Internal
+Object alignment applies to the object's payload-relative `offset` in the `.ninferno` JSON. Internal
 plane offsets and padding belong to the selected layout. Inter-object padding belongs to the
 container and is not included in an object's `bytes`.
 
@@ -255,22 +258,28 @@ This layout stores only rank-two `nvfp4` matrices `[N,K]` satisfying:
 ```text
 N > 0
 K > 0
-N % 128 == 0
 K % 64 == 0
 ```
 
-It adds no logical padding. Let:
+It adds no logical row padding. The scale plane is addressed in whole 128-row tiles, so it spans
+`align_up(N, 128)` rows: when `N % 128 != 0` (a vocabulary of 202048 rows) the last tile is
+completed, and the scale words of its rows `N .. align_up(N, 128) - 1` are zero. Let:
 
 ```text
 code_plane_bytes      = N * K / 2
 scale_plane_offset    = align_up(code_plane_bytes, 256)
-scale_plane_bytes     = N * K / 16
+scale_plane_bytes     = align_up(N, 128) * K / 16
 weight_divisor_offset = scale_plane_offset + scale_plane_bytes
-payload_bytes         = weight_divisor_offset + 4
+payload_bytes         = weight_divisor_offset + 4 * divisors
 ```
 
+`divisors` is the tensor object's member of that name, one for a plane quantized as a single
+matrix. A plane stacked from several separately quantized source matrices holds one divisor per
+source, in the order the sources are stacked; each covers `N / divisors` consecutive rows, and that
+share is a whole number of 128-row scale tiles.
+
 The payload is a row-major E2M1 packed-code plane, zero padding to `scale_plane_offset`, a
-swizzled E4M3FN scale plane, and the little-endian FP32 weight-divisor word. Within each packed code
+swizzled E4M3FN scale plane, and `divisors` little-endian FP32 weight-divisor words. Within each packed code
 byte, the low nibble is the smaller K coordinate and the high nibble is the next coordinate.
 
 For logical row `n`, scale-group coordinate `g=floor(k/16)`, and `K_tiles=K/64`, define:
@@ -292,7 +301,7 @@ The scale word's byte offset within the scale plane is:
 ```
 
 Layout decoding must recover the original packed E2M1 words, natural `[N,K/16]` E4M3FN scale-word
-matrix, and exact divisor word. It never decodes and re-encodes either floating-point format.
+matrix, and exact divisor words. It never decodes and re-encodes either floating-point format.
 
 ## 5. `row_scale_v1`
 
@@ -336,7 +345,49 @@ trailing padding. The resource object's JSON `bytes` is its exact nonzero length
 returns the complete span unchanged. A model contract assigns a resource name and interprets those
 bytes; the common encoding does not infer that meaning from the name.
 
-## 7. Decode boundary
+## 7. `ggml_frag_v1`
+
+`ggml_frag_v1` stores a routed-expert bank (an object bound only under `layers/<i>/.../experts/`)
+of `ggml_q4_0`, `ggml_q4_k`, `ggml_iq3_xxs` or `ggml_iq2_s` in the order the grouped MoE kernel's
+register MMA reads its code bytes. It is the format's published layout (`ggml_blocks_v1` for
+`ggml_q4_k`, `ggml_planes_v1` for the others) with one change: within each row's span of the code
+plane, the bytes are permuted by a fixed map. The geometry (plane offsets and sizes, padding,
+encoded size, alignment), the high and scale planes and every other byte are the published
+layout's, and no value is decoded or re-encoded, so the layout is lossless. The published
+decoders gather a lane's code bytes of one K step from four or more 4-byte words 16 bytes apart;
+in fragment order they are one aligned 8- or 16-byte load.
+
+Let `pub` be a row's code bytes in the published layout and `frag` the same row in
+`ggml_frag_v1`. The map works on units of the row; `u` numbers them from 0 and `o` is a unit's
+first byte:
+
+| Format | Unit | Map within the unit (`q`, `i`, `t` in `0..3`; `h`, `b` in `0..1`; `j` in `0..7`) |
+|---|---|---|
+| `ggml_q4_0` | each whole span of four blocks, `o = 64u`, `u < floor(K / 128)` | `frag[o + 16q + 4i + t] = pub[o + 16i + 4q + t]` |
+| `ggml_q4_k` | each 144-byte superblock, `o = 144u` | `frag[o + x] = pub[o + x]` for `x < 16`; for `c` in `{16, 80}`: `frag[o + c + 16q + 4i + t] = pub[o + c + 16i + 4q + t]` |
+| `ggml_iq3_xxs` | each superblock's 64 `qs` bytes, `o = 64u` | `frag[o + 32h + 8q + j] = pub[o + 32h + 4j + q]` |
+| `ggml_iq2_s` | each superblock's 72 code bytes (`qs`, `signs`, `qh`), `o = 72u` | `frag[o + 32h + 16b + j] = pub[o + 16h + b + 2j]`; `frag[o + 32h + 16b + 8 + j] = pub[o + 32 + 16h + b + 2j]`; `frag[o + 64 + j] = pub[o + 64 + j]` |
+
+In words: Q4_0 transposes each span's 4 x 4 grid of 32-bit words (word `q` of block `i` moves to
+word `i` of block `q`); Q4_K keeps its 16-byte `d`, `dmin`, `scales` head and transposes each
+64-byte half of its nibbles the same way; IQ3_XXS stores each 32-byte half as the 8 x 4 byte
+transpose; IQ2_S stores each 32-value half `h` as its even `qs` bytes, even `signs` bytes, odd
+`qs` bytes and odd `signs` bytes, eight each, and keeps the eight `qh` bytes. The Q4_0 bytes past
+the last whole span (the row's last `(K / 32) % 4` blocks) are unchanged. Every map is a
+bijection of its unit; the inverse reads the same equations from right to left
+(`pub[source] = frag[target]`), and the Q4_0 and Q4_K transposes are their own inverses.
+
+Only the grouped MoE kernel reads the layout; a projection (`linear`, the generic path) refuses a
+`ggml_frag_v1` weight rather than read it as published. `ninferno-convert` stores a bank in
+`ggml_frag_v1` where the kernel measured not slower on it (`--layout auto`: Q4_0 at `K >= 1024`,
+Q4_K, IQ3_XXS and IQ2_S at every K); `--layout published` keeps every bank published, and
+`--relayout` moves an existing artifact's banks between the two without the checkpoint
+([`weight-conversion.md`](../weight-conversion.md)). The implementation is
+[`core/ggml_frag.cpp`](../../src/core/ggml_frag.cpp); `ninferno_convert_ggml_frag_test` checks
+the maps and round trips, and `ninferno_moe_frag_test` checks that the kernel's bytes on a frag
+bank equal its bytes on the published one.
+
+## 8. Decode boundary
 
 Layout decoding yields only persistent logical words:
 
@@ -344,16 +395,17 @@ Layout decoding yields only persistent logical words:
 - `row_split_k128_v1` yields the grouped signed codes and binary16 scales for logical columns
   `0..K-1`, discarding physical columns `K..K_pad-1`;
 - `block_scale_k16_m128x4_v1` yields the packed E2M1 words, natural E4M3FN group-scale words, and
-  matrix-level FP32 weight divisor;
+  FP32 weight divisor of each stacked source matrix;
 - `row_scale_v1` yields the natural row-major E4M3FN code words and one BF16 multiplier per logical
   row;
+- `ggml_frag_v1` yields its published layout's words after the inverse map of Section 7;
 - `raw_bytes_v1` yields the enclosing resource bytes.
 
 Dequantized values follow the reconstruction rule in `tensor-formats.md`. This document does
 not select a quantization encoder, output dtype, accumulation dtype, kernel, runtime device layout,
 or model consumer.
 
-## 8. Logical views and native operands
+## 9. Logical views and native operands
 
 Bindings address C-order logical element ranges of a parent object. The parent retains its full
 geometry and backing allocation, so a view can locate code and scale planes using the original

@@ -2,13 +2,14 @@
 
 #include "models/qwen3_5/program/program_impl.h"
 #include <chrono>
+#include <span>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 struct MtpCausalAttentionEnvelopes;
 struct DFlashEnvelopes;
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 using execution::dimension;
 using Clock = std::chrono::steady_clock;
@@ -17,7 +18,6 @@ std::uint64_t elapsed_ns(Clock::time_point started) noexcept;
 
 std::int32_t checked_i32(std::uint32_t value, const char* label);
 
-std::uint32_t kv_pages_for_frontier(std::uint32_t frontier) noexcept;
 
 std::size_t context_resource_index(runtime::ContextResourceClass resource);
 
@@ -28,6 +28,13 @@ void validate_long_anchor_ordinals(std::span<const LongAnchorCheckpoint> anchors
 
 void advance_rebuild_work(SequenceState& sequence, std::uint32_t frontier,
                           std::uint32_t prefill_chunk);
+
+// Root rebuild work of a prompt prefix [0, frontier): its fully consumed vision items and the
+// capture and rewrite boundaries below the frontier (planning/request_plan.cpp).
+runtime::PrefillWork rebuild_work_at_frontier(const PreparedPromptData& prompt,
+                                              std::uint32_t frontier, std::uint32_t prefill_chunk,
+                                              std::span<const CaptureGroup> captures,
+                                              std::span<const std::uint32_t> rewrite_frontiers);
 
 std::optional<qwen3_5::TargetKVRequirement>
 retained_requirement_after_drops(const qwen3_5::ContinuationSummary& summary,
@@ -63,7 +70,6 @@ detail::PhysicalResources positive_resource_difference(detail::PhysicalResources
 execution::MtpCausalAttentionEnvelopes
 mtp_causal_attention_envelopes(std::uint32_t max_frontier, std::uint32_t k, std::uint32_t capacity);
 
-execution::DFlashEnvelopes dflash_envelopes(std::uint32_t min_frontier, std::uint32_t max_frontier,
-                                            std::uint32_t k);
+execution::DFlashEnvelopes dflash_envelopes(std::uint32_t max_frontier, std::uint32_t k);
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

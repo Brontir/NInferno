@@ -1,12 +1,17 @@
-add_library(ninfer_text STATIC
+add_library(ninferno_text STATIC
+  pattern.cpp
+  hf_token_codec.cpp
+  tokenizer.cpp
   unicode.cpp
   ${PROJECT_SOURCE_DIR}/third_party/utf8proc/utf8proc.c
 )
-ninfer_internal_includes(ninfer_text)
-target_include_directories(ninfer_text PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
+ninferno_internal_includes(ninferno_text)
+target_include_directories(ninferno_text PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
+# utf8proc is compiled in, not a DLL: without this its header declares it dllimport on Windows.
+target_compile_definitions(ninferno_text PUBLIC UTF8PROC_STATIC)
 
 # Language evaluation reuses the engine's Unicode and JSON dependencies.
-target_sources(ninfer_jinja PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/jinja.cpp)
-ninfer_internal_includes(ninfer_jinja)
-target_include_directories(ninfer_jinja PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
-target_link_libraries(ninfer_jinja PRIVATE ninfer_text ninfer::json)
+target_sources(ninferno_jinja PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/jinja.cpp)
+ninferno_internal_includes(ninferno_jinja)
+target_include_directories(ninferno_jinja PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninferno_jinja PRIVATE ninferno_text ninferno::json)

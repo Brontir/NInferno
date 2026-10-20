@@ -1,9 +1,10 @@
 #include "ops/linear/bf16/bf16_dispatch.h"
 #include "ops/linear/bf16/bf16_shapes.h"
+#include "ops/common/shape_routes.h"
 #include <array>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 struct ShapeEntry {
     std::int32_t n, k;
@@ -17,10 +18,14 @@ constexpr std::array kShapes{
 };
 } // namespace
 
+bool bf16_linear_registered(std::int32_t n, std::int32_t k) {
+    return find_shape(kShapes, n, k) != nullptr;
+}
+
 Bf16Launch select_bf16_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
     if (t <= 0) throw std::invalid_argument("bf16 linear: T must be positive");
-    for (const auto& entry : kShapes) {
-        if (entry.n == n && entry.k == k) return entry.select(t);
+    if (const auto* entry = find_shape(kShapes, n, k)) {
+        return entry->select(route_tokens({QType::BF16, ShapeCompute::A16, n, k}, t));
     }
     throw std::invalid_argument("bf16 linear: unsupported shape");
 }
@@ -35,4 +40,4 @@ void bf16_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPol
                    cudaStream_t stream) {
     select_bf16_launch(weight.n, weight.k, x.ne[1], policy)(x, weight, out, stream);
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

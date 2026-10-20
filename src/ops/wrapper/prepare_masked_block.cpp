@@ -1,4 +1,4 @@
-#include "ninfer/ops/prepare_masked_block.h"
+#include "ninferno/ops/prepare_masked_block.h"
 
 #include "ops/launcher/prepare_masked_block.h"
 
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 void require_i32_vector(const Tensor& tensor, std::int32_t size, const char* name) {
@@ -26,12 +26,6 @@ void require_i32_matrix(const Tensor& tensor, std::int32_t width, std::int32_t b
         throw std::invalid_argument("prepare_masked_block: " + std::string(name) +
                                     " must be a contiguous I32 matrix");
     }
-}
-
-bool overlaps(const Tensor& lhs, const Tensor& rhs) {
-    const auto lhs_begin = reinterpret_cast<std::uintptr_t>(lhs.data);
-    const auto rhs_begin = reinterpret_cast<std::uintptr_t>(rhs.data);
-    return lhs_begin < rhs_begin + rhs.bytes() && rhs_begin < lhs_begin + lhs.bytes();
 }
 
 } // namespace
@@ -64,4 +58,4 @@ void prepare_masked_block(const Tensor& anchors, const Tensor& lengths, const Te
                                         block_size, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ninfer_eval.events import EventSink, RunEvent
-from ninfer_eval.progress import ProgressRenderer
+from ninferno_eval.events import EventSink, RunEvent
+from ninferno_eval.progress import ProgressRenderer
 
 
 class NonTTY(io.StringIO):
@@ -51,8 +51,8 @@ class ProgressTest(unittest.TestCase):
             sink.emit(RunEvent(kind="warning", run_id="r", message="token=top-secret"))
             sink.close()
             handler.close()
-            self.assertNotIn("top-secret", (root / "events.jsonl").read_text())
-            self.assertNotIn("top-secret", (root / "run.log").read_text())
+            self.assertNotIn("top-secret", (root / "events.jsonl").read_text(encoding="utf-8"))
+            self.assertNotIn("top-secret", (root / "run.log").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

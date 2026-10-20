@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# ninferno-start: pick a model for this GPU and start the server at its best measured settings.
+#
+#   ninferno-start                      list the choices for this GPU and ask which to start
+#   ninferno-start --list               only list them
+#   ninferno-start N [--multi] [ARGS]   start choice N (--multi: the setting for several users at
+#                                       once); ARGS go to ninferno-serve, e.g. --host 0.0.0.0
+#
+# The choices are the GPU x model pairs measured for the performance pages
+# (share/ninferno/recommend.tsv). A GPU nobody measured gets the measured GPU of the same
+# architecture closest in memory, and the list says so. NINFERNO_DEVICE picks the GPU (default 0).
+set -euo pipefail
+HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+DATA=$HERE/share/ninferno/recommend.tsv
+DEVICE=${NINFERNO_DEVICE:-0}
+
+die() { echo "ninferno-start: $*" >&2; exit 1; }
+[ -r "$DATA" ] || die "no model list at $DATA; reinstall NInferno"
+command -v nvidia-smi > /dev/null || die "nvidia-smi not found: install the NVIDIA driver first"
+
+IFS=, read -r gpu_name cap vram_mib < <(nvidia-smi -i "$DEVICE" \
+  --query-gpu=name,compute_cap,memory.total --format=csv,noheader,nounits | sed 's/, */,/g')
+sm=${cap/./}  # 8.9 -> 89, 12.0 -> 120
+vram_gb=$(( (vram_mib + 512) / 1024 ))
+
+# The measured GPU to take the numbers from: this one by name, else the same architecture
+# closest in memory (smaller first: what fits there fits here).
+pick=$(awk -F'\t' -v name="$gpu_name" -v sm="$sm" -v vram="$vram_gb" '
+  { n = split($3, names, "|"); for (i = 1; i <= n; i++) if (names[i] == name) exact = $1
+    if ($4 == sm) { d = vram - $5; if (d < 0) d = 1000 - d; if (best == "" || d < bd) { best = $1; bd = d } } }
+  END { print (exact != "" ? exact : best) }' "$DATA")
+[ -n "$pick" ] || die "no measured settings for $gpu_name (sm_$sm) yet; see the performance pages"
+mapfile -t rows < <(awk -F'\t' -v g="$pick" '$1 == g' "$DATA")
+measured_on=$(cut -f2 <<< "${rows[0]}")
+
+list() {
+  echo "$gpu_name, ${vram_gb} GB"
+  [ "$(cut -f3 <<< "${rows[0]}" | tr '|' '\n' | grep -Fxc "$gpu_name")" -gt 0 ] ||
+    echo "(not measured itself: the numbers are the $measured_on's)"
+  printf '\n  %-3s %-26s %12s %20s\n' "#" "model" "one stream" "several users"
+  local i=1
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r _ _ _ _ _ model single multi conc _ _ <<< "$row"
+    printf '  %-3s %-26s %8s tok/s %11s tok/s (%s)\n' "$i" "$model" "$single" "$multi" "$conc"
+    i=$((i + 1))
+  done
+  echo
+}
+
+choice=${1:-}
+if [ "$choice" = --list ]; then list; exit 0; fi
+if [ -z "$choice" ]; then
+  list
+  read -r -p "Start which model? [1-${#rows[@]}] " choice
+  read -r -p "For one user (1) or several at once (2)? [1] " users
+  [ "${users:-1}" = 2 ] && set -- --multi
+else
+  shift
+fi
+[[ $choice =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#rows[@]}" ] || die "no choice $choice"
+multi=0
+if [ "${1:-}" = --multi ]; then multi=1; shift; fi
+IFS=$'\t' read -r _ _ _ _ _ model _ _ _ cmd cmd_multi <<< "${rows[$((choice - 1))]}"
+[ $multi = 1 ] && [ "$cmd_multi" != - ] && cmd=$cmd_multi
+[ "$cmd" != - ] || die "$model has no measured setting for that; try the other"
+read -r -a argv <<< "$cmd"
+argv[0]=$HERE/bin/${argv[0]}
+echo "Starting $model: ${argv[*]#"$HERE/bin/"} $*"
+echo "The first start downloads and converts the model; then: http://127.0.0.1:8080/v1/chat/completions"
+exec "${argv[@]}" "$@"

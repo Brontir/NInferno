@@ -2,12 +2,17 @@
 
 #include "artifact/schema.h"
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
-void parse_resources(FrontendResources& resources, const Config& config) {
+void attach_qwen3_5_tokenizer(FrontendResources& resources) {
     resources.tokenizer = std::make_shared<const frontend::Tokenizer>(
         frontend::TokenizerResources{resources.tokenizer_json, resources.tokenizer_config_json,
                                      resources.generation_config_json});
+    resources.public_token_count = static_cast<std::uint32_t>(resources.tokenizer->vocab_size());
+}
+
+void parse_resources(FrontendResources& resources, const Config& config) {
+    attach_qwen3_5_tokenizer(resources);
     const auto count = resources.tokenizer->vocab_size();
     if (!count || count > config.text.vocab_size ||
         !resources.tokenizer->has_exact_token_domain(count)) {
@@ -44,4 +49,4 @@ void parse_resources(FrontendResources& resources, const Config& config) {
     }
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

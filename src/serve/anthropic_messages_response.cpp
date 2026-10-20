@@ -1,47 +1,35 @@
 #include "serve/anthropic_messages.h"
 
 #include "serve/generation_service.h"
+#include "serve/request_validation.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
-#include <cstdio>
 #include <iterator>
-#include <random>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 using Json        = nlohmann::json;
 using OrderedJson = nlohmann::ordered_json;
 
-std::string random_identifier(const char* prefix) {
-    static thread_local std::mt19937_64 random{std::random_device{}()};
-    std::uniform_int_distribution<std::uint64_t> distribution;
-    std::array<char, 32> buffer{};
-    std::snprintf(buffer.data(), buffer.size(), "%016llx",
-                  static_cast<unsigned long long>(distribution(random)));
-    return std::string(prefix) + buffer.data();
-}
+constexpr std::string_view kHiddenThinkingPrefix = "ninferno-hidden-thinking-v1:";
+constexpr std::string_view kBase64Url =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 std::string event(const char* type, Json payload) {
     return std::string("event: ") + type + "\ndata: " + payload.dump() + "\n\n";
 }
 
 std::vector<ToolCall> materialize_tool_calls(const GenerationOutcome& outcome) {
-    std::vector<ToolCall> result;
-    result.reserve(outcome.tool_calls.size());
-    for (const ninfer::GeneratedToolCall& call : outcome.tool_calls) {
-        result.push_back(ToolCall{.id             = random_identifier("toolu_"),
-                                  .name           = call.name,
-                                  .arguments_json = call.arguments_json});
-    }
-    return result;
+    return tool_calls_of(outcome.tool_calls,
+                         [](std::size_t) { return random_identifier("toolu_"); });
 }
 
 OrderedJson parse_tool_input(const ToolCall& call) {
@@ -60,20 +48,21 @@ struct StopPresentation {
 StopPresentation stop_presentation(const GenerationOutcome& outcome) {
     if (!outcome.tool_calls.empty()) { return StopPresentation{.reason = "tool_use"}; }
     switch (outcome.finish_reason) {
-    case ninfer::FinishReason::OutputLimit:
+    case ninferno::FinishReason::OutputLimit:
+    case ninferno::FinishReason::Repetition:
         return StopPresentation{.reason = "max_tokens"};
-    case ninfer::FinishReason::ContextCapacity:
+    case ninferno::FinishReason::ContextCapacity:
         return StopPresentation{.reason = "model_context_window_exceeded"};
-    case ninfer::FinishReason::StopString:
+    case ninferno::FinishReason::StopString:
         if (!outcome.matched_stop_string) {
             throw std::logic_error("stop-string terminal result has no matched declaration");
         }
         return StopPresentation{.reason   = "stop_sequence",
                                 .sequence = *outcome.matched_stop_string};
-    case ninfer::FinishReason::StopToken:
-    case ninfer::FinishReason::None:
+    case ninferno::FinishReason::StopToken:
+    case ninferno::FinishReason::None:
         return StopPresentation{.reason = "end_turn"};
-    case ninfer::FinishReason::Cancelled:
+    case ninferno::FinishReason::Cancelled:
         throw std::logic_error("cancelled generation cannot be serialized as an Anthropic message");
     }
     throw std::logic_error("unknown Engine finish reason");
@@ -181,15 +170,58 @@ std::string make_anthropic_sse_error(const ApiError& error, const std::string& r
            "\n\n";
 }
 
+std::string encode_hidden_thinking_signature(std::string_view reasoning) {
+    std::string out(kHiddenThinkingPrefix);
+    out.reserve(out.size() + (reasoning.size() + 2) / 3 * 4);
+    std::uint32_t bits = 0;
+    int pending        = 0;
+    for (const char ch : reasoning) {
+        bits = (bits << 8) | static_cast<unsigned char>(ch);
+        pending += 8;
+        while (pending >= 6) {
+            pending -= 6;
+            out.push_back(kBase64Url[(bits >> pending) & 0x3F]);
+        }
+    }
+    if (pending > 0) { out.push_back(kBase64Url[(bits << (6 - pending)) & 0x3F]); }
+    return out;
+}
+
+std::optional<std::string> decode_hidden_thinking_signature(std::string_view signature) {
+    if (!signature.starts_with(kHiddenThinkingPrefix)) { return std::nullopt; }
+    signature.remove_prefix(kHiddenThinkingPrefix.size());
+    if (signature.size() % 4 == 1) { return std::nullopt; }
+    std::string out;
+    out.reserve(signature.size() / 4 * 3 + 2);
+    std::uint32_t bits = 0;
+    int pending        = 0;
+    for (const char ch : signature) {
+        const std::size_t value = kBase64Url.find(ch);
+        if (value == std::string_view::npos) { return std::nullopt; }
+        bits = (bits << 6) | static_cast<std::uint32_t>(value);
+        pending += 6;
+        if (pending >= 8) {
+            pending -= 8;
+            out.push_back(static_cast<char>((bits >> pending) & 0xFF));
+        }
+    }
+    return out;
+}
+
 std::string make_anthropic_messages_response(const AnthropicResponseIdentity& identity,
-                                             const GenerationOutcome& outcome) {
+                                             const GenerationOutcome& outcome,
+                                             AnthropicThinkingDisplay display) {
     OrderedJson content = OrderedJson::array();
     if (!outcome.reasoning.empty()) {
         // Claude clients expect a non-empty opaque value. The response identity already has the
-        // required lifetime, so Thinking introduces no independent state or credential.
-        content.push_back(OrderedJson{{"type", "thinking"},
-                                      {"thinking", outcome.reasoning},
-                                      {"signature", identity.message_id}});
+        // required lifetime, so visible Thinking introduces no independent state or credential;
+        // hidden Thinking carries its own text for the client to echo back.
+        const bool hidden = display == AnthropicThinkingDisplay::Omitted;
+        content.push_back(
+            OrderedJson{{"type", "thinking"},
+                        {"thinking", hidden ? std::string() : outcome.reasoning},
+                        {"signature", hidden ? encode_hidden_thinking_signature(outcome.reasoning)
+                                             : identity.message_id}});
     }
     if (!outcome.text.empty()) {
         content.push_back(OrderedJson{{"type", "text"}, {"text", outcome.text}});
@@ -217,12 +249,12 @@ std::string make_anthropic_count_tokens_response(int input_tokens) {
 }
 
 AnthropicMessagesStream::AnthropicMessagesStream(AnthropicResponseIdentity identity,
-                                                 int input_tokens)
-    : identity_(std::move(identity)), input_tokens_(input_tokens) {}
+                                                 int input_tokens, AnthropicThinkingDisplay display)
+    : identity_(std::move(identity)), display_(display), input_tokens_(input_tokens) {}
 
 std::string AnthropicMessagesStream::start() { return start_with_cache(std::nullopt); }
 
-std::string AnthropicMessagesStream::start(const ninfer::GenerationStart& generation) {
+std::string AnthropicMessagesStream::start(const ninferno::GenerationStart& generation) {
     if (generation.prompt.prompt_tokens != static_cast<std::uint32_t>(input_tokens_)) {
         throw std::logic_error("Anthropic stream prompt count differs from Engine start");
     }
@@ -259,7 +291,7 @@ std::vector<std::string> AnthropicMessagesStream::reasoning_delta(const std::str
                         Json{{"type", "thinking"}, {"thinking", ""}, {"signature", ""}}}}));
     }
     reasoning_ += text;
-    if (!text.empty()) {
+    if (!text.empty() && display_ == AnthropicThinkingDisplay::Visible) {
         events.push_back(
             event("content_block_delta",
                   Json{{"type", "content_block_delta"},
@@ -272,11 +304,14 @@ std::vector<std::string> AnthropicMessagesStream::reasoning_delta(const std::str
 std::vector<std::string> AnthropicMessagesStream::close_thinking() {
     std::vector<std::string> events;
     if (!thinking_open_) { return events; }
-    events.push_back(event(
-        "content_block_delta",
-        Json{{"type", "content_block_delta"},
-             {"index", thinking_index_},
-             {"delta", Json{{"type", "signature_delta"}, {"signature", identity_.message_id}}}}));
+    events.push_back(
+        event("content_block_delta",
+              Json{{"type", "content_block_delta"},
+                   {"index", thinking_index_},
+                   {"delta", Json{{"type", "signature_delta"},
+                                  {"signature", display_ == AnthropicThinkingDisplay::Omitted
+                                                    ? encode_hidden_thinking_signature(reasoning_)
+                                                    : identity_.message_id}}}}));
     events.push_back(event("content_block_stop",
                            Json{{"type", "content_block_stop"}, {"index", thinking_index_}}));
     thinking_open_ = false;
@@ -362,4 +397,4 @@ std::string AnthropicMessagesStream::error(const ApiError& api_error) const {
     return make_anthropic_sse_error(api_error, identity_.request_id);
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

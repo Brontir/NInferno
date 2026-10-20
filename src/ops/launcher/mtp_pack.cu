@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 void mtp_pack_fc_input_launch(const Tensor& embedding_norm, const Tensor& hidden_norm, Tensor& out,
                               cudaStream_t stream) {
@@ -36,8 +36,9 @@ void mtp_split_attn_in_launch(const Tensor& attn_in, Tensor& q, Tensor& k, Tenso
     mtp_split_attn_in_kernel<<<grid, kBlock, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(attn_in.data), static_cast<__nv_bfloat16*>(q.data),
         static_cast<__nv_bfloat16*>(k.data), static_cast<__nv_bfloat16*>(gate.data),
-        static_cast<__nv_bfloat16*>(v.data), attn_in.ne[1]);
+        static_cast<__nv_bfloat16*>(v.data), attn_in.ne[1], q.ne[0] * q.ne[1],
+        k.ne[0] * k.ne[1]);
     CUDA_CHECK(cudaGetLastError());
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

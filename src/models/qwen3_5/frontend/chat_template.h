@@ -1,10 +1,11 @@
 #pragma once
 
+#include "chat/conventions.h"
 #include "models/qwen3_5/frontend/tokenizer.h"
 #include "text/jinja.h"
 
 #include "models/qwen3_5/frontend/prepared_prompt.h"
-#include <ninfer/types.h>
+#include <ninferno/types.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,9 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::frontend {
-
-inline constexpr std::string_view kCanonicalReasoningCloseSerialization = "\n</think>\n\n";
+namespace ninferno::models::qwen3_5::frontend {
 
 struct ToolCall {
     std::string id;
@@ -39,6 +38,7 @@ struct MediaPlaceholderByteSpec {
     text::ByteSpan bytes;
     Modality modality      = Modality::Image;
     std::size_t item_index = 0;
+    VisionStyle style      = VisionStyle::Qwen;
 };
 
 struct MediaTokenRunByteSpec {
@@ -46,6 +46,7 @@ struct MediaTokenRunByteSpec {
     Modality modality       = Modality::Image;
     std::size_t item_index  = 0;
     std::size_t frame_index = 0;
+    VisionStyle style       = VisionStyle::Qwen;
 };
 
 struct MediaData {
@@ -114,6 +115,12 @@ struct RenderedChat {
     std::string text;
     std::vector<text::ByteSpan> literal_spans;
     bool starts_in_reasoning = false;
+    // The generation starts a fresh assistant body that has no reasoning section yet, so the
+    // model may open one itself (templates that leave the opener to the model).
+    bool reasoning_open_allowed = false;
+    // The request turned reasoning off in a template that has the switch (enable_thinking false,
+    // or unset where the template's default is off): the model is not to open a section itself.
+    bool reasoning_declined = false;
     std::vector<MediaPlaceholderByteSpec> media_placeholders;
     std::vector<MediaTokenRunByteSpec> media_token_runs;
     std::optional<RewriteCheckpointByteSpec> rewrite_checkpoint;
@@ -134,13 +141,24 @@ public:
     [[nodiscard]] RenderedChat render(const std::vector<ChatMessage>& messages,
                                       ChatRenderOptions options         = {},
                                       const PreparationControl& control = {}) const;
+    // The turn, reasoning and tool-call markup this template uses (chat::resolve_conventions).
+    [[nodiscard]] const chat::ChatConventions& conventions() const noexcept { return conventions_; }
 
 private:
-    CompiledChatTemplate(text::JinjaTemplate compiled, nlohmann::ordered_json special_tokens)
-        : compiled_(std::move(compiled)), special_tokens_(std::move(special_tokens)) {}
+    [[nodiscard]] RenderedChat render_once(const std::vector<ChatMessage>& messages,
+                                           const ChatRenderOptions& options,
+                                           const PreparationControl& control) const;
+    CompiledChatTemplate(text::JinjaTemplate compiled, nlohmann::ordered_json special_tokens,
+                         chat::ChatConventions conventions)
+        : compiled_(std::move(compiled)), special_tokens_(std::move(special_tokens)),
+          conventions_(std::move(conventions)) {}
 
     text::JinjaTemplate compiled_;
     nlohmann::ordered_json special_tokens_;
+    chat::ChatConventions conventions_;
+    // enable_thinking changes the rendered prompt, and the template's choice when it is unset.
+    bool thinking_switch_  = false;
+    bool thinking_default_ = true;
 };
 
-} // namespace ninfer::models::qwen3_5::frontend
+} // namespace ninferno::models::qwen3_5::frontend

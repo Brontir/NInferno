@@ -1,4 +1,9 @@
 #include "options.h"
+#include "core/command_line.h"
+#include "ninferno/types.h"
+#include "product/activation_options.h"
+#include "product/numeric_options.h"
+#include "product/sampling_options.h"
 #include "product/speculative_options.h"
 
 #include <cerrno>
@@ -6,87 +11,40 @@
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
-namespace ninfer::cli {
+namespace ninferno::cli {
 namespace {
 
-std::uint64_t parse_u64(const char* text, std::string_view label) {
-    if (text == nullptr || *text == '\0' || *text == '-') {
-        throw std::invalid_argument("invalid " + std::string(label) + ": " +
-                                    (text == nullptr ? "" : text));
-    }
-    errno                          = 0;
-    char* end                      = nullptr;
-    const unsigned long long value = std::strtoull(text, &end, 10);
-    if (errno == ERANGE || end == text || *end != '\0') {
-        throw std::invalid_argument("invalid " + std::string(label) + ": " + text);
-    }
-    return static_cast<std::uint64_t>(value);
-}
+using product::parse_float_in;
+using product::parse_kv_capacity;
+using product::parse_kv_dtype;
+using product::parse_u32;
+using product::parse_u64;
 
-std::uint32_t parse_u32(const char* text, std::string_view label, bool allow_zero = false) {
-    const std::uint64_t value = parse_u64(text, label);
-    if ((!allow_zero && value == 0) || value > std::numeric_limits<std::uint32_t>::max()) {
-        throw std::invalid_argument("invalid " + std::string(label) + ": " + text);
-    }
-    return static_cast<std::uint32_t>(value);
-}
+int parse_device(const char* text) { return product::parse_nonnegative_int(text, "device"); }
 
-int parse_device(const char* text) {
-    const std::uint64_t value = parse_u64(text, "device");
-    if (value > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
-        throw std::invalid_argument(std::string("invalid device: ") + text);
-    }
-    return static_cast<int>(value);
-}
 
-float parse_float(const char* text, std::string_view label, float minimum, float maximum) {
-    errno              = 0;
-    char* end          = nullptr;
-    const double value = std::strtod(text, &end);
-    if (errno == ERANGE || end == text || *end != '\0' || !std::isfinite(value) ||
-        value < static_cast<double>(minimum) || value > static_cast<double>(maximum)) {
-        throw std::invalid_argument("invalid " + std::string(label) + ": " + text);
-    }
-    return static_cast<float>(value);
-}
-
-KvCacheStorage parse_kv_cache(std::string_view text) {
-    if (text == "bf16") { return KvCacheStorage::BFloat16; }
-    if (text == "int8") { return KvCacheStorage::Int8Group64; }
-    if (text == "fp8") { return KvCacheStorage::Fp8E4M3Row256; }
-    if (text == "nvfp4") { return KvCacheStorage::Nvfp4Group16; }
-    if (text == "k8v4") { return KvCacheStorage::Fp8KeyNvfp4Value; }
-    throw std::invalid_argument("invalid kv-dtype: " + std::string(text));
-}
-
-KvCapacityPolicy parse_kv_capacity(const char* text) {
-    if (std::string_view(text) == "auto") { return KvCapacityPolicy::automatic(); }
-    return KvCapacityPolicy::explicit_capacity(parse_u32(text, "kv-capacity"));
-}
-
-ReasoningEffort parse_reasoning_effort(std::string_view text) {
-    if (text == "none") { return ReasoningEffort::None; }
-    if (text == "minimal") { return ReasoningEffort::Minimal; }
-    if (text == "high") { return ReasoningEffort::High; }
-    if (text == "max") { return ReasoningEffort::Max; }
-    if (text == "low") { return ReasoningEffort::Low; }
-    if (text == "medium") { return ReasoningEffort::Medium; }
-    if (text == "xhigh") { return ReasoningEffort::XHigh; }
+ReasoningEffort parse_reasoning_effort_option(std::string_view text) {
+    if (const auto effort = ninferno::parse_reasoning_effort(text)) { return *effort; }
     throw std::invalid_argument("invalid reasoning-effort: " + std::string(text));
 }
 
 } // namespace
 
 std::string usage_text(const char* argv0) {
-    return std::string("usage: ") + argv0 +
-           " <model.ninfer> (--prompt <text>|--messages <messages.json>)\n"
+    return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
+           " <model.ninferno> (--prompt <text>|--messages <messages.json>)\n"
            "       [--max-context N] [--kv-capacity N|auto] [--prefill-chunk N] [--max-new N]\n"
            "       [--device N]\n"
-           "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--spec mtp|dflash|dflash2 --draft-tokens "
-           "N]\n"
-           "       [--lm-head-draft]\n"
+           "       [--kv-dtype auto|bf16|int8|fp8|nvfp4|k8v4] [--sliding-kv-dtype bf16|fp8]\n"
+           "       [--state-dtype f32|bf16|f16]\n"
+           "       [--activations exact|fast|int8] [--rope-yarn-factor F]\n"
+           "       [--spec auto|none|mtp|dflash|dflash2 "
+           "--draft-tokens N]\n"
+           "       [--ngram-draft-tokens N [--ngram-min-match M]]  copy rounds beside MTP\n"
+           "       [--lm-head-draft] [--acceptance-floor TOKENS_PER_ROUND]\n"
            "       [--temperature F] [--top-p F] [--top-k N] [--min-p F]\n"
            "       [--presence-penalty F] [--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--stop-token-id N]... [--stop <text>]... [--reasoning-stop <text>]...\n"
@@ -100,22 +58,32 @@ std::string usage_text(const char* argv0) {
            "Structured message content accepts text, image/image_url, and video/video_url parts;\n"
            "media sources may be local paths, HTTP(S) URLs, or base64 data URIs.\n"
            "--vision enables image/video input and loads the fixed Vision GPU allocations.\n"
+           "Without --spec, speculation follows the profile the model came with\n"
+           "(<model>.ninferno.speculation.json, or a maintainer's "
+           "<model>.ninferno.spec_profile.json)\n"
+           "for this GPU: its default for the thinking flag. --spec none decodes plainly. `" +
+           std::string(argv0) +
+           " spec-tune <model.ninferno>` measures a profile, `spec-reselect <profile.json>` "
+           "selects\n"
+           "again over its measurements (maintainers; docs/cli.md lists their flags).\n"
            "--thinking-budget caps model-origin thinking tokens; inserted control tokens count "
            "toward --max-new.\n"
-           "--kv-capacity auto leaves " +
+           "--kv-capacity auto plans every runtime byte and leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
-           " MiB of sizing headroom.\n"
+           " MiB for the CUDA driver's own allocations (under WSL 2, where Windows shares the "
+           "card and pages it out to Host memory when full, a 32nd of it, at most 1 GiB, as far "
+           "as the free memory allows).\n"
            "Sampling defaults come from the loaded model and thinking mode; flags override "
            "individual fields.\n";
 }
 
 Options parse_options(int argc, char** argv) {
     Options options;
-    if (argc >= 2 && (std::string_view(argv[1]) == "--help" || std::string_view(argv[1]) == "-h")) {
+    if (help_requested(argc, argv)) {
         options.help_requested = true;
         return options;
     }
-    if (argc < 2) { throw std::invalid_argument(".ninfer model path is required"); }
+    if (argc < 2) { throw std::invalid_argument(".ninferno model path is required"); }
     options.artifact_path     = argv[1];
     bool kv_capacity_explicit = false;
 
@@ -144,11 +112,40 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--device") {
             options.device = parse_device(value(arg));
         } else if (arg == "--kv-dtype") {
-            options.kv_cache = parse_kv_cache(value(arg));
+            const std::string_view text = value(arg);
+            options.kv_cache = text == "auto" ? std::nullopt : std::optional(parse_kv_dtype(text));
+        } else if (arg == "--sliding-kv-dtype") {
+            const std::string_view text = value(arg);
+            if (text != "bf16" && text != "fp8") {
+                throw std::invalid_argument("--sliding-kv-dtype must be bf16 or fp8");
+            }
+            options.sliding_kv_cache = parse_kv_dtype(text);
+        } else if (arg == "--state-dtype") {
+            const auto storage = parse_recurrent_state_storage(value(arg));
+            if (!storage) { throw std::invalid_argument("--state-dtype must be f32, bf16 or f16"); }
+            options.recurrent_state = *storage;
+        } else if (arg == "--activations") {
+            options.activations = product::parse_activation_mode(value(arg));
+        } else if (arg == "--rope-yarn-factor") {
+            options.rope_yarn_factor = parse_float_in(value(arg), "rope-yarn-factor", 1.0F, 64.0F);
         } else if (arg == "--spec") {
-            options.speculative.backend = product::parse_speculative_backend(value(arg));
+            const std::string_view mode = value(arg);
+            if (mode == "auto") {
+                options.spec_explicit = false;
+            } else {
+                options.speculative.backend = product::parse_speculative_backend(mode);
+                options.spec_explicit       = true;
+            }
+        } else if (arg == "--acceptance-floor") {
+            options.acceptance_floor =
+                parse_float_in(value(arg), "acceptance-floor", 0.0F, 1000.0F);
         } else if (arg == "--draft-tokens") {
             options.speculative.draft_tokens = parse_u32(value(arg), "draft-tokens");
+        } else if (arg == "--ngram-draft-tokens") {
+            options.speculative.ngram_draft_tokens =
+                parse_u32(value(arg), "ngram-draft-tokens", /*allow_zero=*/true);
+        } else if (arg == "--ngram-min-match") {
+            options.speculative.ngram_min_match = parse_u32(value(arg), "ngram-min-match");
         } else if (arg == "--lm-head-draft") {
             options.speculative.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--raw-output") {
@@ -160,7 +157,7 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--thinking-budget") {
             options.thinking_budget = parse_u32(value(arg), "thinking-budget");
         } else if (arg == "--reasoning-effort") {
-            options.reasoning_effort = parse_reasoning_effort(value(arg));
+            options.reasoning_effort = parse_reasoning_effort_option(value(arg));
         } else if (arg == "--vision") {
             options.enable_vision = true;
         } else if (arg == "--no-cuda-graph") {
@@ -180,24 +177,8 @@ Options parse_options(int argc, char** argv) {
                 .text    = std::move(text),
                 .channel = arg == "--stop" ? OutputChannel::Content : OutputChannel::Reasoning,
             });
-        } else if (arg == "--temperature") {
-            options.sampling.temperature = parse_float(value(arg), "temperature", 0.0F, 2.0F);
-        } else if (arg == "--top-p") {
-            options.sampling.top_p = parse_float(value(arg), "top-p", 0.0F, 1.0F);
-        } else if (arg == "--top-k") {
-            const std::uint32_t top_k = parse_u32(value(arg), "top-k", true);
-            if (top_k > 20) { throw std::invalid_argument("--top-k must be in [0,20]"); }
-            options.sampling.top_k = static_cast<std::int32_t>(top_k);
-        } else if (arg == "--min-p") {
-            options.sampling.min_p = parse_float(value(arg), "min-p", 0.0F, 1.0F);
-        } else if (arg == "--presence-penalty") {
-            options.sampling.presence_penalty =
-                parse_float(value(arg), "presence-penalty", -2.0F, 2.0F);
-        } else if (arg == "--frequency-penalty") {
-            options.sampling.frequency_penalty =
-                parse_float(value(arg), "frequency-penalty", -2.0F, 2.0F);
-        } else if (arg == "--seed") {
-            options.sampling.seed = parse_u64(value(arg), "seed");
+        } else if (product::parse_sampling_flag(
+                       arg, [&] { return value(arg); }, options.sampling)) {
         } else if (arg == "--greedy") {
             options.greedy = true;
         } else if (arg == "--log-level") {
@@ -236,4 +217,4 @@ Options parse_options(int argc, char** argv) {
     return options;
 }
 
-} // namespace ninfer::cli
+} // namespace ninferno::cli

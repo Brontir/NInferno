@@ -1,5 +1,5 @@
-#include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/execution/text.h"
+#include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/execution/attention.h"
 #include "models/qwen3_5/execution/gdn.h"
 #include "models/qwen3_5/execution/ffn.h"
@@ -7,63 +7,59 @@
 #include "models/qwen3_5/execution/workspace.h"
 
 #include "core/nvtx.h"
+#include "models/common/layer_dump.h"
 #include "models/qwen3_5/execution/visual_scatter.h"
 #include "models/qwen3_5/execution/vision.h"
 #include "models/qwen3_5/program/vision_control.h"
-#include "ninfer/ops/argmax.h"
-#include "ninfer/ops/attn_input_proj.h"
-#include "ninfer/ops/causal_conv1d_silu.h"
-#include "ninfer/ops/embedding.h"
-#include "ninfer/ops/gated_delta_net.h"
-#include "ninfer/ops/gated_rmsnorm.h"
-#include "ninfer/ops/gdn_gating.h"
-#include "ninfer/ops/gdn_gating_proj.h"
-#include "ninfer/ops/gdn_input_proj.h"
-#include "ninfer/ops/linear.h"
-#include "ninfer/ops/kv_cache_append.h"
-#include "ninfer/ops/speculative_round.h"
-#include "ninfer/ops/linear_add.h"
-#include "ninfer/ops/linear_pair.h"
-#include "ninfer/ops/linear_swiglu.h"
-#include "ninfer/ops/mtp_pack.h"
-#include "ninfer/ops/position.h"
-#include "ninfer/ops/residual_add.h"
-#include "ninfer/ops/rmsnorm.h"
-#include "ninfer/ops/rope.h"
-#include "ninfer/ops/sparse_moe.h"
-#include "ninfer/ops/scatter.h"
-#include "ninfer/ops/scalar.h"
-#include "ninfer/ops/sigmoid_mul.h"
-#include "ninfer/ops/silu_mul.h"
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/argmax.h"
+#include "ninferno/ops/attn_input_proj.h"
+#include "ninferno/ops/causal_conv1d_silu.h"
+#include "ninferno/ops/embedding.h"
+#include "ninferno/ops/gated_delta_net.h"
+#include "ninferno/ops/gated_rmsnorm.h"
+#include "ninferno/ops/gdn_gating.h"
+#include "ninferno/ops/gdn_gating_proj.h"
+#include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/kv_cache_append.h"
+#include "ninferno/ops/speculative_round.h"
+#include "ninferno/ops/linear_add.h"
+#include "ninferno/ops/linear_pair.h"
+#include "ninferno/ops/linear_swiglu.h"
+#include "ninferno/ops/mtp_pack.h"
+#include "ninferno/ops/position.h"
+#include "ninferno/ops/prefill_routes.h"
+#include "ninferno/ops/residual_add.h"
+#include "ninferno/ops/rmsnorm.h"
+#include "ninferno/ops/rope.h"
+#include "ninferno/ops/sparse_moe.h"
+#include "ninferno/ops/scatter.h"
+#include "ninferno/ops/scalar.h"
+#include "ninferno/ops/sigmoid_mul.h"
+#include "ninferno/ops/silu_mul.h"
+#include "ninferno/ops/softmax_attention.h"
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 namespace {
 
 void project(const Tensor& x, const LinearParameters& parameters, Tensor& out,
              WorkspaceArena& workspace, cudaStream_t stream) {
     ops::linear(x, parameters.weight, out, parameters.policy, workspace, stream);
-}
-
-void copy_i32(const std::int32_t* source, Tensor& destination, cudaStream_t stream) {
-    if (source == nullptr || destination.dtype != DType::I32 || !destination.is_contiguous() ||
-        destination.data == nullptr) {
-        throw std::invalid_argument("copy_i32: invalid host source or I32 destination");
-    }
-    CUDA_CHECK(cudaMemcpyAsync(destination.data, source, destination.bytes(),
-                               cudaMemcpyHostToDevice, stream));
 }
 
 void require_tensor_shape(const Tensor& t, DType dtype, std::initializer_list<std::int32_t> shape,
@@ -150,6 +146,70 @@ private:
     T& slot_;
     T previous_;
 };
+
+// Debug aids for prefill chunk-invariance work. Both are read once from the environment and cost
+// nothing when unset.
+//
+// NINFERNO_QWEN_PREFILL_CUTS=p1,p2,... ends a prefill call at each of those absolute positions, the
+// way a restored or continued context meets the cache off the chunk grid.
+//
+// NINFERNO_QWEN_DUMP=<dir> (with NINFERNO_QWEN_DUMP_ROWS=lo:hi, models/common/layer_dump.h) appends
+// the token columns of every prefill layer's intermediates whose absolute position lies in [lo,hi)
+// to <dir>/L<layer>.<kind>.bin. Eager passes only (a captured stream is skipped); it synchronizes
+// the device, so it localizes numerics and is never for timing.
+const LayerDump* dump_config() {
+    static const std::optional<LayerDump> config = read_layer_dump("NINFERNO_QWEN_DUMP");
+    return config ? &*config : nullptr;
+}
+
+// ",a,b," when NINFERNO_QWEN_DUMP_KINDS=a,b limits the dump to those kinds; empty: all.
+const std::string& dump_kinds() {
+    static const std::string kinds = [] {
+        const char* value = std::getenv("NINFERNO_QWEN_DUMP_KINDS");
+        return value != nullptr ? std::string(",") + value + "," : std::string();
+    }();
+    return kinds;
+}
+
+const std::vector<long long>& prefill_cuts() {
+    static const std::vector<long long> cuts = [] {
+        std::vector<long long> out;
+        const char* text = std::getenv("NINFERNO_QWEN_PREFILL_CUTS");
+        if (text == nullptr) { return out; }
+        const char* p = text;
+        while (*p != 0) {
+            char* end         = nullptr;
+            const long long v = std::strtoll(p, &end, 10);
+            if (end == p) {
+                throw std::invalid_argument("NINFERNO_QWEN_PREFILL_CUTS must be p1,p2,...");
+            }
+            out.push_back(v);
+            p = *end == ',' ? end + 1 : end;
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }();
+    return cuts;
+}
+
+// Absolute position of the current prefill call's first column (-1 outside prefill) and the
+// layer being run, for the dump.
+thread_local long long t_dump_p0 = -1;
+thread_local int t_dump_layer    = 0;
+
+void dump(const Tensor& tensor, std::int32_t t, const char* kind, cudaStream_t stream) {
+    const LayerDump* c = dump_config();
+    if (c == nullptr || t_dump_p0 < 0 || t <= 0) { return; }
+    const std::string& kinds = dump_kinds();
+    if (!kinds.empty() && kinds.find(std::string(",") + kind + ",") == std::string::npos) {
+        return;
+    }
+    if (!dumps_on(c, stream)) { return; }
+    char name[64];
+    std::snprintf(name, sizeof(name), "/L%02d.%s.bin", t_dump_layer, kind);
+    write_device_rows(*c, tensor.data, tensor.bytes() / static_cast<std::size_t>(t), t, t_dump_p0,
+                      c->dir + name, true);
+}
 
 } // namespace
 
@@ -351,10 +411,10 @@ void TextContext::mtp_forward_tail(Tensor& x, const Tensor& ah, const Tensor& po
                                        dimension(config_.attention->num_attention_heads), T});
     Tensor kn = results.normalized_key.view({dimension(config_.attention->head_dim),
                                              dimension(config_.attention->num_key_value_heads), T});
-    ops::rmsnorm(q, mtp_->query_norm, config_.rms_norm_eps, true, qn, s);
-    ops::rmsnorm(k, mtp_->key_norm, config_.rms_norm_eps, true, kn, s);
+
     Tensor rope_for_op = active_sequence_batch_ != 0 ? rope_positions.view({T}) : rope_positions;
-    text_rope(rope_for_op, *config_.rope_parameters, qn, kn, s);
+    text_qk_norm_rope(rope_for_op, *config_.rope_parameters, *config_.attention,
+                      config_.rms_norm_eps, mtp_->query_norm, mtp_->key_norm, q, k, qn, kn, ctx_.execution_view());
 
     Tensor a = results.attention.view({dimension(config_.attention->head_dim),
                                        dimension(config_.attention->num_attention_heads), T});
@@ -377,6 +437,7 @@ void TextContext::mtp_forward_tail(Tensor& x, const Tensor& ah, const Tensor& po
                                         dimension(config_.attention->num_attention_heads), width,
                                         active_sequence_batch_});
         Tensor position_batch = positions.view({width, active_sequence_batch_});
+        const Tensor gate_batch = gate.view({dimension(config_.attention->head_dim), dimension(config_.attention->num_attention_heads), width, active_sequence_batch_});
         ops::causal_softmax_attention(
             q_batch, k_batch, v_batch, position_batch, *active_valid_columns_,
             *active_backend_kv_table_rows_,
@@ -384,7 +445,7 @@ void TextContext::mtp_forward_tail(Tensor& x, const Tensor& ah, const Tensor& po
              dimension(config_.attention->num_attention_heads),
              dimension(config_.attention->num_key_value_heads)},
             static_cast<float>(1.0 / std::sqrt(static_cast<double>(config_.attention->head_dim))),
-            batch_mtp_kv_->batch_layer_view(0), envelope, work_, a_batch, s);
+            batch_mtp_kv_->batch_layer_view(0), envelope, work_, a_batch, ctx_.execution_view(), &gate_batch);
     } else {
         ops::causal_softmax_attention(
             qn, kn, v, positions, Tensor{}, io_.backend_kv_table_row,
@@ -392,9 +453,8 @@ void TextContext::mtp_forward_tail(Tensor& x, const Tensor& ah, const Tensor& po
              dimension(config_.attention->num_attention_heads),
              dimension(config_.attention->num_key_value_heads)},
             static_cast<float>(1.0 / std::sqrt(static_cast<double>(config_.attention->head_dim))),
-            batch_mtp_kv_->batch_layer_view(0), envelope, work_, a, s);
+            batch_mtp_kv_->batch_layer_view(0), envelope, work_, a, ctx_.execution_view(), &gate);
     }
-    ops::sigmoid_mul(gate, a, s);
 
     const auto post = workspace::mtp_post_attention(work_, config_, T);
     Tensor o        = post.output;
@@ -406,7 +466,7 @@ void TextContext::mtp_forward_tail(Tensor& x, const Tensor& ah, const Tensor& po
 
     {
         auto post_mixer_scope = work_.scope();
-        ffn(mh, mtp_->ffn, x, {}, work_, s, true);
+        ffn(mh, mtp_->ffn, x, {}, work_, ctx_.execution_view(), parameters_.experts, true);
     }
 
     Tensor flat_mtp_hidden = mtp_hidden.view({dimension(config_.hidden_size), T});
@@ -487,7 +547,7 @@ void TextContext::mtp_prefill_chunk(const Tensor& ids, const Tensor& hidden,
             work_.alloc(DType::BF16, {dimension(config_.attention->head_dim),
                                       dimension(config_.attention->num_key_value_heads), T});
         ops::rmsnorm(k, mtp_->key_norm, config_.rms_norm_eps, true, kn, s);
-        text_rope(rope_positions, *config_.rope_parameters, kn, s);
+        text_rope(rope_positions, *config_.rope_parameters, kn, ctx_.execution_view());
         ops::kv_cache_append(kn, v, positions, mtp_kv_.layer_view(0), s);
 
         if (final_chunk) {
@@ -532,7 +592,7 @@ void TextContext::mtp_prefill_chunk(const Tensor& ids, const Tensor& hidden,
                     cudaMemcpyAsync(dst, src, sizeof(std::int32_t), cudaMemcpyDeviceToDevice, s));
             }
         }
-        text_rope(last_rope_position, *config_.rope_parameters, qn, s);
+        text_rope(last_rope_position, *config_.rope_parameters, qn, ctx_.execution_view());
 
         Tensor a = work_.alloc(DType::BF16, {dimension(config_.attention->head_dim),
                                              dimension(config_.attention->num_attention_heads), 1});
@@ -542,7 +602,7 @@ void TextContext::mtp_prefill_chunk(const Tensor& ids, const Tensor& hidden,
              dimension(config_.attention->num_attention_heads),
              dimension(config_.attention->num_key_value_heads)},
             static_cast<float>(1.0 / std::sqrt(static_cast<double>(config_.attention->head_dim))),
-            mtp_kv_.layer_view(0), envelope, work_, a, s);
+            mtp_kv_.layer_view(0), envelope, work_, a, ctx_.execution_view());
         ops::sigmoid_mul(gate, a, s);
 
         Tensor o = work_.alloc(DType::BF16, {dimension(config_.hidden_size), 1});
@@ -554,7 +614,7 @@ void TextContext::mtp_prefill_chunk(const Tensor& ids, const Tensor& hidden,
         ops::rmsnorm(x_last, mtp_->post_attention_norm, config_.rms_norm_eps, true, mh, s);
         {
             auto post_mixer_scope = work_.scope();
-            ffn(mh, mtp_->ffn, x_last, {}, work_, s, true);
+            ffn(mh, mtp_->ffn, x_last, {}, work_, ctx_.execution_view(), parameters_.experts, true);
         }
         ops::rmsnorm(x_last, mtp_->final_norm, config_.rms_norm_eps, true, *final_hidden, s);
         proposal_argmax(*final_hidden, *logits, *draft_token);
@@ -697,6 +757,7 @@ void TextContext::ordinary_decode_batch(const Tensor& ids, const Tensor& cache_p
         ScopedValue<const Tensor*> destination_binding(active_linear_state_destination_slots_,
                                                        &linear_state_destination_slots);
         ScopedValue<std::int32_t> batch_binding(active_sequence_batch_, batch);
+        const ops::ScopedRoundLanes lanes_binding(batch);
         ScopedValue<std::int32_t> width_binding(active_sequence_width_, 1);
 
         Tensor x = work_.alloc(DType::BF16, {dimension(config_.hidden_size), batch});
@@ -750,6 +811,7 @@ void TextContext::target_verify_batch_impl(const Tensor& ids, const Tensor& cach
                                                  &linear_state_source_slots);
         ScopedValue<const Tensor*> valid_binding(active_valid_columns_, &valid_columns);
         ScopedValue<std::int32_t> batch_binding(active_sequence_batch_, batch);
+        const ops::ScopedRoundLanes lanes_binding(batch);
         ScopedValue<std::int32_t> width_binding(active_sequence_width_, width);
 
         Tensor x        = work_.alloc(DType::BF16, {dimension(config_.hidden_size), columns});
@@ -804,7 +866,7 @@ void TextContext::mtp_forward_decode_batch(const Tensor& ids, const Tensor& hidd
     if (batch_mtp_kv_ == nullptr) { throw std::runtime_error("MTP forward is not enabled"); }
     const std::int32_t width = ids.ne[0];
     const std::int32_t batch = ids.ne[1];
-    if (width <= 0 || width > static_cast<std::int32_t>(kMaximumMtpDraftTokens + 1) || batch <= 0 ||
+    if (width <= 0 || width > static_cast<std::int32_t>(kMaximumMtpVerifyWidth) || batch <= 0 ||
         batch > static_cast<std::int32_t>(kMaximumConcurrency)) {
         throw std::invalid_argument("MTP decode batch shape is outside the supported domain");
     }
@@ -823,6 +885,7 @@ void TextContext::mtp_forward_decode_batch(const Tensor& ids, const Tensor& hidd
     ScopedValue<const Tensor*> backend_binding(active_backend_kv_table_rows_, &kv_table_rows);
     ScopedValue<const Tensor*> valid_binding(active_valid_columns_, &valid_columns);
     ScopedValue<std::int32_t> batch_binding(active_sequence_batch_, batch);
+    const ops::ScopedRoundLanes lanes_binding(batch);
     ScopedValue<std::int32_t> width_binding(active_sequence_width_, width);
     mtp_forward_core(ids, hidden, cache_positions, rope_positions, envelope, mtp_hidden, nullptr);
 }
@@ -862,6 +925,11 @@ void TextContext::attn_mix(const BlockParameters& w, Tensor& x, int fidx, Phase 
     Tensor k_flat    = k.view({dimension(config_.attention->key_width()), T});
     Tensor v_flat    = v.view({dimension(config_.attention->key_width()), T});
     attention_projection(h, p, q_flat, gate_flat, k_flat, v_flat, work_, s);
+    dump(h, T, "ah", s);
+    dump(q_flat, T, "q", s);
+    dump(gate_flat, T, "qg", s);
+    dump(k_flat, T, "k", s);
+    dump(v_flat, T, "v", s);
 
     const auto results = workspace::text_attention_results(work_, config_, T);
     Tensor qn =
@@ -869,14 +937,13 @@ void TextContext::attn_mix(const BlockParameters& w, Tensor& x, int fidx, Phase 
                                        dimension(config_.attention->num_attention_heads), T});
     Tensor kn = results.normalized_key.view({dimension(config_.attention->head_dim),
                                              dimension(config_.attention->num_key_value_heads), T});
-    ops::rmsnorm(q, p.query_norm, config_.rms_norm_eps, true, qn, s);
-    ops::rmsnorm(k, p.key_norm, config_.rms_norm_eps, true, kn, s);
     const Tensor& cache_positions =
         active_cache_positions_ != nullptr ? *active_cache_positions_ : io_.pos;
     const Tensor& rope_positions =
         active_rope_positions_ != nullptr ? *active_rope_positions_ : io_.rope_pos;
     Tensor rope_for_op = active_sequence_batch_ != 0 ? rope_positions.view({T}) : rope_positions;
-    text_rope(rope_for_op, *config_.rope_parameters, qn, kn, s);
+    text_qk_norm_rope(rope_for_op, *config_.rope_parameters, *config_.attention,
+                      config_.rms_norm_eps, p.query_norm, p.key_norm, q, k, qn, kn, ctx_.execution_view());
 
     Tensor a = results.attention.view({dimension(config_.attention->head_dim),
                                        dimension(config_.attention->num_attention_heads), T});
@@ -901,6 +968,7 @@ void TextContext::attn_mix(const BlockParameters& w, Tensor& x, int fidx, Phase 
                                         active_sequence_batch_});
         Tensor position_batch = cache_positions.view({width, active_sequence_batch_});
         const Tensor valid = active_valid_columns_ != nullptr ? *active_valid_columns_ : Tensor{};
+        const Tensor gate_batch = gate.view({dimension(config_.attention->head_dim), dimension(config_.attention->num_attention_heads), width, active_sequence_batch_});
         ops::causal_softmax_attention(
             q_batch, k_batch, v_batch, position_batch, valid, kv_table_rows,
             {dimension(config_.attention->head_dim),
@@ -908,7 +976,7 @@ void TextContext::attn_mix(const BlockParameters& w, Tensor& x, int fidx, Phase 
              dimension(config_.attention->num_key_value_heads)},
             static_cast<float>(1.0 / std::sqrt(static_cast<double>(config_.attention->head_dim))),
             batch_text_kv_->batch_layer_view(fidx), *active_causal_attention_envelope_, work_,
-            a_batch, s);
+            a_batch, ctx_.execution_view(), &gate_batch);
     } else {
         ops::causal_softmax_attention(
             qn, kn, v, cache_positions, Tensor{}, kv_table_rows,
@@ -917,12 +985,16 @@ void TextContext::attn_mix(const BlockParameters& w, Tensor& x, int fidx, Phase 
              dimension(config_.attention->num_key_value_heads)},
             static_cast<float>(1.0 / std::sqrt(static_cast<double>(config_.attention->head_dim))),
             batch_text_kv_->batch_layer_view(fidx), *active_causal_attention_envelope_, work_, a,
-            s);
+            ctx_.execution_view(), &gate);
     }
-    ops::sigmoid_mul(gate, a, s);
+    // The Op has applied the sigmoid gate: "attn" is the o_proj input the HF oracle hooks.
+    dump(qn, T, "qn", s);
+    dump(kn, T, "kn", s);
+    dump(a, T, "attn", s);
 
     ops::linear_add(a.view({dimension(config_.attention->query_width()), T}), p.output.weight, x,
                     p.output.policy, work_, s);
+    dump(x, T, "xa", s);
 }
 
 void TextContext::gdn_mix(const BlockParameters& w, Tensor& x, int gidx, Phase ph) {
@@ -985,12 +1057,20 @@ void TextContext::gdn_mix(const BlockParameters& w, Tensor& x, int gidx, Phase p
         Tensor qkv    = workspace::gdn_prefill_conv(work_, config_, T);
         Tensor z_flat = z.view({dimension(config_.gdn->value_width()), T});
         gdn_projection(h, p, qkv, z_flat, work_, s);
+        dump(h, T, "gh", s);
+        dump(g, T, "g", s);
+        dump(beta, T, "beta", s);
+        dump(qkv, T, "qkv", s);
+        dump(z_flat, T, "z", s);
         Tensor conv_state_in =
             state_.conv_slot(static_cast<std::uint32_t>(gidx), linear_state_source_slot_);
         Tensor conv_state_out =
             state_.conv_slot(static_cast<std::uint32_t>(gidx), linear_state_destination_slot_);
         ops::causal_conv1d_silu_split(qkv, p.convolution, conv_state_in, conv_state_out, qc, kc, vc,
                                       s);
+        dump(qc, T, "cq", s);
+        dump(kc, T, "ck", s);
+        dump(vc, T, "cv", s);
     }
 
     Tensor q_recurrent = qc.view({dimension(config_.gdn->linear_key_head_dim),
@@ -1044,20 +1124,39 @@ void TextContext::gdn_mix(const BlockParameters& w, Tensor& x, int gidx, Phase p
             state_.recurrent_slot(static_cast<std::uint32_t>(gidx), linear_state_source_slot_);
         Tensor recurrent_state_out =
             state_.recurrent_slot(static_cast<std::uint32_t>(gidx), linear_state_destination_slot_);
-        ops::gated_delta_net(
-            q_recurrent, k_recurrent, vv, g, beta,
-            static_cast<float>(1.0 /
-                               std::sqrt(static_cast<double>(config_.gdn->linear_key_head_dim))),
-            /*normalize_qk=*/true, work_, recurrent_state_in, recurrent_state_out, o, s);
+        ops::gated_delta_net(q_recurrent, k_recurrent, vv, g, beta,
+                             static_cast<float>(1.0 / std::sqrt(static_cast<double>(
+                                                          config_.gdn->linear_key_head_dim))),
+                             /*normalize_qk=*/true, work_, recurrent_state_in, recurrent_state_out,
+                             o, ctx_.execution_view());
     }
 
     Tensor on = workspace::gdn_normalized_output(work_, config_, T)
                     .view({dimension(config_.gdn->linear_value_head_dim),
                            dimension(config_.gdn->linear_num_value_heads), T});
-    ops::gated_rmsnorm(o, p.norm, z, config_.rms_norm_eps, on, s);
+    // An out_proj kept in llama.cpp's tiled value-head column order takes its input regrouped the
+    // same way: the norm writes it so where it can (the same bytes), else a copy into the
+    // recurrent output, which is dead after the norm.
+    const auto groups = static_cast<std::int32_t>(config_.gdn->linear_num_key_heads);
+    const bool tiled  = config_.gdn->output_heads_tiled;
+    const bool fused  = tiled && ops::gated_rmsnorm_regroups(o, p.norm, z, on);
+    if (fused) {
+        ops::gated_rmsnorm_regrouped(o, p.norm, z, config_.rms_norm_eps, groups, on,
+                                     ctx_.execution_view());
+    } else {
+        ops::gated_rmsnorm(o, p.norm, z, config_.rms_norm_eps, on, ctx_.execution_view());
+    }
+    dump(o, T, "o", s);
+    dump(on, T, fused ? "on_tiled" : "on", s);
 
-    ops::linear_add(on.view({dimension(config_.gdn->value_width()), T}), p.output.weight, x,
-                    p.output.policy, work_, s);
+    Tensor projected = on;
+    if (tiled && !fused) {
+        ops::regroup_bf16_heads(on, groups, o, s);
+        projected = o;
+    }
+    ops::linear_add(projected.view({dimension(config_.gdn->value_width()), T}), p.output.weight,
+                    x, p.output.policy, work_, s);
+    dump(x, T, "xg", s);
 }
 
 ops::SparseMoeHints TextContext::next_projection_hints(int layer) const {
@@ -1070,16 +1169,21 @@ void TextContext::mlp_tail(const BlockParameters& weights, Tensor& x, Phase,
                            const ops::SparseMoeHints& hints) {
     Tensor h = workspace::post_mixer_hidden(work_, config_, x.ne[1]);
     ops::rmsnorm(x, weights.post_attention_norm, config_.rms_norm_eps, true, h, ctx_.stream);
-    ffn(h, weights.ffn, x, hints, work_, ctx_.stream);
+    dump(h, x.ne[1], "mh", ctx_.stream);
+    ffn(h, weights.ffn, x, hints, work_, ctx_.execution_view(), parameters_.experts);
+    dump(x, x.ne[1], "x", ctx_.stream);
 }
 
 template <class Tap>
 void TextContext::run_layers(Tensor& x, Phase ph, Tap& tap) {
     const bool prefill = ph == Phase::Prefill;
+    // Prefill takes the token-invariant route profile; verify keeps the speed-tuned routes.
+    const ops::ScopedPrefillRoutes route_profile(prefill);
     for (std::size_t layer = 0; layer < parameters_.text.layers.size(); ++layer) {
         const auto& block  = parameters_.text.layers[layer];
         const bool full    = config_.layer_types[layer] == MixerKind::FullAttention;
         const auto compact = dimension(config_.compact_layer_indices[layer]);
+        t_dump_layer       = static_cast<int>(layer);
         nvtx::ScopedRange layer_range(
             full ? (prefill ? nvtx::Name::PrefillLayerFull : nvtx::Name::VerifyLayerFull)
                  : (prefill ? nvtx::Name::PrefillLayerGdn : nvtx::Name::VerifyLayerGdn),
@@ -1107,10 +1211,10 @@ void TextContext::run_layers(Tensor& x, Phase ph, Tap& tap) {
             if constexpr (Tap::enabled) {
                 tap.capture_layer(static_cast<int>(layer), x, ctx_.stream);
             }
-        } catch (const std::exception& error) {
-            throw std::runtime_error("text/layers/" + std::to_string(layer) +
-                                     (prefill ? " prefill" : " verify") +
-                                     " columns=" + std::to_string(x.ne[1]) + ": " + error.what());
+        } catch (const std::exception&) {
+            rethrow_with_context("text/layers/" + std::to_string(layer) +
+                                 (prefill ? " prefill" : " verify") +
+                                 " columns=" + std::to_string(x.ne[1]));
         }
     }
 }
@@ -1177,7 +1281,25 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
     int t0 = 0;
     for (; t0 < T;) {
         int len = std::min(chunk, T - t0);
-        if (split_rel > 0 && t0 < split_rel && t0 + len > split_rel) { len = split_rel - t0; }
+        // The next boundary inside this call: the split frontier or a debug cut. The call ends on
+        // it, and a call that would end short of it leaves at least kPrefillMinTokens for the
+        // next one (see prefill_call_tokens).
+        long long boundary = split_rel > t0 ? split_rel : -1;
+        for (const long long cut : prefill_cuts()) {
+            const long long rel = cut - base64;
+            if (rel > t0) {
+                if (boundary < 0 || rel < boundary) { boundary = rel; }
+                break;
+            }
+        }
+        if (boundary > 0 && boundary <= t0 + len) {
+            len = static_cast<int>(boundary - t0);
+        } else if (boundary > t0 + len) {
+            const auto cursor = static_cast<std::uint32_t>(base64 + t0);
+            len               = static_cast<int>(
+                prefill_call_tokens(static_cast<std::uint32_t>(len), cursor,
+                                    static_cast<std::uint32_t>(base64 + boundary)));
+        }
         work_.reset();
 
         VisionChunk vision_chunk;
@@ -1216,7 +1338,7 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                 work_, config_, len, rope_axes,
                 static_cast<std::int32_t>(local_scatter_indices.size()));
             Tensor ids_device = roots.ids;
-            copy_i32(ids.data() + t0, ids_device, s);
+            copy_from_host(ids.data() + t0, ids_device, s);
 
             Tensor positions = roots.positions;
             ops::fill_i32_positions(positions, base_i + t0, s);
@@ -1233,7 +1355,7 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                     std::copy_n(src, len,
                                 rope_positions_host.data() + static_cast<std::size_t>(axis) * len);
                 }
-                copy_i32(rope_positions_host.data(), rope_positions, s);
+                copy_from_host(rope_positions_host.data(), rope_positions, s);
             } else if (rope_delta_ != 0) {
                 rope_positions = roots.rope_positions;
                 ops::offset_i32_positions(positions, io_.rope_delta, rope_positions, s);
@@ -1248,12 +1370,13 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
             ops::embedding(ids_device, *embed_, x, s);
             if (!local_scatter_indices.empty()) {
                 Tensor indices_device = roots.scatter_indices;
-                copy_i32(local_scatter_indices.data(), indices_device, s);
+                copy_from_host(local_scatter_indices.data(), indices_device, s);
                 Tensor embeddings = vision_chunk.embeddings.slice(
                     1, visual_begin, static_cast<std::int32_t>(local_scatter_indices.size()));
                 ops::scatter(embeddings, indices_device, x, s);
             }
             if constexpr (Tap::enabled) { tap.begin(x); }
+            t_dump_p0 = static_cast<long long>(base_i) + t0;
             run_layers(x, Phase::Prefill, tap);
             if constexpr (requires { tap.capture_positions(positions, s); }) {
                 tap.capture_positions(positions, s);
@@ -1263,6 +1386,9 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                             ? matrix_window(prefill_hidden_, len)
                             : work_.alloc(DType::BF16, {dimension(config_.hidden_size), len});
             ops::rmsnorm(x, *final_norm_, config_.rms_norm_eps, true, xf, s);
+            t_dump_layer = 99;
+            dump(xf, len, "xf", s);
+            t_dump_p0 = -1;
 
             if (is_last) {
                 Tensor last_xf = xf.slice(1, len - 1, 1);
@@ -1304,8 +1430,8 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                 Tensor mtp_ids = work_.alloc(DType::I32, {len});
                 if (prompt_columns != 0) {
                     Tensor prompt_mtp_ids = mtp_ids.slice(0, 0, prompt_columns);
-                    copy_i32(alignment_ids.data() + mtp_window.shifted_embedding_begin,
-                             prompt_mtp_ids, s);
+                    copy_from_host(alignment_ids.data() + mtp_window.shifted_embedding_begin,
+                                   prompt_mtp_ids, s);
                 }
                 if (mtp_window.final_column_uses_generated_token) {
                     Tensor generated_mtp_id = mtp_ids.slice(0, len - 1, 1);
@@ -1447,4 +1573,4 @@ PrefillChunkResult TextContext::prefill_chunk(const qwen3_5::PreparedPromptData&
                         finalize_at_end);
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

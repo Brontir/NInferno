@@ -8,7 +8,11 @@
 #include <array>
 #include <limits>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
+
+// A directory longer than this is a damaged or forged header, refused before it is read into
+// memory (the converter's largest directories are a few MiB).
+constexpr std::uint64_t kMaximumDirectoryBytes = 256ULL << 20;
 
 struct Reader::Impl {
     std::filesystem::path entry;
@@ -19,24 +23,30 @@ struct Reader::Impl {
     mutable std::vector<std::unique_ptr<InputFile>> files;
     mutable std::vector<std::optional<WeightGeometry>> geometries;
 
-    explicit Impl(const std::filesystem::path& path) : entry(path) {
+    Impl(const std::filesystem::path& path, PendingRelayout pending) : entry(path) {
+        std::error_code error;
+        if (pending == PendingRelayout::Refuse &&
+            std::filesystem::exists(relayout_journal_path(entry), error)) {
+            throw ArtifactError(entry.string() +
+                                ": an in-place ninferno-convert --relayout of this "
+                                "artifact did not finish (" +
+                                relayout_journal_path(entry).string() +
+                                "); rerun the same --relayout command to finish it (it says "
+                                "when the journal is not this artifact's and can be deleted)");
+        }
         auto file = std::make_unique<InputFile>(entry);
         std::array<std::byte, kHeaderBytes> header{};
         file->read_exact(0, header);
-        if (!std::equal(kEntryMagic.begin(), kEntryMagic.end(), header.begin())) {
-            if (std::equal(kEntryMagic.begin(), kEntryMagic.end() - 1, header.begin()) &&
-                header[kEntryMagic.size() - 1] == std::byte{2}) {
-                throw ArtifactError(
-                    entry.string() +
-                    ": NInfer v2 artifact is not supported. Upgrade to v3 with: "
-                    "python3 tools/upgrade_ninfer_v2_to_v3.py INPUT.ninfer OUTPUT.ninfer");
-            }
-            throw ArtifactError(entry.string() + ": expected NInfer v3 entry magic");
+        if (!has_magic(kEntryMagic, header.data())) {
+            throw ArtifactError(entry.string() + ": not a NInferno artifact (no NInferno entry magic)");
         }
         const auto json_bytes = read_u64_le(header.data() + 8);
         if (!json_bytes || json_bytes > file->bytes() - kHeaderBytes ||
-            json_bytes > std::numeric_limits<std::size_t>::max()) {
-            throw ArtifactError(entry.string() + ": invalid directory length");
+            json_bytes > kMaximumDirectoryBytes) {
+            throw ArtifactError(entry.string() + ": invalid directory length " +
+                                std::to_string(json_bytes) + " (file " +
+                                std::to_string(file->bytes()) + " bytes, at most " +
+                                std::to_string(kMaximumDirectoryBytes) + ")");
         }
         std::copy_n(header.begin() + 16, id.size(), id.begin());
         std::string text(static_cast<std::size_t>(json_bytes), '\0');
@@ -67,7 +77,7 @@ struct Reader::Impl {
             auto input         = std::make_unique<InputFile>(entry.parent_path() / *record.path);
             std::array<std::byte, kHeaderBytes> header{};
             input->read_exact(0, header);
-            if (!std::equal(kPartMagic.begin(), kPartMagic.end(), header.begin()) ||
+            if (!has_magic(kPartMagic, header.data()) ||
                 read_u64_le(header.data() + 8) != index ||
                 !std::equal(id.begin(), id.end(), header.begin() + 16)) {
                 throw ArtifactError(*record.path +
@@ -83,7 +93,12 @@ struct Reader::Impl {
     }
 };
 
-Reader::Reader(const std::filesystem::path& path) : impl_(std::make_unique<Impl>(path)) {}
+std::filesystem::path relayout_journal_path(const std::filesystem::path& entry) {
+    return std::filesystem::path(entry.string() + ".relayout-journal");
+}
+
+Reader::Reader(const std::filesystem::path& path, PendingRelayout pending)
+    : impl_(std::make_unique<Impl>(path, pending)) {}
 
 Reader::~Reader()                            = default;
 Reader::Reader(Reader&&) noexcept            = default;
@@ -174,4 +189,4 @@ std::size_t Reader::read_direct(std::size_t file_index, std::uint64_t file_offse
     return impl_->file(file_index).read_direct(file_offset, destination);
 }
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

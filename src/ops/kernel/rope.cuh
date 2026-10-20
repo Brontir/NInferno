@@ -1,18 +1,19 @@
 #pragma once
 
-// Implements: include/ninfer/ops/rope.h
+// Implements: include/ninferno/ops/rope.h
 // Fixed matches: BF16 Qwen3.6 Text 24Q/4K and 16Q/2K at D/R=256/64, DFlash 32Q/8K at
-// D/R=128/128, plus packed Vision 16Q/16K at D/R=72/72. One CTA owns one token and shares its
+// D/R=128/128, plus packed Vision 16Q/16K at D/R=72/72 (other Vision heads take the generic kernel). One CTA owns one token and shares its
 // rotary coefficients across heads.
 
 #include "ops/common/dflash_rope.cuh"
+#include "ops/kernel/rope_limits.h"
 
 #include <cuda_bf16.h>
 
 #include <cmath>
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 enum class RopeKernelMode : std::int32_t {
     Text1D,
@@ -20,8 +21,6 @@ enum class RopeKernelMode : std::int32_t {
     TextMrope,
     Vision2D,
 };
-
-inline constexpr int kRopeMaxHalf = 128;
 
 static __device__ __constant__ float kTextRopeInvFrequency[32] = {
     1.000000000e+00F, 6.042963902e-01F, 3.651741273e-01F, 2.206734069e-01F, 1.333521432e-01F,
@@ -167,10 +166,13 @@ __global__ void rope_fixed_split_kernel(const std::int32_t* positions, __nv_bflo
 
 __device__ __forceinline__ void generic_axis_frequency(int axes, int head_dim, int rotary_dim,
                                                        int pair, int* axis, float* exponent) {
-    if (axes == 2 && head_dim == 72 && rotary_dim == 72) {
-        *axis           = pair / 18;
-        const int local = pair % 18;
-        *exponent       = -2.0F * static_cast<float>(local) / 36.0F;
+    if (axes == 2 && head_dim == rotary_dim) {
+        // Qwen's Vision rotary: the first quarter of the pairs takes the row, the second the
+        // column, each with the frequencies of a head half as wide (72: 18 + 18 of 36).
+        const int quarter = rotary_dim / 4;
+        *axis             = pair / quarter;
+        const int local   = pair % quarter;
+        *exponent         = -2.0F * static_cast<float>(local) / static_cast<float>(2 * quarter);
     } else {
         *axis     = axes == 3 ? pair % 3 : 0;
         *exponent = -2.0F * static_cast<float>(pair) / static_cast<float>(rotary_dim);
@@ -182,7 +184,9 @@ static __global__ void rope_generic_kernel(const std::int32_t* positions, std::i
                                            std::int32_t head_dim, std::int32_t rotary_dim,
                                            float theta, std::int32_t q_heads, std::int32_t k_heads,
                                            std::int32_t tokens, std::int64_t q_token_stride,
-                                           std::int64_t k_token_stride) {
+                                           std::int64_t k_token_stride,
+                                           const float* inverse_frequencies = nullptr,
+                                           float coefficient_scale         = 1.0F) {
     const int token = static_cast<int>(blockIdx.x);
     if (token >= tokens) { return; }
     const int half = rotary_dim / 2;
@@ -190,7 +194,17 @@ static __global__ void rope_generic_kernel(const std::int32_t* positions, std::i
     __shared__ float sin_cache[kRopeMaxHalf];
     if (threadIdx.x < static_cast<unsigned>(half)) {
         const int pair = static_cast<int>(threadIdx.x);
-        if (axes == 1 && head_dim == 128 && rotary_dim == 128 && theta == 1.0e7F) {
+        if (inverse_frequencies != nullptr) {
+            // rope_scaled: the caller's frequencies (Text modes), both coefficients scaled.
+            const int axis = axes == 3 ? pair % 3 : 0;
+            const float angle =
+                static_cast<float>(positions[static_cast<std::int64_t>(axis) * tokens + token]) *
+                inverse_frequencies[pair];
+            float sine, cosine;
+            sincosf(angle, &sine, &cosine);
+            sin_cache[pair] = sine * coefficient_scale;
+            cos_cache[pair] = cosine * coefficient_scale;
+        } else if (axes == 1 && head_dim == 128 && rotary_dim == 128 && theta == 1.0e7F) {
             fixed_sincos<RopeKernelMode::DflashText1D>(positions, tokens, token, pair,
                                                        &sin_cache[pair], &cos_cache[pair]);
         } else {
@@ -228,4 +242,4 @@ static __global__ void rope_generic_kernel(const std::int32_t* positions, std::i
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

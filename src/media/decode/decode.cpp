@@ -1,5 +1,7 @@
 #include "media/decode/decode.h"
 
+#include "core/units.h"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -26,7 +28,7 @@ extern "C" {
 #include <utility>
 #include <vector>
 
-namespace ninfer::media::decode {
+namespace ninferno::media::decode {
 namespace {
 
 std::string av_error(int code) {
@@ -48,7 +50,7 @@ void validate_input(std::span<const std::uint8_t> bytes, const Policy& policy) {
 }
 
 int exif_orientation(std::span<const std::uint8_t> bytes) {
-    constexpr std::size_t limit = 1ULL << 20;
+    constexpr std::size_t limit = kMiB;
     bytes                       = bytes.first(std::min(limit, bytes.size()));
     if (bytes.size() < 4 || bytes[0] != 0xff || bytes[1] != 0xd8) { return 1; }
     auto be16 = [&](std::size_t offset) {
@@ -168,6 +170,14 @@ std::int64_t seek_packet(void* opaque, std::int64_t offset, int whence) {
     return static_cast<std::int64_t>(cursor.offset);
 }
 
+// Every input is the one buffer the caller passed: a demuxer that would open another resource (an
+// HLS or DASH playlist's segments, a concat list, an image sequence's next file) is refused, so a
+// client's media cannot make the server read its files or fetch past the media fetch's own
+// network checks.
+int refuse_nested_open(AVFormatContext*, AVIOContext**, const char*, int, AVDictionary**) {
+    return AVERROR(EPERM);
+}
+
 class Decoder {
 public:
     Decoder(std::span<const std::uint8_t> input, std::uint64_t max_decoded_pixels)
@@ -186,22 +196,41 @@ public:
             }
             format_->pb = io_;
             format_->flags |= AVFMT_FLAG_CUSTOM_IO;
+            format_->io_open     = refuse_nested_open;
             AVFormatContext* raw = format_;
             int rc               = avformat_open_input(&raw, nullptr, nullptr, nullptr);
             format_              = raw;
             if (rc < 0) { throw_invalid_media("failed to open media: " + av_error(rc)); }
-            if ((rc = avformat_find_stream_info(format_, nullptr)) < 0) {
-                throw_invalid_media("failed to inspect media: " + av_error(rc));
+            // FFmpeg allocates a frame for the dimensions a header declares before any pixel is
+            // decoded (a 16384x16384 PNG of zeros is 2.5 MB compressed and 268 MB decoded), so the
+            // budget goes to the decoders the probe opens and to ours; the frame check after
+            // decoding alone came after the allocation.
+            const auto max_pixels = static_cast<std::int64_t>(std::min<std::uint64_t>(
+                max_decoded_pixels_, std::numeric_limits<std::int64_t>::max()));
+            std::vector<AVDictionary*> probe_options(format_->nb_streams, nullptr);
+            for (AVDictionary*& options : probe_options) {
+                av_dict_set_int(&options, "max_pixels", max_pixels, 0);
             }
+            rc = avformat_find_stream_info(format_, probe_options.data());
+            for (AVDictionary*& options : probe_options) { av_dict_free(&options); }
+            if (rc < 0) { throw_invalid_media("failed to inspect media: " + av_error(rc)); }
             stream_index_ = av_find_best_stream(format_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
             if (stream_index_ < 0) { throw_invalid_media("media has no decodable video stream"); }
-            stream_              = format_->streams[stream_index_];
+            stream_ = format_->streams[stream_index_];
+            if (stream_->codecpar->width > 0 && stream_->codecpar->height > 0 &&
+                static_cast<std::uint64_t>(stream_->codecpar->width) *
+                        static_cast<std::uint64_t>(stream_->codecpar->height) >
+                    max_decoded_pixels_) {
+                throw Error(ErrorKind::BudgetExceeded, "media dimensions exceed processor limit");
+            }
             const AVCodec* codec = avcodec_find_decoder(stream_->codecpar->codec_id);
             if (codec == nullptr) { throw_invalid_media("media codec is not supported"); }
             codec_ = avcodec_alloc_context3(codec);
             if (codec_ == nullptr) { throw std::bad_alloc(); }
-            if ((rc = avcodec_parameters_to_context(codec_, stream_->codecpar)) < 0 ||
-                (rc = avcodec_open2(codec_, codec, nullptr)) < 0) {
+            if ((rc = avcodec_parameters_to_context(codec_, stream_->codecpar)) >= 0) {
+                codec_->max_pixels = max_pixels;
+            }
+            if (rc < 0 || (rc = avcodec_open2(codec_, codec, nullptr)) < 0) {
                 throw_invalid_media("failed to open media codec: " + av_error(rc));
             }
             packet_ = av_packet_alloc();
@@ -374,7 +403,12 @@ private:
         av_packet_free(&packet_);
         avcodec_free_context(&codec_);
         if (format_ != nullptr) { avformat_close_input(&format_); }
-        if (io_ != nullptr) { avio_context_free(&io_); }
+        if (io_ != nullptr) {
+            // Probing replaces the buffer handed to avio_alloc_context, and avio_context_free
+            // does not free the current one: release it from the context itself.
+            av_freep(&io_->buffer);
+            avio_context_free(&io_);
+        }
     }
 
     AVFormatContext* format_ = nullptr;
@@ -456,8 +490,10 @@ std::vector<int> sample_indices(int total, double source_fps, double target_fps,
         max_frames < min_frames) {
         throw std::invalid_argument("invalid video sampling configuration");
     }
-    int count = static_cast<int>(static_cast<double>(total) / source_fps * target_fps);
-    count     = std::min({std::max(count, min_frames), max_frames, total});
+    // Clamped as a double: a tiny source rate makes the wanted count overflow an int.
+    const double wanted = static_cast<double>(total) / source_fps * target_fps;
+    int count           = !(wanted < max_frames) ? max_frames : static_cast<int>(wanted);
+    count               = std::min({std::max(count, min_frames), max_frames, total});
     std::vector<int> indices(static_cast<std::size_t>(count));
     if (count == 1) {
         indices[0] = 0;
@@ -489,11 +525,15 @@ VideoPlan make_video_plan(std::span<const std::uint8_t> bytes, const Policy& pol
                             ? static_cast<int>(probe.stream()->nb_frames)
                             : 0;
     plan.duration     = probe.duration_seconds();
-    if (plan.total_frames == 0 && plan.duration > 0.0) {
-        plan.total_frames = static_cast<int>(std::nearbyint(plan.duration * plan.fps));
-    }
-    if (plan.duration > policy.max_video_duration_seconds) {
+    if (!(plan.duration <= policy.max_video_duration_seconds)) {
         throw Error(ErrorKind::BudgetExceeded, "video duration exceeds processor limit");
+    }
+    if (plan.total_frames == 0 && plan.duration > 0.0) {
+        // Estimated from duration and rate, clamped one past the limit checked below.
+        const double estimate = std::nearbyint(plan.duration * plan.fps);
+        plan.total_frames     = estimate > policy.max_video_source_frames
+                                    ? policy.max_video_source_frames + 1
+                                    : static_cast<int>(estimate);
     }
     if (plan.total_frames == 0) { plan.total_frames = count_frames(bytes, policy); }
     if (plan.total_frames == 0) { throw_invalid_media("video contains no decoded frame"); }
@@ -642,4 +682,4 @@ Video decode_video(std::span<const std::uint8_t> bytes, const Policy& policy, do
     return out;
 }
 
-} // namespace ninfer::media::decode
+} // namespace ninferno::media::decode

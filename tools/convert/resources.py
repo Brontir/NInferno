@@ -16,23 +16,30 @@ VISION_RESOURCES = ("preprocessor_config.json", "video_preprocessor_config.json"
 
 
 def token_domain(
-    tokenizer: dict, config: dict, vocab_size: int
+    tokenizer: dict, config: dict, vocab_size: int, beyond: dict[int, str] | None = None
 ) -> tuple[int, tuple[int, ...]]:
+    """An added token past the embedding table is outside the domain (recorded in `beyond`):
+    Gemma 3 1B's multimodal tokenizer defines <image_soft_token> at 262144 over a 262144-row
+    table. The vocabulary proper must fit the table."""
     ids: dict[int, str] = {}
     special: dict[int, bool] = {}
+    beyond = {} if beyond is None else beyond
 
-    def add(index: object, content: object) -> None:
+    def add(index: object, content: object, added: bool = True) -> bool:
         if (
             type(index) is not int
-            or not 0 <= index < vocab_size
+            or index < 0
+            or (not added and index >= vocab_size)
             or not isinstance(content, str)
         ):
             raise ValueError(
                 f"invalid tokenizer entry id={index!r}, content={content!r}"
             )
-        if index in ids and ids[index] != content:
+        table = ids if index < vocab_size else beyond
+        if index in table and table[index] != content:
             raise ValueError(f"tokenizer resources disagree about token {index}")
-        ids[index] = content
+        table[index] = content
+        return index < vocab_size
 
     def add_special(index: int, token: dict) -> None:
         flag = token.get("special", False)
@@ -49,14 +56,14 @@ def token_domain(
     if not isinstance(vocabulary, dict):
         raise ValueError("tokenizer model must provide a vocabulary mapping")
     for token, index in vocabulary.items():
-        add(index, token)
+        add(index, token, added=False)
     for token in tokenizer.get("added_tokens", []):
-        add(token["id"], token["content"])
-        add_special(token["id"], token)
+        if add(token["id"], token["content"]):
+            add_special(token["id"], token)
     for raw_id, token in config.get("added_tokens_decoder", {}).items():
         index = int(raw_id)
-        add(index, token["content"])
-        add_special(index, token)
+        if add(index, token["content"]):
+            add_special(index, token)
     if not ids or set(ids) != set(range(max(ids) + 1)):
         raise ValueError("this tokenizer requires a contiguous public token ID domain")
     return len(ids), tuple(sorted(index for index, flag in special.items() if flag))

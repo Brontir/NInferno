@@ -1,8 +1,9 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
+#include "models/qwen3_5/program/planning/rebuild_work.h"
 #include "core/device.h"
-#include "ninfer/ops/sampling.h"
+#include "ninferno/ops/sampling.h"
 
 #include <algorithm>
 #include <array>
@@ -16,7 +17,7 @@
 #include <utility>
 #include <variant>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 PendingBatch ProgramImpl::wrap_pending(std::span<const std::uint32_t> lanes,
                                        const runtime::BatchedGeneratedRound& round) {
@@ -40,7 +41,7 @@ PendingBatch ProgramImpl::wrap_pending(std::span<const std::uint32_t> lanes,
     pending_transaction_ = transaction;
     return ContractAccess::make_pending(
         this, transaction.id, std::span<const SequenceHandle>(handles.data(), lanes.size()),
-        round.tokens, round.row_counts, round.row_stride, round.timing);
+        round.tokens, round.row_counts, round.row_stride, round.timing, round.row_faults);
 }
 
 PrefillProgress ProgramImpl::wrap_prefill(std::uint32_t lane, runtime::PrefillStepResult step) {
@@ -54,6 +55,7 @@ PrefillProgress ProgramImpl::wrap_prefill(std::uint32_t lane, runtime::PrefillSt
         const runtime::BatchedGeneratedRound round{
             .tokens     = step.round.tokens,
             .row_counts = {},
+            .row_faults = step.round.row_faults,
             .row_stride = 1,
         };
         out.pending.emplace(wrap_pending(lanes, round));
@@ -66,6 +68,7 @@ PrefillProgress ProgramImpl::wrap_prefill(std::uint32_t lane, runtime::PrefillSt
 }
 
 StartResult ProgramImpl::start_request(MaterializationTransaction& transaction) {
+    round_after_other_work                   = true;
     std::optional<std::uint32_t> destination = transaction.destination.value;
     std::optional<std::uint32_t> continuation_index;
     try {
@@ -138,6 +141,9 @@ StartResult ProgramImpl::start_request(MaterializationTransaction& transaction) 
         return StartResult{.sequence = handle};
     } catch (...) {
         if (destination && *destination < max_concurrency) {
+            // Startup may have queued work before a later publication check failed.
+            // Complete it before returning its buffers, pages or execution row to the pools.
+            device.synchronize();
             const std::uint32_t lane = *destination;
             if (active_continuations[lane] < continuation_capacity) {
                 clear_lane_best_effort(active_sequence(lane), requests[lane]);
@@ -152,11 +158,17 @@ StartResult ProgramImpl::start_request(MaterializationTransaction& transaction) 
 
 PendingBatch ProgramImpl::decode(std::span<const SequenceHandle> members,
                                  std::span<const runtime::RoundBudget> budgets,
-                                 runtime::ExecutionTiming* failed_timing) {
+                                 runtime::ExecutionTiming* failed_timing,
+                                 runtime::TokenMaskSource* masks) {
     if (pending_transaction_ || members.empty() || members.size() > max_concurrency ||
         budgets.size() != members.size()) {
         throw std::invalid_argument("decode membership is invalid");
     }
+    struct ActiveMaskScope {
+        ProgramImpl& program;
+        ~ActiveMaskScope() { program.active_masks = nullptr; }
+    } mask_scope{*this};
+    active_masks = masks;
     std::array<std::uint32_t, kMaximumConcurrency> lanes{};
     for (std::size_t row = 0; row < members.size(); ++row) {
         if (!valid_sequence(members[row])) {
@@ -228,6 +240,7 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
     std::uint32_t row_stride, std::span<const std::optional<std::uint32_t>> prefix_execution_splits,
     runtime::ExecutionTiming* failed_timing) {
     runtime::ExecutionTimingRecorder timing(runtime::ExecutionTimingPhase::Submit, failed_timing);
+    round_after_other_work = true;
     if (pending_transaction_ || members.empty() || members.size() > max_concurrency ||
         row_stride == 0 || prefix_execution_splits.size() != members.size() ||
         row_major_tokens.size() != static_cast<std::size_t>(row_stride) * members.size()) {
@@ -246,6 +259,9 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
             throw std::logic_error("forced-token membership is duplicate or not active");
         }
         const SequenceState& sequence = active_sequence(lane);
+        // A plain request's drafter state stays where it stopped speculating (collect_ordinary),
+        // so only a drafting request's drafter frontier must have reached the target's.
+        const bool drafting = !requests[lane].plain;
         if (sequence.execution_frontier == std::numeric_limits<std::uint32_t>::max() ||
             sequence.ledger_frontier != sequence.execution_frontier + 1U ||
             sequence.ledger.size() != sequence.ledger_frontier ||
@@ -253,7 +269,8 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
             sequence.prefix_digests.size() != sequence.ledger_frontier ||
             sequence.text_kv_valid != sequence.execution_frontier ||
             (speculative_backend == SpeculativeBackend::Mtp &&
-             sequence.mtp_kv_valid != sequence.execution_frontier) ||
+             (drafting ? sequence.mtp_kv_valid != sequence.execution_frontier
+                       : sequence.mtp_kv_valid > sequence.execution_frontier)) ||
             (is_masked_draft_backend(speculative_backend) &&
              sequence.dflash_context_frontier > sequence.execution_frontier) ||
             static_cast<std::uint64_t>(sequence.execution_frontier) + row_stride > capacity) {
@@ -283,7 +300,7 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
             Tensor ids    = forced_ids.slice(0, static_cast<std::int32_t>(row * row_stride),
                                              static_cast<std::int32_t>(row_stride));
             Tensor counts = token_counts.slice(1, static_cast<std::int32_t>(lane), 1)
-                                .view({dimension(parameters.model.resources().public_token_count)});
+                                .view({model.traits().public_tokens});
             ops::increment_token_counts(ids, counts, device.stream);
         }
         work.reset();
@@ -301,8 +318,12 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
             const std::uint32_t base                 = sequence.execution_frontier;
             const std::uint32_t end                  = base + row_stride;
             const auto started                       = Clock::now();
+            // A plain request never drafts again and is never published as a continuation, so
+            // its forced tokens leave the drafter alone, as its plain decode steps do: the DFlash
+            // context it lags by may be longer than an append, whose hidden rows are gone anyway.
+            const bool drafting = !request.plain;
 
-            if (is_masked_draft_backend(speculative_backend) &&
+            if (drafting && is_masked_draft_backend(speculative_backend) &&
                 sequence.dflash_context_frontier < base) {
                 const std::array<std::uint32_t, 1> append_lanes{lane};
                 const std::array<std::uint32_t, 1> append_starts{sequence.dflash_context_frontier};
@@ -318,58 +339,52 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
                 timing.resume_submit();
             }
 
-            ensure_sequence_kv_mapped(sequence, end, backend_kv_cache() ? end : 0U);
+            ensure_sequence_kv_mapped(sequence, end, drafting && backend_kv_cache() ? end : 0U);
 
             sequence.ledger.insert(sequence.ledger.end(), forced.begin(), forced.end());
             if (sequence.ledger.size() != static_cast<std::size_t>(end) + 1U) {
                 throw std::logic_error("forced-token continuation ledger has an invalid shape");
             }
 
-            if (is_masked_draft_backend(speculative_backend)) {
-                if (!dflash || !io.dflash_decode || !sequence.kv ||
+            if (drafting && is_masked_draft_backend(speculative_backend)) {
+                if (!dflash || !io.dflash_prefill || !dflash_prefill_host_ingress || !sequence.kv ||
                     (backend_kv_cache() && !sequence.kv->backend)) {
                     throw std::logic_error("DFlash forced continuation state is incomplete");
                 }
-                *dflash_host_ingress                            = {};
-                dflash_host_ingress->active_lanes[0]            = static_cast<std::int32_t>(lane);
-                const StateImageSelectors selectors             = state_selectors(sequence);
-                dflash_host_ingress->state_source_slots[0]      = selectors.source;
-                dflash_host_ingress->state_destination_slots[0] = selectors.destination;
-                dflash_host_ingress->dflash_kv_table_rows[0] =
-                    sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
-                                         : 0;
-                CUDA_CHECK(cudaMemcpyAsync(io.dflash_decode->ingress.data, dflash_host_ingress,
-                                           sizeof(qwen3_5::DFlashDecodeIngress),
-                                           cudaMemcpyHostToDevice, device.stream));
             }
 
+            // The forced tokens prefill through the prefill KV row scalars, which a later bind or
+            // another lane's prefill step may have repointed; publish this lane's rows.
+            publish_kv_rows(sequence);
             std::uint32_t cursor = base;
             while (cursor < end) {
-                const std::uint32_t count           = std::min(prefill_chunk, end - cursor);
+                const std::uint32_t count = model.prefill_call_tokens(prefill_chunk, cursor, end);
                 const StateImageSelectors selectors = state_selectors(sequence);
                 execution::PrefillContext schedule_state{
-                    {device, parameters, work, state_images->linear(),
+                    {device, model, work, *state_images,
                      replay_records ? &*replay_records : nullptr, io, prefill_hidden, prefill_chunk,
-                     proposal_head},
+                     capacity, proposal_head, draft_width, &speculation_load},
                     text_kv_view(sequence),
-                    mtp_kv_view(sequence),
+                    drafting ? mtp_kv_view(sequence) : qwen3_5::PagedKVCacheView{},
                     decoder->text_kv,
-                    decoder->mtp_cache(),
-                    dflash ? &*dflash : nullptr,
+                    drafting ? decoder->mtp_cache() : nullptr,
+                    drafting && dflash ? &*dflash : nullptr,
                     cursor,
                     nullptr,
                     nullptr,
                     selectors.source,
                     selectors.destination,
                     0,
-                    dflash_host_ingress};
-                mark_workspace_usage(speculative_backend == SpeculativeBackend::Mtp
+                    sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
+                                         : 0,
+                    dflash_prefill_host_ingress};
+                mark_workspace_usage(drafting && speculative_backend == SpeculativeBackend::Mtp
                                          ? workspace_plan.mtp_prefill
                                          : workspace_plan.text_prefill);
-                if (is_masked_draft_backend(speculative_backend)) {
+                if (drafting && is_masked_draft_backend(speculative_backend)) {
                     mark_workspace_usage(workspace_plan.dflash_context);
                 }
-                const execution::PrefillChunkResult result = execution::prefill_text_chunk(
+                const execution::PrefillChunkResult result = model.prefill_text_chunk(
                     schedule_state, sequence.ledger, count, std::nullopt, false);
                 if (result.finalized || result.processed_tokens == 0 ||
                     result.processed_tokens > count) {
@@ -377,9 +392,9 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
                 }
                 cursor += result.processed_tokens;
                 sequence.text_kv_valid = cursor;
-                if (speculative_backend == SpeculativeBackend::Mtp) {
+                if (drafting && speculative_backend == SpeculativeBackend::Mtp) {
                     sequence.mtp_kv_valid = cursor;
-                } else if (is_masked_draft_backend(speculative_backend)) {
+                } else if (drafting && is_masked_draft_backend(speculative_backend)) {
                     sequence.dflash_context_frontier = cursor;
                 }
                 commit_sequence_kv(sequence, sequence.text_kv_valid, backend_kv_valid(sequence));
@@ -583,6 +598,15 @@ DiscardResult ProgramImpl::abort_pending(PendingBatch&& pending) noexcept {
 }
 
 FinishResult ProgramImpl::finish(SequenceHandle sequence) noexcept {
+    return finish_terminal(sequence, false);
+}
+
+FinishResult ProgramImpl::finish_cancelled(SequenceHandle sequence) noexcept {
+    return finish_terminal(sequence, true);
+}
+
+FinishResult ProgramImpl::finish_terminal(SequenceHandle sequence, bool cancelled) noexcept {
+    round_after_other_work = true;
     FinishResult out;
     if (has_context_transaction() || pending_transaction_ || !valid_sequence(sequence)) {
         return out;
@@ -591,8 +615,107 @@ FinishResult ProgramImpl::finish(SequenceHandle sequence) noexcept {
     RequestControl& request                = requests[lane];
     SequenceState& state                   = active_sequence(lane);
     const std::uint32_t continuation_index = active_continuations[lane];
-    if (request.lifecycle != Lifecycle::Finishable) { return out; }
-    if (!request.publish_continuation) {
+    // A drafting DFlash lane's context trails its frontier by the last round's accepted tokens
+    // (the next round appends them), so a cancel between rounds publishes it as a plain lane:
+    // its checkpoints (the turn closure at the prompt's end above all) and not its endpoint.
+    bool drop_endpoint = false;
+    if (cancelled) {
+        // A cancellation at a decode boundary leaves the lane as a finished request leaves it:
+        // every committed token is in KV, recurrent state and drafter context, so it publishes
+        // the same continuation, and the conversation it consumed as its source stays reusable
+        // (otherwise a cancelled agent turn re-prefills its whole prompt). Frontiers
+        // out of step cannot publish an endpoint and stay with abort, except a DFlash context
+        // a round behind (drop_endpoint).
+        // Mid-prefill, the lane holds the prompt up to its cursor, the end of the last chunk
+        // executed: KV, recurrent state and drafter context all stand there, and only the
+        // execution frontier and rebuild work still stand at the materialization base. Brought
+        // to the cursor, the prefix publishes as any endpoint, and a resend (an agent's retry
+        // after an interrupt) continues from it instead of prefilling the prompt again. A
+        // capture offer in flight, or a cursor inside
+        // an image's tokens (whose features a later turn could not resume), keeps the abort path.
+        if (request.lifecycle == Lifecycle::Prefilling) {
+            if (!request.prefill || request.prefill->pending_capture_offer != 0 ||
+                state.state.fork_pending || !state.kv) {
+                return out;
+            }
+            const RequestControl::Prefill& prefill = *request.prefill;
+            const std::uint32_t cursor             = prefill.cursor;
+            if (cursor == 0 || cursor > prefill.prompt_tokens || state.text_kv_valid != cursor) {
+                return out;
+            }
+            for (const qwen3_5::VisionItem& item : prefill.prompt.vision_items) {
+                for (const qwen3_5::TokenSpan& span : item.token_spans) {
+                    if (span.begin < cursor && span.begin + span.count > cursor) { return out; }
+                }
+            }
+            try {
+                std::span<const std::uint32_t> rewrites =
+                    prefill.prompt.identity.rewrite_execution_frontiers;
+                state.rebuild_work = rebuild_work_at_frontier(prefill.prompt, cursor, prefill_chunk,
+                                                              prefill.capture_groups, rewrites);
+                std::uint32_t tail_begin = 0;
+                for (const CaptureGroup& group : prefill.capture_groups) {
+                    runtime_support::include_rebuild_boundary(tail_begin, group.frontier, cursor);
+                }
+                for (const std::uint32_t boundary : rewrites) {
+                    runtime_support::include_rebuild_boundary(tail_begin, boundary, cursor);
+                }
+                state.rebuild_tail_begin = tail_begin;
+                state.execution_frontier = cursor;
+            } catch (...) { return out; }
+        } else if (request.lifecycle != Lifecycle::Active &&
+                   request.lifecycle != Lifecycle::Finishable) {
+            return out;
+        }
+        const std::uint32_t frontier = state.execution_frontier;
+        if (state.text_kv_valid != frontier) { return out; }
+        if (speculative_backend == SpeculativeBackend::Mtp &&
+            (state.mtp_kv_valid + 1U < frontier || !state.tail_hidden_valid)) {
+            return out;
+        }
+        if (is_masked_draft_backend(speculative_backend) &&
+            state.dflash_context_frontier < frontier) {
+            drop_endpoint = true;
+        }
+        // As abort: the lane's last launches may still be queued.
+        try {
+            device.synchronize();
+        } catch (...) { return out; }
+    } else if (request.lifecycle != Lifecycle::Finishable) {
+        return out;
+    }
+    // Decode takes no periodic checkpoints (some servers capture one every 256 output tokens, so
+    // a cancelled or diverging turn resumes from the nearest): each one holds a full recurrent
+    // state image, and the 16-24 GB cards this targets have none to spare for them. A request's
+    // reusable points stay the prompt's end, the long anchors and this endpoint.
+    // A request that finished plainly in a speculative engine has no drafter state past its
+    // switch, so its endpoint is not a reusable continuation; its checkpoints from before the
+    // switch (the turn closure at the prompt's end, long anchors) are, and keep it published.
+    // They count only when the drafter state reached them (a request that decoded plainly from its
+    // start may not have prepared it), as a later materialization requires.
+    const bool plain_checkpoints = [&] {
+        std::uint32_t frontier = 0;
+        bool any               = false;
+        if (state.rewrite_state && *state.rewrite_state != state.state.read) {
+            frontier = state.rewrite_checkpoint.frontier;
+            any      = true;
+        }
+        for (const LongAnchorCheckpoint& anchor : state.long_anchors) {
+            frontier = std::max(frontier, anchor.frontier);
+            any      = true;
+        }
+        if (!any) { return false; }
+        if (speculative_backend == SpeculativeBackend::Mtp) {
+            return state.mtp_kv_valid + 1U >= frontier;
+        }
+        if (is_masked_draft_backend(speculative_backend)) {
+            return state.dflash_context_frontier >= frontier &&
+                   (backend_kv_cache() == nullptr || (state.kv && state.kv->backend));
+        }
+        return true;
+    }();
+    const bool without_endpoint = request.plain || drop_endpoint;
+    if (!request.publish_continuation || (without_endpoint && !plain_checkpoints)) {
         if (!clear_lane_strict(state, request)) { return out; }
         out.disposition = runtime::FinishDisposition::Released;
         out.timings     = request.timings;
@@ -636,6 +759,19 @@ FinishResult ProgramImpl::finish(SequenceHandle sequence) noexcept {
             return out;
         }
         state.endpoint_valid = true;
+        if (without_endpoint) {
+            // The continuation is published without its endpoint, as a materialization that
+            // reuses below an endpoint leaves its source: a later turn restores a checkpoint.
+            const StateImageHandle endpoint = state.state.read;
+            state.endpoint_valid            = false;
+            state.state                     = {};
+            state.tail_hidden               = {};
+            state.tail_hidden_valid         = false;
+            if (state_store->checkpoint_references(endpoint) == 0 &&
+                !state_store->release(endpoint)) {
+                return out;
+            }
+        }
         refresh_state_views(state);
         text_kv_addresses->set_checkpoint_requirement(state.kv->text, state.execution_frontier);
         if (state.kv->backend) {
@@ -650,6 +786,7 @@ FinishResult ProgramImpl::finish(SequenceHandle sequence) noexcept {
     unbind_sequence_kv(state);
     request.active_resources                    = {};
     request.optional_resources                  = {};
+    request.prefill.reset(); // a lane settled mid-prefill leaves its staged prompt behind
     request.lifecycle                           = Lifecycle::Empty;
     request.pending                             = {};
     continuation_slots[continuation_index].role = ContinuationSlotRole::Catalogued;
@@ -666,6 +803,7 @@ FinishResult ProgramImpl::finish(SequenceHandle sequence) noexcept {
 }
 
 AbortResult ProgramImpl::abort(SequenceHandle sequence) noexcept {
+    round_after_other_work = true;
     AbortResult out;
     if (has_context_transaction() || pending_transaction_ || !valid_sequence(sequence)) {
         return out;
@@ -675,6 +813,16 @@ AbortResult ProgramImpl::abort(SequenceHandle sequence) noexcept {
     if (request.lifecycle == Lifecycle::Pending || request.lifecycle == Lifecycle::Empty) {
         return out;
     }
+    // A non-final prefill step returns without synchronizing, so a cancelled lane's last chunk and
+    // its table copies may still be queued. The copies read the pinned shadow row when they run,
+    // and the lane's next request rewrites that row: the chunk would write its KV through the next
+    // request's page table. Drain the stream first, as every other path that frees a lane does;
+    // the drain also settles uploads and initialization a cancellation can arrive before. A
+    // failed drain is a failed device: the sequence stays unconsumed, and the Engine answers the
+    // failure as the device's (a synchronization reports it) instead of terminating here.
+    try {
+        device.synchronize();
+    } catch (...) { return out; }
     SequenceState& state = active_sequence(lane);
     if (!clear_lane_strict(state, request)) { return out; }
     out.timings     = request.timings;
@@ -803,4 +951,4 @@ void ProgramImpl::fail_all_cleanup() noexcept {
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

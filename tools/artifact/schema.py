@@ -15,8 +15,23 @@ ACTIVATION_POLICIES = frozenset(("A16Only", "AllowA8", "AllowA4"))
 
 
 class ArtifactError(ValueError):
-    """A directory or file does not satisfy the NInfer v3 contract."""
+    """A directory or file does not satisfy the NInferno v3 contract."""
 
+
+
+_WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                    *(f"{port}{i}" for port in ("COM", "LPT")
+                      for i in (*range(1, 10), "\u00b9", "\u00b2", "\u00b3"))}
+
+
+def portable_sibling_name(name: str) -> bool:
+    """One file in the entry's directory on every platform (as the C++ reader checks)."""
+    if name in ("", ".", "..") or name[-1] in ". ":
+        return False
+    if any(ord(c) < 0x20 or ord(c) == 0x7F or c in "/\\:<>\"|?*" for c in name):
+        return False
+    # Windows drops the spaces before a dot, so "NUL .bin" is the device too.
+    return name.split(".", 1)[0].rstrip(" ").upper() not in _WINDOWS_DEVICES
 
 def integer(value: object, label: str, *, positive: bool = False) -> int:
     minimum = 1 if positive else 0
@@ -66,6 +81,9 @@ class TensorSpec:
     shape: tuple[int, ...]
     format: str
     layout: str
+    # Source matrices stacked into this parent, each with its own NVFP4 divisor. One means the
+    # parent has a single divisor, which is every parent that is not such a stack.
+    divisors: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,10 +101,16 @@ class TensorObject:
     layout: str
     offset: int
     bytes: int
+    divisors: int = 1
     kind: ClassVar[str] = "tensor"
 
     def to_json(self) -> dict:
-        return {**asdict(self), "shape": list(self.shape), "kind": self.kind}
+        out = {**asdict(self), "shape": list(self.shape), "kind": self.kind}
+        # The common parent has one divisor; saying so on every one of a hundred thousand
+        # objects would be a megabyte of directory that means nothing.
+        if self.divisors == 1:
+            del out["divisors"]
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +170,7 @@ def validate_encoding(obj: ArtifactObject) -> None:
             )
         return
     try:
-        size = encoded_size(obj.layout, obj.format, obj.shape)
+        size = encoded_size(obj.layout, obj.format, obj.shape, obj.divisors)
         alignment = get_layout(obj.layout).alignment
     except (TypeError, ValueError) as error:
         raise ArtifactError(f"{obj.id}: {error}") from error
@@ -171,10 +195,12 @@ def plan_objects(specs: Sequence[ObjectSpec]) -> tuple[ArtifactObject, ...]:
             dims = shape(spec.shape, name)
             try:
                 start = align_up(offset, get_layout(spec.layout).alignment)
-                size = encoded_size(spec.layout, spec.format, dims)
+                size = encoded_size(spec.layout, spec.format, dims, spec.divisors)
             except (TypeError, ValueError) as error:
                 raise ArtifactError(f"{name}: {error}") from error
-            obj = TensorObject(name, dims, spec.format, spec.layout, start, size)
+            obj = TensorObject(
+                name, dims, spec.format, spec.layout, start, size, spec.divisors
+            )
         elif isinstance(spec, ResourceSpec):
             obj = ResourceObject(name, spec.encoding, offset, spec.bytes)
         else:
@@ -196,7 +222,7 @@ def _parse_object(value: object) -> ArtifactObject:
     common = {"id", "kind", "offset", "bytes"}
     kind = value.get("kind")
     if kind == "tensor":
-        members(value, common | {"shape", "format", "layout"}, set(), "tensor")
+        members(value, common | {"shape", "format", "layout"}, {"divisors"}, "tensor")
     elif kind == "resource":
         members(value, common | {"encoding"}, set(), "resource")
     else:
@@ -214,6 +240,7 @@ def _parse_object(value: object) -> ArtifactObject:
         identifier(value["layout"], name),
         offset,
         size,
+        integer(value.get("divisors", 1), f"{name} divisors", positive=True),
     )
 
 
@@ -272,7 +299,7 @@ def _files(values: object, entry_name: str | None) -> tuple[FileRecord, ...]:
                 raise ArtifactError("files[0].path must be null")
         else:
             name = identifier(name, f"files[{index}].path")
-            if name in (".", "..") or "/" in name or "\\" in name or name in seen:
+            if not portable_sibling_name(name) or name in seen:
                 raise ArtifactError(
                     f"files[{index}]: invalid or duplicate sibling filename {name!r}"
                 )

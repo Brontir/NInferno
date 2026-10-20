@@ -756,6 +756,12 @@ struct raised_exception : public std::exception {
     const char* what() const noexcept override { return message.c_str(); }
 };
 
+// raise_exception() called by the template itself: its message is the template author's words
+// for the caller, so it passes through without the source-location trace.
+struct template_raised_exception : public raised_exception {
+    using raised_exception::raised_exception;
+};
+
 // Used to rethrow exceptions with modified messages
 struct rethrown_exception : public std::exception {
     std::string message;

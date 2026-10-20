@@ -1,4 +1,4 @@
-// ninfer::ops::detail - asymmetric FP8-K/NVFP4-V append launch ownership.
+// ninferno::ops::detail - asymmetric FP8-K/NVFP4-V append launch ownership.
 #include "ops/kv_cache/append/launch.h"
 
 #include "core/device.h"
@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr int kBlock = 256;
@@ -20,7 +20,7 @@ void launch_k8v4_for(const Tensor& k, const Tensor& v, const Tensor& positions, 
     auto* cache_v     = static_cast<std::uint8_t*>(cache.v_pages.data);
     auto* scale_k     = static_cast<__half*>(cache.k_scale_pages.data);
     auto* scale_v     = static_cast<std::uint8_t*>(cache.v_scale_pages.data);
-    if (tokens >= 128 && Geometry::KVHeads == 2) {
+    if (tokens >= kKVCacheAppendPageTileMinTokens && Geometry::KVHeads == 2) {
         constexpr int TokensPerTile = 8;
         const int max_tiles         = div_up(tokens + TokensPerTile - 1, TokensPerTile);
         const dim3 grid(static_cast<unsigned>(max_tiles), static_cast<unsigned>(Geometry::KVHeads));
@@ -69,6 +69,26 @@ void kv_cache_append_k8v4_batch_launch(const Tensor& k, const Tensor& v, const T
             .table_rows   = static_cast<const std::int32_t*>(table_rows.data),
             .table_stride = cache.block_tables.ne[0],
         };
+        if (k.ne[3] > 1) {
+            const auto append = [&]<class G>() {
+                const dim3 grid(div_up(k.ne[2] * G::KVHeads, 8), 1, k.ne[3]);
+                kv_cache_append_full_k8v4_kernel<G, PagedKVBatchMetadata<Masked>, true>
+                    <<<grid, kBlock, 0, stream>>>(
+                        static_cast<const __nv_bfloat16*>(k.data),
+                        static_cast<const __nv_bfloat16*>(v.data),
+                        static_cast<const std::int32_t*>(positions.data), metadata,
+                        static_cast<std::uint8_t*>(cache.k_pages.data),
+                        static_cast<std::uint8_t*>(cache.v_pages.data),
+                        static_cast<__half*>(cache.k_scale_pages.data),
+                        static_cast<std::uint8_t*>(cache.v_scale_pages.data), k.ne[2]);
+            };
+            if (k.ne[1] == 4)
+                append.template operator()<KVCacheAppendD256Kv4>();
+            else
+                append.template operator()<KVCacheAppendD256Kv2>();
+            CUDA_CHECK(cudaGetLastError());
+            return;
+        }
         dispatch_k8v4(k, v, positions, cache, metadata, stream);
     };
     if (valid_columns.data == nullptr) {
@@ -78,4 +98,4 @@ void kv_cache_append_k8v4_batch_launch(const Tensor& k, const Tensor& v, const T
     }
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

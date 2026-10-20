@@ -1,7 +1,7 @@
 #pragma once
 
 #include "models/qwen3_5/model.h"
-#include "ninfer/ops/weight_input.h"
+#include "ninferno/ops/weight_input.h"
 
 #include <array>
 #include <memory>
@@ -11,7 +11,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 
 using LinearParameters = ops::SingleProjectionWeight;
 
@@ -23,11 +23,21 @@ using LinearParameters = ops::SingleProjectionWeight;
 }
 
 struct DenseParameters {
-    LinearParameters gate_up;
+    LinearParameters gate_up; // one [2I, H] parent; unused when split_gate_up is set
     LinearParameters down;
+    // Gate and up in separate parents (formats differ): [gate; up] through the generic segmented
+    // projection, then silu_mul.
+    std::optional<ops::SegmentedProjectionWeights> split_gate_up;
 };
 
-using FfnParameters = std::variant<DenseParameters, ops::SparseMoeWeights>;
+// A MoE layer SparseMoe does not admit (a GGUF's K-/i-quant expert banks, another geometry): the
+// generic moe Op.
+struct GenericMoeParameters {
+    ops::MoeWeights weights;
+    ops::MoeConfig config;
+};
+
+using FfnParameters = std::variant<DenseParameters, ops::SparseMoeWeights, GenericMoeParameters>;
 
 struct AttentionParameters {
     ops::ProjectionWeights projection;
@@ -40,6 +50,14 @@ struct GdnParameters {
     ops::ProjectionWeights control;
     Tensor a_log, dt_bias, convolution, norm;
     LinearParameters output;
+};
+
+// Where a sparse MoE call reads its routed experts under MoE expert offload
+// (models/common/expert_offload.h): null residency when off.
+struct ExpertPlacement {
+    ExpertResidency* residency = nullptr;
+    std::int64_t experts       = 0;
+    std::int64_t top_k         = 0;
 };
 
 struct BlockParameters {
@@ -57,7 +75,9 @@ struct TextParameters {
 };
 
 struct MtpProjectionParameters {
-    LinearParameters packed;
+    // Q, K, gate, V as one parent; absent when a published checkpoint stores them in separate
+    // parents (a GGUF nextn block: Q6_K attn_q, Q8_0 attn_k/attn_v), which the dense rows serve.
+    std::optional<LinearParameters> packed;
     // Dense MTP projects K/V and Q/gate independently in its incremental path.
     // MoE MTP uses its existing complete-parent Attention projection.
     std::optional<std::array<LinearParameters, 4>> rows;
@@ -102,6 +122,9 @@ struct DynamicConvParameters {
 struct DraftBlockParameters {
     Tensor input_norm, post_attention_norm;
     LinearParameters query_key_value, context_key, context_value;
+    // Query/key/value as slices of their parents: the generic projection of a drafter whose
+    // matrices are not the fused Q8 profile (a published GGUF's Q4_0).
+    ops::SegmentedProjectionWeights query_key_value_bank;
     Tensor query_norm, key_norm;
     LinearParameters output;
     DenseParameters mlp;
@@ -110,7 +133,7 @@ struct DraftBlockParameters {
 
 struct SelectorParameters {
     LinearParameters hidden_projection;
-    Tensor predecessor_codebook, successor_codebook;
+    Weight predecessor_codebook, successor_codebook;
 };
 
 struct DraftParameters {
@@ -139,6 +162,7 @@ public:
     Parameters& operator=(Parameters&&)      = delete;
 
     const Model& model;
+    ExpertPlacement experts;
     TextParameters text;
     std::optional<MtpParameters> mtp;
     std::optional<VisionParameters> vision;
@@ -146,4 +170,4 @@ public:
     std::optional<ProposalParameters> proposal;
 };
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

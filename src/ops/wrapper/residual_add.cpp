@@ -1,34 +1,16 @@
-// ninfer::ops - residual_add wrapper: implements the public api, validates parameters, and
+// ninferno::ops - residual_add wrapper: implements the public api, validates parameters, and
 // dispatches to the launcher. Host-compiled; never includes the kernel header.
 // See docs/op-development.md §2.
-#include "ninfer/ops/residual_add.h"
+#include "ninferno/ops/residual_add.h"
 
+#include "ops/common/tensor_checks.h"
 #include "ops/launcher/residual_add.h" // detail::residual_add_launch
 
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 
-namespace ninfer::ops {
-namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t) {
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument("residual_add: y/x dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { return 0; }
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("residual_add: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
-
-} // namespace
-
+namespace ninferno::ops {
 void residual_add(const Tensor& y, Tensor& x, cudaStream_t stream) {
     if (y.dtype != DType::BF16 || x.dtype != DType::BF16) {
         throw std::invalid_argument("residual_add: y/x must be BF16");
@@ -38,7 +20,7 @@ void residual_add(const Tensor& y, Tensor& x, cudaStream_t stream) {
             throw std::invalid_argument("residual_add: y/x shapes must match");
         }
     }
-    if (numel_allow_zero(x) == 0) { return; }
+    if (numel_allow_zero(x, "residual_add", "x") == 0) { return; }
     if (!y.is_contiguous() || !x.is_contiguous()) {
         throw std::invalid_argument("residual_add: y/x must be contiguous");
     }
@@ -49,4 +31,4 @@ void residual_add(const Tensor& y, Tensor& x, cudaStream_t stream) {
     detail::residual_add_launch(y, x, stream); // single variant -> direct dispatch
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

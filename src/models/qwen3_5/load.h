@@ -6,12 +6,12 @@
 #include <memory>
 #include <span>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 class Reader;
 struct ParameterReference;
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 // Cold load plan borrows its Reader until materialization. Its selected Host bytes and parsed
 // resources already have owners; no Program or device allocation is needed for plan_load.
@@ -34,16 +34,19 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     explicit LoadPlan(std::unique_ptr<Impl> impl);
-    friend LoadPlan plan_load(const artifact::Reader&, LoadOptions);
+    friend LoadPlan plan_load(const artifact::Reader&, LoadOptions, const MoeOffloadOptions&);
     friend std::unique_ptr<Model> materialize_model(LoadPlan&&, DeviceContext&,
                                                     const StartupObserver*);
 };
 
-[[nodiscard]] LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options = {});
+// `offload`: the routed experts materialized to Host groups (MoE expert offload,
+// artifact/expert_groups.h).
+[[nodiscard]] LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options = {},
+                                 const MoeOffloadOptions& offload = {});
 [[nodiscard]] std::unique_ptr<Model> materialize_model(LoadPlan&& plan, DeviceContext& device,
                                                        const StartupObserver* observer = nullptr);
 [[nodiscard]] std::unique_ptr<Model> load_model(const std::filesystem::path& path,
                                                 LoadOptions options, DeviceContext& device,
                                                 const StartupObserver* observer = nullptr);
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one NInfer CLI messages file to an already-running ninfer-serve instance."""
+"""Send one NInferno CLI messages file to an already-running ninferno-serve instance."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.ninfer_serve.client import NInferServeClient, ProtocolRequest, ServeProtocolError
+from tools.ninferno_serve.client import NInfernoServeClient, ProtocolRequest, ServeProtocolError
 from tools.streaming_http.client import HttpClientError
 
 
@@ -43,22 +43,22 @@ def load_cli_messages(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, 
     return root, tools
 
 
-def _media_source(part: dict[str, Any], kind: str, where: str) -> tuple[str, str | None]:
+def _media_source(part: dict[str, Any], kind: str, where: str) -> str:
     direct = part.get(kind)
     if isinstance(direct, str) and direct:
-        return direct, None
+        return direct
 
     field = f"{kind}_url"
     value = part.get(field)
     if isinstance(value, str) and value:
-        return value, None
+        return value
     if isinstance(value, dict):
         url = value.get("url")
         if isinstance(url, str) and url:
             detail = value.get("detail") if kind == "image" else None
             if detail is not None and detail != "auto":
                 raise RuntimeError(f"{where} image detail must be omitted or 'auto'")
-            return url, detail
+            return url
     raise RuntimeError(f"{where} has no {kind} source")
 
 
@@ -109,7 +109,7 @@ def _convert_content_part(
         return dict(part)
 
     if kind in {"image", "image_url"} or "image" in part or "image_url" in part:
-        source, _ = _media_source(part, "image", where)
+        source = _media_source(part, "image", where)
         url = _as_data_uri(source, "image", part.get("media_type"), media_root, where)
         result = {
             key: value
@@ -120,7 +120,7 @@ def _convert_content_part(
         return result
 
     if kind in {"video", "video_url"} or "video" in part or "video_url" in part:
-        source, _ = _media_source(part, "video", where)
+        source = _media_source(part, "video", where)
         url = _as_data_uri(source, "video", part.get("media_type"), media_root, where)
         result = {
             key: value
@@ -161,7 +161,7 @@ def normalize_base_url(base_url: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("messages", type=Path, help="NInfer CLI --messages JSON file")
+    parser.add_argument("messages", type=Path, help="NInferno CLI --messages JSON file")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--model", required=True, help="public model ID configured by the server")
     parser.add_argument("--max-tokens", type=int, default=1024)
@@ -237,7 +237,7 @@ def main() -> int:
         stream=False,
     )
     try:
-        client = NInferServeClient(normalize_base_url(args.base_url), args.timeout, api_key)
+        client = NInfernoServeClient(normalize_base_url(args.base_url), args.timeout, api_key)
         result = client.prepare(request).execute()
     except (HttpClientError, ServeProtocolError, OSError) as error:
         print(f"send_to_serve: request failed: {error}", file=sys.stderr)

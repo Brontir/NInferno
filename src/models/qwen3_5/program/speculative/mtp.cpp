@@ -1,15 +1,17 @@
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/speculative_round.h"
+#include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "models/qwen3_5/program/graph_execution.h"
 #include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/program/context.h"
 #include "core/nvtx.h"
-#include "ninfer/ops/mtp_round.h"
-#include "ninfer/ops/scatter.h"
-#include "ninfer/ops/scalar.h"
+#include "ninferno/ops/mtp_round.h"
+#include "ninferno/ops/scatter.h"
+#include "ninferno/ops/scalar.h"
 #include <cuda_runtime.h>
 #include <stdexcept>
+#include <utility>
 
-namespace ninfer::models::qwen3_5::execution {
+namespace ninferno::models::qwen3_5::execution {
 void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
                             const Tensor& previous_hidden, std::int32_t position,
                             std::span<const std::int32_t> rope_position, bool build_proposal,
@@ -21,10 +23,11 @@ void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
         throw std::invalid_argument("MTP bridge requires one three-axis rope position");
     }
     state.execution.work.reset();
-    TextContext card(state.execution.device, state.execution.parameters, state.execution.work,
-                     state.text_kv, state.execution.linear_attention, state.execution.io,
-                     state.execution.prefill_hidden, state.execution.prefill_chunk,
-                     state.text_kv_base, state.mtp_kv, &state.text_cache, state.mtp_cache);
+    TextContext card(state.execution.device, qwen3_5::detail::qwen_parameters(state.execution),
+                     state.execution.work, state.text_kv, state.execution.state_images.linear(),
+                     state.execution.io, state.execution.prefill_hidden,
+                     state.execution.prefill_chunk, state.text_kv_base, state.mtp_kv,
+                     &state.text_cache, state.mtp_cache);
     configure_text_card(card, state.execution, state.sampling, state.state_source_slot,
                         state.state_destination_slot, state.mtp_proposal_extent);
 
@@ -70,8 +73,10 @@ void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
 auto mtp_decode_batch_body(MtpBatchContext& state, std::int32_t batch_size, std::uint32_t k,
                            MtpCausalAttentionEnvelopes envelopes) {
     return [&state, batch_size, k, envelopes] {
+        const std::uint32_t depth = state.draft_depth == 0 ? k : state.draft_depth;
         if (batch_size <= 0 || batch_size > static_cast<std::int32_t>(kMaximumConcurrency) ||
-            k == 0 || k > kMtpDecodeMaximumDrafts) {
+            k == 0 || k > kMtpDecodeMaximumDrafts || depth > std::min(k, kMaximumMtpDraftTokens) ||
+            state.mtp_cache == nullptr) {
             throw std::logic_error("MTP decode batch state is incomplete");
         }
 
@@ -81,67 +86,39 @@ auto mtp_decode_batch_body(MtpBatchContext& state, std::int32_t batch_size, std:
                                    sizeof(qwen3_5::MtpDecodeIngress), cudaMemcpyHostToDevice,
                                    state.execution.device.stream));
 
-        TextContext card(state.execution.device, state.execution.parameters, state.execution.work,
-                         {}, state.execution.linear_attention, state.execution.io,
-                         state.execution.prefill_hidden, state.execution.prefill_chunk, 0, {},
-                         &state.text_cache, &state.mtp_cache);
-        Tensor anchors            = frame.anchors.slice(0, 0, batch_size);
-        Tensor frontiers          = frame.base_frontiers.slice(0, 0, batch_size);
-        Tensor budgets            = frame.remaining_budgets.slice(0, 0, batch_size);
-        Tensor current_extents    = frame.current_extents.slice(0, 0, batch_size);
-        Tensor target_valid       = frame.target_valid_columns.slice(0, 0, batch_size);
-        Tensor current_drafts     = frame.current_drafts.slice(1, 0, batch_size);
-        Tensor target_rope        = frame.target_rope_positions.slice(1, 0, batch_size);
-        Tensor text_rows          = frame.text_kv_table_rows.slice(0, 0, batch_size);
-        Tensor mtp_rows           = frame.mtp_kv_table_rows.slice(0, 0, batch_size);
-        Tensor state_sources      = frame.state_source_slots.slice(0, 0, batch_size);
-        Tensor state_destinations = frame.state_destination_slots.slice(0, 0, batch_size);
-        Tensor rope_deltas        = frame.rope_deltas.slice(0, 0, batch_size);
-        Tensor verify_ids         = frame.verify_ids.slice(1, 0, batch_size);
-        Tensor target_positions   = frame.target_positions.slice(1, 0, batch_size);
-        Tensor target_tokens      = frame.target_argmax.slice(1, 0, batch_size);
-        Tensor target_logits      = frame.target_logits.slice(2, 0, batch_size);
-        Tensor target_hidden      = frame.target_hidden.slice(2, 0, batch_size);
-        Tensor selected_hidden    = frame.target_continuation_hidden.slice(1, 0, batch_size);
-        Tensor licensed_tokens    = frame.licensed_tokens.slice(1, 0, batch_size);
-        Tensor licensed_counts    = frame.licensed_counts.slice(0, 0, batch_size);
-        Tensor accepted           = frame.accepted_drafts.slice(0, 0, batch_size);
-        Tensor next_extents       = frame.next_extents.slice(0, 0, batch_size);
-        Tensor alignment_ids      = frame.alignment_ids.slice(1, 0, batch_size);
-        Tensor alignment_hidden   = frame.alignment_hidden.slice(2, 0, batch_size);
-        Tensor ar_hidden          = frame.ar_hidden.slice(1, 0, batch_size);
-        Tensor next_hidden        = frame.next_hidden.slice(1, 0, batch_size);
-        Tensor ar_positions       = frame.ar_positions.slice(0, 0, batch_size);
-        Tensor ar_rope_positions  = frame.ar_rope_positions.slice(0, 0, batch_size);
-        Tensor ar_valid_columns   = frame.ar_valid_columns.slice(0, 0, batch_size);
-        Tensor next_drafts        = frame.next_drafts.slice(0, 0, batch_size);
+        TextContext card(state.execution.device, qwen3_5::detail::qwen_parameters(state.execution),
+                         state.execution.work, {}, state.execution.state_images.linear(),
+                         state.execution.io, state.execution.prefill_hidden,
+                         state.execution.prefill_chunk, 0, {}, &state.text_cache, state.mtp_cache);
+        // The frame's first batch_size rows.
+        qwen3_5::MtpDecodeState fb = frame.rows(batch_size);
 
-        ops::speculative_prepare_verify_inputs(anchors, current_drafts, frontiers, current_extents,
-                                               verify_ids, target_positions,
-                                               state.execution.device.stream);
+        ops::speculative_prepare_verify_inputs(fb.anchors, fb.current_drafts, fb.base_frontiers,
+                                               fb.current_extents, fb.verify_ids,
+                                               fb.target_positions, state.execution.device.stream);
         {
             nvtx::ScopedRange target_range(nvtx::Name::DecodeMtpTarget, nvtx::Category::Mtp,
                                            static_cast<std::uint64_t>(width) * batch_size);
             target_verify_accept(state.execution, state.continuation_hidden_store, card,
                                  TargetVerifyFrameView{
-                                     .ids                     = verify_ids,
-                                     .cache_positions         = target_positions,
-                                     .rope_positions          = target_rope,
-                                     .valid_columns           = target_valid,
-                                     .kv_table_rows           = text_rows,
-                                     .state_source_slots      = state_sources,
-                                     .state_destination_slots = state_destinations,
-                                     .target_hidden           = target_hidden,
-                                     .target_logits           = target_logits,
-                                     .target_tokens           = target_tokens,
-                                     .drafts                  = current_drafts,
-                                     .current_extents         = current_extents,
-                                     .frontiers               = frontiers,
-                                     .anchors                 = anchors,
-                                     .licensed_tokens         = licensed_tokens,
-                                     .licensed_counts         = licensed_counts,
-                                     .accepted_drafts         = accepted,
-                                     .selected_hidden         = selected_hidden,
+                                     .ids                     = fb.verify_ids,
+                                     .cache_positions         = fb.target_positions,
+                                     .rope_positions          = fb.target_rope_positions,
+                                     .valid_columns           = fb.target_valid_columns,
+                                     .kv_table_rows           = fb.text_kv_table_rows,
+                                     .state_source_slots      = fb.state_source_slots,
+                                     .state_destination_slots = fb.state_destination_slots,
+                                     .target_hidden           = fb.target_hidden,
+                                     .target_logits           = fb.target_logits,
+                                     .target_tokens           = fb.target_argmax,
+                                     .drafts                  = fb.current_drafts,
+                                     .current_extents         = fb.current_extents,
+                                     .frontiers               = fb.base_frontiers,
+                                     .anchors                 = fb.anchors,
+                                     .licensed_tokens         = fb.licensed_tokens,
+                                     .licensed_counts         = fb.licensed_counts,
+                                     .accepted_drafts         = fb.accepted_drafts,
+                                     .selected_hidden         = fb.target_continuation_hidden,
                                      .replay_records          = state.execution.replay_records,
                                      .sampling                = frame.sampling,
                                  },
@@ -150,51 +127,69 @@ auto mtp_decode_batch_body(MtpBatchContext& state, std::int32_t batch_size, std:
 
         {
             nvtx::ScopedRange draft_range(nvtx::Name::DecodeMtpDraft, nvtx::Category::Mtp,
-                                          static_cast<std::uint64_t>(k) * batch_size);
-            ops::mtp_prepare_next_round(verify_ids, anchors, accepted, frontiers, budgets,
-                                        licensed_counts, rope_deltas, alignment_ids, next_extents,
-                                        ar_positions, ar_rope_positions, ar_valid_columns,
+                                          static_cast<std::uint64_t>(depth) * batch_size);
+            // The drafter proposes `depth` drafts: its AR steps are the first depth - 1 columns.
+            const auto ar_steps    = static_cast<std::int32_t>(std::max(depth, 2U) - 1U);
+            Tensor depth_positions = fb.ar_positions.slice(1, 0, ar_steps);
+            Tensor depth_rope      = fb.ar_rope_positions.slice(1, 0, ar_steps);
+            Tensor depth_valid     = fb.ar_valid_columns.slice(1, 0, ar_steps);
+            ops::mtp_prepare_next_round(fb.verify_ids, fb.anchors, fb.accepted_drafts,
+                                        fb.base_frontiers, fb.remaining_budgets, fb.licensed_counts,
+                                        fb.rope_deltas, fb.alignment_ids, fb.next_extents,
+                                        depth_positions, depth_rope, depth_valid,
                                         static_cast<std::int32_t>(state.text_cache.max_context()),
+                                        static_cast<std::int32_t>(depth),
                                         state.execution.device.stream);
-            card.mtp_forward_decode_batch(alignment_ids, target_hidden, target_positions,
-                                          target_rope, licensed_counts, mtp_rows, envelopes.batch,
-                                          alignment_hidden);
-            ops::speculative_select_accepted_hidden(alignment_hidden, accepted, ar_hidden,
-                                                    state.execution.device.stream);
+            card.mtp_forward_decode_batch(
+                fb.alignment_ids, fb.target_hidden, fb.target_positions, fb.target_rope_positions,
+                fb.licensed_counts, fb.mtp_kv_table_rows, envelopes.batch, fb.alignment_hidden);
+            ops::speculative_select_accepted_hidden(fb.alignment_hidden, fb.accepted_drafts,
+                                                    fb.ar_hidden, state.execution.device.stream);
 
-            Tensor proposal_logits = frame.proposal_logits.slice(1, 0, batch_size);
-            Tensor draft0          = next_drafts.slice(1, 0, 1).view({batch_size});
-            card.mtp_propose_batch(ar_hidden, proposal_logits, draft0);
-            for (std::uint32_t step = 0; step + 1 < k; ++step) {
+            Tensor proposal_logits = fb.proposal_logits;
+            Tensor draft0          = fb.next_drafts.slice(1, 0, 1).view({batch_size});
+            card.mtp_propose_batch(fb.ar_hidden, proposal_logits, draft0);
+            // Each step reads one hidden buffer and writes the other, then they trade places;
+            // the last step's hidden ends in fb.ar_hidden (copied once when it lands in the other).
+            Tensor current = fb.ar_hidden;
+            Tensor spare   = fb.next_hidden;
+            for (std::uint32_t step = 0; step + 1 < depth; ++step) {
                 Tensor previous =
-                    next_drafts.slice(1, static_cast<std::int32_t>(step), 1).view({batch_size});
-                Tensor next =
-                    next_drafts.slice(1, static_cast<std::int32_t>(step + 1), 1).view({batch_size});
-                Tensor position =
-                    ar_positions.slice(1, static_cast<std::int32_t>(step), 1).view({1, batch_size});
-                Tensor rope = ar_rope_positions.slice(1, static_cast<std::int32_t>(step), 1)
+                    fb.next_drafts.slice(1, static_cast<std::int32_t>(step), 1).view({batch_size});
+                Tensor next = fb.next_drafts.slice(1, static_cast<std::int32_t>(step + 1), 1)
+                                  .view({batch_size});
+                Tensor position = fb.ar_positions.slice(1, static_cast<std::int32_t>(step), 1)
+                                      .view({1, batch_size});
+                Tensor rope = fb.ar_rope_positions.slice(1, static_cast<std::int32_t>(step), 1)
                                   .view({1, batch_size});
-                Tensor valid = ar_valid_columns.slice(1, static_cast<std::int32_t>(step), 1)
+                Tensor valid = fb.ar_valid_columns.slice(1, static_cast<std::int32_t>(step), 1)
                                    .view({batch_size});
                 Tensor previous_batch = previous.view({1, batch_size});
-                Tensor hidden_batch   = ar_hidden.view(
-                    {dimension(state.execution.parameters.model.config().text.hidden_size), 1,
-                       batch_size});
-                Tensor next_hidden_batch = next_hidden.view(
-                    {dimension(state.execution.parameters.model.config().text.hidden_size), 1,
-                     batch_size});
+                Tensor hidden_batch =
+                    current.view({dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                                .model.config()
+                                                .text.hidden_size),
+                                  1, batch_size});
+                Tensor next_hidden_batch =
+                    spare.view({dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                              .model.config()
+                                              .text.hidden_size),
+                                1, batch_size});
                 card.mtp_forward_decode_batch(previous_batch, hidden_batch, position, rope, valid,
-                                              mtp_rows, envelopes.ar[step], next_hidden_batch);
-                card.mtp_propose_batch(next_hidden, proposal_logits, next);
-                CUDA_CHECK(cudaMemcpyAsync(ar_hidden.data, next_hidden.data, ar_hidden.bytes(),
+                                              fb.mtp_kv_table_rows, envelopes.ar[step],
+                                              next_hidden_batch);
+                card.mtp_propose_batch(spare, proposal_logits, next);
+                std::swap(current, spare);
+            }
+            if (current.data != fb.ar_hidden.data) {
+                CUDA_CHECK(cudaMemcpyAsync(fb.ar_hidden.data, current.data, fb.ar_hidden.bytes(),
                                            cudaMemcpyDeviceToDevice,
                                            state.execution.device.stream));
             }
         }
 
-        CUDA_CHECK(cudaMemcpyAsync(&state.host_egress, frame.egress.data,
-                                   sizeof(qwen3_5::MtpDecodeEgress), cudaMemcpyDeviceToHost,
-                                   state.execution.device.stream));
+        ops::copy_to_pinned_host(&state.host_egress, frame.egress.data,
+                                 sizeof(qwen3_5::MtpDecodeEgress), state.execution.device.stream);
     };
 }
 
@@ -211,4 +206,4 @@ void mtp_decode_batch(MtpBatchContext& state, std::int32_t batch_size, std::uint
     run_prepared(state, executable, body);
 }
 
-} // namespace ninfer::models::qwen3_5::execution
+} // namespace ninferno::models::qwen3_5::execution

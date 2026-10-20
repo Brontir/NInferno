@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,7 @@ def main() -> None:
     if files:
         subprocess.run(
             [
-                "/usr/bin/clang-format",
+                shutil.which("clang-format") or "clang-format",
                 "-i",
                 "--style=file",
                 "--fallback-style=none",

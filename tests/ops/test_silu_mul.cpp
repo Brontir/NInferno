@@ -1,4 +1,4 @@
-#include "ninfer/ops/silu_mul.h"
+#include "ninferno/ops/silu_mul.h"
 #include "ops/op_tester.h"
 
 #include <algorithm>
@@ -7,8 +7,8 @@
 #include <iostream>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 

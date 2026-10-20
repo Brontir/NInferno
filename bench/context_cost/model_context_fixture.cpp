@@ -6,7 +6,8 @@
 #include "core/host_kv_arena.h"
 #include "core/layout.h"
 #include "core/paged_kv_cache.h"
-#include "ninfer/engine.h"
+#include "core/units.h"
+#include "ninferno/engine.h"
 
 #include <cuda_runtime.h>
 
@@ -27,10 +28,10 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::bench::context_cost {
+namespace ninferno::bench::context_cost {
 namespace {
 
-constexpr std::uint64_t kMiB                 = 1ULL << 20U;
+using ninferno::kMiB;
 constexpr std::uint32_t kMaximumFixturePages = 1024;
 constexpr std::uint32_t kMaximumCopyRuns     = 8;
 
@@ -62,9 +63,9 @@ void fill_transfer_payload(void* destination, std::size_t bytes, std::uint64_t s
 
 std::filesystem::path existing_input_path(const std::filesystem::path& path) {
     if (std::filesystem::exists(path)) { return path; }
-#ifdef NINFER_SOURCE_DIR
+#ifdef NINFERNO_SOURCE_DIR
     if (path.is_relative()) {
-        const std::filesystem::path source = std::filesystem::path(NINFER_SOURCE_DIR) / path;
+        const std::filesystem::path source = std::filesystem::path(NINFERNO_SOURCE_DIR) / path;
         if (std::filesystem::exists(source)) { return source; }
     }
 #endif
@@ -445,7 +446,7 @@ PromptInput image_prompt(int dimension) {
 
 ArtifactProfile inspect_artifact(const std::filesystem::path& artifact_path) {
     const std::filesystem::path path = existing_input_path(artifact_path);
-    ninfer::artifact::Reader reader(path);
+    ninferno::artifact::Reader reader(path);
     return ArtifactProfile{.path = path};
 }
 
@@ -621,4 +622,4 @@ const char* transfer_direction_name(TransferDirection direction) noexcept {
     return "unknown";
 }
 
-} // namespace ninfer::bench::context_cost
+} // namespace ninferno::bench::context_cost

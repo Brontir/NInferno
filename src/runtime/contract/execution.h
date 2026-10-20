@@ -5,7 +5,7 @@
 #include <compare>
 #include <span>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 struct LaneId {
     std::uint32_t value = 0;
@@ -51,11 +51,14 @@ struct BeginSummary {
 
 struct GeneratedRound {
     std::span<const TokenId> tokens;
+    // Per row, nonzero when the round computed a NaN or an infinity for it (empty: none).
+    std::span<const std::uint8_t> row_faults;
 };
 
 struct BatchedGeneratedRound {
     std::span<const TokenId> tokens;
     std::span<const std::int32_t> row_counts;
+    std::span<const std::uint8_t> row_faults;
     std::uint32_t row_stride = 1;
     ExecutionTiming timing;
 };
@@ -72,4 +75,4 @@ struct RoundBudget {
     std::uint32_t generated_tokens_remaining = 0;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

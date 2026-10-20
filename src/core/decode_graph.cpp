@@ -1,21 +1,16 @@
 #include "core/decode_graph.h"
+#include "core/cuda_error.h"
 
 #include "core/device.h"
 #include "core/nvtx.h"
+#include "core/units.h"
 
 #include <cstdio>
 #include <stdexcept>
 #include <string>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
-
-void log_cuda_error(const char* op, cudaError_t err) noexcept {
-    if (err != cudaSuccess) {
-        std::fprintf(stderr, "CUDA cleanup failed during %s: %s: %s\n", op, cudaGetErrorName(err),
-                     cudaGetErrorString(err));
-    }
-}
 
 void destroy_graph_exec(cudaGraphExec_t& exec) noexcept {
     if (exec != nullptr) {
@@ -108,13 +103,51 @@ void DecodeGraphExecutable::instantiate(const DecodeGraphDefinition& definition)
     reset();
 
     cudaGraphExec_t exec  = nullptr;
-    const cudaError_t err = cudaGraphInstantiate(&exec, definition.graph_, 0);
+    // The nodes' own priorities (an urgent launch's, pdl::launch), not the launch stream's.
+    const cudaError_t err = cudaGraphInstantiateWithFlags(&exec, definition.graph_,
+                                                          cudaGraphInstantiateFlagUseNodePriority);
     if (err != cudaSuccess) {
         destroy_graph_exec(exec);
-        CUDA_CHECK(err);
+        // Instantiation failures are not sticky: clear the error so the context stays usable and
+        // the caller can report or recover (a smaller context, chunk or draft depth).
+        (void)cudaGetLastError();
+        std::string message = std::string("CUDA Graph instantiation failed: ") +
+                              cudaGetErrorName(err) + ": " + cudaGetErrorString(err);
+        if (err == cudaErrorMemoryAllocation) {
+            std::size_t free_bytes = 0, total_bytes = 0;
+            if (cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess) {
+                char memory[96];
+                std::snprintf(memory, sizeof(memory), " (%.0f MiB free of %.0f MiB)",
+                              to_mib(free_bytes), to_mib(total_bytes));
+                message += memory;
+            }
+            message += ". The session left too little device memory for its captured graphs: "
+                       "use a smaller context or prefill chunk, or fewer draft tokens.";
+            throw GraphMemoryError(message);
+        }
+        throw std::runtime_error(message);
     }
     exec_ = exec;
 }
+
+namespace {
+
+// One cudaGraphExecUpdate. A rejected update is recorded as the thread's last CUDA error
+// (cudaErrorGraphExecUpdateFailure) although the context stays usable: clear it here, or the next
+// CUDA_CHECK(cudaGetLastError()) after any launch reports it as that launch's failure.
+cudaError_t exec_update(cudaGraphExec_t exec, cudaGraph_t graph,
+                        cudaGraphExecUpdateResultInfo& result) noexcept {
+    const cudaError_t err = cudaGraphExecUpdate(exec, graph, &result);
+    if (err == cudaErrorGraphExecUpdateFailure) { (void)cudaGetLastError(); }
+    return err;
+}
+
+bool rejected_update(cudaError_t err, const cudaGraphExecUpdateResultInfo& result) noexcept {
+    return err == cudaErrorGraphExecUpdateFailure ||
+           (err == cudaSuccess && result.result != cudaGraphExecUpdateSuccess);
+}
+
+} // namespace
 
 void DecodeGraphExecutable::update(const DecodeGraphDefinition& definition) {
     nvtx::ScopedRange update_range(nvtx::Name::CudaGraphUpdate, nvtx::Category::Graph);
@@ -123,12 +156,32 @@ void DecodeGraphExecutable::update(const DecodeGraphDefinition& definition) {
     }
 
     cudaGraphExecUpdateResultInfo result{};
-    const cudaError_t err = cudaGraphExecUpdate(exec_, definition.graph_, &result);
+    const cudaError_t err = exec_update(exec_, definition.graph_, result);
+    if (err != cudaSuccess && !rejected_update(err, result)) { // the context's failure
+        throw CudaError(err, "CUDA Graph executable update failed: " +
+                                 std::string(cudaGetErrorName(err)));
+    }
     if (err != cudaSuccess || result.result != cudaGraphExecUpdateSuccess) {
         throw std::runtime_error(
             "CUDA Graph executable update failed: " + std::string(cudaGetErrorName(err)) +
             " (update result " + std::to_string(static_cast<int>(result.result)) + ")");
     }
+}
+
+bool DecodeGraphExecutable::try_update(const DecodeGraphDefinition& definition) {
+    nvtx::ScopedRange update_range(nvtx::Name::CudaGraphUpdate, nvtx::Category::Graph);
+    if (!ready() || !definition.ready()) {
+        throw std::logic_error("CUDA Graph update requires a definition and executable");
+    }
+
+    cudaGraphExecUpdateResultInfo result{};
+    const cudaError_t err = exec_update(exec_, definition.graph_, result);
+    if (rejected_update(err, result)) { return false; }
+    if (err != cudaSuccess) { // the context's failure, not the definition's
+        throw CudaError(err, "CUDA Graph executable update failed: " +
+                                 std::string(cudaGetErrorName(err)));
+    }
+    return true;
 }
 
 void DecodeGraphExecutable::upload(cudaStream_t stream) {
@@ -148,4 +201,4 @@ bool DecodeGraphExecutable::ready() const noexcept { return exec_ != nullptr; }
 
 void DecodeGraphExecutable::reset() noexcept { destroy_graph_exec(exec_); }
 
-} // namespace ninfer
+} // namespace ninferno

@@ -1,6 +1,6 @@
 # Qwen3.5 model reference
 
-This reference describes the Qwen3.5 Dense and MoE mathematics implemented by NInfer, including
+This reference describes the Qwen3.5 Dense and MoE mathematics implemented by NInferno, including
 Text, MTP, Vision and their state semantics. The Qwen3.6 and Qwen3.8 releases used by the official
 artifacts are instances of these architectures. Their release names do not choose another graph.
 
@@ -101,7 +101,7 @@ A simple split at the middle of the source matrix would change the model.
 The Dense groupwise attention recipe packs Q/K into Q4 and gate/V into Q5. A supported FP8 or NVFP4
 recipe can pack their union into one parent. The same four logical roles then become either the
 two-weight or one-weight native fused call. Dense gate/up and MoE expert banks follow their finite
-packing and execution rules. [Storage layouts](storage-layouts.md#8-logical-views-and-native-operands)
+packing and execution rules. [Storage layouts](storage-layouts.md#9-logical-views-and-native-operands)
 describes the difference between logical views and native operand restrictions.
 
 `tie_word_embeddings` records a training relationship; bindings choose whether physical data is
@@ -158,8 +158,8 @@ The logical cached values are normalized/rotated K and projected V. Prefill appe
 uses causal attention; decode appends one column and attends over the visible prefix.
 
 Paging and KV quantization are storage choices. Their contracts are
-[`kv_cache_append.h`](../../include/ninfer/ops/kv_cache_append.h),
-[`softmax_attention.h`](../../include/ninfer/ops/softmax_attention.h) and
+[`kv_cache_append.h`](../../include/ninferno/ops/kv_cache_append.h),
+[`softmax_attention.h`](../../include/ninferno/ops/softmax_attention.h) and
 [paged KV cache](paged-kv-cache.md).
 
 ### Gated DeltaNet
@@ -183,6 +183,12 @@ S     = Sbar + u outer k
 o     = (S @ q) * (1/sqrt(Dk))
 y     = out_projection(plain_rmsnorm(o, gdn_norm) * SiLU(z))
 ```
+
+With `linear_output_head_order: "tiled"` in the text config (a GGUF K-quant `out_projection` kept as
+published: llama.cpp stores its columns with value head `g * per + j` at head position
+`j * key_heads + g`, and a 256-value superblock spans two value heads under one `d`, so no
+same-format repack is lossless), the gated norm's output is regrouped into that order
+(`regroup_bf16_heads`, exact copies) before the projection. Absent, the order is grouped.
 
 The delta error uses the already-decayed state. GDN controls and recurrent state are FP32. The Op
 receives raw BF16 q/k; normalization precision and the chunked/recurrent implementation are private
@@ -251,7 +257,18 @@ implementation own chunk-boundary and continuation alignment.
 
 An optional proposal head supplies an indexed vocabulary subset for draft prediction. Its row map
 converts proposal rows to actual token IDs. Full target verification continues to use the full
-output head. Backend selection, draft width and proposal-head choice are fixed at startup.
+output head. Backend selection and proposal-head choice are fixed at startup; the draft depth is
+per request (`ExecutionOptions::speculation`), from 1 up to the engine's window, or 0 for plain
+decode. Every depth listed at start (`SpeculativeOptions::draft_tokens` and `request_draft_tokens`)
+is a launch window with its own speculative CUDA graphs, captured at start over narrowed views of
+the window-sized round frame and GDN replay records (dense `[depth + 1, batch]` layouts). A decode
+step verifies its speculating rows in one launch at the smallest window that covers the deepest of
+them (and, for DFlash, the target features a row still has to append); each row drafts at its own
+depth. Plain rows (depth 0, or a request whose acceptance watchdog tripped) run the ordinary decode
+launch in the same step, whose graphs every generation engine captures; the two launches share one
+synchronization, and the pending batch resolves the plain rows one by one and the speculative
+launch's rows in launch order. A plain row's drafter state stops at its switch: it never
+speculates again and its endpoint is not catalogued for reuse.
 
 ## Vision and multimodal positions
 
@@ -315,7 +332,7 @@ does not infer execution identity from tokenizer filenames, release names or sam
 Each StateImage contains the Text GDN state and continuation hidden. Per GDN layer, recurrent
 state has one `[Dv,Dk]` matrix per value head, and convolution history has
 `(2 * key_width + value_width) * (kernel_width - 1)` values. Program sizes Device/Host StateImage
-capacity under the [context resource contract](resource-scheduling-and-context-cache.md#11-配置语义与有界性).
+capacity under the [context resource contract](resource-scheduling-and-context-cache.md#11-configuration-semantics-and-boundedness).
 ReplaySSM records are separate pending-round scratch when speculation is enabled.
 
 Text GQA KV grows with visible context. Selected MTP owns separate KV; DFlash backends own the

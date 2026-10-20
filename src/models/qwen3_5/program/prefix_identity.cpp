@@ -1,11 +1,12 @@
 #include "models/qwen3_5/program/prefix_identity.h"
+#include "core/fnv.h"
 #include <algorithm>
 #include <bit>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 namespace {
 
 bool same_grid(const VisionGrid& left, const VisionGrid& right) {
@@ -56,8 +57,8 @@ bool prefix_item_count(const std::vector<VisionItem>& items, std::size_t tokens,
 
 using DigestPair = std::array<std::uint64_t, 2>;
 
-constexpr DigestPair kDigestOffset{1469598103934665603ULL, 7809847782465536322ULL};
-constexpr DigestPair kDigestPrime{1099511628211ULL, 14029467366897019727ULL};
+constexpr DigestPair kDigestOffset{fnv::kOffset, 7809847782465536322ULL};
+constexpr DigestPair kDigestPrime{fnv::kPrime, 14029467366897019727ULL};
 constexpr std::uint64_t kTokenDigestDomain   = 0x6e696e6665722d74ULL;
 constexpr std::uint64_t kRewriteDigestDomain = 0x6e696e6665722d72ULL;
 constexpr std::uint64_t kVisionDigestDomain  = 0x6e696e6665722d76ULL;
@@ -415,4 +416,4 @@ bool prefix_matches(const PreparedPromptData& prompt, std::span<const TokenId> r
            resident_identity.matches(prompt, count);
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "product/logging/logging.h"
 
 #include <cstdint>
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::cli {
+namespace ninferno::cli {
 
 struct Options {
     bool help_requested = false;
@@ -25,8 +25,19 @@ struct Options {
     std::uint32_t prefill_chunk  = 1024;
     int device                   = 0;
 
-    KvCacheStorage kv_cache = KvCacheStorage::BFloat16;
+    // --kv-dtype auto (or omitted): the model family chooses (EngineOptions::kv_cache_automatic).
+    std::optional<KvCacheStorage> kv_cache;
+    KvCacheStorage sliding_kv_cache = KvCacheStorage::BFloat16; // --sliding-kv-dtype
+    // --state-dtype (omitted: EngineOptions::recurrent_state_automatic).
+    std::optional<RecurrentStateStorage> recurrent_state;
+    ActivationMode activations = kDefaultActivationMode; // --activations exact|fast
+    float rope_yarn_factor     = 1.0F;                   // --rope-yarn-factor
     SpeculativeOptions speculative;
+    // --spec given explicitly (mtp|dflash|dflash2|none); otherwise the artifact's speculation
+    // profile, when it came with one, decides (--spec auto says so explicitly).
+    bool spec_explicit = false;
+    // Watchdog floor in tokens per round (0: the profile's, or off without a profile).
+    std::optional<float> acceptance_floor;
     bool enable_vision  = false;
     bool use_cuda_graph = true;
 
@@ -48,4 +59,4 @@ struct Options {
 [[nodiscard]] Options parse_options(int argc, char** argv);
 [[nodiscard]] std::string usage_text(const char* argv0);
 
-} // namespace ninfer::cli
+} // namespace ninferno::cli

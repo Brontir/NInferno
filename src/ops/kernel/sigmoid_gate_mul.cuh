@@ -1,10 +1,11 @@
 #pragma once
 
-// Implements: include/ninfer/ops/sigmoid_mul.h
+// Implements: include/ninferno/ops/sigmoid_mul.h
 // Match: contiguous BF16 inputs. Registered aligned/eight-element domains use
 // one 16-byte pack per thread; BF16x2 and scalar routes preserve correctness for
 // smaller alignments and odd tails. Sigmoid remains FP32 expf, not a fit.
 
+#include "core/pdl.cuh"
 #include "ops/common/bf16_vector.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/memory.cuh"
@@ -13,7 +14,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 inline constexpr int kSigmoidGateMulPairsPerThread = 4;
 
@@ -35,11 +36,36 @@ __global__ void sigmoid_gate_mul_scalar_kernel(const __nv_bfloat16* gate, __nv_b
 
 __launch_bounds__(256) __global__
     void sigmoid_gate_mul_bf16x8_kernel(const Bf16x8Pack* gate, Bf16x8Pack* x, std::int64_t packs) {
+    // A programmatic dependent (the attention output projection at decode) may launch now: it
+    // waits for this kernel before it reads, and streams its weights meanwhile.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
     const std::int64_t start  = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
     const std::int64_t stride = static_cast<std::int64_t>(gridDim.x) * blockDim.x;
     for (std::int64_t i = start; i < packs; i += stride) {
         const Bf16x8Pack gv = load_vec<Bf16x8Pack>(gate + i);
         Bf16x8Pack xv       = load_vec<Bf16x8Pack>(x + i);
+#pragma unroll
+        for (int pair = 0; pair < 4; ++pair) {
+            xv.pair[pair] = sigmoid_gate_mul_pair(gv.pair[pair], xv.pair[pair]);
+        }
+        store_vec(x + i, xv);
+    }
+}
+
+// The gate's columns sit `gate_stride` packs apart (its rows a slice of a wider packed
+// projection's output, [q; k; gate; v]); x is contiguous with `row_packs` packs per column.
+__launch_bounds__(256) __global__
+    void sigmoid_gate_mul_rows_bf16x8_kernel(const Bf16x8Pack* gate, std::int64_t gate_stride,
+                                             Bf16x8Pack* x, std::int64_t row_packs,
+                                             std::int64_t packs) {
+    if (threadIdx.x == 0) pdl::trigger_dependents();
+    const std::int64_t start  = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
+    const std::int64_t stride = static_cast<std::int64_t>(gridDim.x) * blockDim.x;
+    for (std::int64_t i = start; i < packs; i += stride) {
+        const std::int64_t column = i / row_packs;
+        const Bf16x8Pack gv =
+            load_vec<Bf16x8Pack>(gate + column * gate_stride + (i - column * row_packs));
+        Bf16x8Pack xv = load_vec<Bf16x8Pack>(x + i);
 #pragma unroll
         for (int pair = 0; pair < 4; ++pair) {
             xv.pair[pair] = sigmoid_gate_mul_pair(gv.pair[pair], xv.pair[pair]);
@@ -85,4 +111,4 @@ __launch_bounds__(256) __global__
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

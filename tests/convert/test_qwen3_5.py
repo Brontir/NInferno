@@ -61,7 +61,7 @@ def _config(*, moe=False):
 
 def _checkpoint(path, config, tensors):
     path.mkdir()
-    (path / "config.json").write_text(json.dumps(config))
+    (path / "config.json").write_text(json.dumps(config), encoding="utf-8")
     save_file(tensors, path / "model.safetensors")
     for role, value in {
         "tokenizer.json": {"model": {"vocab": {str(i): i for i in range(6)}}},
@@ -82,8 +82,8 @@ def _checkpoint(path, config, tensors):
             "merge_size": config.get("vision_config", {}).get("spatial_merge_size", 2),
         },
     }.items():
-        (path / role).write_text(json.dumps(value))
-    (path / "chat_template.jinja").write_text("{{ messages }}")
+        (path / role).write_text(json.dumps(value), encoding="utf-8")
+    (path / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
     return SafetensorsSource(path)
 
 
@@ -386,7 +386,7 @@ def test_rope_aliases_preserve_supported_parameters_and_reject_changed_mathemati
 def test_selected_vision_processor_geometry_is_checked_before_conversion(tmp_path):
     bad = tmp_path / "custom-processor.json"
     bad.write_text(
-        json.dumps({"patch_size": 99, "temporal_patch_size": 1, "merge_size": 2})
+        json.dumps({"patch_size": 99, "temporal_patch_size": 1, "merge_size": 2}), encoding="utf-8"
     )
     with _checkpoint(
         tmp_path / "source", _config(), {"unused": torch.ones(1)}

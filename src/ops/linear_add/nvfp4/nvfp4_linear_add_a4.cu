@@ -1,0 +1,104 @@
+#include "core/per_device.h"
+#include "core/weight.h"
+#include "ops/linear_add/nvfp4/nvfp4_linear_add_plan.h"
+
+#include "core/device.h"
+#include "core/device_class.h"
+#include "ops/linear/nvfp4/nvfp4_schedule.cuh"
+#include "ops/linear/nvfp4/nvfp4_template_launch.cuh"
+#include "ops/linear_add/nvfp4/nvfp4_linear_add_a4_tma_launch.h"
+#include "ops/linear/common/epilogue.cuh"
+
+#include <exception>
+#include <stdexcept>
+#include <type_traits>
+
+namespace ninferno::ops::detail {
+namespace {
+
+using M32N32            = Nvfp4A4MmaSchedule<32, 32, 256, 2, 4, 4, 2>;
+using M32N64            = Nvfp4A4MmaSchedule<32, 64, 256, 2, 4, 2, 2>;
+using M32N128           = Nvfp4A4MmaSchedule<32, 128, 256, 2, 4, 2, 1>;
+using M64N128           = Nvfp4A4MmaSchedule<64, 128, 256, 4, 2, 2, 1>;
+using M128N128Pipelined = Nvfp4A4MmaSchedule<128, 128, 256, 4, 2, 2, 1>;
+using M128N128Resident  = Nvfp4A4MmaSchedule<128, 128, 256, 4, 2, 1, 2>;
+
+// This projection selects its own route, so the layout the quantizer writes below must be derived
+// from the same predicate; the two are read together at the call site for that reason.
+constexpr bool uses_tma(std::int32_t tokens) { return tokens >= 1024; }
+
+// The [5120,17408] down projection at verify widths: M32N64 makes its 5120 rows 80 CTAs, fewer
+// than half of a 170-SM RTX 5090, so a verify streams the weights from part of the device.
+// Halving the tile doubles the grid, and the long K loop then wants four stages
+// (Neroued/ninfer#365: T 8..32 46 -> 40 us; same per-row K order, so the bytes do not change).
+// Where 80 CTAs already fill half the device the narrow tile only re-reads the weights.
+bool narrow_tile_fills_device() {
+    static PerDevice<bool> fills;
+    return fills.get([](int) {
+        try {
+            return device_class().sms >= 160;
+        } catch (const std::exception&) { return false; }
+    });
+}
+
+template <class Geometry, class Schedule>
+void launch_gemm(const Weight& weight, Tensor& residual, Nvfp4A4Workspace workspace,
+                 std::int32_t tokens, cudaStream_t stream) {
+    launch_nvfp4_a4_mma<Nvfp4ScheduleInstance<Schedule, Geometry::kInputRows>>(
+        nvfp4_a4_operands(weight, workspace, tokens, Nvfp4ScaleLayout::RowMajor),
+        LinearBf16Output{static_cast<__nv_bfloat16*>(residual.data), weight.n},
+        LinearResidualAddEpilogue{{static_cast<__nv_bfloat16*>(residual.data), weight.n}}, stream);
+}
+
+template <class Geometry>
+void launch_problem(const Weight& weight, Tensor& residual, Nvfp4A4Workspace workspace,
+                    std::int32_t tokens, cudaStream_t stream) {
+    if constexpr (std::is_same_v<Geometry, Nvfp4N5120K17408>) {
+        if (tokens <= 32 && narrow_tile_fills_device()) {
+            launch_gemm<Geometry, M32N32>(weight, residual, workspace, tokens, stream);
+            return;
+        }
+    }
+    if (tokens <= 64) {
+        launch_gemm<Geometry, M32N64>(weight, residual, workspace, tokens, stream);
+    } else if (tokens <= 128) {
+        launch_gemm<Geometry, M32N128>(weight, residual, workspace, tokens, stream);
+    } else if (tokens <= 192) {
+        launch_gemm<Geometry, M64N128>(weight, residual, workspace, tokens, stream);
+    } else if (tokens <= 384) {
+        launch_gemm<Geometry, M128N128Resident>(weight, residual, workspace, tokens, stream);
+    } else if (tokens <= 512) {
+        launch_gemm<Geometry, M128N128Pipelined>(weight, residual, workspace, tokens, stream);
+    } else {
+        launch_gemm<Geometry, M128N128Resident>(weight, residual, workspace, tokens, stream);
+    }
+}
+
+} // namespace
+
+void nvfp4_linear_add_a4_launch(const Tensor& x, const Weight& weight, Tensor& residual,
+                                Nvfp4A4Workspace workspace, cudaStream_t stream) {
+    const std::int32_t tokens = x.ne[1];
+    const auto layout = uses_tma(tokens) ? Nvfp4ScaleLayout::Tiled256 : Nvfp4ScaleLayout::RowMajor;
+    launch_nvfp4_a4_quantize(x, weight, workspace, layout, stream);
+    if (uses_tma(tokens)) {
+        launch_nvfp4_a4_tma_linear_add(nvfp4_a4_operands(weight, workspace, tokens, layout),
+                                       static_cast<__nv_bfloat16*>(residual.data), stream);
+        return;
+    }
+    switch (resolve_nvfp4_geometry(weight.n, weight.k)) {
+    case Nvfp4GeometryId::N5120K6144:
+        launch_problem<Nvfp4N5120K6144>(weight, residual, workspace, tokens, stream);
+        return;
+    case Nvfp4GeometryId::N5120K17408:
+        launch_problem<Nvfp4N5120K17408>(weight, residual, workspace, tokens, stream);
+        return;
+    case Nvfp4GeometryId::N14336K5120:
+    case Nvfp4GeometryId::N16384K5120:
+    case Nvfp4GeometryId::N34816K5120:
+        break;
+    }
+    throw std::invalid_argument("nvfp4 linear_add: unsupported problem");
+}
+
+} // namespace ninferno::ops::detail

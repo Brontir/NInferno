@@ -1,5 +1,6 @@
 #include "text/jinja.h"
 
+#include "text/json_depth.h"
 #include "text/unicode.h"
 
 #include <jinja/parser.h>
@@ -8,9 +9,14 @@
 #include <exception>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
-namespace ninfer::text {
+namespace ninferno::text {
 namespace {
+
+// The context is converted and rendered recursively: deeper input (a tool call's arguments in
+// history, a tool schema) is refused before it can overflow the stack.
+constexpr std::size_t kMaximumTemplateInputDepth = 256;
 
 // Interpreter error decoration must not change request cancellation/deadline errors.
 struct Interrupted {
@@ -24,8 +30,10 @@ std::string pointer_component(std::string value) {
 }
 
 jinja::value convert(const nlohmann::ordered_json& input, const std::string& pointer,
-                     const std::unordered_map<std::string, std::uint32_t>& tags, bool literal) {
+                     const std::unordered_map<std::string, std::uint32_t>& tags,
+                     const std::unordered_set<std::string>& control, bool literal) {
     using namespace jinja;
+    if (literal && control.contains(pointer)) literal = false;
     value result;
     if (input.is_null())
         result = mk_val<value_none>();
@@ -44,7 +52,8 @@ jinja::value convert(const nlohmann::ordered_json& input, const std::string& poi
     else if (input.is_array()) {
         auto array = mk_val<value_array>();
         for (std::size_t i = 0; i < input.size(); ++i) {
-            array->push_back(convert(input[i], pointer + "/" + std::to_string(i), tags, literal));
+            array->push_back(
+                convert(input[i], pointer + "/" + std::to_string(i), tags, control, literal));
         }
         result = std::move(array);
     } else if (input.is_object()) {
@@ -52,7 +61,7 @@ jinja::value convert(const nlohmann::ordered_json& input, const std::string& poi
         for (const auto& item : input.items()) {
             object->insert(mk_val<value_string>(string(item.key(), 0, literal)),
                            convert(item.value(), pointer + "/" + pointer_component(item.key()),
-                                   tags, literal));
+                                   tags, control, literal));
         }
         result = std::move(object);
     } else
@@ -90,6 +99,10 @@ JinjaTemplate::JinjaTemplate(std::string source, std::string source_name)
 TemplateOutput JinjaTemplate::render(const nlohmann::ordered_json& input,
                                      const TemplateRenderOptions& options) const {
     if (!input.is_object()) throw std::invalid_argument("Template context must be an object");
+    if (json_nests_deeper_than(input, kMaximumTemplateInputDepth)) {
+        throw std::invalid_argument("template input nests deeper than " +
+                                    std::to_string(kMaximumTemplateInputDepth) + " levels");
+    }
     if (options.checkpoint) options.checkpoint();
     try {
         jinja::context context(impl_->source);
@@ -105,12 +118,14 @@ TemplateOutput JinjaTemplate::render(const nlohmann::ordered_json& input,
         }
         std::unordered_map<std::string, std::uint32_t> tags;
         for (const auto& region : options.regions) tags.emplace(region.pointer, region.tag);
+        const std::unordered_set<std::string> control(options.control_pointers.begin(),
+                                                      options.control_pointers.end());
         for (const auto& item : input.items()) {
             const bool literal =
                 std::find(options.control_variables.begin(), options.control_variables.end(),
                           item.key()) == options.control_variables.end();
             context.set_val(item.key(), convert(item.value(), "/" + pointer_component(item.key()),
-                                                tags, literal));
+                                                tags, control, literal));
         }
         jinja::runtime runtime(context);
         const auto rendered = jinja::runtime::gather_string_parts(runtime.execute(impl_->program));
@@ -136,9 +151,13 @@ TemplateOutput JinjaTemplate::render(const nlohmann::ordered_json& input,
         return result;
     } catch (const Interrupted& interrupted) {
         std::rethrow_exception(interrupted.error);
+    } catch (const jinja::template_raised_exception& error) {
+        // The template refused the request in its own words, which are for the client as they
+        // stand; the source name (a server path under --chat-template) stays out of them.
+        throw std::invalid_argument(error.what());
     } catch (const std::exception& error) {
         throw std::invalid_argument(impl_->source_name + ": " + error.what());
     }
 }
 
-} // namespace ninfer::text
+} // namespace ninferno::text

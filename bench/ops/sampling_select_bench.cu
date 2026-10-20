@@ -1,14 +1,14 @@
 // Qualification benchmark for G2 sampling, G3 one-hot accept, and G4 DFlash2 sparse-q accept.
 //
-//   ./ninfer_sampling_select_bench --sample --batch 8 --mode stochastic
-//   ./ninfer_sampling_select_bench --mtp --mode stochastic --mtp-k 5
-//   ./ninfer_sampling_select_bench --dflash2 --drafts 15 --batch 8 --mode stochastic --extent 15
-//   ./ninfer_sampling_select_bench --matrix
+//   ./ninferno_sampling_select_bench --sample --batch 8 --mode stochastic
+//   ./ninferno_sampling_select_bench --mtp --mode stochastic --mtp-k 5
+//   ./ninferno_sampling_select_bench --dflash2 --drafts 15 --batch 8 --mode stochastic --extent 15
+//   ./ninferno_sampling_select_bench --matrix
 #include "core/device.h"
 #include "core/tensor.h"
-#include "ninfer/ops/sampling.h"
-#include "ninfer/ops/speculative_round.h"
-#include "ninfer_bench_common.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/ops/speculative_round.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_runtime.h>
 
@@ -21,8 +21,8 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -129,7 +129,7 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "--no-counts") {
             options.counts_active = false;
         } else if (arg == "-h" || arg == "--help") {
-            usage(argc > 0 ? argv[0] : "ninfer_sampling_select_bench");
+            usage(argc > 0 ? argv[0] : "ninferno_sampling_select_bench");
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown argument: " + std::string(arg));
@@ -172,7 +172,8 @@ DeviceBuffer make_logits(int cols) {
     for (int col = 0; col < cols; ++col) {
         const int hot = (17 + col * 7919) % kTokenDomain;
         for (int row = 0; row < kPhysicalRows; ++row) {
-            float value = -8.0f + static_cast<float>((row * 17 + col * 31) % 4096) / 4096.0f;
+            float value = fixture::uniform(static_cast<std::uint64_t>(col) * kPhysicalRows + row,
+                                           101U, -8.F, -7.F);
             if (row == hot) { value = 8.0f; }
             if (row >= kTokenDomain) { value = 20.0f; }
             host[static_cast<std::size_t>(col) * kPhysicalRows + row] = f32_to_bf16(value);
@@ -406,7 +407,7 @@ void run_dflash2(DeviceBuffer& logits, DeviceBuffer& counts, const Options& opti
     graph.capture(stream, [&](cudaStream_t s) {
         for (int i = 0; i < options.graph_calls; ++i) launch(s);
     });
-    DeviceBuffer flush(kFlushBytes);
+    bench::L2FlushBuffer flush(kFlushBytes);
     const ColdTiming timing =
         measure_cold_graph(graph, flush, stream, options.warmup, options.repeat);
     CUDA_CHECK(cudaStreamDestroy(stream));
@@ -486,7 +487,7 @@ int main(int argc, char** argv) {
             if (options.dflash2) { run_dflash2(logits, counts, options); }
         }
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "ninfer_sampling_select_bench: %s\n", e.what());
+        std::fprintf(stderr, "ninferno_sampling_select_bench: %s\n", e.what());
         return 2;
     }
     return 0;

@@ -6,14 +6,18 @@ Official checkpoint names and quantization assignments live in official_recipes.
 
 from __future__ import annotations
 
-from math import isfinite, isqrt
+from math import isqrt
 from pathlib import Path
-import struct
 from typing import Mapping
 
+from .config_checks import check_source_fields as _check_source_fields
+from .config_checks import f32 as _f32
+from .config_checks import fixed as _fixed
+from .config_checks import has_model_config as _has_model_config
+from .config_checks import positive as _positive
 from .model import Model, Parameter
 from .resources import load_resources
-from .sources.logical import LogicalSource, select_rows, transpose_source
+from .sources.logical import select_rows, transpose_source
 from .sources.safetensors import SafetensorsSource, tensor_source
 from .sources.compressed_tensors import matrix_source
 
@@ -25,33 +29,6 @@ _TEXT_ARCHITECTURES = {
 }
 
 
-def _positive(value, name):
-    if type(value) is not int or value <= 0:
-        raise ValueError(f"{name}: expected a positive integer")
-    return value
-
-
-def _f32(value, name):
-    if type(value) not in (float, int):
-        raise ValueError(f"{name}: expected a real value")
-    try:
-        result = struct.unpack("<f", struct.pack("<f", value))[0]
-    except (OverflowError, struct.error) as error:
-        raise ValueError(f"{name}: not representable as F32") from error
-    if not isfinite(result) or result <= 0:
-        raise ValueError(f"{name}: expected positive finite F32")
-    return result
-
-
-def _fixed(config, key, value, label):
-    if key in config and (
-        config[key] != value
-        or isinstance(value, bool)
-        and type(config[key]) is not bool
-    ):
-        raise ValueError(f"{label}.{key}: expected {value!r}, got {config[key]!r}")
-
-
 def _rope_source(raw: dict, label: str) -> dict:
     rope = {}
     for field in ("rope_scaling", "rope_parameters"):
@@ -60,11 +37,37 @@ def _rope_source(raw: dict, label: str) -> dict:
             continue
         if not isinstance(value, dict):
             raise ValueError(f"{label}.{field}: expected an object")
+        # YaRN (transformers' "yarn" rope_type): carried as yarn_factor and yarn_original, which
+        # the load applies as --rope-yarn-factor does. Only the default ramp and attention scale.
+        yarn = False
         for alias in ("type", "rope_type"):
-            _fixed(value, alias, "default", label + "." + field)
-        if "factor" in value and _f32(value["factor"], label + ".factor") != 1.0:
-            raise ValueError(f"{label}: scaled RoPE is not implemented")
-        for key, item in value.items():
+            if value.get(alias) == "yarn":
+                yarn = True
+            else:
+                _fixed(value, alias, "default", label + "." + field)
+        own = dict(value)
+        if yarn:
+            factor = _f32(value.get("factor"), label + ".factor")
+            if not 1.0 < factor <= 64.0:
+                raise ValueError(f"{label}: YaRN factor must be in (1, 64]")
+            rope["yarn_factor"] = factor
+            rope["yarn_original"] = _positive(
+                value.get("original_max_position_embeddings"),
+                label + ".original_max_position_embeddings")
+            standard = {"beta_fast": 32.0, "beta_slow": 1.0}
+            for name in ("beta_fast", "beta_slow", "attention_factor", "mscale", "mscale_all_dim",
+                         "truncate"):
+                if value.get(name) is not None and not (
+                    name in standard and isinstance(value[name], (int, float))
+                    and float(value[name]) == standard[name]
+                ):
+                    raise ValueError(f"{label}: YaRN {name} other than the default is not implemented")
+            for name in ("type", "rope_type", "factor", "original_max_position_embeddings",
+                         "beta_fast", "beta_slow"):
+                own.pop(name, None)
+        elif "factor" in value and _f32(value["factor"], label + ".factor") != 1.0:
+            raise ValueError(f"{label}: scaled RoPE other than YaRN is not implemented")
+        for key, item in own.items():
             if key in rope and rope[key] != item:
                 raise ValueError(f"{label}: conflicting RoPE field {key}")
             rope[key] = item
@@ -155,6 +158,9 @@ def text_config(source: dict, *, mtp: bool) -> dict:
             "partial_rotary_factor": factor,
             "mrope_section": list(sections),
         }
+        if "yarn_factor" in rope:
+            result["rope_parameters"]["yarn_factor"] = rope["yarn_factor"]
+            result["rope_parameters"]["yarn_original"] = rope["yarn_original"]
     if "linear_attention" in layers:
         _fixed(raw, "mamba_ssm_dtype", "float32", "text")
         for key in (
@@ -250,6 +256,8 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
         raw.get("rms_norm_eps", 1e-6), backend + ".rms_norm_eps"
     )
     rope = _rope_source(raw, backend)
+    if "yarn_factor" in rope:
+        raise ValueError(f"{backend}: a drafter rotates with its trained frequencies; YaRN is not implemented")
     result["rope_parameters"] = {
         "rope_theta": _f32(
             rope.get("rope_theta", raw.get("rope_theta", 10_000_000)),
@@ -318,27 +326,6 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
                 raise ValueError("DFlash2 final_logit_softcapping must be disabled")
     result["dflash_config"] = output
     return result
-
-
-def _has_model_config(source: SafetensorsSource) -> bool:
-    return bool(
-        source.config.keys()
-        - {
-            "quantization_config",
-            "_name_or_path",
-            "transformers_version",
-            "torch_dtype",
-            "dtype",
-        }
-    )
-
-
-def _check_source_fields(name, actual, expected, fields):
-    for field in sorted(fields):
-        if actual.get(field) != expected.get(field):
-            raise ValueError(
-                f"{name}: additional source {field} differs; provide an explicit logical source"
-            )
 
 
 class _Builder:

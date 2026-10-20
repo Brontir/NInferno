@@ -7,7 +7,7 @@
 
 namespace {
 using Json = nlohmann::ordered_json;
-using ninfer::text::JinjaTemplate;
+using ninferno::text::JinjaTemplate;
 
 int check(bool condition, const char* message) {
     if (condition) return 0;
@@ -39,6 +39,10 @@ int language_semantics() {
         {"{{ text|trim }}|{{ text.split()|tojson }}|{{ text.rsplit(none,1)|tojson }}",
          {{"text", "\u0085北京\u3000two\tend\u001c"}},
          "北京　two\tend|[\"北京\", \"two\", \"end\"]|[\"\u0085北京　two\", \"end\"]"},
+        {"{{ text|trim }}|{{ text.strip('🌏x\u3000\u2003') }}|{{ text.lstrip() }}|{{ text.rstrip() "
+         "}}|{{ text[2:-2] }}|{{ text[:1] }}|{{ text[-1:] }}|{{ text[5:3] }}",
+         {{"text", "\u3000🌏x北 京x🌏\u2003"}},
+         "🌏x北 京x🌏|北 京|🌏x北 京x🌏\u2003|\u3000🌏x北 京x🌏|x北 京x|\u3000|\u2003|"},
         {"{{ text.replace('', '-', 2) }}|{{ text.replace('京', 'x', 1) }}",
          {{"text", "北京🌏"}},
          "-北-京🌏|北x🌏"},
@@ -59,6 +63,35 @@ int language_semantics() {
          Json::object(), "[value]"},
         {"{{ number }}", {{"number", 1.23456789}}, "1.23456789"},
         {"{% filter upper %}{{ text }}{% endfilter %}", {{"text", "straße"}}, "STRASSE"},
+        // llama.cpp #20782 (GHSA-q9j6-4hhc-rq9p, GHSA-2q4c-9gq5-5vfp): comparing containers of
+        // different lengths read past the shorter one and could call a prefix equal.
+        {"{{ [1, 2] == [1, 2, 3] }}|{{ [1, 2, 3] == [1, 2] }}|{{ {'a': 1} == {'a': 1, 'b': 2} }}|"
+         "{{ {'a': 1, 'b': 2} == {'a': 1} }}|{{ [] == [1] }}|"
+         "{{ [[1, 2]] == [[1, 2, 3]] }}",
+         Json::object(), "False|False|False|False|False|False"},
+        // llama.cpp #20913: an empty computed member `a[]` bound a null expression (UB); it is
+        // an undefined value, as is a member named by an undefined value.
+        {"{{ a[]|default('fallback') }}|{{ a[] is undefined }}|{{ a[undefined] is undefined }}",
+         {{"a", {{"name", "Bob"}}}},
+         "fallback|True|True"},
+        // lstrip_blocks at the start of a template (found by tests/text/jinja_differential.py):
+        // the first character survives when only blanks separate it from the first block, a
+        // leading newline is not part of the block's line, and pure blanks are still stripped.
+        {"a {%- if t %}b{% endif %}", {{"t", true}}, "ab"},
+        {"a {% if t -%} b{% endif %}", {{"t", true}}, "a b"},
+        {"x {#- c #}y", Json::object(), "xy"},
+        {"\n{% if t %}b{% endif %}", {{"t", true}}, "\nb"},
+        {"  {% if t %}b{% endif %}", {{"t", true}}, "b"},
+        // Jinja2's sort and dictsort fold case unless case_sensitive=true; dictsort yields
+        // (key, value) pairs.
+        {"{{ ['b', 'C', 'a']|sort|join(',') }}|"
+         "{{ ['b', 'C', 'a']|sort(case_sensitive=true)|join(',') }}|"
+         "{{ people|sort(attribute='name')|map(attribute='name')|join(',') }}|"
+         "{% for k, v in d|dictsort %}{{ k }}{{ v }}{% endfor %}|{{ (d|dictsort)[0][0] }}|"
+         "{{ d|dictsort|length }}",
+         {{"d", {{"b", 1}, {"C", 2}, {"a", 3}}},
+          {"people", Json::array({Json{{"name", "bob"}}, Json{{"name", "Ann"}}})}},
+         "a,b,C|C,a,b|Ann,bob|a3b1C2|a|3"},
     };
     int failures = 0;
     for (const auto& item : cases) {
@@ -78,6 +111,24 @@ int language_semantics() {
         } catch (const std::invalid_argument& error) {
             failures += check(std::string(error.what()).starts_with("error-test:"),
                               "template error omitted its source name");
+            failures +=
+                check(std::string(error.what()).find("While executing") != std::string::npos,
+                      "template error lost its source location");
+        }
+    }
+    // A template that refuses the request (raise_exception) speaks to the client: its message
+    // arrives as written, with no source name and no trace of where the template raised it, also
+    // from a macro called inside a loop (each nested statement used to wrap it again).
+    for (const char* source :
+         {"{% if messages|length == 0 %}{{ raise_exception('No user query found.') }}{% endif %}",
+          "{% macro refuse(m) %}{{ raise_exception('No user query found.') }}{% endmacro %}"
+          "{% for m in ['a'] %}{% if m %}{{ refuse(m) }}{% endif %}{% endfor %}"}) {
+        try {
+            (void)JinjaTemplate(source, "raise-test").render(Json{{"messages", Json::array()}});
+            ++failures;
+        } catch (const std::invalid_argument& error) {
+            failures += check(std::string(error.what()) == "No user query found.",
+                              "raise_exception message did not arrive as written");
         }
     }
     return failures;
@@ -87,8 +138,8 @@ int origins_and_requests() {
     const JinjaTemplate compiled(
         "{% filter upper %}{{ text|trim }}{% endfilter %}|{{ tool|tojson }}", "shared-test");
     const Json context{{"text", " hello "}, {"tool", {{"name", "f"}}}};
-    const std::vector<ninfer::text::TemplateInputRegion> regions{{"/text", 7}, {"/tool", 9}};
-    ninfer::text::TemplateRenderOptions options{.timestamp = 0, .regions = regions};
+    const std::vector<ninferno::text::TemplateInputRegion> regions{{"/text", 7}, {"/tool", 9}};
+    ninferno::text::TemplateRenderOptions options{.timestamp = 0, .regions = regions};
     const auto result = compiled.render(context, options);
     int failures = check(result.text == "HELLO|{\"name\": \"f\"}" && result.regions.size() == 2 &&
                              result.regions[0].tag == 7 && result.regions[0].begin == 0 &&
@@ -177,14 +228,14 @@ int literal_content() {
             std::cerr << "literal-content text mismatch: " << item.source << '\n';
             ++failures;
         }
-        failures +=
-            check(!ninfer::text::overlaps(output.literal_spans, 0, start.size()) &&
-                      !ninfer::text::overlaps(output.literal_spans, output.text.size() - end.size(),
-                                              output.text.size()),
-                  "input content shielded surrounding template controls");
+        failures += check(!ninferno::text::overlaps(output.literal_spans, 0, start.size()) &&
+                              !ninferno::text::overlaps(output.literal_spans,
+                                                        output.text.size() - end.size(),
+                                                        output.text.size()),
+                          "input content shielded surrounding template controls");
         for (auto pos = output.text.find(pad); pos != std::string::npos;
              pos      = output.text.find(pad, pos + pad.size())) {
-            if (!ninfer::text::overlaps(output.literal_spans, pos, pos + pad.size())) {
+            if (!ninferno::text::overlaps(output.literal_spans, pos, pos + pad.size())) {
                 std::cerr << "literal-content marker lost through: " << item.source << '\n';
                 ++failures;
             }
@@ -213,8 +264,8 @@ int literal_content() {
                                .render({{"bos_token", "<|im_start|>"}, {"data", "<|im_start|>"}},
                                        {.control_variables = tokens});
     failures +=
-        check(!ninfer::text::overlaps(variables.literal_spans, 0, start.size()) &&
-                  ninfer::text::overlaps(variables.literal_spans, start.size(), 2 * start.size()),
+        check(!ninferno::text::overlaps(variables.literal_spans, 0, start.size()) &&
+                  ninferno::text::overlaps(variables.literal_spans, start.size(), 2 * start.size()),
               "engine token variables and ordinary kwargs were not distinguished");
     return failures;
 }

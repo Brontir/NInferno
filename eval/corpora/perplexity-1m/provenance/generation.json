@@ -1,5 +1,5 @@
 {
-  "corpus_id": "ninfer-ppl-1m-v1",
+  "corpus_id": "ninferno-ppl-1m-v1",
   "sizing": {
     "role": "approximate stream boundary selection only",
     "tokenizer": "Qwen3.6 family tokenizer.json",

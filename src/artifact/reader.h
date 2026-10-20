@@ -8,7 +8,7 @@
 #include <memory>
 #include <span>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 struct ReadSegment {
     std::size_t file_index           = 0;
@@ -17,11 +17,20 @@ struct ReadSegment {
     std::uint64_t bytes              = 0;
 };
 
+// <entry>.relayout-journal: an in-place `ninferno-convert --relayout` of the artifact that has not
+// finished. Until it does, part of the payload is in one layout while the directory names the
+// other, so the artifact must not be read.
+[[nodiscard]] std::filesystem::path relayout_journal_path(const std::filesystem::path& entry);
+
+// Whether a Reader opens an artifact with a pending relayout: only the relayout itself does.
+enum class PendingRelayout { Refuse, Allow };
+
 // Owns the cold directory and lazily opened files. Runtime views borrow materialized storage,
 // never this Reader. Encodings are interpreted only for requested objects.
 class Reader {
 public:
-    explicit Reader(const std::filesystem::path& path);
+    explicit Reader(const std::filesystem::path& path,
+                    PendingRelayout pending = PendingRelayout::Refuse);
     ~Reader();
     Reader(Reader&&) noexcept;
     Reader& operator=(Reader&&) noexcept;
@@ -49,4 +58,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

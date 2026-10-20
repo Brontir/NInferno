@@ -1,4 +1,4 @@
-"""Convert explicitly selected local weights into a NInfer v3 artifact."""
+"""Convert explicitly selected local weights into a NInferno v3 artifact."""
 
 from __future__ import annotations
 
@@ -9,12 +9,38 @@ from pathlib import Path
 import sys
 from collections.abc import Mapping
 
+from . import gemma4, gemma4_assistant, gemma4_dflash, qwen3_5
 from .official_recipes import RECIPES
 from .pipeline import convert
 from .proposal import DEFAULT_RANKING, add_official_proposal
-from .qwen3_5 import build_model
 from .recipe import Recipe
 from .sources.safetensors import SafetensorsSource
+
+# Architecture families are selected explicitly by the checkpoint's own declaration. There is no
+# discovery step and no name matching: an architecture absent from this table is not convertible.
+_FAMILIES = {
+    "Qwen3_5ForCausalLM": qwen3_5,
+    "Qwen3_5ForConditionalGeneration": qwen3_5,
+    "Qwen3_5MoeForCausalLM": qwen3_5,
+    "Qwen3_5MoeForConditionalGeneration": qwen3_5,
+    "Gemma4ForCausalLM": gemma4,
+    "Gemma4ForConditionalGeneration": gemma4,
+    "Gemma4UnifiedForConditionalGeneration": gemma4,
+    "Gemma4AssistantForCausalLM": gemma4_assistant,
+    "Gemma4UnifiedAssistantForCausalLM": gemma4_assistant,
+    # A Qwen DFlash drafter is never a --model: it enters a Qwen artifact as a --source companion.
+    "DFlashDraftModel": gemma4_dflash,
+}
+
+
+def _build_model(base, **kwargs):
+    architectures = base.config.get("architectures")
+    if not isinstance(architectures, list) or len(architectures) != 1:
+        raise ValueError("checkpoint config must declare exactly one architecture")
+    family = _FAMILIES.get(architectures[0])
+    if family is None:
+        raise ValueError(f"unsupported architecture {architectures[0]!r}")
+    return family.build_model(base, **kwargs)
 
 
 class SourceInputs(Mapping):
@@ -65,7 +91,7 @@ def _function(value: str):
     if not separator:
         filename, function = value, "configure"
     path = Path(filename).resolve()
-    spec = importlib.util.spec_from_file_location("ninfer_user_recipe", path)
+    spec = importlib.util.spec_from_file_location("ninferno_user_recipe", path)
     if spec is None or spec.loader is None:
         raise ValueError(f"cannot load recipe file {path}")
     module = importlib.util.module_from_spec(spec)
@@ -143,15 +169,22 @@ def main(argv=None):
         companions = {
             key: sources[key] for key in ("dflash", "dflash2") if key in components
         }
-        model = build_model(
+        model = _build_model(
             base,
             components=components,
             companions=companions,
             resource_overrides=overrides,
         )
+        # A Gemma 4 drafter has no separate proposal head: its own head is the one restricted.
+        restricted = args.proposal and model.config.get("model_type") == "gemma4_assistant"
+        if restricted:
+            gemma4_assistant.restrict_head(
+                model, ranking=args.ranking, rows=args.proposal_rows
+            )
         recipe = Recipe(model)
         _function(args.recipe)(model, recipe, sources)
-        if args.proposal:
+        recipe.share_tied_head()
+        if args.proposal and not restricted:
             add_official_proposal(recipe, ranking=args.ranking, rows=args.proposal_rows)
         if args.override:
             _function(args.override)(model, recipe, sources)
@@ -166,7 +199,7 @@ def main(argv=None):
             )
 
         provenance = {
-            "converter": "ninfer-v3",
+            "converter": "ninferno-v3",
             "recipe": args.recipe,
             "sources": sources.provenance(),
         }

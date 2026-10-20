@@ -3,7 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 
-using namespace ninfer::runtime;
+using namespace ninferno::runtime;
 
 static void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
@@ -21,7 +21,7 @@ int main() {
         require(!expensive.allow(9 * ms, 2 * ms, 2 * ms, ms, true, 2),
                 "improved incumbent retained the expensive root's budget");
         require(expensive.stop_reason() ==
-                    ninfer::MaterializationStopReason::InsufficientExpectedGain,
+                    ninferno::MaterializationStopReason::InsufficientExpectedGain,
                 "economic stopping was reported as wall exhaustion");
 
         MaterializationSearchBudget discovery(idle, 0, 80'000 * ms);

@@ -1,8 +1,11 @@
-// ninfer::ops - embedding wrapper: public api validation and qtype dispatch.
-#include "ninfer/ops/embedding.h"
+// ninferno::ops - embedding wrapper: public api validation and qtype dispatch.
+#include "ninferno/ops/embedding.h"
 
 #include "ops/common/math.h"
+#include "ops/common/tensor_checks.h"
+#include "ops/generic/route_table.h" // qtype_name
 #include "ops/linear/fp8/fp8_format.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/launcher/embed_gather.h" // detail::embed_gather_*_launch
 #include "core/weight_view.h"
 
@@ -11,29 +14,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-std::int64_t numel_allow_zero(const Tensor& t, const char* label) {
-    bool has_zero = false;
-    for (int d = 0; d < 4; ++d) {
-        if (t.ne[d] < 0) {
-            throw std::invalid_argument(std::string("embedding: ") + label +
-                                        " dimensions must be nonnegative");
-        }
-        if (t.ne[d] == 0) { has_zero = true; }
-    }
-    if (has_zero) { return 0; }
-
-    std::int64_t total = 1;
-    for (int d = 0; d < 4; ++d) {
-        if (total > std::numeric_limits<std::int64_t>::max() / t.ne[d]) {
-            throw std::overflow_error("embedding: tensor size overflows int64");
-        }
-        total *= t.ne[d];
-    }
-    return total;
-}
 
 std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b) {
     if (b != 0 && a > std::numeric_limits<std::uint64_t>::max() / b) {
@@ -198,8 +180,8 @@ void embedding(const Tensor& ids, const Weight& table, Tensor& out, cudaStream_t
     if (ids.dtype != DType::I32) { throw std::invalid_argument("embedding: ids must be I32"); }
     if (out.dtype != DType::BF16) { throw std::invalid_argument("embedding: out must be BF16"); }
 
-    (void)numel_allow_zero(ids, "ids");
-    (void)numel_allow_zero(out, "out");
+    (void)numel_allow_zero(ids, "embedding", "ids");
+    (void)numel_allow_zero(out, "embedding", "out");
     require_ids_shape(ids);
     require_out_shape(ids, out);
 
@@ -232,9 +214,52 @@ void embedding(const Tensor& ids, const Weight& table, Tensor& out, cudaStream_t
         require_non_empty_tensors(ids, out);
         detail::embed_gather_fp8_launch(ids, table, out, stream);
         break;
+    case QType::GGML_Q4_K:
+    case QType::GGML_Q5_K:
+    case QType::GGML_Q6_K:
+    case QType::GGML_Q3_K:
+    case QType::GGML_Q2_K:
+    case QType::GGML_IQ4_XS:
+    case QType::GGML_IQ3_XXS:
+    case QType::GGML_IQ3_S:
+    case QType::GGML_Q4_0:
+    case QType::GGML_Q4_1:
+    case QType::GGML_Q5_0:
+    case QType::GGML_Q5_1:
+    case QType::GGML_IQ4_NL:
+    case QType::GGML_IQ2_XXS:
+    case QType::GGML_IQ2_XS:
+    case QType::GGML_IQ2_S:
+    case QType::GGML_IQ1_S:
+    case QType::GGML_IQ1_M:
+    case QType::GGML_TQ1_0:
+    case QType::GGML_TQ2_0:
+    case QType::GGML_Q1_0:
+    case QType::GGML_Q2_0:
+        if (table.shape[1] != out.ne[0]) {
+            throw std::invalid_argument("embedding: ggml table d must match out.ne[0]");
+        }
+        if (is_empty_T(ids, out)) { return; }
+        require_non_empty_tensors(ids, out);
+        detail::embed_gather_generic_launch(ids, table, out, stream);
+        break;
     default:
-        throw std::invalid_argument("embedding: unsupported table qtype");
+        // Any other format the generic projection path decodes (Q4/Q5 G64, Q3, zero-point int4,
+        // ...): a checkpoint's embedding is gathered in the format it was published in.
+        if (!detail::generic::supports(table)) {
+            throw std::invalid_argument(
+                "embedding: the token table is stored as " +
+                detail::generic::format_label(table.qtype) +
+                " in a layout this build cannot read; reconvert the model with this build's "
+                "ninferno-convert");
+        }
+        if (table.k != out.ne[0]) {
+            throw std::invalid_argument("embedding: table width must match out.ne[0]");
+        }
+        if (is_empty_T(ids, out)) { return; }
+        require_non_empty_tensors(ids, out);
+        detail::embed_gather_generic_launch(ids, table, out, stream);
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

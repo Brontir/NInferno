@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 // Session-local indexed membership for opaque Program target ordinals. Storage is acquired when a
 // bounded search begins; discovering, assessing, and expanding targets performs no allocation and
@@ -42,4 +42,4 @@ private:
     std::vector<std::uint8_t> states_;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

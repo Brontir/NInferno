@@ -7,12 +7,12 @@
 
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 inline constexpr std::int32_t kBf16LinearAddSmallTMinTokens   = 2;
-inline constexpr std::int32_t kBf16LinearAddSmallTMaxTokens   = 32;
+inline constexpr std::int32_t kBf16LinearAddSmallTMaxTokens   = 4;
 inline constexpr std::int32_t kBf16LinearAddSmallTDispatchEnd = 4;
-inline constexpr std::int32_t kBf16LinearAddAggregateMmaEnd   = 48;
+inline constexpr std::int32_t kBf16LinearAddAggregateMmaEnd   = 64;
 
 enum class Bf16LinearAddScheduleId : std::uint8_t {
     Decode,
@@ -21,6 +21,8 @@ enum class Bf16LinearAddScheduleId : std::uint8_t {
     Mma,
 };
 
+// The (rows, k) problems this plan registers; ops/wrapper/linear_add.cpp asks it.
+bool bf16_linear_add_registered(std::int32_t rows, std::int32_t k) noexcept;
 bool bf16_linear_add_admits(std::int32_t output_rows, std::int32_t input_rows,
                             std::int32_t tokens) noexcept;
 Bf16LinearAddScheduleId bf16_linear_add_select(std::int32_t output_rows, std::int32_t input_rows,
@@ -39,4 +41,4 @@ void bf16_linear_add_mma_launch(const Tensor& x, const Weight& weight, Tensor& r
 void bf16_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& residual,
                               cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

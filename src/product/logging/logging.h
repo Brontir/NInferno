@@ -8,7 +8,7 @@ namespace spdlog {
 class logger;
 }
 
-namespace ninfer::product {
+namespace ninferno::product {
 
 enum class LogLevel {
     Trace,
@@ -84,4 +84,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace ninfer::product
+} // namespace ninferno::product

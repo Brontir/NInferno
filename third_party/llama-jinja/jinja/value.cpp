@@ -92,6 +92,12 @@ static value split_string(const func_args& args, bool reverse) {
     return result;
 }
 
+// NInferno: the comparison key of Jinja2's sort and dictsort (case_sensitive=false folds strings).
+static value sort_key(const value& v, bool case_sensitive) {
+    if (case_sensitive || !is_val<value_string>(v)) { return v; }
+    return mk_val<value_string>(v->as_string().lowercase());
+}
+
 template <typename T>
 static value empty_value_fn(const func_args&) {
     if constexpr (std::is_same_v<T, value_int>) {
@@ -253,7 +259,7 @@ const func_builtins& global_builtins() {
          [](const func_args& args) -> value {
              args.ensure_vals<value_string>();
              std::string msg = args.get_pos(0)->as_string().str();
-             throw raised_exception("Jinja Exception: " + msg);
+             throw template_raised_exception(msg);
          }},
         {"namespace",
          [](const func_args& args) -> value {
@@ -272,7 +278,11 @@ const func_builtins& global_builtins() {
              args.ensure_vals<value_string>();
              std::string format = args.get_pos(0)->as_string().str();
              std::tm local{};
+#ifdef _WIN32
+             if (localtime_s(&local, &args.ctx.current_time) != 0) {
+#else
              if (!localtime_r(&args.ctx.current_time, &local)) {
+#endif
                  throw raised_exception("strftime_now: invalid time");
              }
              if (format.empty()) return mk_val<value_string>("");
@@ -917,9 +927,9 @@ const func_builtins& value_array_t::get_builtins() const {
              value val_reverse = args.get_kwarg_or_pos("reverse", 1);
              value val_case    = args.get_kwarg_or_pos("case_sensitive", 2);
              value attribute   = args.get_kwarg_or_pos("attribute", 3);
-             // FIXME: sorting is currently always case sensitive
-             // const bool case_sensitive = val_case->as_bool(); // undefined == false
-             const bool reverse     = val_reverse->as_bool(); // undefined == false
+             // NInferno: Jinja2 compares strings case-insensitively unless case_sensitive=true.
+             const bool case_sensitive = val_case->as_bool(); // undefined == false
+             const bool reverse        = val_reverse->as_bool(); // undefined == false
              const bool attr_is_int = is_val<value_int>(attribute);
              const int64_t attr_int = attr_is_int ? attribute->as_int() : 0;
              std::vector<value> arr = val->as_array(); // copy
@@ -940,7 +950,8 @@ const func_builtins& value_array_t::get_builtins() const {
                              " and " + b->type());
                      }
                  }
-                 return value_compare(val_a, val_b,
+                 return value_compare(sort_key(val_a, case_sensitive),
+                                      sort_key(val_b, case_sensitive),
                                       reverse ? value_compare_op::gt : value_compare_op::lt);
              });
              return is_val<value_tuple>(val) ? mk_val<value_tuple>(std::move(arr))
@@ -1077,26 +1088,25 @@ const func_builtins& value_object_t::get_builtins() const {
              value val_case    = args.get_kwarg_or_pos("case_sensitive", 1);
              value val_by      = args.get_kwarg_or_pos("by", 2);
              value val_reverse = args.get_kwarg_or_pos("reverse", 3);
-             // FIXME: sorting is currently always case sensitive
-             // const bool case_sensitive = val_case->as_bool(); // undefined == false
-             const bool reverse = val_reverse->as_bool(); // undefined == false
+             // NInferno: Jinja2 compares strings case-insensitively unless case_sensitive=true and
+             // returns a list of (key, value) pairs, not a mapping.
+             const bool case_sensitive = val_case->as_bool();    // undefined == false
+             const bool reverse        = val_reverse->as_bool(); // undefined == false
              const bool by_value =
                  is_val<value_string>(val_by) && val_by->as_string().str() == "value" ? true
                                                                                       : false;
-             auto result = mk_val<value_object>(val_input); // copy
-             std::sort(result->val_obj.begin(), result->val_obj.end(),
-                       [&](const auto& a, const auto& b) {
-                           if (by_value) {
-                               return value_compare(a.second, b.second,
-                                                    reverse ? value_compare_op::gt
-                                                            : value_compare_op::lt);
-                           } else {
-                               return value_compare(a.first, b.first,
-                                                    reverse ? value_compare_op::gt
-                                                            : value_compare_op::lt);
-                           }
-                       });
-             return result;
+             auto sorted = mk_val<value_object>(val_input)->val_obj; // copy
+             std::sort(sorted.begin(), sorted.end(), [&](const auto& a, const auto& b) {
+                 const value& left  = by_value ? a.second : a.first;
+                 const value& right = by_value ? b.second : b.first;
+                 return value_compare(sort_key(left, case_sensitive),
+                                      sort_key(right, case_sensitive),
+                                      reverse ? value_compare_op::gt : value_compare_op::lt);
+             });
+             std::vector<value> pairs;
+             pairs.reserve(sorted.size());
+             for (const auto& pair : sorted) { pairs.push_back(mk_val<value_tuple>(pair)); }
+             return mk_val<value_array>(std::move(pairs));
          }},
         {"join", object_join_not_implemented},
     };

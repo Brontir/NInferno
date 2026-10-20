@@ -1,14 +1,15 @@
 #pragma once
 
-// Shared implementation primitives for include/ninfer/ops/sampling.h and
-// include/ninfer/ops/speculative_round.h. The ordering key is exact for finite BF16
+// Shared implementation primitives for include/ninferno/ops/sampling.h and
+// include/ninferno/ops/speculative_round.h. The ordering key is exact for finite BF16
 // logits (including numeric-zero ties); candidate storage is bounded by the
-// semantic top-20 cap and all global staging is supplied by the caller.
+// semantic top-64 cap (top-20 on the single-block fallback) and all global staging is supplied by
+// the caller.
 
 #include "ops/common/math.h"
 #include "ops/common/sampling_workspace.h"
 #include "ops/common/score_id_order.cuh"
-#include "ninfer/ops/sampling.h"
+#include "ninferno/ops/sampling.h"
 
 #include <cub/block/block_merge_sort.cuh>
 #include <cub/warp/warp_merge_sort.cuh>
@@ -18,13 +19,37 @@
 #include <cstdint>
 #include <math_constants.h>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 using SamplingPartialSort =
     cub::BlockMergeSort<unsigned long long, kSamplerBlock, kSamplerItemsPerThread>;
 using SamplingGroupSort =
     cub::BlockMergeSort<unsigned long long, kSamplerGroupBlock, kSamplerGroupItemsPerThread>;
 inline constexpr int kSamplingTileWarps              = kSamplerBlock / 32;
+
+// The maximum over the lanes of a mask of the low power-of-two lanes. NINFERNO-SPECIAL(arch:sm75):
+// redux.sync (__reduce_max_sync) is sm_80; Turing reduces by butterfly shuffles over the same
+// lanes.
+template <unsigned Mask>
+__device__ __forceinline__ unsigned int lanes_max(unsigned int value) {
+    static_assert(Mask != 0 && (Mask & (Mask + 1)) == 0, "a mask of the low lanes");
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 800
+    // The set bits of Mask, counted at compile time (std::popcount is host-only in device code,
+    // __builtin_popcount is not MSVC's).
+    constexpr int kLanes = [] {
+        int n = 0;
+        for (unsigned m = Mask; m != 0; m >>= 1) { n += static_cast<int>(m & 1U); }
+        return n;
+    }();
+    static_assert((kLanes & (kLanes - 1)) == 0, "a power-of-two lane count");
+#    pragma unroll
+    for (int offset = kLanes / 2; offset > 0; offset /= 2)
+        value = max(value, __shfl_xor_sync(Mask, value, offset));
+    return value;
+#else
+    return __reduce_max_sync(Mask, value);
+#endif
+}
 inline constexpr int kSamplingTileIndexBits          = 9;
 inline constexpr unsigned int kSamplingTileIndexMask = (1u << kSamplingTileIndexBits) - 1u;
 static_assert(kSamplerPartialTileItems == (1 << kSamplingTileIndexBits));
@@ -102,14 +127,12 @@ __device__ __forceinline__ float sampling_uniform(unsigned long long seed, int p
     return static_cast<float>(bits) * (1.0f / 16777216.0f);
 }
 
-// Candidate ordering: higher value wins, ties broken by lower vocab index.
+// Candidate ordering: higher value wins (NaN as -inf, rank_score), ties broken by lower vocab
+// index.
 __device__ __forceinline__ bool sampling_better(float v, int i, float bv, int bi) {
+    v  = rank_score(v);
+    bv = rank_score(bv);
     return v > bv || (v == bv && i < bi);
-}
-
-// True when (v,i) ranks strictly below pivot (pv,pi) in the ordering above.
-__device__ __forceinline__ bool sampling_worse_than(float v, int i, float pv, int pi) {
-    return pv > v || (pv == v && pi < i);
 }
 
 __device__ __forceinline__ unsigned long long sampling_sort_key(float v, int idx) {
@@ -181,9 +204,9 @@ __device__ inline void sampling_store_tile_topk(unsigned long long (&keys)[kSamp
             const unsigned long long key =
                 storage.candidates[lane * kSamplerCandidateCap + position];
             const unsigned int high     = static_cast<unsigned int>(key >> 32);
-            const unsigned int max_high = __reduce_max_sync(kMergeMask, high);
+            const unsigned int max_high = lanes_max<kMergeMask>(high);
             const unsigned int low      = high == max_high ? static_cast<unsigned int>(key) : 0u;
-            const unsigned int max_low  = __reduce_max_sync(kMergeMask, low);
+            const unsigned int max_low  = lanes_max<kMergeMask>(low);
             const unsigned int winners =
                 __ballot_sync(kMergeMask, high == max_high && low == max_low);
             const int source = __ffs(static_cast<int>(winners)) - 1;
@@ -220,7 +243,7 @@ __device__ inline void sampling_store_bf16_tile_topk(unsigned int (&keys)[kSampl
         int position                      = 0;
         for (int rank = 0; rank < cap; ++rank) {
             const unsigned int key     = storage.candidates[lane * kSamplerCandidateCap + position];
-            const unsigned int best    = __reduce_max_sync(kMergeMask, key);
+            const unsigned int best    = lanes_max<kMergeMask>(key);
             const unsigned int winners = __ballot_sync(kMergeMask, key == best);
             const int source           = __ffs(static_cast<int>(winners)) - 1;
             if (lane == 0) {
@@ -232,21 +255,125 @@ __device__ inline void sampling_store_bf16_tile_topk(unsigned int (&keys)[kSampl
     }
 }
 
+// A group block's top-cap keys into the workspace slot `slot`: the whole block sorts its keys (the
+// tile helper above is one partial block's eight warps; a group block is kSamplerGroupBlock
+// threads). All threads of the block must call.
+__device__ inline void sampling_store_group_topk(
+    unsigned long long (&keys)[kSamplerGroupItemsPerThread], int cap, SamplingWorkspace workspace,
+    int col, int slot, typename SamplingGroupSort::TempStorage& storage) {
+    SamplingGroupSort(storage).Sort(keys, SamplingKeyGreater{});
+#pragma unroll
+    for (int item = 0; item < kSamplerGroupItemsPerThread; ++item) {
+        const int rank = static_cast<int>(threadIdx.x) * kSamplerGroupItemsPerThread + item;
+        if (rank < cap) {
+            workspace.partial_keys[sampling_partial_offset(workspace, col, slot, rank)] = keys[item];
+        }
+    }
+}
+
 __device__ __forceinline__ int sampling_dist_offset(int col, int j) {
     return col * kSamplerCandidateCap + j;
 }
 
-// Applies presence/frequency penalties to a raw logit. `overlay`/`overlay_len`
+// True when a row needs the adjusted-logit route: penalties or an allowed-token mask. Without
+// either, every route keeps its exact raw-logit fast path.
+__device__ __forceinline__ bool sampling_has_penalties(const SamplingConfig& c) {
+    return c.presence_penalty != 0.0f || c.frequency_penalty != 0.0f;
+}
+
+__device__ __forceinline__ bool sampling_adjusts(const SamplingConfig& c) {
+    return sampling_has_penalties(c) || c.token_mask != nullptr;
+}
+
+__device__ __forceinline__ std::uint32_t sampling_load_acquire_system(const std::uint32_t* p) {
+    std::uint32_t value;
+    asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(value) : "l"(p) : "memory");
+    return value;
+}
+
+__device__ __forceinline__ std::uint32_t sampling_load_relaxed_system(const std::uint32_t* p) {
+    std::uint32_t value;
+    asm volatile("ld.relaxed.sys.global.u32 %0, [%1];" : "=r"(value) : "l"(p) : "memory");
+    return value;
+}
+
+// A wait that lasted this long reads the host's progress counter once, the baseline for the
+// first expiry.
+inline constexpr unsigned long long kTokenMaskProgressReadingNs = 1'000'000ULL;
+
+__device__ __forceinline__ unsigned long long sampling_global_timer_ns() {
+    unsigned long long value;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(value));
+    return value;
+}
+
+// All threads of the block call this before reading c.token_mask. One thread waits until the
+// host released this call's mask epoch (system-scope acquire); the barrier orders every other
+// thread's subsequent mask loads after that observation. The wait is bounded so a host failure
+// cannot hang the device: on expiry the fault flag is raised and the call proceeds. A host that
+// is slow but still computing masks (a large grammar over a wide verify window) advances the
+// progress counter, and each advance seen at expiry renews the bound up to the overall one. The
+// counter lives in mapped host memory, so it is read only once a wait has outlasted a normal
+// release (one reading after a millisecond, then one per expiry).
+__device__ inline void sampling_acquire_token_mask(const SamplingConfig& c) {
+    if (c.token_mask == nullptr) { return; }
+    if (threadIdx.x == 0) {
+        const unsigned long long first = sampling_global_timer_ns();
+        unsigned long long start       = first;
+        std::uint32_t progress         = 0;
+        bool watched                   = false;
+        for (;;) {
+            const std::uint32_t released = sampling_load_acquire_system(c.token_mask_release);
+            if (static_cast<std::int32_t>(released - c.token_mask_epoch) >= 0) { break; }
+            const unsigned long long now = sampling_global_timer_ns();
+            if (c.token_mask_progress != nullptr && !watched &&
+                now - first > kTokenMaskProgressReadingNs) {
+                progress = sampling_load_relaxed_system(c.token_mask_progress);
+                watched  = true;
+            }
+            if (now - start > kTokenMaskReleaseWaitNs && watched &&
+                now - first < kTokenMaskReleaseMaxWaitNs) {
+                const std::uint32_t seen = sampling_load_relaxed_system(c.token_mask_progress);
+                if (seen != progress) {
+                    progress = seen;
+                    start    = now;
+                }
+            }
+            if (now - start > kTokenMaskReleaseWaitNs) {
+                if (c.token_mask_fault != nullptr) {
+                    asm volatile("st.relaxed.sys.global.u32 [%0], %1;" ::"l"(c.token_mask_fault),
+                                 "r"(1u)
+                                 : "memory");
+                }
+                break;
+            }
+            __nanosleep(1000);
+        }
+    }
+    __syncthreads();
+}
+
+// Mask words are read with cache-volatile loads: the mask may live in mapped host memory that
+// the host rewrites between calls, so no cached line from an earlier call may be reused.
+__device__ __forceinline__ bool sampling_token_allowed(const SamplingConfig& c, int column, int v) {
+    const std::uint32_t word =
+        __ldcv(c.token_mask + static_cast<std::int64_t>(column) * c.token_mask_words + (v >> 5));
+    return ((word >> (v & 31)) & 1u) != 0u;
+}
+
+// Applies the allowed-token mask and presence/frequency penalties to a raw logit. A disallowed
+// token becomes -inf. `overlay`/`overlay_len`
 // carry a round-local count overlay: tokens already committed earlier in the
 // current speculative round but not yet flushed to the global `token_counts`. For speculative
 // verify column `col` the overlay is exactly drafts[0..col-1] (statically known,
 // since column `col` is only consumed when every earlier draft was accepted), so
 // the penalty at each column sees the same prefix a per-token sampler would.
 // Non-speculative callers pass no overlay. The scan is bounded by k and
-// only runs when penalties are active, so it is free on the no-penalty path.
-__device__ __forceinline__ float sampling_adjusted_logit(float raw, int v, const SamplingConfig& c,
-                                                         const std::int32_t* overlay = nullptr,
-                                                         int overlay_len             = 0) {
+// only runs when penalties are active, so it is free on the no-penalty path. `column` selects
+// the mask row: 0 for sample(), the verify column for speculative acceptance.
+__device__ __forceinline__ float sampling_penalized_logit(float raw, int v, const SamplingConfig& c,
+                                                          const std::int32_t* overlay,
+                                                          int overlay_len) {
     float x = raw;
     if (c.presence_penalty == 0.0f && c.frequency_penalty == 0.0f) { return x; }
     int cnt = c.token_counts != nullptr ? c.token_counts[v] : 0;
@@ -256,6 +383,83 @@ __device__ __forceinline__ float sampling_adjusted_logit(float raw, int v, const
     if (cnt > 0) { x -= c.presence_penalty; }
     if (c.frequency_penalty != 0.0f) { x -= c.frequency_penalty * static_cast<float>(cnt); }
     return x;
+}
+
+__device__ __forceinline__ float sampling_adjusted_logit(float raw, int v, const SamplingConfig& c,
+                                                         const std::int32_t* overlay = nullptr,
+                                                         int overlay_len = 0, int column = 0) {
+    if (c.token_mask != nullptr && !sampling_token_allowed(c, column, v)) { return -CUDART_INF_F; }
+    return sampling_penalized_logit(raw, v, c, overlay, overlay_len);
+}
+
+// Staged mask access. Reading the mask word of every token straight from (mapped) memory costs
+// one dependent memory round trip per loop iteration; instead a block copies the words covering
+// the tokens it is about to visit into shared memory with independent coalesced loads, then
+// tests bits there. `stage` covers tokens [stage_first, stage_first + 32 * staged words).
+// first_token must be a multiple of 128 (whole 16-byte groups of words); rows are 32-byte
+// aligned because token_mask_words is a multiple of 8. The stage must hold
+// round_up(ceil(tokens / 32), 4) words.
+__device__ inline void sampling_stage_mask_words(const SamplingConfig& c, int column,
+                                                 int first_token, int tokens,
+                                                 std::uint32_t* stage) {
+    constexpr int kBatch = 4; // independent 16-byte loads in flight per thread
+    const std::uint32_t* row =
+        c.token_mask + static_cast<std::int64_t>(column) * c.token_mask_words;
+    const int first_group = first_token >> 7;
+    const int groups      = (tokens + 127) >> 7;
+    const int row_groups  = c.token_mask_words >> 2;
+    const uint4* source   = reinterpret_cast<const uint4*>(row);
+    uint4* target         = reinterpret_cast<uint4*>(stage);
+    for (int base = threadIdx.x; base < groups; base += kBatch * blockDim.x) {
+        uint4 value[kBatch];
+#pragma unroll
+        for (int j = 0; j < kBatch; ++j) {
+            const int g = base + j * static_cast<int>(blockDim.x);
+            value[j]    = (g < groups && first_group + g < row_groups)
+                              ? __ldcv(source + first_group + g)
+                              : make_uint4(0u, 0u, 0u, 0u);
+        }
+#pragma unroll
+        for (int j = 0; j < kBatch; ++j) {
+            const int g = base + j * static_cast<int>(blockDim.x);
+            if (g < groups) { target[g] = value[j]; }
+        }
+    }
+    __syncthreads();
+}
+
+__device__ __forceinline__ float sampling_staged_logit(float raw, int v, const SamplingConfig& c,
+                                                       const std::uint32_t* stage, int stage_first,
+                                                       const std::int32_t* overlay = nullptr,
+                                                       int overlay_len = 0) {
+    if (stage != nullptr) {
+        const int offset = v - stage_first;
+        if (((stage[offset >> 5] >> (offset & 31)) & 1u) == 0u) { return -CUDART_INF_F; }
+    }
+    return sampling_penalized_logit(raw, v, c, overlay, overlay_len);
+}
+
+// Visits tokens [0, vocab) as `for (v = tid; v < vocab; v += blockDim.x)` would, calling
+// body(v, stage, stage_first). With a mask the vocabulary is walked in chunks whose mask words
+// are staged in `stage` (capacity stage_words); without one stage is null. All threads of the
+// block must call; the call ends with a barrier when a mask is present.
+template <class Body>
+__device__ inline void sampling_for_each_token(const SamplingConfig& c, int column, int vocab,
+                                               std::uint32_t* stage, int stage_words, Body body) {
+    if (c.token_mask == nullptr) {
+        for (int v = threadIdx.x; v < vocab; v += blockDim.x) { body(v, nullptr, 0); }
+        return;
+    }
+    const int chunk = stage_words * 32;
+    for (int first = 0; first < vocab; first += chunk) {
+        const int tokens = vocab - first < chunk ? vocab - first : chunk;
+        __syncthreads(); // every reader of the previous chunk is done
+        sampling_stage_mask_words(c, column, first, tokens, stage);
+        for (int v = first + threadIdx.x; v < first + tokens; v += blockDim.x) {
+            body(v, stage, first);
+        }
+    }
+    __syncthreads();
 }
 
 __device__ __forceinline__ void sampling_insert_candidate(float* vals, int* idxs, int cap, float v,
@@ -317,6 +521,9 @@ __device__ inline void sampling_normalize_support(const SamplingConfig& cfg, flo
         float cum                = 0.0f;
         int support              = 0;
         for (int j = 0; j < n; ++j) {
+            // Candidates are sorted descending, so a -inf (mask-disallowed) value ends the
+            // support. Unmasked candidates are always finite, which keeps that route unchanged.
+            if (!(cand_val[j] > -CUDART_INF_F)) { break; }
             if (min_p_thresh >= 0.0f && prob[j] < min_p_thresh) { break; }
             cum += prob[j];
             support = j + 1;
@@ -339,13 +546,14 @@ __device__ inline void
 sampling_build_truncated_small(const __nv_bfloat16* logits, std::int64_t base, std::int32_t vocab,
                                const SamplingConfig& cfg, float* tile_val, int* tile_idx,
                                float* cand_val, int* cand_idx, float* prob, int* n_support,
-                               const std::int32_t* overlay = nullptr, int overlay_len = 0) {
+                               const std::int32_t* overlay = nullptr, int overlay_len = 0,
+                               int column = 0) {
     const int tid = threadIdx.x;
     const int cap = sampling_candidate_cap(cfg, vocab);
     if (tid < kSamplerTileItems) {
         if (tid < vocab) {
             const float x = sampling_adjusted_logit(__bfloat162float(logits[base + tid]), tid, cfg,
-                                                    overlay, overlay_len);
+                                                    overlay, overlay_len, column);
             tile_val[tid] = x;
             tile_idx[tid] = tid;
         } else {
@@ -365,13 +573,14 @@ sampling_build_truncated_small(const __nv_bfloat16* logits, std::int64_t base, s
 
 // Single-block fallback for large columns when the finite multi-block workspace
 // route cannot represent the launch. It still reads each vocab entry once and
-// keeps a bounded per-thread top-20, so it avoids a top_k*vocab global reread.
+// keeps a bounded per-thread top-20 (kSamplerFastCandidates: a larger top_k is served at 20 here),
+// so it avoids a top_k*vocab global reread.
 __device__ inline void sampling_build_truncated_block_fast(
     const __nv_bfloat16* logits, std::int64_t base, std::int32_t vocab, const SamplingConfig& cfg,
     float* merge_val, int* merge_idx, float* cand_val, int* cand_idx, float* prob, int* n_support,
-    const std::int32_t* overlay = nullptr, int overlay_len = 0) {
+    const std::int32_t* overlay = nullptr, int overlay_len = 0, int column = 0) {
     const int tid = threadIdx.x;
-    const int cap = sampling_candidate_cap(cfg, vocab); // always <= kSamplerFastCandidates
+    const int cap = min(sampling_candidate_cap(cfg, vocab), kSamplerFastCandidates);
 
     float local_val[kSamplerFastCandidates];
     int local_idx[kSamplerFastCandidates];
@@ -382,10 +591,23 @@ __device__ inline void sampling_build_truncated_block_fast(
     }
 
     const int fast_cap = cap;
-    for (int v = tid; v < vocab; v += blockDim.x) {
-        const float x = sampling_adjusted_logit(__bfloat162float(logits[base + v]), v, cfg, overlay,
-                                                overlay_len);
-        sampling_insert_candidate(local_val, local_idx, fast_cap, x, v);
+    if (cfg.token_mask == nullptr) {
+        for (int v = tid; v < vocab; v += blockDim.x) {
+            const float x = sampling_penalized_logit(__bfloat162float(logits[base + v]), v, cfg,
+                                                     overlay, overlay_len);
+            sampling_insert_candidate(local_val, local_idx, fast_cap, x, v);
+        }
+    } else {
+        // merge_val (16-byte aligned by every caller) doubles as the mask stage until the merge.
+        sampling_for_each_token(cfg, column, vocab, reinterpret_cast<std::uint32_t*>(merge_val),
+                                kSamplerBlock * kSamplerFastCandidates,
+                                [&](int v, const std::uint32_t* stage, int stage_first) {
+                                    const float x = sampling_staged_logit(
+                                        __bfloat162float(logits[base + v]), v, cfg, stage,
+                                        stage_first, overlay, overlay_len);
+                                    sampling_insert_candidate(local_val, local_idx, fast_cap, x,
+                                                              v);
+                                });
     }
 
     for (int j = 0; j < kSamplerFastCandidates; ++j) {
@@ -438,4 +660,4 @@ __device__ __forceinline__ int sampling_pick_from_support(const int* cand_idx, c
     return picked;
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

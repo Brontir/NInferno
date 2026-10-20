@@ -6,11 +6,22 @@
 
 #include <cuda_runtime.h>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
+
+// T in [1,32]: Q4 query/key and Q5 value/z through the small-T MMA kernels (q4_ksplit_mma.cuh,
+// q5_small_t_mma.cuh).
+void q4_q5_gdn_input_small_t_launch(const Tensor& x, const Weight& qk_weight,
+                                    const Weight& value_z_weight, Tensor& qk, Tensor& value,
+                                    Tensor& z, cudaStream_t stream);
 
 void q4_q5_gdn_input_independent_launch(const Tensor& x, const Weight& qk_weight,
                                         const Weight& value_z_weight, Tensor& qk, Tensor& value,
                                         Tensor& z, cudaStream_t stream);
+
+// Both parents on the sliced-K MMA kernels at T in [1,32].
+void q4_q5_gdn_input_sliced_launch(const Tensor& x, const Weight& qk_weight,
+                                   const Weight& value_z_weight, Tensor& qk, Tensor& value,
+                                   Tensor& z, int variant, cudaStream_t stream);
 
 void q4_q5_gdn_input_grouped_mma_launch(const Tensor& x, const Weight& qk_weight,
                                         const Weight& value_z_weight, Tensor& qkv, Tensor& z,
@@ -31,4 +42,4 @@ void q4_q5_gdn_input_conv_record_launch(const Tensor& x, const Weight& qk_weight
                                         Tensor& query, Tensor& key, Tensor& value, Tensor& z,
                                         cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

@@ -1,5 +1,5 @@
-#include "ninfer/ops/sigmoid_mul.h"
-#include "ninfer_bench_common.h"
+#include "ninferno/ops/sigmoid_mul.h"
+#include "ninferno_bench_common.h"
 #include "ops/launcher/sigmoid_gate_mul.h"
 
 #include <cuda_runtime.h>
@@ -13,8 +13,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -52,12 +52,15 @@ std::vector<int> parse_tokens(const char* raw) {
 void run(int tokens, int heads, bool control, int candidate_block) {
     const int d         = 256 * heads;
     const std::size_t n = static_cast<std::size_t>(d) * static_cast<std::size_t>(tokens);
-    DeviceBuffer gate   = make_bf16(n);
-    DeviceBuffer x      = make_bf16(n);
+    DeviceBuffer gate   = make_bf16(n, 101U);
+    DeviceBuffer x      = make_bf16(n, 103U);
+    SavedBuffer initial(x);
+    const auto restore = [&](cudaStream_t stream) { initial.restore(stream); };
     Tensor tgate(gate.p, DType::BF16, {256, heads, tokens});
     Tensor tx(x.p, DType::BF16, {256, heads, tokens});
 
-    const Result result = bench_loop(
+    const Result result = bench_loop_prepared(
+        restore,
         [&](cudaStream_t stream) {
             if (control) {
                 constexpr int block   = 256;

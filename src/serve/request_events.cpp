@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 
 RequestLogContext make_request_log_context(std::uint64_t id, std::string protocol,
                                            const GenerationRequest& request,
@@ -23,14 +23,15 @@ RequestLogContext make_request_log_context(std::uint64_t id, std::string protoco
     context.enable_thinking                    = prepared.enable_thinking;
     context.thinking_budget                    = prepared.thinking_budget;
     context.requested_reasoning_effort =
-        prepared.reasoning_effort ? parse_requested_reasoning_effort(
-                                        ninfer::reasoning_effort_name(*prepared.reasoning_effort))
+        prepared.reasoning_effort ? ninferno::parse_reasoning_effort(
+                                        ninferno::reasoning_effort_name(*prepared.reasoning_effort))
                                   : std::nullopt;
     context.preserve_thinking                 = prepared.preserve_thinking;
     context.preserve_thinking_semantic_change = metadata.preserve_thinking_semantic_change;
     context.sampling                          = prepared.sampling;
     context.acquisition_seconds               = prepared.acquisition_seconds;
     context.preparation                       = prepared.preparation;
+    context.notes                             = request.notes;
     return context;
 }
 
@@ -113,4 +114,4 @@ RequestFailure make_client_disconnected_failure(RequestFailurePhase phase) {
     };
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

@@ -1,171 +1,144 @@
-# Contributing to NInfer
+# Contributing to NInferno
 
-NInfer welcomes precise problem reports, reproducible performance evidence, and carefully scoped
-code contributions. The most useful first contribution is often an Issue that establishes what is
-happening and why it matters. A pull request is an implementation of an agreed change, not the
-place to ask the maintainer to discover the problem, choose its semantics, or redesign its core
-approach.
+Thank you for helping. The most useful contributions are precise bug reports, reproducible
+performance evidence, and small, well-verified pull requests. NInferno is derived from
+[ninfer](https://github.com/Neroued/ninfer) by Neroued (Apache-2.0; see [`NOTICE`](NOTICE)).
 
-## Project scope and decisions
+## Scope
 
-NInfer is an intentionally focused inference engine. Contributions are evaluated against the
-supported product described in [`README.md`](README.md), the public documentation map in
-[`docs/README.md`](docs/README.md), and the applicable architecture documents. Broader
-compatibility or generality is not a benefit by itself when it adds a product contract or
-maintenance surface that the project does not intend to own.
+NInferno is an inference engine for one NVIDIA GPU, from Volta (`sm_70`) to Blackwell (`sm_120`).
+The supported product is described in [`README.md`](README.md); the documentation map is
+[`docs/README.md`](docs/README.md). Maintainers decide scope, architecture and long-term
+maintenance. A good idea may still be implemented by a maintainer inside the current architecture,
+and the report will be credited.
 
-The maintainer makes the final decision about product scope, architecture, and long-term
-maintenance. Establishing that a bug is real or that an idea is useful does not imply that a
-particular implementation will be accepted. The maintainer may preserve the report or core idea
-and implement it independently within the current architecture.
+## Start with an issue
 
-## Start with an Issue
+Open an issue before writing code for a bug, a performance opportunity, a feature or a protocol
+change. Wait for a maintainer to confirm the scope and direction; a pull request without a
+confirmed issue may be closed unread. Typos, broken links and obvious one-line fixes need no issue.
 
-Every bug, performance opportunity, feature request, protocol change, and architecture proposal
-must begin with an Issue before implementation starts. Use the Issue to establish:
+**Bug report.** Include the NInferno commit, GPU model, driver and CUDA version, the source
+checkpoint and conversion command, the full command or request that fails (smallest reproduction),
+expected versus observed behavior, logs as text, and how often it happens.
 
-- the concrete problem or use case;
-- whether it occurs within the supported product scope;
-- the expected behavior or performance claim;
-- the affected contract and ownership boundary; and
-- whether an external implementation is appropriate.
+**Performance report.** Say what level you measured (operator, request phase or end to end) and give
+baseline and candidate under the same conditions: workload, commands, GPU, toolchain, warmup and
+repetitions. Note costs such as memory, numerical quality and effects on other GPUs. An end-to-end
+number does not isolate an operator change; an operator proposal needs an operator benchmark and a
+correctness check.
 
-Wait for the maintainer to confirm the scope and implementation direction before investing in a
-pull request. Opening an Issue does not by itself approve a proposed design. A pull request without
-a linked, confirmed Issue may be closed without detailed review.
+## Build
 
-### Bug reports
+Requirements are in the [README](README.md#build-it-yourself). Build for your GPU architecture:
 
-A bug report must contain enough information for the maintainer to locate and reason about the
-failure. Include, as applicable:
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build -j
+```
 
-- the exact NInfer commit or release, artifact source, and recipe when using custom weights;
-- the GPU, driver, CUDA toolchain, build configuration, and relevant runtime options;
-- the complete command, request, or smallest practical reproduction;
-- the expected behavior and the observed behavior;
-- relevant logs or error output as text;
-- the reproduction frequency and any known trigger or boundary condition; and
-- checks already performed, including anything that could not be verified.
+For development use the `dev` preset, which also builds tests and benchmarks (add
+`-DCMAKE_CUDA_ARCHITECTURES=<arch>` when the default `120a` is not your GPU):
 
-State clearly when a reproduction is incomplete or when the behavior occurs outside the advertised
-product target. An unsupported use case may still motivate a proposal, but it is not a defect in
-the supported product contract.
+```bash
+cmake --preset dev
+cmake --build --preset dev -j
+```
 
-### Performance reports
+Build options are listed in [`docs/maintainer/build-system.md`](docs/maintainer/build-system.md).
 
-A performance report must identify the level of the claim: operator, schedule, request phase, or
-end-to-end inference. Include the baseline and candidate measurements under comparable conditions,
-the exact workload and commands, hardware and toolchain, warmup and repetition method, and a useful
-summary of the results.
+## Test before you open a PR
 
-Account for relevant tradeoffs such as workspace, resident memory, transfer cost, numerical quality,
-and effects on other execution paths. End-to-end results can establish an end-to-end observation;
-they do not isolate an operator change. A proposed operator optimization should therefore include a
-direct operator benchmark and appropriate correctness evidence.
+```bash
+ctest --preset dev                      # or: ctest --test-dir build --output-on-failure
+python3 -m pytest tests/artifact tests/convert tests/test_serve_corpus.py
+```
 
-### Feature and architecture proposals
+Use Python 3.11. Run GPU tests serially. A case your GPU or build cannot run prints `SKIP` and still
+passes; `tools/audit/ctest_skips.sh build` counts skipped cases. Tests that need a converted model
+are skipped unless `NINFERNO_TEST_ARTIFACT` points at one. For a local change, build and run just
+the affected target (`ctest --test-dir build -R <name>`). Test layout and the opt-in model tests
+are in [`tests/README.md`](tests/README.md); benchmarks in [`bench/README.md`](bench/README.md).
 
-Describe the real supported use case, the limitation of the current behavior, the desired semantics,
-and the new contract or maintenance responsibility the project would acquire. Explain why the
-existing architecture cannot satisfy the use case. Do not begin a broad implementation until the
-maintainer has accepted both the product direction and the proposed ownership model.
+What to verify depends on the change:
 
-## Pull request scope
+- exact transforms and formats: exact comparison;
+- floating-point kernels: an independent naive FP32/FP64 oracle, as in
+  [Op development](docs/maintainer/op-development.md);
+- stateful behavior: the whole affected transition;
+- CUDA changes: the relevant shapes and routes, and say which GPU classes you tested;
+- performance: measure at the level you claim;
+- protocol changes: the OpenAI/Anthropic schema tests and [`docs/serving.md`](docs/serving.md).
 
-A pull request is appropriate only after its linked Issue has established the problem and the
-maintainer has agreed to its scope and implementation direction. Target pull requests at the
-`master` branch. Before implementation, also review the current `dev` branch to avoid duplicating
-or conflicting with maintainer work that has not yet reached `master`.
+Say plainly which checks you could not run. Do not claim validation you did not do.
 
-Each pull request must represent one coherent engineering decision:
+## Code style
 
-- address one confirmed Issue with one consistent design;
-- include all implementation, tests, tooling, and active documentation required to close that
-  decision correctly;
-- keep independent bugs, optimizations, refactors, and product changes in separate pull requests;
-- exclude unrelated cleanup and speculative compatibility work; and
-- avoid changing public semantics or product scope beyond what was agreed in the Issue.
+C++20 and CUDA, formatted with the repository's [`.clang-format`](.clang-format) (LLVM-based,
+4-space indent, 100 columns, left-aligned pointers, `#include` order left as written):
 
-There is no mechanical line-count or file-count limit. A necessary solution may cross several
-files, but every changed part must belong to the same contract and be reviewable and verifiable as
-one unit. A large change that combines independent decisions, crosses ownership boundaries without
-prior agreement, or requires the maintainer to reconstruct its design is not maintainable and will
-not be accepted. Use the Issue, not a draft implementation, to resolve architecture and scope.
+```bash
+clang-format -i path/to/changed_file.cpp
+```
 
-## Engineering and verification
+Follow the surrounding code. Python tools target Python 3.11 and run from the repository root.
+Write comments and docs in English. Do not leave dead code, unused options
+or compatibility aliases for names you replaced.
 
-Read the active documentation governing the code being changed and preserve its ownership and
-semantic contracts. In particular:
+## Documentation
 
-- validate exact transformations and formats with exact comparison;
-- validate floating-point work against an independent mathematical oracle with a justified
-  numerical criterion;
-- verify the complete affected transition for stateful behavior;
-- exercise relevant supported shapes and execution routes for CUDA changes;
-- measure performance at the level being claimed; and
-- keep externally observable implementation, schema tests, and documentation consistent.
+Documentation lives in [`docs/`](docs/README.md): user guides ([serving](docs/serving.md),
+[CLI](docs/cli.md), [conversion](docs/weight-conversion.md)) and maintainer references under
+[`docs/maintainer/`](docs/maintainer/). Update the page that owns a behavior in the same PR as the
+change. CI checks documentation (`.github/workflows/docs.yml`); run both checks locally:
 
-Use the existing project workflows:
+```bash
+python3 tools/docs/gen_performance.py --check   # performance pages match their data
+python3 tools/docs/check_anchors.py .           # relative links and their #anchors resolve
+```
 
-- [`tests/README.md`](tests/README.md) for test organization and commands;
-- [`bench/README.md`](bench/README.md) for product and operator benchmarks; and
-- [`docs/maintainer/op-development.md`](docs/maintainer/op-development.md) for numerical Op
-  development and qualification.
+**Performance pages** are generated; do not edit them by hand. Measurements are lines in
+[`docs/performance/data/bench.jsonl`](docs/performance/data/bench.jsonl), with GPUs and models in
+`gpus.json` and `models.json` beside it. After changing the data, regenerate:
 
-Run the focused checks needed to establish the changed behavior and its material claims. Record the
-exact commands and summarize the results. If a relevant check could not be run, state that
-limitation and its consequence. Do not claim validation that was not performed.
+```bash
+python3 tools/docs/gen_performance.py
+```
 
-## Contributor responsibility and AI assistance
+This rewrites `docs/performance/README.md`, the per-GPU, per-model and per-pair
+(`runs/<gpu>/<model>.md`) pages, and the blocks between the `perf-summary` and `perf` markers in
+the top-level `README.md`. Commit data and pages
+together. Measurement rules are in
+[`docs/performance/methodology.md`](docs/performance/methodology.md).
 
-The contributor is responsible for every submitted change, regardless of which tools were used to
-produce it. Tool choice neither qualifies nor disqualifies a contribution.
+## Pull requests
 
-The contributor must understand the complete diff, explain the design and its boundary conditions,
-review generated output, perform the stated verification, and respond to technical review. Code
-that the contributor cannot explain, validate, or maintain is not ready for submission. Maintainer
-review is not a substitute for contributor debugging or engineering supervision.
-
-## Pull request description
-
-Use the [PR template](.github/pull_request_template.md) to describe the problem and scope,
-implementation, and verification. One PR completes one agreed change, including its necessary
-implementation, verification and report; submit independent changes separately.
-
-A pull request description must include:
-
-- the linked Issue and the agreed scope;
-- the concrete design and why it fits the current architecture;
-- the affected behavior, ownership boundary, or public contract;
-- the exact verification commands and summarized results;
-- the workload, hardware, toolchain, and methodology for any performance claim; and
-- every relevant check that was not run and the resulting limitation.
-
-Choose the verification details relevant to your change:
+- Target the `master` branch and link the confirmed issue.
+- One PR is one coherent change: implementation, tests, tools and docs that belong together.
+  Keep unrelated fixes, refactors and optimizations in separate PRs, and avoid drive-by cleanup.
+- Use Conventional Commit subjects: `feat`, `fix`, `perf`, `bench`, `test`, `build`, `refactor`,
+  `docs` or `chore`, for example `fix: reject empty tool arguments`.
+- Fill in the [PR template](.github/pull_request_template.md): problem and scope, design, and the
+  exact verification commands with summarized results (GPU model, toolchain, workload for any
+  performance claim).
+- Run `git diff --check` and keep line endings LF.
 
 | Change | Evidence to include |
 |---|---|
-| Bug fix | The trigger, expected behavior, and verification of the fix. |
-| Recipe or conversion method | The source, target representation, conversion command, and which stages were actually verified: conversion, loading, or execution. |
-| New Op or shape | Supported inputs, independent numerical verification, and relevant boundaries. Follow [Op development](docs/maintainer/op-development.md). |
-| Performance tuning | Correctness evidence and a final performance report. Linear tuning follows the [existing report format](docs/maintainer/linear-tuning.md#4-report-format) and [Q4 example](docs/maintainer/examples/q4-linear.md). |
-| Runtime or interface change | Reproduction and verification of the affected behavior. |
-| Documentation, build, or tooling | Checks relevant to the change, such as links, affected build targets, or tool invocations. |
+| Bug fix | The trigger, expected behavior, and verification of the fix |
+| Conversion recipe | Source, target format, command, and which stages you verified (convert, load, run) |
+| New Op or shape | Supported inputs and an independent numerical check ([Op development](docs/maintainer/op-development.md)) |
+| Linear tuning | Correctness evidence and a report in the [existing format](docs/maintainer/linear-tuning.md#4-report-format) |
+| Docs, build, tooling | The checks relevant to the change: links, affected targets, tool runs |
 
-## Review policy
+## Your responsibility
 
-Review is a limited maintainer resource and is not guaranteed. A pull request may be closed without
-a line-by-line review when it:
+You are responsible for every change you submit, whichever tools produced it, including AI
+assistants. Understand the whole diff, be able to explain and defend the design, and answer review
+comments yourself. Review time is limited: a PR may be closed without detailed review if it lacks a
+confirmed issue, mixes independent changes, falls outside the supported product, or lacks evidence
+for its claims. Closing a PR does not reject the underlying report.
 
-- was submitted before its problem, scope, or implementation direction was confirmed;
-- falls outside the supported product or expands an unapproved contract;
-- combines independent changes into an unreviewable implementation;
-- contains evident correctness, ownership, lifetime, state, or boundary problems;
-- lacks evidence appropriate to its correctness, numerical, or performance claims;
-- cannot be explained and supported by its contributor; or
-- would require the maintainer to redesign, split, debug, or complete its core implementation.
+## Security
 
-Closing a pull request does not necessarily reject the underlying report or idea. It means that the
-submitted implementation does not meet the project's review and maintenance threshold. The
-maintainer may address a confirmed problem through a separate implementation and reference the
-original report where appropriate.
+Report vulnerabilities privately; see [`SECURITY.md`](SECURITY.md).

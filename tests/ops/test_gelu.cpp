@@ -1,13 +1,14 @@
-#include "ninfer/ops/gelu.h"
+#include "ninferno/ops/gelu.h"
 #include "ops/op_tester.h"
+#include "ops/oracle.h"
 
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -27,9 +28,7 @@ double gelu_oracle(double input, ops::GeluMode mode) {
     if (mode == ops::GeluMode::Exact) {
         return 0.5 * input * (1.0 + std::erf(input / std::sqrt(2.0)));
     }
-    constexpr double sqrt_two_over_pi = 0.79788456080286535587989211986876;
-    return 0.5 * input *
-           (1.0 + std::tanh(sqrt_two_over_pi * (input + 0.044715 * input * input * input)));
+    return gelu_tanh_oracle(input);
 }
 
 int run_case(const char* label, ops::GeluMode mode, std::int32_t rows, std::int32_t columns,

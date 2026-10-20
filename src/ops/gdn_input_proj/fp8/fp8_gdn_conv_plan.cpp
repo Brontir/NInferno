@@ -1,17 +1,19 @@
-#include "core/weight.h"
 #include "ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.h"
+
+#include "core/weight.h"
+#include "ops/linear/fp8/fp8_policy.h"
 
 #include "core/layout.h"
 #include "ops/gdn_input_proj/fp8/fp8_gdn_input_plan.h"
 #include "ops/gdn_input_proj/gdn_projected_conv.h"
 #include "ops/linear/fp8/fp8_a8_plan.h"
-#include "ops/linear/fp8/fp8_config.h"
+#include "ops/linear/fp8/fp8_geometry.h"
 
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 
 constexpr std::int32_t kChannels = 10240;
@@ -43,11 +45,9 @@ void require_policy(LinearPolicy policy, const char* operation) {
 }
 
 Fp8GdnConvPlan b1_a16_plan(std::int32_t width) {
-    const bool fused = width <= 3 || (width >= 7 && width <= 10);
+    const bool fused = width <= 3;
     return {fused ? Fp8GdnConvScheduleId::FusedA16 : Fp8GdnConvScheduleId::MaterializedA16};
 }
-
-bool materialized(Fp8GdnConvPlan plan) { return plan.schedule != Fp8GdnConvScheduleId::FusedA16; }
 
 std::size_t snapshot_capacity(Fp8GdnConvPlan maximum_plan, std::int32_t materialized_columns,
                               std::int32_t maximum_columns) {
@@ -55,14 +55,16 @@ std::size_t snapshot_capacity(Fp8GdnConvPlan maximum_plan, std::int32_t material
     WorkspaceLayoutBuilder layout;
     (void)allocate_projected(layout, materialized_columns);
     if (maximum_plan.schedule == Fp8GdnConvScheduleId::MaterializedA8) {
-        (void)allocate_fp8_a8_workspace(layout, maximum_columns, Fp8N16384K5120::kInputRows);
+        (void)allocate_fp8_a8_workspace(layout, maximum_columns, Fp8N16384K5120::kInputRows,
+                                        fp8_gdn_input_partial_capacity_bytes(maximum_columns));
     }
     return layout.peak_bytes(1);
 }
 
 std::size_t record_capacity(Fp8GdnConvPlan plan, std::int32_t aggregate_columns) {
     if (plan.schedule != Fp8GdnConvScheduleId::MaterializedA8) { return 0; }
-    return fp8_a8_workspace_capacity_bytes(aggregate_columns, Fp8N16384K5120::kInputRows);
+    return fp8_a8_workspace_capacity_bytes(aggregate_columns, Fp8N16384K5120::kInputRows,
+                                           fp8_gdn_input_partial_capacity_bytes(aggregate_columns));
 }
 
 void launch_projection(const Tensor& x, const Weight& weight, Tensor& projected, Tensor& z,
@@ -85,11 +87,16 @@ Fp8GdnConvPlan fp8_gdn_snapshot_resolve_plan(LinearPolicy policy, std::int32_t w
     if (width <= 0 || batch_size <= 0 || batch_size > 8 || (batch_size > 1 && width > 16)) {
         throw std::invalid_argument("fp8 GDN snapshot: invalid B/W domain");
     }
+    // A16Only (the exact contract) materializes every width through the A16 projection, as the
+    // NVFP4 conv does: the fused A16 form sums K in its own order.
+    if (policy == LinearPolicy::A16Only) { return {Fp8GdnConvScheduleId::MaterializedA16}; }
     if (batch_size == 1) {
-        if (allows_a8(policy) && width >= 10) { return {Fp8GdnConvScheduleId::MaterializedA8}; }
+        if (fp8_a8_allowed(policy) && width >= 17) {
+            return {Fp8GdnConvScheduleId::MaterializedA8};
+        }
         return b1_a16_plan(width);
     }
-    if (allows_a8(policy) && width * batch_size >= 9) {
+    if (fp8_a8_allowed(policy) && width * batch_size >= 17) {
         return {Fp8GdnConvScheduleId::MaterializedA8};
     }
     return {Fp8GdnConvScheduleId::MaterializedA16};
@@ -115,16 +122,8 @@ std::size_t fp8_gdn_snapshot_workspace_capacity_bytes(LinearPolicy policy, std::
     }
     (void)fp8_gdn_snapshot_resolve_plan(policy, min_width, batch_size);
     const Fp8GdnConvPlan maximum = fp8_gdn_snapshot_resolve_plan(policy, max_width, batch_size);
-    std::int32_t largest_materialized_width = 0;
-    if (batch_size > 1 || max_width > 10) {
-        largest_materialized_width = max_width;
-    } else {
-        for (std::int32_t width = min_width; width <= max_width; ++width) {
-            if (materialized(fp8_gdn_snapshot_resolve_plan(policy, width, batch_size))) {
-                largest_materialized_width = width;
-            }
-        }
-    }
+    const std::int32_t largest_materialized_width =
+        batch_size > 1 || max_width > 3 || policy == LinearPolicy::A16Only ? max_width : 0;
     return snapshot_capacity(maximum, batch_size * largest_materialized_width,
                              batch_size * max_width);
 }
@@ -214,4 +213,4 @@ void fp8_gdn_record_dispatch(const Tensor& x, const Weight& weight, const Tensor
                        fp8_gdn_record_resolve_plan(policy, x.ne[1], x.ne[2]), workspace, stream);
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

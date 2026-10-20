@@ -1,0 +1,2091 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NInferno</title>
+<script>try { const v = localStorage.getItem("ninferno-theme"); if (v) document.documentElement.dataset.theme = v; } catch (e) {}</script>
+<style>
+:root{--bg:#f5f6f8;--panel:#fff;--soft:#f0f2f5;--fg:#1a1d21;--muted:#646d78;--line:#e1e4e9;--accent:#4b3df5;--accent-hover:#3627d6;--accent-soft:#ecebfe;--accent-fg:#fff;
+--ok:#1f8a4c;--ok-soft:#e2f4ea;--warn:#a86a00;--warn-soft:#fff2d9;--bad:#b42323;--bad-soft:#fce7e7;--bar-bg:#e7e9ee;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111316;--panel:#191c20;--soft:#20242a;--fg:#e7e9ec;--muted:#98a1ac;--line:#2a2f36;--accent:#8b80ff;--accent-hover:#a59dff;--accent-soft:#2a2650;--accent-fg:#0f0d24;
+--ok:#6fd49b;--ok-soft:#173326;--warn:#f0c36b;--warn-soft:#3a2d11;--bad:#f29a9a;--bad-soft:#3d1c1c;--bar-bg:#2a2f36;color-scheme:dark}}
+:root[data-theme=dark]{--bg:#111316;--panel:#191c20;--soft:#20242a;--fg:#e7e9ec;--muted:#98a1ac;--line:#2a2f36;--accent:#8b80ff;--accent-hover:#a59dff;--accent-soft:#2a2650;--accent-fg:#0f0d24;
+--ok:#6fd49b;--ok-soft:#173326;--warn:#f0c36b;--warn-soft:#3a2d11;--bad:#f29a9a;--bad-soft:#3d1c1c;--bar-bg:#2a2f36;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1240px;margin:0 auto;padding:14px 16px 40px}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.brand{font-weight:750;font-size:19px;letter-spacing:.01em}
+.tabs{display:flex;gap:4px;margin-left:auto;background:var(--soft);padding:3px;border-radius:10px}
+.tabs button{border:0;background:transparent;padding:6px 14px;border-radius:8px;color:var(--muted);font-weight:600}
+.tabs button.on{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.tabs button:hover:not(:disabled):not(.on){background:color-mix(in srgb,var(--panel) 60%,transparent);color:var(--fg)}
+.badge{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:11px;line-height:18px;text-align:center}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.ok{background:var(--ok-soft);color:var(--ok)}.warn{background:var(--warn-soft);color:var(--warn)}.bad{background:var(--bad-soft);color:var(--bad)}
+.chip{display:inline-block;padding:1px 7px;border:1px solid var(--line);border-radius:6px;font:12px/1.5 var(--mono);white-space:nowrap;background:var(--panel)}
+.muted{color:var(--muted)}.mono{font-family:var(--mono)}.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+button,select,input{font:inherit;color:var(--fg)}
+button{padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);cursor:pointer;white-space:nowrap;
+  transition:background-color .12s,border-color .12s,color .12s,box-shadow .12s}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted);padding:6px 8px}
+button.danger{color:var(--bad)}
+button:hover:not(:disabled){border-color:var(--accent);background:var(--soft)}
+button.primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover);box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 35%,transparent)}
+button.ghost:hover:not(:disabled){border-color:transparent;background:var(--soft);color:var(--fg)}
+button.danger:hover:not(:disabled){background:var(--bad-soft);color:var(--bad)}
+button:active:not(:disabled){transform:translateY(1px)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled,button.primary:disabled{background:var(--soft);color:var(--muted);border-color:var(--line);cursor:not-allowed;box-shadow:none}
+select,input[type=search]{padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+.gpus{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px}
+.gpu{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 12px;cursor:pointer}
+.gpu:hover{border-color:var(--muted)}
+.gpu.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.gpu .top{display:flex;justify-content:space-between;gap:8px;font-weight:600}
+.bar{height:6px;background:var(--bar-bg);border-radius:3px;overflow:hidden;margin:7px 0 5px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.run{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px}
+.run .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.run button{padding:3px 9px;font-size:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.bar-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--soft)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--soft)}
+.title{font-weight:600}
+.sub{font-size:12px;color:var(--muted)}
+.icons{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}
+.icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;font-size:11px;font-weight:700}
+.i-vision{background:var(--warn-soft);color:var(--warn)}.i-spec{background:var(--accent-soft);color:var(--accent)}.i-run{background:var(--ok-soft);color:var(--ok)}
+.acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.split{display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:12px;align-items:start}
+@media (max-width:820px){.split{grid-template-columns:1fr}}
+.list{max-height:70vh;overflow:auto}
+.item{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;padding:9px 12px}
+.item:hover:not(:disabled){background:var(--soft);border-color:var(--line)}.item.sel,.item.sel:hover:not(:disabled){background:var(--accent-soft)}
+.item .title{display:flex;gap:6px;align-items:center;min-width:0}
+.item .title,.item .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .title .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.list{overflow-x:hidden}
+.group{padding:8px 12px 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.detail{padding:14px 16px}
+.detail h3{margin:0 0 2px;font-size:18px}
+.facts{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;background:var(--soft);border-radius:10px;padding:12px;margin-bottom:12px}
+.controls .ctl{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);min-width:0}
+@media (min-width:600px){.controls .ctl.wide{grid-column:span 2}}
+.presets{display:flex;gap:4px;flex-wrap:wrap}
+.presets button{padding:2px 7px;font:11px/1.4 var(--mono)}
+.controls output{font:600 14px/1 var(--mono);color:var(--fg)}
+input[type=range]{width:100%;height:22px;margin:0;accent-color:var(--accent);cursor:grab}
+input[type=range]:active{cursor:grabbing}
+.pick{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.pick .big{font:700 16px/1.2 var(--mono)}
+.pickmain{flex:1 1 320px;min-width:0}
+.pickacts{display:flex;gap:8px;align-items:center}
+ul.why{margin:5px 0 6px;padding-left:18px;font-size:12px;color:var(--fg)}
+.pick.none{border-color:var(--bad);background:var(--bad-soft)}
+.qwrap{border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+.quants{min-width:560px}
+.quants.multi{min-width:640px}
+.quants.multi .q{grid-template-columns:12px minmax(140px,2fr) 40px 70px minmax(96px,1fr) 72px 80px 80px}
+.q{display:grid;grid-template-columns:12px minmax(140px,2fr) 40px 70px minmax(96px,1fr) 72px 80px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.q:last-child{border-bottom:0}.q:hover{background:var(--soft)}.q.sel{background:var(--accent-soft)}
+.q.head{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:700;background:var(--soft);cursor:default;padding-block:6px}
+.q.head span{cursor:help;line-height:1.25}
+.q.head .num{white-space:normal}
+.q.head small{display:block;font-size:10px;letter-spacing:0;text-transform:none;font-weight:600}
+.q.off{opacity:.45;cursor:default}
+.q.no{background:color-mix(in srgb,var(--bad-soft) 45%,transparent)}
+.q.no>*{opacity:.55}.q.no .qn,.q.no .why{color:var(--bad);opacity:1}
+.q.no:hover{background:var(--bad-soft)}
+.why{font-size:11px}
+.est{color:var(--muted)}
+.note{font-size:12px;color:var(--muted);margin:8px 2px 0}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.d-full{background:var(--ok)}.d-tight{background:var(--warn)}.d-no{background:transparent;border:2px solid var(--bad)}
+.pbar{height:8px;background:var(--bar-bg);border-radius:4px;overflow:hidden;margin:6px 0}
+.pbar>i{display:block;height:100%;background:var(--accent);transition:width .4s}
+pre.log{margin:0;background:var(--soft);border-top:1px solid var(--line);padding:10px 12px;max-height:300px;overflow:auto;font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}
+.drawer{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);box-shadow:0 -6px 20px rgba(0,0,0,.12);z-index:5}
+.drawer .head{display:flex;align-items:center;gap:8px;padding:6px 12px}
+.empty{padding:28px 12px;text-align:center;color:var(--muted)}
+.confirm{display:inline-flex;gap:6px;align-items:center;font-size:12px}
+.err{color:var(--bad)}
+.info{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:4px;border-radius:50%;
+  border:1px solid var(--muted);color:var(--muted);font:italic 600 9px/1 Georgia,serif;cursor:help;vertical-align:1px;text-transform:none;letter-spacing:0}
+.info:hover{border-color:var(--accent);color:var(--accent)}
+[data-tip]{cursor:help}
+#tip{position:fixed;z-index:30;max-width:300px;padding:8px 10px;border-radius:8px;background:var(--panel);color:var(--fg);
+  border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.18);font:12px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  pointer-events:none;text-transform:none;letter-spacing:0;font-weight:400}
+#tip b{font-weight:650}
+.kvsel,.seg{display:flex;gap:4px;flex-wrap:wrap}
+.kvsel button,.seg button{padding:3px 8px;font:12px/1.4 var(--mono)}
+.seg button{font-family:inherit}
+.kvsel button.on,.seg button.on,.kvsel button.on:hover:not(:disabled),.seg button.on:hover:not(:disabled){background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.sortline{padding-block:8px}
+.chk{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);cursor:pointer;margin-left:auto}
+.sup{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:11px;font-weight:800;flex:none;cursor:help}
+.sup-star{background:#f5c518;color:#3d2e00}
+.accel{margin:10px 0;padding:10px 12px;border:1px solid var(--line, #8883);border-radius:8px;display:flex;flex-direction:column;gap:6px}
+.accel .seg{display:inline-flex;gap:4px;flex-wrap:wrap;margin-left:8px}
+.accel .drt{border-collapse:collapse;width:100%;font-size:12px}
+.accel .drt th,.accel .drt td{text-align:left;padding:4px 6px;border-top:1px solid var(--line, #8883);vertical-align:top}
+.accel details summary{cursor:pointer}
+.sup-full,.sup-pill-full{background:var(--ok-soft);color:var(--ok)}.sup-drafter,.sup-pill-drafter{background:var(--warn-soft);color:var(--warn)}
+.sup-none,.sup-pill-none{background:var(--bad-soft);color:var(--bad)}.sup-unknown,.sup-pill-unknown{background:var(--soft);color:var(--muted)}
+.kvsel button:disabled{opacity:.35}
+.langpick{position:relative}
+#lang{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--mono)}
+.flag{display:inline-flex;width:20px;height:14px;border-radius:2px;overflow:hidden;box-shadow:0 0 0 1px var(--line);flex:none}
+.flag svg{width:100%;height:100%;display:block}
+.langmenu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;display:grid;min-width:170px;padding:4px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.langmenu button{display:flex;gap:9px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px}
+.langmenu button.on{background:var(--accent-soft)}
+.hubseg button{font:600 11px/1.4 var(--mono);padding:4px 7px}
+.sup.spin{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.item.unsup .title .nm,.item.unsup .sub{opacity:.6}
+.controls{gap:6px 18px;padding:8px 12px;margin-bottom:10px}
+.controls .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.controls .row output{margin-right:4px}
+.controls .presets{margin-left:auto}
+.presets button.on{border-color:var(--accent);color:var(--accent)}
+.controls label.row{cursor:pointer}
+.pick{padding:8px 12px;gap:10px}
+ul.why{margin:3px 0 4px}
+.chatpanel{overflow:hidden}
+.chatbar{padding-block:6px}
+#chatframe{display:block;width:100%;height:calc(100vh - 210px);min-height:420px;border:0;background:var(--panel)}
+a.btnlink{color:var(--accent);text-decoration:none;font-size:13px;padding:4px 8px;border-radius:8px}
+a.btnlink:hover{background:var(--soft)}
+[hidden]{display:none!important}
+.update{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 12px;padding:9px 12px;border-radius:12px;
+  background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+.update.required{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.update .msg{flex:1;min-width:200px}
+.update a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <span class="brand">NInferno</span>
+  <span id="exposure" class="pill ok"></span>
+  <span class="muted" id="gpuerr"></span>
+  <nav class="tabs">
+    <button data-tab="models" class="on" data-t="tabModels"></button>
+    <button data-tab="find" data-t="tabFind"></button>
+    <button data-tab="downloads"><span data-t="tabDownloads"></span><span class="badge" id="dlcount" hidden></span></button>
+    <button data-tab="chat" id="chattab" hidden><span data-t="chatTitle"></span></button>
+  </nav>
+  <span class="langpick"><button class="ghost" id="lang" aria-haspopup="true"></button><div class="langmenu" id="langmenu" hidden></div></span>
+  <button class="ghost" id="theme" style="font-size:16px;line-height:1"></button>
+</header>
+
+<div class="update" id="update" hidden>
+  <span class="msg" id="updmsg"></span>
+  <a id="updnotes" target="_blank" rel="noopener noreferrer" hidden></a>
+  <button class="ghost" id="updlog" hidden></button>
+  <button class="ghost" id="updlater"></button>
+  <button class="primary" id="updgo"></button>
+</div>
+
+<div class="gpus" id="gpus"></div>
+
+<section id="tab-models">
+  <div class="panel">
+    <div class="bar-line">
+      <b data-t="myModels"></b><span class="muted" id="mysum"></span>
+      <span style="flex:1"></span>
+      <span id="origline" class="muted"></span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th data-t="arch"></th><th data-t="params"></th><th data-t="publisher"></th><th data-t="model"></th>
+        <th data-t="quant"></th><th class="num" data-t="size"></th><th data-t="modified"></th><th></th></tr></thead>
+      <tbody id="mine"></tbody></table></div>
+  </div>
+</section>
+
+<section id="tab-find" hidden>
+  <div class="split">
+    <div class="panel">
+      <div class="bar-line"><input type="search" id="q" style="flex:1;min-width:0" autocomplete="off" spellcheck="false"><span class="seg hubseg" id="hubsel"></span></div>
+      <div class="bar-line sortline"><span class="seg" id="sort"></span>
+        <label class="chk"><input type="checkbox" id="hidenone"><span data-t="hideNone"></span></label></div>
+      <div class="list" id="results"></div>
+    </div>
+    <div class="panel" id="detail"><div class="empty" data-t="pickOne"></div></div>
+  </div>
+</section>
+
+<section id="tab-downloads" hidden>
+  <div class="panel"><div id="downloads"></div></div>
+</section>
+
+<section id="tab-chat" hidden>
+  <div class="panel chatpanel">
+    <div class="bar-line chatbar"><b id="chattitle"></b><span class="muted" id="chatgpu"></span><span style="flex:1"></span>
+      <a class="btnlink" id="chatnew" target="_blank" rel="noopener noreferrer"></a><button class="ghost" id="chatclose">✕</button></div>
+    <iframe id="chatframe" title="chat"></iframe>
+  </div>
+</section>
+</main>
+
+<div id="tip" hidden></div>
+<div class="drawer" id="drawer" hidden>
+  <div class="head"><b id="drawertitle"></b><span style="flex:1"></span><button class="ghost" id="drawerclose">✕</button></div>
+  <pre class="log" id="log"></pre>
+</div>
+
+<script>
+"use strict";
+const T = {
+  en:{tabModels:"My models",tabFind:"Find",tabDownloads:"Downloads",myModels:"My models",arch:"Arch",params:"Params",publisher:"Publisher",model:"Model",
+    quant:"Quant",size:"Size",modified:"Modified",run:"Run",chat:"Chat",stop:"Stop",log:"Log",del:"Delete",delq:"Delete?",yes:"Yes",no:"No",
+    calibrate:"Calibrate speculation",original:"original",delOriginals:"Delete originals",originalsKept:"originals kept",
+    noModels:"Nothing downloaded yet. Find a model in “Find”.",running:"running",ready:"ready",starting:"starting",
+    search:"Search Hugging Face (org/name works too)",picks:"Our picks",hub:"Hugging Face",pickOne:"Pick a model on the left",
+    context:"Context",parallel:"Parallel requests",gpu:"GPU",recommended:"Recommended",download:"Download",fitsFull:"fits",fitsTight:"tight",fitsNo:"does not fit",
+    over8:"> 8 bit",drafter:"drafter",kvUnknown:"context cost unknown: only weights counted",need:"needs",of:"of",measured:"tok/s on this card (measured by us)",noChat:"The chat window is not part of this build.",
+    llama:"llama.cpp",downloads:"downloads",likes:"likes",noDl:"No downloads.",done:"done",failed:"failed",cancel:"Cancel",here:"downloaded",
+    localonly:"localhost only",exposed:"open to the network, no password",nogpu:"no NVIDIA GPU visible",vision:"takes images",spec:"speculative heads",
+    ago:"ago",justNow:"just now",min:"min",h:"h",d:"days",tokens:"tok",perReq:"per request",free:"freed",fail:"error",onGpu:"on GPU",openHf:"on Hugging Face",
+    nothing:"nothing found",loading:"loading…",readingRepo:"Reading the repository: its files, then the model header (a large GGUF repository takes a few seconds)…",speculation:"speculation",profOwn:"own profile",profSimilar:"profile from",profGeneric:"generic profile",profNone:"no profile",
+    ctxCol:"Context",quantTip:"The weights' format as the repository publishes it; ★ is what we would pick for this card, ✓ is downloaded",
+    sizeTip:"Download size of the weights",
+    ctxColTip:"How much context the card holds beside the weights\n256K ×3 + 40K: three requests at the model's full length at once, and 40K of cache left over for one more, shorter one",
+    capFull:"{n} at the model's full context ({ctx}) at once\nand {rest} of cache left over",
+    capShort:"One request with up to {ctx} tokens\nless than the model's own {native}: the weights leave no more room",
+    ctxTip:"How long one conversation may grow: prompt, history and answer together",
+    parTip:"How many requests the server answers at the same time\neach takes its own cache; the total speed grows slower than the count",
+    accel:"Generation speed-up",accelAuto:"Auto (recommended)",accelOff:"Off",accelManual:"Manual",accelTip:"A small drafter guesses tokens ahead and the model checks them in one step: the answer is the same, only faster. Auto runs what was measured fastest for this model and GPU",accelByTask:"by task",famCode:"code",famMath:"math",famProse:"prose",famThinking:"reasoning",accelWeighted:"weighted",passSampled:"at the model's temperature",passGreedy:"greedy",accelWeightedTip:"Mean gain over the task mix: code 25 %, math 20 %, prose 30 %, reasoning 25 %; sampled at the model's temperature",accelGoals:"What to expect",goalOne:"one request",goalLoad:"{n} requests at once",goalLong:"long context (~{depth})",goalOffBetter:"plain decoding is faster here",autoPlainNote:"Auto starts without speed-up here: {n} at once at ~{depth} of context measured faster without it (speed-up ×{k})",accelDrafters:"Drafters for this model",drKind:"drafter",drWhere:"where",drEngine:"NInferno",drPrecision:"drafter precision",drResult:"result",drYes:"runs",drNo:"not yet",drNoTip:"NInferno does not run this kind of drafter yet",drOwn:"model's own",drOfficial:"official",drCommunity:"community",drOurs:"★ measured by us",drOthers:"≈ others measured",drNone:"not measured",drInCkpt:"inside the model: nothing to download",drOnDownload:"converted when downloaded",precTitle:"Drafter precision",precText:"The drafter only proposes tokens and the model checks every one, so its precision changes speed, never the answer. A lower-precision drafter costs less per round and guesses nearly as often: gpt-oss-20b on an RTX 4090 at temperature 1: bf16 ×1.19, q8 ×1.29, q4 ×1.36. NInferno takes the precision measured fastest for the model; without a measurement, q4 beside a model of 8 bits or fewer and bf16 beside an exact one",manualPick:"run with",manualNote:"runs as chosen even where auto would turn it off",
+    specTip:"A small drafter guesses several tokens ahead and the model checks them in one step: the same answer, faster\n×N is the gain measured on this GPU class",
+    kvType:"KV cache",kvTip:"How the context cache is stored\nfewer bytes hold more context and more requests, at a small cost in accuracy on long texts",
+    kv_bf16:"BF16: 2 bytes, exact",kv_int8:"INT8: half the memory, nearly exact",kv_fp8:"FP8: half the memory, RTX 40/50",
+    kv_nvfp4:"NVFP4: a quarter of the memory, loses more on long contexts",kv_k8v4:"Keys FP8, values NVFP4: about 40 % of BF16",
+    kvNeeds256:"not for this model: compact KV takes 256-wide heads",kvNeedsFp8:"needs an RTX 40 or 50 (FP8)",
+    memTip:"Memory the launch takes: weights, drafter, KV cache, recurrent states, buffers and CUDA",
+    bits:"Bits",ctxAll:"Context, total",gen:"Generation",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Decode",decode1:"Decode, 1 request",decodeAll:"Decode, total",
+    decodeAllTip:"All parallel requests together\nnot N times one request: they share the card's bandwidth, and a MoE reads more experts for more requests; scaled by our measurements",
+    ctxAllTip:"Tokens of context this card holds beside the weights for the chosen number of parallel requests, all of them together",
+    genTip:"Estimated generation speed of one request at the chosen context and number of requests, with speculation when it is on: card bandwidth, the bytes a token reads, the profile's measured gain. Hover a value for the memory it needs",
+    promptTip:"Estimated prompt processing speed: the card's tensor throughput and the model's active parameters",
+    tip1:"One request with up to {each} tokens of context",
+    tipN:"{n} at once while their contexts together stay under {total} tokens (each up to {each})",
+    noFitAt:"does not fit at {ctx} × {par}", tooBig:"weights alone do not fit",
+    estNote:"≈ — estimates from the card (memory, bandwidth, clock) and the model's shape, with speculation from the registry profile of this GPU; not measurements. Red rows do not fit the chosen context × requests.",
+    toDark:"Dark theme",toLight:"Light theme",avail:"available",memWeights:"weights",memDrafter:"drafter",
+    memStates:"states",memRuntime:"workspace and CUDA",noSpec:"without speculation",busyNow:"Now only {free} is free: other processes hold the rest",
+    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this architecture yet",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Fits {ctx} × {par} with {free} to spare",recWhyRule:"The most precise quantization that fits and decodes within 10 % of the fastest one of 4 bits or more",recWhySlower:"{name} is more precise but {p} % slower than the fastest of 4 bits or more",recWhyNoFit:"{name} is more precise but does not fit at {ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",recWhyLow:"Only quantizations below 4 bits fit: answers are noticeably worse",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
+  ru:{tabModels:"Мои модели",tabFind:"Найти",tabDownloads:"Загрузки",myModels:"Мои модели",arch:"Архитектура",params:"Параметры",publisher:"Автор",model:"Модель",
+    quant:"Квант",size:"Размер",modified:"Изменена",run:"Запустить",chat:"Чат",stop:"Стоп",log:"Лог",del:"Удалить",delq:"Удалить?",yes:"Да",no:"Нет",
+    calibrate:"Калибровать спекуляцию",original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
+    noModels:"Пока ничего не скачано. Найдите модель во вкладке «Найти».",running:"работает",ready:"готова",starting:"запускается",
+    search:"Поиск по Hugging Face (можно org/name)",picks:"Наша подборка",hub:"Hugging Face",pickOne:"Выберите модель слева",
+    context:"Контекст",parallel:"Параллельных запросов",gpu:"Видеокарта",recommended:"Рекомендуем",download:"Скачать",fitsFull:"влезает",fitsTight:"впритык",fitsNo:"не влезает",
+    over8:"> 8 бит",drafter:"черновик",kvUnknown:"стоимость контекста неизвестна: учтены только веса",need:"нужно",of:"из",measured:"ток/с на этой карте (наш замер)",noChat:"Окно чата не входит в эту сборку.",
+    llama:"llama.cpp",downloads:"скачиваний",likes:"лайков",noDl:"Загрузок нет.",done:"готово",failed:"ошибка",cancel:"Отменить",here:"скачан",
+    localonly:"только localhost",exposed:"открыт в сеть, без пароля",nogpu:"NVIDIA GPU не видно",vision:"понимает картинки",spec:"спекулятивные головы",
+    ago:"назад",justNow:"только что",min:"мин",h:"ч",d:"дн",tokens:"ток",perReq:"на запрос",free:"освобождено",fail:"ошибка",onGpu:"на GPU",openHf:"на Hugging Face",
+    nothing:"ничего не найдено",loading:"загрузка…",readingRepo:"Читаю репозиторий: список файлов, затем заголовок модели (большой GGUF-репозиторий — несколько секунд)…",speculation:"спекуляция",profOwn:"свой профиль",profSimilar:"профиль от",profGeneric:"общий профиль",profNone:"нет профиля",
+    ctxCol:"Контекст",quantTip:"Формат весов, как его публикует репозиторий; ★ — что мы бы выбрали для этой карты, ✓ — уже скачан",
+    sizeTip:"Сколько скачивать",
+    ctxColTip:"Сколько контекста карта вмещает рядом с весами\n256K ×3 + 40K: три запроса с полным контекстом модели одновременно и ещё 40K кеша на четвёртый, покороче",
+    capFull:"{n} с полным контекстом модели ({ctx}) одновременно\nи ещё {rest} кеша сверху",
+    capShort:"Один запрос с контекстом до {ctx} токенов\nменьше, чем умеет модель ({native}): больше не даёт память после весов",
+    ctxTip:"Насколько может вырасти один диалог: промпт, история и ответ вместе",
+    parTip:"Сколько запросов сервер обслуживает одновременно\nу каждого свой кеш; суммарная скорость растёт медленнее числа запросов",
+    accel:"Ускорение генерации",accelAuto:"Авто (рекомендуем)",accelOff:"Выкл",accelManual:"Вручную",accelTip:"Маленький черновик угадывает токены вперёд, модель проверяет их за один шаг: ответ тот же, только быстрее. Авто запускает то, что замерено самым быстрым для этой модели и карты",accelByTask:"по задачам",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"рассуждения",accelWeighted:"взвешенно",passSampled:"при температуре модели",passGreedy:"жадно",accelWeightedTip:"Средний выигрыш по смеси задач: код 25 %, математика 20 %, проза 30 %, рассуждения 25 %; при выборке с температурой модели",accelGoals:"Чего ждать",goalOne:"один запрос",goalLoad:"{n} запросов сразу",goalLong:"длинный контекст (~{depth})",goalOffBetter:"здесь быстрее без ускорения",autoPlainNote:"Авто запустит без ускорения: {n} сразу и ~{depth} контекста — без него замерено быстрее (ускорение ×{k})",accelDrafters:"Черновики для этой модели",drKind:"черновик",drWhere:"где",drEngine:"NInferno",drPrecision:"точность черновика",drResult:"результат",drYes:"работает",drNo:"пока нет",drNoTip:"NInferno пока не запускает черновики этого вида",drOwn:"своя у модели",drOfficial:"официальный",drCommunity:"сообщество",drOurs:"★ наш замер",drOthers:"≈ замеры других",drNone:"не замерено",drInCkpt:"внутри модели: качать нечего",drOnDownload:"конвертируется при скачивании",precTitle:"Точность черновика",precText:"Черновик только предлагает токены, а модель проверяет каждый, поэтому его точность меняет скорость, но не ответ. Черновик пониже точностью дешевле на раунд и угадывает почти так же: gpt-oss-20b на RTX 4090 при температуре 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno берёт точность, замеренную самой быстрой для модели; без замера — q4 к модели в 8 бит и меньше и bf16 к точной",manualPick:"запускать с",manualNote:"работает как выбрано, даже там, где авто выключило бы ускорение",
+    specTip:"Маленькая модель-черновик угадывает несколько токенов вперёд, основная проверяет их за один шаг: ответ тот же, быстрее\n×N — выигрыш, измеренный на картах этого класса",
+    kvType:"KV-кеш",kvTip:"Как хранится кеш контекста\nменьше байт — больше контекста и потоков, ценой небольшой точности на длинных текстах",
+    kv_bf16:"BF16: 2 байта, без потерь",kv_int8:"INT8: вдвое меньше памяти, почти без потерь",kv_fp8:"FP8: вдвое меньше памяти, RTX 40/50",
+    kv_nvfp4:"NVFP4: вчетверо меньше памяти, на длинном контексте потери заметнее",kv_k8v4:"Ключи FP8, значения NVFP4: около 40 % от BF16",
+    kvNeeds256:"не для этой модели: компактный KV только для голов размера 256",kvNeedsFp8:"нужна RTX 40 или 50 (FP8)",
+    memTip:"Сколько видеопамяти займёт запуск: веса, черновик, KV-кеш, состояния, буферы и CUDA",
+    bits:"Бит",ctxAll:"Контекст, всего",gen:"Генерация",prompt:"Промпт",perSec:"ток/с",prefill:"Префилл",decode:"Декод",decode1:"Декод, 1 поток",decodeAll:"Декод, всего",
+    decodeAllTip:"Все параллельные запросы вместе\nне N × один запрос: запросы делят полосу памяти карты, а MoE на большем числе запросов читает больше экспертов; масштаб — по нашим замерам",
+    ctxAllTip:"Сколько токенов контекста карта вмещает рядом с весами при выбранном числе параллельных запросов, на все запросы вместе",
+    genTip:"Оценка скорости генерации одного запроса при выбранных контексте и числе запросов, со спекуляцией, если она включена: полоса памяти карты, байты на токен, измеренный выигрыш профиля. Наведите на число — увидите, сколько памяти нужно",
+    promptTip:"Оценка скорости обработки промпта: тензорная производительность карты и активные параметры модели",
+    tip1:"Один запрос с контекстом до {each} токенов",
+    tipN:"{n} одновременно, если их контексты вместе меньше {total} токенов (каждый до {each})",
+    noFitAt:"не влезает при {ctx} × {par}", tooBig:"не влезают даже веса",
+    estNote:"≈ — оценка по карте (память, полоса, такты) и форме модели, со спекуляцией по профилю реестра для этой карты; не замер. Красные строки не влезают при выбранном контексте × числе запросов.",
+    toDark:"Тёмная тема",toLight:"Светлая тема",avail:"доступно",memWeights:"веса",memDrafter:"черновик",
+    memStates:"состояния",memRuntime:"буферы и CUDA",noSpec:"без спекуляции",busyNow:"Сейчас свободно только {free}: остальное занято другими процессами",
+    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nэту архитектуру движок пока не запускает",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Влезает при {ctx} × {par}, запас {free}",recWhyRule:"Самый точный квант из тех, что влезают и по декоду не медленнее лучшего 4-битного больше чем на 10 %",recWhySlower:"{name} точнее, но на {p} % медленнее лучшего 4-битного",recWhyNoFit:"{name} точнее, но не влезает при {ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",recWhyLow:"Влезают только кванты меньше 4 бит: ответы заметно хуже",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
+// New words of every language; a language without a word falls back to English.
+Object.assign(T.en, {
+  sup_format:"Not supported: the weights format\nthe architecture is the engine's, but {lib} weights are not read",supShort_format:"format not supported",
+  hideNone:"Hide unsupported",hubTip:"Where to search and download from",
+  searchHub:"Search {hub} (org/name works too)",
+  sup_family:"Probably supported\na variant of a family the engine runs ({family}); not verified yet",
+  sup_projector:"Checking…\nthe hub read the image projector (mmproj) instead of the model; reading the model file",
+  sup_checking:"Checking the model file…",supShort_family:"probably supported",supShort_projector:"checking",
+  basisHub:"Architecture as the hub reads it ({src})",basisOwn:"Architecture read from the model file: {file}",
+  srcGguf:"the header of one GGUF file",srcConfig:"config.json",srcTag:"the repository's model_type tag",
+  chatTitle:"Chat",closeChat:"Close the chat",newTab:"Open in a new tab",language:"Language",
+  memDetail:"weights {w} + KV {kv} + other {o}",
+});
+Object.assign(T.ru, {
+  sup_format:"Не поддерживается формат весов\nархитектура наша, но веса {lib} движок не читает",supShort_format:"формат не поддерживается",
+  hideNone:"Скрыть неподдерживаемые",hubTip:"Где искать и откуда скачивать",
+  searchHub:"Поиск по {hub} (можно org/name)",
+  sup_family:"Вероятно, поддерживается\nвариант семейства, которое движок запускает ({family}); пока не проверено",
+  sup_projector:"Проверяю…\nхаб прочитал проектор картинок (mmproj), а не модель; читаю файл модели",
+  sup_checking:"Проверяю файл модели…",supShort_family:"вероятно, поддерживается",supShort_projector:"проверяю",
+  basisHub:"Архитектура по данным хаба ({src})",basisOwn:"Архитектура прочитана из файла модели: {file}",
+  srcGguf:"заголовок одного GGUF-файла",srcConfig:"config.json",srcTag:"тег model_type репозитория",
+  chatTitle:"Чат",closeChat:"Закрыть чат",newTab:"Открыть в новой вкладке",language:"Язык",
+  memDetail:"веса {w} + KV {kv} + прочее {o}",
+});
+T.uk = {sup_format:"Не підтримується формат ваг\nархітектура наша, але ваги {lib} рушій не читає",supShort_format:"формат не підтримується",
+  tabModels:"Мої моделі",tabFind:"Знайти",tabDownloads:"Завантаження",myModels:"Мої моделі",arch:"Архітектура",params:"Параметри",publisher:"Автор",model:"Модель",
+  quant:"Квант",size:"Розмір",modified:"Змінено",run:"Запустити",chat:"Чат",stop:"Стоп",log:"Лог",del:"Видалити",delq:"Видалити?",yes:"Так",no:"Ні",
+  calibrate:"Калібрувати спекуляцію",original:"оригінал",delOriginals:"Видалити оригінали",originalsKept:"оригінали зберігаються",
+  noModels:"Ще нічого не завантажено. Знайдіть модель у вкладці «Знайти».",running:"працює",ready:"готова",starting:"запускається",
+  pickOne:"Виберіть модель ліворуч",context:"Контекст",parallel:"Паралельних запитів",gpu:"Відеокарта",recommended:"Рекомендуємо",download:"Завантажити",
+  fitsFull:"вміщується",fitsTight:"впритул",fitsNo:"не вміщується",over8:"> 8 біт",drafter:"чернетка",kvUnknown:"вартість контексту невідома: враховано лише ваги",
+  need:"потрібно",of:"з",measured:"ток/с на цій карті (наш замір)",noChat:"Вікно чату не входить до цієї збірки.",llama:"llama.cpp",downloads:"завантажень",likes:"вподобань",noDl:"Завантажень немає.",
+  done:"готово",failed:"помилка",cancel:"Скасувати",here:"завантажено",localonly:"лише localhost",exposed:"відкрито в мережу, без пароля",
+  nogpu:"NVIDIA GPU не видно",vision:"розуміє зображення",spec:"спекулятивні голови",ago:"тому",justNow:"щойно",min:"хв",h:"год",d:"дн",tokens:"ток",
+  perReq:"на запит",free:"звільнено",fail:"помилка",onGpu:"на GPU",nothing:"нічого не знайдено",loading:"завантаження…",readingRepo:"Читаю репозиторій: список файлів, потім заголовок моделі (великий GGUF-репозиторій — кілька секунд)…",speculation:"спекуляція",
+  profOwn:"власний профіль",profSimilar:"профіль від",profGeneric:"загальний профіль",profNone:"немає профілю",
+  quantTip:"Формат ваг, як його публікує репозиторій; ★ — що ми б вибрали для цієї карти, ✓ — вже завантажено",sizeTip:"Скільки завантажувати",
+  capFull:"{n} з повним контекстом моделі ({ctx}) одночасно\nі ще {rest} кешу зверху",
+  capShort:"Один запит з контекстом до {ctx} токенів\nменше, ніж уміє модель ({native}): більше не дає пам'ять після ваг",
+  ctxTip:"Наскільки може вирости одна розмова: промпт, історія і відповідь разом",
+  parTip:"Скільки запитів сервер обслуговує одночасно\nу кожного свій кеш; сумарна швидкість росте повільніше за кількість запитів",
+  accel:"Прискорення генерації",accelAuto:"Авто (рекомендуємо)",accelOff:"Вимк",accelManual:"Вручну",accelTip:"Маленька чернетка вгадує токени наперед, модель перевіряє їх за один крок: відповідь та сама, лише швидше. Авто запускає те, що виміряно найшвидшим для цієї моделі й карти",accelByTask:"за задачами",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"міркування",accelWeighted:"зважено",passSampled:"за температури моделі",passGreedy:"жадібно",accelWeightedTip:"Середній виграш за сумішшю задач: код 25 %, математика 20 %, проза 30 %, міркування 25 %; під час вибірки з температурою моделі",accelGoals:"Чого чекати",goalOne:"один запит",goalLoad:"{n} запитів одразу",goalLong:"довгий контекст (~{depth})",goalOffBetter:"тут швидше без прискорення",autoPlainNote:"Авто запустить без прискорення: {n} одразу і ~{depth} контексту — без нього виміряно швидше (прискорення ×{k})",accelDrafters:"Чернетки для цієї моделі",drKind:"чернетка",drWhere:"де",drEngine:"NInferno",drPrecision:"точність чернетки",drResult:"результат",drYes:"працює",drNo:"поки ні",drNoTip:"NInferno поки не запускає чернетки цього виду",drOwn:"власна у моделі",drOfficial:"офіційна",drCommunity:"спільнота",drOurs:"★ наш вимір",drOthers:"≈ виміри інших",drNone:"не виміряно",drInCkpt:"усередині моделі: нічого завантажувати",drOnDownload:"конвертується під час завантаження",precTitle:"Точність чернетки",precText:"Чернетка лише пропонує токени, а модель перевіряє кожен, тож її точність змінює швидкість, але не відповідь. Чернетка нижчої точності дешевша за раунд і вгадує майже так само: gpt-oss-20b на RTX 4090 при температурі 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno бере точність, виміряну найшвидшою для моделі; без виміру — q4 до моделі у 8 біт і менше та bf16 до точної",manualPick:"запускати з",manualNote:"працює як обрано, навіть там, де авто вимкнуло б прискорення",
+  specTip:"Маленька модель-чернетка вгадує кілька токенів наперед, основна перевіряє їх за один крок: та сама відповідь, швидше\n×N — виграш, виміряний на картах цього класу",
+  kvType:"KV-кеш",kvTip:"Як зберігається кеш контексту\nменше байтів — більше контексту й потоків, ціною невеликої точності на довгих текстах",
+  kv_bf16:"BF16: 2 байти, без втрат",kv_int8:"INT8: удвічі менше пам'яті, майже без втрат",kv_fp8:"FP8: удвічі менше пам'яті, RTX 40/50",
+  kv_nvfp4:"NVFP4: учетверо менше пам'яті, на довгому контексті втрати помітніші",kv_k8v4:"Ключі FP8, значення NVFP4: близько 40 % від BF16",
+  kvNeeds256:"не для цієї моделі: компактний KV лише для голів розміру 256",kvNeedsFp8:"потрібна RTX 40 або 50 (FP8)",kvUnknownHead:"розмір голови моделі невідомий: лише BF16",
+  memTip:"Скільки відеопам'яті займе запуск: ваги, чернетка, KV-кеш, стани, буфери і CUDA",
+  bits:"Біт",prefill:"Префіл",decode:"Декод",perSec:"ток/с",
+  decodeAllTip:"Усі паралельні запити разом\nне N × один запит: запити ділять смугу пам'яті карти, а MoE на більшій кількості запитів читає більше експертів; масштаб — за нашими замірами",
+  promptTip:"Оцінка швидкості обробки промпту: тензорна продуктивність карти та активні параметри моделі",
+  noFitAt:"не вміщується при {ctx} × {par}",tooBig:"не вміщуються навіть ваги",
+  estNote:"≈ — оцінка за картою (пам'ять, смуга, такти) і формою моделі, зі спекуляцією за профілем реєстру для цієї карти; не замір. Червоні рядки не вміщуються при вибраних контексті × кількості запитів.",
+  toDark:"Темна тема",toLight:"Світла тема",avail:"доступно",memWeights:"ваги",memDrafter:"чернетка",memStates:"стани",memRuntime:"буфери і CUDA",
+  noSpec:"без спекуляції",busyNow:"Зараз вільно лише {free}: решту займають інші процеси",
+  s_downloads:"↓ Завантаження",s_likes:"♥ Вподобання",s_lastModified:"Свіжі",s_trendingScore:"У тренді",hideNone:"Сховати непідтримувані",
+  sup_full:"Повна підтримка\nрушій запускає цю архітектуру: завантажити й запустити",
+  sup_family:"Імовірно, підтримується\nваріант родини, яку рушій запускає ({family}); ще не перевірено",
+  sup_drafter:"Чернетка для спекуляції\nпрацює разом зі своєю моделлю, не сама",
+  sup_none:"Не підтримується\nцю архітектуру рушій поки не запускає",
+  sup_unknown:"Архітектура невідома\nхаб не повідомляє, що це за ваги",
+  sup_projector:"Перевіряю…\nхаб прочитав проєктор зображень (mmproj), а не модель; читаю файл моделі",sup_checking:"Перевіряю файл моделі…",
+  supShort_full:"повна підтримка",supShort_family:"імовірно, підтримується",supShort_drafter:"чернетка",supShort_none:"не підтримується",
+  supShort_unknown:"архітектура невідома",supShort_projector:"перевіряю",archLabel:"Архітектура",
+  basisHub:"Архітектура за даними хаба ({src})",basisOwn:"Архітектуру прочитано з файлу моделі: {file}",
+  srcGguf:"заголовок одного GGUF-файлу",srcConfig:"config.json",srcTag:"тег model_type репозиторію",
+  tested:"перевірена",testedTip:"Виміряна нами\nдля цього репозиторію відомі швидкість і спекуляція",
+  measuredTip:"Декод одного запиту зі спекуляцією, наш замір на цій карті",
+  depthNote:"Швидкості — при заповненні контексту на чверть: {depth} з {ctx} на запит. На порожньому контексті декод виглядає кращим, ніж буде насправді.",
+  ctxReq:"Контекст",ctxReqTip:"Контекст, який ви вибрали на кожен запит\nнаведіть на число — побачите, скільки карта вміщує максимум",
+  prefillCol:"Префіл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запит",decodeTot:"Декод разом, ток/с",
+  genTip2:"Декод одного запиту\nпри заповненому контексті {depth} (чверть від {ctx}), зі спекуляцією, якщо вона ввімкнена",
+  basisLoad:"За кількістю запитів: замір на {gpu} ({run})",basisKind:"За кількістю запитів: середнє виміряних {kind}-моделей (RTX 4090)",dense:"щільних",
+  extrap:"Далі за виміряну кількість запитів: екстраполяція",
+  speedLine:"Декод при {depth} контексту: ≈ {one} ток/с на запит, {all} ток/с на {n}",speedLine1:"Декод при {depth} контексту: ≈ {one} ток/с",
+  ctxTimes:"{ctx} × {par}",recWhyFit:"Вміщується при {ctx} × {par}, запас {free}",
+  recWhyRule:"Найточніший квант з тих, що вміщуються й за декодом не повільніші за найкращий 4-бітний більш ніж на 10 %",
+  recWhySlower:"{name} точніший, але на {p} % повільніший за найкращий 4-бітний",recWhyNoFit:"{name} точніший, але не вміщується при {ctx} × {par}",
+  recWhyLow:"Вміщуються лише кванти менше 4 біт: відповіді помітно гірші",recNone:"Нічого не вміщується при {ctx} × {par}: зменште контекст або кількість запитів",
+  selected:"Вибрано",unsupportedRun:"Цю архітектуру рушій не запускає",launching:"Запуск…",maxCtx:"макс",visionProj:"проєктор зображень",
+  hubTip:"Де шукати й звідки завантажувати",searchHub:"Пошук у {hub} (можна org/name)",
+  chatTitle:"Чат",closeChat:"Закрити чат",newTab:"Відкрити в новій вкладці",language:"Мова",memDetail:"ваги {w} + KV {kv} + інше {o}"};
+// The other languages: the words on buttons, tabs, columns and controls; tooltips in English.
+T.de = {tabModels:"Meine Modelle",tabFind:"Suchen",tabDownloads:"Downloads",myModels:"Meine Modelle",arch:"Architektur",params:"Parameter",publisher:"Herausgeber",model:"Modell",
+  quant:"Quant",size:"Größe",modified:"Geändert",run:"Starten",chat:"Chat",stop:"Stopp",log:"Log",del:"Löschen",delq:"Löschen?",yes:"Ja",no:"Nein",
+  running:"läuft",ready:"bereit",starting:"startet",pickOne:"Links ein Modell wählen",context:"Kontext",parallel:"Parallele Anfragen",gpu:"GPU",
+  recommended:"Empfohlen",download:"Herunterladen",fitsFull:"passt",fitsTight:"knapp",fitsNo:"passt nicht",here:"heruntergeladen",
+  nothing:"nichts gefunden",loading:"lädt…",speculation:"Spekulation",kvType:"KV-Cache",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",
+  decodeOne:"eine Anfrage",decodeTot:"Decode gesamt, tok/s",ctxReq:"Kontext",selected:"Ausgewählt",launching:"Startet…",maxCtx:"max",
+  s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Neueste",s_trendingScore:"Im Trend",hideNone:"Nicht unterstützte ausblenden",
+  supShort_full:"voll unterstützt",supShort_family:"wahrscheinlich unterstützt",supShort_none:"nicht unterstützt",supShort_drafter:"Drafter",
+  supShort_unknown:"Architektur unbekannt",supShort_projector:"wird geprüft",tested:"getestet",searchHub:"{hub} durchsuchen (org/name geht auch)",
+  chatTitle:"Chat",closeChat:"Chat schließen",newTab:"In neuem Tab öffnen",language:"Sprache",toDark:"Dunkles Design",toLight:"Helles Design",
+  noModels:"Noch nichts heruntergeladen. Ein Modell unter „Suchen“ finden.",noDl:"Keine Downloads.",cancel:"Abbrechen",done:"fertig",failed:"Fehler"};
+T.fr = {tabModels:"Mes modèles",tabFind:"Chercher",tabDownloads:"Téléchargements",myModels:"Mes modèles",arch:"Architecture",params:"Paramètres",publisher:"Éditeur",model:"Modèle",
+  quant:"Quant",size:"Taille",modified:"Modifié",run:"Lancer",chat:"Chat",stop:"Arrêter",log:"Journal",del:"Supprimer",delq:"Supprimer ?",yes:"Oui",no:"Non",
+  running:"en cours",ready:"prêt",starting:"démarrage",pickOne:"Choisissez un modèle à gauche",context:"Contexte",parallel:"Requêtes parallèles",gpu:"GPU",
+  recommended:"Recommandé",download:"Télécharger",fitsFull:"tient",fitsTight:"juste",fitsNo:"ne tient pas",here:"téléchargé",
+  nothing:"rien trouvé",loading:"chargement…",speculation:"spéculation",kvType:"Cache KV",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Décodage, tok/s",
+  decodeOne:"une requête",decodeTot:"Décodage total, tok/s",ctxReq:"Contexte",selected:"Sélectionné",launching:"Démarrage…",maxCtx:"max",
+  s_downloads:"↓ Téléchargements",s_likes:"♥ J'aime",s_lastModified:"Récents",s_trendingScore:"Tendance",hideNone:"Masquer les non pris en charge",
+  supShort_full:"pris en charge",supShort_family:"probablement pris en charge",supShort_none:"non pris en charge",supShort_drafter:"drafter",
+  supShort_unknown:"architecture inconnue",supShort_projector:"vérification",tested:"testé",searchHub:"Chercher sur {hub} (org/name accepté)",
+  chatTitle:"Chat",closeChat:"Fermer le chat",newTab:"Ouvrir dans un nouvel onglet",language:"Langue",toDark:"Thème sombre",toLight:"Thème clair",
+  noModels:"Rien de téléchargé. Trouvez un modèle dans « Chercher ».",noDl:"Aucun téléchargement.",cancel:"Annuler",done:"terminé",failed:"échec"};
+T.es = {tabModels:"Mis modelos",tabFind:"Buscar",tabDownloads:"Descargas",myModels:"Mis modelos",arch:"Arquitectura",params:"Parámetros",publisher:"Autor",model:"Modelo",
+  quant:"Cuant.",size:"Tamaño",modified:"Modificado",run:"Ejecutar",chat:"Chat",stop:"Detener",log:"Registro",del:"Eliminar",delq:"¿Eliminar?",yes:"Sí",no:"No",
+  running:"en marcha",ready:"listo",starting:"iniciando",pickOne:"Elige un modelo a la izquierda",context:"Contexto",parallel:"Solicitudes paralelas",gpu:"GPU",
+  recommended:"Recomendado",download:"Descargar",fitsFull:"cabe",fitsTight:"justo",fitsNo:"no cabe",here:"descargado",
+  nothing:"nada encontrado",loading:"cargando…",speculation:"especulación",kvType:"Caché KV",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Decodificación, tok/s",
+  decodeOne:"una solicitud",decodeTot:"Decodificación total, tok/s",ctxReq:"Contexto",selected:"Seleccionado",launching:"Iniciando…",maxCtx:"máx",
+  s_downloads:"↓ Descargas",s_likes:"♥ Me gusta",s_lastModified:"Recientes",s_trendingScore:"Tendencia",hideNone:"Ocultar no compatibles",
+  supShort_full:"compatible",supShort_family:"probablemente compatible",supShort_none:"no compatible",supShort_drafter:"drafter",
+  supShort_unknown:"arquitectura desconocida",supShort_projector:"comprobando",tested:"probado",searchHub:"Buscar en {hub} (también org/name)",
+  chatTitle:"Chat",closeChat:"Cerrar el chat",newTab:"Abrir en una pestaña nueva",language:"Idioma",toDark:"Tema oscuro",toLight:"Tema claro",
+  noModels:"Aún no hay descargas. Busca un modelo en «Buscar».",noDl:"Sin descargas.",cancel:"Cancelar",done:"listo",failed:"error"};
+T.it = {tabModels:"I miei modelli",tabFind:"Cerca",tabDownloads:"Download",myModels:"I miei modelli",arch:"Architettura",params:"Parametri",publisher:"Autore",model:"Modello",
+  quant:"Quant",size:"Dimensione",modified:"Modificato",run:"Avvia",chat:"Chat",stop:"Ferma",log:"Log",del:"Elimina",delq:"Eliminare?",yes:"Sì",no:"No",
+  running:"in esecuzione",ready:"pronto",starting:"avvio",pickOne:"Scegli un modello a sinistra",context:"Contesto",parallel:"Richieste parallele",gpu:"GPU",
+  recommended:"Consigliato",download:"Scarica",fitsFull:"entra",fitsTight:"al limite",fitsNo:"non entra",here:"scaricato",
+  nothing:"nessun risultato",loading:"caricamento…",speculation:"speculazione",kvType:"Cache KV",bits:"Bit",prefillCol:"Prefill, tok/s",decodeCol:"Decodifica, tok/s",
+  decodeOne:"una richiesta",decodeTot:"Decodifica totale, tok/s",ctxReq:"Contesto",selected:"Selezionato",launching:"Avvio…",maxCtx:"max",
+  s_downloads:"↓ Download",s_likes:"♥ Mi piace",s_lastModified:"Recenti",s_trendingScore:"Di tendenza",hideNone:"Nascondi non supportati",
+  supShort_full:"supportato",supShort_family:"probabilmente supportato",supShort_none:"non supportato",supShort_drafter:"drafter",
+  supShort_unknown:"architettura sconosciuta",supShort_projector:"verifica",tested:"testato",searchHub:"Cerca su {hub} (anche org/name)",
+  chatTitle:"Chat",closeChat:"Chiudi la chat",newTab:"Apri in una nuova scheda",language:"Lingua",toDark:"Tema scuro",toLight:"Tema chiaro",
+  noModels:"Ancora niente scaricato. Trova un modello in «Cerca».",noDl:"Nessun download.",cancel:"Annulla",done:"fatto",failed:"errore"};
+T.pl = {tabModels:"Moje modele",tabFind:"Szukaj",tabDownloads:"Pobrane",myModels:"Moje modele",arch:"Architektura",params:"Parametry",publisher:"Autor",model:"Model",
+  quant:"Kwant",size:"Rozmiar",modified:"Zmieniono",run:"Uruchom",chat:"Czat",stop:"Stop",log:"Log",del:"Usuń",delq:"Usunąć?",yes:"Tak",no:"Nie",
+  running:"działa",ready:"gotowy",starting:"uruchamianie",pickOne:"Wybierz model po lewej",context:"Kontekst",parallel:"Równoległe zapytania",gpu:"GPU",
+  recommended:"Polecany",download:"Pobierz",fitsFull:"mieści się",fitsTight:"na styk",fitsNo:"nie mieści się",here:"pobrany",
+  nothing:"nic nie znaleziono",loading:"ładowanie…",speculation:"spekulacja",kvType:"Pamięć KV",bits:"Bity",prefillCol:"Prefill, tok/s",decodeCol:"Dekodowanie, tok/s",
+  decodeOne:"jedno zapytanie",decodeTot:"Dekodowanie łącznie, tok/s",ctxReq:"Kontekst",selected:"Wybrany",launching:"Uruchamianie…",maxCtx:"maks",
+  s_downloads:"↓ Pobrania",s_likes:"♥ Polubienia",s_lastModified:"Najnowsze",s_trendingScore:"Popularne",hideNone:"Ukryj nieobsługiwane",
+  supShort_full:"pełne wsparcie",supShort_family:"prawdopodobnie obsługiwany",supShort_none:"nieobsługiwany",supShort_drafter:"drafter",
+  supShort_unknown:"nieznana architektura",supShort_projector:"sprawdzanie",tested:"przetestowany",searchHub:"Szukaj w {hub} (można org/name)",
+  chatTitle:"Czat",closeChat:"Zamknij czat",newTab:"Otwórz w nowej karcie",language:"Język",toDark:"Ciemny motyw",toLight:"Jasny motyw",
+  noModels:"Nic jeszcze nie pobrano. Znajdź model w „Szukaj”.",noDl:"Brak pobrań.",cancel:"Anuluj",done:"gotowe",failed:"błąd"};
+T.zh = {tabModels:"我的模型",tabFind:"查找",tabDownloads:"下载",myModels:"我的模型",arch:"架构",params:"参数",publisher:"发布者",model:"模型",
+  quant:"量化",size:"大小",modified:"修改时间",run:"运行",chat:"聊天",stop:"停止",log:"日志",del:"删除",delq:"删除？",yes:"是",no:"否",
+  running:"运行中",ready:"就绪",starting:"启动中",pickOne:"在左侧选择模型",context:"上下文",parallel:"并发请求",gpu:"GPU",
+  recommended:"推荐",download:"下载",fitsFull:"可容纳",fitsTight:"勉强",fitsNo:"放不下",here:"已下载",
+  nothing:"未找到",loading:"加载中…",speculation:"推测解码",kvType:"KV 缓存",bits:"位",prefillCol:"预填充，tok/s",decodeCol:"解码，tok/s",
+  decodeOne:"单个请求",decodeTot:"解码总计，tok/s",ctxReq:"上下文",selected:"已选",launching:"启动中…",maxCtx:"最大",
+  s_downloads:"↓ 下载量",s_likes:"♥ 点赞",s_lastModified:"最新",s_trendingScore:"热门",hideNone:"隐藏不支持的",
+  supShort_full:"完全支持",supShort_family:"可能支持",supShort_none:"不支持",supShort_drafter:"草稿模型",
+  supShort_unknown:"架构未知",supShort_projector:"检查中",tested:"已测试",searchHub:"在 {hub} 搜索（也可输入 org/name）",
+  chatTitle:"聊天",closeChat:"关闭聊天",newTab:"在新标签页打开",language:"语言",toDark:"深色主题",toLight:"浅色主题",
+  noModels:"尚未下载任何模型。请在“查找”中寻找。",noDl:"没有下载。",cancel:"取消",done:"完成",failed:"失败"};
+T.ja = {tabModels:"マイモデル",tabFind:"検索",tabDownloads:"ダウンロード",myModels:"マイモデル",arch:"アーキテクチャ",params:"パラメータ",publisher:"公開者",model:"モデル",
+  quant:"量子化",size:"サイズ",modified:"更新",run:"起動",chat:"チャット",stop:"停止",log:"ログ",del:"削除",delq:"削除しますか？",yes:"はい",no:"いいえ",
+  running:"実行中",ready:"準備完了",starting:"起動中",pickOne:"左でモデルを選択",context:"コンテキスト",parallel:"並列リクエスト",gpu:"GPU",
+  recommended:"おすすめ",download:"ダウンロード",fitsFull:"収まる",fitsTight:"ぎりぎり",fitsNo:"収まらない",here:"ダウンロード済み",
+  nothing:"見つかりません",loading:"読み込み中…",speculation:"投機的デコード",kvType:"KV キャッシュ",bits:"ビット",prefillCol:"プリフィル, tok/s",decodeCol:"デコード, tok/s",
+  decodeOne:"1 リクエスト",decodeTot:"デコード合計, tok/s",ctxReq:"コンテキスト",selected:"選択中",launching:"起動中…",maxCtx:"最大",
+  s_downloads:"↓ ダウンロード数",s_likes:"♥ いいね",s_lastModified:"新着",s_trendingScore:"トレンド",hideNone:"非対応を隠す",
+  supShort_full:"完全対応",supShort_family:"おそらく対応",supShort_none:"非対応",supShort_drafter:"ドラフター",
+  supShort_unknown:"アーキテクチャ不明",supShort_projector:"確認中",tested:"検証済み",searchHub:"{hub} を検索（org/name も可）",
+  chatTitle:"チャット",closeChat:"チャットを閉じる",newTab:"新しいタブで開く",language:"言語",toDark:"ダークテーマ",toLight:"ライトテーマ",
+  noModels:"まだ何もダウンロードしていません。「検索」でモデルを探してください。",noDl:"ダウンロードはありません。",cancel:"キャンセル",done:"完了",failed:"失敗"};
+// The language menu: its own name and a small flag (drawn here: Windows shows no flag emoji).
+// Ukrainian for the keys added after its table.
+Object.assign(T.uk, {search:"Пошук на Hugging Face (можна org/name)",picks:"Наша добірка",hub:"Hugging Face",openHf:"на Hugging Face",
+  ctxCol:"Контекст",ctxColTip:"Скільки контексту карта вміщує поруч із вагами\n256K ×3 + 40K: три запити з повним контекстом моделі одночасно і ще 40K кешу на четвертий, коротший",
+  ctxAll:"Контекст, усього",gen:"Генерація",prompt:"Промпт",decode1:"Декод, 1 запит",decodeAll:"Декод, усього",
+  ctxAllTip:"Скільки токенів контексту карта вміщує поруч із вагами за вибраної кількості паралельних запитів, на всі запити разом",
+  genTip:"Оцінка швидкості генерації одного запиту за вибраних контексту й кількості запитів, зі спекуляцією, якщо вона ввімкнена: смуга пам'яті карти, байти на токен, виміряний виграш профілю. Наведіть на число — побачите, скільки пам'яті потрібно",
+  tip1:"Один запит із контекстом до {each} токенів",tipN:"{n} одночасно, якщо їхні контексти разом менші за {total} токенів (кожен до {each})",
+  onlyFull:"Лише з повною підтримкою"});
+// The longer strings (tooltips, the recommendation's reasons) of the seven languages beyond English,
+// Russian and Ukrainian.
+Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",delOriginals:"Originale löschen",originalsKept:"Originale behalten",
+  search:"Hugging Face durchsuchen (auch org/name)",picks:"Unsere Auswahl",hub:"Hugging Face",over8:"> 8 Bit",drafter:"Entwurfsmodell",
+  kvUnknown:"Kontextkosten unbekannt: nur die Gewichte gezählt",need:"braucht",of:"von",measured:"Tok/s auf dieser Karte (unsere Prüfstände)",llama:"llama.cpp",
+  downloads:"Downloads",likes:"Likes",localonly:"nur localhost",exposed:"im Netz offen, ohne Passwort",nogpu:"keine NVIDIA-GPU sichtbar",vision:"versteht Bilder",
+  spec:"spekulative Köpfe",ago:"vor",justNow:"gerade eben",min:"Min.",h:"Std.",d:"Tage",tokens:"Tok",perReq:"pro Anfrage",free:"freigegeben",fail:"Fehler",
+  onGpu:"auf der GPU",openHf:"auf Hugging Face",
+  readingRepo:"Repository wird gelesen: erst die Dateien, dann der Modellkopf (ein großes GGUF-Repository braucht einige Sekunden)…",
+  profOwn:"eigenes Profil",profSimilar:"Profil von",profGeneric:"allgemeines Profil",profNone:"kein Profil",ctxCol:"Kontext",
+  quantTip:"Das Format der Gewichte, wie das Repository es veröffentlicht; ★ ist unsere Wahl für diese Karte, ✓ ist heruntergeladen",
+  sizeTip:"Downloadgröße der Gewichte",
+  ctxColTip:"Wie viel Kontext die Karte neben den Gewichten hält\n256K ×3 + 40K: drei Anfragen mit voller Modelllänge gleichzeitig und 40K Cache übrig für eine weitere, kürzere",
+  capFull:"{n} mit vollem Modellkontext ({ctx}) gleichzeitig\nund {rest} Cache übrig",
+  capShort:"Eine Anfrage mit bis zu {ctx} Token\nweniger als die eigenen {native} des Modells: die Gewichte lassen nicht mehr Platz",
+  ctxTip:"Wie lang ein Gespräch werden darf: Prompt, Verlauf und Antwort zusammen",
+  parTip:"Wie viele Anfragen der Server gleichzeitig beantwortet\njede belegt ihren eigenen Cache; die Gesamtgeschwindigkeit wächst langsamer als die Anzahl",
+  specTip:"Ein kleines Entwurfsmodell rät mehrere Token voraus, das Modell prüft sie in einem Schritt: dieselbe Antwort, schneller\n×N ist der auf dieser GPU-Klasse gemessene Gewinn",
+  kvTip:"Wie der Kontext-Cache gespeichert wird\nweniger Bytes fassen mehr Kontext und mehr Anfragen, bei etwas Genauigkeitsverlust in langen Texten",
+  kv_bf16:"BF16: 2 Bytes, exakt",kv_int8:"INT8: halber Speicher, fast exakt",kv_fp8:"FP8: halber Speicher, RTX 40/50",
+  kv_nvfp4:"NVFP4: ein Viertel des Speichers, verliert mehr bei langem Kontext",kv_k8v4:"Schlüssel FP8, Werte NVFP4: etwa 40 % von BF16",
+  kvNeeds256:"nicht für dieses Modell: kompakter KV braucht 256 breite Köpfe",kvNeedsFp8:"braucht eine RTX 40 oder 50 (FP8)",
+  memTip:"Speicher, den der Start belegt: Gewichte, Entwurfsmodell, KV-Cache, rekurrente Zustände, Puffer und CUDA",
+  ctxAll:"Kontext, gesamt",gen:"Generierung",prompt:"Prompt",perSec:"Tok/s",prefill:"Prefill",decode:"Decode",decode1:"Decode, 1 Anfrage",decodeAll:"Decode, gesamt",
+  decodeAllTip:"Alle parallelen Anfragen zusammen\nnicht N-mal eine Anfrage: sie teilen sich die Bandbreite der Karte, und ein MoE liest für mehr Anfragen mehr Experten; skaliert nach den Messungen der Prüfstände",
+  ctxAllTip:"Kontext-Token, die diese Karte neben den Gewichten für die gewählte Zahl paralleler Anfragen hält, alle zusammen",
+  genTip:"Geschätzte Generierungsgeschwindigkeit einer Anfrage bei gewähltem Kontext und gewählter Anfragezahl, mit Spekulation, wenn sie an ist: Bandbreite der Karte, gelesene Bytes pro Token, gemessener Gewinn des Profils. Fahren Sie über einen Wert, um den Speicherbedarf zu sehen",
+  promptTip:"Geschätzte Prompt-Verarbeitung: Tensor-Durchsatz der Karte und aktive Parameter des Modells",
+  tip1:"Eine Anfrage mit bis zu {each} Token Kontext",tipN:"{n} gleichzeitig, solange ihre Kontexte zusammen unter {total} Token bleiben (jeder bis {each})",
+  noFitAt:"passt nicht bei {ctx} × {par}",tooBig:"schon die Gewichte passen nicht",
+  estNote:"≈ — Schätzungen aus der Karte (Speicher, Bandbreite, Takt) und der Form des Modells, Spekulation aus dem Registry-Profil dieser GPU; keine Messungen. Rote Zeilen passen nicht in Kontext × Anfragen.",
+  avail:"verfügbar",memWeights:"Gewichte",memDrafter:"Entwurfsmodell",memStates:"Zustände",memRuntime:"Arbeitsspeicher und CUDA",noSpec:"ohne Spekulation",
+  busyNow:"Gerade sind nur {free} frei: andere Prozesse belegen den Rest",onlyFull:"Nur voll unterstützte",
+  sup_full:"Voll unterstützt\ndie Engine führt diese Architektur aus: herunterladen und starten",
+  sup_drafter:"Spekulatives Entwurfsmodell\nläuft neben seinem Modell, nicht allein",
+  sup_none:"Nicht unterstützt\ndie Engine führt diese Architektur noch nicht aus",
+  sup_unknown:"Architektur unbekannt\nder Hub sagt nicht, was die Gewichte sind",archLabel:"Architektur",
+  testedTip:"Auf unseren Prüfständen gemessen\nGeschwindigkeit und Spekulation sind für dieses Repository bekannt",
+  measuredTip:"Decode einer Anfrage mit Spekulation, auf unseren Prüfständen mit dieser Karte gemessen",
+  kvUnknownHead:"Kopfgröße des Modells unbekannt: nur BF16",
+  depthNote:"Geschwindigkeiten bei einem Viertel gefülltem Kontext: {depth} von {ctx} pro Anfrage. Ein leerer Kontext schönt den Decode.",
+  ctxReqTip:"Der gewählte Kontext pro Anfrage\nfahren Sie über einen Wert für das Maximum dieser Karte",
+  genTip2:"Decode einer Anfrage\nbei {depth} gefülltem Kontext (ein Viertel von {ctx}), mit Spekulation, wenn sie an ist",
+  basisLoad:"Über Anfragen: gemessen auf der {gpu} ({run})",basisKind:"Über Anfragen: Mittel der gemessenen {kind}-Modelle (RTX 4090)",dense:"dichten",
+  extrap:"Jenseits der gemessenen Anfragezahlen: extrapoliert",
+  speedLine:"Decode bei {depth} Kontext: ≈ {one} Tok/s pro Anfrage, {all} Tok/s für {n}",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"Passt bei {ctx} × {par}, {free} Reserve",
+  recWhyRule:"Die genaueste Quantisierung, die passt und höchstens 10 % langsamer dekodiert als die schnellste mit 4 Bit oder mehr",
+  recWhySlower:"{name} ist genauer, aber {p} % langsamer als die schnellste mit 4 Bit oder mehr",
+  recWhyNoFit:"{name} ist genauer, passt aber nicht bei {ctx} × {par}",
+  recNone:"Nichts passt bei {ctx} × {par}: Kontext oder Anfragezahl verringern",
+  unsupportedRun:"Die Engine führt diese Architektur nicht aus",
+  recWhyLow:"Nur Quantisierungen unter 4 Bit passen: die Antworten sind merklich schlechter",
+  speedLine1:"Decode bei {depth} Kontext: ≈ {one} Tok/s",visionProj:"Bildprojektor",
+  sup_format:"Nicht unterstützt: das Format der Gewichte\ndie Architektur kennt die Engine, aber {lib}-Gewichte liest sie nicht",supShort_format:"Format nicht unterstützt",
+  hubTip:"Wo gesucht und heruntergeladen wird",
+  sup_family:"Wahrscheinlich unterstützt\neine Variante einer Familie, die die Engine ausführt ({family}); noch nicht geprüft",
+  sup_projector:"Wird geprüft…\nder Hub las den Bildprojektor (mmproj) statt des Modells; die Modelldatei wird gelesen",
+  sup_checking:"Modelldatei wird geprüft…",basisHub:"Architektur laut Hub ({src})",basisOwn:"Architektur aus der Modelldatei gelesen: {file}",
+  srcGguf:"der Kopf einer GGUF-Datei",srcConfig:"config.json",srcTag:"das model_type-Tag des Repositorys",memDetail:"Gewichte {w} + KV {kv} + Sonstiges {o}"});
+
+Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",delOriginals:"Supprimer les originaux",originalsKept:"originaux conservés",
+  search:"Chercher sur Hugging Face (org/nom aussi)",picks:"Notre sélection",hub:"Hugging Face",over8:"> 8 bits",drafter:"brouillon",
+  kvUnknown:"coût du contexte inconnu : seuls les poids sont comptés",need:"demande",of:"sur",measured:"tok/s sur cette carte (nos bancs)",llama:"llama.cpp",
+  downloads:"téléchargements",likes:"j'aime",localonly:"localhost uniquement",exposed:"ouvert au réseau, sans mot de passe",nogpu:"aucun GPU NVIDIA visible",vision:"accepte des images",
+  spec:"têtes spéculatives",ago:"il y a",justNow:"à l'instant",min:"min",h:"h",d:"jours",tokens:"tok",perReq:"par requête",free:"libéré",fail:"erreur",
+  onGpu:"sur le GPU",openHf:"sur Hugging Face",
+  readingRepo:"Lecture du dépôt : ses fichiers, puis l'en-tête du modèle (un grand dépôt GGUF prend quelques secondes)…",
+  profOwn:"profil propre",profSimilar:"profil de",profGeneric:"profil générique",profNone:"pas de profil",ctxCol:"Contexte",
+  quantTip:"Le format des poids tel que le dépôt le publie ; ★ est notre choix pour cette carte, ✓ est téléchargé",
+  sizeTip:"Taille de téléchargement des poids",
+  ctxColTip:"Combien de contexte la carte tient à côté des poids\n256K ×3 + 40K : trois requêtes à la longueur complète du modèle en même temps, et 40K de cache en plus pour une quatrième, plus courte",
+  capFull:"{n} au contexte complet du modèle ({ctx}) en même temps\net {rest} de cache en plus",
+  capShort:"Une requête jusqu'à {ctx} tokens\nmoins que les {native} du modèle : les poids ne laissent pas plus de place",
+  ctxTip:"Jusqu'où une conversation peut grandir : prompt, historique et réponse ensemble",
+  parTip:"Combien de requêtes le serveur traite en même temps\nchacune prend son propre cache ; la vitesse totale croît moins vite que leur nombre",
+  specTip:"Un petit modèle brouillon devine plusieurs tokens d'avance et le modèle les vérifie en une étape : la même réponse, plus vite\n×N est le gain mesuré sur cette classe de GPU",
+  kvTip:"Comment le cache de contexte est stocké\nmoins d'octets tiennent plus de contexte et de requêtes, au prix d'un peu de précision sur les longs textes",
+  kv_bf16:"BF16 : 2 octets, exact",kv_int8:"INT8 : moitié de mémoire, presque exact",kv_fp8:"FP8 : moitié de mémoire, RTX 40/50",
+  kv_nvfp4:"NVFP4 : un quart de la mémoire, perd plus sur les longs contextes",kv_k8v4:"Clés FP8, valeurs NVFP4 : environ 40 % de BF16",
+  kvNeeds256:"pas pour ce modèle : le KV compact demande des têtes de largeur 256",kvNeedsFp8:"demande une RTX 40 ou 50 (FP8)",
+  memTip:"Mémoire prise par le lancement : poids, brouillon, cache KV, états récurrents, tampons et CUDA",
+  ctxAll:"Contexte, total",gen:"Génération",prompt:"Prompt",perSec:"tok/s",prefill:"Préremplissage",decode:"Décodage",decode1:"Décodage, 1 requête",decodeAll:"Décodage, total",
+  decodeAllTip:"Toutes les requêtes parallèles ensemble\npas N fois une requête : elles partagent la bande passante de la carte, et un MoE lit plus d'experts pour plus de requêtes ; mis à l'échelle par les mesures des bancs",
+  ctxAllTip:"Tokens de contexte que cette carte tient à côté des poids pour le nombre choisi de requêtes parallèles, toutes ensemble",
+  genTip:"Vitesse de génération estimée d'une requête au contexte et au nombre de requêtes choisis, avec la spéculation si elle est active : bande passante de la carte, octets lus par token, gain mesuré du profil. Survolez une valeur pour la mémoire nécessaire",
+  promptTip:"Vitesse estimée de traitement du prompt : débit tensoriel de la carte et paramètres actifs du modèle",
+  tip1:"Une requête avec jusqu'à {each} tokens de contexte",tipN:"{n} en même temps tant que leurs contextes restent ensemble sous {total} tokens (chacun jusqu'à {each})",
+  noFitAt:"ne tient pas à {ctx} × {par}",tooBig:"les poids seuls ne tiennent pas",
+  estNote:"≈ — estimations à partir de la carte (mémoire, bande passante, fréquence) et de la forme du modèle, spéculation selon le profil du registre pour ce GPU ; pas des mesures. Les lignes rouges ne tiennent pas au contexte × requêtes choisis.",
+  avail:"disponible",memWeights:"poids",memDrafter:"brouillon",memStates:"états",memRuntime:"espace de travail et CUDA",noSpec:"sans spéculation",
+  busyNow:"Seuls {free} sont libres : d'autres processus occupent le reste",onlyFull:"Pleinement pris en charge seulement",
+  sup_full:"Pleinement pris en charge\nle moteur exécute cette architecture : téléchargez et lancez",
+  sup_drafter:"Brouillon spéculatif\ntourne à côté de son modèle, pas seul",
+  sup_none:"Non pris en charge\nle moteur n'exécute pas encore cette architecture",
+  sup_unknown:"Architecture inconnue\nle hub ne dit pas ce que sont les poids",archLabel:"Architecture",
+  testedTip:"Mesuré sur nos bancs\nvitesse et spéculation connues pour ce dépôt",
+  measuredTip:"Décodage d'une requête avec spéculation, mesuré sur nos bancs avec cette carte",
+  kvUnknownHead:"taille de tête du modèle inconnue : BF16 seulement",
+  depthNote:"Vitesses à un quart du contexte rempli : {depth} sur {ctx} par requête. Un contexte vide flatte le décodage.",
+  ctxReqTip:"Le contexte choisi pour chaque requête\nsurvolez une valeur pour le maximum de cette carte",
+  genTip2:"Décodage d'une requête\nà {depth} de contexte rempli (un quart de {ctx}), avec spéculation si elle est active",
+  basisLoad:"Selon les requêtes : mesuré sur la {gpu} ({run})",basisKind:"Selon les requêtes : moyenne des modèles {kind} mesurés (RTX 4090)",dense:"denses",
+  extrap:"Au-delà des nombres de requêtes mesurés : extrapolé",
+  speedLine:"Décodage à {depth} de contexte : ≈ {one} tok/s par requête, {all} tok/s pour {n}",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"Tient à {ctx} × {par} avec {free} de marge",
+  recWhyRule:"La quantification la plus précise qui tient et décode à moins de 10 % de la plus rapide de 4 bits ou plus",
+  recWhySlower:"{name} est plus précise mais {p} % plus lente que la plus rapide de 4 bits ou plus",
+  recWhyNoFit:"{name} est plus précise mais ne tient pas à {ctx} × {par}",
+  recNone:"Rien ne tient à {ctx} × {par} : réduisez le contexte ou le nombre de requêtes",
+  unsupportedRun:"Le moteur n'exécute pas cette architecture",
+  recWhyLow:"Seules des quantifications sous 4 bits tiennent : les réponses sont nettement moins bonnes",
+  speedLine1:"Décodage à {depth} de contexte : ≈ {one} tok/s",visionProj:"projecteur d'images",
+  sup_format:"Non pris en charge : le format des poids\nl'architecture est connue du moteur, mais il ne lit pas les poids {lib}",supShort_format:"format non pris en charge",
+  hubTip:"Où chercher et télécharger",
+  sup_family:"Probablement pris en charge\nune variante d'une famille que le moteur exécute ({family}) ; pas encore vérifié",
+  sup_projector:"Vérification…\nle hub a lu le projecteur d'images (mmproj) au lieu du modèle ; lecture du fichier du modèle",
+  sup_checking:"Vérification du fichier du modèle…",basisHub:"Architecture selon le hub ({src})",basisOwn:"Architecture lue dans le fichier du modèle : {file}",
+  srcGguf:"l'en-tête d'un fichier GGUF",srcConfig:"config.json",srcTag:"l'étiquette model_type du dépôt",memDetail:"poids {w} + KV {kv} + autre {o}"});
+
+Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",delOriginals:"Borrar originales",originalsKept:"originales conservados",
+  search:"Buscar en Hugging Face (también org/nombre)",picks:"Nuestra selección",hub:"Hugging Face",over8:"> 8 bits",drafter:"borrador",
+  kvUnknown:"coste del contexto desconocido: solo se cuentan los pesos",need:"necesita",of:"de",measured:"tok/s en esta tarjeta (nuestros bancos)",llama:"llama.cpp",
+  downloads:"descargas",likes:"me gusta",localonly:"solo localhost",exposed:"abierto a la red, sin contraseña",nogpu:"no se ve ninguna GPU NVIDIA",vision:"acepta imágenes",
+  spec:"cabezas especulativas",ago:"hace",justNow:"ahora mismo",min:"min",h:"h",d:"días",tokens:"tok",perReq:"por solicitud",free:"liberado",fail:"error",
+  onGpu:"en la GPU",openHf:"en Hugging Face",
+  readingRepo:"Leyendo el repositorio: sus archivos y luego la cabecera del modelo (un repositorio GGUF grande tarda unos segundos)…",
+  profOwn:"perfil propio",profSimilar:"perfil de",profGeneric:"perfil genérico",profNone:"sin perfil",ctxCol:"Contexto",
+  quantTip:"El formato de los pesos tal como lo publica el repositorio; ★ es nuestra elección para esta tarjeta, ✓ está descargado",
+  sizeTip:"Tamaño de descarga de los pesos",
+  ctxColTip:"Cuánto contexto cabe en la tarjeta junto a los pesos\n256K ×3 + 40K: tres solicitudes con la longitud completa del modelo a la vez y 40K de caché sobrante para una cuarta, más corta",
+  capFull:"{n} con el contexto completo del modelo ({ctx}) a la vez\ny {rest} de caché sobrante",
+  capShort:"Una solicitud de hasta {ctx} tokens\nmenos que los {native} del modelo: los pesos no dejan más sitio",
+  ctxTip:"Cuánto puede crecer una conversación: prompt, historial y respuesta juntos",
+  parTip:"Cuántas solicitudes atiende el servidor a la vez\ncada una ocupa su propia caché; la velocidad total crece más despacio que su número",
+  specTip:"Un pequeño modelo borrador adivina varios tokens por delante y el modelo los comprueba en un paso: la misma respuesta, más rápido\n×N es la ganancia medida en esta clase de GPU",
+  kvTip:"Cómo se guarda la caché de contexto\nmenos bytes caben más contexto y más solicitudes, con una pequeña pérdida de precisión en textos largos",
+  kv_bf16:"BF16: 2 bytes, exacto",kv_int8:"INT8: mitad de memoria, casi exacto",kv_fp8:"FP8: mitad de memoria, RTX 40/50",
+  kv_nvfp4:"NVFP4: un cuarto de la memoria, pierde más en contextos largos",kv_k8v4:"Claves FP8, valores NVFP4: alrededor del 40 % de BF16",
+  kvNeeds256:"no para este modelo: el KV compacto requiere cabezas de 256",kvNeedsFp8:"requiere una RTX 40 o 50 (FP8)",
+  memTip:"Memoria que ocupa el arranque: pesos, borrador, caché KV, estados recurrentes, búferes y CUDA",
+  ctxAll:"Contexto, total",gen:"Generación",prompt:"Prompt",perSec:"tok/s",prefill:"Prellenado",decode:"Decodificación",decode1:"Decodificación, 1 solicitud",decodeAll:"Decodificación, total",
+  decodeAllTip:"Todas las solicitudes paralelas juntas\nno N veces una solicitud: comparten el ancho de banda de la tarjeta, y un MoE lee más expertos con más solicitudes; escalado según las mediciones de los bancos",
+  ctxAllTip:"Tokens de contexto que esta tarjeta guarda junto a los pesos para el número elegido de solicitudes paralelas, todas juntas",
+  genTip:"Velocidad estimada de generación de una solicitud con el contexto y el número de solicitudes elegidos, con especulación si está activa: ancho de banda de la tarjeta, bytes leídos por token, ganancia medida del perfil. Pase el cursor por un valor para ver la memoria que necesita",
+  promptTip:"Velocidad estimada de procesamiento del prompt: rendimiento tensorial de la tarjeta y parámetros activos del modelo",
+  tip1:"Una solicitud con hasta {each} tokens de contexto",tipN:"{n} a la vez mientras sus contextos juntos queden por debajo de {total} tokens (cada uno hasta {each})",
+  noFitAt:"no cabe con {ctx} × {par}",tooBig:"solo los pesos ya no caben",
+  estNote:"≈ — estimaciones a partir de la tarjeta (memoria, ancho de banda, reloj) y la forma del modelo, especulación según el perfil del registro para esta GPU; no son mediciones. Las filas rojas no caben en el contexto × solicitudes elegidos.",
+  avail:"disponible",memWeights:"pesos",memDrafter:"borrador",memStates:"estados",memRuntime:"espacio de trabajo y CUDA",noSpec:"sin especulación",
+  busyNow:"Ahora solo quedan {free} libres: otros procesos ocupan el resto",onlyFull:"Solo con soporte completo",
+  sup_full:"Soporte completo\nel motor ejecuta esta arquitectura: descargar y ejecutar",
+  sup_drafter:"Borrador especulativo\nfunciona junto a su modelo, no solo",
+  sup_none:"No soportado\nel motor aún no ejecuta esta arquitectura",
+  sup_unknown:"Arquitectura desconocida\nel hub no dice qué son los pesos",archLabel:"Arquitectura",
+  testedTip:"Medido en nuestros bancos\nse conocen la velocidad y la especulación de este repositorio",
+  measuredTip:"Decodificación de una solicitud con especulación, medida en nuestros bancos con esta tarjeta",
+  kvUnknownHead:"tamaño de cabeza del modelo desconocido: solo BF16",
+  depthNote:"Velocidades con un cuarto del contexto lleno: {depth} de {ctx} por solicitud. Un contexto vacío embellece la decodificación.",
+  ctxReqTip:"El contexto elegido para cada solicitud\npase el cursor por un valor para ver el máximo de esta tarjeta",
+  genTip2:"Decodificación de una solicitud\ncon {depth} de contexto lleno (un cuarto de {ctx}), con especulación si está activa",
+  basisLoad:"Según solicitudes: medido en la {gpu} ({run})",basisKind:"Según solicitudes: media de los modelos {kind} medidos (RTX 4090)",dense:"densos",
+  extrap:"Más allá de los números de solicitudes medidos: extrapolado",
+  speedLine:"Decodificación con {depth} de contexto: ≈ {one} tok/s por solicitud, {all} tok/s para {n}",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"Cabe con {ctx} × {par} y {free} de margen",
+  recWhyRule:"La cuantización más precisa que cabe y decodifica a menos de un 10 % de la más rápida de 4 bits o más",
+  recWhySlower:"{name} es más precisa pero un {p} % más lenta que la más rápida de 4 bits o más",
+  recWhyNoFit:"{name} es más precisa pero no cabe con {ctx} × {par}",
+  recNone:"Nada cabe con {ctx} × {par}: reduzca el contexto o el número de solicitudes",
+  unsupportedRun:"El motor no ejecuta esta arquitectura",
+  recWhyLow:"Solo caben cuantizaciones de menos de 4 bits: las respuestas son notablemente peores",
+  speedLine1:"Decodificación con {depth} de contexto: ≈ {one} tok/s",visionProj:"proyector de imágenes",
+  sup_format:"No soportado: el formato de los pesos\nla arquitectura la conoce el motor, pero no lee pesos {lib}",supShort_format:"formato no soportado",
+  hubTip:"Dónde buscar y descargar",
+  sup_family:"Probablemente soportado\nuna variante de una familia que ejecuta el motor ({family}); aún sin verificar",
+  sup_projector:"Comprobando…\nel hub leyó el proyector de imágenes (mmproj) en lugar del modelo; leyendo el archivo del modelo",
+  sup_checking:"Comprobando el archivo del modelo…",basisHub:"Arquitectura según el hub ({src})",basisOwn:"Arquitectura leída del archivo del modelo: {file}",
+  srcGguf:"la cabecera de un archivo GGUF",srcConfig:"config.json",srcTag:"la etiqueta model_type del repositorio",memDetail:"pesos {w} + KV {kv} + otros {o}"});
+
+Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",delOriginals:"Elimina originali",originalsKept:"originali conservati",
+  search:"Cerca su Hugging Face (anche org/nome)",picks:"La nostra selezione",hub:"Hugging Face",over8:"> 8 bit",drafter:"bozza",
+  kvUnknown:"costo del contesto sconosciuto: contati solo i pesi",need:"richiede",of:"di",measured:"tok/s su questa scheda (i nostri banchi)",llama:"llama.cpp",
+  downloads:"download",likes:"mi piace",localonly:"solo localhost",exposed:"aperto alla rete, senza password",nogpu:"nessuna GPU NVIDIA visibile",vision:"accetta immagini",
+  spec:"teste speculative",ago:"fa",justNow:"proprio ora",min:"min",h:"h",d:"giorni",tokens:"tok",perReq:"per richiesta",free:"liberato",fail:"errore",
+  onGpu:"sulla GPU",openHf:"su Hugging Face",
+  readingRepo:"Lettura del repository: prima i file, poi l'intestazione del modello (un grande repository GGUF richiede qualche secondo)…",
+  profOwn:"profilo proprio",profSimilar:"profilo da",profGeneric:"profilo generico",profNone:"nessun profilo",ctxCol:"Contesto",
+  quantTip:"Il formato dei pesi come lo pubblica il repository; ★ è la nostra scelta per questa scheda, ✓ è scaricato",
+  sizeTip:"Dimensione di download dei pesi",
+  ctxColTip:"Quanto contesto la scheda contiene accanto ai pesi\n256K ×3 + 40K: tre richieste alla lunghezza piena del modello insieme e 40K di cache in più per una quarta, più corta",
+  capFull:"{n} al contesto pieno del modello ({ctx}) insieme\ne {rest} di cache in più",
+  capShort:"Una richiesta fino a {ctx} token\nmeno dei {native} del modello: i pesi non lasciano altro spazio",
+  ctxTip:"Quanto può crescere una conversazione: prompt, cronologia e risposta insieme",
+  parTip:"Quante richieste il server serve contemporaneamente\nognuna occupa la propria cache; la velocità totale cresce meno del loro numero",
+  specTip:"Un piccolo modello bozza indovina diversi token in anticipo e il modello li verifica in un passo: stessa risposta, più veloce\n×N è il guadagno misurato su questa classe di GPU",
+  kvTip:"Come viene memorizzata la cache di contesto\nmeno byte contengono più contesto e più richieste, con una piccola perdita di precisione sui testi lunghi",
+  kv_bf16:"BF16: 2 byte, esatto",kv_int8:"INT8: metà memoria, quasi esatto",kv_fp8:"FP8: metà memoria, RTX 40/50",
+  kv_nvfp4:"NVFP4: un quarto della memoria, perde di più sui contesti lunghi",kv_k8v4:"Chiavi FP8, valori NVFP4: circa il 40 % di BF16",
+  kvNeeds256:"non per questo modello: il KV compatto richiede teste larghe 256",kvNeedsFp8:"richiede una RTX 40 o 50 (FP8)",
+  memTip:"Memoria occupata all'avvio: pesi, bozza, cache KV, stati ricorrenti, buffer e CUDA",
+  ctxAll:"Contesto, totale",gen:"Generazione",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Decodifica",decode1:"Decodifica, 1 richiesta",decodeAll:"Decodifica, totale",
+  decodeAllTip:"Tutte le richieste parallele insieme\nnon N volte una richiesta: condividono la banda della scheda, e un MoE legge più esperti con più richieste; scalato dalle misure dei banchi",
+  ctxAllTip:"Token di contesto che questa scheda contiene accanto ai pesi per il numero scelto di richieste parallele, tutte insieme",
+  genTip:"Velocità di generazione stimata di una richiesta con il contesto e il numero di richieste scelti, con la speculazione se attiva: banda della scheda, byte letti per token, guadagno misurato del profilo. Passa sopra un valore per la memoria necessaria",
+  promptTip:"Velocità stimata di elaborazione del prompt: throughput tensoriale della scheda e parametri attivi del modello",
+  tip1:"Una richiesta con fino a {each} token di contesto",tipN:"{n} insieme finché i loro contesti restano insieme sotto {total} token (ciascuno fino a {each})",
+  noFitAt:"non entra con {ctx} × {par}",tooBig:"già i soli pesi non entrano",
+  estNote:"≈ — stime dalla scheda (memoria, banda, clock) e dalla forma del modello, speculazione dal profilo del registro per questa GPU; non misure. Le righe rosse non entrano nel contesto × richieste scelti.",
+  avail:"disponibile",memWeights:"pesi",memDrafter:"bozza",memStates:"stati",memRuntime:"spazio di lavoro e CUDA",noSpec:"senza speculazione",
+  busyNow:"Ora sono liberi solo {free}: altri processi occupano il resto",onlyFull:"Solo pienamente supportati",
+  sup_full:"Pienamente supportato\nil motore esegue questa architettura: scarica ed esegui",
+  sup_drafter:"Bozza speculativa\ngira accanto al suo modello, non da sola",
+  sup_none:"Non supportato\nil motore non esegue ancora questa architettura",
+  sup_unknown:"Architettura sconosciuta\nl'hub non dice cosa siano i pesi",archLabel:"Architettura",
+  testedTip:"Misurato sui nostri banchi\nvelocità e speculazione note per questo repository",
+  measuredTip:"Decodifica di una richiesta con speculazione, misurata sui nostri banchi con questa scheda",
+  kvUnknownHead:"dimensione delle teste sconosciuta: solo BF16",
+  depthNote:"Velocità con un quarto del contesto pieno: {depth} di {ctx} per richiesta. Un contesto vuoto abbellisce la decodifica.",
+  ctxReqTip:"Il contesto scelto per ogni richiesta\npassa sopra un valore per il massimo di questa scheda",
+  genTip2:"Decodifica di una richiesta\ncon {depth} di contesto pieno (un quarto di {ctx}), con la speculazione se attiva",
+  basisLoad:"Per richieste: misurato sulla {gpu} ({run})",basisKind:"Per richieste: media dei modelli {kind} misurati (RTX 4090)",dense:"densi",
+  extrap:"Oltre i numeri di richieste misurati: estrapolato",
+  speedLine:"Decodifica con {depth} di contesto: ≈ {one} tok/s per richiesta, {all} tok/s per {n}",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"Entra con {ctx} × {par} con {free} di margine",
+  recWhyRule:"La quantizzazione più precisa che entra e decodifica entro il 10 % della più veloce da 4 bit in su",
+  recWhySlower:"{name} è più precisa ma più lenta del {p} % rispetto alla più veloce da 4 bit in su",
+  recWhyNoFit:"{name} è più precisa ma non entra con {ctx} × {par}",
+  recNone:"Niente entra con {ctx} × {par}: riduci il contesto o il numero di richieste",
+  unsupportedRun:"Il motore non esegue questa architettura",
+  recWhyLow:"Entrano solo quantizzazioni sotto i 4 bit: le risposte sono sensibilmente peggiori",
+  speedLine1:"Decodifica con {depth} di contesto: ≈ {one} tok/s",visionProj:"proiettore di immagini",
+  sup_format:"Non supportato: il formato dei pesi\nl'architettura è nota al motore, ma i pesi {lib} non vengono letti",supShort_format:"formato non supportato",
+  hubTip:"Dove cercare e scaricare",
+  sup_family:"Probabilmente supportato\nuna variante di una famiglia che il motore esegue ({family}); non ancora verificato",
+  sup_projector:"Verifica…\nl'hub ha letto il proiettore di immagini (mmproj) invece del modello; lettura del file del modello",
+  sup_checking:"Verifica del file del modello…",basisHub:"Architettura secondo l'hub ({src})",basisOwn:"Architettura letta dal file del modello: {file}",
+  srcGguf:"l'intestazione di un file GGUF",srcConfig:"config.json",srcTag:"il tag model_type del repository",memDetail:"pesi {w} + KV {kv} + altro {o}"});
+
+Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOriginals:"Usuń oryginały",originalsKept:"oryginały zachowane",
+  search:"Szukaj w Hugging Face (także org/nazwa)",picks:"Nasz wybór",hub:"Hugging Face",over8:"> 8 bitów",drafter:"model szkicu",
+  kvUnknown:"koszt kontekstu nieznany: liczone tylko wagi",need:"wymaga",of:"z",measured:"tok/s na tej karcie (nasze stanowiska)",llama:"llama.cpp",
+  downloads:"pobrania",likes:"polubienia",localonly:"tylko localhost",exposed:"otwarte w sieci, bez hasła",nogpu:"nie widać GPU NVIDIA",vision:"przyjmuje obrazy",
+  spec:"głowice spekulacyjne",ago:"temu",justNow:"przed chwilą",min:"min",h:"godz.",d:"dni",tokens:"tok",perReq:"na zapytanie",free:"zwolniono",fail:"błąd",
+  onGpu:"na GPU",openHf:"w Hugging Face",
+  readingRepo:"Czytam repozytorium: najpierw pliki, potem nagłówek modelu (duże repozytorium GGUF zajmuje kilka sekund)…",
+  profOwn:"własny profil",profSimilar:"profil z",profGeneric:"profil ogólny",profNone:"brak profilu",ctxCol:"Kontekst",
+  quantTip:"Format wag, jak publikuje go repozytorium; ★ to nasz wybór dla tej karty, ✓ jest pobrane",
+  sizeTip:"Rozmiar pobierania wag",
+  ctxColTip:"Ile kontekstu karta mieści obok wag\n256K ×3 + 40K: trzy zapytania z pełną długością modelu naraz i jeszcze 40K pamięci podręcznej na czwarte, krótsze",
+  capFull:"{n} z pełnym kontekstem modelu ({ctx}) naraz\ni {rest} pamięci podręcznej w zapasie",
+  capShort:"Jedno zapytanie do {ctx} tokenów\nmniej niż {native} modelu: wagi nie zostawiają więcej miejsca",
+  ctxTip:"Jak długa może być rozmowa: prompt, historia i odpowiedź razem",
+  parTip:"Ile zapytań serwer obsługuje jednocześnie\nkażde zajmuje własną pamięć podręczną; łączna szybkość rośnie wolniej niż ich liczba",
+  specTip:"Mały model szkicu zgaduje kilka tokenów naprzód, a model sprawdza je w jednym kroku: ta sama odpowiedź, szybciej\n×N to zysk zmierzony na tej klasie GPU",
+  kvTip:"Jak przechowywana jest pamięć podręczna kontekstu\nmniej bajtów mieści więcej kontekstu i zapytań, kosztem niewielkiej dokładności w długich tekstach",
+  kv_bf16:"BF16: 2 bajty, dokładnie",kv_int8:"INT8: połowa pamięci, prawie dokładnie",kv_fp8:"FP8: połowa pamięci, RTX 40/50",
+  kv_nvfp4:"NVFP4: ćwierć pamięci, traci więcej na długich kontekstach",kv_k8v4:"Klucze FP8, wartości NVFP4: około 40 % BF16",
+  kvNeeds256:"nie dla tego modelu: kompaktowe KV wymaga głowic o szerokości 256",kvNeedsFp8:"wymaga RTX 40 lub 50 (FP8)",
+  memTip:"Pamięć zajęta przy starcie: wagi, model szkicu, pamięć KV, stany rekurencyjne, bufory i CUDA",
+  ctxAll:"Kontekst, łącznie",gen:"Generowanie",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Dekodowanie",decode1:"Dekodowanie, 1 zapytanie",decodeAll:"Dekodowanie, łącznie",
+  decodeAllTip:"Wszystkie równoległe zapytania razem\nnie N razy jedno zapytanie: dzielą przepustowość karty, a MoE czyta więcej ekspertów przy większej liczbie zapytań; skalowane według pomiarów stanowisk",
+  ctxAllTip:"Tokeny kontekstu, które karta mieści obok wag przy wybranej liczbie równoległych zapytań, łącznie",
+  genTip:"Szacowana szybkość generowania jednego zapytania przy wybranym kontekście i liczbie zapytań, ze spekulacją, gdy jest włączona: przepustowość karty, bajty czytane na token, zmierzony zysk profilu. Najedź na wartość, by zobaczyć potrzebną pamięć",
+  promptTip:"Szacowana szybkość przetwarzania promptu: przepustowość tensorowa karty i aktywne parametry modelu",
+  tip1:"Jedno zapytanie z kontekstem do {each} tokenów",tipN:"{n} naraz, dopóki ich konteksty razem mieszczą się poniżej {total} tokenów (każdy do {each})",
+  noFitAt:"nie mieści się przy {ctx} × {par}",tooBig:"same wagi się nie mieszczą",
+  estNote:"≈ — szacunki z karty (pamięć, przepustowość, taktowanie) i kształtu modelu, spekulacja z profilu rejestru dla tego GPU; nie pomiary. Czerwone wiersze nie mieszczą się w wybranym kontekście × zapytaniach.",
+  avail:"dostępne",memWeights:"wagi",memDrafter:"model szkicu",memStates:"stany",memRuntime:"przestrzeń robocza i CUDA",noSpec:"bez spekulacji",
+  busyNow:"Teraz wolne jest tylko {free}: resztę zajmują inne procesy",onlyFull:"Tylko w pełni obsługiwane",
+  sup_full:"W pełni obsługiwany\nsilnik uruchamia tę architekturę: pobierz i uruchom",
+  sup_drafter:"Model szkicu do spekulacji\ndziała obok swojego modelu, nie sam",
+  sup_none:"Nieobsługiwany\nsilnik jeszcze nie uruchamia tej architektury",
+  sup_unknown:"Architektura nieznana\nhub nie mówi, czym są wagi",archLabel:"Architektura",
+  testedTip:"Zmierzone na naszych stanowiskach\nszybkość i spekulacja są znane dla tego repozytorium",
+  measuredTip:"Dekodowanie jednego zapytania ze spekulacją, zmierzone na naszych stanowiskach z tą kartą",
+  kvUnknownHead:"rozmiar głowic modelu nieznany: tylko BF16",
+  depthNote:"Szybkości przy kontekście wypełnionym w jednej czwartej: {depth} z {ctx} na zapytanie. Pusty kontekst upiększa dekodowanie.",
+  ctxReqTip:"Kontekst wybrany dla każdego zapytania\nnajedź na wartość, by zobaczyć maksimum tej karty",
+  genTip2:"Dekodowanie jednego zapytania\nprzy {depth} wypełnionego kontekstu (jedna czwarta z {ctx}), ze spekulacją, gdy jest włączona",
+  basisLoad:"Według zapytań: zmierzone na {gpu} ({run})",basisKind:"Według zapytań: średnia zmierzonych modeli {kind} (RTX 4090)",dense:"gęstych",
+  extrap:"Poza zmierzonymi liczbami zapytań: ekstrapolacja",
+  speedLine:"Dekodowanie przy {depth} kontekstu: ≈ {one} tok/s na zapytanie, {all} tok/s dla {n}",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"Mieści się przy {ctx} × {par} z zapasem {free}",
+  recWhyRule:"Najdokładniejsza kwantyzacja, która się mieści i dekoduje najwyżej 10 % wolniej od najszybszej z 4 lub więcej bitami",
+  recWhySlower:"{name} jest dokładniejsza, ale o {p} % wolniejsza od najszybszej z 4 lub więcej bitami",
+  recWhyNoFit:"{name} jest dokładniejsza, ale nie mieści się przy {ctx} × {par}",
+  recNone:"Nic się nie mieści przy {ctx} × {par}: zmniejsz kontekst lub liczbę zapytań",
+  unsupportedRun:"Silnik nie uruchamia tej architektury",
+  recWhyLow:"Mieszczą się tylko kwantyzacje poniżej 4 bitów: odpowiedzi są zauważalnie gorsze",
+  speedLine1:"Dekodowanie przy {depth} kontekstu: ≈ {one} tok/s",visionProj:"projektor obrazów",
+  sup_format:"Nieobsługiwany: format wag\narchitekturę silnik zna, ale wag {lib} nie czyta",supShort_format:"format nieobsługiwany",
+  hubTip:"Gdzie szukać i skąd pobierać",
+  sup_family:"Prawdopodobnie obsługiwany\nwariant rodziny, którą silnik uruchamia ({family}); jeszcze niesprawdzony",
+  sup_projector:"Sprawdzanie…\nhub odczytał projektor obrazów (mmproj) zamiast modelu; czytam plik modelu",
+  sup_checking:"Sprawdzanie pliku modelu…",basisHub:"Architektura według huba ({src})",basisOwn:"Architektura odczytana z pliku modelu: {file}",
+  srcGguf:"nagłówek jednego pliku GGUF",srcConfig:"config.json",srcTag:"tag model_type repozytorium",memDetail:"wagi {w} + KV {kv} + inne {o}"});
+
+Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOriginals:"删除原始文件",originalsKept:"保留原始文件",
+  search:"搜索 Hugging Face（也可输入 org/name）",picks:"我们的推荐",hub:"Hugging Face",over8:"> 8 位",drafter:"草稿模型",
+  kvUnknown:"上下文开销未知：仅计算权重",need:"需要",of:"/",measured:"本卡上的 tok/s（我们的测试台）",llama:"llama.cpp",
+  downloads:"下载",likes:"点赞",localonly:"仅本机",exposed:"对网络开放，无密码",nogpu:"未检测到 NVIDIA GPU",vision:"支持图像",
+  spec:"推测头",ago:"前",justNow:"刚刚",min:"分钟",h:"小时",d:"天",tokens:"tok",perReq:"每个请求",free:"已释放",fail:"错误",
+  onGpu:"在 GPU 上",openHf:"在 Hugging Face 上",
+  readingRepo:"正在读取仓库：先是文件列表，再是模型头部（大型 GGUF 仓库需要几秒）…",
+  profOwn:"自有配置",profSimilar:"配置来自",profGeneric:"通用配置",profNone:"无配置",ctxCol:"上下文",
+  quantTip:"仓库发布的权重格式；★ 是我们为这张卡的选择，✓ 表示已下载",
+  sizeTip:"权重的下载大小",
+  ctxColTip:"这张卡在权重之外能容纳多少上下文\n256K ×3 + 40K：同时三个满长度请求，另有 40K 缓存可供第四个较短的请求",
+  capFull:"同时 {n} 个满上下文（{ctx}）请求\n另余 {rest} 缓存",
+  capShort:"单个请求最多 {ctx} 个 token\n少于模型自身的 {native}：权重没有留下更多空间",
+  ctxTip:"一次对话最长能有多长：提示、历史和回答合计",
+  parTip:"服务器同时处理多少个请求\n每个请求占用自己的缓存；总速度的增长慢于请求数",
+  specTip:"小型草稿模型预先猜测多个 token，主模型一步验证：答案相同，速度更快\n×N 是在该类 GPU 上测得的加速",
+  kvTip:"上下文缓存的存储方式\n字节越少，能容纳越多上下文和请求，长文本精度略有损失",
+  kv_bf16:"BF16：2 字节，精确",kv_int8:"INT8：一半内存，几乎精确",kv_fp8:"FP8：一半内存，RTX 40/50",
+  kv_nvfp4:"NVFP4：四分之一内存，长上下文损失更大",kv_k8v4:"键 FP8、值 NVFP4：约为 BF16 的 40 %",
+  kvNeeds256:"不适用于此模型：紧凑 KV 需要宽度为 256 的头",kvNeedsFp8:"需要 RTX 40 或 50（FP8）",
+  memTip:"启动占用的显存：权重、草稿模型、KV 缓存、循环状态、缓冲区和 CUDA",
+  ctxAll:"上下文，合计",gen:"生成",prompt:"提示",perSec:"tok/s",prefill:"预填充",decode:"解码",decode1:"解码，1 个请求",decodeAll:"解码，合计",
+  decodeAllTip:"所有并行请求合计\n不是单个请求的 N 倍：它们共享显卡带宽，MoE 在更多请求下读取更多专家；按测试台测量值缩放",
+  ctxAllTip:"在所选并行请求数下，这张卡在权重之外能容纳的上下文 token 总数",
+  genTip:"在所选上下文和请求数下单个请求的估计生成速度，开启时包含推测解码：显卡带宽、每个 token 读取的字节数、配置测得的加速。将鼠标悬停在数值上可查看所需显存",
+  promptTip:"估计的提示处理速度：显卡张量吞吐量与模型的激活参数",
+  tip1:"一个请求，上下文最多 {each} 个 token",tipN:"同时 {n} 个，只要上下文合计低于 {total} 个 token（每个最多 {each}）",
+  noFitAt:"在 {ctx} × {par} 下放不下",tooBig:"仅权重就放不下",
+  estNote:"≈ — 基于显卡（显存、带宽、频率）和模型结构的估算，推测解码取自该 GPU 的注册配置；并非实测。红色行在所选上下文 × 请求数下放不下。",
+  avail:"可用",memWeights:"权重",memDrafter:"草稿模型",memStates:"状态",memRuntime:"工作区和 CUDA",noSpec:"不使用推测解码",
+  busyNow:"当前仅有 {free} 空闲：其余被其他进程占用",onlyFull:"仅完全支持",
+  sup_full:"完全支持\n引擎可运行此架构：下载即可运行",
+  sup_drafter:"推测解码草稿模型\n与其主模型一起运行，不能单独运行",
+  sup_none:"不支持\n引擎尚不能运行此架构",
+  sup_unknown:"架构未知\nhub 未说明权重是什么",archLabel:"架构",
+  testedTip:"在我们的测试台上测量过\n该仓库的速度和推测解码已知",
+  measuredTip:"在我们的测试台上用这张卡测得的单请求带推测解码的解码速度",
+  kvUnknownHead:"模型的头大小未知：仅 BF16",
+  depthNote:"速度按上下文填满四分之一计算：每个请求 {depth} / {ctx}。空上下文会让解码看起来更快。",
+  ctxReqTip:"为每个请求选择的上下文\n悬停数值可查看这张卡的最大值",
+  genTip2:"单个请求的解码\n上下文已填 {depth}（{ctx} 的四分之一），开启时包含推测解码",
+  basisLoad:"按请求数：在 {gpu} 上测得（{run}）",basisKind:"按请求数：已测 {kind} 模型的平均值（RTX 4090）",dense:"稠密",
+  extrap:"超出已测请求数：外推",
+  speedLine:"上下文 {depth} 时解码：每个请求 ≈ {one} tok/s，{n} 合计 {all} tok/s",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"在 {ctx} × {par} 下可放下，余 {free}",
+  recWhyRule:"能放下且解码速度不低于 4 位及以上最快量化 90 % 的最精确量化",
+  recWhySlower:"{name} 更精确，但比 4 位及以上最快的慢 {p} %",
+  recWhyNoFit:"{name} 更精确，但在 {ctx} × {par} 下放不下",
+  recNone:"在 {ctx} × {par} 下都放不下：请减小上下文或请求数",
+  unsupportedRun:"引擎不运行此架构",
+  recWhyLow:"只有低于 4 位的量化能放下：回答质量明显下降",
+  speedLine1:"上下文 {depth} 时解码：≈ {one} tok/s",visionProj:"图像投影器",
+  sup_format:"不支持：权重格式\n引擎认识此架构，但不读取 {lib} 权重",supShort_format:"格式不支持",
+  hubTip:"在哪里搜索和下载",
+  sup_family:"可能支持\n引擎支持的模型系列（{family}）的变体；尚未验证",
+  sup_projector:"检查中…\nhub 读取的是图像投影器（mmproj）而非模型；正在读取模型文件",
+  sup_checking:"正在检查模型文件…",basisHub:"hub 给出的架构（{src}）",basisOwn:"从模型文件读取的架构：{file}",
+  srcGguf:"一个 GGUF 文件的头部",srcConfig:"config.json",srcTag:"仓库的 model_type 标签",memDetail:"权重 {w} + KV {kv} + 其他 {o}"});
+
+Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジナル",delOriginals:"オリジナルを削除",originalsKept:"オリジナルを保持",
+  search:"Hugging Face を検索（org/name も可）",picks:"おすすめ",hub:"Hugging Face",over8:"> 8 ビット",drafter:"ドラフトモデル",
+  kvUnknown:"コンテキストのコストは不明：重みのみを計上",need:"必要",of:"/",measured:"このカードでの tok/s（当社のテスト環境）",llama:"llama.cpp",
+  downloads:"ダウンロード",likes:"いいね",localonly:"localhost のみ",exposed:"ネットワークに公開、パスワードなし",nogpu:"NVIDIA GPU が見つかりません",vision:"画像に対応",
+  spec:"投機ヘッド",ago:"前",justNow:"たった今",min:"分",h:"時間",d:"日",tokens:"tok",perReq:"リクエストあたり",free:"解放済み",fail:"エラー",
+  onGpu:"GPU 上",openHf:"Hugging Face で",
+  readingRepo:"リポジトリを読み込み中：まずファイル一覧、次にモデルのヘッダー（大きな GGUF リポジトリは数秒かかります）…",
+  profOwn:"専用プロファイル",profSimilar:"プロファイル元",profGeneric:"汎用プロファイル",profNone:"プロファイルなし",ctxCol:"コンテキスト",
+  quantTip:"リポジトリが公開している重みの形式。★ はこのカード向けのおすすめ、✓ はダウンロード済み",
+  sizeTip:"重みのダウンロードサイズ",
+  ctxColTip:"重みの横にカードが保持できるコンテキスト量\n256K ×3 + 40K：モデルの最大長のリクエストを同時に 3 つ、さらに短い 4 つ目用に 40K のキャッシュ",
+  capFull:"モデルの最大コンテキスト（{ctx}）で同時に {n}\nさらに {rest} のキャッシュが残る",
+  capShort:"最大 {ctx} トークンのリクエスト 1 つ\nモデル本来の {native} より少ない：重みでこれ以上の空きがありません",
+  ctxTip:"1 つの会話がどこまで伸びられるか：プロンプト、履歴、回答の合計",
+  parTip:"サーバーが同時に応答するリクエスト数\nそれぞれが独自のキャッシュを使い、合計速度は数ほどには伸びません",
+  specTip:"小さなドラフトモデルが数トークン先を予測し、モデルが 1 ステップで検証します：同じ回答をより速く\n×N はこの GPU クラスで測定した向上率",
+  kvTip:"コンテキストキャッシュの保存形式\nバイト数が少ないほど多くのコンテキストとリクエストを保持でき、長文で精度がわずかに下がります",
+  kv_bf16:"BF16：2 バイト、正確",kv_int8:"INT8：メモリ半分、ほぼ正確",kv_fp8:"FP8：メモリ半分、RTX 40/50",
+  kv_nvfp4:"NVFP4：メモリ 4 分の 1、長いコンテキストで劣化が大きい",kv_k8v4:"キー FP8、値 NVFP4：BF16 の約 40 %",
+  kvNeeds256:"このモデルには不可：コンパクト KV は幅 256 のヘッドが必要",kvNeedsFp8:"RTX 40 または 50 が必要（FP8）",
+  memTip:"起動時に使うメモリ：重み、ドラフトモデル、KV キャッシュ、再帰状態、バッファ、CUDA",
+  ctxAll:"コンテキスト合計",gen:"生成",prompt:"プロンプト",perSec:"tok/s",prefill:"プリフィル",decode:"デコード",decode1:"デコード、1 リクエスト",decodeAll:"デコード合計",
+  decodeAllTip:"並列リクエストすべての合計\n1 リクエストの N 倍ではありません：カードの帯域を共有し、MoE はリクエストが多いほど多くのエキスパートを読み込みます。テスト環境の測定値で補正",
+  ctxAllTip:"選択した並列リクエスト数で、重みの横にこのカードが保持できるコンテキストトークンの合計",
+  genTip:"選択したコンテキストとリクエスト数での 1 リクエストの推定生成速度（有効時は投機デコード込み）：カードの帯域、トークンあたりの読み込みバイト、プロファイルの測定向上率。値にカーソルを合わせると必要メモリを表示",
+  promptTip:"推定プロンプト処理速度：カードのテンソル演算性能とモデルのアクティブパラメータ",
+  tip1:"最大 {each} トークンのコンテキストでリクエスト 1 つ",tipN:"コンテキストの合計が {total} トークン未満なら同時に {n}（各最大 {each}）",
+  noFitAt:"{ctx} × {par} では収まりません",tooBig:"重みだけで収まりません",
+  estNote:"≈ — カード（メモリ、帯域、クロック）とモデル構造からの推定値。投機デコードはこの GPU のレジストリプロファイルによる。実測値ではありません。赤い行は選択したコンテキスト × リクエスト数に収まりません。",
+  avail:"利用可能",memWeights:"重み",memDrafter:"ドラフトモデル",memStates:"状態",memRuntime:"作業領域と CUDA",noSpec:"投機デコードなし",
+  busyNow:"現在空きは {free} のみ：残りは他のプロセスが使用中",onlyFull:"完全対応のみ",
+  sup_full:"完全対応\nエンジンはこのアーキテクチャを実行できます：ダウンロードして実行",
+  sup_drafter:"投機デコード用ドラフトモデル\n本体モデルと一緒に動作し、単独では動きません",
+  sup_none:"未対応\nエンジンはまだこのアーキテクチャを実行できません",
+  sup_unknown:"アーキテクチャ不明\nhub が重みの種類を示していません",archLabel:"アーキテクチャ",
+  testedTip:"当社のテスト環境で測定済み\nこのリポジトリの速度と投機デコードは既知です",
+  measuredTip:"当社のテスト環境でこのカードを使って測定した、投機デコードありの 1 リクエストのデコード",
+  kvUnknownHead:"モデルのヘッドサイズが不明：BF16 のみ",
+  depthNote:"速度はコンテキストが 4 分の 1 埋まった状態で表示：リクエストあたり {ctx} 中 {depth}。空のコンテキストではデコードが実際より速く見えます。",
+  ctxReqTip:"各リクエストに選択したコンテキスト\n値にカーソルを合わせるとこのカードの最大値を表示",
+  genTip2:"1 リクエストのデコード\nコンテキスト {depth} 使用時（{ctx} の 4 分の 1）、有効時は投機デコード込み",
+  basisLoad:"リクエスト数ごと：{gpu} で測定（{run}）",basisKind:"リクエスト数ごと：測定済み {kind} モデルの平均（RTX 4090）",dense:"密",
+  extrap:"測定したリクエスト数の範囲外：外挿",
+  speedLine:"コンテキスト {depth} でのデコード：リクエストあたり ≈ {one} tok/s、{n} 合計 {all} tok/s",ctxTimes:"{ctx} × {par}",
+  recWhyFit:"{ctx} × {par} で収まり、余裕 {free}",
+  recWhyRule:"収まる量子化のうち、4 ビット以上で最速のものとのデコード速度差が 10 % 以内で最も精度の高いもの",
+  recWhySlower:"{name} はより高精度ですが、4 ビット以上で最速のものより {p} % 遅い",
+  recWhyNoFit:"{name} はより高精度ですが、{ctx} × {par} では収まりません",
+  recNone:"{ctx} × {par} で収まるものがありません：コンテキストかリクエスト数を減らしてください",
+  unsupportedRun:"エンジンはこのアーキテクチャを実行しません",
+  recWhyLow:"4 ビット未満の量子化しか収まりません：回答の質が明らかに落ちます",
+  speedLine1:"コンテキスト {depth} でのデコード：≈ {one} tok/s",visionProj:"画像プロジェクター",
+  sup_format:"未対応：重みの形式\nアーキテクチャはエンジンが対応していますが、{lib} の重みは読み込めません",supShort_format:"形式未対応",
+  hubTip:"検索とダウンロードの場所",
+  sup_family:"おそらく対応\nエンジンが実行できるファミリー（{family}）の派生。未検証",
+  sup_projector:"確認中…\nhub がモデルではなく画像プロジェクター（mmproj）を読み取りました。モデルファイルを読み込み中",
+  sup_checking:"モデルファイルを確認中…",basisHub:"hub によるアーキテクチャ（{src}）",basisOwn:"モデルファイルから読み取ったアーキテクチャ：{file}",
+  srcGguf:"GGUF ファイル 1 つのヘッダー",srcConfig:"config.json",srcTag:"リポジトリの model_type タグ",memDetail:"重み {w} + KV {kv} + その他 {o}"});
+// The update bar.
+for (const [code, words] of Object.entries({
+  en:{updAvail:"NInferno {v} is available (you have {cur}).",updRequired:"This version ({cur}) is out of date: please update to {v}.",
+      updNotes:"What's new",updNow:"Update",updLater:"Later",updWorking:"Updating to {v}…",updLog:"Progress",
+      updDone:"NInferno {v} is installed. Restart to use it: running models stop and can be started again.",updRestart:"Restart now",
+      updFailed:"The update did not finish.",updRetry:"Try again",updManual:"Install it with: ninferno-update",updRestarting:"Restarting…"},
+  ru:{updAvail:"Вышла NInferno {v} (у вас {cur}).",updRequired:"Эта версия ({cur}) устарела: обновитесь до {v}.",
+      updNotes:"Что нового",updNow:"Обновить",updLater:"Позже",updWorking:"Обновление до {v}…",updLog:"Ход",
+      updDone:"NInferno {v} установлена. Перезапустите: запущенные модели остановятся, их можно будет запустить снова.",updRestart:"Перезапустить",
+      updFailed:"Обновление не завершилось.",updRetry:"Повторить",updManual:"Установите командой: ninferno-update",updRestarting:"Перезапуск…"},
+  uk:{updAvail:"Вийшла NInferno {v} (у вас {cur}).",updRequired:"Ця версія ({cur}) застаріла: оновіться до {v}.",
+      updNotes:"Що нового",updNow:"Оновити",updLater:"Пізніше",updWorking:"Оновлення до {v}…",updLog:"Перебіг",
+      updDone:"NInferno {v} встановлено. Перезапустіть: запущені моделі зупиняться, їх можна буде запустити знову.",updRestart:"Перезапустити",
+      updFailed:"Оновлення не завершилося.",updRetry:"Повторити",updManual:"Встановіть командою: ninferno-update",updRestarting:"Перезапуск…"},
+  de:{updAvail:"NInferno {v} ist verfügbar (Sie haben {cur}).",updRequired:"Diese Version ({cur}) ist veraltet: bitte auf {v} aktualisieren.",
+      updNotes:"Neuerungen",updNow:"Aktualisieren",updLater:"Später",updWorking:"Aktualisiere auf {v}…",updLog:"Verlauf",
+      updDone:"NInferno {v} ist installiert. Neu starten, um sie zu nutzen: laufende Modelle stoppen und lassen sich wieder starten.",updRestart:"Jetzt neu starten",
+      updFailed:"Die Aktualisierung wurde nicht abgeschlossen.",updRetry:"Erneut versuchen",updManual:"Installieren mit: ninferno-update",updRestarting:"Starte neu…"},
+  fr:{updAvail:"NInferno {v} est disponible (vous avez {cur}).",updRequired:"Cette version ({cur}) est obsolète : mettez à jour vers {v}.",
+      updNotes:"Nouveautés",updNow:"Mettre à jour",updLater:"Plus tard",updWorking:"Mise à jour vers {v}…",updLog:"Progression",
+      updDone:"NInferno {v} est installée. Redémarrez pour l'utiliser : les modèles en cours s'arrêtent et peuvent être relancés.",updRestart:"Redémarrer",
+      updFailed:"La mise à jour n'a pas abouti.",updRetry:"Réessayer",updManual:"Installez-la avec : ninferno-update",updRestarting:"Redémarrage…"},
+  es:{updAvail:"NInferno {v} está disponible (tienes {cur}).",updRequired:"Esta versión ({cur}) está obsoleta: actualiza a {v}.",
+      updNotes:"Novedades",updNow:"Actualizar",updLater:"Más tarde",updWorking:"Actualizando a {v}…",updLog:"Progreso",
+      updDone:"NInferno {v} está instalada. Reinicia para usarla: los modelos en marcha se detienen y pueden volver a iniciarse.",updRestart:"Reiniciar ahora",
+      updFailed:"La actualización no terminó.",updRetry:"Reintentar",updManual:"Instálala con: ninferno-update",updRestarting:"Reiniciando…"},
+  it:{updAvail:"È disponibile NInferno {v} (hai {cur}).",updRequired:"Questa versione ({cur}) è superata: aggiorna a {v}.",
+      updNotes:"Novità",updNow:"Aggiorna",updLater:"Più tardi",updWorking:"Aggiornamento a {v}…",updLog:"Avanzamento",
+      updDone:"NInferno {v} è installata. Riavvia per usarla: i modelli in esecuzione si fermano e si possono riavviare.",updRestart:"Riavvia ora",
+      updFailed:"L'aggiornamento non è terminato.",updRetry:"Riprova",updManual:"Installala con: ninferno-update",updRestarting:"Riavvio…"},
+  pl:{updAvail:"Dostępna jest NInferno {v} (masz {cur}).",updRequired:"Ta wersja ({cur}) jest przestarzała: zaktualizuj do {v}.",
+      updNotes:"Co nowego",updNow:"Aktualizuj",updLater:"Później",updWorking:"Aktualizacja do {v}…",updLog:"Postęp",
+      updDone:"NInferno {v} jest zainstalowana. Uruchom ponownie, aby jej użyć: działające modele zatrzymają się i można je uruchomić znowu.",updRestart:"Uruchom ponownie",
+      updFailed:"Aktualizacja się nie zakończyła.",updRetry:"Spróbuj ponownie",updManual:"Zainstaluj poleceniem: ninferno-update",updRestarting:"Ponowne uruchamianie…"},
+  zh:{updAvail:"NInferno {v} 已发布（当前 {cur}）。",updRequired:"此版本（{cur}）已过时：请更新到 {v}。",
+      updNotes:"更新内容",updNow:"更新",updLater:"稍后",updWorking:"正在更新到 {v}…",updLog:"进度",
+      updDone:"NInferno {v} 已安装。重启后生效：正在运行的模型会停止，之后可再次启动。",updRestart:"立即重启",
+      updFailed:"更新未完成。",updRetry:"重试",updManual:"用此命令安装：ninferno-update",updRestarting:"正在重启…"},
+  ja:{updAvail:"NInferno {v} が利用できます（現在 {cur}）。",updRequired:"このバージョン（{cur}）は古くなっています：{v} に更新してください。",
+      updNotes:"新機能",updNow:"更新",updLater:"後で",updWorking:"{v} に更新中…",updLog:"進行状況",
+      updDone:"NInferno {v} をインストールしました。再起動すると使えます：実行中のモデルは停止し、再度起動できます。",updRestart:"今すぐ再起動",
+      updFailed:"更新が完了しませんでした。",updRetry:"再試行",updManual:"次のコマンドでインストール：ninferno-update",updRestarting:"再起動中…"},
+})) { if (T[code]) Object.assign(T[code], words); }
+const LANGS = [
+  ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
+  ["uk", "Українська", '<svg viewBox="0 0 3 2"><rect width="3" height="1" fill="#0057B7"/><rect y="1" width="3" height="1" fill="#FFD700"/></svg>'],
+  ["ru", "Русский", '<svg viewBox="0 0 9 6"><rect width="9" height="2" fill="#fff"/><rect y="2" width="9" height="2" fill="#0039A6"/><rect y="4" width="9" height="2" fill="#D52B1E"/></svg>'],
+  ["de", "Deutsch", '<svg viewBox="0 0 5 3"><rect width="5" height="1" fill="#000"/><rect y="1" width="5" height="1" fill="#D00"/><rect y="2" width="5" height="1" fill="#FFCE00"/></svg>'],
+  ["fr", "Français", '<svg viewBox="0 0 3 2"><rect width="1" height="2" fill="#0055A4"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#EF4135"/></svg>'],
+  ["es", "Español", '<svg viewBox="0 0 3 2"><rect width="3" height="2" fill="#AA151B"/><rect y=".5" width="3" height="1" fill="#F1BF00"/></svg>'],
+  ["it", "Italiano", '<svg viewBox="0 0 3 2"><rect width="1" height="2" fill="#009246"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#CE2B37"/></svg>'],
+  ["pl", "Polski", '<svg viewBox="0 0 8 5"><rect width="8" height="2.5" fill="#fff"/><rect y="2.5" width="8" height="2.5" fill="#DC143C"/></svg>'],
+  ["zh", "中文", '<svg viewBox="0 0 30 20"><rect width="30" height="20" fill="#DE2910"/><path d="M5,2.5 6.2,6.1 2.4,3.9H7.6L3.8,6.1Z" fill="#FFDE00"/></svg>'],
+  ["ja", "日本語", '<svg viewBox="0 0 3 2"><rect width="3" height="2" fill="#fff"/><circle cx="1.5" cy="1" r=".6" fill="#BC002D"/></svg>'],
+];
+let lang = null; try { lang = localStorage.getItem("ninferno-lang"); } catch (e) {}
+if (!T[lang]) {
+  const want = (navigator.languages || [navigator.language || "en"]).map(x => String(x).toLowerCase().slice(0, 2));
+  lang = want.find(x => T[x]) || "en";
+}
+const L = T[lang];
+document.documentElement.lang = lang;
+const t = k => L[k] ?? T.en[k] ?? k;
+const fill = (s, v) => s.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
+// "N requests" in the page's language, by its plural rules.
+const REQ = {en: {one: "request", other: "requests"}, ru: {one: "запрос", few: "запроса", many: "запросов"},
+             uk: {one: "запит", few: "запити", many: "запитів"}, de: {one: "Anfrage", other: "Anfragen"},
+             fr: {one: "requête", other: "requêtes"}, es: {one: "solicitud", other: "solicitudes"},
+             it: {one: "richiesta", other: "richieste"}, pl: {one: "zapytanie", few: "zapytania", many: "zapytań"},
+             zh: {other: "个请求"}, ja: {other: "件のリクエスト"}};
+const plural = new Intl.PluralRules(lang);
+const nReq = n => {
+  const forms = REQ[lang] || REQ.en, word = forms[plural.select(n)] || forms.many || forms.other || forms.one;
+  return lang === "zh" || lang === "ja" ? `${n} ${word}` : `${n} ${word}`;
+};
+document.querySelectorAll("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
+const $ = id => document.getElementById(id);
+const info = text => `<i class="info" data-tip="${esc(text)}">i</i>`;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const GiB = 2 ** 30;
+
+// ---- theme and language ----------------------------------------------------------------------
+let theme = document.documentElement.dataset.theme || null;
+const isDark = () => theme ? theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+// The chat (llama-ui, served from this origin) keeps its theme under mode-watcher's key: it takes
+// ours, at its next load and, when it is open, at once.
+function shareTheme() {
+  const mode = theme || "system";
+  try {
+    localStorage.setItem("mode-watcher-mode", mode);
+    // llama-ui applies its own setting (LlamaUi.config.theme) over mode-watcher's at load.
+    const raw = localStorage.getItem("LlamaUi.config"), config = raw ? JSON.parse(raw) : {};
+    if (config && config.theme !== mode) { config.theme = mode; localStorage.setItem("LlamaUi.config", JSON.stringify(config)); }
+  } catch (e) {}
+  try {
+    const doc = $("chatframe") && $("chatframe").contentDocument;
+    if (doc && doc.documentElement) {
+      doc.documentElement.classList.toggle("dark", isDark());
+      doc.documentElement.style.colorScheme = isDark() ? "dark" : "light";
+    }
+  } catch (e) {}
+}
+function paintTheme() { $("theme").textContent = isDark() ? "☀" : "☾"; $("theme").title = t(isDark() ? "toLight" : "toDark"); shareTheme(); }
+$("theme").onclick = () => {
+  theme = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem("ninferno-theme", theme); } catch (e) {}
+  paintTheme();
+};
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTheme);
+paintTheme();
+const flag = svg => `<span class="flag">${svg.replace("<svg ", '<svg preserveAspectRatio="none" ')}</span>`;
+const here = LANGS.find(x => x[0] === lang) || LANGS[0];
+$("lang").innerHTML = `${flag(here[2])}<span>${lang.toUpperCase()}</span>`;
+$("lang").title = t("language");
+$("langmenu").innerHTML = LANGS.map(([code, name, svg]) =>
+  `<button data-lang="${code}" class="${code === lang ? "on" : ""}">${flag(svg)}${esc(name)}</button>`).join("");
+$("lang").onclick = ev => { ev.stopPropagation(); $("langmenu").hidden = !$("langmenu").hidden; };
+$("langmenu").onclick = ev => {
+  const b = ev.target.closest("[data-lang]");
+  if (!b) return;
+  try { localStorage.setItem("ninferno-lang", b.dataset.lang); } catch (e) {}
+  location.reload();
+};
+document.addEventListener("click", ev => { if (!ev.target.closest(".langpick")) $("langmenu").hidden = true; });
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({error:r.statusText}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function ago(iso) {
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (!(s >= 0)) return "";
+  if (s < 90) return t("justNow");
+  if (s < 5400) return `${Math.round(s / 60)} ${t("min")} ${t("ago")}`;
+  if (s < 129600) return `${Math.round(s / 3600)} ${t("h")} ${t("ago")}`;
+  return `${Math.round(s / 86400)} ${t("d")} ${t("ago")}`;
+}
+const human = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "K" : String(n);
+const ctxLabel = n => n >= 1024 ? Math.round(n / 1024) + "K" : String(n);
+
+// ---- state: GPUs and processes ------------------------------------------------------------
+let S = {gpus:[], processes:[]}, gpu = 0, chatUi = false, logId = 0;
+function live(p) { return !["exited","failed"].includes(p.state); }
+// ---- update bar: a newer release (ninferno-ui's daily check), its install and the restart ------
+let restarting = false;
+function renderUpdate(u) {
+  const bar = $("update");
+  if (!u || !u.latest) { bar.hidden = true; return; }
+  let later = null; try { later = localStorage.getItem("ninferno-update-later"); } catch (e) {}
+  const running = u.job && live({state: u.job_state});
+  bar.hidden = !u.required && later === u.latest && !u.job;
+  bar.classList.toggle("required", !!u.required);
+  const v = {v: u.latest, cur: u.current};
+  let msg = t(u.required ? "updRequired" : "updAvail"), go = t("updNow"), action = "install";
+  if (restarting) { msg = t("updRestarting"); go = ""; }
+  else if (u.installed) { msg = t("updDone"); go = t("updRestart"); action = "restart"; }
+  else if (running) { msg = t("updWorking") + (u.last_line ? " " + u.last_line : ""); go = ""; }
+  else if (u.job_state === "failed") { msg = t("updFailed"); go = t("updRetry"); }
+  else if (!u.can_install) { msg += " " + t("updManual"); go = ""; }
+  $("updmsg").textContent = fill(msg, v);
+  $("updnotes").hidden = !/^https?:\/\//i.test(u.notes || ""); $("updnotes").href = /^https?:\/\//i.test(u.notes || "") ? u.notes : "#"; $("updnotes").textContent = t("updNotes");
+  $("updlog").hidden = !u.job; $("updlog").textContent = t("updLog");
+  $("updlog").onclick = () => openLog(u.job, "NInferno " + u.latest);
+  $("updlater").hidden = !!u.required || !!running || restarting; $("updlater").textContent = t("updLater");
+  $("updlater").onclick = () => { try { localStorage.setItem("ninferno-update-later", u.latest); } catch (e) {} bar.hidden = true; };
+  $("updgo").hidden = !go; $("updgo").textContent = go;
+  $("updgo").onclick = async () => {
+    try {
+      await api("/api/update", {action});
+      if (action === "restart") { restarting = true; renderUpdate(u); } else refreshState();
+    } catch (e) { showError(e.message); }
+  };
+}
+async function refreshState() {
+  // An update on Windows restarts the page itself (NInferno.exe): gone while one runs counts too.
+  const updating = S.update && S.update.job && live({state: S.update.job_state});
+  try { S = await api("/api/state"); } catch (e) { if (restarting || updating) restarting = "down"; return; }
+  // Gone and back after a restart: the new version's page.
+  if (restarting === "down") { location.reload(); return; }
+  renderUpdate(S.update);
+  chatUi = !!S.chat_ui;
+  const ex = $("exposure");
+  ex.textContent = S.exposed ? t("exposed") + " (" + S.listen + ")" : t("localonly");
+  ex.className = "pill " + (S.exposed ? "warn" : "ok");
+  $("gpuerr").textContent = S.gpus.length ? "" : t("nogpu") + (S.gpu_error ? ": " + S.gpu_error : "");
+  if (S.gpus.length && !S.gpus.some(g => g.index === gpu)) gpu = S.gpus[0].index;
+  const serving = S.processes.filter(p => p.kind === "serve" && live(p));
+  $("gpus").innerHTML = S.gpus.map(g => {
+    const used = g.memory_used / g.memory_total * 100;
+    const runs = serving.filter(p => p.gpu === g.index).map(p => {
+      const st = p.state === "ready" ? `<span class="pill ok">${t("ready")}</span>` : `<span class="pill warn">${p.percent >= 0 ? p.percent + "%" : t("starting")}</span>`;
+      return `<div class="run"><span class="nm" title="${esc(p.model)}">${esc(shortName(p.model))}</span>${st}
+        ${p.state === "ready" ? `<button class="primary" data-chat="${p.id}">${t("chat")}</button>` : ""}
+        <button class="ghost" data-log="${p.id}">${t("log")}</button><button class="ghost danger" data-stop="${p.id}">■</button></div>`;
+    }).join("");
+    return `<div class="gpu ${g.index === gpu ? "sel" : ""}" data-gpu="${g.index}">
+      <div class="top"><span>${esc(g.name.replace("NVIDIA GeForce ", ""))}</span><span class="muted mono">${(g.memory_used / GiB).toFixed(1)} / ${(g.memory_total / GiB).toFixed(0)} GiB</span></div>
+      <div class="bar"><i style="width:${used.toFixed(1)}%"></i></div>
+      <div class="stats"><span>GPU ${g.util_gpu >= 0 ? g.util_gpu + " %" : "—"}</span><span>${g.temperature_c >= 0 ? g.temperature_c + " °C" : ""}</span>
+        <span>${g.power_w >= 0 ? g.power_w.toFixed(0) + (g.power_limit_w > 0 ? " / " + g.power_limit_w.toFixed(0) : "") + " W" : ""}</span><span>#${g.index}</span></div>
+      ${runs}</div>`;
+  }).join("");
+  renderDownloads();
+  if (logId) refreshLog();
+}
+function shortName(m) {
+  const base = m.split("/").pop();
+  return base.replace(/\.ninferno$/, "").replace(/\.[a-z0-9_]+$/, "");
+}
+async function refreshLog() {
+  try {
+    const j = await api(`/api/log?id=${logId}&n=400`);
+    const el = $("log"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+    el.textContent = j.lines.join("\n");
+    if (atEnd) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+function openLog(id, title) { logId = id; $("drawer").hidden = false; $("drawertitle").textContent = title || "#" + id; refreshLog(); }
+function showError(msg) { $("drawer").hidden = false; $("drawertitle").textContent = t("fail"); $("log").textContent = msg; logId = 0; }
+$("drawerclose").onclick = () => { $("drawer").hidden = true; logId = 0; };
+
+// ---- tabs -------------------------------------------------------------------------------------
+let tab = "models";
+function setTab(name) {
+  tab = name;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  for (const n of ["models","find","downloads","chat"]) $("tab-" + n).hidden = n !== name;
+  if (name === "models") refreshMine();
+  if (name === "find" && !$("results").innerHTML) search("");
+}
+
+// ---- my models ------------------------------------------------------------------------------
+let mine = [];
+const confirming = new Set();
+async function refreshMine() {
+  let j;
+  try { j = await api("/api/local"); } catch (e) { setTimeout(refreshMine, 2000); return; }  // ninferno-ui restarting
+  mine = j.models;
+  $("mysum").textContent = mine.length ? `· ${mine.length} · ${j.total_gib.toFixed(1)} GiB` : "";
+  $("origline").innerHTML = j.originals_gib > 0
+    ? `${t("originalsKept")}: ${j.originals_gib.toFixed(1)} GiB <button class="ghost danger" data-delorig="*">${t("delOriginals")}</button>` : "";
+  if (!mine.length) { $("mine").innerHTML = `<tr><td colspan="8" class="empty">${t("noModels")}</td></tr>`; return; }
+  $("mine").innerHTML = mine.map((m, i) => {
+    const icons = (m.vision ? `<span class="icon i-vision" title="${t("vision")}">👁</span>` : "") +
+                  (m.mtp ? `<span class="icon i-spec" title="${t("spec")}">⚡</span>` : "") +
+                  (m.running ? `<span class="icon i-run" title="${t("running")}">▶</span>` : "");
+    const key = "d" + i;
+    const del = confirming.has(m.artifact)
+      ? `<span class="confirm">${t("delq")} <button class="danger" data-delyes="${i}">${t("yes")}</button><button data-delno="${i}">${t("no")}</button></span>`
+      : `<button class="ghost danger" data-del="${i}" title="${t("del")}">🗑</button>`;
+    return `<tr>
+      <td>${m.arch ? `<span class="chip">${esc(m.arch)}</span>` : ""}</td>
+      <td>${m.params ? `<span class="chip">${esc(m.params)}</span>` : ""}</td>
+      <td class="muted">${esc(m.publisher)}</td>
+      <td><span class="title">${esc(m.title)}</span><span class="icons">${icons}</span>
+        ${m.original_gib > 0 ? `<div class="sub">${t("original")}: ${m.original_gib.toFixed(1)} GiB · <a href="#" data-delorig="${esc(m.repo)}">${t("del")}</a></div>` : ""}</td>
+      <td>${m.quant ? `<span class="chip">${esc(m.quant)}</span>` : ""}</td>
+      <td class="num">${m.size_gib.toFixed(1)} GiB</td>
+      <td class="muted">${esc(ago(m.modified))}</td>
+      <td><div class="acts">${m.running ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
+        <button class="ghost" data-tune="${i}" title="${t("calibrate")}">⚙</button>${del}</div></td></tr>`;
+  }).join("");
+}
+
+// ---- find -------------------------------------------------------------------------------------
+// The hub's models (Hugging Face or ModelScope) in the order picked, each marked by how far the
+// engine runs its architecture: what the hub says first, then, where that is in doubt, what the
+// model file's own header says (/api/arch). Supported models first, unsupported last; a
+// repository our catalog lists was measured by us.
+let found = {picks:[], hub:[]}, selected = null, searchTimer = 0, searchSeq = 0;
+const SORTS = ["downloads", "likes", "lastModified", "trendingScore"];
+const HUBS = {huggingface: ["HF", "Hugging Face"], modelscope: ["MS", "ModelScope"]};
+let sortBy = "downloads", hideNone = false, hubName = "huggingface";
+try {
+  sortBy = localStorage.getItem("ninferno-sort") || sortBy;
+  hideNone = localStorage.getItem("ninferno-hide-none") === "1";
+  hubName = localStorage.getItem("ninferno-hub") || hubName;
+} catch (e) {}
+if (!SORTS.includes(sortBy)) sortBy = "downloads";
+if (!HUBS[hubName]) hubName = "huggingface";
+async function search(q) {
+  const seq = ++searchSeq;
+  if (!found.hub.length) $("results").innerHTML = `<div class="empty">${t("loading")}</div>`;
+  try {
+    const j = await api(`/api/search?q=${encodeURIComponent(q)}&sort=${sortBy}&hub=${hubName}`);
+    await ensureCatalog();
+    if (seq !== searchSeq) return;
+    for (const h of j.hub) {
+      const known = archKnown[hubName + ":" + h.id];
+      if (known) Object.assign(h, known);
+    }
+    found = j;
+    renderResults(j.error);
+    verifyDoubtful();
+  } catch (e) { $("results").innerHTML = `<div class="empty err">${esc(e.message)}</div>`; }
+}
+function renderSortBar() {
+  $("sort").innerHTML = SORTS.map(s => `<button data-sort="${s}" class="${s === sortBy ? "on" : ""}">${t("s_" + s)}</button>`).join("");
+  $("hubsel").innerHTML = Object.entries(HUBS).map(([k, [short, name]]) =>
+    `<button data-hubsel="${k}" class="${k === hubName ? "on" : ""}" data-tip="${esc(name + "\n" + t("hubTip"))}">${short}</button>`).join("");
+  $("hidenone").checked = hideNone;
+  $("q").placeholder = fill(t("searchHub"), {hub: HUBS[hubName][1]});
+}
+async function ensureCatalog() {
+  if (!catalogCache[gpu]) { try { catalogCache[gpu] = await api(`/api/catalog?gpu=${gpu}`); } catch (e) { catalogCache[gpu] = {models:[]}; } }
+  return catalogCache[gpu];
+}
+function catalogFor(repo) {
+  const c = catalogCache[gpu];
+  return c && hubName === "huggingface" ? c.models.find(m => m.sources.some(s => s.repo === repo)) || null : null;
+}
+// The support levels, best first; the list keeps the hub's order within a level.
+const SUP = {full: "✓", family: "≈", projector: "…", unknown: "?", drafter: "◇", format: "✕", none: "✕"};
+const SUP_RANK = {full: 0, family: 1, projector: 2, unknown: 2, drafter: 3, format: 4, none: 4};
+const supOf = h => SUP[h.support] ? h.support : "unknown";
+function familyOf(arch) { return String(arch || "").replace(/(ForConditionalGeneration|ForCausalLM|Model)$/, ""); }
+function supportTip(h) {
+  const s = supOf(h);
+  const head = s === "family" ? fill(t("sup_family"), {family: familyOf(h.architecture)})
+             : s === "format" ? fill(t("sup_format"), {lib: h.weights_format || (h.library || "").toUpperCase()})
+             : h.checking ? t("sup_checking") : t("sup_" + s);
+  const src = h.arch_file ? fill(t("basisOwn"), {file: h.arch_file})
+            : h.architecture ? fill(t("basisHub"), {src: t(hubName === "modelscope" ? "srcTag" : h.gguf ? "srcGguf" : "srcConfig")}) : "";
+    return head + (h.architecture ? "\n" + t("archLabel") + ": " + h.architecture : "") + (src ? "\n" + src : "") + (h.note ? "\n" + h.note : "");
+}
+// The cards a repository was measured on (its catalog entry: single-request cells and load
+// tables). A measured repository is starred and listed first: on this card first, then on others.
+function measuredCards(repo) {
+  const cat = catalogFor(repo);
+  if (!cat) return [];
+  const cards = new Set([...(cat.measured || []).map(m => m.gpu), ...(cat.load || []).map(l => l.gpu)]);
+  return [...cards];
+}
+function measuredRank(h) {
+  const cards = measuredCards(h.id);
+  if (!cards.length) return null;
+  const g = gpuOf();
+  return g && cards.some(c => g.name.includes(c)) ? 0 : 1;
+}
+function supportBadge(h) {
+  const s = supOf(h), cards = measuredCards(h.id);
+  if (cards.length) {
+    return `<span class="sup sup-star" data-tip="${esc(t("testedTip") + "\n" + cards.join(", ") + "\n\n" + supportTip(h))}">★</span>`;
+  }
+  return `<span class="sup sup-${s}${h.checking ? " spin" : ""}" data-tip="${esc(supportTip(h))}">${SUP[s]}</span>`;
+}
+// Listing order: measured on this card, measured elsewhere, then by support level; the hub's
+// order within each.
+function listRank(h) {
+  const m = measuredRank(h);
+  return m !== null ? m : 2 + SUP_RANK[supOf(h)];
+}
+function renderResults(error) {
+  const sel = selected ? selected.key : "";
+  const list = found.hub.filter(h => !hideNone || !["none", "format"].includes(supOf(h)))
+    .map((h, i) => [h, i]).sort((a, b) => listRank(a[0]) - listRank(b[0]) || a[1] - b[1]).map(x => x[0]);
+  let html = list.map(h => {
+    const tested = catalogFor(h.id);
+    return `<button class="item ${sel === "h:" + h.id ? "sel" : ""} ${["none", "format"].includes(supOf(h)) ? "unsup" : ""}" data-hub="${esc(h.id)}">
+      <div class="title">${supportBadge(h)}<span class="nm">${esc(h.id.split("/")[1])}</span>${h.gguf ? '<span class="chip">GGUF</span>' : ""}${h.library === "ninferno" ? '<span class="chip">NInferno</span>' : ""}${tested ? `<span class="pill ok" data-tip="${esc(t("testedTip"))}">${t("tested")}</span>` : ""}</div>
+      <div class="sub">${esc(h.id.split("/")[0])} · ↓ ${human(h.downloads)} · ♥ ${human(h.likes)}${h.updated ? " · " + esc(ago(h.updated)) : ""}${h.context ? " · " + ctxLabel(h.context) : ""}</div></button>`;
+  }).join("");
+  if (!html) html = `<div class="empty">${error ? `<span class="err">${esc(error)}</span>` : t("nothing")}</div>`;
+  $("results").innerHTML = html;
+}
+// Where the hub's word is in doubt (a variant of a known family, an image projector read instead
+// of the model, nothing said), the model file's header decides; three at a time, each once.
+const archKnown = {}, archAsked = new Set();
+// One queue for every search: a new search replaces what an older one had not yet asked, and the
+// three running requests, whichever search they came from, take the next from it when they end.
+let archRunning = 0, archRender = 0, archQueue = [];
+function verifyDoubtful() {
+  const hub = hubName;
+  archQueue = found.hub.filter(h => ["family", "projector", "unknown"].includes(supOf(h)) && !archAsked.has(hub + ":" + h.id))
+    .map(h => ({h, hub}));
+  archNext();
+  if (archQueue.length || archRunning) renderResults();
+}
+function archNext() {
+  while (archRunning < 3 && archQueue.length) {
+    const {h, hub} = archQueue.shift(), key = hub + ":" + h.id;
+    if (archAsked.has(key)) continue;
+    archAsked.add(key); archRunning++; h.checking = true;
+    api(`/api/arch?repo=${encodeURIComponent(h.id)}&hub=${hub}`).then(a => {
+      if (a.architecture) {
+        archKnown[key] = {architecture: a.architecture, support: a.support, arch_file: a.file, note: a.note || ""};
+        Object.assign(h, archKnown[key]);
+      }
+    }).catch(() => {}).finally(() => {
+      h.checking = false; archRunning--;
+      // A result for a model of the list in view (the list may have been replaced since).
+      const shown = found.hub.find(x => x.id === h.id);
+      if (shown && shown !== h && archKnown[key] && hubName === hub) Object.assign(shown, archKnown[key]);
+      clearTimeout(archRender); archRender = setTimeout(() => { if (hubName === hub) renderResults(); }, 150);
+      archNext();
+    });
+  }
+}
+$("q").oninput = () => {
+  clearTimeout(searchTimer);
+  const v = $("q").value.trim();
+  searchTimer = setTimeout(() => {
+    if (/^[\w.-]+\/[\w.-]+(:[\w.-]+)?$/.test(v)) { const [repo] = v.split(":"); openRepo(repo, null); }
+    search(v);
+  }, 350);
+};
+$("hidenone").onchange = () => {
+  hideNone = $("hidenone").checked;
+  try { localStorage.setItem("ninferno-hide-none", hideNone ? "1" : "0"); } catch (e) {}
+  renderResults();
+};
+function setHub(name) {
+  if (!HUBS[name] || name === hubName) return;
+  hubName = name;
+  try { localStorage.setItem("ninferno-hub", hubName); } catch (e) {}
+  found = {picks:[], hub:[]};
+  renderSortBar(); search($("q").value.trim());
+}
+
+// Detail: one hub repository; the catalog's model when it lists the repository.
+let ctxValue = 32768, parallel = 1, quantSel = null, catalogCache = {}, useSpec = true;
+// Speculation: "auto" (the measured choice), "off", or a drafter kind the page offers (mtp, dflash,
+// dflash2): the launch's --spec.
+let specMode = "auto";
+function openRepo(repo, hub) {
+  selected = {key:"h:" + repo, hub, repo, hubName, catalog: catalogFor(repo)};
+  renderResults(); loadRepo();
+}
+const repoUrl = sel => sel.hubName === "modelscope" ? `https://modelscope.cn/models/${sel.repo}` : `https://huggingface.co/${sel.repo}`;
+async function loadRepo() {
+  const sel = selected;
+  sel.quants = null; sel.error = ""; quantSel = null;
+  const started = Date.now(), tick = setInterval(() => {
+    if (sel !== selected || sel.quants || sel.error) { clearInterval(tick); return; }
+    const el = $("readsec");
+    if (el) el.textContent = Math.round((Date.now() - started) / 1000) + " s";
+  }, 1000);
+  await ensureCatalog();
+  sel.catalog = catalogFor(sel.repo);
+  renderDetail();
+  try {
+    const j = await api(`/api/quants?repo=${encodeURIComponent(sel.repo)}&gpu=${gpu}&hub=${sel.hubName}`);
+    if (sel === selected) {
+      sel.quants = j.quants; sel.kv = j.kv; sel.spec = j.speculation;
+      // The architecture read from the weights themselves outranks the hub's word.
+      if (j.architecture) {
+        const h = sel.hub || found.hub.find(x => x.id === sel.repo);
+        const own = {architecture: j.architecture, support: j.support, arch_file: t("srcGguf")};
+        if (h) Object.assign(h, own); else sel.hub = own;
+      }
+    }
+  }
+  catch (e) { if (sel === selected) sel.error = e.message; }
+  if (sel === selected) renderDetail();
+}
+function gpuMem() { const g = S.gpus.find(x => x.index === gpu); return g ? g.memory_total / GiB : 0; }
+function kvGiB(kv, ctx) {
+  if (!kv || !kv.known) return 0;
+  const w = kv.window > 0 ? Math.min(ctx, kv.window) : ctx;
+  return (kv.full_bytes_per_token * kvScale(kv) * ctx + kv.window_bytes_per_token * w) / GiB;
+}
+// Memory as ninferno-serve plans it (catalog.h KvModel, checked against its capacity lines): the
+// weights, the drafter's when speculating, the KV pool (requests x context x bytes per token, bf16),
+// per sequence (each request and one cached state of the context cache) the recurrent state and a
+// sliding ring of window + prefill chunk rows, the prefill workspace, and the CUDA runtime.
+const CHUNK = 1024, RUNTIME = 0.75 * GiB;
+// serve's --kv-dtype: bytes per element of a 256-wide head with its scales (core/paged_kv_storage.h).
+// Only BF16 holds other head sizes; FP8 needs the E4M3 MMA of an RTX 40 or 50.
+const KV = {bf16: 2, int8: 264 / 256, fp8: 258 / 256, nvfp4: 144 / 256, k8v4: 402 / 512};
+// The KV storage: the one the user picked, else the server's default for the model's family
+// (ninferno-serve, product::default_kv_storage: int8 for Qwen 3.5's, BF16 for the others).
+let kvType = "bf16", kvChosen = false;
+function kvDefault(kv) {
+  const arch = (kv && kv.architecture || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return arch.startsWith("qwen35") && !kvWhyNot("int8", kv) ? "int8" : "bf16";
+}
+function kvNow() { return kvChosen ? kvType : kvDefault(selected && selected.kv); }
+function kvWhyNot(type, kv) {
+  if (type === "bf16") return "";
+  if (!kv || !kv.known) return t("kvUnknownHead");
+  if (kv.kv_head_dim !== 256) return t("kvNeeds256");
+  const g = gpuOf();
+  if ((type === "fp8" || type === "k8v4") && g && parseFloat(g.cc) < 8.9) return t("kvNeedsFp8");
+  return "";
+}
+function kvScale(kv) { const k = kvNow(); return (kvWhyNot(k, kv) ? KV.bf16 : KV[k]) / KV.bf16; }
+function specOf() { const sp = selected && selected.spec; return useSpec && sp && sp.known && sp.config !== "plain" && !(specMode === "auto" && autoVerdict()?.plain) ? sp : null; }
+function memOf(q, kv, streams) {
+  const k = kv && kv.known ? kv : null, sp = specOf(), seqs = streams + 1;
+  const ring = (w, bytes) => w > 0 ? (w + CHUNK) * bytes : 0;
+  const parts = {
+    weights: q.bytes,
+    drafter: sp ? sp.drafter_bytes + seqs * ring(sp.drafter_window, sp.drafter_window_bytes_per_token) : 0,
+    states: k ? seqs * ((k.state_bytes || 0) + ring(k.window, k.window_bytes_per_token)) : 0,
+    workspace: (k ? k.workspace_bytes || 0 : 0) + RUNTIME,
+  };
+  const perTok = (k ? k.full_bytes_per_token * kvScale(k) : 0) + (sp ? sp.drafter_kv_bytes_per_token || 0 : 0);
+  return {parts, fixed: parts.weights + parts.drafter + parts.states + parts.workspace, perTok};
+}
+// What the card holds for one model: its memory less the 1 GiB a desktop keeps. What other
+// processes hold now is said apart (busyNote), not counted: the table is about the card.
+function availBytes() { const g = gpuOf(); return g ? g.memory_total - GiB : 0; }
+function busyNote(needGib) {
+  const g = gpuOf();
+  return g && g.memory_free < needGib * GiB ? fill(t("busyNow"), {free: gib(g.memory_free)}) : "";
+}
+function fitOf(q, kv) {
+  const avail = availBytes(), m = memOf(q, kv, parallel);
+  const kvBytes = parallel * ctxValue * m.perTok;
+  const need = m.fixed + kvBytes;
+  if (!avail) return {cls:"tight", need: need / GiB, kv: kvBytes, m, spare: 0};
+  return {need: need / GiB, kv: kvBytes, m, spare: avail - need, cls: need <= avail - 0.5 * GiB ? "full" : need <= avail ? "tight" : "no"};
+}
+// Rough estimates from the card and the model's shape (catalog.h KvModel), not measurements.
+const capLabel = n => n >= 1048576 && n % 1048576 === 0 ? n / 1048576 + "M" : n >= 1024 ? Math.floor(n / 1024) + "K" : String(n);
+const gib = b => (b / GiB).toFixed(1) + " GiB";
+// Tokens per second in full, digits grouped: 2 900, not 2.9K.
+const rate = n => Math.round(n).toLocaleString(lang).replace(/,/g, " ");
+function gpuOf() { return S.gpus.find(x => x.index === gpu); }
+function shapeOf(q, kv) {
+  const params = kv && kv.params > 0 ? kv.params : q.bits ? q.bytes * 8 / q.bits : 0;
+  return {params, active: kv && kv.active_params > 0 ? kv.active_params : params,
+          routed: kv && kv.routed_share || 0, used: kv && kv.experts_used || 0};
+}
+// The model's own context: the GGUF header or config.json, else what the hub read, else 256K.
+function nativeCtx() {
+  const kv = selected && selected.kv, h = selected && selected.hub;
+  return kv && kv.native_context > 0 ? kv.native_context : h && h.context > 0 ? h.context : 262144;
+}
+// Context each of `streams` requests can hold beside the weights (fitOf's budget), up to the model's own.
+function ctxCap(q, kv, streams) {
+  const native = nativeCtx();
+  const avail = availBytes();
+  if (!avail) return native;
+  const m = memOf(q, kv, streams), pool = avail - m.fixed;
+  if (pool <= 0) return 0;
+  if (!(m.perTok > 0)) return native;
+  return Math.min(native, Math.floor(pool / (streams * m.perTok)));
+}
+// Decode is bound by memory traffic: per step the dense part once, the routed experts as far as the
+// streams' picks reach (1 - (1 - used)^streams of them) and each stream's KV up to `depth` tokens
+// at 85 % of the card's bandwidth, plus a fixed cost per layer (launches, routing: 50 us a MoE
+// layer, 8 us a dense one). Used for what we did not measure: the cost of context depth,
+// and a model or card without a measurement.
+function genTps(q, kv, depth, streams) {
+  const g = gpuOf(), s = shapeOf(q, kv);
+  if (!g || !(g.bandwidth_gbs > 0) || !s.params) return 0;
+  const routed = s.routed * s.params;
+  const fixed = s.active - s.used * routed;
+  const touched = s.used ? routed * (1 - Math.pow(1 - s.used, streams)) : 0;
+  const bytes = (fixed + touched) * (q.bytes / s.params) + kvGiB(kv, depth) * GiB * streams;
+  const layers = kv && kv.layers > 0 ? kv.layers : 40;
+  const step = bytes / (g.bandwidth_gbs * 1e9 * 0.85) + layers * (s.used ? 50e-6 : 8e-6);
+  return streams / step;
+}
+// Speeds are given at a quarter of the chosen context filled: decode on an empty context flatters.
+const DEPTH = 0.25, SHORT = 512;
+// Decode of one request at n requests relative to one request, and how much of speculation's gain
+// is left at n, from our load runs (RTX 4090, ~6K tokens a request): this
+// model's own table when the catalog has one, else the mean of the measured models of its kind
+// (dense: Qwen3.8 27B, Gemma 4 31B, Muse 30B; MoE: Gemma 4 26B, Nemotron 30B, gpt-oss 20B; the
+// gain kept at 2 requests measured 0.76..1.21, taken as 1); between the counts on a log scale,
+// past the last one by its last doubling.
+const KIND_LOAD = {dense: {1: 1, 2: 0.888, 4: 0.791, 8: 0.715}, moe: {1: 1, 2: 0.747, 4: 0.532, 8: 0.363}};
+const SPEC_KEEP = {1: 1, 2: 1, 4: 0.65, 8: 0.43};
+function interp(table, n) {
+  const pts = Object.entries(table).map(([k, v]) => [Math.log2(+k), v]).sort((a, b) => a[0] - b[0]);
+  const x = Math.log2(n);
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return y0 * Math.pow(y1 / y0, (x - x0) / (x1 - x0)); }
+  }
+  if (pts.length < 2) return pts[0][1];
+  const [x0, y0] = pts[pts.length - 2], [x1, y1] = pts[pts.length - 1];
+  return y1 * Math.pow(y1 / y0, (x - x1) / (x1 - x0));
+}
+const maxMeasured = table => Math.max(...Object.keys(table).map(Number));
+function isMoE(kv) { return !!(kv && kv.experts_used > 0); }
+// This model's load table: the one measured on this card, else on another.
+function loadOf() {
+  const cat = selected && selected.catalog;
+  if (!cat || !cat.load || !cat.load.length) return null;
+  const g = gpuOf(), name = g ? g.name : "";
+  return cat.load.find(l => name.includes(l.gpu)) || cat.load[0];
+}
+function loadHere(l) { const g = gpuOf(); return !!(l && g && g.name.includes(l.gpu)); }
+function ratioTable(per, base) { const out = {}; for (const [k, v] of Object.entries(per)) out[k] = v / base; return out; }
+function plainRatio(n, kv) {
+  const l = loadOf(), none = l && l.per_request.none;
+  return none && none["1"] > 0 ? interp(ratioTable(none, none["1"]), n) : interp(isMoE(kv) ? KIND_LOAD.moe : KIND_LOAD.dense, n);
+}
+// Speculation's gain at n requests: the measured gains when this card's table has them; else the
+// registry profile's gain for this GPU class at one request, keeping what the table (or the kind
+// mean) keeps at n.
+function specGainAt(n) {
+  const sp = specOf();
+  if (!sp) return 1;
+  const l = loadOf(), auto = l && l.per_request.auto, none = l && l.per_request.none;
+  let keep = SPEC_KEEP, gains = null;
+  if (auto && none) {
+    gains = {};
+    for (const k of Object.keys(auto)) if (none[k] > 0) gains[k] = auto[k] / none[k];
+    if (gains["1"] > 1.02) { keep = {}; for (const [k, v] of Object.entries(gains)) keep[k] = (v - 1) / (gains["1"] - 1); }
+    if (loadHere(l)) return Math.max(1, interp(gains, n));
+  }
+  const g1 = sp.speedup > 0 ? sp.speedup : 1;
+  return Math.max(1, 1 + (g1 - 1) * interp(keep, n));
+}
+// How far our measurement on this card is from the bandwidth model, for the whole repository: plain
+// decode of one short request from the load table, else the catalog's decode with speculation
+// (divided by the gain at one request); 1 when this card has no measurement of the model.
+function calibOf(q, kv) {
+  const sel = selected, l = loadOf(), quants = sel && sel.quants || [];
+  const of = name => quants.find(x => x.quant === name && !x.drafter);
+  const ratio = (measured, x, gain) => {
+    const est = x ? genTps(x, kv, SHORT, 1) * gain : 0;
+    return est > 0 ? Math.min(2, Math.max(0.4, measured / est)) : 0;
+  };
+  if (loadHere(l) && l.per_request.none && l.per_request.none["1"] > 0) {
+    const k = ratio(l.per_request.none["1"], of(l.quant), 1);
+    if (k) return k;
+  }
+  const cat = sel && sel.catalog, src = cat && cat.sources.find(s => s.repo === sel.repo);
+  if (src && src.tps > 0 && src.tps_basis === "measured") {
+    const k = ratio(src.tps, of(src.quant), specOf() ? specGainAt(1) : 1);
+    if (k) return k;
+  }
+  return 1;
+}
+// The measured table by depth on this card (n = 1..8 requests, each at ~6K and ~25-31K tokens,
+// without and with speculation): decode of one request among n at `depth` tokens, from the cells
+// whose KV pool held every request whole (in the others requests waited their turn: no speed).
+// Between the measured depths on a log scale, past them by the bandwidth model's slope; between
+// the counts as interp() does. Another quant of the model scales by the model. null without one.
+const GEN_HALF = 128; // a cell decodes 256 tokens after its prompt: the mean depth of its steps
+function depthCells(spec) {
+  const l = loadOf();
+  if (!loadHere(l) || !l.by_depth) return null;
+  return l.by_depth[spec ? "auto" : "none"] || null;
+}
+function wholeCounts(mode) {
+  return Object.entries(mode || {}).filter(([, v]) => v.some(x => x.whole)).map(([c]) => +c);
+}
+function atDepth(cells, depth, value, slope) {
+  const ok = cells.map(x => ({d: x.tokens + GEN_HALF, v: value(x)})).filter(x => x.v > 0).sort((a, b) => a.d - b.d);
+  if (!ok.length) return 0;
+  const a = ok[0], b = ok[ok.length - 1];
+  if (depth <= a.d) return a.v * slope(a.d, depth);
+  if (depth >= b.d) return b.v * slope(b.d, depth);
+  for (let i = 1; i < ok.length; i++) {
+    if (depth <= ok[i].d) {
+      const p = ok[i - 1], r = ok[i], f = Math.log(depth / p.d) / Math.log(r.d / p.d);
+      return p.v * Math.pow(r.v / p.v, f);
+    }
+  }
+  return b.v;
+}
+function measuredReq(q, kv, depth, n, spec) {
+  const mode = depthCells(spec), l = loadOf();
+  if (!mode) return 0;
+  const ref = (selected.quants || []).find(x => x.quant === l.quant && !x.drafter) || q;
+  const atC = {};
+  for (const [c, cells] of Object.entries(mode)) {
+    const v = atDepth(cells.filter(x => x.whole), depth, x => x.per_request, (from, to) => {
+      const a = genTps(ref, kv, from, +c), b = genTps(ref, kv, to, +c);
+      return a > 0 && b > 0 ? b / a : 1;
+    });
+    if (v > 0) atC[c] = v;
+  }
+  if (!Object.keys(atC).length) return 0;
+  const scale = q === ref ? 1 : genTps(q, kv, depth, n) / genTps(ref, kv, depth, n);
+  return interp(atC, n) * (scale > 0 ? scale : 1);
+}
+// llama.cpp's server on the same GGUF, measured beside our table (the standard run's
+// plain cells there): one request's decode among n at `depth`; 0 without them.
+function llamaReq(depth, n) {
+  const l = loadOf(), cells = loadHere(l) && l.llama_cpp;
+  if (!cells) return 0;
+  const atC = {};
+  for (const [c, v] of Object.entries(cells)) {
+    const at = atDepth(v, depth, x => x.per_request, () => 1);
+    if (at > 0) atC[c] = at;
+  }
+  return Object.keys(atC).length ? interp(atC, n) : 0;
+}
+// One request's decode at n parallel requests, at DEPTH of the context `ctx`.
+function reqTps(q, kv, ctx, n, spec = true) {
+  const measured = measuredReq(q, kv, Math.max(SHORT, ctx * DEPTH), n, spec && !!specOf());
+  if (measured > 0) return measured;
+  const one = genTps(q, kv, SHORT, 1);
+  if (!one) return 0;
+  const depth = Math.max(SHORT, ctx * DEPTH);
+  const deep = (genTps(q, kv, depth, n) / n) / (genTps(q, kv, SHORT, n) / n);
+  return one * calibOf(q, kv) * plainRatio(n, kv) * deep * (spec ? specGainAt(n) : 1);
+}
+function extrapolated(n) {
+  const mode = depthCells(!!specOf());
+  if (mode) { const whole = wholeCounts(mode); return !whole.length || n > Math.max(...whole); }
+  const l = loadOf(), none = l && l.per_request.none;
+  return n > (none ? maxMeasured(none) : 4);
+}
+function basisNote(kv) {
+  const l = loadOf();
+  return l ? fill(t("basisLoad"), {gpu: l.gpu, run: l.run}) : fill(t("basisKind"), {kind: isMoE(kv) ? "MoE" : t("dense")});
+}
+// SMs and rated boost clocks of the GeForce cards: NVML in WSL counts no cores and reports the
+// overclocking ceiling (3090 MHz on a 5090) as both the maximum and the boost clock.
+const CARDS = {"RTX 5090":[170, 2407], "RTX 5080":[84, 2617], "RTX 5070 Ti":[70, 2452], "RTX 5070":[48, 2512],
+               "RTX 4090":[128, 2520], "RTX 4080 SUPER":[80, 2550], "RTX 4080":[76, 2505], "RTX 4070 Ti SUPER":[66, 2610],
+               "RTX 4070 Ti":[60, 2610], "RTX 4070":[46, 2475], "RTX 3090 Ti":[84, 1860], "RTX 3090":[82, 1695],
+               "RTX 3080 Ti":[80, 1665], "RTX 3080":[68, 1710], "RTX 2080 Ti":[68, 1545]};
+function tensorOf(g) {
+  const k = Object.keys(CARDS).filter(n => g.name.includes(n)).sort((a, b) => b.length - a.length)[0];
+  if (k) return {sms: CARDS[k][0], mhz: CARDS[k][1]};
+  return {sms: g.sms, mhz: g.sm_clock_max_mhz > 0 ? g.sm_clock_max_mhz : g.sm_clock_mhz};
+}
+// Prefill is bound by tensor math: the 8-bit activation paths run int8/fp8 MMA, 1024 operations
+// per SM and clock on GeForce Turing through Blackwell, at 38 % (27B on a 5090 measured 2.9K tok/s
+// at 32K), two operations per active parameter and token.
+function prefillTps(q, kv) {
+  // Measured on this card for one request at the table's depths (prefill grows a little with the
+  // prompt: longer chunks fill the tensor cores better); taken at the chosen depth.
+  const mode = depthCells(false);
+  if (mode && mode["1"]) {
+    const v = atDepth(mode["1"], Math.max(SHORT, ctxValue * DEPTH), x => x.prefill, () => 1);
+    if (v > 0) return v;
+  }
+  const g = gpuOf(), s = shapeOf(q, kv);
+  if (!g || !s.active) return 0;
+  const c = tensorOf(g);
+  return c.sms > 0 && c.mhz > 0 ? c.sms * c.mhz * 1e6 * 1024 * 0.38 / (2 * s.active) : 0;
+}
+// The cache the card holds, counted in whole contexts of the model (each request may grow to the
+// model's own length) and what is left beside them; below one whole context, the longest one.
+function capacityOf(q, kv) {
+  const native = nativeCtx();
+  const one = ctxCap(q, kv, 1);
+  if (one < 4096) return t("tooBig");
+  if (!(memOf(q, kv, 1).perTok > 0)) return fill(t("capFull"), {n: nReq(1), ctx: capLabel(native), rest: "0"});
+  let k = 0;
+  while (k < 64 && ctxCap(q, kv, k + 1) >= native) k++;
+  if (k === 0) return fill(t("capShort"), {ctx: one.toLocaleString(lang), native: capLabel(native)});
+  const m = memOf(q, kv, k), rest = Math.max(0, Math.floor((availBytes() - m.fixed) / m.perTok) - k * native);
+  return fill(t("capFull"), {n: nReq(k), ctx: capLabel(native), rest: capLabel(rest)});
+}
+// The recommendation, with its reasons: of the quantizations that fit the chosen context x
+// requests with room to spare, the most precise (most bits, then the largest) whose decode is
+// within 10 % of the fastest one of 4 bits or more (below 4 bits quality drops); the reasons name
+// the next more precise one and why not it.
+const precision = q => [q.bits || 16, q.bytes];
+const morePrecise = (a, b) => { const [x, y] = [precision(a), precision(b)]; return x[0] !== y[0] ? x[0] > y[0] : x[1] > y[1]; };
+function recommend(quants, kv) {
+  const usable = quants.filter(q => !q.drafter && q.supported);
+  const ok = usable.filter(q => fitOf(q, kv).cls === "full");
+  const pars = {ctx: ctxLabel(ctxValue), par: parallel};
+  if (!ok.length) return {q: null, why: [fill(t("recNone"), pars)]};
+  const speed = q => reqTps(q, kv, ctxValue, parallel);
+  const four = ok.filter(q => (q.bits || 16) >= 4);
+  const base = Math.max(...(four.length ? four : ok).map(speed));
+  const pick = ok.filter(q => speed(q) >= 0.9 * base).sort((a, b) => morePrecise(a, b) ? -1 : 1)[0];
+  const why = [fill(t("recWhyFit"), {...pars, free: gib(Math.max(0, fitOf(pick, kv).spare))}), t("recWhyRule")];
+  if ((pick.bits || 16) < 4) why.push(t("recWhyLow"));
+  const better = usable.filter(q => morePrecise(q, pick)).sort((a, b) => morePrecise(a, b) ? 1 : -1)[0];
+  if (better) {
+    const name = quantLabel(better, selected.repo);
+    if (fitOf(better, kv).cls !== "full") why.push(fill(t("recWhyNoFit"), {...pars, name}));
+    else why.push(fill(t("recWhySlower"), {name, p: Math.round((1 - speed(better) / base) * 100)}));
+  }
+  return {q: pick, why};
+}
+// A safetensors repository's weights are named by the format its name says (RedHatAI/...-NVFP4).
+const FORMATS = ["NVFP4", "MXFP4", "FP8", "W4A16", "W8A8", "AWQ", "GPTQ", "INT4", "INT8", "BF16"];
+function quantLabel(q, repo) {
+  if (q.quant) return q.quant;
+  const up = (repo || "").toUpperCase();
+  return FORMATS.find(f => up.includes(f)) || q.format;
+}
+function localFor(repo, quant) { return mine.find(m => m.repo === repo && (!quant || m.quant === quant)); }
+
+// The context slider runs on a log scale from 4K to the model's own context, snapped to 1K below
+// 32K, 8K below 256K and 32K above; the presets jump.
+const CTX_MIN = 4096, SLIDER = 1000;
+function snapCtx(c) {
+  const step = c < 32768 ? 1024 : c < 262144 ? 8192 : 32768;
+  return Math.max(CTX_MIN, Math.min(nativeCtx(), Math.round(c / step) * step));
+}
+function ctxAt(v) {
+  if (v >= SLIDER) return nativeCtx();
+  const lo = Math.log(CTX_MIN), hi = Math.log(nativeCtx());
+  return snapCtx(Math.exp(lo + (hi - lo) * v / SLIDER));
+}
+function sliderAt(c) {
+  const lo = Math.log(CTX_MIN), hi = Math.log(nativeCtx());
+  return hi > lo ? Math.round((Math.log(c) - lo) / (hi - lo) * SLIDER) : SLIDER;
+}
+const PRESETS = [8192, 32768, 131072, 262144, 1048576];
+const MAX_PAR = 16;
+// The header and the controls are drawn once per model; the controls redraw only the body, so a
+// slider keeps the pointer while it is dragged.
+function renderDetail() {
+  const sel = selected, el = $("detail");
+  if (!sel) { el.innerHTML = `<div class="empty">${t("pickOne")}</div>`; return; }
+  const name = sel.repo.split("/")[1];
+  const cat = sel.catalog;
+  const src = cat ? cat.sources.find(s => s.repo === sel.repo) : null;
+  const repos = cat ? [...new Set(cat.sources.map(s => s.repo))] : [];
+  ctxValue = Math.min(Math.max(ctxValue, CTX_MIN), nativeCtx());
+  const h = sel.hub || found.hub.find(x => x.id === sel.repo);
+  let html = `<div class="detail"><h3>${esc(name)}</h3>
+    <div class="sub"><a href="${esc(repoUrl(sel))}" target="_blank" rel="noopener noreferrer">${esc(sel.repo)} ↗</a> · ${esc(HUBS[sel.hubName][1])}
+      ${h && h.downloads != null ? ` · ↓ ${human(h.downloads)} · ♥ ${human(h.likes)}${h.updated ? " · " + esc(ago(h.updated)) : ""}` : ""}</div>
+    <div class="facts">${h ? `<span class="pill sup-pill-${supOf(h)}" data-tip="${esc(supportTip(h))}">${SUP[supOf(h)]} ${esc(t("supShort_" + supOf(h)))}${h.architecture ? " · " + esc(h.architecture) : ""}</span>` : ""}
+      ${cat ? `<span class="chip">${esc(cat.kind)}</span><span class="chip">${esc(cat.use)}</span>` : ""}
+      ${src && src.tps && src.tps_basis === "measured" ? `<span class="pill ok" data-tip="${esc(t("measuredTip"))}">${rate(src.tps)} ${t("measured")}</span>` : ""}
+      ${src && src.llama_cpp ? `<span class="pill">${t("llama")} ${rate(src.llama_cpp)} ${t("perSec")}</span>` : ""}
+      ${cat && cat.speculation ? specChip(cat.speculation) : ""}</div>`;
+  if (repos.length > 1) html += `<div class="facts">${repos.map(r => `<button class="${r === sel.repo ? "primary" : ""}" data-repo="${esc(r)}">${esc(r.split("/")[0])} · ${esc((cat.sources.find(s => s.repo === r) || {}).format || "")}</button>`).join("")}</div>`;
+  html += `<div class="controls">
+    ${S.gpus.length > 1 ? `<div class="ctl"><span>${t("gpu")}</span><select id="dgpu">${S.gpus.map(g => `<option value="${g.index}" ${g.index === gpu ? "selected" : ""}>#${g.index} ${esc(g.name.replace("NVIDIA GeForce ", ""))} · ${(g.memory_total / GiB).toFixed(0)} GiB</option>`).join("")}</select></div>` : ""}
+    <div class="ctl wide"><div class="row"><span>${t("context")}${info(t("ctxTip"))}</span><output id="ctxout"></output>
+        <span class="presets">${PRESETS.filter(c => c < nativeCtx()).concat([nativeCtx()]).map(c => `<button data-ctx="${c}" data-tip="${esc(c === nativeCtx() ? t("maxCtx") + " · " + c.toLocaleString(lang) : c.toLocaleString(lang))}">${capLabel(c)}</button>`).join("")}</span></div>
+      <input type="range" id="ctx" min="0" max="${SLIDER}" step="1" value="${sliderAt(ctxValue)}" aria-label="${esc(t("context"))}"></div>
+    <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip"))}</span><output id="parout"></output></div>
+      <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}"></div>
+    <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div>
+</div></div>
+    ${accelBlock(sel)}
+    <div id="dbody"></div>`;
+  el.innerHTML = html + "</div>";
+  const ctx = $("ctx");
+  ctx.oninput = () => { ctxValue = ctxAt(+ctx.value); renderBody(); };
+  const par = $("par");
+  par.oninput = () => { parallel = +par.value; renderBody(); };
+  // The speed-up mode: useSpec follows it (the estimates take speculation when it is not off).
+  const setMode = m => { specMode = m; useSpec = m !== "off"; renderDetail(); };
+  el.querySelectorAll("[data-specmode]").forEach(b => { b.onclick = () => setMode(b.dataset.specmode); });
+  const sm = $("specmanual"); if (sm) sm.onchange = () => { if (sm.value) setMode(sm.value); };
+  const dg = $("dgpu"); if (dg) dg.onchange = () => { gpu = +dg.value; refreshState(); loadRepo(); };
+  renderBody();
+}
+function memParts(f) {
+  return t("memWeights") + " " + gib(f.m.parts.weights) + (f.m.parts.drafter ? " + " + t("memDrafter") + " " + gib(f.m.parts.drafter) : "") +
+    " + KV " + gib(f.kv) + (f.m.parts.states ? " + " + t("memStates") + " " + gib(f.m.parts.states) : "") + " + " + t("memRuntime") + " " + gib(f.m.parts.workspace);
+}
+function renderKv() {
+  const kv = selected.kv;
+  $("kvsel").innerHTML = Object.keys(KV).map(k => {
+    const why = kvWhyNot(k, kv);
+    return `<span data-tip="${esc(t("kv_" + k) + (why ? "\n" + why : ""))}"><button data-kv="${k}" class="${k === kvNow() && !why ? "on" : ""}" ${why ? "disabled" : ""}>${k.toUpperCase()}</button></span>`;
+  }).join("");
+}
+function renderBody() {
+  const sel = selected, el = $("dbody");
+  if (!sel || !el) return;
+  $("ctxout").textContent = `${ctxLabel(ctxValue)} ${t("tokens")}`;
+  document.querySelectorAll(".presets [data-ctx]").forEach(b => b.classList.toggle("on", +b.dataset.ctx === ctxValue));
+  $("parout").textContent = String(parallel);
+  const av = $("autoverdict");
+  if (av) {
+    const v = specMode === "auto" ? autoVerdict() : null;
+    av.innerHTML = v && v.plain ? `<span class="err">${esc(fill(t("autoPlainNote"), {n: nReq(v.n), depth: ctxLabel(v.tokens), k: v.k.toFixed(2)}))}</span> <span class="muted">· ${esc(v.gpu)}, ${esc(v.run)}</span>` : "";
+  }
+  if (+$("par").value !== parallel) $("par").value = parallel;
+  renderKv();
+  let html = "";
+  if (sel.error) html += `<p class="err">${esc(sel.error)}</p>`;
+  else if (!sel.quants) html += `<p class="muted"><span class="sup spin">…</span> ${t("readingRepo")} <span id="readsec"></span></p>`;
+  else {
+    const h = sel.hub || found.hub.find(x => x.id === sel.repo);
+    const unsupported = h && ["none", "format"].includes(h.support);
+    const r = recommend(sel.quants, sel.kv), rec = r.q;
+    if (!quantSel || !sel.quants.includes(quantSel)) quantSel = rec;
+    const q = quantSel;
+    const depth = Math.max(SHORT, Math.round(ctxValue * DEPTH));
+    if (q) {
+      const f = fitOf(q, sel.kv), here = localFor(sel.repo, q.quant);
+      const one = reqTps(q, sel.kv, ctxValue, parallel), plain = reqTps(q, sel.kv, ctxValue, parallel, false);
+      const runWhy = unsupported ? t("unsupportedRun") : f.cls === "no" ? fill(t("noFitAt"), {ctx: ctxLabel(ctxValue), par: parallel}) : "";
+      html += `<div class="pick"><div class="pickmain"><div class="sub">${q === rec ? t("recommended") : t("selected")}</div>
+        <div class="big">${esc(quantLabel(q, sel.repo))} · ${q.size_gib.toFixed(1)} GiB</div>
+        ${q === rec || !rec ? `<ul class="why">${r.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+        <div class="sub"><span data-tip="${esc(t("memTip") + "\n" + memParts(f))}">${t("need")} ≈ ${f.need.toFixed(1)} ${t("of")} ${(availBytes() / GiB).toFixed(1)} GiB</span> · ${fill(t("ctxTimes"), {ctx: ctxLabel(ctxValue), par: nReq(parallel)})}${sel.kv && sel.kv.known ? "" : " · " + t("kvUnknown")}${busyNote(f.need) ? ` · <span class="err">${esc(busyNote(f.need))}</span>` : ""}</div>
+        ${one ? `<div class="sub">${fill(t(parallel > 1 ? "speedLine" : "speedLine1"), {depth: ctxLabel(depth), one: rate(one), all: rate(one * parallel), n: nReq(parallel)})}${specOf() && one > plain * 1.02 ? ` · ${t("noSpec")} ≈ ${rate(plain)}` : ""}${(() => { const l = loadOf(), lc = loadHere(l) && q.quant === l.quant ? llamaReq(depth, parallel) : 0; return lc > 0 ? ` · llama.cpp ≈ ${rate(lc)}` : ""; })()} · ${t("prefill")} ≈ ${rate(prefillTps(q, sel.kv))} ${t("perSec")}</div>` : ""}</div>
+        <span style="flex:1"></span>
+        <div class="pickacts">
+        ${here ? `<span class="pill ok">✓ ${t("here")}</span>` : `<span ${unsupported ? `data-tip="${esc(t("unsupportedRun"))}"` : ""}><button data-get ${unsupported ? "disabled" : ""}>${t("download")}</button></span>`}
+        <span ${runWhy ? `data-tip="${esc(runWhy)}"` : ""}><button class="primary" data-go ${runWhy ? "disabled" : ""}>${t("run")}</button></span></div></div>`;
+    } else {
+      html += `<div class="pick none"><ul class="why">${r.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
+    }
+    const ex = extrapolated(parallel) ? " ~" : "";
+    const head = `<div class="q head"><span></span><span>${t("quant")}${info(t("quantTip"))}</span><span>${t("bits")}</span><span class="num">${t("size")}${info(t("sizeTip"))}</span>
+      <span class="num">${t("ctxReq")}${info(t("ctxReqTip"))}</span>
+      <span class="num">${t("prefillCol")}${info(t("promptTip"))}</span>
+      <span class="num">${t("decodeCol")}<small>${parallel > 1 ? t("decodeOne") : ""}</small>${info(fill(t("genTip2"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxValue)}) + "\n" + basisNote(sel.kv))}</span>
+      ${parallel > 1 ? `<span class="num">${t("decodeTot")}<small>${nReq(parallel)}</small>${info(t("decodeAllTip") + "\n" + basisNote(sel.kv) + (ex ? "\n" + t("extrap") : ""))}</span>` : ""}</div>`;
+    html += `<div class="note">${fill(t("depthNote"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxValue)})}</div>`;
+    html += `<div class="qwrap"><div class="quants ${parallel > 1 ? "multi" : ""}">${head}${sel.quants.map((x, i) => {
+      const f = x.drafter || !x.supported ? null : fitOf(x, sel.kv);
+      const name = `${x === rec ? "★ " : ""}${esc(quantLabel(x, sel.repo))}${localFor(sel.repo, x.quant) ? " ✓" : ""}`;
+      const bits = x.bits ? x.bits : "";
+      if (!f) return `<div class="q off" data-qi="${i}"><span></span><span class="mono">${name}</span><span class="muted">${bits}</span>
+        <span class="num">${x.size_gib.toFixed(1)} GiB</span><span class="sub" style="grid-column:span ${parallel > 1 ? 4 : 3}">${x.drafter ? t(/mmproj/i.test(x.quant + " " + (x.files || []).join(" ")) ? "visionProj" : "drafter") : t("over8")}</span></div>`;
+      const cap = ctxCap(x, sel.kv, 1), gen = reqTps(x, sel.kv, ctxValue, parallel), pre = prefillTps(x, sel.kv);
+      const why = f.cls === "no" ? (cap < 4096 ? t("tooBig") : fill(t("noFitAt"), {ctx: ctxLabel(ctxValue), par: parallel})) : "";
+      const ctxTip = t("ctxReqTip") + "\n" + capacityOf(x, sel.kv);
+      return `<div class="q ${x === quantSel ? "sel" : ""} ${f.cls === "no" ? "no" : ""}" data-qi="${i}">
+        <span><span class="dot d-${f.cls}" data-tip="${esc(t(f.cls === "full" ? "fitsFull" : f.cls === "tight" ? "fitsTight" : "fitsNo") + (why ? "\n" + why : ""))}"></span></span>
+        <span><span class="mono qn">${name}</span>${why ? `<div class="why">${esc(why)}</div>` : ""}</span>
+        <span class="muted">${bits}</span><span class="num">${x.size_gib.toFixed(1)} GiB</span>
+        <span class="num mono" data-tip="${esc(ctxTip)}">${ctxLabel(ctxValue)}${parallel > 1 ? " ×" + parallel : ""}</span>
+        <span class="num est" data-tip="${esc(t("promptTip"))}">${pre ? "≈ " + rate(pre) : "—"}</span>
+        <span class="num est" data-tip="${esc(t("memTip") + "\n" + f.need.toFixed(1) + " GiB · " + t("memWeights") + " " + gib(f.m.parts.weights) + (f.m.parts.drafter ? " + " + t("memDrafter") + " " + gib(f.m.parts.drafter) : "") + " + KV " + gib(f.kv) + (f.m.parts.states ? " + " + t("memStates") + " " + gib(f.m.parts.states) : "") + " + " + t("memRuntime") + " " + gib(f.m.parts.workspace))}">${gen ? "≈ " + rate(gen) : "—"}</span>
+        ${parallel > 1 ? `<span class="num est" data-tip="${esc(t("decodeAllTip") + (ex ? "\n" + t("extrap") : ""))}">${gen ? "≈" + ex + " " + rate(gen * parallel) : "—"}</span>` : ""}</div>`;
+    }).join("")}</div></div><div class="note">${t("estNote")}</div>`;
+  }
+  el.innerHTML = html;
+}
+
+// ---- generation speed-up ------------------------------------------------------------------------
+// The task mix behind "weighted": what people ask a local model for, roughly.
+const FAMILY_WEIGHT = {code: 0.25, math: 0.2, prose: 0.3, thinking: 0.25};
+const FAMILY_LABEL = {code: "famCode", math: "famMath", prose: "famProse", thinking: "famThinking"};
+const KIND_LABEL = {mtp: "MTP", gemma4_assistant: "MTP (assistant)", nemotron_h_mtp: "MTP", dflash: "DFlash",
+                    dflash2: "DFlash2", dspark: "DSpark", eagle3: "EAGLE3"};
+// The --spec a kind runs under (the launch takes these).
+const KIND_SPEC = {mtp: "mtp", gemma4_assistant: "mtp", nemotron_h_mtp: "mtp", dflash: "dflash", dflash2: "dflash2"};
+// Our measured suite on this card: per configuration, the gain per task family against plain decode
+// and the weighted mean. The sampled pass (the model's own temperature) runs each drafter's deepest
+// depth only: a configuration takes its sampled gains when it has them, else the greedy ones.
+function suiteHere(cat) {
+  const g = gpuOf();
+  const run = g && (cat.spec_suite || []).find(x => g.name.includes(x.gpu));
+  if (!run) return null;
+  const gainsOf = pass => {
+    const rows = run.rows.filter(r => r.pass === pass), plain = {}, configs = {};
+    rows.filter(r => r.config === "plain").forEach(r => { plain[r.family] = r.tok_s; });
+    for (const r of rows) {
+      if (r.config === "plain" || !(plain[r.family] > 0)) continue;
+      (configs[r.config] = configs[r.config] || {})[r.family] = r.tok_s / plain[r.family];
+    }
+    return configs;
+  };
+  const greedy = gainsOf("greedy"), sampled = gainsOf("sampled");
+  const out = [];
+  for (const config of new Set([...Object.keys(greedy), ...Object.keys(sampled)])) {
+    const pass = sampled[config] ? "sampled" : "greedy", gains = (pass === "sampled" ? sampled : greedy)[config];
+    let w = 0, sum = 0;
+    for (const [f, k] of Object.entries(FAMILY_WEIGHT)) if (gains[f] > 0) { sum += k * gains[f]; w += k; }
+    if (w > 0) out.push({config, gains, pass, weighted: sum / w});
+  }
+  out.sort((a, b) => b.weighted - a.weighted);
+  return {run, configs: out};
+}
+// The best measured configuration of a drafter kind (its config prefix).
+function bestOfKind(suite, kind) {
+  if (!suite) return null;
+  const prefix = (KIND_SPEC[kind] || kind) + ":";
+  return suite.configs.find(c => c.config.startsWith(prefix)) || null;
+}
+const gainChips = gains => Object.keys(FAMILY_WEIGHT).filter(f => gains[f] > 0)
+  .map(f => `<span class="pill">${t(FAMILY_LABEL[f])} ×${gains[f].toFixed(2)}</span>`).join(" ");
+// Auto against plain on this card's load table: aggregate decode at n requests and the depth.
+function loadGain(n, deep) {
+  const l = loadOf();
+  if (!loadHere(l) || !l.by_depth || !l.by_depth.auto || !l.by_depth.none) return null;
+  const a = l.by_depth.auto[String(n)], p = l.by_depth.none[String(n)];
+  if (!a || !p || !a.length || !p.length) return null;
+  const pick = v => (deep ? v[v.length - 1] : v[0]);
+  const x = pick(a), y = pick(p);
+  return x.aggregate > 0 && y.aggregate > 0 ? {k: x.aggregate / y.aggregate, tokens: x.tokens} : null;
+}
+// Auto against plain on this card's measured load table, at the requests asked (the widest
+// measured count not above it) and the depth the estimates take (a quarter of the context): when
+// plain decode measured faster there, Auto launches without speculation (the
+// measured table decides).
+function autoVerdict() {
+  const l = loadOf();
+  if (!loadHere(l) || !l.by_depth || !l.by_depth.auto || !l.by_depth.none) return null;
+  const counts = Object.keys(l.by_depth.auto).map(Number).filter(c => l.by_depth.none[String(c)] && c <= parallel);
+  if (!counts.length) return null;
+  const n = Math.max(...counts);
+  const depth = Math.max(SHORT, Math.round(ctxValue * DEPTH));
+  const near = cells => cells.filter(x => x.aggregate > 0).sort((a, b) => Math.abs(a.tokens - depth) - Math.abs(b.tokens - depth))[0];
+  const a = near(l.by_depth.auto[String(n)]), p = near(l.by_depth.none[String(n)]);
+  if (!a || !p) return null;
+  const k = a.aggregate / p.aggregate;
+  return {n, tokens: a.tokens, k, plain: k < 0.97, run: l.run || "", gpu: l.gpu};
+}
+function accelBlock(sel) {
+  const cat = catalogFor(sel.repo) || {};
+  const drafters = cat.drafters || [];
+  const sp = sel.spec && sel.spec.known ? sel.spec : null;
+  if (!sp && !drafters.length) return "";
+  const suite = suiteHere(cat);
+  const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])
+    .filter((d, i, all) => all.findIndex(x => KIND_SPEC[x.kind] === KIND_SPEC[d.kind]) === i);
+  const manualKinds = runnable.map(d => KIND_SPEC[d.kind]);
+  if (!["auto", "off"].includes(specMode) && !manualKinds.includes(specMode)) specMode = "auto";
+  let html = `<div class="accel"><div class="row"><b>${t("accel")}</b>${info(t("accelTip"))}
+    <span class="seg">
+      <button data-specmode="auto" class="${specMode === "auto" ? "primary" : ""}">${t("accelAuto")}</button>
+      <button data-specmode="off" class="${specMode === "off" ? "primary" : ""}">${t("accelOff")}</button>
+      ${manualKinds.length ? `<select id="specmanual" class="${!["auto", "off"].includes(specMode) ? "primary" : ""}">
+        <option value="">${t("accelManual")}…</option>
+        ${manualKinds.map(k => `<option value="${k}" ${specMode === k ? "selected" : ""}>${t("manualPick")} ${esc(KIND_LABEL[k] || k)}</option>`).join("")}</select>` : ""}
+    </span></div>`;
+  if (specMode === "auto" && sp) {
+    const best = suite && suite.configs.find(c => c.config === sp.config.split("+")[0]) || (suite && suite.configs[0]);
+    html += `<div class="sub">${esc(sp.config)}${sp.speedup > 0 ? ` ×${sp.speedup.toFixed(2)}` : ""} <span class="muted">· ${esc(specWhere(sp))}</span></div>`;
+    if (best) {
+      html += `<div class="sub"><span data-tip="${esc(t("accelWeightedTip"))}">${t("accelWeighted")} ×${best.weighted.toFixed(2)}</span> <span class="muted">(${t(best.pass === "sampled" ? "passSampled" : "passGreedy")})</span> · ${t("accelByTask")}: ${gainChips(best.gains)}
+        <span class="muted">· ${t("drOurs")} ${esc(suite.run.gpu)}, ${esc(suite.run.run || "")}</span></div>`;
+    }
+    const goals = [];
+    const one = loadGain(1, false), long = loadGain(1, true);
+    if (one) goals.push(`${t("goalOne")} ×${one.k.toFixed(2)}`);
+    for (const n of [4, 8]) {
+      const g = loadGain(n, false);
+      if (g) goals.push(`${fill(t("goalLoad"), {n})} ×${g.k.toFixed(2)}${g.k < 0.97 ? ` <span class="err">(${t("goalOffBetter")})</span>` : ""}`);
+    }
+    if (long) goals.push(`${fill(t("goalLong"), {depth: capLabel(long.tokens)})} ×${long.k.toFixed(2)}${long.k < 0.97 ? ` <span class="err">(${t("goalOffBetter")})</span>` : ""}`);
+    html += `<div class="sub" id="autoverdict"></div>`;
+    if (goals.length) html += `<div class="sub">${t("accelGoals")}: ${goals.join(" · ")} <span class="muted">· ${esc(loadOf().gpu)}, ${esc(loadOf().run || "")}</span></div>`;
+  } else if (!["auto", "off"].includes(specMode)) {
+    html += `<div class="sub muted">${t("manualNote")}</div>`;
+  }
+  if (drafters.length) {
+    html += `<details class="drafters"><summary>${t("accelDrafters")} (${drafters.length})</summary>
+      <div class="qwrap"><table class="drt"><tr><th>${t("drKind")}</th><th>${t("drWhere")}</th><th>${t("drEngine")}</th><th>${t("drPrecision")}</th><th>${t("drResult")}</th></tr>
+      ${drafters.map(d => {
+        const best = d.engine === "yes" ? bestOfKind(suite, d.kind) : null;
+        const where = d.repo
+          ? `<a href="https://huggingface.co/${esc(d.repo)}" target="_blank" rel="noopener">HF</a>${d.modelscope ? ` · <a href="https://modelscope.cn/models/${esc(d.repo)}" target="_blank" rel="noopener">ModelScope</a>` : ""}<div class="muted">${esc(d.repo)}</div>`
+          : `<span class="muted">${t("drInCkpt")}</span>`;
+        const src = d.source === "official" ? t("drOfficial") : d.source === "community" ? t("drCommunity") : esc(d.source || "");
+        const engine = d.engine === "yes" ? `<span class="pill ok">✓ ${t("drYes")}</span>` : `<span class="pill" data-tip="${esc(t("drNoTip"))}">✕ ${t("drNo")}</span>`;
+        const prec = (d.precisions || []).map(p => p === "model's own" ? t("drOwn") : p).join(" / ") || "—";
+        // precision_measured: {gpu, sampled|greedy: {q8: gain, q4: gain}}, our drafter-precision sweep
+        const pm = d.precision_measured, pmPass = pm && (pm.sampled ? "sampled" : pm.greedy ? "greedy" : null);
+        const precRun = pmPass ? `<div class="muted">${t("drOurs")}, ${esc(pm.gpu || "")}: ${Object.entries(pm[pmPass]).map(([q, k]) => `${esc(q)} ×${Number(k).toFixed(2)}`).join(" · ")} (${t(pmPass === "sampled" ? "passSampled" : "passGreedy")})</div>` : "";
+        const result = best ? `${t("drOurs")}: ${esc(best.config)} ×${best.weighted.toFixed(2)} <span class="muted">(${t(best.pass === "sampled" ? "passSampled" : "passGreedy")})</span><div>${gainChips(best.gains)}</div>`
+          : d.claim ? `<span class="muted">${t("drOthers")}: ${esc(d.claim)}</span>` : `<span class="muted">${t("drNone")}</span>`;
+        return `<tr><td><b>${esc(KIND_LABEL[d.kind] || d.kind)}</b><div class="muted">${src}${d.params_m ? ` · ${d.params_m >= 1000 ? (d.params_m / 1000).toFixed(1) + "B" : d.params_m + "M"}` : ""}</div></td>
+          <td>${where}</td><td>${engine}${d.engine === "yes" && d.convert ? `<div class="muted">${d.convert === "on download" ? t("drOnDownload") : t("drInCkpt")}</div>` : ""}</td>
+          <td>${esc(prec)}${precRun}</td><td>${result}</td></tr>`;
+      }).join("")}</table></div>
+      <div class="sub"><b>${t("precTitle")}</b>: ${esc(t("precText"))}</div></details>`;
+  }
+  return html + "</div>";
+}
+function specWhere(s) {
+  return s.profile === "own" ? t("profOwn") : s.profile === "similar" ? t("profSimilar") + " " + s.profile_class : t("profGeneric");
+}
+function specChip(s) {
+  const d = s.drafters.length ? s.drafters.join(", ") : "—";
+  const cls = {own:"ok", similar:"warn", generic:"warn", none:"bad"}[s.profile] || "";
+  const what = {own:t("profOwn"), similar:t("profSimilar") + " " + s.profile_class, generic:t("profGeneric"), none:t("profNone")}[s.profile] || "";
+  return `<span class="pill ${cls}">${t("speculation")}: ${esc(d)} · ${esc(what)}</span>`;
+}
+
+// ---- chat -------------------------------------------------------------------------------------
+// A running model's chat opens as a tab of this page: the header and the GPU cards stay in view.
+let chatId = 0;
+function openChat(id) {
+  const p = S.processes.find(x => x.id === id);
+  $("chattitle").textContent = p ? shortName(p.model) : "#" + id;
+  const g = p ? S.gpus.find(x => x.index === p.gpu) : null;
+  $("chatgpu").textContent = g ? "· " + g.name.replace("NVIDIA GeForce ", "") + " #" + g.index : "";
+  $("chatnew").href = `/chat/${id}/`;
+  $("chatnew").textContent = t("newTab") + " ↗";
+  $("chatclose").title = t("closeChat");
+  shareTheme();
+  if (chatId !== id) { $("chatframe").src = `/chat/${id}/`; chatId = id; }
+  $("chattab").hidden = false;
+  setTab("chat");
+}
+$("chatframe").addEventListener("load", shareTheme);
+$("chatclose").onclick = () => {
+  $("chatframe").src = "about:blank"; chatId = 0;
+  $("chattab").hidden = true;
+  setTab("models");
+};
+
+// ---- downloads ------------------------------------------------------------------------------
+function renderDownloads() {
+  const list = S.processes.filter(p => p.kind === "prepare" || (p.kind === "serve" && p.percent >= 0 && p.state === "starting"));
+  const active = list.filter(live).length;
+  $("dlcount").hidden = !active; $("dlcount").textContent = active;
+  $("downloads").innerHTML = list.length ? list.slice().reverse().map(p => {
+    const st = live(p) ? "" : p.state === "exited" && p.exit_code === 0 ? `<span class="pill ok">${t("done")}</span>` : `<span class="pill bad">${t("failed")}</span>`;
+    return `<div style="padding:10px 12px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;gap:8px;align-items:center"><b>${esc(p.model)}</b>${st}<span style="flex:1"></span>
+        <button class="ghost" data-log="${p.id}">${t("log")}</button>${live(p) ? `<button class="ghost danger" data-stop="${p.id}">${t("cancel")}</button>` : ""}</div>
+      ${live(p) && p.percent >= 0 ? `<div class="pbar"><i style="width:${p.percent}%"></i></div><div class="sub mono">${esc(p.progress_file)} · ${esc(p.progress)}</div>`
+        : `<div class="sub">${esc(p.last_line).slice(0, 160)}</div>`}</div>`;
+  }).join("") : `<div class="empty">${t("noDl")}</div>`;
+}
+
+// ---- actions ----------------------------------------------------------------------------------
+async function launch(model, quant, button) {
+  if (button) { button.disabled = true; button.textContent = t("launching"); }
+  try {
+    const j = await api("/api/launch", {model, quant, gpu, max_context: ctxValue, max_concurrency: parallel,
+      hub: selected && model === selected.repo ? selected.hubName : "",
+      spec: specMode === "off" || (specMode === "auto" && autoVerdict()?.plain) ? "none" : specMode, kv_dtype: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : ""});
+    openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);
+  } catch (e) {
+    showError(e.message);
+    if (button) { button.disabled = false; button.textContent = t("run"); }
+  }
+}
+async function prepare(model, quant) {
+  try { await api("/api/prepare", {model, quant, hub: selected && model === selected.repo ? selected.hubName : ""}); setTab("downloads"); refreshState(); }
+  catch (e) { showError(e.message); }
+}
+document.addEventListener("click", async ev => {
+  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  if (!el || el.disabled) return;
+  const d = el.dataset;
+  if (d.tab) setTab(d.tab);
+  else if (d.chat) {
+    if (ev.target.closest("[data-gpu]")) ev.stopPropagation();
+    if (chatUi) openChat(+d.chat); else showError(t("noChat"));
+  }
+  else if (d.log) { const p = S.processes.find(x => x.id === +d.log); openLog(+d.log, p ? shortName(p.model) : ""); }
+  else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
+  else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }
+  else if (d.run !== undefined) { const m = mine[+d.run]; launch(m.artifact, "", el); }
+  else if (d.tune !== undefined) { try { const j = await api("/api/tune", {artifact: mine[+d.tune].artifact, gpu}); openLog(j.id, t("calibrate")); } catch (e) { showError(e.message); } }
+  else if (d.del !== undefined) { confirming.add(mine[+d.del].artifact); refreshMine(); }
+  else if (d.delno !== undefined) { confirming.delete(mine[+d.delno].artifact); refreshMine(); }
+  else if (d.delyes !== undefined) {
+    const m = mine[+d.delyes]; confirming.delete(m.artifact);
+    try { await api("/api/delete", {artifact: m.artifact}); } catch (e) { showError(e.message); }
+    refreshMine();
+  }
+  else if (d.delorig !== undefined) {
+    ev.preventDefault();
+    const repos = d.delorig === "*" ? [...new Set(mine.filter(m => m.original_gib > 0).map(m => m.repo))] : [d.delorig];
+    for (const repo of repos) { try { await api("/api/delete_original", {repo}); } catch (e) { showError(e.message); } }
+    refreshMine();
+  }
+  else if (d.hubsel) setHub(d.hubsel);
+  else if (d.sort) {
+    sortBy = d.sort;
+    try { localStorage.setItem("ninferno-sort", sortBy); } catch (e) {}
+    renderSortBar(); search($("q").value.trim());
+  }
+  else if (d.ctx) { ctxValue = +d.ctx; $("ctx").value = sliderAt(ctxValue); renderBody(); }
+  else if (d.hub) openRepo(d.hub, found.hub.find(h => h.id === d.hub));
+  else if (d.repo) { selected.repo = d.repo; loadRepo(); }
+  else if (d.kv) { kvType = d.kv; kvChosen = true; renderBody(); }
+  else if (d.qi !== undefined) { const q = selected.quants[+d.qi]; if (!q.drafter && q.supported) { quantSel = q; renderBody(); } }
+  else if (d.get !== undefined) prepare(selected.repo, quantSel.quant);
+  else if (d.go !== undefined) { const here = localFor(selected.repo, quantSel.quant); launch(here ? here.artifact : selected.repo, here ? "" : quantSel.quant, el); }
+});
+
+// One tooltip for every [data-tip]: its first line bold, the rest as written.
+document.addEventListener("mouseover", ev => {
+  const el = ev.target.closest("[data-tip]"), tip = $("tip");
+  if (!el || !el.dataset.tip) { tip.hidden = true; return; }
+  const [head, ...rest] = el.dataset.tip.split("\n");
+  tip.innerHTML = rest.length ? `<b>${esc(head)}</b><br>${rest.map(esc).join("<br>")}` : esc(head);
+  tip.hidden = false;
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  tip.style.top = (r.bottom + h + 12 < innerHeight ? r.bottom + 6 : r.top - h - 6) + "px";
+});
+renderSortBar();
+refreshState(); refreshMine();
+setInterval(refreshState, 2000);
+setInterval(() => { if (tab === "models") refreshMine(); }, 15000);
+</script>
+</body>
+</html>

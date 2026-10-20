@@ -1,6 +1,7 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/planning/pressure_planner.h"
+#include "core/fnv.h"
 
 #include <algorithm>
 #include <array>
@@ -12,7 +13,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 namespace {
 
@@ -644,7 +645,7 @@ std::optional<qwen3_5::detail::PressureDecision> ProgramImpl::inspect_checkpoint
             KVAddressSpaceHandle address, std::uint32_t retained_frontier,
             std::uint32_t& removed_pages) -> bool {
         if (!addresses.can_truncate_inactive_prefix(address, retained_frontier)) { return false; }
-        const std::uint32_t retained_pages = kv_pages_for_frontier(retained_frontier);
+        const std::uint32_t retained_pages = paged_kv_pages(retained_frontier);
         const std::uint32_t mapped         = addresses.mapped_pages(address);
         const std::size_t stride =
             plan_host_kv_page_layout(pages.physical_pool().geometry()).page_stride;
@@ -678,8 +679,7 @@ std::optional<qwen3_5::detail::PressureDecision> ProgramImpl::inspect_checkpoint
     for (const runtime::CheckpointRef checkpoint : option.dropped_checkpoints) {
         identity ^= static_cast<std::uint64_t>(checkpoint.kind) << 56U;
         identity ^= static_cast<std::uint64_t>(checkpoint.frontier) << 16U;
-        identity ^= checkpoint.ordinal;
-        identity *= 1099511628211ULL;
+        identity = fnv::mix(identity, checkpoint.ordinal);
     }
     option.id                     = identity == 0 ? 1 : identity;
     option.checkpoint_drop_effect = option.effect;
@@ -760,7 +760,10 @@ void ProgramImpl::publish_checkpoint_drop(SequenceState& sequence,
                                                          retained->backend_frontier);
     }
     if (speculative_backend == SpeculativeBackend::Mtp) {
-        sequence.mtp_kv_valid    = retained->backend_frontier;
+        sequence.mtp_kv_valid    = sequence.kv->backend
+                                       ? retained->backend_frontier
+                                       : detail::backend_frontier_at(speculative_backend,
+                                                                     retained->main_frontier);
         sequence.mtp_draft_count = 0;
     } else if (is_masked_draft_backend(speculative_backend)) {
         sequence.dflash_context_frontier = retained->main_frontier;
@@ -851,4 +854,4 @@ ProgramImpl::checkpoint_recovery_work(const SharedPrefixHandle& owner,
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

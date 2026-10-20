@@ -1,18 +1,14 @@
 #pragma once
 
 #include "models/qwen3_5/program/program_impl.h"
+#include "core/checked.h"
 
 #include <array>
 #include <limits>
+#include <span>
 #include <tuple>
 
-namespace ninfer::models::qwen3_5::detail {
-
-inline void planning_saturating_add(std::uint64_t& value, std::uint64_t add) noexcept {
-    value = add > std::numeric_limits<std::uint64_t>::max() - value
-                ? std::numeric_limits<std::uint64_t>::max()
-                : value + add;
-}
+namespace ninferno::models::qwen3_5::detail {
 
 inline std::uint32_t planning_saturating_u32(std::uint64_t value) noexcept {
     return value > std::numeric_limits<std::uint32_t>::max()
@@ -66,7 +62,8 @@ struct PlanningTransferAccumulator {
     void append(std::span<const runtime::ContextTransferRequirement> requirements) noexcept {
         for (const runtime::ContextTransferRequirement& requirement : requirements) {
             const std::size_t index = planning_direction_index(requirement.direction);
-            planning_saturating_add(work[index].payload_bytes, requirement.work.payload_bytes);
+            work[index].payload_bytes =
+                saturating_add(work[index].payload_bytes, requirement.work.payload_bytes);
             work[index].copy_operations =
                 planning_saturating_u32(static_cast<std::uint64_t>(work[index].copy_operations) +
                                         requirement.work.copy_operations);
@@ -140,4 +137,4 @@ dropped_checkpoint_count(const qwen3_5::detail::PressureDecision& decision) noex
     return decision.checkpoint_drops;
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

@@ -1,8 +1,10 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/score_detail.h"
+#include "ninferno/types.h"
 #include "runtime/contract/execution.h"
 #include "runtime/contract/resources.h"
+#include "runtime/contract/token_mask.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 
 #include <cstddef>
@@ -15,11 +17,11 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer {
+namespace ninferno {
 struct DeviceContext;
 }
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 
 namespace execution {
 class Parameters;
@@ -27,6 +29,7 @@ class Parameters;
 
 namespace detail {
 struct CaptureAssessmentImpl;
+class ModelExecution;
 
 } // namespace detail
 
@@ -41,6 +44,19 @@ struct PhysicalUsageSnapshot {
 
     [[nodiscard]] friend constexpr bool operator==(const PhysicalUsageSnapshot&,
                                                    const PhysicalUsageSnapshot&) noexcept = default;
+};
+
+// Device KV pages of the main (text) and backend (drafter) pools.
+struct DeviceKVPages {
+    std::uint32_t main    = 0;
+    std::uint32_t backend = 0;
+};
+
+// Pages a space-settled KV lease (EngineOptions::kv_lease_window) still lacks beyond what its pools
+// hold free: for its full growth step and for its smallest one.
+struct DeviceKVLeaseShortfall {
+    DeviceKVPages full;
+    DeviceKVPages minimum;
 };
 
 enum class TextPhase {
@@ -174,14 +190,18 @@ public:
     SequencePlanner& operator=(const SequencePlanner&) = delete;
 
     [[nodiscard]] const runtime::SequenceCapacityCurve& capacity_curve() const noexcept;
+    // Bytes of one Host StateImage (a context-cache Host tier slot) of this plan.
+    [[nodiscard]] std::size_t host_state_image_bytes() const noexcept;
     [[nodiscard]] SequencePlan finalize(std::uint32_t main_page_groups) &&;
 
 public:
     explicit SequencePlanner(std::unique_ptr<detail::SequencePlannerImpl> impl) noexcept;
     std::unique_ptr<detail::SequencePlannerImpl> impl_;
 
-    friend SequencePlanner make_sequence_planner(const execution::Parameters&, DeviceContext&,
+    friend SequencePlanner make_sequence_planner(const detail::ModelExecution&, DeviceContext&,
                                                  const EngineOptions&);
+    friend SequencePlanner make_sequence_planner(const detail::ModelExecution&, DeviceContext&,
+                                                 const EngineOptions&, bool);
 };
 
 class RequestBasePlan {
@@ -668,9 +688,11 @@ public:
         : owner_(std::exchange(other.owner_, nullptr)),
           transaction_(std::exchange(other.transaction_, 0)), rows_(other.rows_),
           row_count_(std::exchange(other.row_count_, 0)), tokens_(other.tokens_),
-          row_counts_(other.row_counts_), row_stride_(other.row_stride_), timing_(other.timing_) {
+          row_counts_(other.row_counts_), row_faults_(other.row_faults_),
+          row_stride_(other.row_stride_), timing_(other.timing_) {
         other.tokens_     = {};
         other.row_counts_ = {};
+        other.row_faults_ = {};
         other.row_stride_ = 0;
         other.timing_     = {};
     }
@@ -685,6 +707,9 @@ public:
 
     [[nodiscard]] std::span<const std::int32_t> row_counts() const noexcept { return row_counts_; }
 
+    // Per row, nonzero when the round computed a NaN or an infinity for it (empty: none).
+    [[nodiscard]] std::span<const std::uint8_t> row_faults() const noexcept { return row_faults_; }
+
     [[nodiscard]] std::uint32_t row_stride() const noexcept { return row_stride_; }
 
     [[nodiscard]] runtime::ExecutionTiming execution_timing() const noexcept { return timing_; }
@@ -696,6 +721,7 @@ private:
     std::size_t row_count_ = 0;
     std::span<const TokenId> tokens_;
     std::span<const std::int32_t> row_counts_;
+    std::span<const std::uint8_t> row_faults_;
     std::uint32_t row_stride_ = 0;
     runtime::ExecutionTiming timing_;
 
@@ -706,6 +732,10 @@ struct PrefillProgress {
     runtime::BeginSummary summary;
     std::uint32_t processed_prompt_tokens = 0;
     bool complete                         = false;
+    // The unit ended inside an image whose encoded output stays in the Program's one Vision
+    // handoff region: no other request's prefill may run before this one's next unit (it would
+    // encode its own image over it).
+    bool holds_vision_handoff = false;
     runtime::ExecutionTiming timing;
     std::optional<PendingBatch> pending;
     std::optional<CaptureOffer> capture;
@@ -849,7 +879,9 @@ public:
     [[nodiscard]] RequestBasePlan plan_request(const PreparedPrompt& prompt,
                                                const runtime::ResolvedExecutionOptions& options);
     [[nodiscard]] std::vector<float> causal_score(PreparedPrompt&& prompt,
-                                                  std::uint32_t first_target);
+                                                  std::uint32_t first_target,
+                                                  const ScoreDetailRequest& request,
+                                                  ScoreDetail& detail);
     [[nodiscard]] std::optional<AdmissionCandidate> inspect_admission(
         const PreparedPrompt& prompt, const RequestBasePlan& base, runtime::LaneId destination,
         const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
@@ -878,13 +910,19 @@ public:
     progress_context_transaction(runtime::CancellationFlagView cancellation);
     void finalize_context_transaction() noexcept;
     [[nodiscard]] bool has_context_transaction() const noexcept;
+    // An active lane still reads an immutable StateImage source through an open Fork. An exact-hit
+    // request keeps its Fork open from its Begin round until its first state-writing decode commit.
+    // Resource planning (admission, captures) must not seal against that window.
+    [[nodiscard]] bool has_unsettled_state_fork() const noexcept;
+    // masks: constrained-decoding source for this unit's single row, or null.
     [[nodiscard]] PrefillProgress
-    advance_prefill(SequenceHandle sequence, runtime::ExecutionTiming* failed_timing = nullptr);
+    advance_prefill(SequenceHandle sequence, runtime::ExecutionTiming* failed_timing = nullptr,
+                    runtime::TokenMaskSource* masks = nullptr);
     [[nodiscard]] CaptureAssessment
     inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle* exact_shared,
                     const SharedPrefixHandle* replacement,
                     std::optional<runtime::CheckpointRef> private_replacement,
-                    bool permit_shared_publication) const;
+                    bool permit_shared_publication, std::uint32_t waiting_admissions) const;
     [[nodiscard]] std::vector<runtime::CheckpointRecoveryAlternativeWork>
     checkpoint_recovery_work(const ContinuationHandle& owner,
                              runtime::CheckpointRef checkpoint) const;
@@ -904,16 +942,20 @@ public:
     reserve_active_capture(CaptureOffer&& offer, const SharedPrefixHandle* exact_shared,
                            const SharedPrefixHandle* replacement,
                            std::optional<runtime::CheckpointRef> private_replacement,
-                           bool permit_shared_publication,
+                           bool permit_shared_publication, std::uint32_t waiting_admissions,
                            runtime::CancellationFlagView cancellation);
     [[nodiscard]] runtime::ContextTransactionReserveStatus reserve_active_capture_with_pressure(
         CaptureOffer&& offer, const SharedPrefixHandle* exact_shared,
         const SharedPrefixHandle* replacement,
         std::optional<runtime::CheckpointRef> private_replacement, bool permit_shared_publication,
-        CapturePressurePlan&& pressure, runtime::CancellationFlagView cancellation);
+        std::uint32_t waiting_admissions, CapturePressurePlan&& pressure,
+        runtime::CancellationFlagView cancellation);
+    // masks: constrained-decoding source row-aligned with sequences, or null when no row is
+    // constrained (the unconstrained route is then unchanged).
     [[nodiscard]] PendingBatch decode(std::span<const SequenceHandle> sequences,
                                       std::span<const runtime::RoundBudget> budgets,
-                                      runtime::ExecutionTiming* failed_timing = nullptr);
+                                      runtime::ExecutionTiming* failed_timing = nullptr,
+                                      runtime::TokenMaskSource* masks         = nullptr);
     // Advance each live sequence with its exact target-owned token row. This does not sample or
     // advance sampler RNG/occurrence state; callers own output publication and budget accounting.
     // Each optional execution split is relative to its row's forced-token span.
@@ -928,7 +970,27 @@ public:
            runtime::ExecutionTiming* failed_timing = nullptr);
     [[nodiscard]] DiscardResult abort_pending(PendingBatch&& pending) noexcept;
     [[nodiscard]] FinishResult finish(SequenceHandle sequence) noexcept;
+    // A cancelled request at a decode boundary, catalogued at its committed frontier like a
+    // finished one so the conversation it consumed stays reusable. Not Consumed when the sequence
+    // cannot publish there (mid-prefill, a plain request, frontiers out of step): abort it then.
+    [[nodiscard]] FinishResult finish_cancelled(SequenceHandle sequence) noexcept;
     [[nodiscard]] AbortResult abort(SequenceHandle sequence) noexcept;
+    // KV lease (EngineOptions::kv_lease_window). An active sequence extends its entitlement at a
+    // decode boundary; when its pools cannot, it settles. The tokens a settled sequence may still
+    // generate inside what its lease covers, keeping one launch window and forced_span_tokens (a
+    // forced control span the caller may still apply) in reserve: absent while the lease can grow.
+    [[nodiscard]] std::optional<std::uint32_t>
+    device_kv_lease_settlement_tokens(SequenceHandle sequence,
+                                      std::uint32_t forced_span_tokens) const noexcept;
+    // A lease settled for pool space (not its ceiling): the pages its steps still lack. The caller
+    // may release cached context, then resume_device_kv_lease, before bounding the sequence.
+    [[nodiscard]] std::optional<DeviceKVLeaseShortfall>
+    device_kv_lease_shortfall(SequenceHandle sequence) const noexcept;
+    // Reopens growth once the smallest step fits; false while it does not.
+    [[nodiscard]] bool resume_device_kv_lease(SequenceHandle sequence) noexcept;
+    // Device KV pages releasing this cached owner would return to the pools.
+    [[nodiscard]] DeviceKVPages
+    retained_device_kv_pages(const ContinuationHandle& continuation) const noexcept;
     [[nodiscard]] ReleaseResult release_continuation(ContinuationHandle&& continuation) noexcept;
     [[nodiscard]] ReleaseResult release_shared_prefix(SharedPrefixHandle&& shared) noexcept;
     void fail_all_cleanup() noexcept;
@@ -943,7 +1005,7 @@ private:
     explicit Program(std::unique_ptr<detail::ProgramImpl> impl) noexcept;
     std::unique_ptr<detail::ProgramImpl> impl_;
 
-    friend std::unique_ptr<Program> create_program(const execution::Parameters&, SequencePlan&&,
+    friend std::unique_ptr<Program> create_program(const detail::ModelExecution&, SequencePlan&&,
                                                    DeviceContext&, const StartupObserver&);
 };
 
@@ -1056,7 +1118,8 @@ struct RuntimeContractAccess {
     [[nodiscard]] static PendingBatch
     make_pending(const void* owner, std::uint64_t transaction, std::span<const SequenceHandle> rows,
                  std::span<const TokenId> tokens, std::span<const std::int32_t> row_counts,
-                 std::uint32_t row_stride, runtime::ExecutionTiming timing) {
+                 std::uint32_t row_stride, runtime::ExecutionTiming timing,
+                 std::span<const std::uint8_t> row_faults = {}) {
         PendingBatch out;
         out.owner_       = owner;
         out.transaction_ = transaction;
@@ -1064,6 +1127,7 @@ struct RuntimeContractAccess {
         for (std::size_t i = 0; i < rows.size(); ++i) { out.rows_[i] = rows[i]; }
         out.tokens_     = tokens;
         out.row_counts_ = row_counts;
+        out.row_faults_ = row_faults;
         out.row_stride_ = row_stride;
         out.timing_     = timing;
         return out;
@@ -1088,6 +1152,7 @@ struct RuntimeContractAccess {
         pending.row_count_   = 0;
         pending.tokens_      = {};
         pending.row_counts_  = {};
+        pending.row_faults_  = {};
         pending.row_stride_  = 0;
         pending.timing_      = {};
     }
@@ -1095,12 +1160,20 @@ struct RuntimeContractAccess {
 
 } // namespace detail
 
-[[nodiscard]] SequencePlanner make_sequence_planner(const execution::Parameters& parameters,
+// The model (a family over its loaded weights) must outlive the planner, its plans and the
+// Program built from them.
+[[nodiscard]] SequencePlanner make_sequence_planner(const detail::ModelExecution& model,
                                                     DeviceContext& device,
                                                     const EngineOptions& options);
+// A plan whose CUDA graph memory the driver already holds (construct_model's kernel warm-up built
+// the same graph set): it reserves no graph allowance.
+[[nodiscard]] SequencePlanner make_sequence_planner(const detail::ModelExecution& model,
+                                                    DeviceContext& device,
+                                                    const EngineOptions& options,
+                                                    bool graph_memory_held);
 
-[[nodiscard]] std::unique_ptr<Program> create_program(const execution::Parameters& parameters,
+[[nodiscard]] std::unique_ptr<Program> create_program(const detail::ModelExecution& model,
                                                       SequencePlan&& plan, DeviceContext& device,
                                                       const StartupObserver& startup_observer);
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

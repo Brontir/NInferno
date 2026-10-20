@@ -8,17 +8,20 @@
 #include <map>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::frontend {
+namespace ninferno::models::qwen3_5::frontend {
 namespace {
 
 using Json = nlohmann::ordered_json;
 
+// The role a template sees. A developer message (OpenAI's instruction role: Codex sends one, and
+// the Responses API's `instructions` become one) renders as a system message: chat templates know
+// system, user, assistant and tool, and the official Qwen templates raise on any other role
+// (map, do not refuse).
 std::string_view role_name(ChatRole role) {
     switch (role) {
     case ChatRole::System:
-        return "system";
     case ChatRole::Developer:
-        return "developer";
+        return "system";
     case ChatRole::User:
         return "user";
     case ChatRole::Assistant:
@@ -122,19 +125,35 @@ bool same_prefix(const text::TemplateOutput& lhs, const text::TemplateOutput& rh
     }
 }
 
-bool real_user(const ChatMessage& message) {
+// Text without its leading and trailing Unicode whitespace. Only the ends are decoded: a message
+// may be many megabytes (decoding all of it took tens of seconds and gigabytes for 96 MiB).
+std::string_view trim_unicode_whitespace(std::string_view text) {
+    namespace uni     = text::unicode_internal;
+    std::size_t begin = 0;
+    while (begin < text.size()) {
+        const uni::CodepointSpan codepoint = uni::utf8_codepoint_at(text, begin, "message content");
+        if (!uni::is_whitespace(codepoint.value)) break;
+        begin += codepoint.length;
+    }
+    std::size_t end = text.size();
+    while (end > begin) {
+        std::size_t start = end - 1;
+        while (start > begin && (static_cast<unsigned char>(text[start]) & 0xC0U) == 0x80U) --start;
+        const uni::CodepointSpan codepoint = uni::utf8_codepoint_at(text, start, "message content");
+        if (start + codepoint.length != end || !uni::is_whitespace(codepoint.value)) break;
+        end = start;
+    }
+    return text.substr(begin, end - begin);
+}
+
+bool real_user(const ChatMessage& message, const chat::ToolMarkup& tools) {
     if (message.role != ChatRole::User) return false;
     if (message.has_media()) return true;
+    if (tools.response_open.empty() || tools.response_close.empty()) return true;
     std::string content;
     for (const auto& part : message.parts) content += part.text;
-    const auto chars  = text::unicode_internal::utf8_codepoints(content, "message content");
-    std::size_t begin = 0, end = chars.size();
-    while (begin < end && text::unicode_internal::is_whitespace(chars[begin].value)) ++begin;
-    while (end > begin && text::unicode_internal::is_whitespace(chars[end - 1].value)) --end;
-    const auto offset = begin < chars.size() ? chars[begin].offset : content.size();
-    const auto limit  = end < chars.size() ? chars[end].offset : content.size();
-    const auto body   = std::string_view(content).substr(offset, limit - offset);
-    return !(body.starts_with("<tool_response>") && body.ends_with("</tool_response>"));
+    const std::string_view body = trim_unicode_whitespace(content);
+    return !(body.starts_with(tools.response_open) && body.ends_with(tools.response_close));
 }
 
 } // namespace
@@ -146,13 +165,111 @@ bool ChatMessage::has_media() const noexcept {
 
 CompiledChatTemplate CompiledChatTemplate::resolve(std::string_view source, std::string source_name,
                                                    Json special_tokens) {
-    return CompiledChatTemplate(text::JinjaTemplate(std::string(source), std::move(source_name)),
-                                std::move(special_tokens));
+    CompiledChatTemplate result(text::JinjaTemplate(std::string(source), std::move(source_name)),
+                                std::move(special_tokens), chat::resolve_conventions(source));
+    // Whether enable_thinking switches reasoning, and which way an unset value goes: Gemma 4
+    // defaults it to false and then opens no thought channel in the prompt, so only the request
+    // tells a model that may open one itself not to (Qwen closes an empty <think> instead).
+    try {
+        std::vector<ChatMessage> probe(1);
+        probe.front().parts.push_back(ChatPart::text_part("x"));
+        ChatRenderOptions on, off;
+        on.enable_thinking           = true;
+        off.enable_thinking          = false;
+        const std::string unset_text = result.render(probe, {}).text;
+        const std::string off_text   = result.render(probe, off).text;
+        result.thinking_switch_      = result.render(probe, on).text != off_text;
+        result.thinking_default_     = unset_text != off_text;
+    } catch (const std::exception&) {
+        // A template that cannot render the probe has no switch the gate can rely on.
+    }
+    return result;
 }
 
+// A system or developer message after the conversation began (agent hosts such as Claude Code
+// append one) is refused by the stock Qwen templates many artifacts embed ("System message must be
+// at the beginning."). When the template refuses a conversation that has one, the
+// conversation renders again with those messages as user messages: the prefix before them, and so
+// the cache, is unchanged, and a template that accepts them keeps their role.
 RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messages,
                                           ChatRenderOptions options,
                                           const PreparationControl& control) const {
+    // An instruction message's own rules hold before any retry may give it the user role.
+    for (const auto& message : messages) {
+        if (instruction(message.role) &&
+            (message.has_media() || !message.reasoning_content.empty() ||
+             !message.tool_calls.empty() || !message.tool_call_id.empty())) {
+            throw std::invalid_argument("system and developer messages may contain only text");
+        }
+    }
+    try {
+        return render_once(messages, options, control);
+    } catch (const std::invalid_argument&) {
+        // Only the first message keeps an instruction role: the stock templates also refuse a
+        // second one that opens the conversation (two system messages, a Responses `instructions`
+        // with a developer message: Codex). The message count stays, so cache markers hold.
+        const std::size_t leading = instruction(messages.front().role) ? 1 : 0;
+        std::vector<ChatMessage> demoted;
+        for (std::size_t i = leading; i < messages.size(); ++i) {
+            if (!instruction(messages[i].role)) continue;
+            if (demoted.empty()) demoted = messages;
+            demoted[i].role = ChatRole::User;
+        }
+        // A tool the client declared without a description renders without one, exactly as
+        // declared; a template that reads the description unconditionally ("// " +
+        // tool.description in gpt-oss, `fn.description | tojson`) refuses it. Such a template sees
+        // an empty description instead.
+        std::optional<ChatRenderOptions> described;
+        for (std::size_t i = 0; i < options.tool_jsons.size(); ++i) {
+            Json tool = Json::parse(options.tool_jsons[i], nullptr, false);
+            if (tool.is_discarded() || !tool.is_object()) continue;
+            Json& function =
+                tool.contains("function") && tool["function"].is_object() ? tool["function"] : tool;
+            if (!function.contains("name") || function.contains("description")) continue;
+            function["description"] = "";
+            if (!described) described = options;
+            described->tool_jsons[i] = tool.dump();
+        }
+        const std::vector<ChatMessage>& retried = demoted.empty() ? messages : demoted;
+        if (!demoted.empty()) {
+            try {
+                return render_once(demoted, options, control);
+            } catch (const std::invalid_argument&) {}
+        }
+        if (described) {
+            try {
+                return render_once(retried, *described, control);
+            } catch (const std::invalid_argument&) {}
+        }
+        // A protocol reasoning effort the template does not take (Qwen 3.8 takes low, medium and
+        // xhigh; OpenAI clients also send minimal and high) renders at the next stronger level the
+        // template takes, never a weaker one. An effort given in chat_template_kwargs is the
+        // client's own template input and stays as given.
+        static_assert(static_cast<int>(ReasoningEffort::Minimal) == 1 &&
+                          static_cast<int>(ReasoningEffort::Low) == 2 &&
+                          static_cast<int>(ReasoningEffort::Medium) == 3 &&
+                          static_cast<int>(ReasoningEffort::High) == 4 &&
+                          static_cast<int>(ReasoningEffort::XHigh) == 5 &&
+                          static_cast<int>(ReasoningEffort::Max) == 6,
+                      "the effort levels are walked weakest to strongest");
+        if (options.reasoning_effort && *options.reasoning_effort != ReasoningEffort::None &&
+            *options.reasoning_effort != ReasoningEffort::Max) {
+            ChatRenderOptions stronger = described.value_or(options);
+            for (auto level = static_cast<int>(*options.reasoning_effort) + 1;
+                 level <= static_cast<int>(ReasoningEffort::Max); ++level) {
+                stronger.reasoning_effort = static_cast<ReasoningEffort>(level);
+                try {
+                    return render_once(retried, stronger, control);
+                } catch (const std::invalid_argument&) {}
+            }
+        }
+        throw;
+    }
+}
+
+RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& messages,
+                                               const ChatRenderOptions& options,
+                                               const PreparationControl& control) const {
     if (messages.empty()) throw std::invalid_argument("chat requires at least one message");
     check_preparation_control(control, "chat template");
     const bool continuation =
@@ -177,6 +294,10 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         regions.push_back({std::move(pointer), id});
         return id;
     };
+    // A role is one of a closed set the request parser checked, not request text: it renders as
+    // template text, so a template that wraps it in control-token markup ('<|' + role + '|>',
+    // Phi-3/Phi-4) writes the control token, as transformers does.
+    std::vector<std::string> control_pointers;
     std::vector<ContentSource> sources(messages.size());
     std::vector<Modality> media;
     for (std::size_t i = 0; i < messages.size(); ++i) {
@@ -188,6 +309,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         }
         Json value{{"role", role_name(message.role)}};
         const auto pointer = "/messages/" + std::to_string(i);
+        control_pointers.push_back(pointer + "/role");
         auto& origin       = sources[i];
         if (!message.has_media()) {
             std::string content;
@@ -222,14 +344,21 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         if (!message.tool_calls.empty()) {
             value["tool_calls"] = Json::array();
             for (const auto& call : message.tool_calls) {
+                // History replays what a model (ours or another backend's) emitted, and a model
+                // can emit arguments that are not a JSON object. Refusing them would fail every
+                // later request of the session, so the raw text is kept under "raw": a mapping
+                // every template can render.
+                Json arguments = Json::object();
+                if (!call.arguments_json.empty()) {
+                    arguments = Json::parse(call.arguments_json, nullptr, false);
+                    if (arguments.is_discarded() || !arguments.is_object()) {
+                        arguments = Json{{"raw", call.arguments_json}};
+                    }
+                }
                 value["tool_calls"].push_back(
                     {{"id", call.id},
                      {"type", "function"},
-                     {"function",
-                      {{"name", call.name},
-                       {"arguments",
-                        (call.arguments_json.empty() ? Json::object()
-                                                     : Json::parse(call.arguments_json))}}}});
+                     {"function", {{"name", call.name}, {"arguments", std::move(arguments)}}}});
             }
         }
         if (!message.tool_call_id.empty()) value["tool_call_id"] = message.tool_call_id;
@@ -242,15 +371,44 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
             context["tools"].push_back(Json::parse(options.tool_jsons[i]));
             tool_tags.push_back(tag("/tools/" + std::to_string(i)));
         }
+    } else {
+        // transformers' apply_chat_template always passes tools, None without any: a template
+        // that tests `tools is none` (OLMo 3) must see none, not an undefined variable.
+        context["tools"] = nullptr;
     }
     std::vector<std::string> control_variables;
     for (const auto& item : special_tokens_.items()) control_variables.push_back(item.key());
     text::TemplateRenderOptions execution{
         .checkpoint        = [&] { check_preparation_control(control, "chat template"); },
         .regions           = regions,
-        .control_variables = control_variables};
+        .control_variables = control_variables,
+        .control_pointers  = control_pointers};
     auto output = compiled_.render(context, execution);
-    auto layout = inspect_prompt_layout(output, media);
+    // A template may drop a system or developer message after the conversation began instead of
+    // refusing it (a Qwen 3.6 template renders only the leading ones): its text would be lost
+    // without an error. Such a render is refused like one the template raised on, and render()
+    // gives the message the user role. The leading run is the template's to merge.
+    std::size_t leading = 0;
+    while (leading < messages.size() && instruction(messages[leading].role)) ++leading;
+    for (std::size_t i = leading; i < messages.size(); ++i) {
+        if (!instruction(messages[i].role)) continue;
+        std::string text;
+        for (const auto& part : messages[i].parts) text += part.text;
+        const auto first = text.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) continue;
+        const auto last = text.find_last_not_of(" \t\r\n");
+        const bool rendered =
+            std::any_of(output.regions.begin(), output.regions.end(),
+                        [&](const auto& region) { return region.tag == sources[i].tag; }) ||
+            output.text.find(std::string_view(text).substr(first, last + 1 - first)) !=
+                std::string::npos;
+        if (!rendered) {
+            throw std::invalid_argument("the chat template drops a " +
+                                        std::string(role_name(messages[i].role)) +
+                                        " message after the conversation began");
+        }
+    }
+    auto layout = inspect_prompt_layout(output, media, conventions_);
     if (continuation) {
         const auto content = unique_output_region(output, sources.back().tag);
         if (!content || layout.messages.empty())
@@ -271,10 +429,16 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         if (!output.literal_spans.empty())
             output.literal_spans.back().end =
                 std::min(output.literal_spans.back().end, output.text.size());
-        layout = inspect_prompt_layout(output, media);
+        layout = inspect_prompt_layout(output, media, conventions_);
     }
     RenderedChat result;
     result.starts_in_reasoning          = layout.starts_in_reasoning;
+    result.reasoning_open_allowed       = !continuation && layout.reasoning_open_allowed;
+    const bool thinking =
+        context.contains("enable_thinking") && context["enable_thinking"].is_boolean()
+            ? context["enable_thinking"].get<bool>()
+            : thinking_default_;
+    result.reasoning_declined           = thinking_switch_ && !thinking;
     result.media_placeholders           = layout.media_placeholders;
     result.rewrite_execution_boundaries = layout.execution_boundaries;
     result.message_boundaries.resize(messages.size() + 1);
@@ -337,8 +501,8 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         const auto& block = layout.messages[*message_blocks[i]];
         if (block.closed && block_users[*message_blocks[i]] == 1)
             result.message_boundaries[i + 1] = block.end;
-        if (messages[i].role == ChatRole::Tool && content_regions[i]) {
-            constexpr std::string_view close = "\n</tool_response>";
+        const std::string_view close = conventions_.tools.response_boundary;
+        if (messages[i].role == ChatRole::Tool && content_regions[i] && !close.empty()) {
             const auto pos                   = output.text.find(close, content_regions[i]->end);
             if (pos != std::string::npos && pos + close.size() <= block.content_end) {
                 const auto end = pos + close.size();
@@ -362,7 +526,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
     if (!continuation) {
         std::optional<std::size_t> query_message;
         for (std::size_t i = messages.size(); i > 0; --i) {
-            if (real_user(messages[i - 1])) {
+            if (real_user(messages[i - 1], conventions_.tools)) {
                 query_message = i - 1;
                 break;
             }
@@ -383,13 +547,24 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
     // next-turn probe distinguishes retained history from a rewritten open turn, including
     // templates whose defaults or aliases differ from the typed request hint. This only chooses
     // the checkpoint to retain: subsequent requests still require exact token/state identity.
+    // A request ending with tool results is inside a tool loop: its next request appends the
+    // model's next step to the same turn rather than a user turn, so that is the continuation to
+    // probe. A template that rewrites the turn only once the user speaks again (Qwen dropping
+    // in-loop reasoning, Gemma closing a model turn left open across tool results) then keeps the
+    // loop's whole prefix instead of restarting every step at the loop's first assistant turn;
+    // that earlier boundary was already published by the loop's first request.
     bool retain_open_turn = context.value("preserve_thinking", false);
-    if (first_tail_assistant && layout.messages[*first_tail_assistant].closed) {
+    const bool tool_loop  = generation_begin && messages.back().role == ChatRole::Tool;
+    if (first_tail_assistant && (layout.messages[*first_tail_assistant].closed || tool_loop)) {
         Json probe = context;
-        probe["messages"].push_back({{"role", "user"}, {"content", ""}});
+        probe["messages"].push_back(tool_loop ? Json{{"role", "assistant"}, {"content", "next"}}
+                                              : Json{{"role", "user"}, {"content", ""}});
         probe["add_generation_prompt"] = false;
         auto probe_options             = execution;
         probe_options.regions          = {};
+        std::vector<std::string> probe_pointers = control_pointers;
+        probe_pointers.push_back("/messages/" + std::to_string(messages.size()) + "/role");
+        probe_options.control_pointers = probe_pointers;
         try {
             const auto next_turn     = compiled_.render(probe, probe_options);
             const auto history_bytes = generation_begin.value_or(output.text.size());
@@ -460,4 +635,4 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
     return result;
 }
 
-} // namespace ninfer::models::qwen3_5::frontend
+} // namespace ninferno::models::qwen3_5::frontend

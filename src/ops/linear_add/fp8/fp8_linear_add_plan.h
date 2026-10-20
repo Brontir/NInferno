@@ -3,17 +3,20 @@
 #include "core/weight.h"
 #include "core/arena.h"
 #include "core/tensor.h"
-#include "ninfer/ops/linear.h"
+#include "ninferno/ops/linear.h"
 
 #include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
-inline constexpr std::int32_t kFp8LinearAddChunkTokens = 24;
+[[nodiscard]] std::size_t fp8_linear_add_partial_capacity_bytes(std::int32_t input_rows,
+                                                                std::int32_t max_tokens);
 
+// The (rows, k) problems this plan registers; ops/wrapper/linear_add.cpp asks it.
+bool fp8_linear_add_registered(std::int32_t rows, std::int32_t k) noexcept;
 [[nodiscard]] std::size_t fp8_linear_add_workspace_capacity_bytes(std::int32_t output_rows,
                                                                   std::int32_t input_rows,
                                                                   LinearPolicy policy,
@@ -22,12 +25,12 @@ inline constexpr std::int32_t kFp8LinearAddChunkTokens = 24;
 
 void fp8_linear_add_decode_launch(const Tensor& x, const Weight& weight, Tensor& residual,
                                   cudaStream_t stream);
-void fp8_linear_add_small_t_launch(const Tensor& x, const Weight& weight, Tensor& residual,
-                                   cudaStream_t stream);
+// `small_t`: the prefill profile's short-call tiles (same bytes as the default tile, more blocks).
+void fp8_linear_add_matrix_launch(const Tensor&, const Weight&, Tensor&, cudaStream_t);
 void fp8_linear_add_a8_launch(const Tensor& x, const Weight& weight, Tensor& residual,
-                              WorkspaceArena& workspace, cudaStream_t stream);
+                              WorkspaceArena& workspace, cudaStream_t stream, bool small_t = false);
 
 void fp8_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& residual,
                              LinearPolicy policy, WorkspaceArena& workspace, cudaStream_t stream);
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

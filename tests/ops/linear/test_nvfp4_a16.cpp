@@ -7,12 +7,13 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::test::linear;
+using namespace ninferno;
+using namespace ninferno::test::linear;
 
 int run_nvfp4_a16() {
     std::vector<Invocation> invocations;
     for (int t = 1; t <= 33; ++t) invocations.push_back({t});
+    for (int t : {63, 64, 65, 95, 96, 97, 127, 128, 129, 512, 1024}) invocations.push_back({t});
     for (int t : {3, 7, 11, 15, 19, 23, 27, 31, 33})
         invocations.push_back({t, CallForm::Policy, ops::LinearPolicy::A16Only, true});
     invocations.push_back({1, CallForm::A16Convenience});
@@ -38,7 +39,7 @@ int run_nvfp4_a16() {
 } // namespace
 
 int main() {
-    if (!ninfer::test::linear::cuda_available()) {
+    if (!ninferno::test::linear::cuda_available()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }

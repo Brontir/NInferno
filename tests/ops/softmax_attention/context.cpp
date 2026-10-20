@@ -1,4 +1,4 @@
-#include "ninfer/ops/softmax_attention.h"
+#include "ninferno/ops/softmax_attention.h"
 
 #include "core/arena.h"
 #include "ops/op_tester.h"
@@ -17,17 +17,33 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
-constexpr int kD       = 128;
-constexpr int kQHeads  = 32;
-constexpr int kKVHeads = 8;
-constexpr int kPage    = 64;
-constexpr float kScale = 0.08838834764831844055f;
-constexpr ops::AttentionHeadGeometry kGeometry{kD, kQHeads, kKVHeads};
+constexpr int kPage = 64;
+
+// The registered profile under test: [128,32,8] (group 4), then [64,64,8] (group 8, gpt-oss's
+// DFlash drafter). Every case below reads it.
+struct Profile {
+    int d;
+    int q_heads;
+    int kv_heads;
+};
+int kD       = 128;
+int kQHeads  = 32;
+int kKVHeads = 8;
+float kScale = 0.08838834764831844055f;
+ops::AttentionHeadGeometry kGeometry{128, 32, 8};
+
+void select_profile(Profile selected) {
+    kD        = selected.d;
+    kQHeads   = selected.q_heads;
+    kKVHeads  = selected.kv_heads;
+    kScale    = 1.0F / std::sqrt(static_cast<float>(selected.d));
+    kGeometry = {selected.d, selected.q_heads, selected.kv_heads};
+}
 
 constexpr ReductionCriterion kContextQueryBf16Criterion{
     .relative_l2                     = 2.95e-3,
@@ -568,14 +584,7 @@ int batch_table_case() {
     return failures;
 }
 
-} // namespace
-
-int run_softmax_attention_context_tests() {
-    if (cuda_unavailable()) {
-        std::cout << "SKIP: CUDA device unavailable\n";
-        return 77;
-    }
-
+int run_profile_cases() {
     int failures = 0;
     constexpr ops::ContextAttentionExecutionEnvelope capacity_envelope{0, 196609};
     const std::size_t interval = ops::context_softmax_attention_workspace_capacity_bytes(
@@ -602,12 +611,199 @@ int run_softmax_attention_context_tests() {
     failures += run_case(8, 95, InputProfile::Random, 4096, MappingPattern::Fragmented);
     failures += run_case(16, 65, InputProfile::Random, 65537, MappingPattern::Fragmented, 16, true);
     failures += run_case(16, 257);
+    failures += run_case(7, 130, InputProfile::Random, -1, MappingPattern::Fragmented);
+    failures += run_case(9, 200, InputProfile::Random, -1, MappingPattern::Offset);
+    failures += run_case(12, 70, InputProfile::Random, 70000, MappingPattern::Fragmented, 10, true);
     failures += run_case(1, 4096, InputProfile::Random, -1, MappingPattern::Fragmented);
     failures += run_case(4, 0, InputProfile::QueryVisibility);
     failures += run_case(8, 0, InputProfile::Random, 0, MappingPattern::Identity, 0);
     failures += run_case(8, 65, InputProfile::Random, 65, MappingPattern::Fragmented, 0);
     failures += graph_mapping_replay_case();
     failures += batch_table_case();
+    return failures;
+}
+
+// Int8Group64 context at D128 (the DFlash drafter's int8 pool): per-token codes with an FP16
+// scale per 64 dimensions, FP16-RNE(absmax / 127), the codes from the reciprocal of that value as
+// kv_cache_append writes them. The oracle reads the dequantized context the kernel stages: K
+// rounded to BF16, V to FP16.
+struct Int8Context {
+    std::vector<std::int8_t> codes;
+    std::vector<__half> scales;
+    std::vector<float> dequant;
+};
+
+Int8Context quantize_context_int8(const std::vector<float>& physical, int physical_pages,
+                                  bool value_plane) {
+    const int groups = kD / 64;
+    Int8Context out;
+    out.codes.resize(physical.size());
+    out.dequant.resize(physical.size());
+    out.scales.resize(static_cast<std::size_t>(groups) * kPage * physical_pages * kKVHeads);
+    for (int kv_head = 0; kv_head < kKVHeads; ++kv_head) {
+        for (int page = 0; page < physical_pages; ++page) {
+            for (int row = 0; row < kPage; ++row) {
+                for (int g = 0; g < groups; ++g) {
+                    const std::size_t base =
+                        physical_context_index(g * 64, kv_head, row, page, physical_pages);
+                    float m = 0.0f;
+                    for (int i = 0; i < 64; ++i) m = std::max(m, std::fabs(physical[base + i]));
+                    const __half scale  = __float2half_rn(m > 0.0f ? m / 127.0f : 0.0f);
+                    const float s       = __half2float(scale);
+                    const float inverse = s > 0.0f ? 1.0f / s : 0.0f;
+                    for (int i = 0; i < 64; ++i) {
+                        const int q = std::clamp(
+                            static_cast<int>(std::nearbyint(physical[base + i] * inverse)), -127,
+                            127);
+                        out.codes[base + i]   = static_cast<std::int8_t>(q);
+                        const float x         = static_cast<float>(q) * s;
+                        out.dequant[base + i] = value_plane ? __half2float(__float2half_rn(x))
+                                                            : bf16_to_f32(f32_to_bf16(x));
+                    }
+                    out.scales[static_cast<std::size_t>(g) +
+                               static_cast<std::size_t>(groups) *
+                                   (static_cast<std::size_t>(row) +
+                                    static_cast<std::size_t>(kPage) *
+                                        (static_cast<std::size_t>(page) +
+                                         static_cast<std::size_t>(physical_pages) *
+                                             static_cast<std::size_t>(kv_head)))] = scale;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+int run_int8_case(int tokens, int context_length, MappingPattern mapping_pattern) {
+    const int logical_pages          = std::max((context_length + kPage - 1) / kPage, 1);
+    const int logical_stride         = (logical_pages * kPage + 127) / 128 * 128;
+    const int physical_pages         = 2 * logical_pages + 1;
+    const std::size_t q_count        = static_cast<std::size_t>(kD) * kQHeads * tokens;
+    const std::size_t query_kv_count = static_cast<std::size_t>(kD) * kKVHeads * tokens;
+    const std::size_t logical_count  = static_cast<std::size_t>(kD) * logical_stride * kKVHeads;
+
+    std::vector<float> q(q_count), query_k(query_kv_count), query_v(query_kv_count);
+    std::vector<float> context_k(logical_count), context_v(logical_count);
+    const auto seed = static_cast<unsigned>(tokens * 977 + context_length * 13);
+    fill_uniform(q, 11u + seed, -0.35f, 0.35f);
+    fill_uniform(query_k, 23u + seed, -0.4f, 0.4f);
+    fill_uniform(query_v, 37u + seed, -0.8f, 0.8f);
+    fill_uniform(context_k, 41u + seed, -0.4f, 0.4f);
+    fill_uniform(context_v, 53u + seed, -0.8f, 0.8f);
+    round_to_bf16(q);
+    round_to_bf16(query_k);
+    round_to_bf16(query_v);
+
+    const std::vector<std::int32_t> mapping = page_mapping(logical_pages, mapping_pattern);
+    const int rows                          = logical_pages * kPage;
+    const Int8Context k8                    = quantize_context_int8(
+        scatter_context(context_k, logical_stride, rows, physical_pages, mapping, 61u + seed),
+        physical_pages, false);
+    const Int8Context v8 = quantize_context_int8(
+        scatter_context(context_v, logical_stride, rows, physical_pages, mapping, 67u + seed),
+        physical_pages, true);
+    // The oracle's logical context: the dequantized values at each position's physical page.
+    for (int position = 0; position < context_length; ++position) {
+        const int physical_page = mapping[static_cast<std::size_t>(position / kPage)];
+        for (int kv_head = 0; kv_head < kKVHeads; ++kv_head) {
+            for (int d = 0; d < kD; ++d) {
+                const std::size_t from =
+                    physical_context_index(d, kv_head, position, physical_page, physical_pages);
+                context_k[context_index(d, kv_head, position, logical_stride)] = k8.dequant[from];
+                context_v[context_index(d, kv_head, position, logical_stride)] = v8.dequant[from];
+            }
+        }
+    }
+    std::vector<double> reference;
+    context_attention_oracle(q, query_k, query_v, context_k, context_v, tokens, context_length,
+                             tokens, logical_stride, reference);
+
+    DeviceBuffer d_q       = to_device(bf16_bits(q));
+    DeviceBuffer d_query_k = to_device(bf16_bits(query_k));
+    DeviceBuffer d_query_v = to_device(bf16_bits(query_v));
+    DeviceBuffer d_k       = to_device(k8.codes);
+    DeviceBuffer d_v       = to_device(v8.codes);
+    DeviceBuffer d_k_scale = to_device(k8.scales);
+    DeviceBuffer d_v_scale = to_device(v8.scales);
+    DeviceBuffer d_table   = to_device(mapping);
+    DeviceBuffer d_length  = to_device_i32(std::vector<int>{context_length});
+    DeviceBuffer d_valid   = to_device_i32(std::vector<int>{tokens});
+    DeviceBuffer d_row     = to_device_i32(std::vector<int>{0});
+    GuardedDeviceBuffer d_out(q_count * sizeof(std::uint16_t));
+    d_out.fill(0x7f);
+
+    const int groups = kD / 64;
+    PagedKVBatchLayerView context{
+        .k_pages = Tensor(d_k.p, DType::I8, {kD, kPage, physical_pages, kKVHeads}),
+        .v_pages = Tensor(d_v.p, DType::I8, {kD, kPage, physical_pages, kKVHeads}),
+        .k_scale_pages =
+            Tensor(d_k_scale.p, DType::FP16, {groups, kPage, physical_pages, kKVHeads}),
+        .v_scale_pages =
+            Tensor(d_v_scale.p, DType::FP16, {groups, kPage, physical_pages, kKVHeads}),
+        .block_tables = Tensor(d_table.p, DType::I32, {logical_pages, 1}),
+        .head_dim     = kD,
+        .num_kv_heads = kKVHeads,
+        .storage      = KvCacheStorage::Int8Group64,
+    };
+    const ops::ContextAttentionExecutionEnvelope envelope{
+        0, static_cast<std::uint32_t>(context_length)};
+    DeviceArena workspace(ops::context_softmax_attention_workspace_capacity_bytes(
+        kGeometry, envelope, tokens, tokens, 1));
+    Tensor out_tensor(d_out.data(), DType::BF16, {kD, kQHeads, tokens, 1});
+    ops::context_softmax_attention(Tensor(d_q.p, DType::BF16, {kD, kQHeads, tokens, 1}),
+                                   Tensor(d_query_k.p, DType::BF16, {kD, kKVHeads, tokens, 1}),
+                                   Tensor(d_query_v.p, DType::BF16, {kD, kKVHeads, tokens, 1}),
+                                   Tensor(d_length.p, DType::I32, {1}),
+                                   Tensor(d_valid.p, DType::I32, {1}),
+                                   Tensor(d_row.p, DType::I32, {1}), kGeometry, kScale, context,
+                                   envelope, workspace, out_tensor, nullptr);
+    cuda_synchronize();
+
+    const std::string label = "context_softmax_attention int8 T=" + std::to_string(tokens) +
+                              " L=" + std::to_string(context_length) +
+                              " mapping=" + mapping_name(mapping_pattern);
+    int failures = verify_reduction(label.c_str(), from_device_bf16(d_out.data(), q_count),
+                                    reference, kContextQueryBf16Criterion);
+    failures += d_out.verify_guards((label + " output guards").c_str());
+    return failures;
+}
+
+int run_int8_cases() {
+    int failures = 0;
+    for (const MappingPattern pattern : {MappingPattern::Identity, MappingPattern::Fragmented}) {
+        for (const auto [tokens, length] :
+             {std::array<int, 2>{1, 1}, std::array<int, 2>{1, 300}, std::array<int, 2>{4, 1000},
+              std::array<int, 2>{8, 129}, std::array<int, 2>{16, 4100}}) {
+            failures += run_int8_case(tokens, length, pattern);
+        }
+    }
+    return failures;
+}
+
+} // namespace
+
+int run_softmax_attention_context_tests() {
+    if (cuda_unavailable()) {
+        std::cout << "SKIP: CUDA device unavailable\n";
+        return 77;
+    }
+    int failures = 0;
+    for (const Profile selected : {Profile{128, 32, 8}, Profile{64, 64, 8}}) {
+        select_profile(selected);
+        std::cout << "context_softmax_attention profile [" << selected.d << ","
+                  << selected.q_heads << "," << selected.kv_heads << "]\n";
+        failures += run_profile_cases();
+    }
+    select_profile({128, 32, 8});
+    std::cout << "context_softmax_attention int8 G64 [128,32,8]\n";
+    failures += run_int8_cases();
+    // An unregistered geometry is refused.
+    try {
+        (void)ops::context_softmax_attention_workspace_capacity_bytes(
+            {64, 32, 8}, ops::ContextAttentionExecutionEnvelope{0, 64}, 1, 1, 1);
+        std::cerr << "context-attention accepted an unregistered geometry\n";
+        ++failures;
+    } catch (const std::invalid_argument&) {}
 
     if (failures != 0) {
         std::cerr << "context_softmax_attention failures=" << failures << '\n';

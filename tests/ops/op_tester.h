@@ -15,7 +15,10 @@
 //                                op_bf16_criterion());
 
 #include "core/arena.h"
-#include "core/tensor.h" // ninfer::DType, ninfer::Tensor (for op call sites)
+#include "core/device_class.h"
+#include "core/tensor.h" // ninferno::DType, ninferno::Tensor (for op call sites)
+#include "core/weight.h" // ninferno::QType (qtype_runs)
+#include "ninferno/types.h" // ninferno::KvCacheStorage and the public enums the op tests name
 #include "ops/op_check.h"
 
 #include <cuda_runtime.h>
@@ -27,6 +30,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -37,7 +41,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace ninfer::test {
+namespace ninferno::test {
 
 // --- environment ------------------------------------------------------------
 inline void cuda_check(cudaError_t status, const char* operation) {
@@ -61,6 +65,29 @@ inline bool cuda_unavailable() {
     if (e == cudaSuccess) { return n == 0; }
     if (e == cudaErrorNoDevice || e == cudaErrorInsufficientDriver) { return true; }
     throw std::runtime_error(std::string("cudaGetDeviceCount: ") + cudaGetErrorString(e));
+}
+
+// --- what this build and device run -----------------------------------------
+// A case whose format this build or device cannot run is skipped, never failed. The native NVFP4
+// Ops (fused projections, SparseMoe and Gemma4Moe expert banks) ship only in the 120a build;
+// NVFP4 weights through linear, linear_add, linear_swiglu and moe run everywhere (the generic
+// path). The E4M3 mma.sync behind the FP8 A8 routes and the fp8/k8v4 KV storages arrived with
+// sm_89. The KV answer is the one the ops refuse on.
+inline constexpr bool kNvfp4Built =
+#if defined(NINFERNO_WITHOUT_NVFP4)
+    false;
+#else
+    true;
+#endif
+
+inline bool fp8_mma_available() { return device_class().features.mma_fp8; }
+
+// Whether this build runs a native Op's weights of `qtype`; prints a SKIP line naming `label`
+// when it does not.
+inline bool qtype_runs(QType qtype, std::string_view label) {
+    if (qtype != QType::NVFP4 || kNvfp4Built) { return true; }
+    std::cout << "SKIP " << label << ": the native NVFP4 Ops need the 120a build\n";
+    return false;
 }
 
 // --- bf16 <-> f32 (round-to-nearest-even) -----------------------------------
@@ -168,7 +195,7 @@ inline std::vector<int> from_device_i32(const DeviceBuffer& d, std::size_t n) {
 // --- verdict ----------------------------------------------------------------
 inline bool error_stats_enabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("NINFER_OP_REPORT_STATS");
+        const char* value = std::getenv("NINFERNO_OP_REPORT_STATS");
         return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
     }();
     return enabled;
@@ -261,10 +288,15 @@ public:
 
     std::size_t bytes() const noexcept { return payload_bytes_; }
 
+    // Both settle the legacy default stream before returning: a legacy cudaMemset, or a pageable
+    // cudaMemcpy host-to-device, may still be in flight when the call returns, and an Op launched
+    // next on a non-blocking stream is not ordered after it (a replay stress test read an
+    // eager output that a late constructor fill had overwritten with the poison).
     void fill(int byte_value = 0) {
         if (payload_bytes_ != 0) {
             cuda_check(cudaMemset(data(), byte_value, payload_bytes_),
                        "cudaMemset guarded payload");
+            cuda_check(cudaStreamSynchronize(nullptr), "settle guarded payload fill");
         }
     }
 
@@ -274,6 +306,7 @@ public:
         auto* destination = static_cast<std::uint8_t*>(data()) + byte_offset;
         cuda_check(cudaMemcpy(destination, source, count, cudaMemcpyHostToDevice),
                    "cudaMemcpy host-to-guarded-device");
+        cuda_check(cudaStreamSynchronize(nullptr), "settle host-to-guarded-device copy");
     }
 
     void copy_to_host(void* destination, std::size_t count, std::size_t byte_offset = 0) const {
@@ -360,4 +393,4 @@ inline int verify_reduction(std::string_view label, std::span<const double> got,
     return 1;
 }
 
-} // namespace ninfer::test
+} // namespace ninferno::test

@@ -2,23 +2,34 @@
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/execution/linear.h"
+#include "core/debug_poison.h"
 #include "core/startup.h"
 #include "core/device.h"
-#include "ninfer/ops/target_logprobs.h"
+#include "core/host_memory.h"
+#include "ninferno/ops/argmax.h"
+#include "ninferno/ops/target_logprobs.h"
+#include "ninferno/ops/token_distribution.h"
+#include "structured/vocabulary.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 static_assert(std::is_nothrow_move_assignable_v<SpeculativeStats>);
 
@@ -35,16 +46,22 @@ std::uint32_t normalized_private_capacity(const ContextCacheOptions& options) {
 
 } // namespace
 
-ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const SequencePlanImpl& plan,
+ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl& plan,
                          DeviceContext& device_in, const StartupObserver& startup_observer)
-    : parameters(parameters_in), device(device_in), capacity(plan.capacity),
-      kv_capacity(plan.kv_capacity), max_concurrency(plan.max_concurrency),
-      context_cache(plan.context_cache),
+    : model(model_in), device(device_in), capacity(plan.capacity), kv_capacity(plan.kv_capacity),
+      max_concurrency(plan.max_concurrency), context_cache(plan.context_cache),
       continuation_capacity(normalized_private_capacity(plan.context_cache)),
       shared_prefix_capacity(plan.context_cache.max_shared_prefixes.value_or(0)),
-      prefill_chunk(plan.prefill_chunk), draft_window(plan.draft_window),
-      speculative_backend(plan.speculative_backend), kv_storage(plan.kv_storage),
-      proposal_head(plan.proposal_head), vision_enabled(plan.features.vision),
+      prefill_chunk(plan.prefill_chunk), kv_lease_window(plan.kv_lease_window),
+      draft_window(plan.draft_window),
+      default_draft_depth(plan.default_draft_depth), speculative_backend(plan.speculative_backend),
+      kv_storage(plan.kv_storage), proposal_head(plan.proposal_head), draft_width(plan.draft_width),
+      watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
+      shared_trip_floor(plan.shared_trip_floor), calibrate_floor(plan.calibrate_floor),
+      copy_window_drafts(plan.ngram_draft_tokens), copy_min_match(plan.ngram_min_match),
+      default_step_down(plan.step_down), speculation_load(plan.load),
+      speculation_context_limit(plan.context_limit),
+      speculative_batch_limit(plan.speculative_batch_limit), vision_enabled(plan.features.vision),
       use_cuda_graph(plan.use_cuda_graph), causal_scoring(plan.causal_scoring),
       kv_payload_bytes(plan.persistent.kv_payload_bytes),
       graph_allowance_bytes(plan.graph_allowance_bytes), workspace_plan(plan.workspace),
@@ -57,25 +74,26 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
       score_logprobs_host(plan.causal_scoring ? std::make_optional<PinnedHostBuffer>(
                                                     kCausalScoreTile * sizeof(float))
                                               : std::nullopt),
-      ordinary_host(
-          !plan.causal_scoring && plan.speculative_backend == SpeculativeBackend::None
-              ? std::make_optional<PinnedHostBuffer>(sizeof(qwen3_5::OrdinaryDecodeIngress) +
-                                                     sizeof(qwen3_5::OrdinaryDecodeEgress))
-              : std::nullopt),
+      ordinary_host(!plan.causal_scoring ? std::make_optional<PinnedHostBuffer>(
+                                               sizeof(qwen3_5::OrdinaryDecodeIngress) +
+                                               sizeof(qwen3_5::OrdinaryDecodeEgress))
+                                         : std::nullopt),
       mtp_host(plan.speculative_backend == SpeculativeBackend::Mtp
                    ? std::make_optional<PinnedHostBuffer>(sizeof(qwen3_5::MtpDecodeIngress) +
                                                           sizeof(qwen3_5::MtpDecodeEgress))
                    : std::nullopt),
       dflash_host(is_masked_draft_backend(plan.speculative_backend)
                       ? std::make_optional<PinnedHostBuffer>(sizeof(qwen3_5::DFlashDecodeIngress) +
-                                                             sizeof(qwen3_5::DFlashDecodeEgress))
+                                                             sizeof(qwen3_5::DFlashDecodeEgress) +
+                                                             sizeof(qwen3_5::DFlashPrefillIngress))
                       : std::nullopt),
       context_source_ready_(device_in), context_completion_(device_in),
+      speculative_tail_ready_(device_in),
       context_transfer_timers_{CudaEventTimer(device_in, device_in.transfer_stream),
                                CudaEventTimer(device_in, device_in.transfer_stream),
                                CudaEventTimer(device_in, device_in.transfer_stream)} {
-    if (&parameters != plan.parameters || parameters.model.options() != plan.features) {
-        throw std::invalid_argument("Program parameters do not match the frozen sequence plan");
+    if (&model != plan.model || model.load_options() != plan.features) {
+        throw std::invalid_argument("Program model does not match the frozen sequence plan");
     }
     if (workspace_plan.general_capacity == 0 ||
         workspace_plan.vision.has_value() != vision_enabled ||
@@ -124,6 +142,25 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
         decoder->text_kv.execution_tables().logical_page_capacity());
     state_images =
         std::make_unique<qwen3_5::StateImageDevicePool>(backing, plan.persistent.state_images);
+    // Host StateImages and Host KV are pinned: refuse, with the numbers, before pinning more than
+    // the host can spare (a pinned-memory overcommit stalls or reboots the host, it does not fail).
+    const std::uint64_t host_image_bytes = state_images->host_layout().image_bytes;
+    const std::uint64_t pinned_host_bytes =
+        host_image_bytes * plan.context_cache.host_state_slots +
+        static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
+    if (pinned_host_bytes != 0) {
+        if (const std::optional<HostMemory> memory = read_host_memory()) {
+            require_pinned_host_fits(
+                pinned_host_bytes, *memory,
+                "the context cache's Host tier (" +
+                    std::to_string(plan.context_cache.host_state_slots) + " Host StateImages x " +
+                    format_gib(host_image_bytes) + " + Host KV " +
+                    format_gib(plan.context_cache.host_kv_capacity_bytes) + ")",
+                "Ask for fewer Host StateImages or less Host KV (ContextCacheOptions "
+                "host_state_slots / host_kv_capacity_bytes; ninferno-serve --host-state-slots, "
+                "--host-kv-mib), or disable the context cache.");
+        }
+    }
     if (plan.context_cache.host_state_slots != 0) {
         const std::uint64_t host_state_bytes =
             static_cast<std::uint64_t>(state_images->host_layout().image_bytes) *
@@ -142,6 +179,9 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
     }
     state_store = std::make_unique<StateImageStore>(
         *state_images, host_state_images.get(), static_cast<std::uint32_t>(logical_state_capacity));
+    if (const std::optional<unsigned char> poison = debug_poison_byte_for("state")) {
+        state_store->enable_debug_poison(*poison, device.stream);
+    }
     pressure_private_owner_scratch_.resize(continuation_capacity);
     pressure_shared_owner_scratch_.resize(shared_prefix_capacity);
     pressure_private_drop_scratch_.resize(continuation_capacity);
@@ -153,18 +193,24 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
     pressure_state_scratch_.reserve(static_cast<std::size_t>(logical_state_capacity));
     if (plan.persistent.replay_records) {
         replay_records.emplace(backing, *plan.persistent.replay_records);
-        replay_fold.emplace(*replay_records, state_images->linear().all_layers_view());
+        if (!model.replay_fold(*replay_records, state_images->linear())) {
+            replay_fold.emplace(*replay_records, state_images->linear().all_layers_view());
+        }
     }
-    if (replay_records.has_value() != (speculative_backend != SpeculativeBackend::None) ||
-        replay_fold.has_value() != replay_records.has_value()) {
+    // A family whose state images must be replayed to the accepted prefix plans replay records;
+    // one whose speculative rows leave nothing to undo (rings: rejected rows are never visible)
+    // plans none.
+    if ((replay_records.has_value() && speculative_backend == SpeculativeBackend::None) ||
+        (replay_fold.has_value() && !replay_records.has_value())) {
         throw std::logic_error("ReplaySSM records do not match the sequence plan");
     }
     if (plan.persistent.dflash) {
+        // A drafter without sliding layers keeps no lane-local state (its full layers page).
         CyclicKVCache* local = state_images->dflash_local();
-        if (local == nullptr) {
-            throw std::logic_error("DFlash StateImage has no local fixed state");
+        if (local == nullptr && !plan.persistent.dflash->full) {
+            throw std::logic_error("DFlash state has neither local rings nor full-layer pages");
         }
-        dflash.emplace(backing, *plan.persistent.dflash, *local);
+        dflash.emplace(backing, *plan.persistent.dflash, local);
     }
     if (dflash.has_value() != plan.features.masked_draft()) {
         throw std::logic_error("DFlash state does not match the frozen sequence plan");
@@ -223,8 +269,7 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
     if (io.mtp_decode.has_value() != (speculative_backend == SpeculativeBackend::Mtp)) {
         throw std::logic_error("MTP decode frame does not match the sequence plan");
     }
-    if (io.ordinary.has_value() !=
-        (!causal_scoring && speculative_backend == SpeculativeBackend::None)) {
+    if (io.ordinary.has_value() != !causal_scoring) {
         throw std::logic_error("ordinary decode frame does not match the sequence plan");
     }
     if (io.dflash_prefill.has_value() != is_masked_draft_backend(speculative_backend)) {
@@ -232,6 +277,41 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
     }
     if (io.dflash_decode.has_value() != is_masked_draft_backend(speculative_backend)) {
         throw std::logic_error("DFlash decode frame does not match the sequence plan");
+    }
+    if (plan.launch_windows.empty() != (speculative_backend == SpeculativeBackend::None) ||
+        (!plan.launch_windows.empty() && plan.launch_windows.back() != draft_window)) {
+        throw std::logic_error("speculative launch windows do not match the sequence plan");
+    }
+    launch_windows.reserve(plan.launch_windows.size());
+    for (std::size_t w = 0; w < plan.launch_windows.size(); ++w) {
+        const std::uint32_t drafts = plan.launch_windows[w];
+        LaunchWindow& window       = launch_windows.emplace_back();
+        window.drafts              = drafts;
+        window.depth               = drafts;
+        if (copy_window_drafts != 0 && w + 1 == plan.launch_windows.size()) {
+            if (w == 0 || drafts != copy_window_drafts) {
+                throw std::logic_error("the copy window does not match the sequence plan");
+            }
+            window.copy  = true;
+            window.depth = plan.launch_windows[w - 1];
+        }
+        window.min_batch           = plan.launch_window_min_batch.at(w);
+        window.batches             = plan.launch_window_batches.at(w);
+        window.graph_bytes =
+            w < plan.launch_window_graph_bytes.size() ? plan.launch_window_graph_bytes[w] : 0;
+        if (io.mtp_decode) { window.mtp = io.mtp_decode->narrowed(drafts); }
+        if (io.dflash_decode) {
+            window.dflash = io.dflash_decode->narrowed(drafts);
+            window.dflash->pending_features =
+                dflash->pending_features.slice(1, 0, static_cast<std::int32_t>(drafts) + 1);
+        }
+        if (replay_records) {
+            window.records     = replay_records->narrowed(static_cast<std::int32_t>(drafts) + 1);
+            window.family_fold = model.replay_fold(*window.records, state_images->linear());
+            if (!window.family_fold) {
+                window.fold.emplace(*window.records, state_images->linear().all_layers_view());
+            }
+        }
     }
     prefill_hidden = plan.persistent.prefill_hidden.bind(backing);
     if (plan.persistent.score_hidden) {
@@ -262,6 +342,11 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
     if (!causal_scoring) { set_device_i32(io.backend_kv_table_row, 0); }
 
     host_tokens = round_host ? static_cast<TokenId*>(round_host->data()) : nullptr;
+    if (!causal_scoring) {
+        const auto domain = static_cast<std::uint32_t>(model.traits().public_tokens);
+        token_masks = std::make_unique<runtime::TokenMaskStaging>(
+            max_concurrency, draft_window + 1U, structured::mask_words_for(domain));
+    }
     if (ordinary_host) {
         ordinary_host_ingress = static_cast<qwen3_5::OrdinaryDecodeIngress*>(ordinary_host->data());
         ordinary_host_egress  = reinterpret_cast<qwen3_5::OrdinaryDecodeEgress*>(
@@ -269,6 +354,38 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
             sizeof(qwen3_5::OrdinaryDecodeIngress));
         *ordinary_host_ingress = {};
         *ordinary_host_egress  = {};
+        // The settings are validated in every generation engine. A CUDA Graph engine paces its
+        // rounds; it runs several steps per round only where rows past a stop leave nothing to
+        // undo (each step is one graph launch) and never in a speculative engine, whose rounds
+        // only choose how the host waits.
+        uncommitted_row_limit  = model.uncommitted_row_limit(plan);
+        const bool speculative = speculative_backend != SpeculativeBackend::None;
+        const bool runs_ahead  = !speculative && uncommitted_row_limit > 0;
+        const RoundPacing pacing(
+            std::getenv("NINFERNO_DECODE_STEPS"),
+            std::getenv("NINFERNO_DECODE_WAIT"), qwen3_5::kMaximumOrdinaryDecodeSteps,
+            runs_ahead ? std::min(qwen3_5::kMaximumOrdinaryDecodeSteps, uncommitted_row_limit + 1U)
+                       : 1U);
+        const bool paced = use_cuda_graph;
+        if (paced) {
+            round_pacing = pacing;
+            round_timer.emplace(device, device.stream, /*blocking_stop=*/true);
+        }
+        // A step count this engine cannot run is reported once per process.
+        const std::optional<std::uint32_t> fixed = pacing.fixed_steps();
+        if (fixed && *fixed > 1 && (!paced || !runs_ahead)) {
+            const char* reason = "this model's recurrent state cannot run ahead";
+            if (speculative) { reason = "a speculative engine does not run ahead"; }
+            if (!use_cuda_graph) { reason = "CUDA graphs are off"; }
+            static std::once_flag reported;
+            std::call_once(reported, [&] {
+                std::fprintf(
+                    stderr,
+                    "NINFERNO_DECODE_STEPS=%u is ignored: %s; ordinary decode runs one step "
+                    "per round\n",
+                    *fixed, reason);
+            });
+        }
     }
     if (mtp_host) {
         mtp_host_ingress = static_cast<qwen3_5::MtpDecodeIngress*>(mtp_host->data());
@@ -282,12 +399,12 @@ ProgramImpl::ProgramImpl(const execution::Parameters& parameters_in, const Seque
         dflash_host_egress  = reinterpret_cast<qwen3_5::DFlashDecodeEgress*>(
             static_cast<unsigned char*>(dflash_host->data()) +
             sizeof(qwen3_5::DFlashDecodeIngress));
-        *dflash_host_ingress = {};
-        *dflash_host_egress  = {};
-    }
-    if (io.dflash_prefill) {
-        CUDA_CHECK(cudaMemsetAsync(io.dflash_prefill->produced_count.data, 0,
-                                   io.dflash_prefill->produced_count.bytes(), device.stream));
+        *dflash_host_ingress        = {};
+        *dflash_host_egress         = {};
+        dflash_prefill_host_ingress = reinterpret_cast<qwen3_5::DFlashPrefillIngress*>(
+            static_cast<unsigned char*>(dflash_host->data()) +
+            sizeof(qwen3_5::DFlashDecodeIngress) + sizeof(qwen3_5::DFlashDecodeEgress));
+        *dflash_prefill_host_ingress = {};
     }
     CUDA_CHECK(cudaMemsetAsync(io.rope_delta.data, 0, io.rope_delta.bytes(), device.stream));
     if (io.mtp) {
@@ -316,7 +433,9 @@ ProgramImpl::~ProgramImpl() noexcept {
 }
 
 std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
-                                             std::uint32_t first_target) {
+                                             std::uint32_t first_target,
+                                             const ScoreDetailRequest& request,
+                                             ScoreDetail& detail) {
     if (!causal_scoring || !score_hidden || !score_logprobs_host ||
         workspace_plan.causal_score == 0) {
         throw std::logic_error("Program was not constructed for causal scoring");
@@ -339,7 +458,7 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
     const auto token_count                     = static_cast<std::uint32_t>(token_count_size);
     const std::uint32_t predictor_count        = token_count - 1U;
     const std::uint32_t scored_predictor_begin = first_target - 1U;
-    const std::uint32_t entitlement            = kv_pages_for_frontier(predictor_count);
+    const std::uint32_t entitlement            = paged_kv_pages(predictor_count);
     if (entitlement == 0) { throw std::logic_error("causal score has no KV entitlement"); }
 
     std::optional<StateImageHandle> state;
@@ -360,6 +479,16 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
 
     std::vector<float> output;
     output.reserve(token_count_size - first_target);
+    const std::size_t top_k   = request.top_k;
+    const std::size_t given_k = request.given_k;
+    if (top_k > static_cast<std::size_t>(ops::kTokenTopkMax) ||
+        given_k > static_cast<std::size_t>(ops::kTokenTopkMax) ||
+        request.given_ids.size() != (token_count_size - first_target) * given_k) {
+        throw std::invalid_argument("causal score detail request has an invalid shape");
+    }
+    detail.top_ids.clear();
+    detail.top_logprobs.clear();
+    detail.given_logprobs.clear();
     std::vector<TokenId> staged_targets;
     staged_targets.reserve(kCausalScoreTile);
     std::uint32_t staged_columns = 0;
@@ -367,7 +496,7 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
     try {
         state = state_store->reserve_reset(device.stream);
         if (!state) { throw std::bad_alloc(); }
-        address = text_kv_addresses->create_active(entitlement, 0);
+        address = text_kv_addresses->create_active(entitlement, 0, device.stream);
         if (!address) { throw std::bad_alloc(); }
         if (text_kv_addresses->bound_row(*address) != 0) {
             throw std::logic_error("causal score did not bind the unique Main KV row");
@@ -383,19 +512,84 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
             work.reset();
             mark_workspace_usage(workspace_plan.causal_score);
             const auto columns = static_cast<std::int32_t>(staged_columns);
-            Tensor logits      = work.alloc(
-                DType::BF16, {dimension(parameters.model.config().text.vocab_size), columns});
+            Tensor logits      = work.alloc(DType::BF16, {model.traits().output_rows, columns});
             Tensor target_ids = work.alloc(DType::I32, {columns});
             Tensor logprobs   = work.alloc(DType::FP32, {columns});
             Tensor hidden     = score_hidden->slice(1, 0, columns);
-            execution::project(hidden, parameters.text.output_head, logits, work, device.stream);
+            model.output_logits(hidden, logits, work, device.stream);
             CUDA_CHECK(cudaMemcpyAsync(target_ids.data, staged_targets.data(), target_ids.bytes(),
                                                     cudaMemcpyHostToDevice, device.stream));
-            ops::target_logprobs(logits, target_ids,
-                                              dimension(parameters.model.resources().public_token_count),
-                                              logprobs, device.stream);
+            ops::target_logprobs(logits, target_ids, model.traits().public_tokens, logprobs,
+                                 device.stream);
+            // The distribution detail (ScoreDetailRequest): this tile's columns are targets
+            // output.size() .. + columns.
+            const auto read_back = [&](const Tensor& t, auto& into, std::size_t count) {
+                const std::size_t at = into.size();
+                into.resize(at + count);
+                CUDA_CHECK(cudaMemcpyAsync(into.data() + at, t.data, count * sizeof(into[0]),
+                                           cudaMemcpyDeviceToHost, device.stream));
+            };
+            if (top_k > 0) {
+                const auto k = static_cast<std::int32_t>(top_k);
+                Tensor ids   = work.alloc(DType::I32, {k, columns});
+                Tensor lps   = work.alloc(DType::FP32, {k, columns});
+                ops::logprob_topk(logits, model.traits().public_tokens, ids, lps, device.stream);
+                read_back(ids, detail.top_ids, top_k * staged_columns);
+                read_back(lps, detail.top_logprobs, top_k * staged_columns);
+            }
+            if (given_k > 0) {
+                const auto k = static_cast<std::int32_t>(given_k);
+                Tensor ids   = work.alloc(DType::I32, {k, columns});
+                Tensor lps   = work.alloc(DType::FP32, {k, columns});
+                CUDA_CHECK(cudaMemcpyAsync(ids.data,
+                                           request.given_ids.data() + output.size() * given_k,
+                                           ids.bytes(), cudaMemcpyHostToDevice, device.stream));
+                ops::gather_logprobs(logits, model.traits().public_tokens, ids, lps, device.stream);
+                read_back(lps, detail.given_logprobs, given_k * staged_columns);
+            }
             CUDA_CHECK(cudaMemcpyAsync(score_logprobs_host->data(), logprobs.data, logprobs.bytes(),
                                                     cudaMemcpyDeviceToHost, device.stream));
+            // Diagnostic (NINFERNO_SCORE_LOGITS=<file>): append each scored column's logits over
+            // the public token domain as FP32, for distribution-level comparison (KL, top-1)
+            // against an external reference. They are the BF16 logits the log probabilities were
+            // computed from, widened exactly; no workspace is added.
+            if (const char* logits_path = std::getenv("NINFERNO_SCORE_LOGITS");
+                logits_path != nullptr && *logits_path) {
+                const auto rows   = static_cast<std::size_t>(logits.ne[0]);
+                const auto usable = std::min<std::size_t>(
+                    rows, static_cast<std::size_t>(model.traits().public_tokens));
+                std::vector<std::uint16_t> words(rows * staged_columns);
+                CUDA_CHECK(cudaMemcpyAsync(words.data(), logits.data,
+                                           words.size() * sizeof(std::uint16_t),
+                                           cudaMemcpyDeviceToHost, device.stream));
+                device.synchronize();
+                std::vector<float> values(usable * staged_columns);
+                for (std::size_t column = 0; column < staged_columns; ++column) {
+                    for (std::size_t row = 0; row < usable; ++row) {
+                        const std::uint32_t bits =
+                            static_cast<std::uint32_t>(words[column * rows + row]) << 16;
+                        std::memcpy(&values[column * usable + row], &bits, sizeof(float));
+                    }
+                }
+                std::ofstream dump(logits_path, std::ios::binary | std::ios::app);
+                dump.write(reinterpret_cast<const char*>(values.data()),
+                           static_cast<std::streamsize>(values.size() * sizeof(float)));
+            }
+            // Diagnostic (NINFERNO_SCORE_ARGMAX=<file>): append each scored column's argmax id, for
+            // top-1 agreement against an external reference. target_ids is free once the log
+            // probabilities are computed, so the ids reuse it; no workspace is added.
+            if (const char* argmax_path = std::getenv("NINFERNO_SCORE_ARGMAX");
+                argmax_path != nullptr && *argmax_path) {
+                ops::argmax(logits, target_ids, model.traits().public_tokens, device.stream);
+                std::vector<std::int32_t> ids(staged_columns);
+                CUDA_CHECK(cudaMemcpyAsync(ids.data(), target_ids.data,
+                                           ids.size() * sizeof(std::int32_t),
+                                           cudaMemcpyDeviceToHost, device.stream));
+                device.synchronize();
+                std::ofstream dump(argmax_path, std::ios::binary | std::ios::app);
+                dump.write(reinterpret_cast<const char*>(ids.data()),
+                           static_cast<std::streamsize>(ids.size() * sizeof(std::int32_t)));
+            }
             device.synchronize();
             const auto* host = static_cast<const float*>(score_logprobs_host->data());
             output.insert(output.end(), host, host + staged_columns);
@@ -406,10 +600,15 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
 
         std::uint32_t cursor = 0;
         while (cursor < predictor_count) {
-            const std::uint32_t nominal = std::min(prefill_chunk, predictor_count - cursor);
+            const std::uint32_t nominal =
+                request.step_tokens == 0 ? model.prefill_call_tokens(prefill_chunk, cursor,
+                                                                     predictor_count)
+                : cursor < scored_predictor_begin
+                    ? model.prefill_call_tokens(prefill_chunk, cursor, scored_predictor_begin)
+                    : std::min(request.step_tokens, predictor_count - cursor);
             execution::PrefillContext schedule_state{
-                {device, parameters, work, state_images->linear(), nullptr, io, prefill_hidden,
-                 prefill_chunk, proposal_head},
+                {device, model, work, *state_images, nullptr, io, prefill_hidden, prefill_chunk,
+                 capacity, proposal_head, draft_width, &speculation_load},
                 decoder->text_kv.execution_view(text_kv_addresses->execution_row(*address)),
                 {},
                 decoder->text_kv,
@@ -421,11 +620,12 @@ std::vector<float> ProgramImpl::causal_score(PreparedPromptData&& prompt,
                 state_slot,
                 state_slot,
                 0,
+                0,
                 nullptr};
             mark_workspace_usage(workspace_plan.text_prefill);
-            const execution::PrefillChunkResult result = execution::prefill_text_chunk(
-                schedule_state, std::span<const TokenId>(prompt.token_ids), nominal, std::nullopt,
-                false);
+            const execution::PrefillChunkResult result =
+                model.prefill_text_chunk(schedule_state, std::span<const TokenId>(prompt.token_ids),
+                                         nominal, std::nullopt, false);
             if (result.finalized || result.processed_tokens == 0 ||
                 result.processed_tokens > nominal) {
                 throw std::logic_error("causal score Prefill made invalid progress");
@@ -508,9 +708,8 @@ MemorySummary ProgramImpl::memory_summary() const noexcept {
     out.max_context     = capacity;
     out.kv_capacity     = kv_capacity;
     out.kv_cache        = kv_storage;
-    const auto& weights = parameters.model.storage_stats();
-    out.weights = ArenaMemorySummary{weights.device_capacity_bytes, weights.device_capacity_bytes,
-                                     weights.device_capacity_bytes};
+    const std::size_t weights = model.traits().weight_bytes;
+    out.weights               = ArenaMemorySummary{weights, weights, weights};
     out.sequence =
         ArenaMemorySummary{persistent.capacity(), persistent.used(), persistent.peak_used()};
     std::size_t active_handoff_bytes = 0;
@@ -543,6 +742,21 @@ MemorySummary ProgramImpl::memory_summary() const noexcept {
     }
     out.workspace_logical_peak_bytes = workspace_logical_peak_bytes;
     out.cuda_graph_allowance_bytes   = graph_allowance_bytes;
+    for (const LaunchWindow& window : launch_windows) {
+        // The first and last batch its graphs cover (0 and 0: none).
+        std::uint32_t first = 0;
+        std::uint32_t last  = 0;
+        for (std::uint32_t batch = 1; batch <= speculative_batch_limit; ++batch) {
+            if (!window_runs_batch(window.batches, batch)) { continue; }
+            first = first == 0 ? batch : first;
+            last  = batch;
+        }
+        out.speculative_graph_windows.push_back({.draft_tokens    = window.drafts,
+                                                 .first_batch     = first,
+                                                 .last_batch      = last,
+                                                 .allowance_bytes = window.graph_bytes});
+    }
+    out.prefill_chunk                = prefill_chunk;
     out.kv_payload_bytes             = kv_payload_bytes;
     if (host_state_images) {
         out.host_state_capacity_slots = host_state_images->capacity();
@@ -574,5 +788,11 @@ void ProgramImpl::reset_memory_peaks() noexcept {
     }
 }
 
+double ProgramImpl::calibrated_floor(std::uint32_t depth, double floor) const noexcept {
+    for (const auto& [measured_depth, measured] : measured_round_floors) {
+        if (measured_depth == depth) { return std::max(floor, measured); }
+    }
+    return floor;
+}
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

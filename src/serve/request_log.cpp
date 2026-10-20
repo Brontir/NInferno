@@ -1,5 +1,6 @@
 #include "serve/request_log.h"
 #include "product/logging/pretty_format.h"
+#include "product/activation_options.h"
 #include "product/speculative_options.h"
 
 #include <spdlog/logger.h>
@@ -17,9 +18,9 @@
 #include <system_error>
 #include <utility>
 
-#include <unistd.h>
+#include "core/sys.h"
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 using Json = nlohmann::json;
@@ -38,7 +39,7 @@ std::uint64_t unix_time_ms() {
 std::string new_server_instance_id() {
     const auto now    = std::chrono::system_clock::now().time_since_epoch();
     const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-    return "serve-" + std::to_string(static_cast<long long>(::getpid())) + '-' +
+    return "serve-" + std::to_string(sys::pid()) + '-' +
            std::to_string(micros);
 }
 
@@ -66,31 +67,21 @@ std::string cuda_uuid_string(const cudaUUID_t& uuid) {
     return out.str();
 }
 
-const char* finish_reason_name(ninfer::FinishReason reason) {
-    switch (reason) {
-    case ninfer::FinishReason::None:
-        return "none";
-    case ninfer::FinishReason::OutputLimit:
-        return "output_limit";
-    case ninfer::FinishReason::ContextCapacity:
-        return "context_capacity";
-    case ninfer::FinishReason::StopToken:
-        return "stop_token";
-    case ninfer::FinishReason::StopString:
-        return "stop_string";
-    case ninfer::FinishReason::Cancelled:
-        return "cancelled";
-    }
-    return "unknown";
-}
-
-Json tool_call_parse_json(const ninfer::ToolCallParseDiagnostics& diagnostics) {
+Json tool_call_parse_json(const ninferno::ToolCallParseDiagnostics& diagnostics) {
     return Json{{"marker_seen", diagnostics.marker_seen},
                 {"structured_call_count", diagnostics.structured_call_count},
                 {"empty_arguments_omitted", diagnostics.empty_arguments_omitted},
                 {"schema_mismatch_arguments", diagnostics.schema_mismatch_arguments},
+                {"repeated_parameters", diagnostics.repeated_parameters},
+                {"recovered_from_reasoning", diagnostics.recovered_from_reasoning},
+                {"ended_inside_reasoning", diagnostics.ended_inside_reasoning},
+                {"cut_calls_dropped", diagnostics.cut_calls_dropped},
+                {"undeclared_calls", diagnostics.undeclared_calls},
+                {"trailing_content_bytes", diagnostics.trailing_content_bytes},
+                {"unwrapped_calls", diagnostics.unwrapped_calls},
+                {"closed_calls", diagnostics.closed_calls},
                 {"fallback_reason",
-                 ninfer::tool_call_parse_fallback_reason_name(diagnostics.fallback_reason)}};
+                 ninferno::tool_call_parse_fallback_reason_name(diagnostics.fallback_reason)}};
 }
 
 std::string tool_choice_name(const ToolChoice& choice) {
@@ -103,48 +94,28 @@ std::string tool_choice_name(const ToolChoice& choice) {
     return "unknown";
 }
 
-Json requested_reasoning_effort_json(const std::optional<RequestedReasoningEffort>& requested) {
-    return requested ? Json(std::string(requested_reasoning_effort_name(*requested)))
+Json requested_reasoning_effort_json(const std::optional<ninferno::ReasoningEffort>& requested) {
+    return requested ? Json(std::string(ninferno::reasoning_effort_name(*requested)))
                      : Json(nullptr);
 }
 
-const char* kv_cache_name(ninfer::KvCacheStorage storage) {
-    switch (storage) {
-    case ninfer::KvCacheStorage::BFloat16:
-        return "bf16";
-    case ninfer::KvCacheStorage::Int8Group64:
-        return "int8-group64";
-    case ninfer::KvCacheStorage::Fp8E4M3Row256:
-        return "fp8-e4m3-row256";
-    case ninfer::KvCacheStorage::Nvfp4Group16:
-        return "nvfp4";
-    case ninfer::KvCacheStorage::Fp8KeyNvfp4Value:
-        return "k8v4";
-    }
-    return "unknown";
+const char* proposal_head_name(ninferno::ProposalHead proposal) {
+    return proposal == ninferno::ProposalHead::Optimized ? "optimized" : "full";
 }
 
-const char* kv_capacity_mode_name(ninfer::KvCapacityMode mode) {
-    return mode == ninfer::KvCapacityMode::Automatic ? "auto" : "explicit";
-}
-
-const char* proposal_head_name(ninfer::ProposalHead proposal) {
-    return proposal == ninfer::ProposalHead::Optimized ? "optimized" : "full";
-}
-
-const char* prefix_reuse_path_name(ninfer::PrefixReusePath path) {
+const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) {
     switch (path) {
-    case ninfer::PrefixReusePath::Root:
+    case ninferno::PrefixReusePath::Root:
         return "root";
-    case ninfer::PrefixReusePath::PrivateEndpoint:
+    case ninferno::PrefixReusePath::PrivateEndpoint:
         return "private_endpoint";
-    case ninfer::PrefixReusePath::PrivateTurnClosure:
+    case ninferno::PrefixReusePath::PrivateTurnClosure:
         return "private_turn_closure";
-    case ninfer::PrefixReusePath::PrivateResponseReplay:
+    case ninferno::PrefixReusePath::PrivateResponseReplay:
         return "private_response_replay";
-    case ninfer::PrefixReusePath::PrivateLongAnchor:
+    case ninferno::PrefixReusePath::PrivateLongAnchor:
         return "private_long_anchor";
-    case ninfer::PrefixReusePath::SharedStablePrefix:
+    case ninferno::PrefixReusePath::SharedStablePrefix:
         return "shared_stable_prefix";
     }
     return "unknown";
@@ -158,7 +129,7 @@ Json event_base(const std::string& server_instance_id, std::uint64_t timestamp, 
                 {"server_instance_id", server_instance_id}};
 }
 
-Json sampler_json(const ninfer::ResolvedSamplingParameters& sampling) {
+Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
     return Json{{"temperature", sampling.temperature},
                 {"top_p", sampling.top_p},
                 {"top_k", sampling.top_k},
@@ -168,7 +139,7 @@ Json sampler_json(const ninfer::ResolvedSamplingParameters& sampling) {
                 {"seed", sampling.seed}};
 }
 
-Json preset_json(const ninfer::SamplingPreset& preset) {
+Json preset_json(const ninferno::SamplingPreset& preset) {
     return Json{{"temperature", preset.temperature},
                 {"top_p", preset.top_p},
                 {"top_k", preset.top_k},
@@ -177,7 +148,7 @@ Json preset_json(const ninfer::SamplingPreset& preset) {
                 {"frequency_penalty", preset.frequency_penalty}};
 }
 
-Json overrides_json(const ninfer::SamplingOverrides& overrides) {
+Json overrides_json(const ninferno::SamplingOverrides& overrides) {
     Json result{{"temperature", nullptr},
                 {"top_p", nullptr},
                 {"top_k", nullptr},
@@ -217,7 +188,8 @@ Json request_json(const RequestLogContext& context) {
                 {"preserve_thinking",
                  context.preserve_thinking ? Json(*context.preserve_thinking) : Json(nullptr)},
                 {"preserve_thinking_semantic_change", context.preserve_thinking_semantic_change},
-                {"sampling", sampler_json(context.sampling)}};
+                {"sampling", sampler_json(context.sampling)},
+                {"notes", context.notes}};
 }
 
 Json preparation_json(const RequestLogContext& context) {
@@ -266,13 +238,13 @@ Json error_json(const ApiError& error) {
                 {"message", error.message}};
 }
 
-Json arena_json(const ninfer::ArenaMemorySummary& arena) {
+Json arena_json(const ninferno::ArenaMemorySummary& arena) {
     return Json{{"capacity_bytes", arena.capacity_bytes},
                 {"used_bytes", arena.used_bytes},
                 {"peak_used_bytes", arena.peak_used_bytes}};
 }
 
-Json vision_workspace_json(const std::optional<ninfer::VisionWorkspaceMemorySummary>& vision) {
+Json vision_workspace_json(const std::optional<ninferno::VisionWorkspaceMemorySummary>& vision) {
     if (!vision) { return nullptr; }
     return Json{{"aggregate_prompt_tokens", vision->aggregate_prompt_tokens},
                 {"max_item_tokens", vision->max_item_tokens},
@@ -285,16 +257,36 @@ Json vision_workspace_json(const std::optional<ninfer::VisionWorkspaceMemorySumm
 }
 
 Json speculative_json(const GenerationMetrics& metrics) {
-    return Json{{"backend", product::speculative_backend_name(metrics.speculative_backend)},
-                {"draft_window", metrics.speculative_draft_window},
-                {"rounds", metrics.speculative_rounds},
-                {"drafted_tokens", metrics.speculative_draft_tokens},
-                {"accepted_tokens", metrics.speculative_accepted_tokens},
-                {"fallback_steps", metrics.speculative_fallback_steps},
-                {"accepted_per_position", metrics.speculative_accepted_per_position}};
+    Json out{{"backend", product::speculative_backend_name(metrics.speculative_backend)},
+             {"draft_window", metrics.speculative_draft_window},
+             {"rounds", metrics.speculative_rounds},
+             {"drafted_tokens", metrics.speculative_draft_tokens},
+             {"accepted_tokens", metrics.speculative_accepted_tokens},
+             {"fallback_steps", metrics.speculative_fallback_steps},
+             {"plain_steps", metrics.speculative_plain_steps},
+             {"wide_rounds", metrics.speculative_wide_rounds},
+             {"ungraphed_rounds", metrics.speculative_ungraphed},
+             {"capped_rounds", metrics.speculative_capped_rounds},
+             {"copy_rounds", metrics.speculative_copy_rounds},
+             {"copy_accepted_tokens", metrics.speculative_copy_accepted},
+             {"shared_trip_deferrals", metrics.speculative_trips_held},
+             {"load_plain", metrics.speculative_load_plain},
+             {"watchdog_tripped", metrics.speculative_watchdog_tripped},
+             {"watchdog_round", metrics.speculative_watchdog_round},
+             {"step_downs", metrics.speculative_step_downs},
+             {"final_draft_window", metrics.speculative_final_draft_window},
+             {"accepted_per_position", metrics.speculative_accepted_per_position}};
+    if (!metrics.speculative_config.empty()) {
+        out["config"]    = metrics.speculative_config;
+        out["selection"] = metrics.speculative_selection;
+        out["reason"]    = metrics.speculative_reason;
+        out["floor"]     = metrics.speculative_floor;
+        if (!metrics.speculative_note.empty()) { out["note"] = metrics.speculative_note; }
+    }
+    return out;
 }
 
-Json materialization_json(const ninfer::MaterializationDiagnostics& diagnostics) {
+Json materialization_json(const ninferno::MaterializationDiagnostics& diagnostics) {
     return Json{
         {"predicted_now_ns", diagnostics.predicted_now_ns},
         {"predicted_future_loss_ns", diagnostics.predicted_future_loss_ns},
@@ -303,7 +295,7 @@ Json materialization_json(const ninfer::MaterializationDiagnostics& diagnostics)
         {"projection_work", diagnostics.projection_work},
         {"planning_elapsed_ns", diagnostics.planning_elapsed_ns},
         {"search_elapsed_ns", diagnostics.search_elapsed_ns},
-        {"stop_reason", ninfer::materialization_stop_reason_name(diagnostics.stop_reason)},
+        {"stop_reason", ninferno::materialization_stop_reason_name(diagnostics.stop_reason)},
         {"budget_exhausted", diagnostics.budget_exhausted},
         {"selected_degradation_units", diagnostics.selected_degradation_units},
         {"selected_maximal_fallback", diagnostics.selected_maximal_fallback},
@@ -318,7 +310,7 @@ Json materialization_json(const ninfer::MaterializationDiagnostics& diagnostics)
         {"search_discovery_used", diagnostics.search_discovery_used},
         {"search_overshoot_ns", diagnostics.search_overshoot_ns},
         {"search_stop_phase",
-         ninfer::materialization_search_phase_name(diagnostics.search_stop_phase)},
+         ninferno::materialization_search_phase_name(diagnostics.search_stop_phase)},
         {"search_boundary_limited", diagnostics.search_boundary_limited},
     };
 }
@@ -331,13 +323,13 @@ double nanoseconds_to_microseconds(std::uint64_t value) noexcept {
     return static_cast<double>(value) * 1.0e-3;
 }
 
-double request_host_exposed_seconds(const ninfer::GenerationEngineTiming& timing) noexcept {
+double request_host_exposed_seconds(const ninferno::GenerationEngineTiming& timing) noexcept {
     return timing.engine_boundary_exposed_seconds + timing.program_submit_exposed_seconds +
            timing.program_post_exposed_seconds + timing.engine_commit_output_exposed_seconds +
            timing.engine_maintenance_exposed_seconds;
 }
 
-Json request_engine_timing_json(const ninfer::GenerationEngineTiming& timing) {
+Json request_engine_timing_json(const ninferno::GenerationEngineTiming& timing) {
     return Json{
         {"queue_wait_seconds", timing.queue_wait_seconds},
         {"host_exposed_seconds",
@@ -355,9 +347,9 @@ Json request_engine_timing_json(const ninfer::GenerationEngineTiming& timing) {
     };
 }
 
-ninfer::RuntimeHostWorkStats host_work_delta(const ninfer::RuntimeHostWorkStats& previous,
-                                             const ninfer::RuntimeHostWorkStats& current) {
-    return ninfer::RuntimeHostWorkStats{
+ninferno::RuntimeHostWorkStats host_work_delta(const ninferno::RuntimeHostWorkStats& previous,
+                                             const ninferno::RuntimeHostWorkStats& current) {
+    return ninferno::RuntimeHostWorkStats{
         .engine_boundary_ns =
             monotonic_delta(previous.engine_boundary_ns, current.engine_boundary_ns),
         .program_submit_ns = monotonic_delta(previous.program_submit_ns, current.program_submit_ns),
@@ -393,7 +385,7 @@ ninfer::RuntimeHostWorkStats host_work_delta(const ninfer::RuntimeHostWorkStats&
     };
 }
 
-std::uint64_t host_active_ns(const ninfer::RuntimeHostWorkStats& timing) noexcept {
+std::uint64_t host_active_ns(const ninferno::RuntimeHostWorkStats& timing) noexcept {
     return timing.engine_boundary_ns + timing.program_submit_ns + timing.program_post_ns +
            timing.engine_commit_output_ns + timing.engine_maintenance_ns;
 }
@@ -407,9 +399,9 @@ Json microseconds_per(std::uint64_t nanoseconds, std::uint64_t count) {
 
 std::string format_server_start_json(
     const std::string& server_instance_id, std::uint64_t timestamp, const ServeOptions& options,
-    const ninfer::EngineOptions& engine_options,
-    const ninfer::ModelSamplingDefaults& sampling_defaults, const std::string& public_model_id,
-    const ninfer::LoadSummary& load, const ninfer::MemorySummary& memory,
+    const ninferno::EngineOptions& engine_options,
+    const ninferno::ModelSamplingDefaults& sampling_defaults, const std::string& public_model_id,
+    const ninferno::LoadSummary& load, const ninferno::MemorySummary& memory,
     const ServerLogEnvironment& environment, std::optional<std::uint64_t> artifact_size_bytes) {
     Json record = event_base(server_instance_id, timestamp, "server_start");
 
@@ -435,6 +427,7 @@ std::string format_server_start_json(
              {"default_thinking",
               options.enable_thinking ? Json(*options.enable_thinking) : Json(nullptr)},
              {"default_thinking_budget", std::move(default_thinking_budget)},
+             {"repetition_stop", options.repetition_stop},
              {"default_preserve_thinking",
               options.preserve_thinking ? Json(*options.preserve_thinking) : Json(nullptr)}};
     record["artifact"]                             = Json{{"path", options.artifact_path},
@@ -450,15 +443,42 @@ std::string format_server_start_json(
                                                           {"host_object_count", load.host_object_count},
                                                           {"load_seconds", load.load_seconds},
                                                           {"upload_seconds", load.upload_seconds}};
-    const ninfer::ContextCacheOptions& cache       = engine_options.context_cache;
-    const ninfer::ContextCostSummary& context_cost = load.context_cost;
+    const ninferno::ContextCacheOptions& cache       = engine_options.context_cache;
+    const ninferno::ContextCostSummary& context_cost = load.context_cost;
     const std::uint64_t total_device_state_slots =
         static_cast<std::uint64_t>(engine_options.max_concurrency) +
         cache.device_state_slots.value();
     record["engine"] =
         Json{{"device", engine_options.device},
              {"max_context", engine_options.max_context},
-             {"kv_capacity_mode", kv_capacity_mode_name(memory.kv_capacity_mode)},
+             {"max_context_automatic", memory.max_context_automatic},
+             {"max_context_native", memory.max_context_native},
+             {"lower_concurrency_fits",
+              [&memory] {
+                  Json fits = Json::array();
+                  for (const ninferno::ConcurrencyFit& fit : memory.lower_concurrency_fits) {
+                      fits.push_back(Json{{"max_concurrency", fit.max_concurrency},
+                                          {"max_context", fit.max_context}});
+                  }
+                  return fits;
+              }()},
+             {"moe_offload",
+              Json{{"mode", memory.moe_offload_mode == ninferno::MoeOffloadMode::Off      ? "off"
+                            : memory.moe_offload_mode == ninferno::MoeOffloadMode::Layers ? "layers"
+                                                                                        : "auto"},
+                   {"layers", memory.moe_offload_layers},
+                   {"offloaded", memory.moe_offload_offloaded},
+                   {"pinned_bytes", memory.moe_offload_pinned_bytes},
+                   {"resident_bytes", memory.moe_offload_resident_bytes},
+                   {"staging_bytes", memory.moe_offload_staging_bytes},
+                   {"target_context", memory.moe_offload_target_context},
+                   {"compute",
+                    memory.moe_offload_compute == ninferno::MoeOffloadCompute::Cpu ? "cpu" : "gpu"},
+                   {"cpu_threads", memory.moe_offload_cpu_threads},
+                   {"cpu_isa", memory.moe_offload_cpu_isa},
+                   {"compute_reason", memory.moe_offload_compute_reason}}},
+             {"kv_capacity_mode",
+              std::string(ninferno::kv_capacity_mode_name(memory.kv_capacity_mode))},
              {"kv_capacity", memory.kv_capacity},
              {"kv_capacity_page_groups", memory.kv_capacity_page_groups},
              {"kv_capacity_max_page_groups", memory.kv_capacity_max_page_groups},
@@ -467,33 +487,48 @@ std::string format_server_start_json(
              {"pending_timeout_ms", engine_options.pending_timeout_ms},
              {"prefill_chunk", engine_options.prefill_chunk},
              {"log_stats_interval_ms", options.log_stats_interval_ms},
-             {"kv_cache", kv_cache_name(engine_options.kv_cache)},
+             {"kv_cache", std::string(ninferno::kv_cache_storage_layout(engine_options.kv_cache))},
+             {"sliding_kv_cache",
+              std::string(ninferno::kv_cache_storage_layout(engine_options.sliding_kv_cache))},
+             {"activations", product::activation_mode_name(engine_options.activations)},
              {"vision", engine_options.enable_vision},
              {"cuda_graph", engine_options.use_cuda_graph},
              {"prefix_reuse", options.allow_prefix_reuse},
              {"speculative_backend",
               product::speculative_backend_name(engine_options.speculative.backend)},
              {"speculative_draft_window", engine_options.speculative.draft_tokens},
+             {"speculative_request_depths", engine_options.speculative.request_draft_tokens},
+             {"speculative_load", product::speculation_load_label(engine_options.speculative.load)},
              {"proposal_head", proposal_head_name(engine_options.speculative.proposal_head)},
-             {"context_cost", Json{{"transfer_source", ninfer::context_cost_preset_source_name(
+             {"context_cost", Json{{"transfer_source", ninferno::context_cost_preset_source_name(
                                                            context_cost.transfer_source)},
-                                   {"prefill_source", ninfer::context_cost_preset_source_name(
+                                   {"prefill_source", ninferno::context_cost_preset_source_name(
                                                           context_cost.prefill_source)},
                                    {"hardware_class", context_cost.hardware_class},
                                    {"prefill_signature", context_cost.prefill_signature},
-                                   {"preset_path", context_cost.preset_path.string()}}},
+                                   {"preset_path", context_cost.preset_path.string()},
+                                   {"similar_to", context_cost.similar_to}}},
              {"context_cache",
               Json{{"enabled", cache.enabled},
                    {"device_state_slots", cache.device_state_slots.value()},
+                   {"device_state_slots_automatic", memory.cached_device_states_automatic},
+                   {"device_state_slots_default", memory.cached_device_states_default},
                    {"total_device_state_slots", total_device_state_slots},
                    {"host_state_slots", cache.host_state_slots},
                    {"host_kv_capacity_bytes", cache.host_kv_capacity_bytes},
+                   {"host_tier_automatic", memory.host_tier_automatic},
+                   {"host_tier_reduced", memory.host_tier_reduced},
+                   {"host_state_slots_default", memory.host_state_slots_default},
+                   {"host_kv_capacity_default_bytes", memory.host_kv_capacity_default_bytes},
+                   {"host_tier_budget_bytes", memory.host_tier_budget_bytes},
                    {"max_private_continuations", cache.max_private_continuations.value()},
                    {"max_shared_prefixes", cache.max_shared_prefixes.value()},
                    {"max_long_anchors_per_continuation",
                     cache.max_long_anchors_per_continuation.value()}}}};
     record["sampling_defaults"] =
-        Json{{"thinking", preset_json(sampling_defaults.thinking)},
+        Json{{"source", sampling_defaults.source},
+             {"notes", sampling_defaults.notes},
+             {"thinking", preset_json(sampling_defaults.thinking)},
              {"non_thinking", preset_json(sampling_defaults.non_thinking)},
              {"server_overrides", overrides_json(options.sampling_overrides)},
              {"omitted_seed", "random"},
@@ -515,7 +550,18 @@ std::string format_server_start_json(
              {"host_state_capacity_slots", memory.host_state_capacity_slots},
              {"host_state_occupied_slots", memory.host_state_occupied_slots},
              {"host_kv_capacity_bytes", memory.host_kv_capacity_bytes},
-             {"host_kv_occupied_bytes", memory.host_kv_occupied_bytes}};
+             {"host_kv_occupied_bytes", memory.host_kv_occupied_bytes},
+             {"kernel_warm_up", Json{{"ran", memory.kernel_warm_up},
+                                     {"prefill_widths", memory.kernel_warm_up_prefill_widths},
+                                     {"widths_run", memory.kernel_warm_up_widths_run},
+                                     {"graph_passes", memory.kernel_warm_up_graph_passes},
+                                     {"seconds", memory.kernel_warm_up_seconds},
+                                     {"lasting_bytes", memory.kernel_warm_up_lasting_bytes},
+                                     {"stack_limit_before_bytes", memory.stack_limit_before_bytes},
+                                     {"stack_limit_bytes", memory.stack_limit_bytes},
+                                     {"stack_limit_source", memory.stack_limit_source},
+                                     {"host_pin_device_bytes", memory.host_pin_device_bytes},
+                                     {"graph_returned_bytes", memory.graph_returned_bytes}}}};
     record["environment"] =
         Json{{"device", environment.device},
              {"gpu_name", environment.gpu_name},
@@ -554,7 +600,7 @@ std::string format_request_done_json(const std::string& server_instance_id, std:
     Json record       = event_base(server_instance_id, timestamp, "request_done");
     record["request"] = request_json(context);
     record["result"] =
-        Json{{"finish_reason", finish_reason_name(outcome.finish_reason)},
+        Json{{"finish_reason", std::string(ninferno::finish_reason_name(outcome.finish_reason))},
              {"prompt_tokens", outcome.prompt_tokens},
              {"completion_tokens", outcome.completion_tokens},
              {"computed_prefill_tokens",
@@ -592,8 +638,8 @@ std::string format_request_error_json(const std::string& server_instance_id,
 std::string format_throughput_json(const std::string& server_instance_id, std::uint64_t timestamp,
                                    const ThroughputReport& report) {
     Json record                          = event_base(server_instance_id, timestamp, "throughput");
-    const ninfer::RuntimeStats& previous = report.previous;
-    const ninfer::RuntimeStats& current  = report.current;
+    const ninferno::RuntimeStats& previous = report.previous;
+    const ninferno::RuntimeStats& current  = report.current;
     const double prefill_rate =
         report.interval_seconds > 0.0
             ? static_cast<double>(report.computed_prefill_tokens) / report.interval_seconds
@@ -607,7 +653,7 @@ std::string format_throughput_json(const std::string& server_instance_id, std::u
         average_batch = static_cast<double>(report.decode_row_rounds) /
                         static_cast<double>(report.decode_rounds);
     }
-    const ninfer::RuntimeHostWorkStats host =
+    const ninferno::RuntimeHostWorkStats host =
         host_work_delta(previous.host_work, current.host_work);
     const std::uint64_t active_host = host_active_ns(host);
     record["interval_seconds"]      = report.interval_seconds;
@@ -817,14 +863,17 @@ JsonlRequestLog::JsonlRequestLog(const std::string& path,
     if (!output_) {
         throw std::runtime_error("failed to open request JSONL log for append: " + path_);
     }
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path_, error);
+    bytes_                    = error ? 0 : size;
 }
 
 void JsonlRequestLog::write_server_start(const ServeOptions& options,
-                                         const ninfer::EngineOptions& engine_options,
-                                         const ninfer::ModelSamplingDefaults& sampling_defaults,
+                                         const ninferno::EngineOptions& engine_options,
+                                         const ninferno::ModelSamplingDefaults& sampling_defaults,
                                          const std::string& public_model_id,
-                                         const ninfer::LoadSummary& load,
-                                         const ninfer::MemorySummary& memory) {
+                                         const ninferno::LoadSummary& load,
+                                         const ninferno::MemorySummary& memory) {
     if (!enabled()) { return; }
     std::error_code error;
     const std::uintmax_t size = std::filesystem::file_size(options.artifact_path, error);
@@ -867,8 +916,16 @@ void JsonlRequestLog::append(std::string record) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (failed_) { return; }
+        if (bytes_ >= kRotateBytes) {
+            output_.close();
+            std::error_code error;
+            std::filesystem::rename(path_, path_ + ".1", error);
+            bytes_ = 0;
+            output_.open(path_, std::ios::out | std::ios::app);
+        }
         output_ << record << '\n';
         output_.flush();
+        bytes_ += record.size() + 1;
         if (!output_) {
             failed_        = true;
             report_failure = true;
@@ -880,4 +937,4 @@ void JsonlRequestLog::append(std::string record) {
     }
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

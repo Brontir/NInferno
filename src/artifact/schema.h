@@ -15,7 +15,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::artifact {
+namespace ninferno::artifact {
 
 class ArtifactError : public std::runtime_error {
 public:
@@ -37,6 +37,9 @@ struct TensorObject {
     std::string layout;
     std::uint64_t offset = 0;
     std::uint64_t bytes  = 0;
+    // Source matrices this plane was assembled from, each with its own NVFP4 divisor. Absent means
+    // one, which is every plane that is not a stack of separately quantised matrices.
+    std::uint64_t divisors = 1;
 };
 
 struct ResourceObject {
@@ -121,4 +124,4 @@ void require_members(const Json& value, std::initializer_list<std::string_view> 
 [[nodiscard]] std::uint64_t align_up(std::uint64_t value, std::uint64_t alignment,
                                      std::string_view label);
 
-} // namespace ninfer::artifact
+} // namespace ninferno::artifact

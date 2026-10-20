@@ -1,4 +1,6 @@
+#include "runtime/contract/sampling.h"
 #include "serve/anthropic_messages.h"
+#include "serve/output_constraint_request.h"
 #include "serve/request_validation.h"
 
 #include <algorithm>
@@ -14,12 +16,14 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::serve {
+namespace ninferno::serve {
 namespace {
 
 using Json = RequestJson;
 
-constexpr std::size_t kMaxToolNameLength = 128;
+// Tool names share the protocol-wide limit (kMaximumToolNameLength, serve/request.h). Anthropic's
+// own boundary is narrower, but agent hosts send longer names — VS Code Copilot wraps MCP tools as
+// "activate_fallback_mcp_<server>_<tool>", past 64 bytes.
 
 enum class ParsePurpose {
     Messages,
@@ -76,51 +80,36 @@ std::optional<CacheBoundary::Ttl> cache_boundary(const Json& value, const char* 
 }
 
 CacheBoundary explicit_cache_boundary(CacheBoundary::Ttl ttl) {
-    return CacheBoundary{.kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-                         .evidence = ninfer::SharedCandidateEvidence::ExplicitBoundary,
+    return CacheBoundary{.kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+                         .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
                          .ttl      = ttl};
 }
 
-std::string require_tool_name(const Json& object, const char* param) {
-    if (!object.contains("name") || !object.at("name").is_string()) {
-        bad_request("tool name must be a string", param);
-    }
-    std::string name = object.at("name").get<std::string>();
-    if (!valid_tool_name(name, kMaxToolNameLength)) {
-        bad_request("tool name must match [A-Za-z0-9_-]{1,128}", param);
-    }
-    return name;
-}
-
-ninfer::product::media_acquire::Source parse_image_source(const Json& block) {
+ninferno::product::media_acquire::Source parse_image_source(const Json& block) {
     if (!block.contains("source") || !block.at("source").is_object()) {
         bad_request("image block must contain a source object", "messages");
     }
     const Json& source     = block.at("source");
     const std::string type = require_string(source, "type", "messages", "image source");
-    ninfer::product::media_acquire::Source result;
+    ninferno::product::media_acquire::Source result;
     if (type == "base64") {
         result.media_type = require_string(source, "media_type", "messages", "base64 image source");
         const std::string data = require_string(source, "data", "messages", "base64 image source");
         if (data.empty()) { bad_request("base64 image data must not be empty", "messages"); }
-        result.kind  = ninfer::product::media_acquire::SourceKind::Data;
+        result.kind  = ninferno::product::media_acquire::SourceKind::Data;
         result.value = "data:" + result.media_type + ";base64," + data;
         return result;
     }
     if (type == "url") {
-        result.value = require_string(source, "url", "messages", "URL image source");
-        if (!result.value.starts_with("http://") && !result.value.starts_with("https://")) {
-            bad_request("image URL must use HTTP(S)", "messages");
-        }
-        result.kind = ninfer::product::media_acquire::SourceKind::Url;
-        return result;
+        return media_source(require_string(source, "url", "messages", "URL image source"),
+                            "image URL", "messages", false);
     }
     if (type == "file") {
-        bad_request("image file sources require an Anthropic Files API, which NInfer does not "
+        bad_request("image file sources require an Anthropic Files API, which NInferno does not "
                     "provide",
                     "messages", "files_not_supported");
     }
-    bad_request("unsupported image source type: " + type, "messages");
+    bad_request("unsupported image source type: " + ascii_preview(type), "messages");
 }
 
 ContentPart parse_image(const Json& block) {
@@ -148,7 +137,7 @@ ContentPart parse_image(const Json& block) {
     const std::string policy = transformations.at("oversized_image").get<std::string>();
     if (policy == "downsize") { return result; }
     if (policy == "error") {
-        result.image_resize_policy = ninfer::ImageResizePolicy::RejectOversized;
+        result.image_resize_policy = ninferno::ImageResizePolicy::RejectOversized;
         return result;
     }
     bad_request("transformations.oversized_image must be 'downsize' or 'error'", "messages");
@@ -162,6 +151,113 @@ ContentPart text_part(std::string value,
     part.text     = std::move(value);
     if (boundary) { part.cache_boundary_after = explicit_cache_boundary(*boundary); }
     return part;
+}
+
+// A document block as the text the model reads: its title and context, then its text in a
+// <document> element. Plain-text sources (source.type "text") and content documents (source.type
+// "content": text blocks, or a string) are read as they are; a PDF (source.type "base64" or "url")
+// is read by its text layer once acquired (ContentKind::Document). Citations are not produced: the
+// answer is ordinary text.
+std::string document_text(const Json& block);
+
+std::string optional_document_string(const Json& block, const char* field) {
+    if (!block.contains(field) || block.at(field).is_null()) return {};
+    if (!block.at(field).is_string()) {
+        bad_request(std::string("document ") + field + " must be a string", "messages");
+    }
+    return block.at(field).get<std::string>();
+}
+
+ContentPart document_part(const Json& block) {
+    const auto boundary = cache_boundary(block, "messages");
+    if (block.contains("source") && block.at("source").is_object()) {
+        const Json& source     = block.at("source");
+        const std::string kind = source.contains("type") && source.at("type").is_string()
+                                     ? source.at("type").get<std::string>()
+                                     : std::string();
+        if (kind == "base64" || kind == "url") {
+            ContentPart part;
+            part.kind     = ContentKind::Document;
+            part.type_raw = "document";
+            if (kind == "base64") {
+                part.source.media_type =
+                    require_string(source, "media_type", "messages", "base64 document source");
+                if (part.source.media_type != "application/pdf") {
+                    bad_request("a base64 document must be application/pdf; send text as a text "
+                                "source",
+                                "messages", "documents_not_supported");
+                }
+                const std::string data =
+                    require_string(source, "data", "messages", "base64 document source");
+                if (data.empty()) bad_request("base64 document data must not be empty", "messages");
+                part.source.kind  = ninferno::product::media_acquire::SourceKind::Data;
+                part.source.value = "data:application/pdf;base64," + data;
+            } else {
+                part.source =
+                    media_source(require_string(source, "url", "messages", "URL document source"),
+                                 "document URL", "messages", false);
+                part.source.media_type = "application/pdf";
+            }
+            part.document_title   = optional_document_string(block, "title");
+            part.document_context = optional_document_string(block, "context");
+            if (boundary) part.cache_boundary_after = explicit_cache_boundary(*boundary);
+            return part;
+        }
+        if (kind == "file") {
+            bad_request("document file sources require an Anthropic Files API, which NInferno "
+                        "does not provide",
+                        "messages", "files_not_supported");
+        }
+    }
+    return text_part(document_text(block), boundary);
+}
+
+std::string document_text(const Json& block) {
+    if (!block.contains("source") || !block.at("source").is_object()) {
+        bad_request("a document block needs a source object", "messages");
+    }
+    const Json& source = block.at("source");
+    const std::string kind =
+        source.contains("type") && source.at("type").is_string() ? source.at("type").get<std::string>()
+                                                                 : std::string();
+    std::string body;
+    if (kind == "text") {
+        body = require_string(source, "data", "messages", "text document source");
+    } else if (kind == "content") {
+        if (!source.contains("content")) {
+            bad_request("a content document needs source.content", "messages");
+        }
+        const Json& content = source.at("content");
+        if (content.is_string()) {
+            body = content.get<std::string>();
+        } else if (content.is_array()) {
+            for (const Json& part : content) {
+                if (require_block_type(part, "messages") != "text") {
+                    bad_request("a content document holds text blocks only here", "messages",
+                                "documents_not_supported");
+                }
+                if (!body.empty()) body += "\n\n";
+                body += require_string(part, "text", "messages", "document text block");
+            }
+        } else {
+            bad_request("source.content must be a string or an array of text blocks", "messages");
+        }
+    } else {
+        bad_request("document source type '" + kind +
+                        "' is not one NInferno reads; send text (source.type \"text\"), content "
+                        "blocks, or a PDF (\"base64\" or \"url\")",
+                    "messages", "documents_not_supported");
+    }
+    std::string out = "<document>\n";
+    if (block.contains("title") && block.at("title").is_string()) {
+        out += "<title>" + block.at("title").get<std::string>() + "</title>\n";
+    }
+    if (block.contains("context") && block.at("context").is_string()) {
+        out += "<context>" + block.at("context").get<std::string>() + "</context>\n";
+    }
+    out += body;
+    out += "\n</document>";
+    return out;
 }
 
 bool is_server_tool_block(std::string_view type) {
@@ -233,6 +329,8 @@ std::vector<ContentPart> parse_tool_result_content(const Json& block) {
                                        cache_boundary(part, "messages")));
         } else if (type == "image") {
             result.push_back(parse_image(part));
+        } else if (type == "document") {
+            result.push_back(document_part(part));
         } else {
             bad_request("unsupported tool_result content block: " + type, "messages",
                         "content_block_not_supported");
@@ -245,7 +343,7 @@ std::vector<ContentPart> parse_tool_result_content(const Json& block) {
 ToolCall parse_tool_use(const Json& block) {
     ToolCall call;
     call.id   = require_tool_history_id(block, "id", "tool_use block");
-    call.name = require_tool_name(block, "messages");
+    call.name = require_tool_name(block, "messages", "tool name");
     if (!block.contains("input") || !block.at("input").is_object()) {
         bad_request("tool_use blocks must contain an input object", "messages");
     }
@@ -280,15 +378,13 @@ std::vector<ParsedUserBlock> parse_user_blocks(const Json& content) {
         } else if (type == "tool_result") {
             result.emplace_back(parse_tool_result(block));
         } else if (type == "document") {
-            bad_request("document blocks require document and citation semantics that NInfer does "
-                        "not provide",
-                        "messages", "documents_not_supported");
+            result.emplace_back(document_part(block));
         } else if (type == "search_result") {
-            bad_request("search_result blocks require source and citation semantics that NInfer "
+            bad_request("search_result blocks require source and citation semantics that NInferno "
                         "does not provide",
                         "messages", "search_results_not_supported");
         } else if (is_server_tool_block(type)) {
-            bad_request("server tool result blocks require an executor that NInfer does not "
+            bad_request("server tool result blocks require an executor that NInferno does not "
                         "provide",
                         "messages", "server_tools_not_supported");
         } else {
@@ -316,8 +412,17 @@ ChatTurn parse_assistant_blocks(const Json& content) {
             }
             const std::string thinking =
                 require_string(block, "thinking", "messages", "thinking block");
-            // NInfer has no encrypted reasoning state to restore. The wire signature is therefore
-            // intentionally outside the lowered request; only visible Thinking reaches the model.
+            // Visible Thinking owns prompt semantics and its signature stays outside the lowered
+            // request. An empty block whose signature NInferno wrote for hidden Thinking (display
+            // "omitted") restores that reasoning, so the prompt matches the visible form.
+            if (thinking.empty() && block.contains("signature") &&
+                block.at("signature").is_string()) {
+                if (const std::optional<std::string> hidden = decode_hidden_thinking_signature(
+                        block.at("signature").get<std::string>())) {
+                    assistant.reasoning_content += *hidden;
+                    continue;
+                }
+            }
             assistant.reasoning_content += thinking;
         } else if (type == "redacted_thinking") {
             if (cache_boundary(block, "messages")) {
@@ -335,7 +440,7 @@ ChatTurn parse_assistant_blocks(const Json& content) {
                 // flattened assistant turn. It is advisory, so execution continues without it.
             }
         } else if (is_server_tool_block(type)) {
-            bad_request("server tool content blocks require an executor that NInfer does not "
+            bad_request("server tool content blocks require an executor that NInferno does not "
                         "provide",
                         "messages", "server_tools_not_supported");
         } else {
@@ -547,12 +652,35 @@ void lower_messages(std::vector<ParsedMessage> messages, GenerationRequest& requ
     }
 }
 
-void parse_messages(const Json& body, GenerationRequest& request) {
+// System messages are accepted anywhere in `messages` (proxies such as LiteLLM send them first or
+// between user turns): the first ones open the system prompt, and the frontend keeps later ones
+// in place, or renders them as user turns for a template that refuses them. A run between an
+// assistant's tool_use and its tool_result turn moves after that turn (LiteLLM moves it so too),
+// since the results must follow their calls.
+void place_system_messages(std::vector<ParsedMessage>& messages) {
+    for (std::size_t index = 0; index < messages.size(); ++index) {
+        if (messages[index].role != ChatRole::Assistant ||
+            messages[index].turn.tool_calls.empty()) {
+            continue;
+        }
+        std::size_t end = index + 1U;
+        while (end < messages.size() && messages[end].role == ChatRole::System) { ++end; }
+        if (end == index + 1U || end == messages.size() || messages[end].role != ChatRole::User) {
+            continue;
+        }
+        const auto first = messages.begin() + static_cast<std::ptrdiff_t>(index + 1U);
+        const auto user  = messages.begin() + static_cast<std::ptrdiff_t>(end);
+        std::rotate(first, user, user + 1);
+    }
+}
+
+void parse_messages(const Json& body, const RequestLimits& limits, GenerationRequest& request) {
     if (!body.contains("messages")) { bad_request("missing required field: messages", "messages"); }
     const Json& messages = body.at("messages");
     if (!messages.is_array() || messages.empty()) {
         bad_request("messages must be a non-empty array", "messages");
     }
+    check_message_count(messages.size(), limits, "messages");
 
     std::vector<ChatRole> roles;
     roles.reserve(messages.size());
@@ -574,21 +702,6 @@ void parse_messages(const Json& body, GenerationRequest& request) {
         }
         if (!item.contains("content") || item.at("content").is_null()) {
             bad_request("each message must contain content", "messages");
-        }
-    }
-
-    for (std::size_t index = 0; index < roles.size();) {
-        if (roles[index] != ChatRole::System) {
-            ++index;
-            continue;
-        }
-        const std::size_t begin = index;
-        while (index < roles.size() && roles[index] == ChatRole::System) { ++index; }
-        if (begin == 0 || roles[begin - 1U] != ChatRole::User ||
-            (index < roles.size() && roles[index] != ChatRole::Assistant)) {
-            bad_request("system messages must follow a user message and be final or precede an "
-                        "assistant message",
-                        "messages", "invalid_message_order");
         }
     }
 
@@ -625,6 +738,7 @@ void parse_messages(const Json& body, GenerationRequest& request) {
         parsed.push_back(std::move(message));
     }
 
+    place_system_messages(parsed);
     parsed = normalize_same_role_messages(std::move(parsed));
     normalize_tool_history(parsed);
     lower_messages(std::move(parsed), request);
@@ -638,7 +752,7 @@ void parse_messages(const Json& body, GenerationRequest& request) {
             bad_request("a final assistant prefill must contain only text", "messages",
                         "assistant_prefill_not_supported");
         }
-        request.continuation = ninfer::PromptContinuationMode::ContinueFinalAssistant;
+        request.continuation = ninferno::PromptContinuationMode::ContinueFinalAssistant;
     }
 }
 
@@ -671,9 +785,9 @@ ToolSelection parse_tool_choice(const Json& body) {
         result.kind = ToolSelectionKind::Any;
     } else if (type == "tool") {
         result.kind = ToolSelectionKind::Named;
-        result.name = require_tool_name(choice, "tool_choice");
+        result.name = require_tool_name(choice, "tool_choice", "tool name");
     } else {
-        bad_request("unsupported tool_choice type: " + type, "tool_choice");
+        bad_request("unsupported tool_choice type: " + ascii_preview(type), "tool_choice");
     }
     result.disable_parallel = optional_bool(choice, "disable_parallel_tool_use", false);
     return result;
@@ -717,7 +831,7 @@ std::vector<ParsedTool> parse_tool_definitions(const Json& body) {
         }
 
         if (parsed.source == ToolSource::UserDefined) {
-            parsed.definition.name = require_tool_name(item, "tools");
+            parsed.definition.name = require_tool_name(item, "tools", "tool name");
             if (!names.insert(parsed.definition.name).second) {
                 bad_request("duplicate tool name: " + parsed.definition.name, "tools");
             }
@@ -739,6 +853,16 @@ std::vector<ParsedTool> parse_tool_definitions(const Json& body) {
             }
             if (const auto ttl = cache_boundary(item, "tools")) {
                 parsed.definition.cache_boundary_after = explicit_cache_boundary(*ttl);
+            }
+            for (auto field = item.begin(); field != item.end(); ++field) {
+                const std::string& key = field.key();
+                if (field.value().is_null()) { continue; }
+                if (key == "input_schema") {
+                    parsed.definition.declared_fields.emplace_back("parameters");
+                } else if (key == "name" || key == "description" || key == "strict" ||
+                           key == "input_examples") {
+                    parsed.definition.declared_fields.push_back(key);
+                }
             }
         } else if (item.contains("name") && item.at("name").is_string()) {
             parsed.definition.name = item.at("name").get<std::string>();
@@ -784,26 +908,32 @@ void lower_tools(const Json& body, GenerationRequest& request) {
         return tool.definition.name == selection.name;
     };
 
+    // Named and any are enforced by a tool-call constraint (attach_tool_call_constraint).
     if (selection.kind == ToolSelectionKind::Named) {
         if (std::none_of(definitions.begin(), definitions.end(), named)) {
             bad_request("tool_choice references unknown tool: " + selection.name, "tool_choice");
         }
-        bad_request("tool_choice.type='tool' requires that exact tool to be called, which NInfer "
-                    "cannot guarantee",
-                    "tool_choice", "tool_choice_not_supported");
+        request.tool_choice.requirement = ninferno::ToolCallRequirement::Named;
+        request.tool_choice.named       = selection.name;
     }
     if (selection.kind == ToolSelectionKind::Any) {
         if (definitions.empty()) { bad_request("tool_choice requires tools", "tool_choice"); }
-        bad_request("tool_choice.type='any' requires at least one tool call, which NInfer cannot "
-                    "guarantee",
-                    "tool_choice", "tool_choice_not_supported");
+        request.tool_choice.requirement = ninferno::ToolCallRequirement::Required;
     }
 
     request.tool_choice.mode =
         selection.kind == ToolSelectionKind::None ? ToolChoiceMode::None : ToolChoiceMode::Auto;
     if (selection.kind == ToolSelectionKind::None) {
+        // The declarations stay in the prompt (tool_choice none renders them without reading
+        // calls back): exactly the tools an auto turn renders, so the prompts agree. Deferred
+        // tools and tools the model may not call directly are not among them.
         for (ParsedTool& tool : definitions) {
-            if (tool.source == ToolSource::UserDefined) {
+            const bool direct =
+                !tool.allowed_callers ||
+                std::find(tool.allowed_callers->begin(), tool.allowed_callers->end(), "direct") !=
+                    tool.allowed_callers->end();
+            if (tool.source == ToolSource::UserDefined && !tool.defer_loading && direct) {
+                tool.definition.strict = tool.strict;
                 request.tools.push_back(std::move(tool.definition));
             }
         }
@@ -812,44 +942,40 @@ void lower_tools(const Json& body, GenerationRequest& request) {
 
     for (ParsedTool& tool : definitions) {
         if (tool.source == ToolSource::Toolset) {
-            bad_request("Anthropic toolsets require a tool loader that NInfer does not provide",
+            bad_request("Anthropic toolsets require a tool loader that NInferno does not provide",
                         "tools", "toolsets_not_supported");
         }
         if (tool.source == ToolSource::AnthropicProvided) {
-            bad_request("Anthropic-provided tool type '" + tool.source_type +
+            bad_request("Anthropic-provided tool type '" + ascii_preview(tool.source_type) +
                             "' requires its predefined prompt schema or server executor, which "
-                            "NInfer does not provide",
+                            "NInferno does not provide",
                         "tools", "anthropic_tools_not_supported");
         }
-        if (tool.strict) {
-            bad_request("strict=true requires generated tool input to satisfy the declared JSON "
-                        "Schema, which NInfer cannot guarantee",
-                        "tools", "strict_tools_not_supported");
-        }
+        tool.definition.strict = tool.strict;
         if (tool.defer_loading) {
-            bad_request("defer_loading=true requires a deferred tool loader that NInfer does not "
+            bad_request("defer_loading=true requires a deferred tool loader that NInferno does not "
                         "provide",
                         "tools", "deferred_tools_not_supported");
         }
         if (tool.allowed_callers &&
             std::find(tool.allowed_callers->begin(), tool.allowed_callers->end(), "direct") ==
                 tool.allowed_callers->end()) {
-            bad_request("tool allowed_callers excludes direct model calls, and NInfer provides no "
-                        "alternate caller",
-                        "tools", "tool_caller_not_supported");
+            bad_request(
+                "tool allowed_callers excludes direct model calls, and NInferno provides no "
+                "alternate caller",
+                "tools", "tool_caller_not_supported");
         }
         request.tools.push_back(std::move(tool.definition));
     }
     if (selection.disable_parallel && !request.tools.empty()) {
-        bad_request("disable_parallel_tool_use=true requires at most one tool call, which NInfer "
-                    "cannot guarantee",
-                    "tool_choice", "parallel_tool_use_not_supported");
+        request.parallel_tool_calls = false;
     }
 }
 
-void parse_thinking(const Json& body, GenerationRequest& request, ParsePurpose purpose,
-                    int effective_max_tokens) {
-    if (!body.contains("thinking") || body.at("thinking").is_null()) { return; }
+AnthropicThinkingDisplay parse_thinking(const Json& body, GenerationRequest& request) {
+    if (!body.contains("thinking") || body.at("thinking").is_null()) {
+        return AnthropicThinkingDisplay::Visible;
+    }
     const Json& thinking = body.at("thinking");
     if (!thinking.is_object() || !thinking.contains("type") || !thinking.at("type").is_string()) {
         bad_request("thinking must be an object with a string type", "thinking");
@@ -865,9 +991,9 @@ void parse_thinking(const Json& body, GenerationRequest& request, ParsePurpose p
         if (!budget || *budget < 1024) {
             bad_request("thinking.budget_tokens must be an integer of at least 1024", "thinking");
         }
-        if (purpose == ParsePurpose::Messages && *budget >= effective_max_tokens) {
-            bad_request("thinking.budget_tokens must be less than max_tokens", "thinking");
-        }
+        // Unlike the Anthropic API, a budget at or above max_tokens is accepted: the output limit
+        // is reached before the budget, so it never takes effect. Clients such as Qwen Code send
+        // a fixed budget while shrinking max_tokens to the context window left.
         request.thinking_budget = static_cast<std::uint32_t>(*budget);
     } else {
         bad_request("thinking.type must be 'disabled', 'adaptive', or 'enabled'", "thinking");
@@ -885,12 +1011,9 @@ void parse_thinking(const Json& body, GenerationRequest& request, ParsePurpose p
             bad_request("thinking.display is valid only when thinking is adaptive or enabled",
                         "thinking");
         }
-        if (purpose == ParsePurpose::Messages && display == "omitted") {
-            bad_request("thinking.display='omitted' requires encrypted hidden-reasoning restore "
-                        "semantics that NInfer does not provide",
-                        "thinking", "thinking_display_not_supported");
-        }
+        if (display == "omitted") { return AnthropicThinkingDisplay::Omitted; }
     }
+    return AnthropicThinkingDisplay::Visible;
 }
 
 void parse_effort(const Json& body, GenerationRequest& request, ParsePurpose purpose) {
@@ -899,16 +1022,15 @@ void parse_effort(const Json& body, GenerationRequest& request, ParsePurpose pur
     if (!config.is_object()) { bad_request("output_config must be an object", "output_config"); }
     if (purpose == ParsePurpose::Messages && config.contains("format") &&
         !config.at("format").is_null()) {
-        bad_request("output_config.format requires constrained decoding, which NInfer does not "
-                    "provide",
-                    "output_config.format", "output_config_format_not_supported");
+        request.output_constraint =
+            parse_anthropic_output_format(config.at("format"), "output_config.format");
     }
     if (!config.contains("effort") || config.at("effort").is_null()) { return; }
     if (!config.at("effort").is_string()) {
         bad_request("output_config.effort must be a string", "output_config.effort");
     }
     const std::string value = config.at("effort").get<std::string>();
-    const auto effort       = parse_requested_reasoning_effort(value);
+    const auto effort       = ninferno::parse_reasoning_effort(value);
     if (!effort) {
         bad_request("output_config.effort is not a recognized effort value",
                     "output_config.effort");
@@ -918,30 +1040,26 @@ void parse_effort(const Json& body, GenerationRequest& request, ParsePurpose pur
 
 void parse_generation_fields(const Json& body, GenerationRequest& request) {
     if (body.contains("stop_sequences") && !body.at("stop_sequences").is_null()) {
-        if (!body.at("stop_sequences").is_array()) {
-            bad_request("stop_sequences must be an array of strings", "stop_sequences");
-        }
-        for (const Json& value : body.at("stop_sequences")) {
-            if (!value.is_string() || value.get<std::string>().empty()) {
-                bad_request("stop_sequences entries must be non-empty strings", "stop_sequences");
-            }
-            request.stop_strings.push_back(value.get<std::string>());
-        }
+        append_stop_strings(body.at("stop_sequences"), "stop_sequences", false,
+                            request.stop_strings);
     }
 
     request.sampling.temperature = optional_number(body, "temperature");
     request.sampling.top_p       = optional_number(body, "top_p");
     request.sampling.top_k       = optional_int(body, "top_k");
+    // Anthropic's temperature range is [0,1], narrower than OpenAI's.
+    constexpr SamplingRange kAnthropicTemperatureRange{0.0F, 1.0F};
     if (request.sampling.temperature &&
-        (*request.sampling.temperature < 0.0 || *request.sampling.temperature > 1.0)) {
-        bad_request("temperature must be in [0,1]", "temperature");
+        !kAnthropicTemperatureRange.contains(*request.sampling.temperature)) {
+        bad_request(runtime::range_message("temperature", kAnthropicTemperatureRange),
+                    "temperature");
     }
-    if (request.sampling.top_p &&
-        (*request.sampling.top_p < 0.0 || *request.sampling.top_p > 1.0)) {
-        bad_request("top_p must be in [0,1]", "top_p");
+    if (request.sampling.top_p && !kProbabilityRange.contains(*request.sampling.top_p)) {
+        bad_request(runtime::range_message("top_p", kProbabilityRange), "top_p");
     }
-    if (request.sampling.top_k && (*request.sampling.top_k < 0 || *request.sampling.top_k > 20)) {
-        bad_request("top_k must be in [0,20]", "top_k");
+    if (request.sampling.top_k &&
+        (*request.sampling.top_k < 0 || *request.sampling.top_k > kMaximumTopK)) {
+        bad_request(top_k_limit_message("top_k", "send"), "top_k");
     }
 }
 
@@ -1001,7 +1119,7 @@ void apply_anthropic_prompt_cache_policy(const Json& body, GenerationRequest& re
                         "target the same boundary with different ttl values",
                         "cache_control", "conflicting_cache_ttl");
         }
-        automatic_target->value().evidence |= ninfer::SharedCandidateEvidence::RequestedAutomatic;
+        automatic_target->value().evidence |= ninferno::SharedCandidateEvidence::RequestedAutomatic;
         return;
     }
     if (explicit_boundaries.size() == kMaximumExplicitPromptCacheMarkers) {
@@ -1010,21 +1128,22 @@ void apply_anthropic_prompt_cache_policy(const Json& body, GenerationRequest& re
                     "cache_control", "too_many_cache_breakpoints");
     }
     *automatic_target =
-        CacheBoundary{.kind     = ninfer::PromptCacheMarkerKind::SharedStablePrefix,
-                      .evidence = ninfer::SharedCandidateEvidence::RequestedAutomatic,
+        CacheBoundary{.kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+                      .evidence = ninferno::SharedCandidateEvidence::RequestedAutomatic,
                       .ttl      = *automatic_ttl};
 }
 
-void parse_common_prompt(const Json& body, GenerationRequest& request, ParsePurpose purpose,
-                         int effective_max_tokens) {
+AnthropicThinkingDisplay parse_common_prompt(const Json& body, const RequestLimits& limits,
+                                             GenerationRequest& request, ParsePurpose purpose) {
     lower_tools(body, request);
     parse_system(body, request);
-    parse_messages(body, request);
-    parse_thinking(body, request, purpose, effective_max_tokens);
+    parse_messages(body, limits, request);
+    const AnthropicThinkingDisplay display = parse_thinking(body, request);
     parse_effort(body, request, purpose);
+    attach_tool_call_constraint(request);
     apply_anthropic_prompt_cache_policy(body, request);
     if (body.contains("container") && !body.at("container").is_null()) {
-        bad_request("container requires an external execution environment that NInfer does not "
+        bad_request("container requires an external execution environment that NInferno does not "
                     "provide",
                     "container", "container_not_supported");
     }
@@ -1039,6 +1158,7 @@ void parse_common_prompt(const Json& body, GenerationRequest& request, ParsePurp
         }
         request.preserve_thinking = body.at("preserve_thinking").get<bool>();
     }
+    return display;
 }
 
 } // namespace
@@ -1048,14 +1168,14 @@ AnthropicMessagesRequest parse_anthropic_messages_request(const Json& body,
     require_object(body);
     AnthropicMessagesRequest result;
     result.model                           = parse_model(body);
-    result.generation.tool_name_max_length = kMaxToolNameLength;
+    result.generation.tool_name_max_length = kMaximumToolNameLength;
     result.stream                          = optional_bool(body, "stream", false);
 
     const std::optional<int> max_tokens = optional_int(body, "max_tokens");
     if (max_tokens) {
         result.output_tokens_explicit = true;
         if (*max_tokens == 0) {
-            bad_request("max_tokens=0 requires a completed cache prewarm lifecycle that NInfer "
+            bad_request("max_tokens=0 requires a completed cache prewarm lifecycle that NInferno "
                         "does not provide",
                         "max_tokens", "cache_prewarm_not_supported");
         }
@@ -1065,20 +1185,33 @@ AnthropicMessagesRequest parse_anthropic_messages_request(const Json& body,
         result.generation.max_tokens = limits.default_max_tokens;
     }
 
-    parse_common_prompt(body, result.generation, ParsePurpose::Messages,
-                        result.generation.max_tokens);
+    result.thinking_display =
+        parse_common_prompt(body, limits, result.generation, ParsePurpose::Messages);
     parse_generation_fields(body, result.generation);
+    check_ninferno_extension(body);
+    // What the parser reads, plus standard fields with no local effect (metadata, service_tier).
+    static constexpr std::string_view kKnown[] = {"cache_control", "chat_template_kwargs",
+                                                  "container",     "max_tokens",
+                                                  "messages",      "metadata",
+                                                  "model",         "ninferno",
+                                                  "output_config", "preserve_thinking",
+                                                  "service_tier",  "stop_sequences",
+                                                  "stream",        "system",
+                                                  "temperature",   "thinking",
+                                                  "tool_choice",   "tools",
+                                                  "top_k",         "top_p"};
+    note_unknown_fields(body, kKnown, result.generation);
     return result;
 }
 
-AnthropicCountTokensRequest parse_anthropic_count_tokens_request(const Json& body) {
+AnthropicCountTokensRequest parse_anthropic_count_tokens_request(const Json& body,
+                                                                 const RequestLimits& limits) {
     require_object(body);
     AnthropicCountTokensRequest result;
     result.model                           = parse_model(body);
-    result.generation.tool_name_max_length = kMaxToolNameLength;
-    parse_common_prompt(body, result.generation, ParsePurpose::CountTokens,
-                        std::numeric_limits<int>::max());
+    result.generation.tool_name_max_length = kMaximumToolNameLength;
+    parse_common_prompt(body, limits, result.generation, ParsePurpose::CountTokens);
     return result;
 }
 
-} // namespace ninfer::serve
+} // namespace ninferno::serve

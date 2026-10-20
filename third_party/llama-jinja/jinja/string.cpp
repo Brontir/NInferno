@@ -81,19 +81,20 @@ string string::cut_bytes(std::size_t begin, std::size_t end) const {
 
 string string::slice(std::optional<std::int64_t> start, std::optional<std::int64_t> stop,
                      std::int64_t step) const {
-    const auto text   = str();
-    const auto chars  = unicode::characters(text);
-    const auto bounds = unicode::slice_indices(chars.size(), start, stop, step);
+    const auto text = str();
     if (step == 1) {
-        const auto begin = bounds.start == static_cast<std::int64_t>(chars.size())
-                               ? text.size()
-                               : chars[bounds.start].begin;
-        const auto end   = bounds.stop <= bounds.start ? begin
-                           : bounds.stop == static_cast<std::int64_t>(chars.size())
-                               ? text.size()
-                               : chars[bounds.stop].begin;
+        // Two scans and no per-character storage: a slice of a whole message is common.
+        const auto bounds = unicode::slice_indices(unicode::length(text), start, stop, step);
+        const auto first  = static_cast<std::size_t>(bounds.start);
+        const auto begin  = unicode::byte_offset(text, first);
+        const auto end =
+            bounds.stop <= bounds.start
+                ? begin
+                : unicode::byte_offset(text, static_cast<std::size_t>(bounds.stop), begin, first);
         return cut_bytes(begin, end);
     }
+    const auto chars  = unicode::characters(text);
+    const auto bounds = unicode::slice_indices(chars.size(), start, stop, step);
     string result;
     for (auto i = bounds.start; step > 0 ? i < bounds.stop : i > bounds.stop;) {
         result.append(cut_bytes(chars[i].begin, chars[i].end));
@@ -189,8 +190,7 @@ string string::capitalize() const { return map_case(unicode::Case::Capitalize); 
 string string::titlecase() const { return map_case(unicode::Case::Title); }
 
 string string::strip(bool left, bool right, std::optional<const std::string_view> selected) const {
-    const auto text  = str();
-    const auto chars = unicode::characters(text);
+    const auto text = str();
     const auto matching =
         selected ? unicode::characters(*selected) : std::vector<unicode::Character>{};
     const auto match = [&](auto cp) {
@@ -198,14 +198,27 @@ string string::strip(bool left, bool right, std::optional<const std::string_view
                                       [&](auto ch) { return ch.value == cp; })
                         : unicode::whitespace(cp);
     };
-    std::size_t begin = 0, end = chars.size();
-    if (left)
-        while (begin < end && match(chars[begin].value)) ++begin;
-    if (right)
-        while (end > begin && match(chars[end - 1].value)) --end;
-    const auto first_byte = begin == chars.size() ? text.size() : chars[begin].begin;
-    const auto last_byte  = end == chars.size() ? text.size() : chars[end].begin;
-    return cut_bytes(first_byte, last_byte);
+    // Only the ends are decoded: a whole message of many megabytes is trimmed by templates, and a
+    // character vector of it took 24 bytes per character (3.5 GiB for 96 MiB).
+    std::size_t first = 0, last = text.size();
+    if (left) {
+        while (first < last) {
+            const auto ch = unicode::character_at(text, first);
+            if (!match(ch.value)) break;
+            first = ch.end;
+        }
+    }
+    if (right) {
+        while (last > first) {
+            std::size_t begin = last - 1;
+            while (begin > first && (static_cast<unsigned char>(text[begin]) & 0xc0U) == 0x80U)
+                --begin;
+            const auto ch = unicode::character_at(text, begin);
+            if (ch.end != last || !match(ch.value)) break;
+            last = begin;
+        }
+    }
+    return cut_bytes(first, last);
 }
 
 } // namespace jinja

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ninfer_eval.result import DatasetResult, ResultCounts, write_summary
+from ninferno_eval.result import DatasetResult, ResultCounts, write_summary
 
 
 class ReportTest(unittest.TestCase):
@@ -21,11 +21,11 @@ class ReportTest(unittest.TestCase):
                 duration_seconds=12.5,
             )
             write_summary(root, "run", "completed", [result])
-            payload = json.loads((root / "summary.json").read_text())
+            payload = json.loads((root / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["schema_version"], 1)
             self.assertEqual(payload["results"][0]["counts"]["planned"], 30)
             self.assertIn(
-                "| aime25 | mock | aime25 |", (root / "summary.md").read_text()
+                "| aime25 | mock | aime25 |", (root / "summary.md").read_text(encoding="utf-8")
             )
 
 

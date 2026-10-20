@@ -1,23 +1,27 @@
-#include "ninfer/engine.h"
+#include "ninferno/engine.h"
 
 #include "core/device.h"
 #include "core/nvtx.h"
 #include "core/startup.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
-#include "runtime/engine/causal_score_core.h"
-#include "runtime/engine/engine_core.h"
+#include "runtime/engine/backend.h"
+#include "runtime/engine/family_registry.h"
 #include "runtime/engine/model_instance.h"
+#include "structured/constraint.h"
+#include "structured/output_constraint.h"
+#include "structured/schema_support.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <utility>
-#include <variant>
 
-namespace ninfer {
+namespace ninferno {
 namespace {
 
 DeviceContext initialize_device(const EngineOptions& options) {
@@ -32,14 +36,22 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     if (options.execution.thinking.budget && *options.execution.thinking.budget == 0) {
         throw std::invalid_argument("thinking budget must be positive");
     }
+    if (const std::uint32_t window = options.stop.repetition_window;
+        window != 0 && (window < kRepetitionMinimumWindow || window > kRepetitionMaximumWindow)) {
+        throw std::invalid_argument("repetition_window must be 0 or in [" +
+                                    std::to_string(kRepetitionMinimumWindow) + ", " +
+                                    std::to_string(kRepetitionMaximumWindow) + "]");
+    }
     runtime::ResolvedRequestOptions resolved;
     resolved.execution.sampling =
         runtime::resolve_sampling(defaults, mode, options.execution.sampling);
     resolved.execution.requested_output_tokens = options.execution.requested_output_tokens;
     resolved.execution.allow_prefix_reuse      = options.execution.allow_prefix_reuse;
     resolved.execution.thinking                = options.execution.thinking;
+    resolved.execution.speculation             = options.execution.speculation;
     resolved.stop                              = std::move(options.stop);
     resolved.output                            = options.output;
+    resolved.constraint                        = std::move(options.constraint);
     return resolved;
 }
 
@@ -53,14 +65,14 @@ std::string context_capacity_error(std::size_t prompt_tokens, std::uint32_t max_
 class PreparedPrompt::Impl {
 public:
     Impl(PromptSummary prompt_summary, PromptPreparationStats preparation, SamplingMode mode,
-         models::qwen3_5::PreparedPrompt prepared)
+         std::unique_ptr<runtime::PromptBox> prepared)
         : summary(std::move(prompt_summary)), prepare(std::move(preparation)), sampling_mode(mode),
           value(std::move(prepared)) {}
 
     PromptSummary summary;
     PromptPreparationStats prepare;
     SamplingMode sampling_mode = SamplingMode::Thinking;
-    models::qwen3_5::PreparedPrompt value;
+    std::unique_ptr<runtime::PromptBox> value;
 };
 
 PreparedPrompt::PreparedPrompt() noexcept                            = default;
@@ -84,35 +96,22 @@ PreparedPrompt::operator bool() const noexcept { return impl_ != nullptr; }
 
 class GenerationHandle::Impl {
 public:
-    class Concept {
-    public:
-        virtual ~Concept() = default;
-        virtual GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) = 0;
-    };
+    Impl(std::shared_ptr<void> keep_alive, std::unique_ptr<runtime::SubmissionBox> submission,
+         ResolvedSamplingParameters sampling, OutputConsumerMode consumer_mode)
+        : keep_alive_(std::move(keep_alive)), submission_(std::move(submission)),
+          sampling_(sampling), consumer_mode_(consumer_mode) {}
 
-    template <class Submission>
-    class Model final : public Concept {
-    public:
-        Model(std::shared_ptr<void> keep_alive, Submission submission)
-            : keep_alive_(std::move(keep_alive)), submission_(std::move(submission)) {}
-
-        GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) override {
-            return submission_.wait(sink, cancellation);
+    // A sink for a streamed request, none for an aggregated one: checked before the handle is
+    // consumed, so a wrong call leaves the request running and the handle waitable.
+    void check_sink(const OutputSink* sink) const {
+        if ((consumer_mode_ == OutputConsumerMode::Streaming) != (sink != nullptr)) {
+            throw std::invalid_argument(
+                "GenerationHandle wait sink does not match its submitted consumer mode");
         }
-
-    private:
-        std::shared_ptr<void> keep_alive_;
-        Submission submission_;
-    };
-
-    template <class Submission>
-    Impl(std::shared_ptr<void> keep_alive, Submission submission,
-         ResolvedSamplingParameters sampling)
-        : state_(std::make_unique<Model<Submission>>(std::move(keep_alive), std::move(submission))),
-          sampling_(sampling) {}
+    }
 
     GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) {
-        return state_->wait(sink, cancellation);
+        return submission_->wait(sink, cancellation);
     }
 
     [[nodiscard]] const ResolvedSamplingParameters& resolved_sampling() const noexcept {
@@ -120,8 +119,11 @@ public:
     }
 
 private:
-    std::unique_ptr<Concept> state_;
+    // Declared first, destroyed last: the Engine outlives the submission that reads its core.
+    std::shared_ptr<void> keep_alive_;
+    std::unique_ptr<runtime::SubmissionBox> submission_;
     ResolvedSamplingParameters sampling_;
+    OutputConsumerMode consumer_mode_ = OutputConsumerMode::Aggregate;
 };
 
 GenerationHandle::GenerationHandle() noexcept                              = default;
@@ -140,50 +142,59 @@ const ResolvedSamplingParameters& GenerationHandle::resolved_sampling() const no
 
 GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView& cancellation) {
     if (impl_ == nullptr) { throw std::logic_error("GenerationHandle is empty"); }
+    impl_->check_sink(sink);
     std::unique_ptr<Impl> impl = std::move(impl_);
     return impl->wait(sink, cancellation);
 }
 
 class Engine::Impl {
 public:
-    using GenerationCore = runtime::EngineCore<runtime::ModelInstance>;
-    using ScoringCore    = runtime::CausalScoreCore<runtime::ModelInstance>;
-    using Core =
-        std::variant<std::monostate, std::unique_ptr<GenerationCore>, std::unique_ptr<ScoringCore>>;
-
     explicit Impl(EngineOptions engine_options)
         : options(runtime::normalize_engine_options(std::move(engine_options))),
           device(initialize_device(options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
-        auto constructed  = runtime::construct_model(options, device);
-        active            = std::move(constructed.instance);
-        load              = std::move(constructed.load);
-        load.cuda_sync_mode = device.sync_mode();
-        sampling_defaults = active->frontend.sampling_defaults();
-        StartupPhaseScope finalize_phase(options.startup_observer, StartupPhase::EngineFinalize);
-        if (options.purpose == EnginePurpose::CausalScoring) {
-            core = std::make_unique<ScoringCore>(*active, device);
-        } else {
-            core = std::make_unique<GenerationCore>(*active, device, options,
-                                                    std::move(constructed.context_cost));
+        backend             = runtime::make_backend(options, device);
+        // Engine::options() reports the effective values: the resolved cached state count, an
+        // automatic max_context, the prefill chunk and an automatic Host tier too.
+        const MemorySummary memory               = backend->memory_summary();
+        options.max_context                      = memory.max_context;
+        options.prefill_chunk                    = memory.prefill_chunk;
+        options.context_cache.device_state_slots = memory.cached_device_states;
+        if (memory.host_tier_automatic) {
+            options.context_cache.host_state_slots       = memory.host_state_capacity_slots;
+            options.context_cache.host_kv_capacity_bytes = memory.host_kv_capacity_bytes;
         }
-        finalize_phase.complete();
+        load                = backend->load_summary();
+        load.cuda_sync_mode = device.sync_mode();
+        sampling_defaults   = backend->sampling_defaults();
     }
 
     ~Impl() noexcept {
         device.bind_to_current_thread_noexcept();
-        core.emplace<std::monostate>();
+        backend.reset();
         try {
             device.synchronize();
         } catch (...) {}
     }
 
+    // Built on first use: the grammar vocabulary covers the whole token domain, so an Engine that
+    // never serves a constrained request pays nothing for it.
+    [[nodiscard]] structured::ConstraintCompiler& constraint_compiler() const {
+        std::lock_guard lock(constraint_mutex);
+        if (!compiler) {
+            compiler =
+                std::make_unique<structured::ConstraintCompiler>(backend->grammar_vocabulary());
+        }
+        return *compiler;
+    }
+
     EngineOptions options;
     DeviceContext device;
-    std::unique_ptr<runtime::ModelInstance> active;
+    std::unique_ptr<runtime::Backend> backend;
     LoadSummary load;
     ModelSamplingDefaults sampling_defaults;
-    Core core;
+    mutable std::mutex constraint_mutex;
+    mutable std::unique_ptr<structured::ConstraintCompiler> compiler;
 };
 
 Engine::Engine(EngineOptions options) {
@@ -200,16 +211,15 @@ Engine& Engine::operator=(Engine&&) noexcept = default;
 PreparedPrompt Engine::prepare(PromptInput input, const PreparationControl& control) const {
     nvtx::ScopedRange prepare_range(nvtx::Name::FrontendPrepare, nvtx::Category::Runtime);
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    auto prepared      = impl_->active->frontend.prepare(std::move(input), control);
-    PromptSummary info = prepared.summary();
+    runtime::PreparedBox prepared = impl_->backend->prepare(std::move(input), control);
+    const PromptSummary& info     = prepared.summary;
     const SamplingMode sampling_mode =
-        info.starts_in_reasoning ? SamplingMode::Thinking : SamplingMode::NonThinking;
-    if (info.prompt_tokens > impl_->active->capacity) {
+        info.thinking() ? SamplingMode::Thinking : SamplingMode::NonThinking;
+    if (info.prompt_tokens > impl_->backend->prompt_capacity()) {
         throw std::logic_error("target Frontend admitted a prompt beyond Engine capacity");
     }
-    const PromptPreparationStats preparation = prepared.preparation_stats();
-    return PreparedPrompt(std::make_unique<PreparedPrompt::Impl>(info, preparation, sampling_mode,
-                                                                 std::move(prepared)));
+    return PreparedPrompt(std::make_unique<PreparedPrompt::Impl>(
+        info, prepared.preparation, sampling_mode, std::move(prepared.prompt)));
 }
 
 PreparedPrompt Engine::prepare_tokens(std::vector<TokenId> token_ids,
@@ -217,27 +227,34 @@ PreparedPrompt Engine::prepare_tokens(std::vector<TokenId> token_ids,
     nvtx::ScopedRange prepare_range(nvtx::Name::FrontendPrepare, nvtx::Category::Runtime,
                                     static_cast<std::uint64_t>(token_ids.size()));
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    if (token_ids.size() > impl_->active->capacity) {
+    const std::uint32_t capacity = impl_->backend->prompt_capacity();
+    if (token_ids.size() > capacity) {
         throw RequestError(RequestErrorKind::ContextLengthExceeded,
-                           context_capacity_error(token_ids.size(), impl_->active->capacity));
+                           context_capacity_error(token_ids.size(), capacity));
     }
-    auto prepared =
-        impl_->active->frontend.prepare_tokens(std::move(token_ids), allow_prefix_identity);
-    PromptSummary info = prepared.summary();
-    if (info.prompt_tokens > impl_->active->capacity) {
+    runtime::PreparedBox prepared =
+        impl_->backend->prepare_tokens(std::move(token_ids), allow_prefix_identity);
+    if (prepared.summary.prompt_tokens > capacity) {
         throw std::logic_error("target Frontend admitted prompt tokens beyond capacity");
     }
-    const PromptPreparationStats preparation = prepared.preparation_stats();
-    return PreparedPrompt(std::make_unique<PreparedPrompt::Impl>(
-        info, preparation, SamplingMode::Thinking, std::move(prepared)));
+    return PreparedPrompt(std::make_unique<PreparedPrompt::Impl>(prepared.summary,
+                                                                 prepared.preparation,
+                                                                 SamplingMode::Thinking,
+                                                                 std::move(prepared.prompt)));
 }
 
 std::vector<TokenId> Engine::tokenize_text(std::string_view text) const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return impl_->active->frontend.tokenize_text(text);
+    return impl_->backend->tokenize_text(text);
 }
 
 std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32_t first_target) {
+    ScoreDetail none;
+    return score_tokens(std::move(tokens), first_target, ScoreDetailRequest{}, none);
+}
+
+std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32_t first_target,
+                                        const ScoreDetailRequest& request, ScoreDetail& detail) {
     nvtx::ScopedRange score_range(nvtx::Name::Score, nvtx::Category::Scoring,
                                   static_cast<std::uint64_t>(tokens.size()));
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
@@ -250,19 +267,21 @@ std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32
     if (first_target == 0 || first_target >= tokens.size()) {
         throw std::invalid_argument("score_tokens first_target must be in [1,token_count-1]");
     }
+    if (request.top_k > 64 || request.given_k > 64) {
+        throw std::invalid_argument("score_tokens: top_k and given_k must be at most 64");
+    }
+    const std::size_t targets = tokens.size() - first_target;
+    if (request.given_ids.size() != targets * request.given_k) {
+        throw std::invalid_argument("score_tokens: given_ids must hold given_k ids per target");
+    }
     PreparedPrompt prompt      = prepare_tokens(std::move(tokens), false);
     const std::size_t expected = prompt.summary().prompt_tokens - first_target;
-    std::vector<float> result  = std::visit(
-        [&](auto& core) -> std::vector<float> {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (std::is_same_v<CoreState, std::unique_ptr<Impl::ScoringCore>>) {
-                return core->score(std::move(prompt.impl_->value), first_target);
-            } else {
-                throw std::logic_error("Engine scoring core is unavailable");
-            }
-        },
-        impl_->core);
-    if (result.size() != expected) {
+    detail                     = {};
+    std::vector<float> result =
+        impl_->backend->score(std::move(prompt.impl_->value), first_target, request, detail);
+    if (result.size() != expected || detail.top_ids.size() != expected * request.top_k ||
+        detail.top_logprobs.size() != expected * request.top_k ||
+        detail.given_logprobs.size() != expected * request.given_k) {
         throw std::logic_error("target Program returned an invalid causal score count");
     }
     return result;
@@ -270,12 +289,57 @@ std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32
 
 std::uint32_t Engine::count_tokens(PromptInput input, const PreparationControl& control) const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return impl_->active->frontend.count_tokens(std::move(input), control);
+    return impl_->backend->count_tokens(std::move(input), control);
 }
 
 ModelSamplingDefaults Engine::sampling_defaults() const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
     return impl_->sampling_defaults;
+}
+
+std::shared_ptr<const OutputConstraint>
+Engine::compile_output_constraint(const OutputConstraintSpec& spec) const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    if (impl_->options.purpose != EnginePurpose::Generation) {
+        throw std::logic_error("compile_output_constraint requires a Generation Engine");
+    }
+    structured::ConstraintCompiler& compiler = impl_->constraint_compiler();
+    if (spec.kind != OutputConstraintKind::ToolCalls) {
+        return std::make_shared<const OutputConstraint>(compiler.compile(spec), &compiler);
+    }
+    // Tool calls are model markup: the Frontend renders it as a structural tag after every strict
+    // argument schema passed the same support policy as a response_format schema.
+    std::vector<ToolCallConstraintTool> tools = spec.tools;
+    for (ToolCallConstraintTool& tool : tools) {
+        if (!tool.strict) { continue; }
+        const nlohmann::ordered_json schema =
+            nlohmann::ordered_json::parse(tool.parameters_json, nullptr, false);
+        if (schema.is_discarded() || !schema.is_object()) {
+            throw OutputConstraintError("invalid_schema", "tool '" + tool.name +
+                                                              "' parameters are not a JSON object");
+        }
+        try {
+            tool.parameters_json = structured::normalize_tool_parameters_schema(schema).dump();
+        } catch (const OutputConstraintError& error) {
+            throw OutputConstraintError(error.code(),
+                                        "tool '" + tool.name + "' parameters: " + error.what());
+        }
+    }
+    OutputConstraintSpec rendered = spec;
+    rendered.kind                 = OutputConstraintKind::StructuralTag;
+    rendered.tools.clear();
+    // With an answer schema the text answer is that JSON: the markup alternative is calls only.
+    const ToolCallRequirement requirement =
+        !spec.answer_schema.empty() && spec.tool_requirement == ToolCallRequirement::Optional
+            ? ToolCallRequirement::Required
+            : spec.tool_requirement;
+    try {
+        rendered.definition = impl_->backend->tool_call_structural_tag(
+            tools, requirement, spec.named_tool, spec.parallel_tool_calls);
+    } catch (const std::invalid_argument& error) {
+        throw OutputConstraintError("invalid_tool_constraint", error.what());
+    }
+    return std::make_shared<const OutputConstraint>(compiler.compile(rendered), &compiler);
 }
 
 GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
@@ -293,6 +357,24 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
         throw std::invalid_argument("live generation observations require a Streaming consumer");
     }
 
+    if (const auto& constraint = options.constraint.compiled) {
+        {
+            std::lock_guard lock(impl_->constraint_mutex);
+            if (constraint->compiled() == nullptr || constraint->owner() != impl_->compiler.get()) {
+                throw std::invalid_argument("output constraint was not compiled by this Engine");
+            }
+        }
+        const bool visible = options.output.raw || options.output.preserve_special_tokens;
+        if (structured::vocabulary_view(*constraint->compiled()).special_tokens_visible != visible) {
+            throw std::invalid_argument(
+                "output constraint special-token visibility does not match OutputOptions");
+        }
+        // A constrained output ends where its grammar does: the grammar admits the checkpoint's
+        // stop tokens only once it is complete, so they stay stops under ignore_eos too. Without
+        // them the accepted stop token did not end the output, and the next round's mask failed
+        // the request (HTTP 500 structured_output_violation).
+        options.stop.include_model_defaults = true;
+    }
     runtime::ResolvedRequestOptions resolved_options = resolve_request_options(
         impl_->sampling_defaults, prompt.impl_->sampling_mode, std::move(options));
     const ResolvedSamplingParameters resolved_sampling = resolved_options.execution.sampling;
@@ -305,47 +387,35 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
     }
     const double prepare_seconds = prompt.impl_->prepare.seconds;
     if (resolved_options.execution.requested_output_tokens == 0) {
-        struct ImmediateSubmission {
+        struct ImmediateSubmission final : runtime::SubmissionBox {
             GenerationResult result;
-            OutputConsumerMode consumer_mode = OutputConsumerMode::Aggregate;
 
-            GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) {
-                const bool streaming = consumer_mode == OutputConsumerMode::Streaming;
-                if (streaming != (sink != nullptr)) {
-                    throw std::invalid_argument(
-                        "GenerationHandle wait sink does not match its submitted consumer mode");
-                }
+            GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) override {
+                // The sink matches the consumer mode (GenerationHandle::Impl::check_sink).
                 if (cancellation.requested()) { result.finish_reason = FinishReason::Cancelled; }
+                // A stream gets its one GenerationStart (engine.h) even with nothing to emit.
+                if (sink != nullptr) { sink->start(GenerationStart{.prompt = result.prompt}); }
                 return std::move(result);
             }
-        } immediate{.consumer_mode = consumer_mode};
+        };
 
-        immediate.result.prompt                     = prompt_summary;
-        immediate.result.finish_reason              = FinishReason::OutputLimit;
-        immediate.result.thinking.configured_budget = resolved_options.execution.thinking.budget;
-        immediate.result.timings.prepare_seconds    = prepare_seconds;
-        immediate.result.timings.total_seconds      = prepare_seconds;
+        auto immediate = std::make_unique<ImmediateSubmission>();
+
+        immediate->result.prompt                     = prompt_summary;
+        immediate->result.finish_reason              = FinishReason::OutputLimit;
+        immediate->result.thinking.configured_budget = resolved_options.execution.thinking.budget;
+        immediate->result.timings.prepare_seconds    = prepare_seconds;
+        immediate->result.timings.total_seconds      = prepare_seconds;
         prompt.impl_.reset();
         return GenerationHandle(std::make_unique<GenerationHandle::Impl>(
-            impl_, std::move(immediate), resolved_sampling));
+            impl_, std::move(immediate), resolved_sampling, consumer_mode));
     }
 
-    return std::visit(
-        [&](auto& core) -> GenerationHandle {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (std::is_same_v<CoreState, std::monostate>) {
-                throw std::logic_error("Engine core is unavailable");
-            } else if constexpr (std::is_same_v<CoreState, std::unique_ptr<Impl::ScoringCore>>) {
-                throw std::logic_error("Engine generation core is unavailable");
-            } else {
-                auto submission = core->submit(std::move(prompt.impl_->value), prompt_summary,
-                                               prepare_seconds, std::move(resolved_options),
-                                               consumer_mode, observation, pending_deadline);
-                return GenerationHandle(std::make_unique<GenerationHandle::Impl>(
-                    impl_, std::move(submission), resolved_sampling));
-            }
-        },
-        impl_->core);
+    auto submission = impl_->backend->submit(std::move(prompt.impl_->value), prompt_summary,
+                                             prepare_seconds, std::move(resolved_options),
+                                             consumer_mode, observation, pending_deadline);
+    return GenerationHandle(std::make_unique<GenerationHandle::Impl>(
+        impl_, std::move(submission), resolved_sampling, consumer_mode));
 }
 
 GenerationResult Engine::generate(PreparedPrompt prompt, RequestOptions options, OutputSink* sink,
@@ -366,63 +436,33 @@ LoadSummary Engine::load_summary() const {
     return impl_->load;
 }
 
+ModelMetadata Engine::model_metadata() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return impl_->load.metadata;
+}
+
 MemorySummary Engine::memory_summary() const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return std::visit(
-        [](const auto& core) -> MemorySummary {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (std::is_same_v<CoreState, std::monostate>) {
-                throw std::logic_error("Engine core is unavailable");
-            } else {
-                return core->memory_summary();
-            }
-        },
-        impl_->core);
+    return impl_->backend->memory_summary();
 }
 
 MediaCacheSummary Engine::media_cache_summary() const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return impl_->active->frontend.media_cache_summary();
+    return impl_->backend->media_cache_summary();
 }
 
 RuntimeStats Engine::runtime_stats() const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return std::visit(
-        [](const auto& core) -> RuntimeStats {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (std::is_same_v<CoreState, std::monostate>) {
-                throw std::logic_error("Engine core is unavailable");
-            } else {
-                return core->runtime_stats();
-            }
-        },
-        impl_->core);
+    return impl_->backend->runtime_stats();
 }
 
 bool Engine::is_available() const {
-    if (impl_ == nullptr) { return false; }
-    return std::visit(
-        [](const auto& core) {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (std::is_same_v<CoreState, std::monostate>) {
-                return false;
-            } else {
-                return core != nullptr && core->is_available();
-            }
-        },
-        impl_->core);
+    return impl_ != nullptr && impl_->backend != nullptr && impl_->backend->is_available();
 }
 
 void Engine::reset_memory_peaks() noexcept {
-    if (impl_ == nullptr) { return; }
-    std::visit(
-        [](auto& core) {
-            using CoreState = std::remove_cvref_t<decltype(core)>;
-            if constexpr (!std::is_same_v<CoreState, std::monostate>) {
-                core->reset_memory_peaks();
-            }
-        },
-        impl_->core);
+    if (impl_ == nullptr || impl_->backend == nullptr) { return; }
+    impl_->backend->reset_memory_peaks();
 }
 
-} // namespace ninfer
+} // namespace ninferno

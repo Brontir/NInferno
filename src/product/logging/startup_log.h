@@ -1,10 +1,10 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 
 #include <memory>
 
-namespace ninfer::product {
+namespace ninferno::product {
 
 class LoggingRuntime;
 
@@ -28,4 +28,4 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
-} // namespace ninfer::product
+} // namespace ninferno::product

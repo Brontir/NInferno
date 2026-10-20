@@ -1,7 +1,7 @@
 // Measures five public feature-slice captures into a strided lane-owned pool.
-#include "ninfer/ops/scatter.h"
+#include "ninferno/ops/scatter.h"
 #include "core/device.h"
-#include "ninfer_bench_common.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <algorithm>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
+using namespace ninferno;
 
 namespace {
 struct Options {
@@ -53,7 +53,7 @@ Options parse(int argc, char** argv) {
             continue;
         }
         if (arg == "--help") {
-            std::puts("usage: ninfer_scatter_bf16_batch_bench [--rows D] [--widths W,...] "
+            std::puts("usage: ninferno_scatter_bf16_batch_bench [--rows D] [--widths W,...] "
                       "[--batches B,...] [--counts full|one|ragged|zero] [--execution eager|graph] "
                       "[--cache cold|warm] [--graph-calls 1..64] [--warmup N] [--repeat N] "
                       "[--csv-out PATH] [--profile]");
@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaGetDeviceCount(&devices));
         if (!devices) return 77;
         DeviceContext device;
-        DeviceBuffer flush(std::size_t{256} << 20);
+        bench::L2FlushBuffer flush(std::size_t{256} << 20);
         std::ofstream csv;
         if (!o.csv.empty()) {
             csv.open(o.csv);

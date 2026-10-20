@@ -17,7 +17,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 runtime::ContextTransactionReserveStatus
 ProgramImpl::reserve_materialization(AdmissionCandidate&& plan, PreparedPromptData&& prompt,
@@ -317,9 +317,11 @@ ProgramImpl::reserve_materialization(AdmissionCandidate&& plan, PreparedPromptDa
         materialization_identity_.assign(prompt);
         materialization_prefix_digests_.assign(prompt);
 
+        // The prefill proposes the request's own depth of drafts (0: a plain request proposes
+        // none), as an engine whose only depth it is would.
         const std::uint32_t initial_mtp_extent =
             speculative_backend == SpeculativeBackend::Mtp
-                ? std::min({draft_window,
+                ? std::min({request_plan.speculation.draft_depth,
                             request_plan.summary.effective_output_tokens > 1
                                 ? request_plan.summary.effective_output_tokens - 2
                                 : 0U,
@@ -344,9 +346,8 @@ ProgramImpl::reserve_materialization(AdmissionCandidate&& plan, PreparedPromptDa
             if (!workspace_plan.vision) {
                 throw std::logic_error("Vision prefill has no startup workspace plan");
             }
-            request.prefill->vision = std::make_unique<execution::VisionPrefillSession>(
-                device, parameters,
-                DeviceSpan{workspace_storage.base(), workspace_storage.capacity()},
+            request.prefill->vision = model.begin_vision_prefill(
+                device, DeviceSpan{workspace_storage.base(), workspace_storage.capacity()},
                 *workspace_plan.vision, request.prefill->prompt, *request.prefill->vision_plan,
                 vision_handoff_peak_bytes);
         }
@@ -534,7 +535,7 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
             .addresses   = backend_kv_addresses.get(),
             .pages       = backend_kv_pages.get(),
             .address     = *source.kv->backend,
-            .frontier    = backend_frontier_at(speculative_backend, details.reuse_base),
+            .frontier    = backend_kv_frontier(details.reuse_base),
             .prefix_fork = details.backend_prefix_fork_required,
         };
     }
@@ -548,7 +549,7 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
             }
             continue;
         }
-        const std::uint32_t target_pages = kv_pages_for_frontier(target.frontier);
+        const std::uint32_t target_pages = paged_kv_pages(target.frontier);
         if (target_pages != 0) {
             const LogicalKVPageHandle tail =
                 target.addresses->logical_page(target.address, target_pages - 1U);
@@ -587,7 +588,7 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
     }
     source.text_kv_valid = details.reuse_base;
     if (speculative_backend == SpeculativeBackend::Mtp) {
-        source.mtp_kv_valid = backend_frontier_at(speculative_backend, details.reuse_base);
+        source.mtp_kv_valid = detail::backend_frontier_at(speculative_backend, details.reuse_base);
     } else if (is_masked_draft_backend(speculative_backend)) {
         source.dflash_context_frontier = details.reuse_base;
     }
@@ -798,9 +799,8 @@ void ProgramImpl::prepare_materialization(MaterializationTransaction& transactio
             DeviceKVPageReservation& reservation,
             std::vector<MaterializationTransaction::KVRestorePage>& restores,
             std::vector<DeviceKVPageHandle>& destinations) {
-            const std::uint32_t mapped = activation_frontier
-                                             ? kv_pages_for_frontier(*activation_frontier)
-                                             : addresses.mapped_pages(address);
+            const std::uint32_t mapped = activation_frontier ? paged_kv_pages(*activation_frontier)
+                                                             : addresses.mapped_pages(address);
             if (mapped > addresses.mapped_pages(address)) {
                 throw std::logic_error("KV activation frontier exceeds address membership");
             }
@@ -2218,4 +2218,4 @@ bool ProgramImpl::has_context_transaction() const noexcept {
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

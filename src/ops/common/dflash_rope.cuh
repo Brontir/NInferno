@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 // D128 full-head 1-D RoPE frequencies for theta=1e7.
 static __device__ __constant__ double kDflashRopeInvFrequency[64] = {
@@ -33,14 +33,21 @@ static __device__ __constant__ double kDflashRopeInvFrequency[64] = {
     1.28639694493697462e-07,
 };
 
-__device__ __forceinline__ void dflash_rope_sincos(const std::int32_t* positions, int token,
-                                                   int pair, float* sine, float* cosine) {
+// sin and cos of an FP64 RoPE angle: the reduction to [-pi, pi] in FP64 (a position near 2^18
+// times a frequency near 1 leaves an FP32 product a few hundredths of a radian off), the sine and
+// cosine of the reduced angle in FP32. Full FP64 sincos costs some sixty FP64 instructions, which
+// GeForce parts issue at 1/64 rate; this costs three.
+__device__ __forceinline__ void rope_angle_sincos(double angle, float* sine, float* cosine) {
     constexpr double kInvTwoPi = 1.59154943091895336e-01;
     constexpr double kTwoPi    = 6.28318530717958648e+00;
-    const double angle  = static_cast<double>(positions[token]) * kDflashRopeInvFrequency[pair];
-    const double turns  = angle * kInvTwoPi;
-    const float reduced = static_cast<float>(angle - nearbyint(turns) * kTwoPi);
+    const float reduced        = static_cast<float>(angle - nearbyint(angle * kInvTwoPi) * kTwoPi);
     sincosf(reduced, sine, cosine);
 }
 
-} // namespace ninfer::ops
+__device__ __forceinline__ void dflash_rope_sincos(const std::int32_t* positions, int token,
+                                                   int pair, float* sine, float* cosine) {
+    rope_angle_sincos(static_cast<double>(positions[token]) * kDflashRopeInvFrequency[pair], sine,
+                      cosine);
+}
+
+} // namespace ninferno::ops

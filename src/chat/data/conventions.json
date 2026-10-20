@@ -1,0 +1,179 @@
+{
+  "turns": [
+    {
+      "name": "chatml_sep",
+      "detect": ["<|im_start|>", "<|im_sep|>", "<|im_end|>"],
+      "open": "<|im_start|>",
+      "header_end": "<|im_sep|>",
+      "close": "<|im_end|>",
+      "after_close": "",
+      "stops": ["<|im_end|>", "<|endoftext|>"],
+      "roles": {"system": "system", "developer": "developer", "user": "user",
+                "assistant": "assistant", "tool": "tool"}
+    },
+    {
+      "name": "chatml",
+      "detect": ["<|im_start|>", "<|im_end|>"],
+      "open": "<|im_start|>",
+      "header_end": "\n",
+      "close": "<|im_end|>",
+      "after_close": "\n",
+      "stops": ["<|im_end|>", "<|endoftext|>"],
+      "roles": {"system": "system", "developer": "developer", "user": "user",
+                "assistant": "assistant", "tool": "tool", "environment": "tool"}
+    },
+    {
+      "name": "gemma4",
+      "detect": ["<|turn>", "<turn|>"],
+      "open": "<|turn>",
+      "header_end": "\n",
+      "close": "<turn|>",
+      "after_close": "\n",
+      "stops": ["<turn|>", "<|tool_response>", "<eos>"],
+      "roles": {"system": "system", "developer": "developer", "user": "user",
+                "model": "assistant", "tool": "tool"}
+    },
+    {
+      "name": "harmony",
+      "detect": ["<|start|>", "<|message|>", "<|end|>", "<|channel|>"],
+      "open": "<|start|>",
+      "header_end": "<|message|>",
+      "close": "<|end|>",
+      "after_close": "",
+      "stops": ["<|return|>", "<|call|>", "<|endoftext|>"],
+      "roles": {"system": "system", "developer": "developer", "user": "user",
+                "assistant": "assistant", "assistant<|channel|>final": "assistant",
+                "assistant<|channel|>analysis": "assistant"}
+    },
+    {
+      "name": "llama3",
+      "detect": ["<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"],
+      "open": "<|start_header_id|>",
+      "header_end": "<|end_header_id|>\n\n",
+      "close": "<|eot_id|>",
+      "after_close": "",
+      "stops": ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>"],
+      "roles": {"system": "system", "user": "user", "assistant": "assistant",
+                "ipython": "tool", "tool": "tool"}
+    },
+    {
+      "name": "start_message",
+      "detect": ["<|start|>", "<|message|>", "<|eot|>", "<|eom|>"],
+      "open": "<|start|>",
+      "header_end": "<|message|>",
+      "close": "<|eot|>",
+      "after_close": "",
+      "stops": ["<|eot|>"],
+      "roles": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool",
+                "assistant to=user": "assistant", "assistant to=self": "assistant"}
+    }
+  ],
+  "reasoning": [
+    {
+      "name": "think",
+      "detect": ["<think>", "</think>"],
+      "open": "<think>",
+      "open_suffix": "\n",
+      "close": "</think>",
+      "canonical_close": "\n</think>\n\n",
+      "budget_control": "\n\n Considering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+    },
+    {
+      "name": "gemma4_channel",
+      "detect": ["<|channel>", "<channel|>"],
+      "open": "<|channel>thought",
+      "open_suffix": "\n",
+      "close": "<channel|>",
+      "canonical_close": "",
+      "budget_control": "<channel|>"
+    },
+    {
+      "name": "harmony_analysis",
+      "detect": ["<|channel|>analysis<|message|>", "<|channel|>final<|message|>"],
+      "open": "<|channel|>analysis<|message|>",
+      "open_suffix": "",
+      "close": "<|end|>",
+      "canonical_close": "",
+      "budget_control": "",
+      "content_open": ["<|start|>assistant<|channel|>final<|message|>", "<|channel|>final<|message|>"]
+    },
+    {
+      "name": "self_recipient",
+      "detect": ["<|start|>assistant to=self<|message|>", "<|eom|>"],
+      "open": " to=self<|message|>",
+      "open_suffix": "",
+      "close": "<|eom|>",
+      "canonical_close": "<|eom|>",
+      "budget_control": "<|eom|><|start|>assistant to=user<|message|>",
+      "content_open": ["<|start|>assistant to=user<|message|>", " to=user<|message|>"]
+    }
+  ],
+  "tools": [
+    {
+      "format": "qwen_xml",
+      "detect": ["<tool_call>", "<function="],
+      "response_open": "<tool_response>",
+      "response_close": "</tool_response>",
+      "response_boundary": "\n</tool_response>"
+    },
+    {
+      "format": "gemma4",
+      "detect": ["<|tool_call>"],
+      "response_open": "<|tool_response>",
+      "response_close": "<tool_response|>",
+      "response_boundary": ""
+    },
+    {
+      "format": "hermes_json",
+      "detect": ["<tool_call>"],
+      "response_open": "<tool_response>",
+      "response_close": "</tool_response>",
+      "response_boundary": ""
+    },
+    {
+      "format": "mistral_json",
+      "detect": ["[TOOL_CALLS]"],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    },
+    {
+      "format": "harmony",
+      "detect": ["<|call|>", "<|channel|>commentary"],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    },
+    {
+      "format": "atem",
+      "detect": ["<atem:function_calls>", "<atem:invoke name="],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    },
+    {
+      "format": "pythonic",
+      "detect": ["<function_calls>", "</function_calls>"],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    },
+    {
+      "format": "granite_json",
+      "detect": ["<|tool_call|>"],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    },
+    {
+      "format": "llama3_json",
+      "detect": ["{\"name\": \"", "\"parameters\": "],
+      "response_open": "",
+      "response_close": "",
+      "response_boundary": ""
+    }
+  ],
+  "generic_stops": ["<|eot_id|>", "<|im_end|>", "<|end|>", "<|return|>", "<|call|>",
+                    "<end_of_turn>", "<|endoftext|>", "<|eom_id|>", "<EOT>", "_<EOT>",
+                    "<|end▁of▁sentence|>", "<end_of_utterance>"]
+}

@@ -52,6 +52,8 @@ value statement::execute(context& ctx) {
         throw;
     } catch (const rethrown_exception& /* ex */) {
         throw;
+    } catch (const template_raised_exception& /* ex */) {
+        throw;
     } catch (const not_implemented_exception& /* ex */) { throw; } catch (const std::exception& e) {
         const std::string& source = *ctx.src;
         if (source.empty()) {

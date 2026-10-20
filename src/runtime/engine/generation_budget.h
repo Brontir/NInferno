@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 class GenerationBudget {
 public:
@@ -26,9 +26,15 @@ public:
         remaining_ -= tokens;
     }
 
+    // Narrows the licensed output to a bounded completion (a settled KV lease): the request then
+    // ends with the limit reason this budget already carries.
+    void cap_remaining(std::uint32_t limit) noexcept {
+        if (limit < remaining_) { remaining_ = limit; }
+    }
+
 private:
     std::uint32_t remaining_   = 0;
     FinishReason limit_reason_ = FinishReason::None;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

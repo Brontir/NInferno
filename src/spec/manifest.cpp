@@ -1,0 +1,361 @@
+#include "spec/manifest.h"
+
+#include "artifact/reader.h"
+#include "spec/fingerprint.h"
+#include "spec/json_fields.h"
+#include "spec/registry.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <vector>
+
+namespace ninferno::spec {
+namespace {
+
+using Json = nlohmann::json;
+
+// Every drafter name a profile's choices reference.
+std::vector<std::string> referenced(const Profile& p) {
+    std::vector<std::string> out;
+    const auto add = [&](const Choice& c) {
+        if (c.config.enabled() && !c.drafter.empty() &&
+            std::find(out.begin(), out.end(), c.drafter) == out.end()) {
+            out.push_back(c.drafter);
+        }
+    };
+    add(p.overall);
+    add(p.non_thinking);
+    add(p.thinking);
+    if (p.served) { // a server's choices may use a drafter the profile's own do not
+        add(p.served->overall);
+        add(p.served->non_thinking);
+        add(p.served->thinking);
+    }
+    if (p.fit_fallback) { add(*p.fit_fallback); } // runs when the chosen drafter does not fit
+    return out;
+}
+
+// `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
+// measured on another GPU calibrated here, another profile's load bounds where it measured none,
+// and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
+bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
+                    ResolvedSpeculation& out, Profile& p) {
+    out.foreign_floors = measured_elsewhere(gpu, published);
+    if (auto note = similarity_note(gpu, published); !note.empty()) {
+        out.notes.push_back(std::move(note));
+    }
+    try {
+        p = profile_from_published(published);
+        if (const auto* from = select_load_fallback(profiles, published)) {
+            p.load                  = profile_from_published(*from).load;
+            const auto cls          = from->value("gpu_class", std::string());
+            const auto others       = from->value("applies_to", Json::array());
+            const std::string whose = cls == "*"
+                                          ? std::string("the \"*\" profile")
+                                          : "the " + cls + " profile" +
+                                                (others.empty() || !others[0].is_string()
+                                                     ? std::string()
+                                                     : " of " + others[0].get<std::string>());
+            out.notes.push_back("load bounds " + load_label(p.load) + " from " + whose +
+                                ": none measured for this profile");
+        }
+    } catch (const std::exception& e) {
+        out.notes.push_back(std::string("the published profile does not parse: ") + e.what());
+        return false;
+    }
+    if (out.foreign_floors) {
+        const auto capped = stand_in_load(p.load, gpu.sms);
+        if (capped != p.load) {
+            out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
+                                ": the profile was measured on another "
+                                "GPU, plain from " +
+                                std::to_string(capped.back().lanes) + " rows on this one's " +
+                                std::to_string(gpu.sms) + " multiprocessors");
+            p.load = capped;
+        }
+    }
+    return true;
+}
+
+// The profiles `manifest` serves from: the registry this binary carries when the manifest came
+// from it (profiles are re-measured and republished; a model converted earlier takes them without
+// being converted again), else the manifest's own copy. Where they come from into `origin`.
+const Json& manifest_profiles(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, std::string& origin) {
+    origin = "manifest " + manifest_path(artifact).string();
+    if (manifest.source == "registry" && !manifest.entry.empty()) {
+        if (const auto* entry = Registry::builtin().by_id(manifest.entry)) {
+            origin = "registry " + entry->id + " for " + manifest_path(artifact).string();
+            return entry->profiles;
+        }
+    }
+    return manifest.profiles;
+}
+
+std::string published_source(const std::string& origin, const Json& published) {
+    // The profile's revision (tools/spec/registry_add.py: a hash of its content) names the table a
+    // server runs.
+    const auto revision = published.value("revision", std::string());
+    return origin + " (" + published.value("gpu_class", std::string()) +
+           (revision.empty() ? std::string() : ", revision " + revision) + ")";
+}
+
+// The registry entry of the model an artifact is, found by what it is (Registry::nearest: its
+// engine, vocabulary and geometry) and only at the entry's own shape: a requantization or an
+// undeclared fine-tune of the entry's model, every drafter of which applies. The artifact's
+// component names into `components`. nullptr: nothing to read, or no entry of its shape.
+const ModelEntry* entry_by_shape(const std::filesystem::path& artifact,
+                                 std::set<std::string>& components) {
+    try {
+        const artifact::Reader reader(artifact);
+        for (const auto& [name, component] : reader.directory().components) {
+            components.insert(name);
+        }
+        const auto found = reader.directory().components.find("text");
+        if (found == reader.directory().components.end() || !found->second.config.is_object()) {
+            return nullptr;
+        }
+        const Json& config = found->second.config;
+        std::string architecture;
+        if (const auto a = config.find("architectures");
+            a != config.end() && a->is_array() && !a->empty() && (*a)[0].is_string()) {
+            architecture = (*a)[0].get<std::string>();
+        }
+        const auto nested = config.find("text_config");
+        const Json& scope = nested != config.end() && nested->is_object() ? *nested : config;
+        const Geometry shape{json_unsigned(scope, "hidden_size"),
+                             json_unsigned(scope, "num_hidden_layers"),
+                             json_unsigned(scope, "vocab_size")};
+        std::string fingerprint;
+        if (const auto fp = artifact_vocab_fingerprint(artifact)) { fingerprint = fp->value; }
+        const auto* entry = Registry::builtin().nearest(
+            engine_for_architecture(architecture), shape, fingerprint, components.contains("mtp"));
+        if (entry == nullptr || shape_distance(entry->geometry, shape) != 0.0) { return nullptr; }
+        return entry;
+    } catch (const std::exception&) { return nullptr; }
+}
+
+} // namespace
+
+const ManifestDrafter* SpeculationManifest::drafter(std::string_view name) const {
+    for (const auto& d : drafters) {
+        if (d.name == name) { return &d; }
+    }
+    return nullptr;
+}
+
+std::filesystem::path manifest_path(const std::filesystem::path& artifact) {
+    return std::filesystem::path(artifact.string() + ".speculation.json");
+}
+
+SpeculationManifest manifest_from_json(const Json& doc) {
+    if (doc.value("schema", 0) != 1) { throw std::runtime_error("speculation manifest: unknown schema"); }
+    SpeculationManifest m;
+    const auto target   = doc.value("target", Json::object());
+    m.target_artifact_id = json_text(target, "artifact_id");
+    m.repo               = json_text(target, "repo");
+    m.engine             = json_text(target, "engine");
+    m.vocab_fingerprint  = json_text(target, "vocab_fingerprint");
+    m.source             = json_text(doc, "source");
+    m.entry              = json_text(doc, "entry");
+    m.matched_by         = json_text(doc, "matched_by");
+    m.fallback           = json_text(doc, "fallback");
+    for (const auto& d : doc.value("drafters", Json::array())) {
+        ManifestDrafter x;
+        x.name        = json_text(d, "name");
+        x.kind        = json_text(d, "kind");
+        x.repo        = json_text(d, "repo");
+        x.revision    = json_text(d, "revision");
+        x.artifact    = json_text(d, "artifact");
+        x.artifact_id = json_text(d, "artifact_id");
+        x.component   = json_text(d, "component");
+        x.status      = json_text(d, "status");
+        m.drafters.push_back(std::move(x));
+    }
+    m.profiles = doc.value("profiles", Json::array());
+    return m;
+}
+
+std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& path,
+                                                 std::string* error) {
+    std::ifstream stream(path);
+    if (!stream) {
+        if (error) { *error = "no manifest at " + path.string(); }
+        return std::nullopt;
+    }
+    try {
+        return manifest_from_json(Json::parse(stream));
+    } catch (const std::exception& e) {
+        if (error) { *error = path.string() + ": " + e.what(); }
+        return std::nullopt;
+    }
+}
+
+ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
+                                        const std::string& artifact_id,
+                                        const GpuKey& gpu) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    ResolvedSpeculation out;
+    std::optional<SpeculationManifest> manifest;
+    std::string unread; // why there is no manifest to read, when a local tune does not serve either
+    {
+        std::string why;
+        manifest = read_manifest(manifest_path(artifact), &why);
+        if (manifest && manifest->target_artifact_id != artifact_id) {
+            out.notes.push_back(manifest_path(artifact).string() +
+                                " belongs to another artifact (id " +
+                                manifest->target_artifact_id + ")");
+            manifest.reset();
+        } else if (!manifest && !std::filesystem::exists(manifest_path(artifact))) {
+            // A converted model without its drafters attached (or attached beside another path
+            // to the same file, such as a symlink): nothing names its registry entry.
+            unread = "no " + manifest_path(artifact).filename().string() +
+                     " beside the artifact: ninferno-convert --attach-drafters --target-artifact "
+                     "<artifact> --model-id <repo> writes it from the registry";
+        } else if (!manifest) {
+            unread = why;
+        }
+        if (manifest) { out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback; }
+    }
+
+    // 1. A maintainer's own tune on this machine.
+    const auto tuned_path = default_profile_path(artifact);
+    std::string why;
+    if (auto tuned = read_profile(tuned_path, &why)) {
+        ProfileKey expected;
+        expected.artifact_id = artifact_id;
+        expected.gpu         = gpu_class;
+        std::vector<std::string> ids;
+        std::map<std::string, std::string> paths;
+        bool drafters_ok = true;
+        for (const auto& d : tuned->drafters) {
+            if (d.artifact_id.empty()) { continue; } // built in, a component, or model-free
+            ids.push_back(d.artifact_id);
+            try {
+                if (artifact_id_hex(d.artifact) != d.artifact_id) {
+                    drafters_ok = false;
+                    out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact +
+                                        " was replaced since the tune");
+                }
+            } catch (const std::exception& e) {
+                drafters_ok = false;
+                out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact + ": " +
+                                    e.what());
+            }
+            paths[d.name.empty() ? d.kind : d.name] = d.artifact;
+        }
+        expected.drafters   = drafter_key(ids);
+        const auto mismatch = key_mismatch(tuned->key, expected);
+        if (!mismatch.empty()) {
+            out.notes.push_back(tuned_path.string() + " was tuned for another " + mismatch);
+        } else if (drafters_ok) {
+            out.source  = "local tune " + tuned_path.string();
+            out.profile = std::move(*tuned);
+            for (const auto& d : out.profile.drafters) {
+                const auto name = d.name.empty() ? d.kind : d.name;
+                if (d.status != "accepted") { continue; }
+                out.drafters[name] = d.artifact_id.empty() ? "component:" + name : d.artifact;
+            }
+            // A tune measures its depths at one request; the published load bounds of its kind
+            // (deeper drafts cost more rounds as requests share the GPU) still apply.
+            if (out.profile.load.empty() && manifest) {
+                std::string origin;
+                const Json& profiles = manifest_profiles(*manifest, artifact, origin);
+                std::vector<std::string> tuned_drafters;
+                for (const auto& [name, path] : out.drafters) { tuned_drafters.push_back(name); }
+                const auto* published =
+                    select_published(profiles, gpu, manifest->repo, &tuned_drafters);
+                ResolvedSpeculation scratch;
+                Profile p;
+                if (published != nullptr && take_published(profiles, *published, gpu, scratch, p) &&
+                    !p.load.empty() && p.overall.config.mode == out.profile.overall.config.mode) {
+                    out.profile.load = std::move(p.load);
+                    out.notes.push_back("load bounds " + load_label(out.profile.load) + " from " +
+                                        published_source(origin, *published) +
+                                        ": the local tune measured none");
+                }
+            }
+            return out;
+        }
+    }
+    if (!unread.empty()) { out.notes.push_back(unread); }
+
+    // 2. The published profile for this GPU (manifest_profiles: the registry's, or the manifest's
+    //    own copy for a bundle declaration or a registry entry this binary no longer knows).
+    if (manifest) {
+        std::vector<std::string> available;
+        for (const auto& d : manifest->drafters) {
+            if (d.usable()) { available.push_back(d.name); }
+        }
+        std::string origin;
+        const Json* profiles  = &manifest_profiles(*manifest, artifact, origin);
+        const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
+        if (published == nullptr) {
+            out.notes.push_back(origin + " has no profile for " + gpu_class +
+                                " along its similarity chain");
+            return out;
+        }
+        Profile p;
+        if (!take_published(*profiles, *published, gpu, out, p)) { return out; }
+        for (const auto& name : referenced(p)) {
+            const auto* d = manifest->drafter(name);
+            if (d == nullptr || !d->usable()) {
+                out.notes.push_back("profile drafter '" + name + "' is not attached" +
+                                    (d ? " (" + d->status + ")" : std::string()));
+                continue;
+            }
+            if (!d->artifact.empty()) {
+                try {
+                    if (artifact_id_hex(d->artifact) != d->artifact_id) {
+                        out.notes.push_back("drafter " + d->artifact + " changed since attach");
+                        continue;
+                    }
+                } catch (const std::exception& e) {
+                    out.notes.push_back("drafter " + d->artifact + ": " + e.what());
+                    continue;
+                }
+                out.drafters[name] = d->artifact;
+            } else {
+                out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
+            }
+        }
+        out.source  = published_source(origin, *published);
+        out.profile = std::move(p);
+    } else if (std::set<std::string> components;
+               const auto* entry = entry_by_shape(artifact, components)) {
+        // 3. No manifest: the registry entry of the model the artifact is, over the drafters it
+        //    carries as components (a GGUF converted with its MTP layers or DFlash drafter built
+        //    in, never attached), rather than the built-in drafter's untuned default.
+        std::vector<std::string> available;
+        for (const char* name : {"mtp", "dflash", "dflash2"}) {
+            if (components.contains(name)) { available.emplace_back(name); }
+        }
+        const auto* published = select_published(entry->profiles, gpu, {}, &available);
+        if (published == nullptr) {
+            out.notes.push_back("registry " + entry->id + " (by the artifact's shape) has no " +
+                                "profile for " + gpu_class +
+                                " along its similarity chain over the built-in drafters");
+            return out;
+        }
+        Profile p;
+        if (!take_published(entry->profiles, *published, gpu, out, p)) { return out; }
+        // Only the drafters the artifact carries: a profile whose drafter ships as an artifact of
+        // its own (gpt-oss-20b's DFlash) decodes plainly here rather than failing to load it.
+        for (const auto& name : referenced(p)) {
+            if (components.contains(name)) {
+                out.drafters[name] = "component:" + name;
+            } else {
+                out.notes.push_back("profile drafter '" + name +
+                                    "' is neither attached nor built into the artifact");
+            }
+        }
+        out.source =
+            published_source("registry " + entry->id + " by the artifact's shape", *published);
+        out.profile = std::move(p);
+    }
+    return out;
+}
+
+} // namespace ninferno::spec

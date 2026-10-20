@@ -1,6 +1,7 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/planning/pressure_planner.h"
+#include "core/fnv.h"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +15,7 @@
 #include <variant>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 bool ProgramImpl::shared_capture_matches(const CaptureOffer& offer,
                                          const SharedPrefixHandle& shared) const {
@@ -33,7 +34,8 @@ CaptureAssessment
 ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle* exact_shared,
                              const SharedPrefixHandle* replacement,
                              std::optional<runtime::CheckpointRef> private_replacement,
-                             bool permit_shared_publication) const {
+                             bool permit_shared_publication,
+                             std::uint32_t waiting_admissions) const {
     if (!valid_capture_offer(offer)) { throw std::logic_error("capture offer is stale"); }
     if (exact_shared != nullptr && replacement != nullptr) {
         throw std::invalid_argument("capture cannot deduplicate and replace simultaneously");
@@ -177,17 +179,30 @@ ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle
     }
     const std::uint32_t device_state_after_preparation =
         state_store->device_occupied() - replaced_shared.device.state_slots;
-    const bool device_destination_available =
-        assessment.recycles_private_state ||
-        device_state_after_preparation < state_store->device_capacity();
-    if (device_destination_available || host_state_images == nullptr) {
+    const std::uint32_t free_device_images =
+        device_state_after_preparation < state_store->device_capacity()
+            ? state_store->device_capacity() - device_state_after_preparation
+            : 0U;
+    std::uint32_t idle_lanes = 0;
+    for (std::uint32_t other = 0; other < max_concurrency; ++other) {
+        if (requests[other].lifecycle == Lifecycle::Empty) { ++idle_lanes; }
+    }
+    // With the automatic 0 cached Device states (the Device pool holds one image per lane) and a
+    // Host tier, a capture forks on Device while the free images outnumber the requests waiting
+    // for admission (at most one per idle lane), and snapshots to Host otherwise: a Device
+    // checkpoint of an active lineage is not reclaimable by admission pressure, so it must not
+    // take an image a waiting request needs.
+    if (capture_prefers_device(free_device_images, idle_lanes, waiting_admissions,
+                               host_state_images != nullptr,
+                               assessment.recycles_private_state)) {
         assessment.state_placement = qwen3_5::CaptureStatePlacement::DeviceFork;
         added.device.state_slots   = 1;
     } else {
-        // A capture must not require a third Device image when the active image and a retained
-        // checkpoint already occupy the C+H pool.  Snapshot the frozen logical checkpoint to
-        // Host, then transfer ownership of its unchanged Device replica to the continuing active
-        // identity.  This preserves both logical checkpoints without assigning fixed slot roles.
+        // Snapshot the frozen logical checkpoint to Host, then transfer ownership of its
+        // unchanged Device replica to the continuing active identity. This preserves both
+        // logical checkpoints without assigning fixed slot roles, and needs no second Device
+        // image: the path taken when the C+H pool is full or its free images are reserved for
+        // waiting admissions.
         assessment.state_placement = qwen3_5::CaptureStatePlacement::HostSnapshot;
         added.host.state_slots     = 1;
     }
@@ -225,7 +240,9 @@ ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle
     if (assessment.state_placement == qwen3_5::CaptureStatePlacement::HostSnapshot) {
         assessment.transfer_requirements.push_back(state_transfer_requirement(
             state_images->host_layout(), runtime::ContextTransferDirection::DeviceToHost));
-    } else if (is_masked_draft_backend(speculative_backend)) {
+    } else if (is_masked_draft_backend(speculative_backend) &&
+               state_images->dflash_local() != nullptr) {
+        // A drafter without sliding layers (gpt-oss's) keeps no lane-local rings to copy.
         assessment.transfer_requirements.push_back(state_transfer_requirement(
             state_images->host_layout(), runtime::ContextTransferDirection::DeviceToDevice, true));
     }
@@ -246,18 +263,23 @@ ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle
     assessment.needs_transfer = !assessment.transfer_requirements.empty();
     assessment.physically_feasible =
         physical_peak_fits(assessment.implementation->demand.physical_peak_additional);
-    if (publish_shared) {
+    // What a later restore at this frontier costs, priced for the capture planner against the
+    // prefill it saves: the StateImage back to the active Device slot, and for a shared
+    // publication the KV pages it copied. A private checkpoint keeps its KV pages in the
+    // continuation's own lineage.
+    {
         std::vector<runtime::ContextTransferRequirement> recovery;
         recovery.reserve(3);
         if (assessment.state_placement == qwen3_5::CaptureStatePlacement::HostSnapshot) {
             recovery.push_back(state_transfer_requirement(
                 state_images->host_layout(), runtime::ContextTransferDirection::HostToDevice));
-        } else if (is_masked_draft_backend(speculative_backend)) {
+        } else if (is_masked_draft_backend(speculative_backend) &&
+                   state_images->dflash_local() != nullptr) {
             recovery.push_back(state_transfer_requirement(
                 state_images->host_layout(), runtime::ContextTransferDirection::DeviceToDevice,
                 true));
         }
-        if (text_snapshot_shape->copied_pages() != 0) {
+        if (text_snapshot_shape && text_snapshot_shape->copied_pages() != 0) {
             recovery.push_back(kv_transfer_requirement(
                 runtime::ContextResourceClass::MainKV,
                 runtime::ContextTransferDirection::DeviceToDevice,
@@ -281,7 +303,8 @@ ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle
 
 std::unique_ptr<CapturePressureCandidateImpl>
 ProgramImpl::make_capture_physical_candidate(const CaptureAssessment& assessment) const {
-    if (assessment.implementation == nullptr || !assessment.publishes_shared ||
+    if (assessment.implementation == nullptr ||
+        (!assessment.publishes_shared && !assessment.publishes_private) ||
         assessment.frontier == 0) {
         throw std::invalid_argument("capture pressure candidate is incomplete");
     }
@@ -301,11 +324,8 @@ ProgramImpl::make_capture_physical_candidate(const CaptureAssessment& assessment
     details->identity_assessment.expandable  = details->identity_assessment.physical_status !=
                                               runtime::MaterializationPhysicalStatus::Feasible;
     details->identity_assessment.projection_work = 1U + details->transfer_requirements.size();
-    std::uint64_t digest                         = 1469598103934665603ULL;
-    const auto mix                               = [&](std::uint64_t value) {
-        digest ^= value;
-        digest *= 1099511628211ULL;
-    };
+    std::uint64_t digest                         = fnv::kOffset;
+    const auto mix = [&](std::uint64_t value) { digest = fnv::mix(digest, value); };
     mix(resource_revision_.value);
     mix(assessment.frontier);
     mix(static_cast<std::uint8_t>(details->identity_assessment.physical_status));
@@ -331,29 +351,32 @@ ProgramImpl::reserve_active_capture(CaptureOffer&& offer, const SharedPrefixHand
                                     const SharedPrefixHandle* replacement,
                                     std::optional<runtime::CheckpointRef> private_replacement,
                                     bool permit_shared_publication,
+                                    std::uint32_t waiting_admissions,
                                     runtime::CancellationFlagView cancellation) {
     return reserve_active_capture_impl(std::move(offer), exact_shared, replacement,
-                                       private_replacement, permit_shared_publication, std::nullopt,
-                                       cancellation);
+                                       private_replacement, permit_shared_publication,
+                                       waiting_admissions, std::nullopt, cancellation);
 }
 
 runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_with_pressure(
     CaptureOffer&& offer, const SharedPrefixHandle* exact_shared,
     const SharedPrefixHandle* replacement,
     std::optional<runtime::CheckpointRef> private_replacement, bool permit_shared_publication,
-    CapturePressureCandidate&& pressure, runtime::CancellationFlagView cancellation) {
+    std::uint32_t waiting_admissions, CapturePressureCandidate&& pressure,
+    runtime::CancellationFlagView cancellation) {
     std::optional<CapturePressureCandidate> owned;
     owned.emplace(std::move(pressure));
     return reserve_active_capture_impl(std::move(offer), exact_shared, replacement,
                                        private_replacement, permit_shared_publication,
-                                       std::move(owned), cancellation);
+                                       waiting_admissions, std::move(owned), cancellation);
 }
 
 runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_impl(
     CaptureOffer&& offer, const SharedPrefixHandle* exact_shared,
     const SharedPrefixHandle* replacement,
     std::optional<runtime::CheckpointRef> private_replacement, bool permit_shared_publication,
-    std::optional<CapturePressureCandidate> pressure, runtime::CancellationFlagView cancellation) {
+    std::uint32_t waiting_admissions, std::optional<CapturePressureCandidate> pressure,
+    runtime::CancellationFlagView cancellation) {
     if (has_context_transaction() || has_unsettled_state_fork() || !valid_capture_offer(offer)) {
         throw std::logic_error("capture transaction is not reservable");
     }
@@ -361,8 +384,9 @@ runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_imp
         skip_capture(std::move(offer));
         return runtime::ContextTransactionReserveStatus::Aborted;
     }
-    const CaptureAssessment assessment = inspect_capture(
-        offer, exact_shared, replacement, private_replacement, permit_shared_publication);
+    const CaptureAssessment assessment =
+        inspect_capture(offer, exact_shared, replacement, private_replacement,
+                        permit_shared_publication, waiting_admissions);
     if (!assessment.publishes_private && !assessment.publishes_shared) {
         skip_capture(std::move(offer));
         return runtime::ContextTransactionReserveStatus::Aborted;
@@ -544,6 +568,7 @@ ProgramImpl::install_private_capture(SequenceState& sequence, const CaptureGroup
             .kind         = *group.rewrite,
             .frontier     = group.frontier,
             .rebuild_work = validated_rebuild_work(group.identity->rebuild_work, group.frontier),
+            .tail_hidden_valid = sequence.tail_hidden_valid,
         };
     }
     if (group.long_anchor && context_cache.max_long_anchors_per_continuation.value_or(0) != 0) {
@@ -589,6 +614,7 @@ ProgramImpl::install_private_capture(SequenceState& sequence, const CaptureGroup
             .frontier     = group.frontier,
             .ordinal      = ordinal,
             .rebuild_work = validated_rebuild_work(group.identity->rebuild_work, group.frontier),
+            .tail_hidden_valid = sequence.tail_hidden_valid,
         });
         validate_long_anchor_ordinals(sequence.long_anchors, capacity_limit);
     }
@@ -710,7 +736,8 @@ void ProgramImpl::enqueue_active_capture_transfers(ActiveCaptureTransaction& tra
         stop_context_transfer_timer(runtime::ContextResourceClass::State);
         transaction.transfer_timer_mask |=
             1U << context_resource_index(runtime::ContextResourceClass::State);
-    } else if (is_masked_draft_backend(speculative_backend)) {
+    } else if (is_masked_draft_backend(speculative_backend) &&
+               state_images->dflash_local() != nullptr) {
         const StateImageSelectors state_fork =
             state_store->selectors(transaction.source_state, transaction.destination_state);
         start_context_transfer_timer(runtime::ContextResourceClass::State);
@@ -861,7 +888,8 @@ ActiveCaptureResult ProgramImpl::publish_active_capture(ActiveCaptureTransaction
         sequence.kv = active_bundle;
         bind_sequence_kv(sequence);
         const std::uint32_t backend_materialized =
-            speculative_backend == SpeculativeBackend::Mtp
+            backend_kv_cache() == nullptr ? 0U
+            : speculative_backend == SpeculativeBackend::Mtp
                 ? std::min(capacity,
                            prefill.prompt_tokens + (prefill.initial_mtp_extent == 0
                                                         ? 0U
@@ -947,10 +975,9 @@ ActiveCaptureResult ProgramImpl::publish_active_capture(ActiveCaptureTransaction
         shared.state    = transaction.source_state;
         shared.identity = transaction.group.identity;
         shared.frontier = transaction.group.frontier;
-        shared.backend_frontier =
-            speculative_backend == SpeculativeBackend::Mtp      ? transaction.group.frontier - 1U
-            : speculative_backend == SpeculativeBackend::DFlash ? transaction.group.frontier
-                                                                : 0U;
+        // As a private checkpoint's: zero when the drafter keeps no Backend KV of its own (Gemma 4's
+        // assistant reads the target's), so a restore does not ask for pages no store holds.
+        shared.backend_frontier = backend_kv_frontier(transaction.group.frontier);
         shared.rope_delta        = sequence.rope_delta;
         shared.tail_hidden_valid = sequence.tail_hidden_valid;
         shared.rebuild_work      = validated_rebuild_work(transaction.group.identity->rebuild_work,
@@ -1151,10 +1178,7 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                         }
                         TransferWork& total = pressure_transition.transfer_work[resource_index];
                         total.payload_bytes =
-                            requirement.work.payload_bytes >
-                                    std::numeric_limits<std::uint64_t>::max() - total.payload_bytes
-                                ? std::numeric_limits<std::uint64_t>::max()
-                                : total.payload_bytes + requirement.work.payload_bytes;
+                            saturating_add(total.payload_bytes, requirement.work.payload_bytes);
                         const std::uint64_t operations =
                             static_cast<std::uint64_t>(total.copy_operations) +
                             requirement.work.copy_operations;
@@ -1323,4 +1347,4 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

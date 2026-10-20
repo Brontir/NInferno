@@ -1,6 +1,7 @@
 #pragma once
 
 #include "artifact/schema.h"
+#include "support/posix.h"
 
 #include <nlohmann/json.hpp>
 
@@ -16,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace ninfer::test::artifact_fixture {
+namespace ninferno::test::artifact_fixture {
 
 using Json = nlohmann::json;
 
@@ -24,7 +25,7 @@ inline void require(bool condition, const char* message) {
     if (!condition) { throw std::runtime_error(message); }
 }
 
-template <class Error = ninfer::artifact::ArtifactError, class Fn>
+template <class Error = ninferno::artifact::ArtifactError, class Fn>
 void rejects(Fn&& fn, const char* message) {
     try {
         fn();
@@ -46,13 +47,14 @@ struct Fixture {
     std::vector<std::byte> payload;
 
     Fixture() : payload(1344) {
-        auto pattern = (std::filesystem::temp_directory_path() / "ninfer-artifact-XXXXXX").string();
+        auto pattern =
+            (std::filesystem::temp_directory_path() / "ninferno-artifact-XXXXXX").string();
         std::vector<char> buffer(pattern.begin(), pattern.end());
         buffer.push_back('\0');
         const char* path = ::mkdtemp(buffer.data());
         if (!path) { throw std::runtime_error("cannot create fixture directory"); }
         directory = path;
-        entry     = directory / "model.ninfer";
+        entry     = directory / "model.ninferno";
         root      = {
             {"components",
                   {{"text", {{"config", Json::object()}, {"resources", {{"tokenizer.json", "asset"}}}}},
@@ -131,8 +133,8 @@ struct Fixture {
             if (omit_optional && i == root.at("files").size() - 1) { break; }
             std::array<std::byte, 32> header{};
             const std::array<unsigned char, 8> magic =
-                i == 0 ? std::array<unsigned char, 8>{'N', 'I', 'N', 'F', 'E', 'R', 0, 3}
-                       : std::array<unsigned char, 8>{'N', 'I', 'N', 'P', 'R', 'T', 0, 3};
+                i == 0 ? std::array<unsigned char, 8>{'N', 'I', 'n', 'f', 'e', 'r', 'n', 'o'}
+                       : std::array<unsigned char, 8>{'N', 'I', 'n', 'f', 'P', 'a', 'r', 't'};
             for (std::size_t j = 0; j < magic.size(); ++j) { header[j] = std::byte(magic[j]); }
             put_word(header, 8, i == 0 ? text.size() : i, 8);
             header[16]      = std::byte{0x71};
@@ -152,4 +154,4 @@ struct Fixture {
     }
 };
 
-} // namespace ninfer::test::artifact_fixture
+} // namespace ninferno::test::artifact_fixture

@@ -1,5 +1,5 @@
 {
-  "artifact_type": "ninfer_cli_examples",
+  "artifact_type": "ninferno_cli_examples",
   "schema_version": 1,
   "working_directory": "repository root",
   "messages_format": "product CLI --messages JSON",
@@ -273,7 +273,7 @@
     {
       "name": "long_niah_8k",
       "messages": "messages/long_niah_8k.json",
-      "messages_sha256": "3080d984516f2917aacf159aab6b4b42d3f7d1abe8ab39e0dadbaf1f05d8ae99",
+      "messages_sha256": "6346e159c35a8a2b9f3ae6141d5415c9b1e23cb230ac8915dba4a2bdd6de22a6",
       "kind": "long_context_niah",
       "thinking": false,
       "prompt_tokens": 7680,
@@ -289,7 +289,7 @@
     {
       "name": "long_niah_64k",
       "messages": "messages/long_niah_64k.json",
-      "messages_sha256": "7160fdf1aff52cd79b5e35efa829e7ef43004fe61aa86136a3bf0adef9cc03f4",
+      "messages_sha256": "af052962e75309193291629d96e215547f65f427b65808ae1f775e636e2b7644",
       "kind": "long_context_niah",
       "thinking": false,
       "prompt_tokens": 64512,
@@ -305,7 +305,7 @@
     {
       "name": "long_niah_128k",
       "messages": "messages/long_niah_128k.json",
-      "messages_sha256": "8dcece5215805293490baa0d8204d59a899d8bc3f9d010b0c142ed6624260a9a",
+      "messages_sha256": "e41336d66f8de3fb492d619a0a1c9b1d1a8a15b567319176139ec2141dbaf3df",
       "kind": "long_context_niah",
       "thinking": false,
       "prompt_tokens": 130048,
@@ -321,7 +321,7 @@
     {
       "name": "long_niah_256k",
       "messages": "messages/long_niah_256k.json",
-      "messages_sha256": "73278973a82c80f5be8bcc7d4c89afd8bdd3edfe82e8900952cb4a7660cd9644",
+      "messages_sha256": "9a3699907bccbd6c694cc8521eb0c2253937c38d870d16e864d8b2e39d784168",
       "kind": "long_context_niah",
       "thinking": false,
       "prompt_tokens": 260096,
@@ -335,57 +335,48 @@
       }
     },
     {
-      "name": "long_decode_aime26_01",
-      "messages": "messages/long_decode_aime26_01.json",
-      "messages_sha256": "2f5f3e05f805aece8a7ef26a6d686cf21b1fd6e7a0b995ad9b7f1274882ecb23",
+      "name": "long_decode_math_01",
+      "messages": "messages/long_decode_math_01.json",
+      "messages_sha256": "4cb11c7049630d56c4e9624603dc3427b23d621145152c66a949e38566b3fce5",
       "kind": "long_decode_math",
-      "dataset": "aime26",
-      "dataset_row": 1,
-      "dataset_id": "1",
       "thinking": true,
-      "prompt_tokens": 186,
+      "prompt_tokens": 97,
       "max_context": 262144,
       "max_new": 65536,
       "kv_dtype": "int8",
       "oracle": {
         "mode": "boxed_integer",
-        "answer": "277"
+        "answer": "3543"
       }
     },
     {
-      "name": "long_decode_aime26_15",
-      "messages": "messages/long_decode_aime26_15.json",
-      "messages_sha256": "07f96a0c9c27be3a50dd702fbf814bbc35513f9521831ad08f52e7d1419ba029",
+      "name": "long_decode_math_02",
+      "messages": "messages/long_decode_math_02.json",
+      "messages_sha256": "36e8c49345562284436331bab3f4c8c43338249b5e3ede9da8e152671ce0abf0",
       "kind": "long_decode_math",
-      "dataset": "aime26",
-      "dataset_row": 15,
-      "dataset_id": "15",
       "thinking": true,
-      "prompt_tokens": 293,
+      "prompt_tokens": 118,
       "max_context": 262144,
       "max_new": 65536,
       "kv_dtype": "int8",
       "oracle": {
         "mode": "boxed_integer",
-        "answer": "83"
+        "answer": "744"
       }
     },
     {
-      "name": "long_decode_aime26_30",
-      "messages": "messages/long_decode_aime26_30.json",
-      "messages_sha256": "752d9780366871d7e015cf302ad765cc791cb649d16b9de9698b3c178b59bbc8",
+      "name": "long_decode_math_03",
+      "messages": "messages/long_decode_math_03.json",
+      "messages_sha256": "41afada60860256c4d42f95715f8d92441c6ec9d938361f182477829e82bcccd",
       "kind": "long_decode_math",
-      "dataset": "aime26",
-      "dataset_row": 30,
-      "dataset_id": "30",
       "thinking": true,
-      "prompt_tokens": 206,
+      "prompt_tokens": 156,
       "max_context": 262144,
       "max_new": 65536,
       "kv_dtype": "int8",
       "oracle": {
         "mode": "boxed_integer",
-        "answer": "393"
+        "answer": "741"
       }
     },
     {
@@ -627,35 +618,312 @@
     }
   ],
   "text_corpus_sources": {
-    "description": "Frozen local sources used to build the committed text examples.",
-    "tokenizer": "Qwen3.6 tokenizer supplied by --tokenizer",
+    "description": "Sources of the long-context and long-decode examples, which tools/bench/build_text_examples.py builds.",
+    "tokenizer": "Qwen3.6 tokenizer (Qwen/Qwen3.6-27B) supplied by --tokenizer",
     "niah": {
-      "dataset": "AI-ModelScope/Needle-in-a-Haystack-Corpus",
-      "file": "PaulGraham_Essays.txt",
-      "sha256": "0982f314869ac03c18ea254a6f3e5448f36835a173ea285cfca1d8ae6395b22e",
-      "excerpt": "first 200000 Unicode characters, repeated"
-    },
-    "aime26": {
-      "dataset": "evalscope/aime26",
-      "file": "aime26-test.arrow",
-      "sha256": "b382d6b1d67dd6172ec7c9429af8c0296ef5ef25ff3ba69db46f6cec6a609d97",
-      "selected": [
+      "haystack": "Federal Register rules and proposed rules of 2026-09-15 to 2026-10-16 of at least 4 pages, at even steps across the window, each cut at 28000 characters; works of the United States Government (17 U.S.C. 105), without tables, email and web addresses and telephone numbers",
+      "excerpt": "the documents joined by blank lines; a token prefix that makes the exact prompt length, the needle as its own paragraph near the middle",
+      "haystack_sha256": "851ecf40f4e559ef44af2e8b02de4714cddc0bc84a23dce85e48d105fb73ec09",
+      "documents": [
         {
-          "row": 1,
-          "id": "1",
-          "answer": "277"
+          "document_number": "2026-18828",
+          "publication_date": "2026-09-15",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/15/2026-18828.txt"
         },
         {
-          "row": 15,
-          "id": "15",
-          "answer": "83"
+          "document_number": "2026-18978",
+          "publication_date": "2026-09-16",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/16/2026-18978.txt"
         },
         {
-          "row": 30,
-          "id": "30",
-          "answer": "393"
+          "document_number": "2026-19071",
+          "publication_date": "2026-09-17",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/17/2026-19071.txt"
+        },
+        {
+          "document_number": "2026-19090",
+          "publication_date": "2026-09-17",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/17/2026-19090.txt"
+        },
+        {
+          "document_number": "2026-19160",
+          "publication_date": "2026-09-18",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/18/2026-19160.txt"
+        },
+        {
+          "document_number": "2026-19172",
+          "publication_date": "2026-09-18",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/18/2026-19172.txt"
+        },
+        {
+          "document_number": "2026-19231",
+          "publication_date": "2026-09-21",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/21/2026-19231.txt"
+        },
+        {
+          "document_number": "2026-19260",
+          "publication_date": "2026-09-21",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/21/2026-19260.txt"
+        },
+        {
+          "document_number": "2026-19332",
+          "publication_date": "2026-09-22",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/22/2026-19332.txt"
+        },
+        {
+          "document_number": "2026-19350",
+          "publication_date": "2026-09-22",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/22/2026-19350.txt"
+        },
+        {
+          "document_number": "2026-19389",
+          "publication_date": "2026-09-22",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/22/2026-19389.txt"
+        },
+        {
+          "document_number": "2026-19493",
+          "publication_date": "2026-09-23",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/23/2026-19493.txt"
+        },
+        {
+          "document_number": "2026-19537",
+          "publication_date": "2026-09-24",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/24/2026-19537.txt"
+        },
+        {
+          "document_number": "2026-19584",
+          "publication_date": "2026-09-24",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/24/2026-19584.txt"
+        },
+        {
+          "document_number": "2026-19652",
+          "publication_date": "2026-09-25",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/25/2026-19652.txt"
+        },
+        {
+          "document_number": "2026-19678",
+          "publication_date": "2026-09-25",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/25/2026-19678.txt"
+        },
+        {
+          "document_number": "2026-19693",
+          "publication_date": "2026-09-25",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/25/2026-19693.txt"
+        },
+        {
+          "document_number": "2026-19741",
+          "publication_date": "2026-09-28",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/28/2026-19741.txt"
+        },
+        {
+          "document_number": "2026-19760",
+          "publication_date": "2026-09-28",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/28/2026-19760.txt"
+        },
+        {
+          "document_number": "2026-19878",
+          "publication_date": "2026-09-29",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/29/2026-19878.txt"
+        },
+        {
+          "document_number": "2026-19892",
+          "publication_date": "2026-09-29",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/29/2026-19892.txt"
+        },
+        {
+          "document_number": "2026-19959",
+          "publication_date": "2026-09-30",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/30/2026-19959.txt"
+        },
+        {
+          "document_number": "2026-19971",
+          "publication_date": "2026-09-30",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/30/2026-19971.txt"
+        },
+        {
+          "document_number": "2026-19987",
+          "publication_date": "2026-09-30",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/30/2026-19987.txt"
+        },
+        {
+          "document_number": "2026-20009",
+          "publication_date": "2026-09-30",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/30/2026-20009.txt"
+        },
+        {
+          "document_number": "2026-20067",
+          "publication_date": "2026-09-30",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/30/2026-20067.txt"
+        },
+        {
+          "document_number": "2026-20087",
+          "publication_date": "2026-10-01",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/01/2026-20087.txt"
+        },
+        {
+          "document_number": "2026-20102",
+          "publication_date": "2026-10-01",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/01/2026-20102.txt"
+        },
+        {
+          "document_number": "2026-20131",
+          "publication_date": "2026-10-01",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/01/2026-20131.txt"
+        },
+        {
+          "document_number": "2026-20192",
+          "publication_date": "2026-10-01",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/01/2026-20192.txt"
+        },
+        {
+          "document_number": "2026-20251",
+          "publication_date": "2026-10-02",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/02/2026-20251.txt"
+        },
+        {
+          "document_number": "2026-20315",
+          "publication_date": "2026-10-05",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/05/2026-20315.txt"
+        },
+        {
+          "document_number": "2026-20330",
+          "publication_date": "2026-10-05",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/05/2026-20330.txt"
+        },
+        {
+          "document_number": "2026-20371",
+          "publication_date": "2026-10-05",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/05/2026-20371.txt"
+        },
+        {
+          "document_number": "2026-20391",
+          "publication_date": "2026-10-05",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/05/2026-20391.txt"
+        },
+        {
+          "document_number": "2026-20443",
+          "publication_date": "2026-10-06",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/06/2026-20443.txt"
+        },
+        {
+          "document_number": "2026-20468",
+          "publication_date": "2026-10-06",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/06/2026-20468.txt"
+        },
+        {
+          "document_number": "2026-20543",
+          "publication_date": "2026-10-07",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/07/2026-20543.txt"
+        },
+        {
+          "document_number": "2026-20622",
+          "publication_date": "2026-10-08",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/08/2026-20622.txt"
+        },
+        {
+          "document_number": "2026-20638",
+          "publication_date": "2026-10-08",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/08/2026-20638.txt"
+        },
+        {
+          "document_number": "2026-20660",
+          "publication_date": "2026-10-08",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/08/2026-20660.txt"
+        },
+        {
+          "document_number": "2026-20687",
+          "publication_date": "2026-10-08",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/08/2026-20687.txt"
+        },
+        {
+          "document_number": "2026-20736",
+          "publication_date": "2026-10-09",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/09/2026-20736.txt"
+        },
+        {
+          "document_number": "2026-20848",
+          "publication_date": "2026-10-13",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/13/2026-20848.txt"
+        },
+        {
+          "document_number": "2026-20884",
+          "publication_date": "2026-10-13",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/13/2026-20884.txt"
+        },
+        {
+          "document_number": "2026-20941",
+          "publication_date": "2026-10-14",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/14/2026-20941.txt"
+        },
+        {
+          "document_number": "2026-20956",
+          "publication_date": "2026-10-14",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/14/2026-20956.txt"
+        },
+        {
+          "document_number": "2026-21004",
+          "publication_date": "2026-10-14",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/14/2026-21004.txt"
+        },
+        {
+          "document_number": "2026-21030",
+          "publication_date": "2026-10-14",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/14/2026-21030.txt"
+        },
+        {
+          "document_number": "2026-21051",
+          "publication_date": "2026-10-15",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/15/2026-21051.txt"
+        },
+        {
+          "document_number": "2026-21069",
+          "publication_date": "2026-10-15",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/15/2026-21069.txt"
+        },
+        {
+          "document_number": "2026-21104",
+          "publication_date": "2026-10-15",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/10/15/2026-21104.txt"
+        },
+        {
+          "document_number": "2026-18830",
+          "publication_date": "2026-09-15",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/15/2026-18830.txt"
+        },
+        {
+          "document_number": "2026-19006",
+          "publication_date": "2026-09-16",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/16/2026-19006.txt"
+        },
+        {
+          "document_number": "2026-19072",
+          "publication_date": "2026-09-17",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/17/2026-19072.txt"
+        },
+        {
+          "document_number": "2026-19094",
+          "publication_date": "2026-09-17",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/17/2026-19094.txt"
+        },
+        {
+          "document_number": "2026-19161",
+          "publication_date": "2026-09-18",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/18/2026-19161.txt"
+        },
+        {
+          "document_number": "2026-19207",
+          "publication_date": "2026-09-18",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/18/2026-19207.txt"
+        },
+        {
+          "document_number": "2026-19254",
+          "publication_date": "2026-09-21",
+          "raw_text_url": "https://www.federalregister.gov/documents/full_text/text/2026/09/21/2026-19254.txt"
         }
       ]
+    },
+    "math": {
+      "source": "written for this repository; tools/bench/build_text_examples.py holds the problems and their answers, each checked by two independent computations"
     }
   },
   "text_corpus_runtime": {

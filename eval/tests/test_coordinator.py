@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ninfer_eval.config import load_config
-from ninfer_eval.coordinator import Coordinator, load_resume_config
+from ninferno_eval.config import load_config
+from ninferno_eval.coordinator import Coordinator, load_resume_config
 
 
 class CoordinatorTest(unittest.TestCase):
@@ -54,7 +54,7 @@ runtime:
             root = Path(tmp)
             config = load_config(self.make_config(root))
             run_dir = Coordinator(config, "all").run()
-            summary = json.loads((run_dir / "summary.json").read_text())
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "completed")
             self.assertEqual(
                 [r["metrics"]["accuracy"] for r in summary["results"]], [0.75, 1.0]
@@ -77,7 +77,7 @@ runtime:
             self.assertEqual(resumed, run_dir)
             events = [
                 json.loads(line)
-                for line in (run_dir / "events.jsonl").read_text().splitlines()
+                for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             skipped = {
                 event["job_id"] for event in events if event["kind"] == "job_skipped"

@@ -1,13 +1,13 @@
-# NInfer Op Development Rules
+# NInferno Op Development Rules
 
 This document defines the repository-wide rules for admitting, specifying, owning, implementing,
-qualifying, and measuring NInfer Ops. An **Op** is a semantic execution contract. A CUDA
+qualifying, and measuring NInferno Ops. An **Op** is a semantic execution contract. A CUDA
 **kernel** is one implementation, or one stage of an implementation, of an Op.
 
 Repository-wide product scope, numerical principles, and evidence requirements remain in
 [`AGENTS.md`](../../AGENTS.md). When this document and a concrete Op contract differ about that
 Op's represented inputs, formula, supported domain, or observable effects, the contract in
-`include/ninfer/ops/` is the concrete authority and the inconsistency must be resolved.
+`include/ninferno/ops/` is the concrete authority and the inconsistency must be resolved.
 
 ## 1. Scope and authorities
 
@@ -21,7 +21,7 @@ This file owns only rules that apply across Op families:
 
 The remaining authorities are:
 
-- `include/ninfer/ops/<family>.h` — the formula, represented inputs, supported domain, outputs,
+- `include/ninferno/ops/<family>.h` — the formula, represented inputs, supported domain, outputs,
   state effects, alias rules, and workspace contract of a concrete Op;
 - [`tests/README.md`](../../tests/README.md) — test organization, commands, and common reporting
   mechanisms;
@@ -104,7 +104,7 @@ staging kernels, workspace layout helpers, and device primitives are parts of an
 not independently model-callable Ops.
 
 Every model-callable device transformation belongs to the central Op layer. A model implementation invokes a
-contract from `include/ninfer/ops/`, composes existing Ops and core mechanisms, or keeps host-side
+contract from `include/ninferno/ops/`, composes existing Ops and core mechanisms, or keeps host-side
 schedule composition in the model implementation.
 
 ### 2.2 Semantic extents and private routes
@@ -167,8 +167,8 @@ direction is a core or host transfer.
 Repository-internal contracts live in:
 
 ```text
-include/ninfer/ops/<family>.h
-namespace ninfer::ops
+include/ninferno/ops/<family>.h
+namespace ninferno::ops
 ```
 
 They are execution-layer interfaces, not a public product ABI. A header may group closely related
@@ -295,7 +295,7 @@ views.
 
 A weight preparation entry resolves weight views and activation permissions into operands for a
 supported native overload, checking its parent geometry, format, layout and shape. See
-[`weight_input.h`](../../include/ninfer/ops/weight_input.h). Model execution composes the prepared
+[`weight_input.h`](../../include/ninferno/ops/weight_input.h). Model execution composes the prepared
 Ops; resource queries and execution check their applicable contracts.
 
 Program owns persistent state instances and lifetime; core owns model-independent physical
@@ -329,7 +329,7 @@ ordering.
 
 - Name an Op after its mathematical transformation or explicit state transition, not its first
   model, layer role, schedule phase, or CUDA strategy.
-- Use `ninfer::ops` for semantic entries. Use `ninfer::ops::detail` only for private material that
+- Use `ninferno::ops` for semantic entries. Use `ninferno::ops::detail` only for private material that
   must cross translation-unit boundaries.
 - Name an implementation specialization by real match facts such as format, geometry, extent,
   device capability, or algorithm.
@@ -354,15 +354,15 @@ Enforce the boundary in code and build ownership:
 - `src/ops/**` does not include model, Program, schedule, product, or artifact-provenance headers;
 - model execution includes contract headers, never private launcher, kernel, common, codec, or plan
   headers;
-- `ninfer_ops` does not link a model implementation;
+- `ninferno_ops` does not link a model implementation;
 - core and artifact do not link Ops or models;
 - explicit source lists give every implementation one build and link owner.
 
 The owning family registers its implementation in `src/ops/<family>/sources.cmake`; Linear
 delegates to one explicit manifest per numeric format. A family manifest includes its wrappers
 even when they live in the horizontal `wrapper/` directory. Ordinary sources contribute to
-`ninfer_ops`; the three NVFP4 sources requiring non-RDC compilation contribute to
-`ninfer_nvfp4_non_rdc` from their owning manifests. Shape files retain their `.cpp` or `.cu`
+`ninferno_ops`; the three NVFP4 sources requiring non-RDC compilation contribute to
+`ninferno_nvfp4_non_rdc` from their owning manifests. Shape files retain their `.cpp` or `.cu`
 language and separate translation units. See [Build system](build-system.md) for the target policy.
 
 ## 6. Qualification
@@ -403,6 +403,9 @@ The oracle determines correctness but does not prescribe production arithmetic. 
 instruction operands, reduction association, staging, workspace representation, and kernel
 decomposition remain implementation choices unless the contract makes an intermediate value
 observable.
+Unless the contract requires an intermediate representation boundary, a fused implementation must
+not retain extra low-precision intermediate rounding to reproduce an unfused route or achieve
+bitwise parity.
 
 ### 6.2 Conformance domain
 
@@ -454,11 +457,12 @@ A long-lived Op benchmark calls the public contract and, when applicable, its pu
 capacity query. It does not include private implementation headers, call private launchers, expose
 candidate or kernel forcing, or duplicate candidate legality and production dispatch tables.
 
-The sole standing exception is `ninfer_gated_delta_net_bench --chunked-only --breakdown`: the
-complete chunked pipeline is still measured through the public Op, while the benchmark may call
-exactly its three intrinsic `prepare_wy_wu`, `state_passing`, and `output` stage launchers for
-algorithm-stage attribution. It may not call the private complete-pipeline launcher or any other
-private launcher.
+The Gated DeltaNet benchmark is an explicit exception: `--running` measures the public Op and
+uses its workspace capacity query, while `--breakdown` may call the selected production
+`prepare` and `recurrence` stage launchers with their private workspace layout. `--force-chunked`
+and `--recurrent-only` may force those production routes at matching prefill extents to measure
+their crossover; `--chunked-only` measures the same chunked route with pre-normalized BF16 Q/K.
+These controls qualify the production prefill decomposition and do not change decode or ReplaySSM.
 
 Candidate comparison is task-local development work. A temporary sweep may call private launchers
 and encode the exact overlapping candidate domains needed for a decision. Measure candidates under
@@ -513,7 +517,11 @@ plausible candidates. Instantiate only the small overlapping candidate set neede
 decision; do not create a Cartesian product of speculative knobs. Add another family or parameter
 only when evidence shows that the existing candidates cannot cover a relevant part of the
 workload. Once dispatch is selected, retain the winning instances and parameters and remove losing
-candidates and unused knobs.
+candidate instances and temporary tuning entry points. Reusable kernel families and schedule
+parameters with a clear purpose and development validation may remain as tuning assets even when
+current production dispatch does not select them. Qualify new configuration/epilogue combinations
+during development; permanent tests protect public behavior and production routes, not an unused
+configuration-by-epilogue matrix.
 
 Derive latency-sensitive extents and bulk anchors from the active workload and the Op's actual
 input semantics. Review pointwise behavior and material route seams; select a small set of useful

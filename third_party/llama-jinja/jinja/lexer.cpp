@@ -149,13 +149,12 @@ lexer_result lexer::tokenize(const std::string& source) {
 
             // equivalent to hf.js code: template.replace(/^[ \t]*({[#%-])/gm, "$1");
             if (opt_lstrip_blocks && src[pos] == '{' && next_pos_is({'%', '#', '-'})) {
+                // NInferno fix: upstream set end = 0 on reaching index 1 before looking at src[0],
+                // so a template whose first character is not a blank, followed only by blanks up
+                // to the first block ("a {% if %}", "x {#- c #}", "\n{% if %}"), lost it.
                 size_t current = end;
                 while (current > start) {
-                    char c = src[current - 1];
-                    if (current == 1) {
-                        end = 0; // Trim from the start of the string
-                        break;
-                    }
+                    const char c = src[current - 1];
                     if (c == '\n') {
                         end = current; // Trim from the start of the line
                         break;
@@ -163,7 +162,10 @@ lexer_result lexer::tokenize(const std::string& source) {
                     if (!std::isspace(static_cast<unsigned char>(c))) {
                         break; // Found non-whitespace before newline, keep
                     }
-                    --current;
+                    if (--current == 0) {
+                        end = 0; // Only blanks back to the start of the string: trim them
+                        break;
+                    }
                 }
             }
 

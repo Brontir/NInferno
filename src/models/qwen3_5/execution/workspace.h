@@ -8,7 +8,7 @@
 
 #include <cstdint>
 
-namespace ninfer::models::qwen3_5::execution::workspace {
+namespace ninferno::models::qwen3_5::execution::workspace {
 
 template <class Allocator>
 Tensor matrix(Allocator& allocator, DType dtype, std::int32_t rows, std::int32_t tokens) {
@@ -240,22 +240,6 @@ DFlashContextLayerRoots dflash_context_layer(Allocator& allocator, const TextCon
     };
 }
 
-struct DFlashProposalRoots {
-    Tensor ids;
-    Tensor positions;
-    Tensor residual;
-};
-
-template <class Allocator>
-DFlashProposalRoots dflash_proposal(Allocator& allocator, const TextConfig& target,
-                                    const DraftConfig& config, std::int32_t tokens) {
-    return {
-        vector(allocator, DType::I32, tokens),
-        vector(allocator, DType::I32, tokens),
-        matrix(allocator, DType::BF16, dimension(target.hidden_size), tokens),
-    };
-}
-
 struct DFlashAttentionRoots {
     Tensor hidden;
     Tensor query_raw;
@@ -310,4 +294,4 @@ DFlashMlpRoots dflash_mlp(Allocator& allocator, const TextConfig& target, const 
     };
 }
 
-} // namespace ninfer::models::qwen3_5::execution::workspace
+} // namespace ninferno::models::qwen3_5::execution::workspace

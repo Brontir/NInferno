@@ -1,6 +1,6 @@
 #include "models/qwen3_5/load/bindings.h"
 
-namespace ninfer::models::qwen3_5::loading {
+namespace ninferno::models::qwen3_5::loading {
 
 void bind_dflash2(Bindings& b, DraftWeights& weights, const DraftConfig& config,
                   const TextConfig& target) {
@@ -22,10 +22,12 @@ void bind_dflash2(Bindings& b, DraftWeights& weights, const DraftConfig& config,
     weights.selector =
         SelectorWeights{b.parameter("dflash2/candidate_selector/hidden_projection",
                                     {extra.selector_rank, h}, {"dflash2/final_hidden"}),
-                        b.direct("dflash2/candidate_selector/predecessor_codebook",
-                                 {target.vocab_size, extra.selector_rank}),
-                        b.direct("dflash2/candidate_selector/successor_codebook",
-                                 {target.vocab_size, extra.selector_rank})};
+                        // Codebooks in whatever format the artifact stores them (a published GGUF
+                        // keeps Q4_0 / Q8_0 rows); the selector Op checks what it can read.
+                        b.parameter("dflash2/candidate_selector/predecessor_codebook",
+                                    {target.vocab_size, extra.selector_rank}),
+                        b.parameter("dflash2/candidate_selector/successor_codebook",
+                                    {target.vocab_size, extra.selector_rank})};
 }
 
-} // namespace ninfer::models::qwen3_5::loading
+} // namespace ninferno::models::qwen3_5::loading

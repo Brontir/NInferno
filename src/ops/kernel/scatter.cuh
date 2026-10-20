@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 
 __global__ void scatter_bf16x8_kernel(const uint4* src, const std::int32_t* indices, uint4* dst,
                                       std::int32_t vectors_per_column) {
@@ -76,4 +76,4 @@ __launch_bounds__(kScatterBatchThreads) __global__
     }
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

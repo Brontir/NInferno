@@ -1,5 +1,5 @@
 #include "core/weight.h"
-#include "ninfer/ops/linear_add.h"
+#include "ninferno/ops/linear_add.h"
 #include "core/device.h"
 
 #include "ops/op_tester.h"
@@ -18,8 +18,8 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 constexpr double kBf16UnitRoundoff = 1.0 / 256.0;
 constexpr ReductionCriterion kA16Tolerance{
@@ -89,15 +89,32 @@ int verify_preserved(const GuardedDeviceBuffer& device, std::span<const std::uin
 }
 
 int run_shape(std::int32_t n, std::int32_t k, std::uint32_t seed) {
-    const std::int32_t first_a4 = k == 6144 ? 7 : 8;
+    const std::int32_t first_a4 = k == 6144 ? 17 : 8;
     const std::array invocations{
         Invocation{1, ops::LinearPolicy::A16Only},
         Invocation{4, ops::LinearPolicy::A16Only},
+        Invocation{5, ops::LinearPolicy::A16Only},
+        Invocation{8, ops::LinearPolicy::A16Only},
+        Invocation{16, ops::LinearPolicy::A16Only},
+        Invocation{17, ops::LinearPolicy::A16Only},
+        Invocation{24, ops::LinearPolicy::A16Only},
+        Invocation{25, ops::LinearPolicy::A16Only},
+        Invocation{32, ops::LinearPolicy::A16Only},
+        Invocation{33, ops::LinearPolicy::A16Only},
+        Invocation{48, ops::LinearPolicy::A16Only},
+        Invocation{49, ops::LinearPolicy::A16Only},
+        Invocation{64, ops::LinearPolicy::A16Only},
+        Invocation{65, ops::LinearPolicy::A16Only},
+        Invocation{128, ops::LinearPolicy::A16Only},
+        Invocation{129, ops::LinearPolicy::A16Only},
+        Invocation{1024, ops::LinearPolicy::A16Only},
         Invocation{first_a4, ops::LinearPolicy::AllowA4},
         Invocation{17, ops::LinearPolicy::AllowA4},
         Invocation{8, ops::LinearPolicy::AllowA4},
         Invocation{16, ops::LinearPolicy::AllowA4},
         Invocation{32, ops::LinearPolicy::AllowA4},
+        // 32 and 33 straddle the K=17408 narrow-tile seam on many-SM cards (M32N32, then M32N64).
+        Invocation{33, ops::LinearPolicy::AllowA4},
         Invocation{64, ops::LinearPolicy::AllowA4},
         Invocation{96, ops::LinearPolicy::AllowA4},
         Invocation{128, ops::LinearPolicy::AllowA4},
@@ -217,7 +234,7 @@ int run_shape(std::int32_t n, std::int32_t k, std::uint32_t seed) {
 } // namespace
 
 int main() {
-    if (ninfer::test::cuda_unavailable()) {
+    if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }

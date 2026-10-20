@@ -1,6 +1,6 @@
-# NInfer Perplexity Corpus
+# NInferno Perplexity Corpus
 
-`ninfer-ppl-1m-v1` is the fixed text corpus for NInfer causal-perplexity evaluation. It contains
+`ninferno-ppl-1m-v1` is the fixed text corpus for NInferno causal-perplexity evaluation. It contains
 16 independent UTF-8 streams from four domains. The streams are not concatenated during scoring;
 the first token of each stream is the only token without a causal score.
 
@@ -9,7 +9,7 @@ the first token of each stream is the only token without a causal score.
 | `english_reference` | WikiText-2 raw test | 4 |
 | `english_long_form` | PG-19 test books | 4 |
 | `chinese_reference` | Chinese Wikipedia | 4 |
-| `ninfer_code` | NInfer production C++/CUDA source | 4 |
+| `project_source_code` | C++/CUDA source of the original ninfer project | 4 |
 
 The `full` mode contains all 16 streams and is roughly a one-million-token workload. The `quick`
 mode selects stream `00` from every domain and is roughly a quarter of that size. `manifest.json`

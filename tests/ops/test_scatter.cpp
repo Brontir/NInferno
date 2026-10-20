@@ -1,5 +1,5 @@
-#include "ninfer/ops/scatter.h"
-#include "ninfer/ops/speculative_round.h"
+#include "ninferno/ops/scatter.h"
+#include "ninferno/ops/speculative_round.h"
 #include "core/device.h"
 #include "core/decode_graph.h"
 #include <algorithm>
@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::test;
+using namespace ninferno;
+using namespace ninferno::test;
 
 namespace {
 
@@ -109,6 +109,43 @@ int extract_case(std::int32_t source_rows, std::int32_t destination_rows,
     return failures;
 }
 
+int regroup_case(std::int32_t dim, std::int32_t groups, std::int32_t per, std::int32_t tokens) {
+    const std::int32_t heads = groups * per;
+    const auto source =
+        bit_pattern(static_cast<std::size_t>(dim) * heads * tokens, 0x2468'ace1u + per);
+    std::vector<std::uint16_t> expected(source.size());
+    for (std::int32_t t = 0; t < tokens; ++t) {
+        for (std::int32_t g = 0; g < groups; ++g) {
+            for (std::int32_t j = 0; j < per; ++j) {
+                std::copy_n(
+                    source.begin() + (static_cast<std::size_t>(t) * heads + g * per + j) * dim, dim,
+                    expected.begin() + (static_cast<std::size_t>(t) * heads + j * groups + g) * dim);
+            }
+        }
+    }
+    GuardedDeviceBuffer device_source(source.size() * sizeof(std::uint16_t));
+    GuardedDeviceBuffer device_destination(expected.size() * sizeof(std::uint16_t));
+    device_source.copy_from_host(source.data(), source.size() * sizeof(std::uint16_t));
+    device_destination.fill(0xcd);
+    Tensor source_tensor(device_source.data(), DType::BF16, {dim, heads, tokens});
+    Tensor destination_tensor(device_destination.data(), DType::BF16, {dim, heads, tokens});
+    ops::regroup_bf16_heads(source_tensor, groups, destination_tensor, nullptr);
+    cuda_synchronize();
+    const std::string label = "regroup_bf16_heads D=" + std::to_string(dim) +
+                              " groups=" + std::to_string(groups) + " per=" + std::to_string(per) +
+                              " T=" + std::to_string(tokens);
+    int failures = 0;
+    failures += verify_exact(label.c_str(),
+                             from_device<std::uint16_t>(device_destination.data(), expected.size()),
+                             expected);
+    failures +=
+        verify_exact((label + " preserves source").c_str(),
+                     from_device<std::uint16_t>(device_source.data(), source.size()), source);
+    failures += device_source.verify_guards((label + " source").c_str());
+    failures += device_destination.verify_guards((label + " destination").c_str());
+    return failures;
+}
+
 int continuation_case(int width, int batch) {
     constexpr int rows = 5120, slots = 11;
     const auto hidden = bit_pattern(static_cast<std::size_t>(rows) * width * batch, 1709U + width);
@@ -172,6 +209,14 @@ int main() {
     failures += scatter_case(2048, {5, 1, 3}, 7);
     failures += extract_case(10240, 6144, 4096, 6);
     failures += extract_case(8192, 2048, 2048, 1);
-    std::cout << (failures ? "FAIL" : "OK") << " scatter and extract_bf16_columns\n";
+    failures += regroup_case(128, 16, 2, 1);
+    failures += regroup_case(128, 16, 2, 37);
+    failures += regroup_case(64, 2, 2, 5);
+    failures += regroup_case(128, 8, 4, 3);
+    failures += regroup_case(128, 16, 3, 1);  // Qwen3.8-27B: 16 key heads, 48 value heads
+    failures += regroup_case(128, 16, 3, 23);
+    failures += regroup_case(64, 4, 1, 2);
+    std::cout << (failures ? "FAIL" : "OK")
+              << " scatter, extract_bf16_columns and regroup_bf16_heads\n";
     return failures ? 1 : 0;
 }

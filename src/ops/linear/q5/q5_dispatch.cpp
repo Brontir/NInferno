@@ -1,9 +1,10 @@
 #include "ops/linear/q5/q5_dispatch.h"
 #include "ops/linear/q5/q5_shapes.h"
+#include "ops/common/shape_routes.h"
 #include <array>
 #include <stdexcept>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 namespace {
 struct ShapeEntry {
     std::int32_t n, k;
@@ -18,10 +19,14 @@ constexpr std::array kShapes{
 };
 } // namespace
 
+bool q5_linear_registered(std::int32_t n, std::int32_t k) {
+    return find_shape(kShapes, n, k) != nullptr;
+}
+
 Q5Launch select_q5_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
     if (t <= 0) throw std::invalid_argument("q5 linear: T must be positive");
-    for (const auto& entry : kShapes) {
-        if (entry.n == n && entry.k == k) return entry.select(t);
+    if (const auto* entry = find_shape(kShapes, n, k)) {
+        return entry->select(route_tokens({QType::Q5_G64_FP16, ShapeCompute::A16, n, k}, t));
     }
     throw std::invalid_argument("q5 linear: unsupported shape");
 }
@@ -35,4 +40,4 @@ void q5_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPolic
                  cudaStream_t stream) {
     select_q5_launch(weight.n, weight.k, x.ne[1], policy)(x, weight, out, stream);
 }
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

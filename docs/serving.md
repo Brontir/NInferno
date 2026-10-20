@@ -1,90 +1,137 @@
 # HTTP serving
 
-`build/apps/ninfer-serve` loads one v3 `.ninfer` artifact and exposes OpenAI- and
-Anthropic-compatible HTTP endpoints over one resident NInfer Engine.
+`build/apps/ninferno-serve` loads one model and serves OpenAI- and Anthropic-compatible HTTP
+endpoints from one resident NInferno Engine on one NVIDIA GPU.
+
+- GPUs: Volta `sm_70` through Blackwell `sm_120`. NVFP4 weights run natively on `sm_120` (RTX 50); older GPUs run them on slower generic kernels (not yet measured), where a GGUF or FP8 checkpoint is the measured choice.
+- Models: only original Hugging Face checkpoints. NInferno publishes no prebuilt model files. The
+  server converts the checkpoint into a `.ninferno` file on first start and reuses it afterwards.
+- Speeds per GPU and model: [performance matrix](performance/README.md).
+
+This page covers everyday use. Every detail (request fields, compatibility rules, state, logs, error
+codes) is in the [serving reference](reference/serving.md).
+
+## Contents
+
+- [Start the server](#start-the-server)
+- [Important options](#important-options)
+- [Endpoints](#endpoints)
+- [Examples](#examples)
+- [Speculative decoding](#speculative-decoding)
+- [Memory, context and concurrency](#memory-context-and-concurrency)
+- [Authentication](#authentication)
+- [Health, shutdown and logs](#health-shutdown-and-logs)
+- [More](#more)
 
 ## Start the server
 
-See [CUDA synchronization](cli.md#cuda-synchronization) for the shared `NINFER_CUDA_SYNC` setting.
+One command starts a model from the Hub:
 
 ```bash
-./build/apps/ninfer-serve models/qwen3_8_27b_nvfp4.ninfer \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --max-context 240000 \
-  --kv-capacity 240000 \
-  --max-concurrency 2 \
-  --kv-dtype fp8 \
-  --device-state-slots 2 \
-  --host-state-slots 8 \
-  --host-kv-mib 8192 \
-  --spec mtp --draft-tokens 3 \
-  --lm-head-draft \
+./build/apps/ninferno-serve Qwen/Qwen3-1.7B            # or org/name@revision
+```
+
+The model argument can be:
+
+| Argument | What happens |
+|---|---|
+| hub id `org/name[@revision]` | downloaded into the Hugging Face cache, converted, and reused on later starts |
+| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/` |
+| `.ninferno` file | served as is |
+
+For a hub id:
+
+- The cache is `$HF_HUB_CACHE`, else `$HF_HOME/hub`, else `$XDG_CACHE_HOME/huggingface/hub`, else `~/.cache/huggingface/hub`. The converted
+  model goes to `<cache>/models--org--name/ninferno/<commit>/`, with the drafters the model
+  declares. Nothing else on the machine is searched.
+- `$HF_TOKEN` authorizes gated and private models. `HF_HUB_OFFLINE=1` uses the cache only.
+- The served model id is the hub id, without an `@revision`.
+- `--prepare-only` downloads and converts, then exits.
+- `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
+
+The server checks before downloading any weight and refuses with a reason if the architecture is not
+supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
+too small.
+
+A fuller example for a converted file:
+
+```bash
+./build/apps/ninferno-serve models/qwen3_8_27b_nvfp4.ninferno \
+  --host 127.0.0.1 --port 8080 \
+  --max-context 240000 --kv-capacity 240000 \
+  --max-concurrency 2 --kv-dtype fp8 \
+  --device-state-slots 2 --host-state-slots 8 --host-kv-mib 8192 \
+  --spec mtp --draft-tokens 3 --lm-head-draft \
   --preserve-thinking
 ```
 
-The command uses Qwen3.8-27B NVFP4. Each request has a 240,000-token logical ceiling. A shared
-240,000-token Main Text KV pool serves admitted requests; either request may use the full capacity
-when running alone, and two requests run concurrently when their complete reservations fit.
+You need none of these flags to start. Context, KV capacity and the Host cache are chosen
+automatically, and the startup log states each choice (`context | ...`, `capacity | ...`,
+`context cache | ...`). Run `./build/apps/ninferno-serve --help` for the exact option list.
 
-With `C=2` and two extra Device checkpoint slots, the process owns two active StateImage guarantees
-plus a global pool of two Device-resident checkpoints. Eight pinned Host State slots and 8 GiB of
-pinned Host KV retain inactive continuations under Device pressure. Active request capacity is two.
+## Important options
 
-Other artifacts use the same command shape with their own path. For 35B-A3B DFlash, replace the MTP
-selection with `--spec dflash --draft-tokens 7 --lm-head-draft`. Qwen3.8-27B
-artifacts with DFlash2 companion weights also support `--spec dflash2 --draft-tokens 7`, with
-`--lm-head-draft` optional. DFlash2 accepts draft counts 1..15 and supports the same sampling,
-concurrency, prefix reuse, and image/video request surfaces. It may remain combined with
-`--vision`.
+| Option | Default | What it does |
+|---|---|---|
+| `--version` | | print the version, the GPU architecture of this build and whether the driver and GPUs here run it, then exit |
+| `--host H` | `127.0.0.1` | listen address |
+| `--port N` | `8080` | listen port |
+| `--api-key KEY`, `--api-key-file PATH` | unset | require a bearer / `x-api-key` value |
+| `--model-id ID` | `metadata.name`, else the file name | public model alias; it does not change execution |
+| `--max-context N` | auto: model's own context if it fits, else the longest that fits | per-request context ceiling |
+| `--kv-capacity N\|auto` | `auto`; with `--max-context` and one request, that context | shared KV pool size |
+| `--max-concurrency N` | `1` | requests generated at once, `1..8` |
+| `--max-pending-requests N` | `16` | requests allowed to wait for admission |
+| `--pending-timeout-ms N` | `600000` (10 min) | longest wait before admission |
+| `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short) |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` picks per model family |
+| `--activations exact\|fast\|int8` | `fast` | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it) |
+| `--spec mtp\|dflash\|dflash2\|auto\|none` | `auto` | speculative decoding backend |
+| `--draft-tokens N` | profile's depth, else 3 (MTP) or 7 (DFlash) | draft depth, `1..15` |
+| `--vision` | off | accept image input (Qwen3.5, 3.6, 3.8, Gemma 4 26B-A4B and 31B) and video input (Qwen); a GGUF needs its `mmproj` file beside it |
+| `--default-max-tokens N` | `8192` | output limit when the request gives none |
+| `--no-thinking` | the template's default | disable thinking by default |
+| `--default-thinking-budget N` | unset | cap on thinking tokens, where the chat template can end thinking (Qwen, Gemma 4; not gpt-oss) |
+| `--no-prefix-reuse` | reuse on | disable prefix caching |
+| `--cors` | off | permissive browser CORS headers |
+| `--request-log-jsonl FILE` | off | machine-readable request log |
+| `--log-level LEVEL` | `info` | stderr verbosity (`trace` ... `off`) |
+| `--device N` | `0` | CUDA device index |
+| `--temperature`, `--top-p`, `--top-k`, `--min-p`, `--seed`, `--greedy` | unset | process-level sampling overrides ([presets](cli.md#sampling-presets)); `--greedy` forces argmax |
 
-When `--model-id` is omitted, the server advertises and accepts the artifact's `metadata.name`,
-falling back to its architecture name when no name is stored. An explicit `--model-id` is a public
-HTTP alias override and does not select or alter model execution.
-
-Vision is disabled by default: its weights and Vision-specific unified-workspace extent are not
-allocated, and media requests and token-count requests fail with HTTP 400 `vision_disabled`. Add
-`--vision` when the server must accept image or video input. Speculative residency is likewise
-frozen by `--spec mtp|dflash|dflash2` and `--draft-tokens`; omitting `--spec` loads no speculative backend.
-`--lm-head-draft` additionally loads the optimized proposal head. DFlash on 35B-A3B and DFlash2 on Qwen3.8-27B can be combined
-with `--vision`; each accelerates generated-text decode after multimodal prefill, while Vision encode
-and prefill remain outside speculative acceleration. A later request cannot enable a capability
-omitted at startup. The artifact need only contain the Text backbone and the optional components
-selected for this process.
+All other options (media, Host cache, response store, MoE offload, penalties, limits) are in the
+[option tables](reference/serving.md#11-server-options).
 
 ## Endpoints
 
-| Method and path | Behavior |
-|---|---|
-| `GET /health` | Engine readiness |
-| `GET /v1/models` | configured OpenAI model alias and effective `max_model_len` |
-| `GET /v1/models/{id}` | lookup of the configured alias and effective `max_model_len` |
-| `POST /v1/chat/completions` | OpenAI-style chat generation |
-| `POST /v1/responses` | OpenAI Responses Core generation, state, typed Items, and SSE |
-| `POST /v1/responses/input_tokens` | Responses prompt-token count without generation |
-| `GET /v1/responses/{id}` | retrieve a locally stored terminal Response |
-| `DELETE /v1/responses/{id}` | delete a locally stored Response |
-| `GET /v1/responses/{id}/input_items` | list that Response's normalized input Items |
-| `POST /v1/messages` | Anthropic-style message generation |
-| `POST /v1/messages/count_tokens` | checkpoint-native expanded input-token count |
+| Path | API | Notes |
+|---|---|---|
+| `GET /health` | server | `200 {"status":"ok"}` with the load gauges; `503` when unavailable, draining or stalled; no authentication |
+| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta` |
+| `GET /props` | llama.cpp | the model alias, context, vocabulary and slots llama.cpp's web UI reads |
+| `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill |
+| `POST /v1/chat/completions` | OpenAI Chat | streaming, tools, images, `timings` extension |
+| `POST /v1/responses` | OpenAI Responses | typed Items, SSE events, local state |
+| `POST /v1/responses/input_tokens` | OpenAI Responses | prompt token count, no generation |
+| `POST /v1/responses/{id}/cancel`, `POST /v1/responses/compact` | OpenAI Responses | answered with an error: no background execution, no compaction |
+| `GET`, `DELETE /v1/responses/{id}` | OpenAI Responses | read or delete a locally stored Response |
+| `GET /v1/responses/{id}/input_items` | OpenAI Responses | list that Response's input Items |
+| `POST /v1/messages` | Anthropic Messages | streaming, tools, thinking |
+| `POST /v1/messages/count_tokens` | Anthropic Messages | prompt token count, no generation |
 
-`GET /health` returns HTTP 200 with `{"status":"ok"}` while the Engine can accept work. After an
-Engine-wide failure it returns HTTP 503 with `{"status":"unavailable"}`. Temporary queue
-saturation does not make the Engine unavailable. The endpoint remains unauthenticated.
+Base URLs:
 
-Every OpenAI-compatible response carries a unique `x-request-id` header, including streaming and
-error responses. Anthropic endpoints use their separate `request-id` contract.
+- OpenAI SDKs: `http://127.0.0.1:8080/v1`.
+- Anthropic SDKs: `http://127.0.0.1:8080` (they append `/v1/messages`).
 
-All three generation SSE endpoints emit the standard `: keep-alive` comment after five seconds
-without a protocol event. The comment is transport-only: SSE clients ignore it, and it does not
-change generated text, event ordering, usage, stored Responses, or request logs. On Linux, accepted
-connections also use TCP keepalive and a 15-second `TCP_USER_TIMEOUT`; together with the heartbeat,
-a dead or unacknowledging peer is normally cancelled within about 20 seconds, including while the
-request is waiting or prefilling. A peer whose TCP stack remains connected and acknowledges data
-cannot be distinguished from a reading application; proxies must close their upstream NInfer
-connection when the downstream client disappears.
+The `model` field must be present in OpenAI requests, but any value is accepted: one server runs
+one model, and the response names the served id. For Anthropic Messages it is only a label and is
+echoed back. The examples below assume a server started with
+`--model-id qwen3.8-27b`.
 
-## OpenAI Chat Completions
+## Examples
+
+OpenAI Chat Completions:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -99,272 +146,21 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   }'
 ```
 
-The endpoint supports:
-
-- `system`, `developer`, `user`, `assistant`, and `tool` history, plus legacy `function` history;
-- string content and ordered text/refusal parts; adjacent parts are preserved without inserted
-  separators, and empty wire content remains an empty turn;
-- User `image_url` parts, tool-result `image_url` parts used by compatible clients, and the User
-  `video_url` extension using HTTP(S) or data URIs; image detail is omitted or `auto`;
-- nonnegative `max_completion_tokens` and the legacy `max_tokens` spelling; zero performs prompt
-  processing without generation;
-- `temperature`, `top_p`, presence/frequency penalties, and signed integer `seed`;
-- the compatible `top_k` (`0..20`) and `min_p` (`0..1`) sampler extensions;
-- up to four non-empty stop strings, applied to both reasoning and answer output;
-- `n:1`, text-only `modalities`, and `response_format: {"type":"text"}`;
-- non-streaming responses and server-sent event streams;
-- `stream_options.include_usage`;
-- llama.cpp-compatible terminal `timings`, plus opt-in `timings_per_token` and
-  streaming `return_progress` observations;
-- non-strict function tools with `tool_choice` `auto`, `none`, or `allowed_tools` in `auto` mode,
-  parallel calls enabled, assistant tool-call history, tool-result messages, and legacy
-  function-call history;
-- the top-level `reasoning_effort` field;
-- `enable_thinking` and `preserve_thinking`, either at top level or in
-  `chat_template_kwargs`;
-- Assistant `reasoning_content` and `reasoning` history aliases.
-
-Options whose observable behavior the Engine cannot provide are rejected when they request that
-behavior. This includes JSON constrained output, nonzero `logit_bias`, requested log probabilities,
-audio/file input or audio output, `strict:true`, required or named tool choice,
-`parallel_tool_calls:false` with enabled tools, explicit low/high image detail, web search,
-moderation, low/high verbosity, stored Chat Completions, and non-empty legacy `functions`.
-Each capability rejection identifies the affected field and the guarantee NInfer cannot provide.
-Known constrained-decoding aliases (`grammar`, `structured_outputs`, `guided_json`, `guided_regex`,
-`guided_choice`, and `guided_grammar`) receive the same explicit rejection instead of being treated
-as unknown hints.
-
-Semantically neutral fields do not make an otherwise executable request fail. All-zero
-`logit_bias`, `logprobs:false`, `top_logprobs:0`, `verbosity:"medium"`, empty legacy tool controls,
-text-only `audio` configuration, and `prediction` are accepted without changing Engine execution.
-Metadata, user/safety identifiers, service-tier and prompt-cache hints are likewise advisory.
-Unknown top-level fields are ignored.
-
-A string `name` on a `tool` message is accepted as an ignored, output-neutral compatibility
-extension for clients that mirror the function name onto tool results. It does not participate in
-tool identity, prompt rendering, or output. Non-string values are malformed; non-empty names on
-other message roles remain unsupported because they carry participant identity that the loaded chat
-template cannot represent.
-
-For commonly generated OpenAI-compatible payloads, `repetition_penalty` is accepted only at its
-neutral value `1`, and `mm_processor_kwargs` when empty or containing only null values. String-form
-image/video URLs are also accepted.
-
-Malformed protocol values return field-specific HTTP 400 errors. Invalid media sources, bytes, or
-decoded content use `invalid_media`; remote fetch and timeout failures retain their dedicated
-server-error codes. Failures in the normalized prompt contract use `invalid_prompt`; typed capacity
-and availability failures retain their dedicated codes. Internal invariant failures are not
-relabeled as client input errors.
-
-The request `model` must equal the public model ID: the artifact `identity.model_id` by default, or
-the explicit `--model-id` override. Reasoning is returned separately as `reasoning_content`; answer
-text remains in `content`.
-
-Across Chat Completions, Responses, and Anthropic Messages, a direct top-level tool-parameter
-`type`, or an `anyOf`/`oneOf` composed entirely of explicit primitive types, guides conversion of
-Qwen's untyped parameter text. It does not decide whether structurally complete markup is a tool
-call. String-admitting values remain strings, including the empty string. An empty block for a
-declared non-string parameter is omitted. Admitted JSON values retain their JSON type;
-case-insensitive boolean text is normalized to `true` or `false`. A nonempty schema mismatch remains
-a structured call: valid JSON retains its represented type and other text becomes a JSON string so
-the tool consumer can report the validation error and continue the agent loop. Schemas without a
-supported explicit type retain untyped inference. NInfer does not apply defaults, enforce required
-properties, perform recursive JSON Schema validation, or use constrained decoding.
-
-String parameters preserve function/tool-call markers and balanced nested
-`<parameter=...>...</parameter>` text as value bytes. The Qwen wire format has no delimiter escape,
-so an unmatched nested parameter opener or a standalone `</parameter>` cannot be represented
-unambiguously; either causes the complete tool-call region to fall back to ordinary content.
-
-Messages enter the selected template in their input order. The maintained Qwen templates keep
-system/developer messages at their original positions.
-
-Prompt-bearing JSON objects retain their received member order through request parsing and prompt
-rendering, including tool schemas and historical tool inputs. Canonical model-origin tool arguments
-retain that member order in aggregate and streaming responses, so an unmodified replay reconstructs
-the same ordered tool call. NInfer does not canonicalize semantically equivalent JSON: if a client
-reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
-does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
-
-`--chat-template FILE` selects a local Jinja template; by default, the server uses the template
-stored in the artifact. See the [CLI guide](cli.md#text-input) for an example.
-
-Control-token spellings quoted in message content, tool data or ordinary template kwargs are
-encoded as text. Media placeholders come from the template and bind to actual image/video inputs.
-
-`chat_template_kwargs` passes a JSON object to the template in Chat Completions, Responses and
-Anthropic Messages. Values duplicated in typed request fields must agree. Null standard options
-mean unspecified; other null values remain `none`. Messages, tools, generation mode and tokenizer
-special tokens cannot be overridden through kwargs.
-
-`--default-thinking-budget N` sets a positive default thinking-token cap for requests that start
-in thinking mode. Non-thinking requests receive no cap. It may coexist with `--no-thinking`
-because requests can explicitly enable thinking. Anthropic
-`thinking:{"type":"enabled","budget_tokens":N}` overrides this default for that request.
-
-Add `--default-thinking-budget 512` to the startup command to cap model-origin thinking at 512
-tokens for every thinking-enabled request.
-
-At the cap boundary, Engine first honors a natural `</think>`, stop condition, cancellation, or
-total output/context limit. If thinking remains open, it commits Qwen's canonical early-close
-guidance and close marker to the same model sequence without sampling, streams the guidance as a
-reasoning delta, and continues normal content or tool-call generation. Inserted tokens count in
-completion usage and the request's `max_tokens`/`max_output_tokens` budget. If the effective output
-capacity extends past the cap but cannot fit the complete tokenizer-derived control suffix plus one
-post-close model token, preparation is rejected with HTTP 400 code
-`thinking_budget_capacity_insufficient` rather than partially inserting control. The server does
-not promise that the model will emit nonempty content or a tool call after the marker.
-
-For Chat Completions, `reasoning_effort: "none"` requests disabled thinking. The selected template
-interprets the other standard values (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
-Conflicting explicit `enable_thinking` and effort values return `conflicting_template_option`.
-
-`preserve_thinking` controls reasoning retention according to the selected template. Request
-options override server defaults set with `--no-thinking` and `--preserve-thinking`. Unspecified
-thinking, effort and preservation options use the template's defaults.
-
-Streaming begins with an assistant-role chunk, sends separate reasoning and content deltas, then a
-finish-reason chunk and `[DONE]`. When `stream_options.include_usage` is true, a final empty
-`choices` chunk contains completed usage. Aggregate and streamed usage include cached prompt tokens
-and reasoning-token details; choices carry `logprobs: null` when log probabilities were not
-requested, and aggregate assistant messages carry `refusal: null` because refusal output is not
-supported.
-
-### llama.cpp-compatible request observations
-
-Every successful Chat Completions response includes a top-level `timings` object. This is a
-llama.cpp-compatible response extension, not an OpenAI field. In a stream it is attached to the
-last JSON chunk before `[DONE]`: the empty `choices` usage chunk when
-`stream_options.include_usage` is true, otherwise the finish-reason chunk.
-
-```json
-{
-  "timings": {
-    "cache_n": 4096,
-    "prompt_n": 4096,
-    "prompt_ms": 83.0,
-    "prompt_per_token_ms": 0.020263671875,
-    "prompt_per_second": 49349.39759036145,
-    "predicted_n": 129,
-    "predicted_ms": 1140.0,
-    "predicted_per_token_ms": 8.90625,
-    "predicted_per_second": 112.28070175438596
-  }
-}
-```
-
-`cache_n` is the exact Engine-proven reused prompt prefix and `prompt_n` is the remaining prompt
-suffix, so `cache_n + prompt_n` equals `usage.prompt_tokens`. Prompt time starts when admission
-commits that exact reuse choice and ends when the first output token is committed. Generation time
-starts at that first token and ends at the last committed output token. Accordingly, generation
-speed uses `max(predicted_n - 1, 0)` token intervals; the first token belongs to prompt latency and
-is not counted again as a decode interval. Zero-token, one-token, zero-duration, and exact-cache-hit
-cases report finite zero rates rather than `NaN` or infinity. Speculative requests additionally
-include terminal `draft_n` and `draft_n_accepted` when draft work occurred.
-
-Set top-level `timings_per_token: true` on a streaming request to attach the latest cumulative
-timing snapshot to each visible reasoning or content chunk. This does not enable terminal timings,
-which are always present. A model commit that is temporarily hidden by UTF-8, stop-string,
-reasoning, or tool-call buffering still advances the cumulative token count; the next visible chunk
-observes that committed frontier. The option increases response serialization and transport volume
-and is off by default.
-
-Set top-level `return_progress: true` together with `stream: true` to receive prompt-processing
-chunks:
-
-```json
-{
-  "prompt_progress": {
-    "total": 8192,
-    "cache": 4096,
-    "processed": 6144,
-    "time_ms": 41
-  }
-}
-```
-
-The initial event has `processed == cache`. Later cumulative events are published only after the
-corresponding prefill unit commits, may be coalesced when the consumer is slower than prefill, and
-never move backwards. The final event has `processed == total` and precedes the first output delta.
-For an exact full-prefix hit, the initial event already has `cache == processed == total` and no
-synthetic prompt work is reported. `time_ms` is elapsed wall time since committed admission;
-clients may calculate actual suffix progress as `(processed-cache)/(total-cache)` when the
-denominator is nonzero.
-
-### Multimodal request
-
-Start the server with `--vision` before sending media:
+Streaming: add `"stream": true` to any request. Chat Completions sends server-sent events ending with
+`[DONE]`. Add `"stream_options": {"include_usage": true}` for a final usage chunk.
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "qwen3.8-27b",
-    "messages": [{
-      "role": "user",
-      "content": [
-        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
-        {"type": "text", "text": "Describe this image."}
-      ]
-    }],
-    "max_tokens": 128
+    "messages": [{"role": "user", "content": "Say hello."}],
+    "stream": true,
+    "stream_options": {"include_usage": true}
   }'
 ```
 
-OpenAI image and video sources may be HTTP(S) URLs or base64 data URLs.
-
-Text and media requests use one complete-prompt context contract. After chat-template rendering and
-media-token expansion, the result must fit Engine `--max-context`. The current Vision runtime also
-has a 32,768 merged-token envelope (131,072 raw patches); the effective Vision limit is therefore
-`min(--max-context, 32768)`. There is no fixed image/video item-count limit: item count is admitted
-through aggregate source-byte, decoded-pixel, raw-patch, Vision-token, and live-memory budgets.
-
-Media cache misses run as independent decode → resize → BF16-pack tasks on a bounded host worker
-pool. Prepared payloads are keyed by SHA-256 of the acquired bytes plus modality, so repeated media
-in later requests reuses the exact immutable BF16 patch input; concurrent identical misses use one
-single-flight build. `--media-cache-mib` bounds LRU-retained payloads, while
-`--media-live-mib` bounds every cache-, request-, or runtime-referenced payload. Cache eviction does
-not invalidate a request reference, and live bytes are returned only when the final reference is
-released. A request-level preparation gate derived from the live limit prevents concurrent partial
-builds from deadlocking the memory account.
-
-An expanded prompt beyond `--max-context` returns HTTP 400 `context_length_exceeded`, including
-the prepared token count and configured context ceiling. A media preprocessing resource rejection
-returns HTTP 400 `media_budget_exceeded`. HTTP 413 `request_too_large` is reserved for a raw request
-body that exceeds `--max-request-mib` before JSON parsing; it is not used for model-context or media
-resource errors.
-
-## OpenAI prompt caching
-
-Chat Completions and Responses translate OpenAI cache hints into optional shared-prefix write
-candidates:
-
-- omitted `prompt_cache_options` creates a default implicit candidate at the latest representable
-  content boundary;
-- `mode:"implicit"` requests the same automatic candidate explicitly;
-- `mode:"explicit"` disables that implicit write for the request;
-- `prompt_cache_breakpoint:{"mode":"explicit"}` on supported content creates an explicit
-  candidate.
-
-One request carries at most four distinct writes. An implicit target occupies one slot unless it
-coincides with an explicit target; the remaining slots contain the latest explicit boundaries.
-Earlier schema-valid historical breakpoints are accepted but are not new write candidates. Exact
-reads of already-published prefixes do not require the request to repeat a marker.
-
-These fields are optimization hints. A legal boundary that cannot be represented as an exact
-rendered-token frontier is ignored without changing prompt content. `prompt_cache_key` is not an
-Engine session key or prefix identity. Valid TTL/retention values are accepted, but NInfer does not
-promise their wall-clock residency; physical retention follows the resource scheduler.
-
-## OpenAI Responses Core
-
-NInfer implements the typed-Item and semantic-event core of the OpenAI
-[Responses API](https://developers.openai.com/api/reference/resources/responses/overview). All
-supported model instances use this same adapter and Engine route. It is intentionally not
-advertised as full parity with OpenAI-hosted tools, durable cloud storage, background jobs,
-Conversations, or compaction.
-
-### Create a Response
+OpenAI Responses:
 
 ```bash
 curl http://127.0.0.1:8080/v1/responses \
@@ -378,268 +174,7 @@ curl http://127.0.0.1:8080/v1/responses \
   }'
 ```
 
-The same endpoint works with OpenAI SDKs by replacing their base URL:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="local-secret")
-response = client.responses.create(
-    model="qwen3.8-27b",
-    instructions="Answer concisely.",
-    input="What is speculative decoding?",
-    max_output_tokens=128,
-)
-print(response.output_text)  # SDK helper derived from response.output
-```
-
-`output_text` is an SDK convenience property. It is not emitted as a top-level wire field; the
-wire response contains typed `output` Items.
-
-### Create request fields
-
-| Field | NInfer Responses Core contract |
-|---|---|
-| `model` | required non-empty string; must equal the artifact-derived public model ID or explicit `--model-id` override |
-| `input` | string or typed Item array; it may be omitted or empty only when `previous_response_id` already supplies a user query |
-| `instructions` | optional string, inserted before the reconstructed conversation for this request only |
-| `previous_response_id` | optional ID of a retained local Response |
-| `max_output_tokens` | non-negative integer; omission executes with `--default-max-tokens` but remains `null` in the Response object |
-| `stream` | boolean; `true` selects Responses SSE rather than a JSON body |
-| `store` | boolean, default `true`; controls local retrieval and continuation state |
-| `temperature` | finite number in `[0,2]` |
-| `top_p` | finite number in `[0,1]` |
-| `metadata` | at most 16 string pairs; keys at most 64 characters and values at most 512 |
-| `client_metadata` | Codex client extension; an object or `null`, accepted as opaque tracing metadata with no generation effect |
-| `reasoning.effort` | `none` requests disabled thinking; other standard effort values pass to the selected template |
-| `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
-| `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
-| `text.format` | omitted or `{"type":"text"}` only |
-| `tools` | direct function definitions or namespace groups containing function definitions; see below |
-| `tool_choice` | `auto`, `none`, or function-only `allowed_tools` with mode `auto`; a namespaced selection carries both `namespace` and `name` |
-| `parallel_tool_calls` | `true` by default; `false` is accepted only when no effective tool is callable |
-| `max_tool_calls` | non-negative integer accepted as a hosted-tool no-op; NInfer does not execute hosted tools |
-| `truncation` | omitted or `disabled`; overlong input fails instead of silently dropping Items |
-| `top_logprobs` | omitted or `0` |
-| `service_tier` | omitted, `auto`, or `default`; the response reports `default` |
-| `background` | omitted or `false` |
-| `include` | omitted or an empty array |
-| `stream_options.include_obfuscation` | optional boolean; accepted as a transport hint, but this local server emits no padding |
-| cache and client hints | `prompt_cache_key`, `prompt_cache_options`, `prompt_cache_retention`, and explicit breakpoints follow [OpenAI prompt caching](#openai-prompt-caching); `safety_identifier` and `user` are accepted as client hints |
-
-Unknown top-level fields fail with `unknown_parameter`. Recognized but unsupported features fail
-with a field-specific 400 error instead of being silently ignored.
-
-### Input Item contract
-
-String `input` is normalized to one user `message` with an `input_text` part. Array input accepts:
-
-| Item | Supported form |
-|---|---|
-| `message` | roles `user`, `assistant`, `system`, and `developer`; string content or typed content array |
-| `input_text` | message content part containing string `text` |
-| `output_text` | assistant-message replay part containing string `text` |
-| `refusal` | assistant-message replay part; its text enters assistant history |
-| `input_image` | user- or assistant-message part with HTTP(S) or data-URI `image_url`; detail omitted or `auto`; requires server `--vision` |
-| `input_video` | NInfer extension with HTTP(S) or data-URI `video_url`; requires server `--vision` |
-| `reasoning` | raw replay Item with `reasoning_text` content; summary/encrypted metadata may accompany raw text but cannot replace it |
-| `function_call` | completed assistant call with optional `id` and namespace, plus required `call_id`, `name`, and JSON-object string `arguments` |
-| `function_call_output` | completed result with required `call_id` and optional matching name/namespace assertion; `output` may be a string or a non-empty array of `input_text`/`input_image` parts |
-
-Contiguous assistant-owned Items form one assistant history turn in the representable order
-`reasoning` -> assistant message content -> `function_call`. Multiple message Items append their
-content parts, multiple calls retain declaration order, and a reasoning-only turn is retained. A
-user, system, developer, or `function_call_output` Item ends the group; an order that would require
-rearranging assistant content fails with `invalid_assistant_history`. Results are validated by
-`call_id` and reordered to call declaration order before prompt rendering; unknown, duplicate, or
-unrepresentable partial result sets fail with `invalid_tool_history`. Canonical input Items retain
-client order. Input Item IDs are preserved when supplied and generated otherwise; duplicate IDs
-fail.
-
-System and developer message Items retain their positions in the input array. Top-level
-`instructions` is represented as a leading developer turn for the current request; target-specific
-role lowering occurs only in the Qwen family frontend.
-
-An `input_text`, `input_image`, or tool-result part may carry
-`prompt_cache_breakpoint:{"mode":"explicit"}`. Write selection follows
-[OpenAI prompt caching](#openai-prompt-caching); boundaries affect reuse opportunities, not prompt
-identity or output semantics. String message status/phase metadata is accepted but has no Qwen
-prompt representation.
-
-`input_file`, `input_audio`, image `file_id`, non-`auto` image detail, reasoning metadata without raw
-reasoning text, partial tool Items, and other Item/content types are not supported. HTTP media URLs
-stored in a response chain are fetched again when that chain is continued; use data URIs when the
-historical media bytes must be immutable.
-
-### Function tools
-
-Responses function definitions may be declared directly rather than inside Chat Completions'
-nested `function` object:
-
-```json
-{
-  "type": "function",
-  "name": "get_weather",
-  "description": "Get current weather",
-  "parameters": {
-    "type": "object",
-    "properties": {"city": {"type": "string"}},
-    "required": ["city"]
-  },
-  "strict": false
-}
-```
-
-They may also be grouped in a Responses namespace:
-
-```json
-{
-  "type": "namespace",
-  "name": "mcp__weather",
-  "description": "Weather service",
-  "tools": [{"type": "function", "name": "get_current"}]
-}
-```
-
-NInfer gives each namespace/function pair a distinct internal Engine identity and restores the
-separate `namespace` and `name` fields in aggregate output, SSE events, and replayed Items. The same
-function name may therefore appear in different namespaces. Namespace members remain ordinary
-client-executed functions; this does not add a remote MCP executor.
-
-NInfer renders these definitions in the Qwen prompt and parses model output into separate
-`function_call` output Items. Each output has a protocol Item `id` (`fc_...`) and a distinct
-`call_id` (`call_...`). The client executes the function and sends a `function_call_output` Item in
-a later request. Only functions in the current effective tool set can become structured calls;
-undeclared model output remains ordinary text. `allowed_tools` with mode `auto` filters that set
-without changing declaration order, while `tool_choice:"none"` disables structured tool output even
-when the history contains earlier calls.
-
-NInfer does not execute functions or enforce JSON Schema through constrained decoding, so
-`strict:true`, required or named tool choice, hosted tools, remote MCP tools, and custom free-form
-tools are rejected. Deferred loading, output schemas, and caller restrictions that exclude direct
-invocation are also rejected because their semantics cannot be honored.
-
-### Response object and usage
-
-A terminal wire response has `object: "response"`, one of `completed`, `incomplete`, or
-`cancelled` in `status`, and a typed `output` array. NInfer may emit:
-
-- a `reasoning` Item containing raw `reasoning_text` and an empty summary;
-- an assistant `message` containing an `output_text` part;
-- one or more `function_call` Items.
-
-Ordinary model/string stops produce `completed`. Output-token or context-capacity exhaustion
-produces `incomplete` with `incomplete_details.reason: "max_output_tokens"`. Errors accepted after
-an SSE response has started produce `response.failed`; validation and preparation errors remain
-normal HTTP error responses. `completed_at` is populated only for completed Responses. A
-reasoning-only incomplete result contains no invented empty assistant message.
-
-Usage is checkpoint-native:
-
-```json
-{
-  "input_tokens": 42,
-  "input_tokens_details": {"cached_tokens": 17},
-  "output_tokens": 12,
-  "output_tokens_details": {"reasoning_tokens": 5},
-  "total_tokens": 54
-}
-```
-
-`input_tokens` includes the chat template and expanded media tokens. `cached_tokens` is the exact
-checkpoint-proven prompt prefix reused by Engine. `output_tokens` is the count of accepted generated token
-IDs, including a withheld stop token when applicable. `reasoning_tokens` is counted in the Qwen
-output decoder while accepted tokens are still in the reasoning channel; it is not estimated by
-re-tokenizing decoded text.
-
-### Responses streaming
-
-Set `stream:true` for semantic Server-Sent Events. Every frame uses both the SSE event name and a
-matching JSON `type`, and every JSON event has a monotonically increasing `sequence_number`:
-
-```text
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","sequence_number":7,...}
-
-```
-
-The normal lifecycle is:
-
-1. `response.created`, then `response.in_progress`;
-2. `response.output_item.added` and `response.content_part.added`;
-3. zero or more `response.reasoning_text.delta` or `response.output_text.delta` events;
-4. matching `*.done`, `response.content_part.done`, and `response.output_item.done` events;
-5. exactly one `response.completed`, `response.incomplete`, or `response.failed` terminal event.
-
-Function arguments use `response.function_call_arguments.delta` and `.done`. IDs, output indices,
-and content indices remain stable, and concatenated deltas equal the terminal Item. Responses SSE
-does not emit the Chat Completions `[DONE]` sentinel. With tools enabled, ordinary answer text still
-streams immediately; only an ambiguous `<tool_call>` suffix or the structured tool region is held.
-Malformed tool markup is flushed back as ordinary text without losing bytes.
-
-### Local response state and resources
-
-`store` defaults to `true`. Stored Responses live only in this server process and are bounded by an
-LRU store. They are lost on restart and are not OpenAI's durable cloud retention service.
-
-`previous_response_id` reconstructs the complete stored input/output Item history before the new
-input. The current `instructions` value is placed first but is not saved into the continuation
-context, matching the Responses rule that previous top-level instructions do not carry forward.
-Function definitions are request configuration rather than conversation Items and must be sent
-again on tool-result turns. The reconstructed prompt follows the ordinary Engine path, so compatible
-checkpoint reuse applies naturally.
-
-A stored Response also retains its resolved `preserve_thinking` value. A child which omits the
-field inherits the parent value. An explicit different value creates a new semantic branch; prompt
-rendering and identity still determine reuse. Changing the boolean alone never invalidates an exact
-checkpoint already proved compatible by the model runtime.
-
-For Engine-local reuse, a stored root Response receives one bounded session key derived from its
-response ID, and every `previous_response_id` child inherits that key. `store:false` roots remain
-anonymous; a `store:false` child may read its inherited session checkpoint but does not replace the
-stored chain's latest endpoint. Response-store eviction or deletion removes the HTTP object, not an
-independently retained Engine checkpoint; the latter remains bounded by the Engine's own retention
-and pressure policy. No session key or cache marker is added to the HTTP schema.
-
-Resource behavior:
-
-| Endpoint | Contract |
-|---|---|
-| `GET /v1/responses/{id}` | returns the stored terminal object, or 404 `response_not_found`; stream recovery and non-empty `include` are rejected rather than ignored |
-| `DELETE /v1/responses/{id}` | removes public retrieval and returns `response.deleted`; descendant contexts already retained by other Responses remain usable |
-| `GET /v1/responses/{id}/input_items` | returns normalized Items supplied to that request; supports `after`, `limit` `1..100` (default `20`), and `order` `asc|desc` (default `desc`); image URLs are redacted unless `include=message.input_image.image_url` |
-| `POST /v1/responses/{id}/cancel` | explicitly fails because background execution is unsupported |
-| `POST /v1/responses/compact` | explicitly fails with `compaction_not_supported` |
-
-`store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction and
-explicit deletion also make an ID unavailable. A single Response larger than the configured store
-capacity fails with `response_store_capacity_exceeded` rather than silently pretending it was
-stored.
-
-### Responses input token count
-
-`POST /v1/responses/input_tokens` uses the same prompt path as Create and does not run generation.
-It accepts `model`, `input`, `instructions`, `previous_response_id`, reasoning, function tools and
-tool choice, supported text/truncation values, and the `preserve_thinking` extension. Parent lookup,
-call-ID normalization, template rendering, and media expansion are therefore identical to the
-corresponding Create request:
-
-```bash
-curl http://127.0.0.1:8080/v1/responses/input_tokens \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3.8-27b","input":"Count this prompt."}'
-```
-
-```json
-{"object":"response.input_tokens","input_tokens":11}
-```
-
-Unsupported Create fields include Conversations, prompt templates, context management, hosted
-moderation, Structured Outputs/JSON mode, non-empty `include`, background execution, compaction,
-files/audio, and OpenAI-hosted/MCP/custom tools. These are compatibility boundaries, not silently
-accepted placeholders.
-
-## Anthropic Messages
+Anthropic Messages:
 
 ```bash
 curl http://127.0.0.1:8080/v1/messages \
@@ -653,351 +188,139 @@ curl http://127.0.0.1:8080/v1/messages \
   }'
 ```
 
-The endpoint accepts top-level System text, ordered User/Assistant/System history, text and image
-blocks, Thinking history, tool-use history, tool results, user-defined tools, aggregate responses,
-and Anthropic SSE. Consecutive User or Assistant messages are joined without adding separators.
-Mid-conversation System messages retain their input position. A final text-only Assistant message
-is an Assistant prefill: generation continues its existing text instead of opening another turn.
-Assistant prefill cannot contain media, Thinking, or tool calls and cannot start with Thinking
-enabled.
+Image input needs a server started with `--vision`. See the
+[multimodal example](reference/serving.md#multimodal-request).
 
-Claude Code may place its attribution metadata in the first block of a top-level System array. If
-that block is a text block beginning exactly with `x-anthropic-billing-header:`, NInfer consumes the
-whole block before token counting, prompt preparation, and cache identity construction. The rule is
-positional: a string-form System value, a later array block, or an inline System message with the
-same text remains ordinary prompt content. A `cache_control` marker attached to the consumed block
-is consumed with it rather than moved to adjacent content.
+Using the OpenAI Python SDK:
 
-`max_tokens` is optional for local clients and otherwise uses `--default-max-tokens`; a positive
-value is the complete output budget. `max_tokens:0` is rejected because NInfer does not expose a
-completed zero-output cache-prewarm lifecycle. `temperature`, `top_p`, `top_k`, and
-`stop_sequences` enter Engine execution. A matched custom stop is returned as
-`stop_reason:"stop_sequence"` together with the actual `stop_sequence`; context exhaustion returns
-`model_context_window_exceeded`.
+```python
+from openai import OpenAI
 
-Thinking supports `disabled`, `adaptive`, and `enabled`. Enabled Thinking requires
-`budget_tokens >= 1024` and less than `max_tokens`, and that budget is passed to Engine. Visible
-Thinking is returned with an opaque compatibility signature; SSE emits its `signature_delta`
-before closing the block. Request lowering reconstructs the local prompt from the visible
-`thinking` text and treats `signature` as non-semantic transport metadata, so retained history
-remains usable across serve restarts.
-`display:"omitted"` is rejected because NInfer cannot provide Anthropic's
-encrypted hidden-reasoning restore semantics. `preserve_thinking` remains a NInfer extension for
-closed-turn reasoning history. `output_config.effort` passes its protocol-validated value to the
-selected template.
-
-User-defined, non-strict tools support `name`, `description`, object `input_schema`, and
-`input_examples`. `tool_choice:auto` and `none` are executable. Forced or named choice,
-`strict:true`, active single-call enforcement, deferred tools, tools that exclude direct model
-calls, Anthropic-provided/server tools, toolsets, MCP, and containers are rejected because their
-required constraint or executor is absent. `tool_result` preserves text/image order and marks
-`is_error:true` explicitly in the model prompt. For a visible Assistant tool-use turn, the next
-User turn must provide exactly one leading result for every declared ID; valid results are matched
-by ID and normalized to call order. A history that begins with results remains valid as a truncated
-or imported conversation.
-
-Block-level ephemeral `cache_control` on tools and supported System/User/Assistant/tool-history
-blocks creates explicit shared-prefix candidates. At most four distinct block-level breakpoints are
-accepted. Request-level `cache_control` targets the last cacheable block: it merges with an explicit
-breakpoint at the same target and TTL, conflicts at the same target with a different TTL, and needs
-an available fifth slot when four different explicit targets already exist. TTL must be `5m` or
-`1h`; it is a protocol hint, not a wall-clock residency guarantee.
-
-NInfer maps representable boundaries to exact prompt frontiers and ignores a legal but
-unrepresentable advisory boundary without changing the prompt. Reuse still requires exact rendered
-identity and can read an existing owner without another `cache_control`. Aggregate usage reports
-verified reused tokens in `cache_read_input_tokens` and leaves cache creation unknown. Streaming
-emits `message_start` after Engine admission commits the prefix selection and before
-transfer/prefill output, so its uncached/cache-read split is already exact; terminal cumulative
-usage matches the aggregate response.
-
-Documents, Search Results, Files, Structured Outputs, server-tool results, container uploads, and
-other execution-dependent blocks are rejected with the missing capability identified. Metadata,
-service tier, inference geography, protocol-version/beta headers, cache TTL, and unknown advisory
-fields do not block an otherwise executable request. The request `model` is any non-empty local
-proxy label and is echoed in the response; it does not select the resident artifact.
-
-Every Messages response carries a `request-id` header; error bodies also carry `request_id` and use
-Anthropic error categories. Local admission overload maps to HTTP 529 and queue/media timeouts to
-HTTP 504. Streaming owns the full Anthropic block lifecycle for Thinking, text, and tool use.
-
-`POST /v1/messages/count_tokens` uses the artifact's tokenizer, chat template, and media expansion
-without generation. It shares the same prompt normalization, tools, Thinking mode, Assistant
-prefill, media processing, and cache-marker interpretation as Messages; output-only sampling and
-streaming fields do not affect the count:
-
-```bash
-curl http://127.0.0.1:8080/v1/messages/count_tokens \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "qwen3.8-27b",
-    "messages": [{"role": "user", "content": "Count this prompt."}]
-  }'
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="local-secret")
+response = client.responses.create(
+    model="qwen3.8-27b",
+    instructions="Answer concisely.",
+    input="What is speculative decoding?",
+    max_output_tokens=128,
+)
+print(response.output_text)
 ```
 
-## Authentication and CORS
+Notes that often matter:
 
-Pass `--api-key VALUE` to require the same value as an OpenAI bearer token or Anthropic
-`x-api-key` header. `GET /health` and CORS preflight requests remain unauthenticated.
+- Reasoning arrives separately: `reasoning_content` in Chat, `reasoning` Items in Responses,
+  `thinking` blocks in Messages.
+- Unknown top-level fields in Chat and Messages are ignored, and the response carries an
+  `X-NInferno-Warning: unknown fields ignored: ...` header. Responses rejects them with
+  `unknown_parameter`.
+- NInferno never runs tools. It renders your tool definitions into the prompt and returns parsed
+  calls. Your client runs them and sends the results back.
+- Unsupported features (audio, logprobs, hosted tools, stored Chat Completions, and similar) are
+  rejected with an error that names the field. See the
+  [compatibility details](reference/serving.md#6-openai-chat-completions).
+
+## Speculative decoding
+
+- `--spec auto` is the default. It runs the speculation tuned for your model and GPU, which
+  `ninferno-convert` attached to the model file. A GPU nobody tuned uses the portable `*` profile.
+- Force a backend with `--spec mtp`, `--spec dflash` or `--spec dflash2`, and a depth with
+  `--draft-tokens N`. Add `--lm-head-draft` for the optimized proposal head.
+- Disable it with `--spec none`.
+- Under concurrency the profile lowers the draft depth per decode step, because deep drafts stop
+  paying off on a busy server. `--spec-load LANES:DEPTH,...` replaces those bounds (`none` removes
+  them).
+- Best settings per model and task: [CLI guide](cli.md#choosing-the-backend-and-draft-count).
+- Internals, bounds, graphs and measured throughput under load:
+  [reference](reference/serving.md#3-speculative-decoding).
+
+## Memory, context and concurrency
+
+- **Context.** Without `--max-context`, the server serves the model's own context if it fits free GPU
+  memory. Otherwise it serves the longest context that fits (in 64-token pages, at least 1024).
+  A prompt longer than the context returns HTTP 400 `context_length_exceeded`.
+- **KV pool.** `--kv-capacity auto` takes the memory that remains after weights, workspace and
+  graphs. One shared pool serves all admitted requests. With an explicit `--max-context` and
+  `--max-concurrency 1` the pool is that one context.
+- **Concurrency.** `--max-concurrency` (1..8) sets how many requests decode together. Up to
+  `--max-concurrency + --max-pending-requests` requests are accepted. Beyond that the server
+  answers HTTP 429 `server_overloaded`. A request that waits longer than `--pending-timeout-ms`
+  gets HTTP 503 `request_queue_timeout` (on `/v1/messages`: 529 and 504, as Anthropic does). Both
+  carry `Retry-After`. A streamed request has its HTTP 200 and event-stream headers sent when it
+  is admitted to the queue, so its queue timeout arrives as the dialect's error event
+  (the same code and message) and the stream ends.
+- **Speculation needs a profile.** `--spec auto` speculates with the profile measured for the
+  model and GPU. A model without one for this GPU (most GGUF conversions of models nobody
+  measured) decodes plainly, and the startup log says so; `--spec mtp` or `--spec dflash`
+  speculates anyway at the default depth.
+- **Speculation needs room.** With `--spec auto`, an explicit `--max-context`, more than one
+  request and the automatic KV pool, the drafter's weights and state come out of the pool. When
+  the pool then holds fewer full contexts than `--max-concurrency` and plain decode holds more, the server
+  drafts with the model's own MTP head instead when it has one and that holds at least four fifths as
+  many contexts (`speculation | fit fallback`), else it decodes without speculation and says so in
+  the startup log (`speculation | ... decodes plainly`). Single-stream speed can then
+  be less than half. Size the server for its load: a lower `--max-concurrency` or `--max-context`
+  keeps the drafter, and an explicit `--spec` always keeps it.
+- **Prefix cache.** Compatible prompt prefixes are reused automatically, for text and images. Reuse
+  state lives in Device memory and in pinned Host memory (`--host-state-slots`, `--host-kv-mib`).
+- **Does not fit?** Try a smaller quantization, a lower `--max-concurrency`, a shorter
+  `--max-context`, or a smaller `--prefill-chunk`. The refusal message names options that fit.
+  MoE models can also keep experts in Host memory (`--moe-offload`).
+- **Requests with images or video** need `--vision`. Without it they fail with HTTP 400
+  `vision_disabled`.
+
+Details and worked examples: [reference](reference/serving.md#13-execution-behavior).
+
+## Authentication
+
+Pass `--api-key VALUE`. Clients then send `Authorization: Bearer VALUE` (OpenAI) or
+`x-api-key: VALUE` (Anthropic). Other users of the host can see command lines, so prefer
+`--api-key-file PATH` (a file holding the key alone, on one line) or the `NINFERNO_API_KEY` environment variable.
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
-  -H 'Authorization: Bearer local-secret'
+curl http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer local-secret'
 ```
 
-`--cors` adds permissive browser CORS headers. It is disabled by default.
+- `GET /health` needs no key, and with `--cors` neither do CORS preflight requests; `/props` and
+  `/metrics` do.
+- An empty key is refused at startup.
+- Browsers: without `--cors`, requests that carry an `Origin` header are refused with HTTP 403.
+  curl and the official SDKs send none.
 
-## Server options
+## Health, shutdown and logs
 
-The table lists executable defaults. The startup example selects a long-context FP8/MTP3 profile.
+- `GET /health` returns `{"status":"ok"}` while the Engine accepts work, and 503 after an
+  Engine-wide failure.
+- SIGTERM or SIGINT starts a drain: new generation requests (every POST and DELETE) and `/health`
+  get 503 while running requests finish; other GET requests are still answered, for at most `--drain-timeout-ms` (default 60000). A second signal stops at once.
+- After an Engine-wide failure (for example a lost GPU) the server drains and exits with status 1.
+  Run it under a supervisor that restarts on failure (systemd `Restart=on-failure`, a Docker
+  restart policy).
+- At the drain timeout, a request still running without streaming is answered 503
+  `server_draining`; a stream stops.
+- At start the server checks the release manifest once in the background and logs a newer release;
+  `NINFERNO_UPDATE_CHECK=0` turns that off, `NINFERNO_UPDATE_URL` names another manifest.
+- Every OpenAI response has an `x-request-id` header. Anthropic responses use `request-id`.
+- Logs go to stderr, one line per event, with a throughput summary every 5 s
+  (`--log-stats-interval-ms`). They never contain prompts or generated text.
+- `--request-log-jsonl FILE` writes one JSON record per event for measurement. The format is in the
+  [logging reference](reference/serving.md#12-logging-and-metrics).
 
-| Option | Meaning | Default |
-|---|---|---:|
-| `--host H` | listen address | `127.0.0.1` |
-| `--port N` | listen port | `8080` |
-| `--api-key KEY` | required bearer or `x-api-key` value | unset |
-| `--model-id ID` | override the public OpenAI model alias | artifact `identity.model_id` |
-| `--max-context N` | logical context ceiling of each sequence | `8192` |
-| `--kv-capacity N\|auto` | explicit shared Main Text KV capacity, or maximize it from remaining GPU memory; omitted means `--max-context` | `8192` |
-| `--max-concurrency N` | maximum admitted requests; valid range `1..8` | `1` |
-| `--max-pending-requests N` | additional requests allowed to wait for admission | `16` |
-| `--pending-timeout-ms N` | maximum preparation-plus-admission wait | `30000` |
-| `--prefill-chunk N` | text-prefill chunk | `1024` |
-| `--log-stats-interval-ms N` | aggregate throughput report interval; `0` disables it | `5000` |
-| `--log-level trace\|debug\|info\|warning\|error\|critical\|off` | pretty stderr verbosity | `info` |
-| `--device N` | CUDA device index | `0` |
-| `--context-cost-presets FILE` | optional runtime context-cost preset registry | generic + compiled defaults |
-| `--max-request-mib N` | body-size limit before JSON parsing | `384` |
-| `--media-cache-mib N` | LRU-retained prepared BF16 media payloads; `0` disables retention | `1024` |
-| `--media-live-mib N` | all live prepared BF16 media payloads | `2048` |
-| `--media-preprocess-threads N` | bounded media preprocessing workers; `0` selects at most 16 from host concurrency | `0` |
-| `--request-log-jsonl FILE` | append full-precision server/request records | disabled |
-| `--response-store-max-records N` | maximum locally retained Responses objects | `1024` |
-| `--response-store-max-mib N` | total local Response envelope/Item/context budget | `256` |
-| `--kv-dtype bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage | `bf16` |
-| `--spec mtp\|dflash\|dflash2` | speculative backend | off |
-| `--draft-tokens N` | MTP `1..5`; DFlash/DFlash2 `1..15` | unset |
-| `--lm-head-draft` | optimized proposal head | off |
-| `--default-max-tokens N` | output limit when omitted by a request | `8192` |
-| `--default-thinking-budget N` | positive thinking cap inherited by thinking-enabled requests | unset |
-| `--vision` | enable media input and load Vision GPU allocations | off |
-| `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
-| `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
-| `--device-state-slots N` | extra Device checkpoint StateImages beyond the active-lane guarantee | `max-concurrency` |
-| `--host-state-slots N` | pinned Host StateImage capacity | `8` |
-| `--host-kv-mib N` | shared pinned Host Main/Backend KV byte capacity in MiB | `8192` |
-| `--max-private-continuations N` | private continuation descriptor capacity | `2 * max-concurrency` |
-| `--max-shared-prefixes N` | Engine-wide shared stable-prefix descriptor capacity | `max(max-concurrency, 4)` |
-| `--max-long-anchors-per-continuation N` | private long-anchor limit per continuation | `2` |
-| `--no-thinking` | disable thinking by default | thinking on |
-| `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
-| `--cors` | permissive browser CORS headers | off |
-| `--temperature F` | process-level temperature override | unset |
-| `--top-p F` | process-level top-p override | unset |
-| `--top-k N` | process-level top-k override (`0..20`; zero selects the top-20 cap) | unset |
-| `--min-p F` | process-level min-p override | unset |
-| `--presence-penalty F` | process-level presence-penalty override | unset |
-| `--frequency-penalty F` | process-level frequency-penalty override | unset |
-| `--seed N` | fixed seed when a request omits one | fresh random seed per request |
-| `--greedy` | force exact argmax for all requests | off |
+## More
 
-Context-cost coefficients resolve once at startup from generic defaults, matching compiled values,
-and optional transfer or prefill entries from `--context-cost-presets FILE`. Prefill entries match
-the hardware and a signature derived from the actual Text/Vision configuration, bindings and Uses.
-A new representation without a matching measurement uses generic prefill coefficients. A malformed
-file aborts startup; the operational context-cost record and JSONL `server_start` identify the
-selected source.
+[Serving reference](reference/serving.md):
 
-Engine selects sampling defaults from the loaded architecture and the request's resolved thinking mode.
-Qwen3.6-27B and Qwen3.8-27B use `1.0/0.95/20/0/0` for
-temperature/top-p/top-k/min-p/presence penalty in thinking mode and `0.7/0.80/20/0/1.5` in
-non-thinking mode. Qwen3.6-35B-A3B differs only in its thinking presence penalty, which is `1.5`.
-Frequency penalty is `0` for all registered presets. Process flags override registered values,
-request fields override process flags, and `--greedy` finally forces temperature `0`.
+- [Model sources and first start](reference/serving.md#1-model-sources-and-first-start)
+- [Startup configuration](reference/serving.md#2-startup-configuration)
+- [Speculative decoding](reference/serving.md#3-speculative-decoding)
+- [Endpoints and transport](reference/serving.md#4-endpoints-and-transport)
+- [Chat Completions](reference/serving.md#6-openai-chat-completions)
+- [Prompt caching](reference/serving.md#7-openai-prompt-caching)
+- [Responses](reference/serving.md#8-openai-responses-core)
+- [Anthropic Messages](reference/serving.md#9-anthropic-messages)
+- [All options](reference/serving.md#11-server-options)
+- [Logs and metrics](reference/serving.md#12-logging-and-metrics)
+- [Execution behavior](reference/serving.md#13-execution-behavior)
+- [Error codes](reference/serving.md#error-codes-summary)
 
-For `C=--max-concurrency` and `H=--device-state-slots`, total Device StateImage capacity is `C+H`:
-`C` slots guarantee active requests and `H` is a global checkpoint pool. Host State and Host KV are
-independent startup-fixed pinned-memory capacities; Host KV is shared by Main and the selected
-Backend pool and is consumed in physical page extents. `--no-prefix-reuse` selects root-only Engine
-mode and cannot be combined with any of the seven explicit context-cache capacity flags, including
-zero-valued flags.
-
-Run `./build/apps/ninfer-serve --help` for the exact option contract.
-
-Serve writes human-readable operational records to stderr using
-`YYYY-MM-DD HH:MM:SS.mmm  LEVEL  message`. Normal output covers material startup milestones,
-readiness, request lifecycle, fixed-interval throughput, and shutdown; `--log-level debug` exposes
-internal startup and resource-planning detail. A terminal may use one transient line during startup,
-but Serve throughput is always a persistent record. Redirected stderr contains no terminal control
-sequences. Pretty values use readable units and rounded rates; use the independent request JSONL for
-complete fields and full precision. Operational records never contain prompts, generated text,
-request bodies, credentials, or arbitrary client error messages.
-If a tool marker is returned to text because its structure or tool identity cannot be represented,
-Serve emits one warning with only the failure classification, never the generated markup.
-
-## Structured request log
-
-`--request-log-jsonl FILE` enables the machine-readable measurement log. The server opens `FILE`
-in append mode and flushes every event, so successive model or MTP blocks may share one campaign
-file. The parent directory must already exist. Failure to open the file aborts startup; the log path
-is also rejected if it resolves to the model artifact.
-
-Every line is one `ninfer_serve_request_log` schema-v21 JSON object. All events carry
-`timestamp_unix_ms` and a process-unique `server_instance_id`; request IDs are monotonic only within
-that server instance. Successful request-start records include request-scoped acquisition,
-media-preprocessing wall/work, tokenizer, cache hit/miss/single-flight, and payload-size fields;
-they do not infer request behavior from process-global counter deltas.
-
-| Event | Contents |
-|---|---|
-| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
-| `request_start` | protocol, resolved sampler and seed, requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape |
-| `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
-| `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |
-| `request_error` | the resolved request configuration and the generation, cancellation, or pre-outcome transport terminal message |
-| `throughput` | interval token/decode/context-cache pressure counter deltas, authoritative worker Host-work deltas, current scheduler/resource gauges, and decode-round batch statistics |
-
-`requested_reasoning_effort` and `preserve_thinking` record the explicit options, or `null` when
-unspecified. `enable_thinking` records whether the response starts in thinking mode.
-
-`request_done.result.tool_call_parse` records whether a complete marker was seen, the structured
-call count, empty non-string arguments omitted during normalization, schema-mismatched arguments
-preserved for consumer validation, and a stable text-fallback reason. Fallback reasons are `none`,
-`malformed_structure`, `duplicate_parameter`, `invalid_tool_name`, `undeclared_tool`, and
-`trailing_content`. These counters contain no tool arguments or generated text.
-
-`request_done.timings_seconds` contains `prepare`, `ttft`, `vision`, `prefill`, `decode`, and `total`
-as full-precision JSON numbers. Its `speculative` object contains `backend`, `draft_window`, `rounds`,
-`drafted_tokens`, `accepted_tokens`, `fallback_steps`, and `accepted_per_position`. Rates can be
-derived downstream from raw token counts and seconds instead of rounded stderr strings.
-
-For `server_start.memory`, `workspace.capacity_bytes` is the only physical workspace allocation.
-When Vision is enabled, `vision_workspace` reports the aggregate prompt and maximum-item token
-bounds plus encode peak and handoff layout/usage within that same allocation; these bytes must not
-be added to `workspace.capacity_bytes`. The field is `null` when Vision is disabled.
-
-`request_done.engine_timing` separates FIFO `queue_wait_seconds`, blocking
-`device_wait_exposed_seconds`, and five mutually exclusive Host-active exposure phases under
-`host_exposed_seconds`: `engine_boundary`, `program_submit`, `program_post`,
-`engine_commit_output`, and `engine_maintenance`. `total` is exactly their sum and excludes Device
-wait. The nested `decode` object reports the request's decode-class Host exposure, Device wait, and
-round count; `units` reports its prefill/control unit counts. In a compact batch every participating
-request is delayed by the full round, so these values explain request latency but **must not be
-summed across concurrent requests**.
-
-The JSONL file contains no generated response text and never records an API-key value; `argv`
-replaces that value with `<redacted>`. Operational stderr summaries are rounded and are not the
-aggregation source. OpenAI Responses, OpenAI Chat, and Anthropic generation requests receive a
-request ID when they enter synchronous preparation. Successful preparation produces
-`request_start`; a preparation failure produces `request_rejected` without a matching start. Each
-started generation transaction then has exactly one machine terminal: `request_done` when Engine
-returns its outcome, or `request_error` when generation fails before an outcome exists. Later
-response rendering, Responses storage, or terminal transport failures are operational response
-events only and do not add a second JSONL terminal. Schema/model validation rejections before
-preparation and token-count-only calls are not measurement requests and do not receive request IDs.
-
-By default the server persistently reports aggregate activity every five seconds. `prefill` counts
-prompt suffix tokens actually computed during the interval, excluding prefix-cache hits; `decode`
-counts tokens finally committed by decode rounds, excluding the first token produced by prefill.
-For MTP, DFlash and DFlash2 this is the accepted committed output, not draft or rejected tokens.
-Pretty `batch` and JSONL `average_size` are decode row-rounds divided by decode rounds during the
-same interval. The
-`running`, `prefilling`, `decode_ready`, `waiting`, `materializing`, `capture_pending`, and
-`terminal_pending` fields are the Engine scheduler snapshot at the end of the interval. The JSONL
-`context_cache` object reports selection, capture, transfer, COW, pressure spill, private/shared
-owner degradation and eviction, checkpoint drop, pressure search, budget exhaustion, maximal fallback, and historical-fork
-counters as interval deltas; `occupancy` and `last_selection` are end-of-interval gauges. Materialization predictions are
-request-owned and appear only on the corresponding `request_done` event.
-`pressure.searches` counts plans accepted into Program resource transactions, including a transaction that later ends in
-request-local abort; committed victim counters likewise report the resulting stable cache changes.
-
-The JSONL `throughput.host_work` object is the aggregation authority: the Engine worker counts each
-wall-time segment once, independent of batch size. `elapsed_seconds` contains the same five
-mutually exclusive Host phases and their `total`; `device_wait_seconds` is separate.
-`work_class_seconds` splits Host and Device-wait time into decode, prefill, and control classes.
-`detail_subset_seconds` and `detail_invocations` expose admission, context-transaction, replica, and
-stats-publication slow paths; these detail values are already contained in a top-level Host phase
-and must not be added to `total`. Per-round, per-row-round, and per-invocation normalized values are
-`null` when their denominator is zero. Pretty throughput contains nonzero token rates and counts,
-the current running/prefill/decode-ready composition, nonzero waiting/materialization/terminal
-states, average decode batch, and Host-active time plus its fraction of the interval. Use JSONL for
-complete measurement analysis.
-Intervals with context materialization or retention activity are retained even when they contain no
-token execution; only fully idle intervals are omitted. Downstream measurement should prefer the
-raw counters and seconds over rounded stderr rates.
-
-## Execution behavior
-
-The server owns one resident Engine with a startup-fixed capacity of `1..8` active generation
-requests. At each decode boundary, every decode-ready request is compacted into one batch and
-processed by one model traversal and, when graphs are enabled, one exact-batch CUDA Graph replay. A
-request joins that batch only after its single-request prefill finishes; when it completes or is
-cancelled, the next boundary rebuilds the batch without an empty row.
-
-`--max-pending-requests` bounds the requests waiting behind the active set. The total generation
-request lifetime capacity is `max_concurrency + max_pending_requests`, including requests still in
-CPU/media preparation and completed model results whose response has not yet been released. A full
-capacity returns HTTP 429 with code `server_overloaded`. The absolute
-`--pending-timeout-ms` deadline starts before preparation, covers media acquisition and Engine FIFO
-waiting, and returns HTTP 503 with code `request_queue_timeout` if admission does not occur in time.
-There is no admission ETA or unbounded overflow queue.
-
-Input memory is bounded by the outstanding-request count and the per-request
-`--max-request-mib` limit. Media requests additionally share one preparation permit, so a waiting
-media request retains the same cancellation and timeout deadline. Model output is bounded by the
-same finite request count and each request's effective output-token limit; output callbacks and
-network serialization run outside the GPU executor and do not delay formation of the next batch.
-
-`--max-context` is each sequence's logical ceiling. `--kv-capacity` fixes the shared Main Text KV
-pool used by active requests and retained prefixes. `auto` accounts for the complete enabled runtime
-and leaves 1 GiB of sizing headroom; omitting the option makes it follow `--max-context`. Capacity
-resolves once at startup.
-
-Admission reserves the full prompt-plus-effective-output page entitlement through request
-completion. A request remains queued until a legal resource plan can satisfy that entitlement.
-
-Each reusable checkpoint contains KV and complete continuation state. At admission, capture, and
-finish boundaries, resource pressure may keep it on Device, move its StateImage and/or KV replicas
-to pinned Host memory, or evict it. The planner compares incoming-request work with the later
-recovery cost imposed on retained checkpoints. Active requests retain their state and completion
-reservations, and placement choices preserve model semantics. The full policy and invariants are
-defined in [Resource scheduling and context cache](maintainer/resource-scheduling-and-context-cache.md).
-
-Compatible prefixes are reused for both text and multimodal histories unless the server starts with
-`--no-prefix-reuse`. A multimodal hit additionally requires matching token types, three-axis MRoPE
-positions, encoded-media digest, grid, and consumer spans. Media wholly inside a matched prefix
-skips Vision execution, while new suffix media is encoded normally. The pretty completion record
-shows `cache N (P%, path)` using readable path labels; JSONL retains the exact
-`prefix_cache_hit_tokens` and `prefix_reuse_path` fields. Machine paths are `root`,
-`private_endpoint`, `private_turn_closure`, `private_response_replay`, `private_long_anchor`, and
-`shared_stable_prefix`. Reuse validation covers KV, recurrent state, hidden state, selected-backend
-state, and the exact prompt frontier. With stable `preserve_thinking=true`, the auxiliary checkpoint
-rolls to the message frontier immediately before the current response's deterministic generation
-prologue. A normalized response, compact-summary instruction, or replacement user suffix therefore
-replays the small generation prologue and only the changed suffix while retaining the complete
-stable conversation prefix. Stable `false` places the turn-closure checkpoint before the first
-assistant opener in the open turn, so closing that turn can recompute its opener and omit its
-reasoning without discarding the preceding conversation.
-
-`preserve_thinking` selects the capture frontier for newly created checkpoints. Existing exact
-checkpoints remain reusable across a mode change. If the desired boundary is behind the selected
-reuse frontier and has no snapshot, the Engine keeps the valid hit and defers the new checkpoint. A
-later request that diverges before every retained checkpoint starts from root. The JSONL completion
-record exposes the restored checkpoint as `prefix_reuse_path`. Reasoning-effort changes participate
-in rendered-token identity and exact-prefix selection.
-
-An appended mid-conversation system message is an ordinary prompt suffix, so an unchanged prior
-history remains eligible for `private_endpoint`. If the client modifies, removes, or moves a
-historical system message, the token prefix genuinely differs and a miss/reset is correct.
-
-Speculative backends preserve protocol output shapes, stop behavior, and usage accounting. If a stop
-truncates a multi-token MTP, DFlash or DFlash2 round, the Engine commits the exact accepted target prefix so
-a following compatible turn can reuse it. Output-limit and context-capacity finishes map to
-`length`/ `max_tokens`; ordinary model or string stops map to `stop`/ `end_turn`.
-
-Function tools are rendered into the model prompt and generated calls are parsed into protocol
-responses. NInfer does not execute tools and does not enforce client JSON Schema through constrained
-decoding.
-
-Prompt-token usage includes chat-template and expanded media tokens. Generated-token usage comes
-from accepted output token IDs, including a stop token whose decoded text may be withheld.
+Related: [CLI guide](cli.md), [performance](performance/README.md),
+[weight conversion](weight-conversion.md).

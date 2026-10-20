@@ -1,16 +1,22 @@
 #include "options.h"
+#include "spec_tune.h"
+#include "core/command_line.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
 #include "product/logging/startup_log.h"
 #include "product/prompt_input/prompt_input.h"
+#include "product/speculation/speculation.h"
 #include "product/speculative_options.h"
 
-#include "ninfer/engine.h"
+#include "ninferno/engine.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -20,33 +26,33 @@
 namespace {
 
 std::string format_seconds(double seconds) {
-    return ninfer::product::format_pretty_duration(seconds);
+    return ninferno::product::format_pretty_duration(seconds);
 }
 
 std::string format_rate(double tokens, double seconds) {
     if (tokens <= 0.0 || seconds <= 0.0) { return "n/a"; }
-    return ninfer::product::format_pretty_rate(tokens / seconds, "tok");
+    return ninferno::product::format_pretty_rate(tokens / seconds, "tok");
 }
 
 std::string format_percent(std::uint64_t numerator, std::uint64_t denominator) {
     if (denominator == 0) { return "n/a"; }
-    return ninfer::product::format_pretty_percent(static_cast<double>(numerator) /
+    return ninferno::product::format_pretty_percent(static_cast<double>(numerator) /
                                                   static_cast<double>(denominator));
 }
 
 std::string format_bytes(std::uint64_t bytes) {
-    return ninfer::product::format_pretty_bytes(bytes);
+    return ninferno::product::format_pretty_bytes(bytes);
 }
 
-std::string format_arena_used(const ninfer::ArenaMemorySummary& arena) {
+std::string format_arena_used(const ninferno::ArenaMemorySummary& arena) {
     return format_bytes(arena.used_bytes) + " / " + format_bytes(arena.capacity_bytes);
 }
 
-std::string format_arena_peak(const ninfer::ArenaMemorySummary& arena) {
+std::string format_arena_peak(const ninferno::ArenaMemorySummary& arena) {
     return format_bytes(arena.peak_used_bytes) + " / " + format_bytes(arena.capacity_bytes);
 }
 
-std::string format_sampling(const ninfer::ResolvedSamplingParameters& sampling) {
+std::string format_sampling(const ninferno::ResolvedSamplingParameters& sampling) {
     if (sampling.temperature <= 0.0F) { return "greedy (temperature 0)"; }
     std::ostringstream output;
     output << std::fixed << std::setprecision(2) << "temp=" << sampling.temperature
@@ -56,42 +62,10 @@ std::string format_sampling(const ninfer::ResolvedSamplingParameters& sampling) 
     return output.str();
 }
 
-std::string format_finish(ninfer::FinishReason reason) {
-    switch (reason) {
-    case ninfer::FinishReason::None:
-        return "none";
-    case ninfer::FinishReason::OutputLimit:
-        return "output-limit";
-    case ninfer::FinishReason::ContextCapacity:
-        return "context-capacity";
-    case ninfer::FinishReason::StopToken:
-        return "stop-token";
-    case ninfer::FinishReason::StopString:
-        return "stop-string";
-    case ninfer::FinishReason::Cancelled:
-        return "cancelled";
-    }
-    return "unknown";
-}
-
-std::string format_kv_cache(ninfer::KvCacheStorage storage) {
-    switch (storage) {
-    case ninfer::KvCacheStorage::BFloat16:
-        return "bf16";
-    case ninfer::KvCacheStorage::Int8Group64:
-        return "int8-group64";
-    case ninfer::KvCacheStorage::Fp8E4M3Row256:
-        return "fp8-e4m3-row256";
-    case ninfer::KvCacheStorage::Nvfp4Group16:
-        return "nvfp4";
-    case ninfer::KvCacheStorage::Fp8KeyNvfp4Value:
-        return "k8v4";
-    }
-    return "unknown";
-}
-
-std::string format_kv_capacity_mode(ninfer::KvCapacityMode mode) {
-    return mode == ninfer::KvCapacityMode::Automatic ? "auto" : "explicit";
+std::string format_finish(ninferno::FinishReason reason) {
+    std::string name(ninferno::finish_reason_name(reason));
+    std::replace(name.begin(), name.end(), '_', '-');
+    return name;
 }
 
 void print_stage(std::string_view group, std::string_view detail, double seconds) {
@@ -103,20 +77,20 @@ void print_metric(std::string_view label, std::string_view value) {
     std::cerr << std::left << std::setw(12) << "summary" << std::setw(26) << label << value << '\n';
 }
 
-class StreamingSink final : public ninfer::OutputSink {
+class StreamingSink final : public ninferno::OutputSink {
 public:
-    void start(ninfer::GenerationStart) override {}
+    void start(ninferno::GenerationStart) override {}
 
-    void progress(ninfer::PromptProgress) override {}
+    void progress(ninferno::PromptProgress) override {}
 
-    void timing(ninfer::GenerationTimingObservation) override {}
+    void timing(ninferno::GenerationTimingObservation) override {}
 
-    void publish(ninfer::OutputDelta delta) override {
+    void publish(ninferno::OutputDelta delta) override {
         std::ostream& output =
-            delta.channel == ninfer::OutputChannel::Reasoning ? std::cerr : std::cout;
+            delta.channel == ninferno::OutputChannel::Reasoning ? std::cerr : std::cout;
         output << delta.text;
         output.flush();
-        if (delta.channel == ninfer::OutputChannel::Reasoning) {
+        if (delta.channel == ninferno::OutputChannel::Reasoning) {
             reasoning_seen_ = reasoning_seen_ || !delta.text.empty();
             if (!delta.text.empty()) { reasoning_ends_in_newline_ = delta.text.back() == '\n'; }
         } else {
@@ -143,9 +117,9 @@ private:
     bool finished_                  = false;
 };
 
-void print_generation_summary(const ninfer::GenerationResult& result,
-                              const ninfer::ResolvedSamplingParameters& sampling,
-                              const ninfer::MemorySummary& memory) {
+void print_generation_summary(const ninferno::GenerationResult& result,
+                              const ninferno::ResolvedSamplingParameters& sampling,
+                              const ninferno::MemorySummary& memory) {
     print_stage("prepare", "render/preprocess", result.timings.prepare_seconds);
     print_stage("generate", "vision", result.timings.vision_seconds);
     print_stage("generate", "text prefill", result.timings.prefill_seconds);
@@ -180,13 +154,14 @@ void print_generation_summary(const ninfer::GenerationResult& result,
                                    memory.runtime_reservation_bytes;
     print_metric("device", std::to_string(memory.device));
     print_metric("max context", std::to_string(memory.max_context));
-    print_metric("KV capacity policy", format_kv_capacity_mode(memory.kv_capacity_mode));
+    print_metric("KV capacity policy",
+                 std::string(ninferno::kv_capacity_mode_name(memory.kv_capacity_mode)));
     print_metric("KV capacity", std::to_string(memory.kv_capacity));
     print_metric("KV page groups", std::to_string(memory.kv_capacity_page_groups) + " / " +
                                        std::to_string(memory.kv_capacity_max_page_groups));
     print_metric("gpu weights used", format_arena_used(memory.weights));
     print_metric("gpu sequence used", format_arena_used(memory.sequence));
-    print_metric("kv cache dtype", format_kv_cache(memory.kv_cache));
+    print_metric("kv cache dtype", std::string(ninferno::kv_cache_storage_layout(memory.kv_cache)));
     print_metric("kv cache payload", format_bytes(memory.kv_payload_bytes));
     print_metric("gpu workspace peak", format_arena_peak(memory.workspace));
     print_metric("runtime reservation", format_bytes(memory.runtime_reservation_bytes));
@@ -197,9 +172,10 @@ void print_generation_summary(const ninfer::GenerationResult& result,
     print_metric("CUDA Graph allowance", format_bytes(memory.cuda_graph_allowance_bytes));
     print_metric("planned device total", format_bytes(reserved));
 
-    const ninfer::SpeculativeStats& speculative = result.speculative;
+    const ninferno::SpeculativeStats& speculative = result.speculative;
     if (speculative.enabled) {
-        const std::string backend = ninfer::product::speculative_backend_name(speculative.backend);
+        const std::string backend =
+            ninferno::product::speculative_backend_name(speculative.backend);
         print_metric(backend + " draft window", std::to_string(speculative.draft_window));
         print_metric(backend + " rounds", std::to_string(speculative.rounds));
         print_metric(backend + " fallback steps", std::to_string(speculative.fallback_steps));
@@ -215,6 +191,23 @@ void print_generation_summary(const ninfer::GenerationResult& result,
                    << " tok/round";
             print_metric(backend + " acceptance length", length.str());
         }
+        if (speculative.copy_rounds != 0) {
+            print_metric(backend + " copy rounds",
+                         std::to_string(speculative.copy_rounds) + " (" +
+                             std::to_string(speculative.copy_accepted_tokens) + " accepted)");
+        }
+        if (speculative.step_downs != 0) {
+            print_metric(backend + " watchdog steps",
+                         std::to_string(speculative.step_downs) + " down to depth " +
+                             std::to_string(speculative.final_draft_window));
+        }
+        if (speculative.watchdog_tripped) {
+            std::ostringstream verdict;
+            verdict << std::fixed << std::setprecision(2) << "tripped at round "
+                    << speculative.watchdog_round << " (" << speculative.watchdog_tokens_per_round
+                    << " tok/round, below the profile's break-even)";
+            print_metric(backend + " watchdog", verdict.str());
+        }
         if (!speculative.accepted_per_position.empty()) {
             std::ostringstream positions;
             for (std::size_t i = 0; i < speculative.accepted_per_position.size(); ++i) {
@@ -229,36 +222,56 @@ void print_generation_summary(const ninfer::GenerationResult& result,
 } // namespace
 
 int main(int argc, char** argv) {
-    ninfer::cli::Options cli;
+    if (ninferno::version_requested(argc, argv)) {
+        std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
+        return 0;
+    }
+    if (argc >= 2 && std::string_view(argv[1]) == "spec-tune") {
+        try {
+            return ninferno::cli::run_spec_tune(argc, argv);
+        } catch (const std::exception& error) {
+            std::cerr << "error: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc >= 2 && std::string_view(argv[1]) == "spec-reselect") {
+        try {
+            return ninferno::cli::run_spec_reselect(argc, argv);
+        } catch (const std::exception& error) {
+            std::cerr << "error: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    ninferno::cli::Options cli;
     try {
-        cli = ninfer::cli::parse_options(argc, argv);
+        cli = ninferno::cli::parse_options(argc, argv);
     } catch (const std::exception& error) {
         std::cerr << "error: " << error.what() << '\n';
-        std::cerr << ninfer::cli::usage_text(argv[0]);
+        std::cerr << ninferno::cli::usage_text(argv[0]);
         return 1;
     }
     if (cli.help_requested) {
-        std::cout << ninfer::cli::usage_text(argv[0]);
+        std::cout << ninferno::cli::usage_text(argv[0]);
         return 0;
     }
 
-    ninfer::product::LoggingRuntime logging(
-        {.logger_name  = "ninfer",
+    ninferno::product::LoggingRuntime logging(
+        {.logger_name  = "ninferno",
          .level        = cli.log_level,
-         .presentation = ninfer::product::LogPresentation::Tool});
+         .presentation = ninferno::product::LogPresentation::Tool});
     const std::shared_ptr<spdlog::logger> logger = logging.logger();
-    ninfer::product::StartupLogRenderer startup_log(logging);
+    ninferno::product::StartupLogRenderer startup_log(logging);
 
     try {
 
-        ninfer::PromptInput input =
+        ninferno::PromptInput input =
             cli.messages_path.empty()
-                ? ninfer::product::prompt_from_text(cli.prompt, cli.enable_thinking)
-                : ninfer::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
+                ? ninferno::product::prompt_from_text(cli.prompt, cli.enable_thinking)
+                : ninferno::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
                                                         cli.enable_vision);
         input.options.reasoning_effort = cli.reasoning_effort;
 
-        ninfer::RequestOptions request;
+        ninferno::RequestOptions request;
         request.execution.sampling                = cli.sampling;
         request.execution.requested_output_tokens = cli.max_new;
         request.execution.thinking.budget         = cli.thinking_budget;
@@ -266,35 +279,124 @@ int main(int argc, char** argv) {
         request.stop.strings                      = cli.stop_strings;
         request.output.raw                        = cli.raw_output;
 
-        ninfer::EngineOptions engine_options;
+        ninferno::EngineOptions engine_options;
         engine_options.artifact_path      = cli.artifact_path;
         engine_options.chat_template_path = cli.chat_template_path;
         engine_options.device             = cli.device;
         engine_options.max_context        = cli.max_context;
         engine_options.kv_capacity        = cli.kv_capacity;
         engine_options.prefill_chunk      = cli.prefill_chunk;
-        engine_options.kv_cache           = cli.kv_cache;
+        engine_options.kv_cache = cli.kv_cache.value_or(ninferno::KvCacheStorage::BFloat16);
+        engine_options.kv_cache_automatic = !cli.kv_cache.has_value();
+        engine_options.sliding_kv_cache   = cli.sliding_kv_cache;
+        engine_options.recurrent_state =
+            cli.recurrent_state.value_or(ninferno::RecurrentStateStorage::FP32);
+        engine_options.recurrent_state_automatic = !cli.recurrent_state.has_value();
+        engine_options.activations        = cli.activations;
+        engine_options.rope_yarn_factor   = cli.rope_yarn_factor;
         engine_options.speculative        = cli.speculative;
+        if (!cli.spec_explicit) {
+            // The speculation the model came with, for this GPU: the profile's default for the
+            // thinking flag (on by default, as the profile's).
+            std::string source;
+            std::vector<std::string> notes;
+            const auto chosen = ninferno::product::profile_speculation(
+                cli.artifact_path, cli.device, cli.enable_thinking, &source, &notes);
+            for (const auto& note : notes) { logger->info("speculation: {}", note); }
+            if (chosen) {
+                engine_options.speculative =
+                    ninferno::product::with_given_settings(*chosen, cli.speculative);
+                logger->info("speculation: {}", source);
+            }
+        } else if (engine_options.speculative.drafter.empty()) {
+            // An explicit --spec drafts with the drafter that came with the model, as the server.
+            engine_options.speculative.drafter = ninferno::product::model_drafter(
+                cli.artifact_path, engine_options.speculative.backend);
+        }
+        if (cli.acceptance_floor) {
+            engine_options.speculative.acceptance_floor = *cli.acceptance_floor;
+        }
         engine_options.enable_vision      = cli.enable_vision;
         engine_options.use_cuda_graph     = cli.use_cuda_graph;
         // One CLI invocation owns exactly one request, so retained cross-request context has no
         // consumer and must not reserve an extra Device StateImage or run terminal capture.
-        engine_options.context_cache.enabled                = false;
-        engine_options.context_cache.host_state_slots       = 0;
-        engine_options.context_cache.host_kv_capacity_bytes = 0;
+        engine_options.context_cache.disable();
         engine_options.startup_observer                     = startup_log.observer();
 
-        ninfer::Engine engine(std::move(engine_options));
+        // A profile's choice that does not fit the requested context on this device gives way as
+        // the server's does (GenerationService): to the profile's fit fallback
+        // (spec::Profile::fit_fallback), then the deepest shallower draft with the same drafter
+        // (product::deepest_fitting_shallower), then the model's own MTP head, then plain decode,
+        // the switch logged. An explicit --spec, or neither, keeps the refusal.
+        const bool from_profile = !cli.spec_explicit && engine_options.speculative.backend !=
+                                                            ninferno::SpeculativeBackend::None;
+        const auto construct = [&]() -> ninferno::Engine {
+            try {
+                return ninferno::Engine(engine_options);
+            } catch (const ninferno::CapacityError& refused) {
+                if (!from_profile) { throw; }
+                namespace product = ninferno::product;
+                const std::string reason =
+                    product::fit_refusal(product::speculation_label(engine_options.speculative),
+                                         engine_options.max_context, refused.what());
+                std::optional<ninferno::Engine> built;
+                // Builds the Engine with `speculative` (the given settings kept): true when it
+                // fits.
+                const auto fits = [&](ninferno::SpeculativeOptions speculative,
+                                      const std::string& source) {
+                    if (cli.acceptance_floor) {
+                        speculative.acceptance_floor = *cli.acceptance_floor;
+                    }
+                    engine_options.speculative =
+                        product::with_given_settings(std::move(speculative), cli.speculative);
+                    built.reset();
+                    try {
+                        built.emplace(engine_options);
+                    } catch (const ninferno::CapacityError&) { return false; }
+                    logger->warn("speculation: {}; running {}", reason, source);
+                    return true;
+                };
+                auto served = product::served_fit_fallback(cli.artifact_path, cli.device, false);
+                if (served && fits(served->engine, served->source)) { return std::move(*built); }
+                if (!served) {
+                    served = product::served_speculation(cli.artifact_path, cli.device,
+                                                         cli.enable_thinking.value_or(true), false);
+                }
+                if (served) {
+                    const auto shallower = [&](const ninferno::spec::SpecConfig& config,
+                                               double floor) {
+                        return product::served_shallower(cli.artifact_path, cli.device, false,
+                                                         config, floor);
+                    };
+                    if (product::deepest_fitting_shallower(
+                            served->menu.primary, shallower,
+                            [&](const product::ServedSpeculation& candidate) {
+                                return fits(candidate.engine, candidate.source);
+                            })) {
+                        return std::move(*built);
+                    }
+                }
+                if (auto head = product::served_head_fallback(cli.artifact_path, cli.device, false);
+                    head && fits(head->engine, head->source)) {
+                    return std::move(*built);
+                }
+                if (fits(ninferno::SpeculativeOptions{}, "plain decode")) {
+                    return std::move(*built);
+                }
+                throw;
+            }
+        };
+        ninferno::Engine engine = construct();
         startup_log.engine_ready(engine.load_summary());
         engine.reset_memory_peaks();
 
-        ninfer::PreparedPrompt prompt = engine.prepare(std::move(input));
+        ninferno::PreparedPrompt prompt = engine.prepare(std::move(input));
 
         StreamingSink sink;
-        ninfer::GenerationHandle generation = engine.submit(std::move(prompt), std::move(request),
-                                                            ninfer::OutputConsumerMode::Streaming);
-        const ninfer::ResolvedSamplingParameters sampling = generation.resolved_sampling();
-        ninfer::GenerationResult result;
+        ninferno::GenerationHandle generation = engine.submit(
+            std::move(prompt), std::move(request), ninferno::OutputConsumerMode::Streaming);
+        const ninferno::ResolvedSamplingParameters sampling = generation.resolved_sampling();
+        ninferno::GenerationResult result;
         try {
             result = generation.wait(&sink);
             sink.finish_streams();
@@ -315,7 +417,7 @@ int main(int argc, char** argv) {
         print_generation_summary(result, sampling, engine.memory_summary());
         return 0;
     } catch (const std::exception& error) {
-        logger->error("{}", ninfer::product::format_pretty_text(error.what()));
+        logger->error("{}", ninferno::product::format_pretty_text(error.what()));
         return 1;
     }
 }

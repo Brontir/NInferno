@@ -1,7 +1,7 @@
 #pragma once
 #include "models/qwen3_5/program/program.h"
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 [[nodiscard]] std::vector<GraphExecutionProfile> ordinary_graph_profiles(std::uint32_t capacity);
 [[nodiscard]] std::vector<GraphExecutionProfile> mtp_graph_profiles(std::uint32_t capacity,
@@ -11,4 +11,4 @@ namespace ninfer::models::qwen3_5::detail {
                                                                        std::uint32_t draft_window,
                                                                        std::uint32_t batch_size);
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

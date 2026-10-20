@@ -1,11 +1,12 @@
-#include "ninfer/ops/scalar.h"
+#include "ninferno/ops/scalar.h"
 
+#include "core/cuda_error.h"
 #include "ops/launcher/scalar.h"
 
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
 
 void require_scalar(const Tensor& tensor, DType dtype, const char* name) {
@@ -52,4 +53,35 @@ void increment_i64_scalar(Tensor& scalar, cudaStream_t stream) {
     detail::increment_i64_scalar_launch(scalar, stream);
 }
 
-} // namespace ninfer::ops
+void fill_i32(Tensor& destination, std::int32_t value, cudaStream_t stream) {
+    if (destination.dtype != DType::I32 || destination.ne[0] < 1 || destination.ne[1] != 1 ||
+        destination.ne[2] != 1 || destination.ne[3] != 1 || !destination.is_contiguous() ||
+        destination.data == nullptr) {
+        throw std::invalid_argument(
+            "fill_i32 destination must be a non-null contiguous I32 vector");
+    }
+    detail::fill_i32_launch(destination, value, stream);
+}
+
+void copy_to_pinned_host(void* host, const void* device, std::size_t bytes, cudaStream_t stream) {
+    if (bytes == 0) { return; }
+    if (host == nullptr || device == nullptr) {
+        throw std::invalid_argument("copy_to_pinned_host: null pointer");
+    }
+    cudaPointerAttributes attributes{};
+    const cudaError_t status = cudaPointerGetAttributes(&attributes, host);
+    // The query also returns an earlier launch's asynchronous failure: that is the device's
+    // (CudaError, HTTP 503), not a wrong argument. An unregistered pointer is
+    // cudaErrorInvalidValue.
+    if (status != cudaSuccess && status != cudaErrorInvalidValue) {
+        throw CudaError(status, cuda_error_message("copy_to_pinned_host", status));
+    }
+    if (status != cudaSuccess || attributes.type != cudaMemoryTypeHost ||
+        attributes.devicePointer == nullptr) {
+        (void)cudaGetLastError();
+        throw std::invalid_argument("copy_to_pinned_host: host is not mapped page-locked memory");
+    }
+    detail::copy_to_pinned_host_launch(attributes.devicePointer, device, bytes, stream);
+}
+
+} // namespace ninferno::ops

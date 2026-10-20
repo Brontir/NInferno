@@ -1,11 +1,12 @@
 #pragma once
 
+#include "ops/common/score_id_order.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/warp.cuh"
 
 #include <cuda_runtime.h>
 
-namespace ninfer::ops::detail {
+namespace ninferno::ops::detail {
 
 inline constexpr int kSparseMoeExperts = 256;
 inline constexpr int kSparseMoeTopK    = 8;
@@ -15,9 +16,40 @@ struct SparseMoeRankedValue {
     int id;
 };
 
+// The ranking compares with bitwise operators: `||` and `&&` may lower to a branch, and the router
+// runs one warp a token, where nothing covers a data-dependent branch while it resolves. NaN ranks
+// as -inf (rank_score): a NaN router logit can neither leave an expert unselected nor let the
+// Gemma 4 network's padding (ids past the experts) win.
 __device__ __forceinline__ bool sparse_moe_ranked_better(const SparseMoeRankedValue& a,
                                                          const SparseMoeRankedValue& b) {
-    return a.value > b.value || (a.value == b.value && a.id < b.id);
+    const float av = rank_score(a.value);
+    const float bv = rank_score(b.value);
+    return (av > bv) | ((av == bv) & (a.id < b.id));
+}
+
+// Leaves the better of the pair in `a`, through selects rather than a swap under an `if`.
+__device__ __forceinline__ void sparse_moe_order_pair(SparseMoeRankedValue& a,
+                                                      SparseMoeRankedValue& b) {
+    const SparseMoeRankedValue x = a;
+    const SparseMoeRankedValue y = b;
+    const bool keep              = sparse_moe_ranked_better(x, y);
+    a                            = keep ? x : y;
+    b                            = keep ? y : x;
+}
+
+// Sorts a lane's eight candidates descending: Batcher's odd-even merge network, 19 exchanges in six
+// levels, every index fixed at compile time, so no lane takes a data-dependent path. The ranking is
+// a total order over distinct ids, so the order equals any other correct sort's.
+__device__ __forceinline__ void
+sparse_moe_sort_eight_descending(SparseMoeRankedValue (&run)[kSparseMoeTopK]) {
+    static_assert(kSparseMoeTopK == 8);
+    constexpr int kPairs[19][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6},
+                                   {5, 7}, {1, 2}, {5, 6}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+                                   {2, 4}, {3, 5}, {1, 2}, {3, 4}, {5, 6}};
+#pragma unroll
+    for (int pair = 0; pair < 19; ++pair) {
+        sparse_moe_order_pair(run[kPairs[pair][0]], run[kPairs[pair][1]]);
+    }
 }
 
 // Merges the descending run of each lane with the run of its xor partner and keeps the better
@@ -44,12 +76,7 @@ sparse_moe_merge_ranked_runs(SparseMoeRankedValue (&run)[kSparseMoeTopK]) {
 #pragma unroll
             for (int rank = 0; rank < kSparseMoeTopK; ++rank) {
                 if ((rank & stride) != 0) { continue; }
-                const int partner_rank = rank | stride;
-                if (!sparse_moe_ranked_better(merged[rank], merged[partner_rank])) {
-                    const SparseMoeRankedValue swap = merged[rank];
-                    merged[rank]                    = merged[partner_rank];
-                    merged[partner_rank]            = swap;
-                }
+                sparse_moe_order_pair(merged[rank], merged[rank | stride]);
             }
         }
 #pragma unroll
@@ -67,16 +94,7 @@ __device__ __forceinline__ void sparse_moe_select_top8_warp(const float* scores,
         const int id = lane + item * 32;
         local[item]  = {scores[id], id};
     }
-#pragma unroll
-    for (int i = 1; i < kSparseMoeTopK; ++i) {
-        const SparseMoeRankedValue value = local[i];
-        int position                     = i;
-        while (position > 0 && sparse_moe_ranked_better(value, local[position - 1])) {
-            local[position] = local[position - 1];
-            --position;
-        }
-        local[position] = value;
-    }
+    sparse_moe_sort_eight_descending(local);
     sparse_moe_merge_ranked_runs(local);
 
     if (lane == 0) {
@@ -96,4 +114,4 @@ __device__ __forceinline__ void sparse_moe_select_top8_warp(const float* scores,
     if (lane == 0) { *shared_scale = sigmoid(scores[kSparseMoeExperts]); }
 }
 
-} // namespace ninfer::ops::detail
+} // namespace ninferno::ops::detail

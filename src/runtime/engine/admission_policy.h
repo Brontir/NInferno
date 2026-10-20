@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ninfer/types.h"
+#include "ninferno/types.h"
 #include "runtime/contract/resources.h"
 
 #include <array>
@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <span>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 enum class BackfillClass : std::uint8_t {
     None,
@@ -53,4 +53,4 @@ persistent_backfill_is_authorized(const AdmissionProtection& protection,
                                   std::span<const ActiveAdmissionSnapshot> active,
                                   ProgramResourceRevision program_proof_revision) noexcept;
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

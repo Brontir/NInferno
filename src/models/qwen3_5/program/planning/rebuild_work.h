@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::runtime_support {
+namespace ninferno::models::qwen3_5::runtime_support {
 
 inline void include_rebuild_boundary(std::uint32_t& tail_begin, std::uint32_t boundary,
                                      std::uint32_t frontier) noexcept {
@@ -40,4 +40,4 @@ inline void advance_segmented_rebuild_work(runtime::PrefillWork& work, std::uint
     work.attention_pairs = total.attention_pairs;
 }
 
-} // namespace ninfer::models::qwen3_5::runtime_support
+} // namespace ninferno::models::qwen3_5::runtime_support

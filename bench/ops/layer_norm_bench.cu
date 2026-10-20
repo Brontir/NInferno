@@ -1,5 +1,5 @@
-#include "ninfer/ops/layer_norm.h"
-#include "ninfer_bench_common.h"
+#include "ninferno/ops/layer_norm.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_bf16.h>
 
@@ -8,8 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 
@@ -37,9 +37,9 @@ __global__ void layer_norm_payload_control(const __nv_bfloat162* x, const __nv_b
 void run(int patches, bool control) {
     constexpr int d     = 1152;
     const std::size_t n = static_cast<std::size_t>(d) * static_cast<std::size_t>(patches);
-    DeviceBuffer x      = make_bf16(n);
-    DeviceBuffer weight = make_bf16(d);
-    DeviceBuffer bias   = make_bf16(d);
+    DeviceBuffer x      = make_bf16(n, 101U);
+    DeviceBuffer weight = make_bf16(d, 103U, .8F, 1.2F);
+    DeviceBuffer bias   = make_bf16(d, 105U);
     DeviceBuffer out    = make_zeros(n * 2);
     Tensor tx(x.p, DType::BF16, {d, patches});
     Tensor tw(weight.p, DType::BF16, {d});

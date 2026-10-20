@@ -1,6 +1,6 @@
 #include "core/weight.h"
-#include "ninfer/ops/gdn_gating_proj.h"
-#include "ninfer_bench_common.h"
+#include "ninferno/ops/gdn_gating_proj.h"
+#include "ninferno_bench_common.h"
 
 #include <cuda_profiler_api.h>
 #include <algorithm>
@@ -13,8 +13,8 @@
 #include <string_view>
 #include <vector>
 
-using namespace ninfer;
-using namespace ninfer::bench;
+using namespace ninferno;
+using namespace ninferno::bench;
 
 namespace {
 struct Options {
@@ -26,7 +26,7 @@ struct Options {
 
 void help() {
     std::cout
-        << "usage: ninfer_gdn_gating_proj_bench [--geometry 27b|35b] [--weights parent|split] "
+        << "usage: ninferno_gdn_gating_proj_bench [--geometry 27b|35b] [--weights parent|split] "
            "[--op norm|control] [--tokens T,...] [--execution eager|graph|both] [--cache "
            "cold|warm|both] "
            "[--graph-calls N] [--warmup N] [--repeat N] [--profile] [--csv-out PATH]\n";
@@ -139,7 +139,7 @@ Weight weight(const void* data, int rows, int hidden) {
     return w;
 }
 
-void run(const Options& o, int t, DeviceExecutionView execution, DeviceBuffer& flush,
+void run(const Options& o, int t, DeviceExecutionView execution, bench::L2FlushBuffer& flush,
          std::ostream* csv) {
     const int heads = o.geometry35 ? 32 : 48, hidden = o.geometry35 ? 2048 : 5120;
     auto x    = bf16_values(std::size_t(hidden) * t, 13u, 1.0f);
@@ -236,6 +236,7 @@ void run(const Options& o, int t, DeviceExecutionView execution, DeviceBuffer& f
 } // namespace
 
 int main(int argc, char** argv) {
+    ninferno::bench::prefill_routes_from_env();
     try {
         const Options o = parse(argc, argv);
         int count       = 0;
@@ -249,7 +250,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaGetDeviceProperties(&props, device));
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        DeviceBuffer flush(256ULL << 20);
+        bench::L2FlushBuffer flush(256ULL << 20);
         std::ofstream csv;
         if (!o.csv.empty()) {
             csv.open(o.csv);

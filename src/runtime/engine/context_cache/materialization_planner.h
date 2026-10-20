@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/checked.h"
 #include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/context_cache/context_portfolio_value.h"
 #include "runtime/engine/context_cache/materialization_budget.h"
@@ -16,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::runtime {
+namespace ninferno::runtime {
 
 struct MaterializationCheckpointPolicy {
     PlanningOwnerId owner;
@@ -127,7 +128,7 @@ public:
             const CandidateInput& input = candidates[index];
             const IdentityMaterializationAssessment& identity =
                 input.candidate->identity_assessment();
-            planning_saturating_add(projection_work, identity.projection_work);
+            projection_work       = saturating_add(projection_work, identity.projection_work);
             const FoldedCost cost = fold_identity(input, identity, machine_cost);
             identity_costs_.push_back(cost);
             std::optional<LogicalGoal> goal;
@@ -246,7 +247,7 @@ public:
                 throw std::logic_error("maximal pressure target changed admission candidate");
             }
             ++targets_evaluated;
-            planning_saturating_add(projection_work, assessment.projection_work);
+            projection_work = saturating_add(projection_work, assessment.projection_work);
             std::optional<LogicalGoal> goal;
             if (assessment.physical_status == MaterializationPhysicalStatus::Feasible) {
                 goal = logical_goal(assessment.candidate, assessment.source_mode,
@@ -355,7 +356,7 @@ public:
             }
             mark_target(assessment.stable_target_ordinal, kTargetDiscovered | kTargetAssessed);
             ++targets_evaluated;
-            planning_saturating_add(projection_work, assessment.projection_work);
+            projection_work = saturating_add(projection_work, assessment.projection_work);
             const FoldedCost cost =
                 fold_assessment(candidates[expected_candidate], assessment, pressure.owner_policy,
                                 pressure.checkpoint_policy, machine_cost);
@@ -924,8 +925,8 @@ private:
                            ? item.estimated_total_ns - parent.estimated_total_ns
                            : 0;
             };
-            const __uint128_t left  = static_cast<__uint128_t>(delta(cost)) * b;
-            const __uint128_t right = static_cast<__uint128_t>(delta(prior)) * a;
+            const Wide left  = mul_wide(delta(cost), b);
+            const Wide right = mul_wide(delta(prior), a);
             if (left != right) { return left < right; }
         }
         return cost.key() < prior.key();
@@ -949,12 +950,6 @@ private:
         const auto count =
             std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
         return count > 0 ? static_cast<std::uint64_t>(count) : 0;
-    }
-
-    static void planning_saturating_add(std::uint64_t& value, std::uint64_t add) noexcept {
-        value = add > std::numeric_limits<std::uint64_t>::max() - value
-                    ? std::numeric_limits<std::uint64_t>::max()
-                    : value + add;
     }
 
     [[nodiscard]] static const MaterializationOwnerPolicy*
@@ -1032,10 +1027,12 @@ private:
                 outcome.disposition == VictimDisposition::Evicted ||
                 outcome.dropped_checkpoints != 0 || outcome.degradation_units != 0;
             if (!may_reduce_recovery_value) { continue; }
-            planning_saturating_add(cost.affected_selected_hits, policy->selected_hit_count);
+            cost.affected_selected_hits =
+                saturating_add(cost.affected_selected_hits, policy->selected_hit_count);
             cost.newest_affected_hit_epoch =
                 std::max(cost.newest_affected_hit_epoch, policy->last_hit_epoch);
-            planning_saturating_add(cost.retention_weight, policy->private_retention_weight);
+            cost.retention_weight =
+                saturating_add(cost.retention_weight, policy->private_retention_weight);
             if (policy->explicit_shared_credit) { ++cost.explicit_shared_losses; }
         }
         portfolio_owner_scratch_.clear();
@@ -1067,7 +1064,7 @@ private:
                     [&](const auto& item) { return item.owner == checkpoint.owner; });
                 if (estimate != guidance.recovery_estimates.end()) {
                     for (std::size_t direction = 0; direction < 3; ++direction) {
-                        planning_saturating_add(
+                        recovery = saturating_add(
                             recovery, machine_cost.transfer_ns(
                                           static_cast<ContextTransferDirection>(direction),
                                           estimate->additional_restore[direction]));
@@ -1084,11 +1081,12 @@ private:
         const auto value =
             portfolio_value_.fold(portfolio_owner_scratch_, portfolio_checkpoint_scratch_);
         cost.estimated_total_ns = priced.immediate_ns;
-        planning_saturating_add(cost.estimated_total_ns,
-                                value.baseline_public_value > value.target_public_value
-                                    ? value.baseline_public_value - value.target_public_value
-                                    : 0);
-        planning_saturating_add(cost.estimated_total_ns, value.private_transition_loss);
+        cost.estimated_total_ns = saturating_add(
+            cost.estimated_total_ns, value.baseline_public_value > value.target_public_value
+                                         ? value.baseline_public_value - value.target_public_value
+                                         : 0);
+        cost.estimated_total_ns =
+            saturating_add(cost.estimated_total_ns, value.private_transition_loss);
         cost.recovery_complete = guidance.recovery_estimate_complete && !value.saturated;
         return cost;
     }
@@ -1173,7 +1171,8 @@ private:
             });
             if (target_recovery > policy.baseline_recovery_ns) {
                 portfolio_degraded = true;
-                planning_saturating_add(cost.affected_selected_hits, policy.selected_hit_count);
+                cost.affected_selected_hits =
+                    saturating_add(cost.affected_selected_hits, policy.selected_hit_count);
                 cost.newest_affected_hit_epoch =
                     std::max(cost.newest_affected_hit_epoch, policy.last_hit_epoch);
             }
@@ -1187,12 +1186,13 @@ private:
                 portfolio.baseline_public_value > portfolio.target_public_value
                     ? portfolio.baseline_public_value - portfolio.target_public_value
                     : 0;
-            planning_saturating_add(cost.future_loss_ns, portfolio.private_transition_loss);
+            cost.future_loss_ns =
+                saturating_add(cost.future_loss_ns, portfolio.private_transition_loss);
         }
         cost.total_ns = cost.now_ns;
-        planning_saturating_add(cost.total_ns, cost.future_loss_ns);
+        cost.total_ns       = saturating_add(cost.total_ns, cost.future_loss_ns);
         cost.lower_bound_ns = priced.optimistic_request_ns;
-        planning_saturating_add(cost.lower_bound_ns, cost.future_loss_ns);
+        cost.lower_bound_ns = saturating_add(cost.lower_bound_ns, cost.future_loss_ns);
         return cost;
     }
 
@@ -1337,4 +1337,4 @@ private:
     std::vector<ContextPortfolioCheckpointValue> portfolio_checkpoint_scratch_;
 };
 
-} // namespace ninfer::runtime
+} // namespace ninferno::runtime

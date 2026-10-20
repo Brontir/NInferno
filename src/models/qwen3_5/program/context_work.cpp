@@ -1,5 +1,5 @@
-#include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context_work.h"
+#include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/program/planning/rebuild_work.h"
 
@@ -12,7 +12,7 @@
 #include <span>
 #include <stdexcept>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 std::uint64_t elapsed_ns(Clock::time_point started) noexcept {
     const auto elapsed =
@@ -27,9 +27,6 @@ std::int32_t checked_i32(std::uint32_t value, const char* label) {
     return static_cast<std::int32_t>(value);
 }
 
-std::uint32_t kv_pages_for_frontier(std::uint32_t frontier) noexcept {
-    return frontier == 0 ? 0U : 1U + (frontier - 1U) / static_cast<std::uint32_t>(kPagedKVPageSize);
-}
 
 std::size_t context_resource_index(runtime::ContextResourceClass resource) {
     switch (resource) {
@@ -278,9 +275,7 @@ execution::MtpCausalAttentionEnvelopes mtp_causal_attention_envelopes(std::uint3
     return out;
 }
 
-execution::DFlashEnvelopes dflash_envelopes(std::uint32_t min_frontier, std::uint32_t max_frontier,
-                                            std::uint32_t k) {
-    (void)min_frontier;
+execution::DFlashEnvelopes dflash_envelopes(std::uint32_t max_frontier, std::uint32_t k) {
     return execution::DFlashEnvelopes{
         .local  = {0, max_frontier},
         .full   = {0, max_frontier},
@@ -288,4 +283,4 @@ execution::DFlashEnvelopes dflash_envelopes(std::uint32_t min_frontier, std::uin
     };
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

@@ -1,13 +1,18 @@
 #include "core/weight.h"
 #include "ops/linear_swiglu/linear_swiglu_test_common.h"
+#include "ops/op_tester.h"
 
 #include <array>
 #include <exception>
 #include <iostream>
 
 int main() {
-    using namespace ninfer;
-    using namespace ninfer::test::linear_swiglu;
+    if (ninferno::test::cuda_unavailable()) {
+        std::cout << "SKIP: no usable CUDA device\n";
+        return 77;
+    }
+    using namespace ninferno;
+    using namespace ninferno::test::linear_swiglu;
 
     try {
         // Public numerical cases straddle each registered Q4 implementation interval. They make

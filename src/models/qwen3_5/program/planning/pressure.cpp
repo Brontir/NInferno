@@ -1,6 +1,7 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/planning/pressure_planner.h"
+#include "core/fnv.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 namespace {
 
@@ -109,10 +110,7 @@ combine_checkpoint_and_replica_target(qwen3_5::detail::PressureDecision checkpoi
 std::uint64_t
 explicit_pressure_identity(const qwen3_5::detail::PressureDecision& decision) noexcept {
     std::uint64_t identity = decision.shared_owner ? 0x5348415245445052ULL : 0x5052495641544550ULL;
-    const auto mix         = [&](std::uint64_t value) {
-        identity ^= value;
-        identity *= 1099511628211ULL;
-    };
+    const auto mix         = [&](std::uint64_t value) { identity = fnv::mix(identity, value); };
     for (const qwen3_5::detail::PressureStateDecision change : decision.state_changes) {
         mix(static_cast<std::uint8_t>(change));
     }
@@ -380,11 +378,8 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_admission(
         identity_status != runtime::PreflightStatus::Ready;
     plan->impl_->identity_assessment.projection_work =
         1U + plan->impl_->transfer_requirements.size();
-    std::uint64_t digest = 1469598103934665603ULL;
-    const auto mix       = [&](std::uint64_t value) {
-        digest ^= value;
-        digest *= 1099511628211ULL;
-    };
+    std::uint64_t digest = fnv::kOffset;
+    const auto mix       = [&](std::uint64_t value) { digest = fnv::mix(digest, value); };
     mix(resource_revision_.value);
     mix(plan->impl_->summary.reusable_prompt_tokens);
     const runtime::MaterializationMachineWork& identity_work =
@@ -473,7 +468,7 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
     if (kv == nullptr) { return protection; }
 
     protection.text       = kv->text;
-    protection.text_pages = kv_pages_for_frontier(admission.reuse_base);
+    protection.text_pages = paged_kv_pages(admission.reuse_base);
     if (protection.consumed_private_source) {
         protection.text_transfer_pages =
             admission.reuse_base / static_cast<std::uint32_t>(kPagedKVPageSize);
@@ -487,8 +482,8 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
             partial_tail_cow_required(*text_kv_addresses, kv->text, admission.reuse_base);
     }
     const std::uint32_t backend_frontier =
-        backend_frontier_at(speculative_backend, admission.reuse_base);
-    protection.backend_pages = kv_pages_for_frontier(backend_frontier);
+        backend_kv_frontier(admission.reuse_base);
+    protection.backend_pages = paged_kv_pages(backend_frontier);
     if (protection.consumed_private_source) {
         protection.backend_transfer_pages =
             backend_frontier / static_cast<std::uint32_t>(kPagedKVPageSize);
@@ -533,11 +528,8 @@ std::optional<qwen3_5::detail::PressureDecision> ProgramImpl::inspect_shared_pre
     const std::size_t initial_actions = option.state_changes.size() +
                                         option.main_kv_changes.size() +
                                         option.backend_kv_changes.size();
-    std::uint64_t identity = 1099511628211ULL;
-    const auto mix         = [&](std::uint64_t value) {
-        identity ^= value;
-        identity *= 1469598103934665603ULL;
-    };
+    std::uint64_t identity = fnv::kOffset;
+    const auto mix         = [&](std::uint64_t value) { identity = fnv::mix(identity, value); };
     for (const qwen3_5::detail::PressureStateDecision change : option.state_changes) {
         mix(static_cast<std::uint8_t>(change));
     }
@@ -729,11 +721,8 @@ ProgramImpl::inspect_pressure_option(const SequenceState& sequence,
                                         option.main_kv_changes.size() +
                                         option.backend_kv_changes.size();
     const detail::PhysicalDelta initial_effect = option.effect;
-    std::uint64_t identity                     = 1469598103934665603ULL;
-    const auto mix                             = [&](std::uint64_t value) {
-        identity ^= value;
-        identity *= 1099511628211ULL;
-    };
+    std::uint64_t identity                     = fnv::kOffset;
+    const auto mix = [&](std::uint64_t value) { identity = fnv::mix(identity, value); };
     for (const qwen3_5::detail::PressureStateDecision change : option.state_changes) {
         mix(static_cast<std::uint8_t>(change));
     }
@@ -2223,7 +2212,7 @@ bool ProgramImpl::compose_pressure_candidate(
             frontier % static_cast<std::uint32_t>(kPagedKVPageSize) == 0) {
             return false;
         }
-        const std::uint32_t required = kv_pages_for_frontier(frontier);
+        const std::uint32_t required = paged_kv_pages(frontier);
         if (required == 0 || required > addresses.mapped_pages(address)) { return false; }
         const LogicalKVPageHandle tail = addresses.logical_page(address, required - 1U);
         const bool device_resident     = pages.device_resident(tail);
@@ -2274,7 +2263,7 @@ bool ProgramImpl::compose_pressure_candidate(
                 !rederive_prefix_move(projection->source_backend_prefix_fork_required,
                                       details.backend_prefix_fork_required, *backend_kv_addresses,
                                       *backend_kv_pages, *source.kv->backend,
-                                      backend_frontier_at(speculative_backend, details.reuse_base),
+                                      backend_kv_frontier(details.reuse_base),
                                       runtime::ContextResourceClass::BackendKV)) {
                 return false;
             }
@@ -2645,4 +2634,4 @@ qwen3_5::PhysicalUsageSnapshot ProgramImpl::physical_usage() const noexcept {
 }
 
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

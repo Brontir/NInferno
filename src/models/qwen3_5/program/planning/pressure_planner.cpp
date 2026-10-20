@@ -1,19 +1,17 @@
 #include "models/qwen3_5/program/planning/pressure_planner.h"
+#include "core/fnv.h"
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 namespace planning_detail {
 
 inline constexpr std::size_t kOptionalTargetCapacity = 4096;
 
-void hash_mix(std::uint64_t& hash, std::uint64_t value) noexcept {
-    hash ^= value;
-    hash *= 1099511628211ULL;
-}
+void hash_mix(std::uint64_t& hash, std::uint64_t value) noexcept { hash = fnv::mix(hash, value); }
 
 [[nodiscard]] std::uint64_t target_hash(std::uint32_t candidate_index,
                                         std::span<const std::uint16_t> choices) noexcept {
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = fnv::kOffset;
     hash_mix(hash, candidate_index);
     for (const std::uint16_t choice : choices) { hash_mix(hash, choice); }
     return hash;
@@ -753,7 +751,7 @@ runtime::PressureTargetGuidance PressurePlanningSessionImpl::guidance_choices(
     const auto append_residual = [&](std::uint64_t value, std::uint64_t limit) {
         if (value == 0) { return; }
         ++constraints;
-        planning_saturating_add(residual_q20, normalized(value, limit));
+        residual_q20 = saturating_add(residual_q20, normalized(value, limit));
     };
     append_residual(residual.device.active_lanes, capacity.device.active_lanes);
     append_residual(residual.device.state_slots, capacity.device.state_slots);
@@ -766,13 +764,8 @@ runtime::PressureTargetGuidance PressurePlanningSessionImpl::guidance_choices(
     const auto update_relief = [&](std::size_t dimension, std::uint64_t eviction_removed,
                                    std::uint64_t eviction_added, std::uint64_t current_removed,
                                    std::uint64_t current_added) {
-        const auto saturating_sum = [](std::uint64_t left, std::uint64_t right) {
-            return right > std::numeric_limits<std::uint64_t>::max() - left
-                       ? std::numeric_limits<std::uint64_t>::max()
-                       : left + right;
-        };
-        const std::uint64_t released         = saturating_sum(eviction_removed, current_added);
-        const std::uint64_t consumed         = saturating_sum(eviction_added, current_removed);
+        const std::uint64_t released         = saturating_add(eviction_removed, current_added);
+        const std::uint64_t consumed         = saturating_add(eviction_added, current_removed);
         maximum_additional_relief[dimension] = std::max(
             maximum_additional_relief[dimension], released > consumed ? released - consumed : 0U);
     };
@@ -1002,7 +995,7 @@ PressurePlanningSessionImpl::assess(qwen3_5::PressureTargetHandle target) {
 
     std::uint64_t digest = candidate.identity_assessment.assessment_digest;
     if (!identity_target) {
-        digest = 1469598103934665603ULL;
+        digest = fnv::kOffset;
         planning_detail::hash_mix(digest, node.candidate_index);
         planning_detail::hash_mix(digest, node.stable_ordinal);
         planning_detail::hash_mix(digest, static_cast<std::uint8_t>(status));
@@ -1372,4 +1365,4 @@ PressurePlanningSessionImpl::seal_capture(qwen3_5::AssessedPressureTarget&& asse
     return sealed;
 }
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

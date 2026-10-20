@@ -10,13 +10,18 @@
 #include "models/qwen3_5/program/round_buffers.h"
 #include "models/qwen3_5/state/state_image.h"
 #include "models/load_options.h"
+#include "models/qwen3_5/program/planning/speculation_load.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
+
+class ModelExecution;
 
 using TensorLayout                              = TensorRegion;
 inline constexpr std::uint32_t kCausalScoreTile = 1024;
@@ -61,53 +66,116 @@ struct WorkspacePlan {
     std::size_t ordinary_round   = 0;
     std::size_t mtp_prefill      = 0;
     std::size_t mtp_round        = 0;
-    std::size_t dflash_context   = 0;
+    std::size_t dflash_context   = 0; // a prefill chunk's append of its features
     std::size_t dflash_round     = 0;
-    std::size_t causal_score     = 0;
-    std::size_t general_capacity = 0;
+    // A round's append of its compacted features, the widest batch (within dflash_round).
+    std::size_t dflash_round_append = 0;
+    std::size_t causal_score        = 0;
+    std::size_t general_capacity    = 0;
     std::optional<VisionWorkspacePlan> vision;
     std::size_t capacity = 0;
 };
 
 struct SequencePlanningInputs {
-    const execution::Parameters* parameters = nullptr;
+    const ModelExecution* model             = nullptr;
     std::uint32_t capacity                  = 0;
     std::uint32_t max_concurrency           = 1;
     std::uint32_t prefill_chunk             = 0;
+    // The speculative window (the largest launch window) and every launch window, ascending: the
+    // draft depths whose speculative graphs are captured (SpeculativeOptions::draft_tokens,
+    // request_draft_tokens and the nonzero load bounds). default_draft_depth: a request's depth
+    // unless it chooses one.
     std::uint32_t draft_window              = 0;
+    std::vector<std::uint32_t> launch_windows;
+    // Per launch window, the smallest speculative batch its graphs are captured for: 1 for the
+    // menu's depths, the lanes of a load bound for a depth only a bound asks (a step of fewer rows
+    // runs the next wider window). Every window stops at speculative_batch_limit.
+    std::vector<std::uint32_t> launch_window_min_batch;
+    // Per launch window, the speculative batches it runs under the load bounds, as bit (batch - 1)
+    // (launch_window_batches): its graphs are captured and allowed for those batches only. A
+    // DFlash row still appending the features of a wider round from before its step grew may need
+    // a window at a batch outside its mask: that launch runs without a graph.
+    std::vector<std::uint32_t> launch_window_batches;
+    // The widest speculative launch: a load bound of 0 turns every row of a step that wide plain,
+    // so no speculative graph or round workspace is planned from its lanes on (max_concurrency
+    // without one).
+    std::uint32_t speculative_batch_limit   = 0;
+    std::uint32_t default_draft_depth       = 0;
     SpeculativeBackend speculative_backend  = SpeculativeBackend::None;
     KvCacheStorage kv_storage               = KvCacheStorage::BFloat16;
+    KvCacheStorage ring_storage             = KvCacheStorage::BFloat16; // sliding rings
+    DType recurrent_state_dtype             = DType::FP32;              // --state-dtype, GDN layers
     ProposalHead proposal_head              = ProposalHead::Full;
+    DFlashDraftWidth draft_width            = DFlashDraftWidth::Default; // SpeculativeOptions
+    double acceptance_floor                 = 0.0; // SpeculativeOptions watchdog
+    std::vector<SpeculationStep> step_down;         // SpeculativeOptions::step_down
+    std::vector<SpeculationLoad> load;              // SpeculativeOptions::load
+    std::uint32_t context_limit             = 0; // SpeculativeOptions::context_limit
+    std::uint32_t watchdog_window           = 32;
+    std::uint32_t watchdog_min_rounds       = 16;
+    double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor
+    bool calibrate_floor                    = false; // SpeculativeOptions::calibrate_floor
+    std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
+    std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
+    std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window
     models::LoadOptions features;
-    bool use_cuda_graph = true;
-    bool causal_scoring = false;
-    int device          = 0;
+    bool use_cuda_graph               = true;
+    bool causal_scoring               = false;
+    int device                        = 0;
+    std::int32_t multiprocessor_count = 0;
     ContextCacheOptions context_cache;
+    // The driver already holds the memory of this plan's CUDA graphs: construction's kernel warm-up
+    // instantiated the same graph set in a probe Program, and the driver keeps a destroyed graph
+    // executable's memory for the next one (rebuilding a destroyed set takes nothing more).
+    // The plan then reserves no graph allowance.
+    bool graph_memory_held = false;
 };
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 struct SequencePlanImpl {
-    const execution::Parameters* parameters = nullptr;
+    const ModelExecution* model             = nullptr;
     std::uint32_t capacity                  = 0;
     std::uint32_t kv_capacity               = 0;
     std::uint32_t main_page_groups          = 0;
     std::uint32_t max_concurrency           = 1;
     std::uint32_t prefill_chunk             = 0;
-    std::uint32_t draft_window              = 0;
+    std::uint32_t draft_window              = 0; // the largest launch window
+    std::vector<std::uint32_t> launch_windows;   // ascending; the last is draft_window
+    std::vector<std::uint32_t> launch_window_min_batch; // SequencePlanningInputs
+    std::vector<std::uint32_t> launch_window_batches;   // SequencePlanningInputs
+    std::uint32_t speculative_batch_limit   = 0;         // SequencePlanningInputs
+    std::uint32_t default_draft_depth       = 0;
     SpeculativeBackend speculative_backend  = SpeculativeBackend::None;
     KvCacheStorage kv_storage               = KvCacheStorage::BFloat16;
+    KvCacheStorage ring_storage             = KvCacheStorage::BFloat16; // sliding rings
+    DType recurrent_state_dtype             = DType::FP32;              // --state-dtype, GDN layers
     ProposalHead proposal_head              = ProposalHead::Full;
+    DFlashDraftWidth draft_width            = DFlashDraftWidth::Default; // SpeculativeOptions
+    double acceptance_floor                 = 0.0; // SpeculativeOptions watchdog
+    std::vector<SpeculationStep> step_down;         // SpeculativeOptions::step_down
+    std::vector<SpeculationLoad> load;              // SpeculativeOptions::load
+    std::uint32_t context_limit             = 0; // SpeculativeOptions::context_limit
+    std::uint32_t watchdog_window           = 32;
+    std::uint32_t watchdog_min_rounds       = 16;
+    double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor
+    bool calibrate_floor                    = false; // SpeculativeOptions::calibrate_floor
+    std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
+    std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
+    std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window
     models::LoadOptions features;
-    bool use_cuda_graph = true;
-    bool causal_scoring = false;
-    int device          = 0;
+    bool use_cuda_graph               = true;
+    bool causal_scoring               = false;
+    int device                        = 0;
+    std::int32_t multiprocessor_count = 0;
     ContextCacheOptions context_cache;
     PersistentLayout persistent;
     WorkspacePlan workspace;
     std::size_t graph_allowance_bytes    = 0;
+    // The part of it each launch window's speculative graphs take, in launch_windows' order.
+    std::vector<std::size_t> launch_window_graph_bytes;
     std::size_t device_reservation_bytes = 0;
 };
 
@@ -117,16 +185,86 @@ struct SequencePlannerImpl {
     std::unique_ptr<SequencePlanImpl> minimum;
 };
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail
 
-namespace ninfer::models::qwen3_5::detail {
+namespace ninferno::models::qwen3_5::detail {
 
 
 [[nodiscard]] std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
-make_sequence_planner_impl(const execution::Parameters& parameters, DeviceContext& device,
-                           const EngineOptions& options);
+make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
+                           const EngineOptions& options, bool graph_memory_held = false);
+
+// Planning pieces every family's Program shares.
+struct ModelTraits;
+
+// The Engine options any family's Program checks: the context against the model's position
+// capacity, the chunk, the concurrency, the KV capacity policy and the speculative depths (MTP up
+// to the family's `maximum_mtp_draft_tokens`, masked drafts up to 15). Copy rounds
+// (SpeculativeOptions::ngram_draft_tokens) need a family whose MTP round runs the copy window
+// (`mtp_copy_rounds`).
+void validate_program_options(const EngineOptions& options, std::uint64_t max_positions,
+                              std::uint32_t maximum_mtp_draft_tokens, bool mtp_copy_rounds = false);
+
+// The storage a ring decoder (the dense family, Gemma 4) offers: BF16 or FP8 keys and values in
+// the paged pool and the sliding rings, and no recurrent state. `family` names it in the refusal.
+void validate_ring_decoder_storage(const EngineOptions& options, std::string_view family);
+
+// Whether `steps` (SpeculativeOptions::step_down) descend strictly below `depth`, each at least 1,
+// with nonnegative floors (empty: always).
+[[nodiscard]] inline bool speculation_steps_descend(std::uint32_t depth,
+                                                    const std::vector<SpeculationStep>& steps) {
+    for (const auto& step : steps) {
+        if (step.draft_tokens == 0 || step.draft_tokens >= depth || !(step.acceptance_floor >= 0.0)) {
+            return false;
+        }
+        depth = step.draft_tokens;
+    }
+    return true;
+}
+
+// How many rows a speculative round's workspace is planned for: the widest speculative launch.
+[[nodiscard]] inline std::uint32_t
+speculative_round_batches(const SequencePlanImpl& plan) noexcept {
+    return plan.speculative_batch_limit != 0 ? plan.speculative_batch_limit : plan.max_concurrency;
+}
+
+// The widest launch window a speculative round of `batch` rows is planned for (0: none runs). An
+// MTP launch's rows are all capped by the step's load bound, so a batch runs only the windows its
+// mask holds (launch_window_batches). A DFlash launch keeps the engine's window at every batch: a
+// row may still append the features of a wider round from before its step grew.
+[[nodiscard]] inline std::uint32_t speculative_round_window(const SequencePlanImpl& plan,
+                                                            std::uint32_t batch) noexcept {
+    if (batch == 0 || batch > speculative_round_batches(plan)) { return 0; }
+    if (plan.speculative_backend != SpeculativeBackend::Mtp ||
+        plan.launch_window_batches.size() != plan.launch_windows.size()) {
+        return plan.draft_window;
+    }
+    std::uint32_t widest = 0;
+    for (std::size_t w = 0; w < plan.launch_windows.size(); ++w) {
+        if (window_runs_batch(plan.launch_window_batches[w], batch)) {
+            widest = std::max(widest, plan.launch_windows[w]);
+        }
+    }
+    return widest;
+}
+
+// The most verify columns (rows times the window's width) any speculative round is planned for.
+[[nodiscard]] inline std::uint32_t
+speculative_round_columns(const SequencePlanImpl& plan) noexcept {
+    std::uint32_t columns = 0;
+    for (std::uint32_t batch = 1; batch <= speculative_round_batches(plan); ++batch) {
+        const std::uint32_t window = speculative_round_window(plan, batch);
+        if (window != 0) { columns = std::max(columns, batch * (window + 1U)); }
+    }
+    return columns;
+}
+
+// The Program's own persistent buffers, planned after a family's state: the round state, the
+// prefill hidden, the causal-score staging and the sampling state. Finishes the layout (out.bytes).
+void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
+                          const ModelTraits& traits, PersistentLayout& out);
 [[nodiscard]] std::unique_ptr<SequencePlanImpl>
 finalize_sequence_plan_impl(std::unique_ptr<qwen3_5::detail::SequencePlannerImpl> planner,
                             std::uint32_t main_page_groups);
 
-} // namespace ninfer::models::qwen3_5::detail
+} // namespace ninferno::models::qwen3_5::detail

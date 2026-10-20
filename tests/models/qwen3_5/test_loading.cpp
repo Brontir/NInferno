@@ -2,6 +2,7 @@
 #include "artifact/fixture.h"
 #include "artifact/formats.h"
 #include "models/qwen3_5/load.h"
+#include "ops/common/native_nvfp4.h"
 
 #include <algorithm>
 #include <array>
@@ -9,10 +10,10 @@
 
 namespace {
 
-using namespace ninfer;
-using namespace ninfer::models;
-namespace qwen = ninfer::models::qwen3_5;
-using namespace ninfer::test::artifact_fixture;
+using namespace ninferno;
+using namespace ninferno::models;
+namespace qwen = ninferno::models::qwen3_5;
+using namespace ninferno::test::artifact_fixture;
 
 Json added_token(int id, const std::string& content) {
     return {{"id", id},        {"content", content}, {"special", true},    {"single_word", false},
@@ -291,6 +292,118 @@ void native_uses() {
                                                     {long_up, ops::LinearPolicy::A16Only, 2.0F});
         },
         "combined coverage hid an incorrect gate/up boundary");
+
+    // A dense FFN's gate and up: one parent stays the fused form; separate parents (a GGUF that
+    // publishes them in different formats) become a two-slice segmented bank in gate, up order.
+    const auto shared = ops::prepare_dense_gate_up_weights({gate, ops::LinearPolicy::A16Only, 2.0F},
+                                                           {up, ops::LinearPolicy::A16Only, 2.0F});
+    require(std::holds_alternative<ops::SingleProjectionWeight>(shared) &&
+                std::get<ops::SingleProjectionWeight>(shared).weight.n == 128,
+            "gate and up of one parent did not keep the fused form");
+    std::vector<std::byte> other_bytes(geometry.bytes);
+    const WeightParent other{geometry, other_bytes.data(), 8.0F};
+    const WeightView other_up{{64, 64}, {{&other, 4096, 8192}}};
+    const auto split = ops::prepare_dense_gate_up_weights({gate, ops::LinearPolicy::A16Only, 2.0F},
+                                                          {other_up, ops::LinearPolicy::A16Only, 2.0F});
+    const auto* bank = std::get_if<ops::SegmentedProjectionWeights>(&split);
+    require(bank && bank->slices.size() == 2 && bank->rows() == 128 && bank->columns() == 64 &&
+                bank->slices[0].parent.payload == bytes.data() && bank->slices[0].row_begin == 0 &&
+                bank->slices[1].parent.payload == other_bytes.data() &&
+                bank->slices[1].row_begin == 64 && bank->slices[1].rows == 64,
+            "gate and up of two parents did not become a gate, up segmented bank");
+    rejects<std::invalid_argument>(
+        [&] {
+            (void)ops::prepare_dense_gate_up_weights({gate, ops::LinearPolicy::A16Only, 2.0F},
+                                                     {full, ops::LinearPolicy::A16Only, 2.0F});
+        },
+        "gate and up of different geometry were accepted");
+}
+
+// Which MoE path a layer takes: SparseMoe only for its registered geometry (256 experts of 512,
+// hidden 2048, shared 512), BF16 routers and one of its codec profiles as a whole - the gate/up and
+// down pair together, and the shared pair - and the generic moe Op for anything else, including a
+// pair SparseMoe has a kernel for on each side but not together.
+void moe_path_selection() {
+    const auto weight = [](QType qtype, std::int32_t n, std::int32_t k) {
+        Weight w;
+        w.qtype = qtype;
+        w.n     = n;
+        w.k     = k;
+        return w;
+    };
+    const auto layer = [&](QType gate_up, QType down, QType shared, QType shared_down,
+                           std::int32_t experts = 256, QType router = QType::BF16) {
+        ops::MoeWeights w;
+        w.router         = weight(router, experts, 2048);
+        w.shared_gate    = weight(QType::BF16, 1, 2048);
+        w.gate_up        = weight(gate_up, experts * 1024, 2048);
+        w.down           = weight(down, experts * 2048, 512);
+        w.shared_gate_up = weight(shared, 1024, 2048);
+        w.shared_down    = weight(shared_down, 2048, 512);
+        return w;
+    };
+    const QType q4 = QType::Q4_G64_FP16, q5 = QType::Q5_G64_FP16, q6 = QType::Q6_G64_FP16;
+    const QType q8 = QType::Q8_G32_FP16, fp4 = QType::NVFP4;
+    require(ops::sparse_moe_admits(layer(q4, q5, q8, q8)) &&
+                ops::sparse_moe_admits(layer(q4, q6, q8, q8)) &&
+                ops::sparse_moe_admits(layer(q8, q8, q8, q8)),
+            "a SparseMoe codec profile was sent to the generic MoE path");
+    // The NVFP4 profile runs on the sm_120a expert kernels; a build without them sends its layers
+    // to the generic moe Op, which reads NVFP4 on every architecture.
+    require(ops::sparse_moe_admits(layer(fp4, fp4, fp4, fp4)) == ops::detail::kNativeNvfp4,
+            ops::detail::kNativeNvfp4
+                ? "the NVFP4 SparseMoe profile was sent to the generic MoE path"
+                : "the NVFP4 SparseMoe profile was admitted without the sm_120a expert kernels");
+    require(!ops::sparse_moe_admits(layer(q8, q6, q8, q8)) &&
+                !ops::sparse_moe_admits(layer(q4, q8, q8, q8)) &&
+                !ops::sparse_moe_admits(layer(q8, q5, q8, q8)) &&
+                !ops::sparse_moe_admits(layer(fp4, q8, fp4, fp4)) &&
+                !ops::sparse_moe_admits(layer(q4, q5, fp4, fp4)) &&
+                !ops::sparse_moe_admits(layer(fp4, fp4, q8, q8)),
+            "a mixed gate/down or routed/shared pair was sent to SparseMoe");
+    require(!ops::sparse_moe_admits(layer(QType::GGML_IQ2_S, QType::GGML_IQ3_XXS, QType::GGML_Q6_K,
+                                          QType::GGML_Q6_K)) &&
+                !ops::sparse_moe_admits(layer(q4, q5, q8, q8, 128)) &&
+                !ops::sparse_moe_admits(layer(q4, q5, q8, q8, 256, QType::GGML_Q6_K)),
+            "a GGUF bank, another geometry or a quantized router was sent to SparseMoe");
+}
+
+// A MoE layer with int4 zero-point experts (GPTQ / AWQ / AutoRound) takes the generic MoE Op: its
+// gate/up bank is one converter parent that the per-expert Uses (2 per expert, in bank order)
+// cover exactly, and preparing them must give that whole parent as one Weight, unmoved, the
+// format and zero-point layout intact. Gaps or a reordered expert are refused.
+void u4_expert_bank() {
+    constexpr std::uint64_t experts = 4, width = 64, hidden = 256;
+    for (const auto format : {QType::U4_G128_ZP_FP16, QType::U4_G32_ZP_FP16}) {
+        const std::array<std::uint64_t, 2> shape{experts * 2 * width, hidden};
+        const auto geometry = weight_geometry(format, QuantLayout::RowGroupZp, shape);
+        std::vector<std::byte> bytes(geometry.bytes);
+        const WeightParent parent{geometry, bytes.data(), 0.0F};
+        const std::uint64_t matrix = width * hidden;
+        std::vector<WeightView> views;
+        for (std::uint64_t i = 0; i < 2 * experts; ++i) {
+            views.push_back({{width, hidden}, {{&parent, i * matrix, (i + 1) * matrix}}});
+        }
+        std::vector<ops::WeightInput> inputs;
+        for (const auto& view : views) { inputs.push_back({view, ops::LinearPolicy::AllowA8}); }
+        const auto bank = ops::prepare_linear_weight(inputs);
+        require(bank.weight.qtype == format && bank.weight.layout == QuantLayout::RowGroupZp &&
+                    bank.weight.payload == bytes.data() &&
+                    bank.weight.n == static_cast<std::int32_t>(experts * 2 * width) &&
+                    bank.weight.k == static_cast<std::int32_t>(hidden),
+                "an int4 zero-point expert bank did not prepare as its whole parent");
+        // WeightInput holds a reference: the altered banks are built, not edited.
+        std::vector<ops::WeightInput> swapped, gap;
+        for (std::size_t i = 0; i < views.size(); ++i) {
+            const std::size_t j = i == 2 ? 3 : i == 3 ? 2 : i;
+            swapped.push_back({views[j], ops::LinearPolicy::AllowA8});
+            if (i != 1) { gap.push_back({views[i], ops::LinearPolicy::AllowA8}); }
+        }
+        rejects<std::invalid_argument>([&] { (void)ops::prepare_linear_weight(swapped); },
+                                       "reordered experts silently changed the bank's row order");
+        rejects<std::invalid_argument>([&] { (void)ops::prepare_linear_weight(gap); },
+                                       "an expert bank with a missing matrix was accepted");
+    }
 }
 
 void invalid_model_data() {
@@ -321,11 +434,33 @@ void invalid_model_data() {
 
 } // namespace
 
+// A text-only artifact (no Vision component) loads its Text backbone; asking it for Vision is
+// refused by naming the missing component.
+void text_only_artifact() {
+    ModelFixture fixture;
+    fixture.file.root["components"].erase("vision");
+    fixture.file.write();
+    artifact::Reader reader(fixture.file.entry);
+    auto plan = qwen::plan_load(reader);
+    require(!plan.config().vision && !plan.weights().vision, "a text-only plan bound Vision");
+    std::string refusal;
+    try {
+        (void)qwen::plan_load(reader, {.vision = true});
+    } catch (const std::exception& error) { refusal = error.what(); }
+    require(refusal.find("no vision component") != std::string::npos,
+            ("a text-only artifact refused Vision without naming the missing component: " +
+             refusal)
+                .c_str());
+}
+
 int main() {
     try {
+        text_only_artifact();
         logical_data_and_instances();
         native_uses();
+        u4_expert_bank();
         invalid_model_data();
+        moe_path_selection();
         std::cout << "model config, binding, resources and Use checks passed\n";
         return 0;
     } catch (const std::exception& error) {

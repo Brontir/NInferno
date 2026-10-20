@@ -1,4 +1,4 @@
-"""Run the Qwen3.6 thinking-preservation fixture through a real ninfer-serve process."""
+"""Run the Qwen3.6 thinking-preservation fixture through a real ninferno-serve process."""
 
 from __future__ import annotations
 
@@ -6,12 +6,17 @@ import argparse
 import json
 import socket
 import subprocess
+import sys
 import tempfile
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.ninferno_serve.health import wait_healthy  # noqa: E402
 
 
 class TestFailure(RuntimeError):
@@ -42,21 +47,6 @@ def request_json(base_url: str, method: str, path: str, payload: Any | None = No
     if not isinstance(value, dict):
         raise TestFailure(f"{method} {path} did not return a JSON object")
     return value
-
-
-def wait_for_server(base_url: str, process: subprocess.Popen[str], timeout: float) -> None:
-    deadline = time.monotonic() + timeout
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise TestFailure(f"ninfer-serve exited during startup with code {process.returncode}")
-        try:
-            if request_json(base_url, "GET", "/health") == {"status": "ok"}:
-                return
-        except TestFailure as error:
-            last_error = error
-        time.sleep(0.25)
-    raise TestFailure(f"ninfer-serve was not healthy after {timeout:g}s: {last_error}")
 
 
 def chat_payload(model: str, fixture: dict[str, Any], messages_key: str) -> dict[str, Any]:
@@ -263,11 +253,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--backend", choices=("mtp", "dflash"), required=True)
-    parser.add_argument("--server-bin", type=Path, default=Path("build/apps/ninfer-serve"))
+    parser.add_argument("--server-bin", type=Path, default=Path("build/apps/ninferno-serve"))
     parser.add_argument(
         "--fixture",
         type=Path,
-        default=Path("tests/fixtures/serve/qwen3_6_thinking_preservation.json"),
+        default=Path(__file__).resolve().parents[2]
+        / "tests/fixtures/serve/qwen3_6_thinking_preservation.json",
     )
     parser.add_argument("--startup-timeout", type=float, default=600.0)
     parser.add_argument("--port", type=int, default=0)
@@ -287,7 +278,7 @@ def main() -> None:
 
     port = args.port or free_port()
     base_url = f"http://127.0.0.1:{port}"
-    with tempfile.TemporaryDirectory(prefix=f"ninfer-{args.backend}-thinking-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=f"ninferno-{args.backend}-thinking-") as temporary:
         temporary_path = Path(temporary)
         request_log = temporary_path / "requests.jsonl"
         server_log = temporary_path / "server.log"
@@ -327,7 +318,7 @@ def main() -> None:
                 text=True,
             )
             try:
-                wait_for_server(base_url, process, args.startup_timeout)
+                wait_healthy(base_url, args.startup_timeout, process)
                 result = exercise(base_url, fixture, request_log, args.backend)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             except Exception as error:

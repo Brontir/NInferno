@@ -1,0 +1,129 @@
+{
+ "qwen3.8-27b": {
+  "name": "Qwen3.8-27B",
+  "hf": "Qwen/Qwen3.8-27B",
+  "family": "Qwen3.5 dense",
+  "params": "27B",
+  "label": [
+   "Qwen3.8",
+   "27B"
+  ],
+  "readme": true
+ },
+ "qwen3.6-35b-a3b": {
+  "name": "Qwen3.6-35B-A3B",
+  "hf": "Qwen/Qwen3.6-35B-A3B",
+  "family": "Qwen3.5 MoE",
+  "params": "35B total, 3B active",
+  "label": [
+   "Qwen3.6",
+   "35B-A3B"
+  ],
+  "readme": true
+ },
+ "gemma-4-31b-it": {
+  "name": "Gemma 4 31B",
+  "hf": "google/gemma-4-31B-it",
+  "family": "Gemma 4 dense",
+  "params": "31B",
+  "label": [
+   "Gemma 4",
+   "31B"
+  ],
+  "readme": true
+ },
+ "gemma-4-26b-a4b-it": {
+  "name": "Gemma 4 26B-A4B",
+  "hf": "google/gemma-4-26B-A4B-it",
+  "family": "Gemma 4 MoE",
+  "params": "26B total, 4B active",
+  "label": [
+   "Gemma 4",
+   "26B-A4B"
+  ],
+  "readme": true
+ },
+ "gpt-oss-20b": {
+  "name": "gpt-oss-20b",
+  "hf": "openai/gpt-oss-20b",
+  "family": "MoE decoder",
+  "params": "21B total, 3.6B active",
+  "label": [
+   "gpt-oss",
+   "20b"
+  ],
+  "readme": true
+ },
+ "muse-glimmer-30b": {
+  "name": "Muse Glimmer 30B",
+  "hf": "meta-models/Muse-Glimmer-30B",
+  "family": "dense decoder",
+  "params": "30B",
+  "label": [
+   "Muse Glimmer",
+   "30B"
+  ],
+  "readme": true
+ },
+ "nemotron-3.5-lightning-30b-a3b": {
+  "name": "Nemotron 3.5 Lightning 30B-A3B",
+  "hf": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+  "family": "Nemotron-H hybrid MoE",
+  "params": "30B total, 3B active",
+  "label": [
+   "Nemotron 3.5",
+   "Lightning 30B-A3B"
+  ],
+  "readme": true
+ },
+ "qwen3.6-27b": {
+  "name": "Qwen3.6-27B",
+  "hf": "Qwen/Qwen3.6-27B",
+  "family": "Qwen3.5 dense",
+  "params": "27B",
+  "label": [
+   "Qwen3.6",
+   "27B"
+  ]
+ },
+ "qwen3.5-9b": {
+  "name": "Qwen3.5-9B",
+  "hf": "Qwen/Qwen3.5-9B",
+  "family": "Qwen3.5 dense",
+  "params": "9B",
+  "label": [
+   "Qwen3.5",
+   "9B"
+  ]
+ },
+ "gemma-4-12b-it": {
+  "name": "Gemma 4 12B",
+  "hf": "google/gemma-4-12B-it",
+  "family": "Gemma 4 dense",
+  "params": "12B",
+  "label": [
+   "Gemma 4",
+   "12B"
+  ]
+ },
+ "qwen3.5-4b": {
+  "name": "Qwen3.5-4B",
+  "hf": "Qwen/Qwen3.5-4B",
+  "family": "Qwen3.5 dense",
+  "params": "4B",
+  "label": [
+   "Qwen3.5",
+   "4B"
+  ]
+ },
+ "qwen3-8b": {
+  "name": "Qwen3-8B",
+  "hf": "Qwen/Qwen3-8B",
+  "family": "dense decoder",
+  "params": "8B",
+  "label": [
+   "Qwen3",
+   "8B"
+  ]
+ }
+}

@@ -1,6 +1,8 @@
 #include "core/weight.h"
-#include "ninfer/ops/linear_pair.h"
+#include "ninferno/ops/linear_pair.h"
 
+#include "ninferno/ops/linear.h"
+#include "ops/common/tensor_checks.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <array>
@@ -10,12 +12,8 @@
 #include <stdexcept>
 #include <string>
 
-namespace ninfer::ops {
+namespace ninferno::ops {
 namespace {
-
-bool aligned_to(const void* pointer, std::uintptr_t alignment) {
-    return pointer != nullptr && (reinterpret_cast<std::uintptr_t>(pointer) & (alignment - 1)) == 0;
-}
 
 void require_matrix(const Tensor& tensor, std::int32_t rows, std::int32_t cols, const char* label) {
     if (tensor.dtype != DType::BF16 || tensor.ne[0] != rows || tensor.ne[1] != cols ||
@@ -54,17 +52,11 @@ void require_weight(const Weight& weight, std::int32_t k, const char* label) {
 
 void require_nonoverlap(const Tensor& x, const Weight& first_weight, const Weight& second_weight,
                         const Tensor& first_out, const Tensor& second_out) {
-    struct Range {
-        const void* pointer;
-        std::uint64_t bytes;
-        const char* label;
-    };
-
     const std::uint64_t cols        = static_cast<std::uint64_t>(x.ne[1]);
     const std::uint64_t k           = static_cast<std::uint64_t>(x.ne[0]);
     const std::uint64_t code_bytes  = 1024u * k;
     const std::uint64_t scale_bytes = 1024u * (k / 32u) * 2u;
-    const std::array<Range, 7> ranges{{
+    const std::array<OperandRange, 7> ranges{{
         {x.data, k * cols * 2u, "x"},
         {first_out.data, 1024u * cols * 2u, "first output"},
         {second_out.data, 1024u * cols * 2u, "second output"},
@@ -73,17 +65,26 @@ void require_nonoverlap(const Tensor& x, const Weight& first_weight, const Weigh
         {second_weight.qdata, code_bytes, "second codes"},
         {second_weight.scales, scale_bytes, "second scales"},
     }};
-    for (std::size_t i = 0; i < ranges.size(); ++i) {
-        const auto first_begin = reinterpret_cast<std::uintptr_t>(ranges[i].pointer);
-        const auto first_end   = first_begin + ranges[i].bytes;
-        for (std::size_t j = i + 1; j < ranges.size(); ++j) {
-            const auto second_begin = reinterpret_cast<std::uintptr_t>(ranges[j].pointer);
-            const auto second_end   = second_begin + ranges[j].bytes;
-            if (first_begin < second_end && second_begin < first_end) {
-                throw std::invalid_argument(std::string("linear_pair: ") + ranges[i].label +
-                                            " overlaps " + ranges[j].label);
-            }
-        }
+    require_disjoint(ranges, "linear_pair");
+}
+
+// The paired Q8 kernel's domain: the Q8 G32 row-split problems its plan registers (the two Qwen
+// drafter geometries). Every other pair runs as two linear() calls with the same numerics contract.
+bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
+    if (!detail::q8_pair_registered(first_weight.n, first_weight.k)) { return false; }
+    try {
+        require_weight(first_weight, first_weight.k, "first weight");
+        require_weight(second_weight, first_weight.k, "second weight");
+    } catch (const std::invalid_argument&) {
+        return false;
+    }
+    return true;
+}
+
+void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
+    if (first_weight.n <= 0 || first_weight.k <= 0 || first_weight.n != second_weight.n ||
+        first_weight.k != second_weight.k) {
+        throw std::invalid_argument("linear_pair: the two weights must share one [N,K] shape");
     }
 }
 
@@ -92,18 +93,30 @@ void require_nonoverlap(const Tensor& x, const Weight& first_weight, const Weigh
 std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
                                                  const Weight& second_weight,
                                                  std::int32_t min_tokens, std::int32_t max_tokens) {
-    if (min_tokens <= 0 || max_tokens < min_tokens ||
-        (first_weight.k != 5120 && first_weight.k != 2048)) {
+    if (min_tokens <= 0 || max_tokens < min_tokens) {
         throw std::invalid_argument("linear_pair: unsupported weight/column geometry");
     }
-    require_weight(first_weight, first_weight.k, "first weight");
-    require_weight(second_weight, first_weight.k, "second weight");
+    if (fused_pair(first_weight, second_weight)) { return 0; }
+    require_same_logical_shape(first_weight, second_weight);
+    // Two A16 linear() calls; the A16 form of linear() takes no caller workspace.
     return 0;
 }
 
 void linear_pair(const Tensor& x, const Weight& first_weight, const Weight& second_weight,
                  Tensor& first_out, Tensor& second_out, cudaStream_t stream) {
     const std::int32_t cols = x.ne[1];
+    if (!fused_pair(first_weight, second_weight)) {
+        require_same_logical_shape(first_weight, second_weight);
+        if (first_weight.k != x.ne[0]) {
+            throw std::invalid_argument("linear_pair: weight K differs from input");
+        }
+        require_matrix(x, x.ne[0], cols, "x");
+        require_matrix(first_out, first_weight.n, cols, "first output");
+        require_matrix(second_out, second_weight.n, cols, "second output");
+        linear(x, first_weight, first_out, stream);
+        linear(x, second_weight, second_out, stream);
+        return;
+    }
     if (x.ne[0] != 5120 && x.ne[0] != 2048) {
         throw std::invalid_argument("linear_pair: x K must be 5120 or 2048");
     }
@@ -119,4 +132,4 @@ void linear_pair(const Tensor& x, const Weight& first_weight, const Weight& seco
     detail::q8_pair_dispatch(x, first_weight, second_weight, first_out, second_out, stream);
 }
 
-} // namespace ninfer::ops
+} // namespace ninferno::ops

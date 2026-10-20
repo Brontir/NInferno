@@ -1,5 +1,8 @@
 #include "models/qwen3_5/config.h"
 
+#include "core/yarn.h"
+#include "models/common/config_json.h"
+
 #include "artifact/schema.h"
 
 #include <algorithm>
@@ -8,34 +11,12 @@
 #include <set>
 #include <string>
 
-namespace ninfer::models::qwen3_5 {
+namespace ninferno::models::qwen3_5 {
 namespace {
 
 using artifact::ArtifactError;
 using artifact::Json;
 using artifact::require_members;
-
-std::uint32_t integer(const Json& value, std::string_view label, bool positive = true) {
-    const auto n = artifact::require_u64(value, label, positive);
-    if (n > std::numeric_limits<std::uint32_t>::max()) {
-        throw ArtifactError(std::string(label) + ": config dimension exceeds u32");
-    }
-    return static_cast<std::uint32_t>(n);
-}
-
-std::uint32_t dimension(const Json& config, const char* name) {
-    return integer(config.at(name), name);
-}
-
-float positive_float(const Json& config, const char* name) {
-    const auto& value = config.at(name);
-    if (!value.is_number()) { throw ArtifactError(std::string(name) + " must be a real value"); }
-    const float result = value.get<float>();
-    if (!std::isfinite(result) || result <= 0) {
-        throw ArtifactError(std::string(name) + " must be positive finite FP32");
-    }
-    return result;
-}
 
 std::string architecture(const Json& config) {
     const auto& names = config.at("architectures");
@@ -54,8 +35,9 @@ const artifact::Component& companion(const artifact::Directory& directory, std::
 }
 
 AttentionConfig attention(const Json& value) {
-    AttentionConfig out{dimension(value, "num_attention_heads"),
-                        dimension(value, "num_key_value_heads"), dimension(value, "head_dim")};
+    AttentionConfig out{json_dimension(value, "num_attention_heads"),
+                        json_dimension(value, "num_key_value_heads"),
+                        json_dimension(value, "head_dim")};
     if (out.num_attention_heads % out.num_key_value_heads) {
         throw ArtifactError("attention query heads must be divisible by KV heads");
     }
@@ -63,11 +45,15 @@ AttentionConfig attention(const Json& value) {
 }
 
 RopeConfig rope(const Json& value, std::uint32_t head_dim) {
-    require_members(value, {"rope_theta", "partial_rotary_factor", "mrope_section"}, {},
-                    "text RoPE");
+    require_members(value, {"rope_theta", "partial_rotary_factor", "mrope_section"},
+                    {"yarn_factor", "yarn_original"}, "text RoPE");
     RopeConfig out;
-    out.rope_theta            = positive_float(value, "rope_theta");
-    out.partial_rotary_factor = positive_float(value, "partial_rotary_factor");
+    if (value.contains("yarn_factor")) {
+        out.artifact_yarn_factor   = json_positive_float(value, "yarn_factor");
+        out.artifact_yarn_original = json_u32(value.at("yarn_original"), "yarn_original", false);
+    }
+    out.rope_theta            = json_positive_float(value, "rope_theta");
+    out.partial_rotary_factor = json_positive_float(value, "partial_rotary_factor");
     if (out.partial_rotary_factor > 1) { throw ArtifactError("partial_rotary_factor exceeds one"); }
     out.rotary_dim = static_cast<std::uint32_t>(double(head_dim) * out.partial_rotary_factor);
     if (!out.rotary_dim || out.rotary_dim % 2) {
@@ -79,7 +65,7 @@ RopeConfig rope(const Json& value, std::uint32_t head_dim) {
     }
     std::uint64_t sum = 0;
     for (std::size_t i = 0; i < 3; ++i) {
-        out.mrope_section[i] = integer(sections[i], "MRoPE section", false);
+        out.mrope_section[i] = json_u32(sections[i], "MRoPE section", false);
         sum += out.mrope_section[i];
     }
     if (sum != out.rotary_dim / 2) {
@@ -106,17 +92,18 @@ TextConfig text(const Json& value, bool mtp) {
          "max_position_embeddings", "tie_word_embeddings", "rms_norm_eps", "layer_types"},
         {"num_attention_heads", "num_key_value_heads", "head_dim", "rope_parameters",
          "linear_num_key_heads", "linear_key_head_dim", "linear_num_value_heads",
-         "linear_value_head_dim", "linear_conv_kernel_dim", "intermediate_size", "num_experts",
+         "linear_value_head_dim", "linear_conv_kernel_dim", "linear_output_head_order",
+         "intermediate_size", "num_experts",
          "num_experts_per_tok", "moe_intermediate_size", "shared_expert_intermediate_size"},
         "text config");
     TextConfig out;
     out.architecture = resolve_architecture(
         architecture(value), artifact::require_id(value.at("model_type"), "model_type"));
-    out.hidden_size             = dimension(value, "hidden_size");
-    out.vocab_size              = dimension(value, "vocab_size");
-    out.num_hidden_layers       = dimension(value, "num_hidden_layers");
-    out.max_position_embeddings = dimension(value, "max_position_embeddings");
-    out.rms_norm_eps            = positive_float(value, "rms_norm_eps");
+    out.hidden_size             = json_dimension(value, "hidden_size");
+    out.vocab_size              = json_dimension(value, "vocab_size");
+    out.num_hidden_layers       = json_dimension(value, "num_hidden_layers");
+    out.max_position_embeddings = json_dimension(value, "max_position_embeddings");
+    out.rms_norm_eps            = json_positive_float(value, "rms_norm_eps");
     if (!value.at("tie_word_embeddings").is_boolean()) {
         throw ArtifactError("tie_word_embeddings must be boolean");
     }
@@ -145,12 +132,20 @@ TextConfig text(const Json& value, bool mtp) {
     if (out.linear_attention_layers || value.contains("linear_num_key_heads") ||
         value.contains("linear_key_head_dim") || value.contains("linear_num_value_heads") ||
         value.contains("linear_value_head_dim") || value.contains("linear_conv_kernel_dim")) {
-        GdnConfig gdn{
-            dimension(value, "linear_num_key_heads"), dimension(value, "linear_key_head_dim"),
-            dimension(value, "linear_num_value_heads"), dimension(value, "linear_value_head_dim"),
-            dimension(value, "linear_conv_kernel_dim")};
+        GdnConfig gdn{json_dimension(value, "linear_num_key_heads"),
+                      json_dimension(value, "linear_key_head_dim"),
+                      json_dimension(value, "linear_num_value_heads"),
+                      json_dimension(value, "linear_value_head_dim"),
+                      json_dimension(value, "linear_conv_kernel_dim")};
         if (gdn.linear_num_value_heads % gdn.linear_num_key_heads) {
             throw ArtifactError("GDN value heads must be divisible by key heads");
+        }
+        if (value.contains("linear_output_head_order")) {
+            const auto& order = value.at("linear_output_head_order");
+            if (order != "grouped" && order != "tiled") {
+                throw ArtifactError("linear_output_head_order must be grouped or tiled");
+            }
+            gdn.output_heads_tiled = order == "tiled";
         }
         (void)gdn.conv_channels();
         out.gdn = gdn;
@@ -159,9 +154,10 @@ TextConfig text(const Json& value, bool mtp) {
         if (value.contains("intermediate_size")) {
             throw ArtifactError("MoE config carries Dense FFN width");
         }
-        MoeConfig moe{dimension(value, "num_experts"), dimension(value, "num_experts_per_tok"),
-                      dimension(value, "moe_intermediate_size"),
-                      dimension(value, "shared_expert_intermediate_size")};
+        MoeConfig moe{json_dimension(value, "num_experts"),
+                      json_dimension(value, "num_experts_per_tok"),
+                      json_dimension(value, "moe_intermediate_size"),
+                      json_dimension(value, "shared_expert_intermediate_size")};
         if (moe.num_experts_per_tok > moe.num_experts) {
             throw ArtifactError("selected experts exceed expert count");
         }
@@ -171,7 +167,7 @@ TextConfig text(const Json& value, bool mtp) {
                                 "shared_expert_intermediate_size"}) {
             if (value.contains(key)) { throw ArtifactError("Dense config carries MoE fields"); }
         }
-        out.ffn = DenseConfig{dimension(value, "intermediate_size")};
+        out.ffn = DenseConfig{json_dimension(value, "intermediate_size")};
     }
     return out;
 }
@@ -187,20 +183,27 @@ VisionConfig vision(const Json& value) {
         throw ArtifactError("unknown Vision model_type");
     }
     VisionConfig out;
-    out.depth                   = dimension(value, "depth");
-    out.hidden_size             = dimension(value, "hidden_size");
-    out.intermediate_size       = dimension(value, "intermediate_size");
-    out.num_heads               = dimension(value, "num_heads");
-    out.patch_size              = dimension(value, "patch_size");
-    out.temporal_patch_size     = dimension(value, "temporal_patch_size");
-    out.spatial_merge_size      = dimension(value, "spatial_merge_size");
-    out.num_position_embeddings = dimension(value, "num_position_embeddings");
+    out.depth                   = json_dimension(value, "depth");
+    out.hidden_size             = json_dimension(value, "hidden_size");
+    out.intermediate_size       = json_dimension(value, "intermediate_size");
+    out.num_heads               = json_dimension(value, "num_heads");
+    out.patch_size              = json_dimension(value, "patch_size");
+    out.temporal_patch_size     = json_dimension(value, "temporal_patch_size");
+    out.spatial_merge_size      = json_dimension(value, "spatial_merge_size");
+    out.num_position_embeddings = json_dimension(value, "num_position_embeddings");
     out.position_grid_side =
         static_cast<std::uint32_t>(std::sqrt(double(out.num_position_embeddings)));
     if (out.hidden_size % out.num_heads || (out.hidden_size / out.num_heads) % 4 ||
         std::uint64_t(out.position_grid_side) * out.position_grid_side !=
             out.num_position_embeddings) {
         throw ArtifactError("invalid Vision head or square position geometry");
+    }
+    // The encoder's packed attention runs heads of 64 (Qwen3.5 0.8B to 9B) or 72 values (27B,
+    // Qwen3.6 35B); any other width is refused here, not on the first image.
+    if (const std::uint64_t head_dim = out.hidden_size / out.num_heads;
+        head_dim != 64 && head_dim != 72) {
+        throw ArtifactError("Vision heads of " + std::to_string(head_dim) +
+                            " values are not supported (64 or 72)");
     }
     (void)out.patch_width();
     (void)out.merger_width();
@@ -221,12 +224,17 @@ DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
     DraftConfig out;
     out.attention = attention(value);
     if (out.attention.head_dim % 2) { throw ArtifactError("draft head dimension must be even"); }
-    out.intermediate_size       = dimension(value, "intermediate_size");
-    out.num_hidden_layers       = dimension(value, "num_hidden_layers");
-    out.max_position_embeddings = dimension(value, "max_position_embeddings");
-    out.rms_norm_eps            = positive_float(value, "rms_norm_eps");
+    out.intermediate_size       = json_dimension(value, "intermediate_size");
+    out.num_hidden_layers       = json_dimension(value, "num_hidden_layers");
+    out.max_position_embeddings = json_dimension(value, "max_position_embeddings");
+    out.rms_norm_eps            = json_positive_float(value, "rms_norm_eps");
     require_members(value.at("rope_parameters"), {"rope_theta"}, {}, "draft RoPE");
-    out.rope_theta     = positive_float(value.at("rope_parameters"), "rope_theta");
+    out.rope_theta     = json_positive_float(value.at("rope_parameters"), "rope_theta");
+    // The draft attention normalizes and rotates Q/K in one fused kernel whose epsilon and RoPE
+    // frequencies are fixed; a draft with other constants would run silently wrong.
+    if (out.rope_theta != 1.0e7F || out.rms_norm_eps != 1.0e-6F) {
+        throw ArtifactError("draft RoPE theta and RMSNorm epsilon must be 1e7 and 1e-6");
+    }
     const auto& layers = value.at("layer_types");
     if (!layers.is_array() || layers.size() != out.num_hidden_layers) {
         throw ArtifactError("draft layer_types length mismatch");
@@ -243,7 +251,7 @@ DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
         }
     }
     if (sliding || value.contains("sliding_window")) {
-        out.sliding_window = dimension(value, "sliding_window");
+        out.sliding_window = json_dimension(value, "sliding_window");
     }
     const auto& config = value.at("dflash_config");
     if (dflash2) {
@@ -254,26 +262,18 @@ DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
     } else {
         require_members(config, {"target_layer_ids", "mask_token_id"}, {}, "DFlash config");
     }
-    const auto& taps = config.at("target_layer_ids");
-    if (!taps.is_array() || taps.empty()) {
-        throw ArtifactError("target_layer_ids must be nonempty");
-    }
-    std::set<std::uint32_t> unique;
-    for (const auto& tap : taps) {
-        const auto index = integer(tap, "target layer index", false);
-        if (index >= target.num_hidden_layers || !unique.insert(index).second) {
-            throw ArtifactError("invalid target layer index");
-        }
+    for (const auto index : json_layer_indices(config.at("target_layer_ids"),
+                                               target.num_hidden_layers, "target_layer_ids")) {
         out.target_layer_ids.push_back(index);
     }
-    out.mask_token_id = integer(config.at("mask_token_id"), "mask token", false);
+    out.mask_token_id = json_u32(config.at("mask_token_id"), "mask token", false);
     if (out.mask_token_id >= target.vocab_size) {
         throw ArtifactError("mask token exceeds target embedding rows");
     }
     if (dflash2) {
         DFlash2Config extra{
-            dimension(config, "conv_kernel_size"), dimension(config, "conv_group_size"),
-            dimension(config, "selector_rank"), dimension(config, "selector_top_k")};
+            json_dimension(config, "conv_kernel_size"), json_dimension(config, "conv_group_size"),
+            json_dimension(config, "selector_rank"), json_dimension(config, "selector_top_k")};
         if (target.hidden_size % extra.conv_group_size) {
             throw ArtifactError("DFlash2 conv group does not divide hidden width");
         }
@@ -320,7 +320,38 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
         Config out;
         out.mtp  = options.speculative == SpeculativeBackend::Mtp;
         out.text = text(directory.component("text").config, out.mtp);
-        if (options.vision) { out.vision = vision(companion(directory, "vision").config); }
+        const RopeConfig* own_rope =
+            out.text.rope_parameters ? &*out.text.rope_parameters : nullptr;
+        const double yarn_factor = options.rope_yarn_factor != 1.0F
+                                       ? static_cast<double>(options.rope_yarn_factor)
+                                       : (own_rope ? own_rope->artifact_yarn_factor : 1.0);
+        if (yarn_factor != 1.0) {
+            // YaRN over the checkpoint's own context: its rotated pairs blend the original and
+            // the stretched frequency ladders, and the model admits factor times the context.
+            if (options.masked_draft()) {
+                throw ArtifactError("--rope-yarn-factor runs no DFlash drafter: they rotate with "
+                                    "their own trained frequencies (MTP and plain decode do)");
+            }
+            RopeConfig& rope    = *out.text.rope_parameters;
+            const auto original = rope.artifact_yarn_original != 0 ? rope.artifact_yarn_original
+                                                                   : out.text.max_position_embeddings;
+            const YarnRope yarn = yarn_rope(rope.rope_theta, rope.rotary_dim,
+                                            {.factor   = yarn_factor,
+                                             .original = static_cast<double>(original)});
+            rope.yarn_inv_freq        = yarn.inv_freq;
+            rope.yarn_attention_scale = static_cast<float>(yarn.attention_scaling);
+            rope.yarn_original        = original;
+            out.text.max_position_embeddings = static_cast<std::uint32_t>(
+                std::min<double>(double(original) * yarn_factor, 1 << 20));
+        }
+        if (options.vision) {
+            // A text-only artifact is complete as it is; asking it for Vision is refused.
+            if (!directory.components.contains("vision")) {
+                throw ArtifactError("no vision component: this artifact is text-only (load it "
+                                    "without Vision)");
+            }
+            out.vision = vision(companion(directory, "vision").config);
+        }
         if (out.mtp) {
             const auto& config = companion(directory, "mtp").config;
             require_members(config, {"architectures"}, {}, "MTP config");
@@ -341,4 +372,4 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
     }
 }
 
-} // namespace ninfer::models::qwen3_5
+} // namespace ninferno::models::qwen3_5

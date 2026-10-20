@@ -1,0 +1,5 @@
+# The pdfium build a release carries (bblanchon/pdfium-binaries): the release tag, then each
+# platform's archive SHA-256. Read by pdfium.sh and windows/package-native.ps1.
+tag chromium/8076
+linux-x64 d9d67bc40af03aef4fe28a60b19b1086f28ace019c8c9caf19cb7fe3d14ceca3
+win-x64 808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac
