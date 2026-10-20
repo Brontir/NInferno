@@ -528,10 +528,20 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // of eight cards the vector kernel was within 4 % of the best route at T = 2..4 and behind it at
 // T = 8 on all of them, the most where a card has the least compute per byte of bandwidth
 // (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
+// Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs, so the vector kernel takes
+// every width it reads (vec_max_tokens): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at T = 5..16
+// about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3 tok/s against
+// C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
+std::int32_t vec_rule_max_tokens() {
+    try {
+        return device_class().features.mma_tensor ? kVecRuleMaxTokens : vec_max_tokens();
+    } catch (const std::exception&) { return kVecRuleMaxTokens; }
+}
+
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= kVecRuleMaxTokens && vec_call(w, policy, tokens);
+    return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
