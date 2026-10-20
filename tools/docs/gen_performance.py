@@ -19,7 +19,8 @@ Inputs (docs/performance/data/):
                 (short chats, all streams together) | perplexity | acceptance | greedy_match
   gpus.json     {"<slug>": {"name", "chip", "sm", "vram_gb", "match": [nvidia-smi names]}}
   models.json   {"<slug>": {"name", "hf", "family", "params", "label": [line, line],
-                "readme": true when the project README's table shows it}}, in table order
+                "readme": true when the project README's table shows it, "native": the format its own
+                checkpoint ships in, e.g. "MXFP4"}}, in table order
 
 Rows whose engine is not "ninferno" (llama.cpp on the same weights and GPU) are references: they
 feed the summary line and the level-3 comparison, never the speed tables.
@@ -50,9 +51,13 @@ OURS = "ninferno"
 
 # --- loading ------------------------------------------------------------------------------------
 
+NATIVE = {}  # lower-case HF id -> the format its own checkpoint ships in (models.json "native")
+
+
 def load():
     gpus = json.loads((DATA / "gpus.json").read_text(encoding="utf-8"))
     models = json.loads((DATA / "models.json").read_text(encoding="utf-8"))
+    NATIVE.update({info["hf"].lower(): info["native"] for info in models.values() if info.get("native")})
     by_name = {n: g for g, info in gpus.items() for n in info["match"]}
     by_hf = {info["hf"].lower(): m for m, info in models.items()}
     by_hf.update({info["hf"].split("/")[-1].lower(): m for m, info in models.items()})
@@ -105,10 +110,11 @@ def weights_short(recipe):
     title: [UD-Q4_K_XL](https://huggingface.co/unsloth/... "unsloth/Qwen3.8-27B-GGUF")."""
     m = HUB_REPO.match(recipe)
     if not m:
-        return recipe
-    # No --quant: the publisher's own checkpoint (gpt-oss ships MXFP4 itself).
-    label = quant(recipe) if re.search(r"--quant[\s=]+\S", recipe) else "original"
-    return f"[{label}](https://huggingface.co/{m.group(1)}{hint(m.group(1))})"
+        return f"`{quant(recipe)}`"
+    # No --quant: the publisher's own checkpoint, named by its format where models.json gives one
+    # ("native": "MXFP4" for gpt-oss). Inline code: a quant name copies whole and does not wrap.
+    label = quant(recipe) if re.search(r"--quant[\s=]+\S", recipe) else NATIVE.get(m.group(1).lower(), "original")
+    return f"[`{label}`](https://huggingface.co/{m.group(1)}{hint(m.group(1))})"
 
 
 def repos(recipes):
@@ -121,12 +127,13 @@ def repos(recipes):
     return ", ".join(f"[`{s}`](https://huggingface.co/{s})" for s in seen)
 
 
-def gpu_short(g, info, base):
-    """A GPU on one line: the label's first line, spaces unbreakable, the full name, memory and chip
-    in the title."""
-    short = (info["label"][0] if info.get("label") else info["name"]).replace(" ", "&nbsp;")
-    size = "" if info["name"].endswith(" GB") else f", {info['vram_gb']} GB"
-    return f"[{short}]({base}gpus/{g}.md{hint(info['name'] + size + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})"
+def gpu_short(g, info, base, full=False):
+    """A GPU on one line, spaces unbreakable: the full name (full, where the table has room) or the
+    label's first line (the README matrix); the name, memory and chip in the title."""
+    shown = info["name"] if full or not info.get("label") else info["label"][0]
+    name = info["name"] if info["name"].endswith(" GB") else f"{info['name']} {info['vram_gb']} GB"
+    return (f"[{shown.replace(' ', '&nbsp;')}]({base}gpus/{g}.md"
+            f"{hint(name + ' (' + info['chip'] + ', sm_' + str(info['sm']) + ')')})")
 
 
 def quant(recipe):
@@ -397,7 +404,8 @@ def page_gpu(g, gpus, models, speed):
         name = models[m]["name"].replace(" ", "&nbsp;")
         lines.append(level2_row(f"[{name}](../models/{m}.md)", speed[(g, m)], f"../runs/{g}/{m}.md"))
         recs += [r for c in speed[(g, m)].values() for r in c.values()]
-    return "\n".join(lines + ["", footer(recs), ""])
+    measured = repos(s[0] for m in models if (g, m) in speed for s in speed[(g, m)])
+    return "\n".join(lines + ([""] + [f"Weights from {measured}."] if measured else []) + ["", footer(recs), ""])
 
 
 def page_model(m, gpus, models, speed):
@@ -407,13 +415,13 @@ def page_model(m, gpus, models, speed):
              f"[`{info['hf']}`](https://huggingface.co/{info['hf']}) · {info['family']}, {info['params']} · "
              "[all GPUs and models](../README.md)", "",
              (f"Measured with {measured}. " if (measured := repos(s[0] for g in present for s in speed[(g, m)]))
-              else "") + "Its fine-tunes and other checkpoints of the same architecture run the same way.", "",
+              else "") + "Fine-tunes and other checkpoints of the same architecture run the same way.", "",
              "Tokens per second, each column at its best setting: one stream, all streams (superscript = "
              "concurrent streams), prefill of a 24K-token prompt, one stream after it.", "",
              "| GPU | " + " | ".join(LEVEL2_HEAD) + " | |", "|---|---|" + "---:|" * 4 + "---|"]
     recs = []
     for g in present:
-        lines.append(level2_row(gpu_short(g, gpus[g], "../"), speed[(g, m)], f"../runs/{g}/{m}.md"))
+        lines.append(level2_row(gpu_short(g, gpus[g], "../", full=True), speed[(g, m)], f"../runs/{g}/{m}.md"))
         recs += [r for c in speed[(g, m)].values() for r in c.values()]
     return "\n".join(lines + ["", footer(recs), ""])
 
