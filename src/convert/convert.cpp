@@ -855,40 +855,82 @@ PublishedActivations published_activations(const Checkpoint& base) {
 
 // The published activation widths of the matrices kept as published, and how many of them the
 // recorded policy lets run below that width (fast mode): provenance["published_activations"].
-std::optional<OJson> published_activation_summary(const Checkpoint& base, const Model& model,
+// Each matrix answers to the description of the checkpoint it is imported from: an NVFP4
+// recipe's --source quantized=PATH, not the unquantized --model. A matrix whose checkpoint
+// describes nothing is not counted; "source" names every description read, in first-use order.
+std::optional<OJson> published_activation_summary(const SourceInputs& sources, const Model& model,
                                                   const Recipe& recipe) {
-    const auto published = published_activations(base);
-    if (published.source.empty()) { return std::nullopt; }
+    const auto opened = sources.opened();
+    std::map<const Checkpoint*, PublishedActivations> described; // each checkpoint read once
+    std::vector<std::string> named;
     std::map<int, std::uint64_t> counts;
     std::uint64_t below = 0, below_int8 = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
-        if (recipe.selections[i].method != Method::ImportEncoded || parameter.probe_leaf.empty() ||
+        const auto& selection = recipe.selections[i];
+        if (selection.method != Method::ImportEncoded || !selection.source ||
             recipe.policies[i].empty()) {
             continue;
         }
-        // The longest named module holding the matrix, under either text root (a recipe's leaf
-        // may name model.layers.N where the checkpoint says model.language_model.layers.N).
-        int bits = published.all;
-        std::vector<std::string> names{parameter.probe_leaf};
-        for (const auto& [from, to] : {std::pair<std::string, std::string>{"model.language_model.", "model."},
-                                       {"model.", "model.language_model."}}) {
-            if (parameter.probe_leaf.starts_with(from)) {
-                names.push_back(to + parameter.probe_leaf.substr(from.size()));
-            } else if (!parameter.probe_leaf.starts_with("model.")) {
-                names.push_back(from + parameter.probe_leaf);
+        std::vector<const TensorInfo*> tensors;
+        selection.source->tensors(sources.base(), tensors);
+        if (parameter.probe_leaf.empty() && tensors.empty()) { continue; }
+        // The opened checkpoint holding the tensors the matrix reads (the base if none does).
+        const Checkpoint* origin = nullptr;
+        for (const auto* tensor : tensors) {
+            for (const auto* checkpoint : opened) {
+                const auto it = checkpoint->tensors().find(tensor->name);
+                if (it != checkpoint->tensors().end() && &it->second == tensor) {
+                    origin = checkpoint;
+                    break;
+                }
+            }
+            if (origin) { break; }
+        }
+        if (!origin) { origin = &sources.base(); }
+        auto entry = described.find(origin);
+        if (entry == described.end()) {
+            entry = described.emplace(origin, published_activations(*origin)).first;
+        }
+        const auto& published = entry->second;
+        if (published.source.empty()) { continue; }
+        if (std::find(named.begin(), named.end(), published.source) == named.end()) {
+            named.push_back(published.source);
+        }
+        // The longest named module holding the matrix, by the recipe's leaf or the tensors' own
+        // names, under either text root (a leaf may name model.layers.N where the checkpoint says
+        // model.language_model.layers.N).
+        std::vector<std::string> leaves;
+        if (!parameter.probe_leaf.empty()) { leaves.push_back(parameter.probe_leaf); }
+        for (const auto* tensor : tensors) {
+            if (std::find(leaves.begin(), leaves.end(), tensor->name) == leaves.end()) {
+                leaves.push_back(tensor->name);
             }
         }
-        for (auto name : names) {
-            bool found = false;
-            while (!name.empty() && !found) {
-                if (const auto it = published.layers.find(name); it != published.layers.end()) {
-                    bits  = it->second;
-                    found = true;
-                } else {
-                    const auto dot = name.rfind('.');
-                    name           = dot == std::string::npos ? std::string() : name.substr(0, dot);
+        int bits   = published.all;
+        bool found = false;
+        for (const auto& leaf : leaves) {
+            std::vector<std::string> names{leaf};
+            for (const auto& [from, to] :
+                 {std::pair<std::string, std::string>{"model.language_model.", "model."},
+                  {"model.", "model.language_model."}}) {
+                if (leaf.starts_with(from)) {
+                    names.push_back(to + leaf.substr(from.size()));
+                } else if (!leaf.starts_with("model.")) {
+                    names.push_back(from + leaf);
                 }
+            }
+            for (auto name : names) {
+                while (!name.empty() && !found) {
+                    if (const auto it = published.layers.find(name); it != published.layers.end()) {
+                        bits  = it->second;
+                        found = true;
+                    } else {
+                        const auto dot = name.rfind('.');
+                        name = dot == std::string::npos ? std::string() : name.substr(0, dot);
+                    }
+                }
+                if (found) { break; }
             }
             if (found) { break; }
         }
@@ -911,8 +953,10 @@ std::optional<OJson> published_activation_summary(const Checkpoint& base, const 
         }
     }
     if (counts.empty()) { return std::nullopt; }
+    std::string source;
+    for (const auto& name : named) { source += (source.empty() ? "" : ", ") + name; }
     OJson out     = OJson::object();
-    out["source"] = published.source;
+    out["source"] = source;
     for (const auto& [bits, count] : counts) {
         out[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
     }
@@ -1631,7 +1675,7 @@ ConvertResult convert(const ConvertOptions& options) {
     provenance["sources"]   = sources.provenance();
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
     if (options.proposal) { provenance["ranking"] = ranking_text; }
-    if (const auto published = published_activation_summary(base, model, recipe)) {
+    if (const auto published = published_activation_summary(sources, model, recipe)) {
         provenance["published_activations"] = *published;
         std::string widths;
         for (const char* bits : {"16", "8", "4"}) {

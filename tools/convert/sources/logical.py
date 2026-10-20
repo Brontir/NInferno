@@ -27,6 +27,8 @@ class LogicalSource:
     read_encoded: Callable[[int, int], EncodedRows] | None = None
     weight_divisor: Callable[[], bytes] | None = None
     input_divisor: Callable[[], bytes] | None = None
+    # (store, tensor or prefix name) pairs the values come from, for provenance.
+    origin: tuple = ()
 
     def values(self, begin: int = 0, end: int | None = None) -> torch.Tensor:
         end = prod(self.shape) if end is None else end
@@ -68,7 +70,9 @@ def transpose_source(
             .reshape(-1)[begin:end]
         )
 
-    return LogicalSource(shape, f"transpose({source.label},{axes})", read)
+    return LogicalSource(
+        shape, f"transpose({source.label},{axes})", read, origin=source.origin
+    )
 
 
 def select_rows(
@@ -123,6 +127,7 @@ def select_rows(
         encoded if source.read_encoded is not None else None,
         source.weight_divisor,
         source.input_divisor,
+        source.origin,
     )
 
 

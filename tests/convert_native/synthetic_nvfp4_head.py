@@ -37,6 +37,10 @@ MLP gate and up were quantized against divisors of their own; the embedding and 
                     stacked parent by name, where a scale tile would span two divisors.
   publisher         hf_quant_config.json (W4A16_NVFP4, layer 1's key NVFP4): provenance counts the
                     kept matrices per published activation width and those fast mode runs below it.
+  publisher-source  qwen3_6_27b_nvfp4 imports its matrices from --source quantized=PATH, whose
+                    hf_quant_config.json (layer 0 W4A16_NVFP4, layer 1's MLP NVFP4) the unquantized
+                    --model lacks: both converters count the imported matrices by the quantized
+                    checkpoint's description, the same published_activations.
   python-tail       the Python writer streams a 200-row NVFP4 matrix in 128-row blocks
                     (TensorOutput.write_codes, the last block ragged): the object is the codec's
                     encoding of the whole matrix and decodes back to its words.
@@ -464,6 +468,52 @@ def qwen_moe_planner_case(work: Path, native: Path, repository: Path) -> list[st
     return errors
 
 
+def publisher_source_case(work: Path, native: Path, repository: Path) -> list[str]:
+    """An NVFP4 recipe's matrices answer to the description of the checkpoint they are imported
+    from (--source quantized=PATH), not the unquantized base's (which has none); the Python
+    converter records the same field."""
+    import synthetic_qwen3_5 as qwen
+
+    model, quantized = work / "qwen-base", work / "qwen-quantized"
+    qwen.base_checkpoint(model, moe_model=False, nested=True, tied=False, vision=False, seed=51)
+    qwen.quantized_dense(quantized, fp8=False, seed=52)
+    (quantized / "hf_quant_config.json").write_text(json.dumps({"quantization": {
+        "quant_algo": "MIXED_PRECISION",
+        "quantized_layers": {"model.layers.0": {"quant_algo": "W4A16_NVFP4"},
+                             "model.layers.1.mlp": {"quant_algo": "NVFP4"}}}}),
+        encoding="utf-8")
+    args = [f"--model={model}", "--recipe=qwen3_6_27b_nvfp4", "--components=text",
+            f"--source=quantized={quantized}"]
+    errors: list[str] = []
+    native_out, python_out = work / "publisher-source.ninferno", work / "publisher-source-py.ninferno"
+    found = {}
+    for tag, command in (
+            ("native", [str(native), *args, "--no-drafters", "--quiet", f"--out={native_out}"]),
+            ("python", [sys.executable, "-m", "tools.convert", *args, "--device=cpu",
+                        f"--out={python_out}"])):
+        result = subprocess.run(command, cwd=repository, capture_output=True, text=True)
+        if result.returncode:
+            errors.append(f"publisher-source: {tag} conversion failed ({result.returncode}): "
+                          f"{result.stderr.strip()[-600:]}")
+            continue
+        out = native_out if tag == "native" else python_out
+        found[tag] = ss.Artifact(out).directory["provenance"].get("published_activations")
+    published = found.get("native")
+    # Layer 1's MLP: gate, up, down at 4 bits (AllowA4, not below); layer 0's imported matrices
+    # at 16 (below, also in int8 mode); layers 2 and 3 named nowhere.
+    if "native" in found and (
+            not published or published.get("source") != "hf_quant_config.json"
+            or published.get("4") != 3 or not published.get("16") or not published.get("unknown")
+            or published.get("below") != published["16"]
+            or published.get("below_int8") != published["16"]):
+        errors.append(f"publisher-source: published_activations {published}")
+    if "python" in found and found["python"] != published:
+        errors.append(f"publisher-source: the Python converter records {found['python']}, "
+                      f"the native {published}")
+    print(f"publisher-source: {'ok' if not errors else 'FAILED'} {published}", flush=True)
+    return errors
+
+
 def python_tail(work: Path) -> list[str]:
     """TensorOutput.write_codes of a matrix whose last 128-row block is ragged."""
     from tools.artifact.codecs.nvfp4 import decode_nvfp4_words, encode_nvfp4
@@ -522,6 +572,7 @@ def main() -> int:
         errors += moe_cases(work, native, repository)
         errors += qwen_case(work, native, repository)
         errors += qwen_moe_planner_case(work, native, repository)
+        errors += publisher_source_case(work, native, repository)
         errors += python_tail(work)
     for error in errors:
         print(error, file=sys.stderr)
