@@ -77,6 +77,8 @@ def main() -> int:
          "m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf", "m-MTP-ONLY-Q8_0.gguf",
          "mtp-m-Q4_0.gguf"])}
     hub.add_repo("org/gguf", ggufs)
+    hub.add_repo("org/gguf-twice", {"m-Q8_0.gguf": blob(1600, 30), "mtp-m-Q4_0.gguf": blob(1601, 31),
+                                     "old/mtp-m-Q4_0.gguf": blob(1602, 32)})
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
     hub.repos["org/ggufhead"]["no_sizes"] = True
@@ -242,6 +244,10 @@ def main() -> int:
         fetch("org/gguf", "--quant", "mtp-m-Q4_0", cache="cache-mtp")
         sidecar = sorted(p.name for p in (work / "cache-mtp" / "models--org--gguf" / "snapshots" /
                                           "c0ffee0123456789abcdef0123456789abcdef01").iterdir())
+        # A projector named whole is still not a model (it comes with the model, as its projector).
+        projector = fetch("org/gguf", "--quant", "mmproj-F16", cache="cache-mmproj", check=False)
+        # The same sidecar name in two directories is ambiguous, not the first listed.
+        twice = fetch("org/gguf-twice", "--quant", "mtp-m-Q4_0", cache="cache-twice", check=False)
         # A width: the largest model of that many bits (UD-Q4_K_XL over Q4_K_M), never the
         # MTP-only sidecar (8-bit and larger than Q8_0).
         picked = {}
@@ -253,7 +259,8 @@ def main() -> int:
              default_pick == ["m-Q8_0.gguf"]
              and q6 == ["m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf"]
              and q8 == ["m-Q8_0.gguf"]
-             and sidecar == ["mtp-m-Q4_0.gguf"]
+             and sidecar == ["mtp-m-Q4_0.gguf"] and projector.returncode != 0
+             and twice.returncode != 0 and "old/mtp-m-Q4_0.gguf" in twice.stderr
              and picked == {"4bit": ["m-UD-Q4_K_XL.gguf"], "8-bit": ["m-Q8_0.gguf"]}
              and ambiguous.returncode != 0 and "m-UD-Q4_K_XL.gguf" in ambiguous.stderr
              and "MTP-ONLY" not in ambiguous.stderr)

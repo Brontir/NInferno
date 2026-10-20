@@ -1022,16 +1022,27 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
         }
         return out;
     }
-    // A --quant that is a sidecar's whole name (a drafter: mtp-<model>-Q4_0) takes that file; a
-    // sidecar is never the model otherwise.
+    // A --quant that is an MTP sidecar's whole name (a drafter: mtp-<model>-Q4_0) takes that file;
+    // a sidecar is never the model otherwise, and a projector or an importance matrix never is.
     if (!options.quant.empty()) {
         const auto want = ascii_lower(options.quant) + ".gguf";
+        std::vector<const RemoteFile*> named;
         for (const auto& file : listing.files) {
             const auto name = ascii_lower(std::filesystem::path(file.path).filename().string());
-            if (name == want && gguf_auxiliary_file(name)) {
-                out.push_back(file);
-                return out;
+            if (name == want && gguf_auxiliary_file(name) && name.find("mmproj") == std::string::npos &&
+                name.find("imatrix") == std::string::npos) {
+                named.push_back(&file);
             }
+        }
+        if (named.size() > 1) {
+            std::string paths;
+            for (const auto* file : named) { paths += "\n  " + file->path; }
+            throw std::runtime_error(repo + ": --quant " + options.quant + " names " +
+                                     std::to_string(named.size()) + " files:" + paths);
+        }
+        if (named.size() == 1) {
+            out.push_back(*named.front());
+            return out;
         }
     }
     if (ggufs.empty()) {
