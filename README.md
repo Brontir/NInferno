@@ -20,15 +20,15 @@ task. The aim: fast, cheap inference for everyone.
   published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ, GPTQ.
 - **Speed:** speculative decoding (MTP, DFlash, DFlash2) and kernels measured per GPU, one to eight
   concurrent streams.
-- **Long context:** YaRN and LongRoPE as the checkpoint defines them (Qwen stretches its window
+- **Long context:** YaRN and LongRoPE as the checkpoint defines them (Qwen3.5/3.6 stretch their window
   with `--rope-yarn-factor`), KV cache in FP8 (NVFP4 for Qwen).
 - **Prompt cache:** a repeated prefix (system prompt, chat history, a document) is not computed
-  again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD¹.
+  again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD³.
 - **API:** OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`) on one
   server, with tool calls, structured output, vision and PDF documents.
 - **Where it goes:** the [roadmap](#roadmap).
 
-<sub>¹ A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
+<sub>³ A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
 two months, an enterprise one in six to eight. NInferno will not offer one.</sub>
 
 ## Contents
@@ -58,8 +58,8 @@ two months, an enterprise one in six to eight. NInferno will not offer one.</sub
 - **Weights:** each model runs as published on Hugging Face (GGUF, NVFP4, MXFP4, FP8, AWQ,
   GPTQ), and so do its fine-tunes. A quantization the engine cannot read is refused at start,
   with the reason. [Weight conversion](docs/weight-conversion.md) lists each family's formats.
-- **Image and video:** start with `--vision`; a GGUF needs its `mmproj` file beside it (the
-  projector is converted with the model).
+- **Image and video:** start with `--vision`, for models that have a vision tower (Gemma 4 12B has
+  none); video is Qwen's. A GGUF needs its `mmproj` file beside it (converted with the model).
 - **Speculative decoding:** the full model checks every drafted token. `--activations exact`
   makes the output identical whatever the load, batch or draft, at some speed
   ([quality checks](docs/perplexity.md)).
