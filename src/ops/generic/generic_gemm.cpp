@@ -771,37 +771,33 @@ bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
 
 bool bf16_mma_native();
 
-// The chip facts verify_rmma reads: the L2 per SM and the CTAs an SM holds (0 where the device
-// cannot be queried, which keeps the rule of the large-L2 boards).
-struct VerifyFacts {
-    std::size_t l2_per_sm = 0;
-    int max_blocks_per_sm = 0;
-};
-
-VerifyFacts verify_facts() {
+// The L2 bytes per SM verify_rmma reads (0 where the device cannot be queried, which keeps the
+// rule of the large-L2 boards).
+std::size_t l2_per_sm() {
     try {
         const auto& d = device_class();
-        return {d.sms > 0 ? d.l2_bytes / static_cast<std::size_t>(d.sms) : 0, d.max_blocks_per_sm};
-    } catch (const std::exception&) { return {}; }
+        return d.sms > 0 ? d.l2_bytes / static_cast<std::size_t>(d.sms) : 0;
+    } catch (const std::exception&) { return 0; }
 }
 
 // The register-MMA schedule of a 9..16-token call (a verify) of K >= 1024 on a native BF16 MMA,
-// from the call's 16-row CTAs, the SMs, the L2 per SM and the CTAs an SM holds. X6 route
-// matrices (ninferno_route_tune --matrix, 26 problems x every admitted route, T 1..16, L2 flushed;
-// RTX 3090 ga102:82sm 6 MiB L2 = 75 KiB per SM, A100 ga100:108sm 40 MiB = 379 KiB, RTX 4090
-// ad102:128sm 72 MiB = 576 KiB, RTX 5070 Ti gb203:70sm 48 MiB = 702 KiB), cells over 1.05x the
-// best route of the call: 3090 208 -> 156 (the shipped route tables 162), 4090 162 -> 154 (182),
-// A100 168 -> 142 (168), 5070 Ti 168 -> 168 (194); no cell slower on any board. Of the 46 cells the
-// 3090's tables fixed against the rule, 43.
-// - Where the L2 holds under 512 KiB per SM (and clusters do not split K), a grid of at most two
-//   16-row CTAs per SM takes the decode split of K over two 8-token columns with eight K warps,
-//   sixteen (one_wave_split) only while both columns together hold at most one CTA per SM. With
-//   two columns every weight row is read by two CTAs; past one CTA per SM the sixteen-warp CTAs
-//   share SMs and lost there (Q4_K 1024x5120, 128 CTAs: 3090 w1x16 1.13-1.21 -> w1x8 1.00, A100
-//   1.06-1.17 -> 1.00), while the 4090 and 5070 Ti, 576 and 702 KiB per SM, kept sixteen (1.00,
-//   Q8 2048x4096 at 256 CTAs too). The four-warp n2 tile on that grid leaves 6 warps per SM (Q8
-//   2048x4096, 128 CTAs: 3090 1.30-1.36 -> 1.00, A100 1.41 -> 1.00).
-// - Else, past one CTA per SM, the n2 tile of four K warps (16 rows), but:
+// from the call's 16-row CTAs, the SMs and the L2 per SM. X6 route matrices (ninferno_route_tune
+// --matrix, 26 problems x every admitted route, T 1..16, L2 flushed; RTX 3090 ga102:82sm 6 MiB L2
+// = 75 KiB per SM, A100 ga100:108sm 40 MiB = 379 KiB, RTX 4090 ad102:128sm 72 MiB = 576 KiB, RTX
+// 5070 Ti gb203:70sm 48 MiB = 702 KiB; held out of the fit: RTX 4060 Ti ad106:34sm 32 MiB = 964
+// KiB), cells over 1.05x the best route of the call: 3090 208 -> 169 (the shipped route tables
+// 162), 4090 162 -> 162 (182), A100 168 -> 142 (168), 5070 Ti 168 -> 168 (194), 4060 Ti 142 -> 134
+// (122); no cell slower on any board.
+// - A grid of more than one and at most two 16-row CTAs per SM takes the decode split of K (eight
+//   warps, as at T <= 8) over two 8-token columns: the four-warp n2 tile leaves 4..8 warps per SM
+//   there (Q8 2048x4096, 128 CTAs: 3090 1.30-1.36 -> 1.00, A100 1.41 -> 1.00, 5070 Ti 1.33-1.40
+//   -> 1.13-1.20; Q4_K 1024x5120, 64 CTAs on the held-out 4060 Ti: 1.27-1.33 -> 1.00).
+// - Where the L2 holds under 512 KiB per SM (and clusters do not split K), a grid of at most one
+//   CTA per SM takes the same eight-warp split, sixteen (one_wave_split) only while both token
+//   columns together hold at most one CTA per SM: past that the sixteen-warp CTAs share SMs and
+//   lost there (Q4_K 1024x5120, 128 CTAs: 3090 w1x16 1.13-1.21 -> w1x8 1.00, A100 1.06-1.17 ->
+//   1.00), while the 4090, 576 KiB per SM, kept sixteen (1.00, Q8 2048x4096 at 256 CTAs too).
+// - Past two CTAs per SM, the n2 tile of four K warps (16 rows), but:
 //   Q4_K at a short K (under 72 steps of 128) where the L2 holds under 512 KiB per SM takes two
 //   row warps by two K warps (32 rows per CTA). A 16-row CTA re-reads the call's whole activation
 //   (16 tokens x K BF16) for every 16 rows, at 4.5 bits a weight 3.6 activation bytes per weight
@@ -815,36 +811,27 @@ VerifyFacts verify_facts() {
 //   activation traffic of the 16-row tile at the same 320 CTAs (5120 rows), each weight read by two
 //   CTAs that run together. 3090 Q4_K 5120x17408: 1.32-1.40 -> 1.03-1.07, Q5_K 1.26-1.42 ->
 //   1.04-1.10; the A100 lost on it (1.23, 1.44) and keeps the 16-row tile.
-//   Q6_K at a long K where an SM holds at most 24 CTAs (the GA10x and AD10x SM: 16 and 24; GA100
-//   and GB20x 32) takes four 8-token tiles per CTA (half of them empty through T = 16), eight K
-//   warps where the grid holds at most three CTAs per SM (what the heavy four-warp tile holds:
-//   over 128 registers), else four. 3090 Q6_K 5120x17408 (320 CTAs, 82 SMs): m1.n4.w1x4 1.00-1.09
-//   against 1.08-1.18; 4090 (128 SMs): m1.n4.w1x8 1.00-1.15 against 1.17-1.34; both route tables
-//   named these tiles. The A100 (n4 1.40) and 5070 Ti (1.29) keep the n2 tile.
+//   Not taken: Q6_K 5120x17408 ran faster on the n4 tile (half its token tiles empty through
+//   T = 16, the same bytes as n2) on the 3090 (w1x4), 4090 and 4060 Ti (w1x8) and slower on the
+//   A100 and 5070 Ti; no chip fact with a mechanism separates them.
 int verify_rmma(const Problem& problem, std::int64_t ctas, std::int64_t sms) {
 #ifdef NINFERNO_WITHOUT_NVFP4
     constexpr bool kClusters = false;
 #else
     constexpr bool kClusters = true;
 #endif
-    const VerifyFacts facts = verify_facts();
-    const auto per_sm_under = [&](std::size_t kib) {
-        return facts.l2_per_sm > 0 && facts.l2_per_sm < kib * 1024;
-    };
-    const bool small_l2 = per_sm_under(512);
+    const std::size_t l2    = l2_per_sm();
+    const auto per_sm_under = [&](std::size_t kib) { return l2 > 0 && l2 < kib * 1024; };
+    const bool small_l2     = per_sm_under(512);
     if (ctas <= sms && (kClusters || !small_l2 || 2 * ctas <= sms))
         return one_wave_split(ctas, sms);
-    if (ctas <= 2 * sms && small_l2) return rmma_index(1, 8, 1, 1);
+    if (ctas <= 2 * sms) return rmma_index(1, 8, 1, 1);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + 127) / 128;
     const bool long_k        = 2 * steps >= 9 * 16;
     const QType q            = problem.qtype;
     if (q == QType::GGML_Q4_K && !long_k && small_l2) return rmma_index(2, 2, 1, 2);
     if ((q == QType::GGML_Q4_K || q == QType::GGML_Q5_K) && long_k && per_sm_under(128)) {
         return rmma_index(2, 2, 1, 1);
-    }
-    if (q == QType::GGML_Q6_K && long_k && facts.max_blocks_per_sm > 0 &&
-        facts.max_blocks_per_sm <= 24) {
-        return rmma_index(1, ctas <= 3 * sms ? 8 : 4, 1, 4);
     }
     return rmma_index(1, 4, 1, 2);
 }
