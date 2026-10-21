@@ -91,7 +91,8 @@ const char* profile_name(Profile p) {
 
 // The route set a build compiles decides what a board can pick, so each set keeps its own files:
 // sm_70 (FMA-emulated MMA, 96 KiB), sm_75 (64 KiB: no producer-warp W4A8 tiles), the full builds
-// (120a / 121a / 120f, with NVFP4 and the cluster K-split schedules) and every other build (base).
+// (120a / 121a / 120f, with NVFP4 and the cluster K-split schedules) and every other build (base;
+// sm_80's deeper staged BF16 tiles change nothing here, the goldens pack no BF16 weights).
 constexpr const char* kBuildSet =
 #if NINFERNO_BUILD_ARCH == 70
     "sm70";

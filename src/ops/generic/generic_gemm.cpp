@@ -170,7 +170,7 @@ constexpr std::array<TiledScheduleInfo, 3> kTiledSchedules{{
 
 // Mirrors NINFERNO_GENERIC_STAGED_SCHEDULES (generic_staged.cu): rows, tokens, warps_m, warps_n,
 // stages.
-constexpr std::array<StagedScheduleInfo, 9> kStagedSchedules{{
+constexpr std::array<StagedScheduleInfo, 13> kStagedSchedules{{
     {128, 128, 2, 4, 3},
     {128, 64, 2, 2, 4},
     {64, 128, 1, 4, 4},
@@ -180,6 +180,10 @@ constexpr std::array<StagedScheduleInfo, 9> kStagedSchedules{{
     {128, 64, 2, 2, 2}, // 48 KiB: two CTAs per SM, for grids of fewer tiles than twice the SMs
     {64, 128, 1, 4, 2},
     {64, 64, 2, 2, 3},
+    {128, 128, 2, 4, 2}, // 64 KiB: two CTAs per SM where an SM holds 128 KiB
+    {128, 128, 2, 4, 5}, // 160 KiB, 144 KiB, 144 KiB: only where one block holds them (GA100, Orin)
+    {256, 128, 4, 2, 3},
+    {128, 256, 2, 4, 3},
 }};
 
 // Mirrors NINFERNO_GENERIC_NVFP4_TILED_SCHEDULES (generic_nvfp4_tiled.cu): classes (the register
@@ -1497,6 +1501,19 @@ TiledScheduleInfo tiled_schedule_info(int index) {
     return kTiledSchedules.at(static_cast<std::size_t>(index));
 }
 int staged_schedule_count() { return static_cast<int>(kStagedSchedules.size()); }
+// The build admits a tile its architecture holds; an sm_80 build run on a later 99 KiB part
+// (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
+bool staged_device_fits(int schedule) {
+    const auto s     = kStagedSchedules.at(static_cast<std::size_t>(schedule));
+    const auto bytes = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    std::size_t limit = 0;
+    try {
+        limit = device_class().smem_per_block_optin;
+    } catch (const std::exception&) {
+        return true; // no device (a CPU-only tool): staged_fits holds the build ceiling
+    }
+    return limit == 0 || bytes <= limit;
+}
 StagedScheduleInfo staged_schedule_info(int index) {
     return kStagedSchedules.at(static_cast<std::size_t>(index));
 }
@@ -2027,7 +2044,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
                (w4a8_schedule_info(route.schedule).producers == 0 || w4a8_ws_admits(w));
     case Family::StagedMma:
         return route.schedule < staged_schedule_count() && staged_fits(route.schedule) &&
-               codec_of(w) == WeightCodec::Bf16 && (w.k % 64) == 0 && aligned_to(w.qdata, 16);
+               staged_device_fits(route.schedule) && codec_of(w) == WeightCodec::Bf16 &&
+               (w.k % 64) == 0 && aligned_to(w.qdata, 16);
     case Family::Nvfp4TiledMma:
         // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once. The
         // schedules parse on every build, but their kernels are 120a-only: elsewhere the tuner

@@ -12,14 +12,15 @@
 namespace ninferno::ops {
 
 // The dynamic shared memory one block may opt into, by the build's architecture
-// (NINFERNO_BUILD_ARCH, CMakeLists.txt): Volta (7.0, 7.2) 96 KiB, Turing (7.5) 64 KiB, everything
-// else the 99 KiB of GA10x Ampere, Ada and consumer Blackwell (101376 B opt-in). sm_80 / sm_90 /
-// sm_100 parts admit more, but the tiles are tuned within 99 KiB, so a larger ceiling would change
-// no schedule. One tree compiles one architecture, so the value holds for host and device code
-// alike.
+// (NINFERNO_BUILD_ARCH, CMakeLists.txt): Volta (7.0, 7.2) 96 KiB, Turing (7.5) 64 KiB, GA100 and
+// Orin (8.0, 8.7) 163 KiB, everything else the 99 KiB of GA10x Ampere, Ada and consumer Blackwell
+// (101376 B opt-in). Most tiles are tuned within 99 KiB; the ones above it (deeper pipelines for a
+// tensor core that outruns its 99 KiB stages) are admitted only where the block holds them. One tree
+// compiles one architecture, so the value holds for host and device code alike.
 inline constexpr std::size_t shared_bytes_per_block_for_arch(int arch) {
     if (arch == 75) { return 64 * 1024; }
     if (arch >= 70 && arch < 75) { return 96 * 1024; }
+    if (arch == 80 || arch == 87) { return 163 * 1024; }
     return 99 * 1024;
 }
 #if defined(NINFERNO_BUILD_ARCH)
