@@ -58,13 +58,11 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
                           : resolved.found() ? "built-in default"
                                              : "none")
             : std::string(local ? "local tune" : "published") + " sha256:" + resolved.sha256;
-    // A registry file only when the variable names one: set empty, it is the compiled-in one
-    // (spec::Registry::builtin).
-    const char* registry = std::getenv("NINFERNO_DRAFTER_REGISTRY");
+    // A registry file only when --drafter-registry named one (spec::Registry::use_file), else the
+    // compiled-in one.
     try {
-        out["drafter_registry"] =
-            std::string(registry != nullptr && *registry != 0 ? "file" : "builtin") +
-            " sha256:" + spec::Registry::builtin().source_sha256();
+        out["drafter_registry"] = std::string(spec::Registry::file().empty() ? "builtin" : "file") +
+                                  " sha256:" + spec::Registry::builtin().source_sha256();
     } catch (const std::exception&) { out["drafter_registry"] = "unreadable"; }
     return out;
 }

@@ -3,8 +3,8 @@
 A drafter entry in `src/spec/data/drafter_registry.json` may carry `"proposal_rows": N` and
 `"ranking": "<file>"`: `ninferno-convert --fetch` (and `--attach-drafters`) then converts that drafter
 with its output head restricted to the N most frequent tokens of the ranking. The converter finds
-the file by name in `$NINFERNO_RANKING_DIR`, then here (in the working directory's tree, then in the
-tree the binary was built from). A converted drafter records the ranking in its provenance as
+the file by name here: in the working directory's tree, then among the rankings installed beside the
+binary (`share/ninferno/rankings`), then in the tree the binary was built from. A converted drafter records the ranking in its provenance as
 `<file> sha256:<digest>`, so the drafter's bytes do not depend on where the file lay.
 
 A ranking is little-endian int64 counts over the model's whole vocabulary (one row of

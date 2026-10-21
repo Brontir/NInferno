@@ -1,10 +1,9 @@
 // What a load refuses before it touches the device: the options only the Qwen 3.5 family
-// implements, named for the family that would ignore them, and a tuner variable it cannot read.
+// implements, named for the family that would ignore them, and option values it cannot read.
 // No GPU.
 
-#include "core/tune_timer.h"
+#include "ninferno/option_enums.h"
 #include "runtime/engine/hf_text_frontend.h"
-#include "support/posix.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -64,38 +63,37 @@ int qwen_only_options() {
     return failures;
 }
 
-int tuner_variable() {
+// The option spellings of the tuner modes and the pacing choices: each name parses back, and any
+// other value is refused with the option named rather than read as a default.
+int option_spellings() {
     using ninferno::TuneMode;
-    using ninferno::tune_mode;
-    constexpr const char* variable = "NINFERNO_TEST_TUNE";
-    int failures                   = 0;
-
-    const auto mode_of = [&](const char* value) {
-        if (value == nullptr) {
-            ::unsetenv(variable);
-        } else {
-            ::setenv(variable, value, 1);
-        }
-        return tune_mode(variable);
-    };
-    failures += check(mode_of(nullptr) == TuneMode::Off, "unset tuner variable is not off");
-    failures += check(mode_of("") == TuneMode::Off, "empty tuner variable is not off");
-    failures += check(mode_of("off") == TuneMode::Off, "tuner variable off is not off");
-    failures += check(mode_of("on") == TuneMode::On, "tuner variable on is not on");
-    failures += check(mode_of("retune") == TuneMode::Retune, "tuner variable retune is not retune");
-    for (const char* value : {"1", "ON", "true", "retune "}) {
-        failures += check(names(refusal([&] { (void)mode_of(value); }), variable,
-                                "'" + std::string(value) + "'"),
-                          "an unknown tuner value was not refused with the variable named");
+    int failures = 0;
+    for (const TuneMode mode : {TuneMode::Off, TuneMode::On, TuneMode::Retune}) {
+        failures +=
+            check(ninferno::parse_tune_mode(ninferno::tune_mode_name(mode), "--dense-tune") == mode,
+                  "a tuner mode does not parse back from its name");
     }
-    ::unsetenv(variable);
+    for (const char* value : {"", "1", "ON", "true", "retune "}) {
+        failures +=
+            check(names(refusal([&] { (void)ninferno::parse_tune_mode(value, "--moe-tune"); }),
+                        "--moe-tune", "'" + std::string(value) + "'"),
+                  "an unknown tuner value was not refused with the option named");
+    }
+    failures += check(ninferno::parse_decode_wait("block") == ninferno::DecodeWait::Block,
+                      "--decode-wait block does not parse");
+    failures += check(names(refusal([] { (void)ninferno::parse_decode_wait("busy"); }),
+                            "--decode-wait", "'busy'"),
+                      "an unknown --decode-wait was not refused with the option named");
+    failures +=
+        check(ninferno::parse_cuda_sync_schedule("yield") == ninferno::CudaSyncSchedule::Yield,
+              "--cuda-sync yield does not parse");
     return failures;
 }
 
 } // namespace
 
 int main() {
-    const int failures = qwen_only_options() + tuner_variable();
+    const int failures = qwen_only_options() + option_spellings();
     if (failures == 0) { std::cout << "load refusals OK\n"; }
     return failures == 0 ? 0 : 1;
 }

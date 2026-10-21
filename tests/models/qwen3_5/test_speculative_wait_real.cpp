@@ -1,8 +1,8 @@
 // How a speculative engine waits for its rounds does not change what it emits. Speculative rounds
 // are timed and paced (round_pacing.h): a stalling host may block on a round's stop event rather
-// than spin. An engine that blocks on every round (NINFERNO_DECODE_WAIT=block) emits exactly the
-// tokens, finish reasons, stop strings and speculative rounds of one that spins
-// (NINFERNO_DECODE_WAIT=spin), under --activations exact, for:
+// than spin. An engine that blocks on every round (--decode-wait block, DecodePacingOptions::wait)
+// emits exactly the tokens, finish reasons, stop strings and speculative rounds of one that spins
+// (--decode-wait spin), under --activations exact, for:
 // - greedy prose and code;
 // - an output limit that no round is likely to end on;
 // - a stop token and a stop string, chosen from the spinning engine's output;
@@ -142,9 +142,10 @@ public:
 
 // Every case in one engine; `plan` is filled from the outputs where it is empty (the spinning
 // engine) and read otherwise.
-std::map<std::string, Outcome> run(const std::string& artifact, const char* wait, Plan& plan) {
-    ::setenv("NINFERNO_DECODE_WAIT", wait, 1);
-    Engine engine(engine_options(artifact));
+std::map<std::string, Outcome> run(const std::string& artifact, DecodeWait wait, Plan& plan) {
+    EngineOptions options = engine_options(artifact);
+    options.pacing.wait   = wait;
+    Engine engine(options);
     std::map<std::string, Outcome> out;
     const std::vector<TokenId> prose = engine.tokenize_text(kProse);
     const std::vector<TokenId> code  = engine.tokenize_text(kCode);
@@ -273,8 +274,8 @@ int main() {
     try {
         const std::string model = artifact.substr(artifact.find_last_of('/') + 1);
         Plan plan;
-        const auto spin  = run(artifact, "spin", plan);
-        const auto block = run(artifact, "block", plan);
+        const auto spin  = run(artifact, DecodeWait::Spin, plan);
+        const auto block = run(artifact, DecodeWait::Block, plan);
         check(plan.stop_token && plan.stop_string,
               model + ": no stop token or stop string was found in the output");
         check(spin.count("stop_token") && spin.at("stop_token").finish == FinishReason::StopToken,

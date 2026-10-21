@@ -173,6 +173,15 @@ int main() {
               "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
+    // Schema 28: the decode pacing and maintainer options the server was started with.
+    failures += check(kRequestLogSchemaVersion == 28 &&
+                          server.at("engine").at("decode_pacing").at("steps") == "auto" &&
+                          server.at("engine").at("decode_pacing").at("wait") == "auto" &&
+                          server.at("engine").at("decode_pacing").at("cuda_sync") == "spin" &&
+                          server.at("engine").at("maintainer").at("dense_tune") == "off" &&
+                          server.at("engine").at("maintainer").at("debug_poison").is_null() &&
+                          server.at("engine").at("maintainer").at("drafter_registry") == "",
+                      "schema 28: decode pacing or maintainer options missing");
     failures += check(server.at("engine").at("kv_capacity") == 524288, "KV capacity missing");
     failures += check(server.at("engine").at("kv_capacity_mode") == "explicit" &&
                           server.at("engine").at("kv_capacity_page_groups") == 8192 &&
@@ -471,9 +480,9 @@ int main() {
                           done.at("materialization").at("search_renewals") == 1 &&
                           done.at("materialization").at("search_discovery_used") == true,
                       "materialization search quality or cumulative budget diagnostics missing");
-    // Schema 26: the planning budgets are counted in work units, not nanoseconds.
+    // Since schema 26 the planning budgets are counted in work units, not nanoseconds.
     failures +=
-        check(kRequestLogSchemaVersion == 26 &&
+        check(kRequestLogSchemaVersion >= 26 &&
                   std::string_view(ninferno::materialization_stop_reason_name(
                       ninferno::MaterializationStopReason::PlanningBudget)) == "planning_budget" &&
                   done.at("materialization").at("planning_units") == 9100 &&

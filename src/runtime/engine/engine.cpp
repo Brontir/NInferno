@@ -1,5 +1,6 @@
 #include "ninferno/engine.h"
 
+#include "core/debug_poison.h"
 #include "core/host_cpu_quota.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -7,6 +8,10 @@
 #include "core/nvtx.h"
 #include "core/sha256.h"
 #include "core/startup.h"
+#include "models/qwen3_5/execution/prefill_cuts.h"
+#include "ninferno/ops/moe.h"
+#include "ninferno/ops/route_table.h"
+#include "ops/generic/generic_gemm.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
 #include "ninferno/ops/moe.h"
@@ -14,6 +19,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/process_options_lease.h"
 #include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/model_instance.h"
@@ -38,9 +44,35 @@
 namespace ninferno {
 namespace {
 
-DeviceContext initialize_device(const EngineOptions& options) {
+using runtime::ProcessOptionsLease;
+
+// The maintainer options, on the device just bound. `first`: no other engine is alive, so every
+// process-wide value is set afresh; otherwise they are already this engine's, and only an
+// explicit route table still has to be loaded on this device. The defaults leave the release's
+// behaviour: the shipped route tables, no timing, no debug aid.
+void apply_maintainer_options(const MaintainerOptions& m, bool first) {
+    if (first) {
+        // Every device back to the default lookup in --route-dir (an earlier engine's explicit
+        // table dropped), before this engine's own table, if any, loads.
+        ops::set_route_table_dir(m.route_dir);
+    }
+    if (!m.route_table.empty() &&
+        (first || ops::route_table_status().path != m.route_table.string())) {
+        const ops::RouteTableStatus status = ops::load_route_table(m.route_table.string());
+        if (!status.loaded) { throw std::invalid_argument("--route-table: " + status.message); }
+    }
+    if (!first) { return; }
+    ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
+    ops::set_moe_tune(m.moe_tune, m.tune_cache);
+    models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
+    set_debug_poison(m.debug_poison, m.debug_poison_skip);
+}
+
+DeviceContext initialize_device(const EngineOptions& options, ProcessOptionsLease& lease) {
     StartupPhaseScope phase(options.startup_observer, StartupPhase::CudaInitialize);
-    DeviceContext device(options.device);
+    DeviceContext device(options.device, options.pacing.cuda_sync);
+    apply_maintainer_options(options.maintainer, lease.first());
+    lease.applied();
     phase.complete();
     return device;
 }
@@ -122,10 +154,6 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     for (auto& [key, value] : ops::moe_tune_sources()) { in.sources[key] = std::move(value); }
     in.sources["context_cost.presets"] =
         runtime::context_cost_presets_source(requested.context_cost.preset_path);
-    in.env   = runtime::env_of([](const char* name) -> std::optional<std::string> {
-        const char* value = std::getenv(name);
-        return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
-    });
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
                                    load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);
@@ -263,7 +291,8 @@ public:
 
     // `requested`: the options as the caller passed them, which the decision fingerprint records.
     Impl(const EngineOptions& requested, EngineOptions normalized)
-        : options(std::move(normalized)), device(initialize_device(options)) {
+        : options(std::move(normalized)), process_options(options),
+          device(initialize_device(options, process_options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
@@ -302,6 +331,8 @@ public:
     }
 
     EngineOptions options;
+    // Before the device: alive while the engine is, released after its backend is gone.
+    ProcessOptionsLease process_options;
     DeviceContext device;
     std::unique_ptr<runtime::Backend> backend;
     LoadSummary load;

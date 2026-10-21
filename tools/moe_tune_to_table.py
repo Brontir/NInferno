@@ -4,7 +4,7 @@
     tools/moe_tune_to_table.py --cache moe_tune.json --table routes/C.json [--class C]
                                [--gpu-name NAME] [--tuned-on MODEL] [--replace]
 
-The engine's startup MoE tuner (src/ops/moe/moe_tune.cpp, NINFERNO_MOE_TUNE) times every compiled
+The engine's startup MoE tuner (src/ops/moe/moe_tune.cpp, --moe-tune on) times every compiled
 gate/up and down schedule per decode width T = 1..16 and keeps a plan only where it beats the
 default by 3 %; its cache (`ninferno-moe-tune/2`, default moe_tune.json in NInferno's cache directory) holds,
 per layer, the kept plan per T (null: the default stays) and the default and best times. This tool

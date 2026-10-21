@@ -45,6 +45,30 @@ ninferno_add_refusal_test(ninferno_perplexity_device_test ninferno-perplexity
 ninferno_add_refusal_test(ninferno_perplexity_context_test ninferno-perplexity
   "invalid context: 12a" missing.ninferno --context 12a)
 
+ninferno_add_refusal_test(ninferno_perplexity_decode_steps_test ninferno-perplexity
+  "--decode-steps does not apply: ninferno-perplexity scores" missing.ninferno --text t
+  --decode-steps 4)
+ninferno_add_refusal_test(ninferno_perplexity_decode_wait_test ninferno-perplexity
+  "--decode-wait does not apply" missing.ninferno --text t --decode-wait block)
+ninferno_add_refusal_test(ninferno_gemma4_moe_tune_test ninferno-gemma4
+  "--moe-tune does not apply: ninferno-gemma4" missing.ninferno score --moe-tune on)
+ninferno_add_refusal_test(ninferno_dense_moe_tune_test ninferno-dense
+  "--moe-tune does not apply: ninferno-dense" missing.ninferno score --moe-tune on)
+ninferno_add_refusal_test(ninferno_dense_unknown_option_test ninferno-dense
+  "unknown option --frobnicate" missing.ninferno score --frobnicate 1)
+ninferno_add_refusal_test(ninferno_dense_cuda_sync_test ninferno-dense
+  "--cuda-sync must be spin, blocking, yield or auto" missing.ninferno score --cuda-sync busy)
+ninferno_add_refusal_test(ninferno_dense_dense_tune_test ninferno-dense
+  "--dense-tune must be off, on or retune" missing.ninferno score --dense-tune yes)
+
+# A removed NINFERNO_* decision variable still set is named with its replacement, once, after the
+# arguments parse (the run then fails on the missing model).
+ninferno_add_refusal_test(ninferno_removed_environment_warning_test ninferno-dense
+  "warning: NINFERNO_DECODE_STEPS is set but no longer read and changes nothing; use --decode-steps instead"
+  missing.ninferno score)
+set_tests_properties(ninferno_removed_environment_warning_test PROPERTIES
+  ENVIRONMENT "NINFERNO_DECODE_STEPS=4")
+
 # The programs a user runs answer --version with their version (the installer and the release
 # scripts call serve's). The output alone decides: serve exits 1 without a driver.
 foreach(program ninferno ninferno-serve ninferno-ui ninferno-convert ninferno-perplexity)

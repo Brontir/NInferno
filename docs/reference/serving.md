@@ -106,8 +106,8 @@ every resident thread. Neither is given back.
 
 ## 2. Startup configuration
 
-See [CUDA synchronization](../cli.md#cuda-synchronization) for the shared `NINFERNO_CUDA_SYNC`
-setting.
+See [CUDA synchronization](../cli.md#cuda-synchronization) for the shared `--cuda-sync` option
+and [decode round pacing](../cli.md#decode-round-pacing) for `--decode-steps` and `--decode-wait`.
 
 ```bash
 ./build/apps/ninferno-serve models/qwen3_8_27b_nvfp4.ninferno \
@@ -1562,6 +1562,9 @@ contract.
 | `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
+| `--decode-steps auto\|N` | ordinary decode steps per round, `1..32` ([decode round pacing](../cli.md#decode-round-pacing)) | `auto` |
+| `--decode-wait auto\|spin\|block` | how the host waits for a round's end | `auto` |
+| `--cuda-sync spin\|blocking\|yield\|auto` | CUDA device synchronization schedule ([CUDA synchronization](../cli.md#cuda-synchronization)) | `spin` |
 | `--context-cost-presets FILE` | optional runtime context-cost preset registry | generic + compiled defaults |
 
 **`--kv-dtype`.** `auto` takes the model family's format:
@@ -1689,7 +1692,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v26 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v28 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1698,7 +1701,7 @@ Serve writes human-readable operational records to stderr as
 
 | Event | Contents |
 |---|---|
-| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; the decision fingerprint (`decision`: fingerprint, manifest, taint and canonical text); resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; the decision fingerprint (`decision`: fingerprint, manifest, taint and canonical text); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |

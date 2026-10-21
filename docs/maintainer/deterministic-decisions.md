@@ -7,7 +7,6 @@ reach the runtime only as facts or as constants.
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
 - the attention split under `exact` follows the free-memory-sized context;
-- environment knobs still steer choices;
 - a constrained row's measured mask time decides whether its masks are filled before launch and
   whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
   wait cannot change bytes or batches;
@@ -37,7 +36,7 @@ This page states the rule and its target. The engine does not meet all of it yet
   process's CPU bandwidth quota is below min(4, logical cores) CPUs, else 1 (both numbers await
   measurements on lab containers). Nothing measures the host, so a host stalled by other
   processes without a quota, or one whose stall 16 steps do not hide, is not detected; its
-  operator sets `NINFERNO_DECODE_STEPS=N` (1..32) explicitly;
+  operator sets `--decode-steps N` (1..32) explicitly;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
   memory picks the speculation; the fingerprint only records it, as the taint
@@ -49,12 +48,12 @@ This page states the rule and its target. The engine does not meet all of it yet
   the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
   stock one and two laptops of one name from two OEMs alike), the host's
   logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
-  build, not at configure), the requested options, the route table, dense- and MoE-tune files,
+  build, not at configure), the requested options (the decode pacing and the maintainer options
+  among them; no environment variable decides), the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, a separate drafter by
-  its artifact id, the decision environment variables that are set, the plan startup resolved
-  without the free memory (KV and state storage, speculative windows, route breakpoints, decode
-  steps per round) and the violations of this page present (taint). The RAM class is `bit_floor`
-  of the whole GiB the host reports (64 for 64 to
+  its artifact id, the plan startup resolved without the free memory (KV and state storage,
+  speculative windows, route breakpoints, decode steps per round) and the violations of this page
+  present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
   startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier) is
   observed and enters only the manifest, so `nf1` is the same across identical starts on one

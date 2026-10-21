@@ -5,7 +5,8 @@
 // Writes <out-prefix>.lp (FP32 log p(token[i] | token[0..i)) for i in [1,T), from the causal
 // scoring path) and <out-prefix>.gen (the greedy continuation of the whole prompt, one id per
 // line, from the generation path). Both engines prefill with <prefill-chunk>; extra off-grid cuts
-// come from NINFERNO_QWEN_PREFILL_CUTS. max-new 0 skips generation, a negative value or
+// come from NINFERNO_PROBE_PREFILL_CUTS=p1,p2,... (both engines' debug_prefill_cuts, the
+// --debug-prefill-cuts option). max-new 0 skips generation, a negative value or
 // NINFERNO_PROBE_NO_SCORE skips scoring. Causal scoring always prefills in 1024-token chunks.
 // NINFERNO_PROBE_ACTIVATIONS=exact|fast selects the activation mode of both engines (default: the
 // product default).
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -51,6 +53,13 @@ int main(int argc, char** argv) {
         activations =
             m == "exact" ? ninferno::ActivationMode::Exact : ninferno::ActivationMode::Fast;
     }
+    std::vector<std::uint64_t> cuts;
+    if (const char* text = std::getenv("NINFERNO_PROBE_PREFILL_CUTS")) {
+        std::istringstream list(text);
+        for (std::string item; std::getline(list, item, ',');) {
+            if (!item.empty()) { cuts.push_back(std::stoull(item)); }
+        }
+    }
     try {
         if (max_new >= 0 && std::getenv("NINFERNO_PROBE_NO_SCORE") == nullptr) {
             ninferno::EngineOptions options;
@@ -60,6 +69,7 @@ int main(int argc, char** argv) {
             options.kv_cache      = storage;
             options.prefill_chunk = chunk;
             options.activations   = activations;
+            options.maintainer.debug_prefill_cuts = cuts;
             ninferno::Engine engine(options);
             if (engine.options().prefill_chunk != chunk) {
                 std::cerr << "score engine chunk normalized to " << engine.options().prefill_chunk
@@ -83,6 +93,7 @@ int main(int argc, char** argv) {
             options.prefill_chunk           = chunk;
             options.context_cache.enabled   = false;
             options.activations             = activations;
+            options.maintainer.debug_prefill_cuts = cuts;
             ninferno::Engine engine(options);
             ninferno::RequestOptions request;
             request.execution.sampling.temperature  = 0.0F;

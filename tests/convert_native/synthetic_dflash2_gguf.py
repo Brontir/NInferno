@@ -226,11 +226,12 @@ def main() -> int:
         registry_path.write_text(json.dumps(registry), encoding="utf-8")
         server, base = fetch_server.start(hub)
         environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
-        environment.update({"HF_ENDPOINT": base, "NINFERNO_DRAFTER_REGISTRY": str(registry_path)})
+        environment.update({"HF_ENDPOINT": base})
         case = []
         try:
             for tag, extra, warned in (("declared", [], False), ("flag", ["--drafter-quant", "q8"], True)):
-                result = subprocess.run([str(native), "--fetch", "org/qwen-tiny-GGUF", "--quant", "BF16",
+                result = subprocess.run([str(native), "--drafter-registry", str(registry_path),
+                                         "--fetch", "org/qwen-tiny-GGUF", "--quant", "BF16",
                                          "--cache", str(work / f"cache-{tag}"), "--with-drafters", *extra],
                                         cwd=repository, capture_output=True, text=True, env=environment)
                 log = result.stdout + result.stderr

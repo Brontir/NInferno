@@ -45,7 +45,7 @@ applies_to.
 Every write stamps the registry (write_registry): a profile that is new or changed gets
 "measured_at" (today, UTC), every profile its "revision" (a hash of its content), and the registry,
 when anything changed, the next "version" and today's "published". The version orders registries
-(a newer one downloaded later can override the compiled-in one, as $NINFERNO_DRAFTER_REGISTRY does
+(a newer one downloaded later can override the compiled-in one, as --drafter-registry FILE does
 from a file today); a revision names the table a server runs. After a hand edit,
 
     python tools/spec/registry_add.py --restamp [--registry PATH]

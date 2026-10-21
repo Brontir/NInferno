@@ -37,12 +37,12 @@
 // - A16 decode never moves to R8 or back (another activation precision);
 // - widths a loaded route table covers (measured and published: it stays);
 // - the invariant route profile and a live route probe.
-// It times only when asked, NINFERNO_DENSE_TUNE=on (=retune also ignores the file): by default
-// the engine starts with no timing and reads the measurements already made, the user's own file
-// and the release's routes/tuner/dense_tune.json (the same entries, per GPU class and schedule
-// set), over the GPU class's published route table (routes/), else the heuristic. The engine
-// enables it for a loaded model (enable_dense_tune); tests and benches keep the heuristic.
-// NINFERNO_DENSE_TUNE_CACHE names the file.
+// It times only when asked, --dense-tune on (retune also ignores the file; set_dense_tune): by
+// default the engine starts with no timing and reads the measurements already made, the
+// release's routes/tuner/dense_tune.json (per GPU class and schedule set), over the GPU class's
+// published route table (routes/), else the heuristic; the file a tuning run wrote is read only
+// while tuning is on. The engine enables it for a loaded model (enable_dense_tune); tests and
+// benches keep the heuristic. --tune-cache DIR names the file's directory.
 
 #include "core/arena.h"
 #include "core/sha256.h"
@@ -185,9 +185,13 @@ std::string problem_key(const Problem& p) {
     return k.str();
 }
 
+// set_dense_tune: the mode and the cache directory (empty: NInferno's cache directory).
+std::atomic<TuneMode> g_mode{TuneMode::Off};
+std::filesystem::path g_cache_dir; // under g_mutex
+std::string g_route_dir;           // route_table_dir() when set_dense_tune last ran; under g_mutex
+
 std::filesystem::path cache_path() {
-    if (const auto path = sys::env("NINFERNO_DENSE_TUNE_CACHE"); !path.empty()) { return path; }
-    const auto dir = sys::cache_dir();
+    const auto dir = g_cache_dir.empty() ? sys::cache_dir() : g_cache_dir;
     return dir.empty() ? dir : dir / "dense_tune.json";
 }
 
@@ -636,7 +640,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
         route_probe_state.quantized_act >= 0 || route_probe_state.tokens_as > 0) {
         return;
     }
-    const TuneMode mode = tune_mode("NINFERNO_DENSE_TUNE");
+    const TuneMode mode = g_mode.load(std::memory_order_relaxed);
     // Off (the default): the release's measurements are read, nothing is timed.
     const bool read_only = mode == TuneMode::Off;
     const Key id = key_of(problem);
@@ -767,10 +771,24 @@ std::vector<std::string> dense_tune_report() {
     return g_report;
 }
 
-void enable_dense_tune(bool on) {
-    // A misspelt mode is refused at load, not at the first projection the tuner sees.
-    if (on) { (void)tune_mode("NINFERNO_DENSE_TUNE"); }
-    g_enabled.store(on, std::memory_order_relaxed);
+void enable_dense_tune(bool on) { g_enabled.store(on, std::memory_order_relaxed); }
+
+void set_dense_tune(TuneMode mode, const std::filesystem::path& cache_dir) {
+    std::lock_guard lock(g_mutex);
+    // Another mode, file or route directory (whose tuner/dense_tune.json holds the release's
+    // measurements): nothing an earlier engine tuned or read stays, and the next problem reads the
+    // cache again (on, the file a tuning run wrote too; off, the release's measurements alone).
+    const std::string route_dir = route_table_dir();
+    if (g_cache_dir != cache_dir || g_mode.load(std::memory_order_relaxed) != mode ||
+        g_route_dir != route_dir) {
+        g_cache_dir    = cache_dir;
+        g_route_dir    = route_dir;
+        g_cache_loaded = false;
+        g_tuned.clear();
+        g_attempted.clear();
+        g_bands_pending.clear();
+    }
+    g_mode.store(mode, std::memory_order_relaxed);
 }
 
 std::map<std::string, std::string> dense_tune_sources() {
@@ -782,12 +800,12 @@ std::map<std::string, std::string> dense_tune_sources() {
             out["dense_tune.shipped"] = std::move(*shipped);
         }
     }
-    TuneMode mode = TuneMode::Off;
-    try {
-        mode = tune_mode("NINFERNO_DENSE_TUNE");
-    } catch (const std::invalid_argument&) {}
-    if (mode != TuneMode::Off) {
-        const auto path        = cache_path();
+    if (g_mode.load(std::memory_order_relaxed) != TuneMode::Off) {
+        std::filesystem::path path;
+        {
+            std::lock_guard lock(g_mutex);
+            path = cache_path();
+        }
         auto user              = path.empty() ? std::nullopt : named_file_sha256(path);
         out["dense_tune.user"] = user ? std::move(*user) : std::string("absent");
     }

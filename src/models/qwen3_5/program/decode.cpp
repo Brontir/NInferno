@@ -32,7 +32,7 @@
 namespace ninferno::models::qwen3_5 {
 namespace {
 
-// Debug poisoning (NINFERNO_DEBUG_POISON). A round's graph is captured for
+// Debug poisoning (--debug-poison). A round's graph is captured for
 // exactly B rows and must read only rows [0, B) of the transfer object copied to the device each
 // round; the rows past B hold whatever an earlier, wider round left. Under poisoning they hold the
 // poison byte instead (-1 as an index or a slot, NaN as a sampling parameter), so a kernel that

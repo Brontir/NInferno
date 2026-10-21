@@ -37,7 +37,7 @@ struct Corpus {
     [[nodiscard]] const CorpusTokens* tokens_for(const std::string& fingerprint) const;
 };
 
-// The compiled-in corpus, or the file at $NINFERNO_SPEC_CORPUS when that is set.
+// The compiled-in corpus (a tool's --corpus FILE loads another with load_corpus).
 [[nodiscard]] const Corpus& builtin_corpus();
 [[nodiscard]] Corpus load_corpus(const std::filesystem::path& path);
 [[nodiscard]] Corpus parse_corpus(const std::string& json_text);

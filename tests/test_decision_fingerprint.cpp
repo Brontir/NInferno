@@ -11,6 +11,7 @@
 #include "core/sha256.h"
 #include "ninferno/ops/moe.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "core/removed_environment.h"
 #include "runtime/engine/decision_sources.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <iterator>
 #include <optional>
 #include <regex>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -68,13 +70,10 @@ rt::DecisionInputs sample_inputs() {
     rt::DecisionInputs in;
     in.facts = rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 13020, kHost);
     in.build = rt::build_of();
-    in.options =
-        rt::options_of(ninferno::EngineOptions{}, "00112233445566778899aabbccddeeff", "sig", "");
+    ninferno::EngineOptions options;
+    options.maintainer.dense_tune = ninferno::TuneMode::On; // a maintainer option: taint
+    in.options = rt::options_of(options, "00112233445566778899aabbccddeeff", "sig", "");
     in.sources = {{"route_table", "gb202.json sha256:ab"}, {"route_table.class", "gb202"}};
-    in.env     = rt::env_of([](const char* name) -> std::optional<std::string> {
-        if (std::string(name) == "NINFERNO_DECODE_STEPS") return std::string("4");
-        return std::nullopt;
-    });
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
     in.plan =
         rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
@@ -91,12 +90,11 @@ int each_key_moves_the_fingerprint() {
     const rt::DecisionInputs base = sample_inputs();
     const auto reference          = rt::decision_fingerprint(base);
     using Member                  = rt::DecisionSection rt::DecisionInputs::*;
-    const std::array<std::pair<const char*, Member>, 8> sections{{
+    const std::array<std::pair<const char*, Member>, 7> sections{{
         {"facts", &rt::DecisionInputs::facts},
         {"build", &rt::DecisionInputs::build},
         {"options", &rt::DecisionInputs::options},
         {"sources", &rt::DecisionInputs::sources},
-        {"env", &rt::DecisionInputs::env},
         {"plan", &rt::DecisionInputs::plan},
         {"taint", &rt::DecisionInputs::taint},
         {"observed", &rt::DecisionInputs::observed},
@@ -214,6 +212,22 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.speculative.watchdog_min_rounds = 8; }},
         {"speculative.shared_trip_floor",
          [](EngineOptions& o) { o.speculative.shared_trip_floor = 1.1; }},
+        {"pacing.steps", [](EngineOptions& o) { o.pacing.steps = 4; }},
+        {"pacing.wait", [](EngineOptions& o) { o.pacing.wait = ninferno::DecodeWait::Block; }},
+        {"pacing.cuda_sync",
+         [](EngineOptions& o) { o.pacing.cuda_sync = ninferno::CudaSyncSchedule::Blocking; }},
+        {"maintainer.route_table", [](EngineOptions& o) { o.maintainer.route_table = "t.json"; }},
+        {"maintainer.route_dir", [](EngineOptions& o) { o.maintainer.route_dir = "routes"; }},
+        {"maintainer.dense_tune",
+         [](EngineOptions& o) { o.maintainer.dense_tune = ninferno::TuneMode::Retune; }},
+        {"maintainer.moe_tune",
+         [](EngineOptions& o) { o.maintainer.moe_tune = ninferno::TuneMode::On; }},
+        // maintainer.tune_cache reaches it only while a tuner is on (maintainer_options()).
+        {"maintainer.debug_prefill_cuts",
+         [](EngineOptions& o) { o.maintainer.debug_prefill_cuts = {700}; }},
+        {"maintainer.debug_poison", [](EngineOptions& o) { o.maintainer.debug_poison = 0xFF; }},
+        {"maintainer.debug_poison_skip",
+         [](EngineOptions& o) { o.maintainer.debug_poison_skip = {"kv"}; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
     // The artifact, its prefill signature and a separate drafter enter by id.
@@ -231,6 +245,16 @@ int options_reach_their_section() {
     other.speculative.decision_sources = {{"drafter_registry", "x"}};
     failures += check(rt::options_of(other, "id", "sig", "") == base,
                       "paths, the device ordinal, queue limits and sources stay out of options");
+    // A maintainer option naming a path enters as given, not by the path: its file is a source.
+    EngineOptions here;
+    EngineOptions there;
+    here.maintainer.route_table  = "/a/t.json";
+    there.maintainer.route_table = "/b/other.json";
+    here.maintainer.tune_cache   = "/a";
+    there.maintainer.tune_cache  = "/b";
+    failures +=
+        check(rt::options_of(here, "id", "sig", "") == rt::options_of(there, "id", "sig", ""),
+              "a maintainer path enters as set, not by its text");
     return failures;
 }
 
@@ -379,57 +403,62 @@ int facts_reach_their_section() {
     return failures;
 }
 
-int environment() {
+// The maintainer options are taint, by name, when they leave the release's values; the decode
+// pacing is an option and no taint. No environment variable enters at all.
+int maintainer_options() {
     int failures      = 0;
-    const auto lookup = [](std::optional<std::string> value) {
-        return rt::env_of([value](const char* name) -> std::optional<std::string> {
-            if (std::string(name) == "NINFERNO_MMQ_VERIFY") return value;
-            if (std::string(name) == "NINFERNO_QWEN_DUMP") return std::string("1"); // not listed
-            if (std::string(name) == "HOME") return std::string("/root");           // not listed
-            return std::nullopt;
-        });
+    const auto taints = [](const ninferno::EngineOptions& o) {
+        rt::DecisionInputs in = sample_inputs();
+        in.options            = rt::options_of(o, "id", "sig", "");
+        return rt::taint_of(in);
     };
-    const auto unset = lookup(std::nullopt);
-    const auto empty = lookup(std::string());
-    const auto set   = lookup(std::string("1"));
-    failures += check(unset.empty(), "unlisted variables are ignored: " +
-                                         (unset.empty() ? std::string() : unset.begin()->first));
-    failures += check(empty.size() == 1 && empty.contains("NINFERNO_MMQ_VERIFY"),
-                      "a variable set to the empty string counts");
-    failures +=
-        check(set.size() == 1 && set.at("NINFERNO_MMQ_VERIFY") != empty.at("NINFERNO_MMQ_VERIFY"),
-              "the value enters by its hash");
-    failures += check(set.at("NINFERNO_MMQ_VERIFY").starts_with("sha256:") &&
-                          set.at("NINFERNO_MMQ_VERIFY").find('1', 7) != 7,
-                      "values are hashed, not copied");
-    rt::DecisionInputs a = sample_inputs();
-    rt::DecisionInputs b = a;
-    rt::DecisionInputs c = a;
-    a.env                = unset;
-    b.env                = empty;
-    c.env                = set;
-    const auto fa        = rt::decision_fingerprint(a).value;
-    const auto fb        = rt::decision_fingerprint(b).value;
-    const auto fc        = rt::decision_fingerprint(c).value;
-    failures +=
-        check(fa != fb && fb != fc && fa != fc, "unset, empty and set are three fingerprints");
-    failures += check(rt::taint_of(b).at("env") == "NINFERNO_MMQ_VERIFY",
-                      "a decision variable set is taint");
-    // Every listed variable is one env_of reads.
-    std::size_t asked = 0;
-    (void)rt::env_of([&asked](const char*) -> std::optional<std::string> {
-        ++asked;
-        return std::nullopt;
-    });
-    failures += check(asked == rt::decision_environment_variables().size(),
-                      "env_of asks for every decision variable");
+    ninferno::EngineOptions release;
+    failures += check(!taints(release).contains("maintainer"), "the release's options are clean");
+    ninferno::EngineOptions paced;
+    paced.pacing.steps = 8;
+    paced.pacing.wait  = ninferno::DecodeWait::Block;
+    failures += check(!taints(paced).contains("maintainer"), "decode pacing is not taint");
+    ninferno::EngineOptions lab;
+    lab.maintainer.route_dir    = "routes";
+    lab.maintainer.moe_tune     = ninferno::TuneMode::On;
+    lab.maintainer.debug_poison = 1;
+    failures += check(taints(lab).at("maintainer") == "route_dir,moe_tune,debug_poison",
+                      "the maintainer options given are taint by name: " +
+                          (taints(lab).contains("maintainer") ? taints(lab).at("maintainer")
+                                                              : std::string("none")));
+    // --tune-cache is read only while a tuner is on: alone it is not taint.
+    ninferno::EngineOptions cache_only;
+    cache_only.maintainer.tune_cache = "cache";
+    failures += check(!taints(cache_only).contains("maintainer"),
+                      "--tune-cache with both tuners off is taint");
+    failures += check(rt::options_of(cache_only, "id", "sig", "") ==
+                          rt::options_of(release, "id", "sig", ""),
+                      "--tune-cache with both tuners off enters the fingerprint");
+    cache_only.maintainer.dense_tune = ninferno::TuneMode::On;
+    ninferno::EngineOptions tuner_only;
+    tuner_only.maintainer.dense_tune = ninferno::TuneMode::On;
+    failures += check(rt::options_of(cache_only, "id", "sig", "") !=
+                          rt::options_of(tuner_only, "id", "sig", ""),
+                      "--tune-cache with a tuner on does not enter the fingerprint");
+    failures += check(taints(cache_only).at("maintainer") == "dense_tune,tune_cache",
+                      "--tune-cache with a tuner on is not taint");
+    // A drafter registry file in place of the compiled-in one is taint, the compiled-in one not.
+    rt::DecisionInputs registry          = sample_inputs();
+    registry.options                     = rt::options_of(release, "id", "sig", "");
+    registry.sources["drafter_registry"] = "builtin sha256:ab";
+    failures += check(!rt::taint_of(registry).contains("maintainer"),
+                      "the compiled-in drafter registry is taint");
+    registry.sources["drafter_registry"] = "file sha256:ab";
+    failures += check(rt::taint_of(registry).contains("maintainer") &&
+                          rt::taint_of(registry).at("maintainer") == "drafter_registry",
+                      "--drafter-registry is not taint");
     return failures;
 }
 
 int taint() {
     int failures          = 0;
     rt::DecisionInputs in = sample_inputs();
-    in.env.clear();
+    in.options["maintainer.dense_tune"] = "off";
     failures += check(rt::taint_of(in).empty(), "a clean input has no taint");
     in.facts["machine.reference_clock_khz"]   = "0";
     in.sources["dense_tune.user"]             = "absent";
@@ -460,7 +489,6 @@ int machine_facts_decide() {
     const auto inputs = [](ninferno::DeviceClass d) {
         d.facts               = ninferno::machine_facts_of(d);
         rt::DecisionInputs in = sample_inputs();
-        in.env.clear();
         in.facts = rt::facts_of(d, ninferno::device_features_for(d.major, d.minor), 13020, kHost);
         in.taint = rt::taint_of(in);
         in.observed = rt::observed_of(ninferno::MemorySummary{});
@@ -568,12 +596,10 @@ int stability_and_golden() {
     pinned.build                    = {{"version", "0.1.0"}};
     pinned.options                  = {{"activations", "fast"}, {"note", "tab\there\nnewline\\"}};
     pinned.sources                  = {{"route_table", "gb202.json sha256:00"}};
-    pinned.env                      = {{"NINFERNO_DECODE_STEPS", "sha256:4b227777d4dd1fc6"}};
     pinned.plan                     = {{"max_context", "4096"}, {"kv_cache", "int8"}};
-    pinned.taint                    = {{"env", "NINFERNO_DECODE_STEPS"}};
+    pinned.taint                    = {{"maintainer", "dense_tune"}};
     const std::string expected_text = "schema\tninferno-fingerprint/1\n"
                                       "build.version\t0.1.0\n"
-                                      "env.NINFERNO_DECODE_STEPS\tsha256:4b227777d4dd1fc6\n"
                                       "facts.chip\tgb202\n"
                                       "facts.sms\t170\n"
                                       "options.activations\tfast\n"
@@ -581,7 +607,7 @@ int stability_and_golden() {
                                       "plan.kv_cache\tint8\n"
                                       "plan.max_context\t4096\n"
                                       "sources.route_table\tgb202.json sha256:00\n"
-                                      "taint.env\tNINFERNO_DECODE_STEPS\n";
+                                      "taint.maintainer\tdense_tune\n";
     const auto golden               = rt::decision_fingerprint(pinned);
     failures +=
         check(golden.canonical == expected_text, "pinned canonical text:\n" + golden.canonical);
@@ -590,7 +616,7 @@ int stability_and_golden() {
                   "nf1-" + ninferno::sha256_hex(std::string_view(expected_text)).substr(0, 16),
               "the fingerprint is the SHA-256 of the canonical text");
     failures +=
-        check(golden.value == "nf1-c705bac13185f770", "pinned fingerprint: " + golden.value);
+        check(golden.value == "nf1-4572a375e41f6c8c", "pinned fingerprint: " + golden.value);
     failures +=
         check(golden.manifest == "nm1-24db57571fa7a906", "pinned manifest: " + golden.manifest);
     return failures;
@@ -622,12 +648,46 @@ int sha256_vectors() {
     return failures;
 }
 
-// Every NINFERNO_* name quoted in src/ is classified: either it steers a decision (and enters the
-// fingerprint when set) or it is known to steer none. A new knob fails here until it is listed.
+// A removed decision variable that is still set gets one warning naming its replacement; unset
+// ones and every other variable get none.
+int removed_environment() {
+    int failures      = 0;
+    const auto is_set = [](std::set<std::string> names) {
+        return [names](const char* name) { return names.contains(name); };
+    };
+    failures += check(ninferno::removed_environment_warnings(is_set({})).empty(),
+                      "removed variables: a warning with none set");
+    failures += check(ninferno::removed_environment_warnings(is_set({"NINFERNO_API_KEY"})).empty(),
+                      "removed variables: a warning for a variable still read");
+    const auto warnings = ninferno::removed_environment_warnings(
+        is_set({"NINFERNO_DECODE_STEPS", "NINFERNO_MOE_TUNE_CACHE", "NINFERNO_MMQ_VERIFY"}));
+    failures +=
+        check(warnings.size() == 3 && warnings[0].starts_with("NINFERNO_DECODE_STEPS is set") &&
+                  warnings[0].ends_with("use --decode-steps instead") &&
+                  warnings[1].ends_with("use --tune-cache instead") &&
+                  warnings[2].ends_with("removed with no replacement"),
+              "removed variables: the warnings do not name their replacements");
+    std::set<std::string> names;
+    for (const auto& removed : ninferno::kRemovedEnvironmentVariables) {
+        failures +=
+            check(names.emplace(removed.name).second && removed.name.starts_with("NINFERNO_"),
+                  std::string(removed.name) + " is listed once");
+    }
+    for (const auto name : rt::non_decision_environment_variables()) {
+        failures += check(!names.contains(std::string(name)),
+                          std::string(name) + " is both read and removed");
+    }
+    return failures;
+}
+
+// Every NINFERNO_* name quoted in src/ is known to steer no decision (a decision is an option). A
+// new variable fails here until it is listed, and one that would steer a decision must be an
+// option instead.
 int environment_inventory() {
     int failures                     = 0;
     const std::filesystem::path root = std::filesystem::path(NINFERNO_SOURCE_DIR) / "src";
     std::set<std::string> found;
+    std::map<std::string, std::set<std::string>> quoted_in; // name -> files, relative to src/
     const std::regex quoted("\"(NINFERNO_[A-Z0-9_]+)\"");
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
         if (!entry.is_regular_file()) { continue; }
@@ -638,12 +698,25 @@ int environment_inventory() {
                                std::istreambuf_iterator<char>());
         for (std::sregex_iterator it(text.begin(), text.end(), quoted), end; it != end; ++it) {
             found.insert((*it)[1].str());
+            quoted_in[(*it)[1].str()].insert(
+                std::filesystem::relative(entry.path(), root).generic_string());
         }
     }
     std::set<std::string> known;
-    for (const auto name : rt::decision_environment_variables()) { known.emplace(name); }
     for (const auto name : rt::non_decision_environment_variables()) {
         failures += check(known.emplace(name).second, std::string(name) + " is on one list only");
+    }
+    // The removed decision variables are quoted only to warn that they change nothing
+    // (core/removed_environment.h).
+    for (const auto& removed : ninferno::kRemovedEnvironmentVariables) {
+        failures += check(known.emplace(removed.name).second,
+                          std::string(removed.name) + " is on one list only");
+        // Quoted nowhere else: a removed name read anywhere would steer something again.
+        const auto files = quoted_in.find(std::string(removed.name));
+        failures +=
+            check(files != quoted_in.end() &&
+                      files->second == std::set<std::string>{"core/removed_environment.h"},
+                  std::string(removed.name) + " is quoted outside core/removed_environment.h");
     }
     for (const auto& name : found) {
         failures += check(known.contains(name), name + " is read in src/ but is on neither list "
@@ -656,25 +729,9 @@ int environment_inventory() {
         failures +=
             check(found.contains(name) || rows, name + " is listed but no longer read in src/");
     }
-    failures += check(found.size() > 20,
+    failures += check(found.size() > 15,
                       "the scan found the variables (" + std::to_string(found.size()) + ")");
     return failures;
-}
-
-void set_env(const char* name, const std::string& value) {
-#ifdef _WIN32
-    (void)_putenv_s(name, value.c_str());
-#else
-    (void)setenv(name, value.c_str(), 1);
-#endif
-}
-
-void unset_env(const char* name) {
-#ifdef _WIN32
-    (void)_putenv_s(name, "");
-#else
-    (void)unsetenv(name);
-#endif
 }
 
 void write_file(const std::filesystem::path& path, std::string_view bytes) {
@@ -713,12 +770,11 @@ int file_sources() {
     failures += check(rt::context_cost_presets_source(dir / "missing.json") == "unreadable",
                       "presets: a missing file is unreadable");
 
-    // The MoE tuner's cache, read only while NINFERNO_MOE_TUNE times.
+    // The MoE tuner's cache, read only while --moe-tune times.
     const auto cache = dir / "moe_tune.json";
-    set_env("NINFERNO_MOE_TUNE_CACHE", cache.string());
-    unset_env("NINFERNO_MOE_TUNE");
+    ninferno::ops::set_moe_tune(ninferno::TuneMode::Off, dir);
     failures += check(ninferno::ops::moe_tune_sources().empty(), "moe tune: off reads no file");
-    set_env("NINFERNO_MOE_TUNE", "on");
+    ninferno::ops::set_moe_tune(ninferno::TuneMode::On, dir);
     failures += check(ninferno::ops::moe_tune_sources().at("moe_tune.user") == "absent",
                       "moe tune: a cache not written yet is absent");
     write_file(cache, R"({"layers":{"a":1}})");
@@ -734,8 +790,7 @@ int file_sources() {
     tuned.sources["moe_tune.user"] = tuned_a;
     failures += check(rt::taint_of(tuned).at("user_tune_cache") == "moe",
                       "moe tune: the user's cache is taint");
-    unset_env("NINFERNO_MOE_TUNE");
-    unset_env("NINFERNO_MOE_TUNE_CACHE");
+    ninferno::ops::set_moe_tune(ninferno::TuneMode::Off, {});
 
     // A drafter under a non-ASCII name: named by its artifact id, "unreadable" when it is none,
     // never an exception (path::string() throws on Windows outside the ANSI code page).
@@ -768,10 +823,11 @@ int main() {
     failures += plan_reaches_its_section();
     failures += facts_reach_their_section();
     failures += machine_facts_decide();
-    failures += environment();
+    failures += maintainer_options();
     failures += taint();
     failures += sha256_vectors();
     failures += environment_inventory();
+    failures += removed_environment();
     failures += file_sources();
     std::cout << (failures == 0 ? "OK" : "FAIL") << " decision_fingerprint (" << failures
               << " failures)\n";

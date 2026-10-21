@@ -53,12 +53,7 @@ Corpus load_corpus(const std::filesystem::path& path) {
 }
 
 const Corpus& builtin_corpus() {
-    static const Corpus corpus = [] {
-        if (const char* path = std::getenv("NINFERNO_SPEC_CORPUS"); path && *path) {
-            return load_corpus(path);
-        }
-        return parse_corpus(std::string(embedded::kSpecCorpusJson));
-    }();
+    static const Corpus corpus = parse_corpus(std::string(embedded::kSpecCorpusJson));
     return corpus;
 }
 

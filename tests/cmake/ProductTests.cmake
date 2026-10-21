@@ -104,3 +104,7 @@ target_compile_definitions(ninferno_update_check_test PRIVATE NINFERNO_SOURCE_DI
 add_test(NAME ninferno_signed_install_test
   COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/signed_install_test.sh ${PROJECT_SOURCE_DIR})
 set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77)
+
+ninferno_add_test(ninferno_tool_maintainer_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"
+  LIBRARIES ninferno_ops ninferno_core)

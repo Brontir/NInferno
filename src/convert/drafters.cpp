@@ -718,9 +718,6 @@ void check_drafter(const DrafterTarget& target, const Json& config,
 
 std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path& repository) {
     if (name.empty()) { return std::nullopt; }
-    if (const char* dir = std::getenv("NINFERNO_RANKING_DIR"); dir && *dir) {
-        if (fs::exists(fs::path(dir) / name)) { return fs::path(dir) / name; }
-    }
     // The given source tree (the working directory for ninferno-convert), then the rankings
     // installed beside this binary (<exe dir>/../share/ninferno/rankings, as the route tables),
     // then the tree it was built from: the rankings the registry names ship in tools/spec/rankings.
@@ -907,7 +904,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                                        ranking->string());
                 } else {
                     d.checks.push_back("note ranking " + d.decl.ranking +
-                                       " not found (tools/spec/rankings, share/ninferno/rankings, $NINFERNO_RANKING_DIR): "
+                                       " not found (tools/spec/rankings, share/ninferno/rankings): "
                                        "full drafter head");
                 }
             }

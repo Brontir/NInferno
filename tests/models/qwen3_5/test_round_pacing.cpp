@@ -1,8 +1,8 @@
-// Ordinary decode round pacing: the steps of a round are a pure function of NINFERNO_DECODE_STEPS
-// and the allowed steps, whatever the host's timings (one step by default); a quiet host spins on
-// a round's end, and a host that lags behind the GPU waits by spinning, or by blocking where its
-// probes found that faster, until the lag stops; NINFERNO_DECODE_STEPS and NINFERNO_DECODE_WAIT
-// fix the policy or are refused.
+// Ordinary decode round pacing: the steps of a round are a pure function of --decode-steps, the
+// CPU quota fact and the allowed steps, whatever the host's timings (one step by default); a quiet
+// host spins on a round's end, and a host that lags behind the GPU waits by spinning, or by
+// blocking where its probes found that faster, until the lag stops; --decode-steps and
+// --decode-wait fix the policy or are refused.
 
 #include "models/qwen3_5/program/round_pacing.h"
 
@@ -17,6 +17,7 @@ namespace {
 
 using ninferno::models::qwen3_5::detail::RoundPacing;
 using Clock = RoundPacing::Clock;
+using Wait  = RoundPacing::Wait;
 
 int check(bool condition, const char* message) {
     if (condition) { return 0; }
@@ -29,11 +30,19 @@ Clock::time_point at(double seconds) {
                                      std::chrono::duration<double>(1000.0 + seconds));
 }
 
-bool refused(const char* steps, const char* wait) {
+bool refused(auto&& operation) {
     try {
-        (void)RoundPacing(steps, wait, 32, 32);
+        operation();
     } catch (const std::invalid_argument&) { return true; }
     return false;
+}
+
+bool steps_refused(const char* text) {
+    return refused([&] { (void)ninferno::parse_decode_steps(text); });
+}
+
+bool wait_refused(const char* text) {
+    return refused([&] { (void)ninferno::parse_decode_wait(text); });
 }
 
 } // namespace
@@ -44,7 +53,7 @@ int main() {
 
     {
         // A quiet host: rounds end within microseconds of their device work.
-        RoundPacing pacing(nullptr, nullptr, 32, 32);
+        RoundPacing pacing(0, Wait::Auto, 32, 32);
         double now = 0.0;
         for (int round = 0; round < 500; ++round) {
             failures += check(pacing.steps() == 1, "a quiet host runs more than one step");
@@ -64,7 +73,7 @@ int main() {
     {
         // A throttled host: the process stops for tens of milliseconds in every 100 ms.
         // The stall changes only the wait, never the steps: a timing may not choose a batch.
-        RoundPacing pacing(nullptr, "auto", 32, 32);
+        RoundPacing pacing(0, Wait::Auto, 32, 32);
         double now = 0.0;
         pacing.observe(1, step + 0.040, step, at(now += step + 0.040));
         failures += check(!pacing.stalling(at(now)), "a single lag marked a stall");
@@ -82,11 +91,11 @@ int main() {
     }
 
     {
-        // NINFERNO_DECODE_WAIT=block blocks on a quiet host too.
-        RoundPacing pacing(nullptr, "block", 32, 32);
+        // --decode-wait block blocks on a quiet host too.
+        RoundPacing pacing(0, Wait::Block, 32, 32);
         pacing.observe(1, step, step, at(0.0));
         failures += check(pacing.block(at(0.0)) && pacing.steps() == 1,
-                          "NINFERNO_DECODE_WAIT=block does not block alone");
+                          "--decode-wait block does not block alone");
     }
 
     {
@@ -95,7 +104,7 @@ int main() {
         for (const bool spin_faster : {true, false}) {
             // One step of a model that cannot run ahead; the rounds each wait kept after the first
             // probes.
-            RoundPacing pacing(nullptr, nullptr, 32, 1);
+            RoundPacing pacing(0, Wait::Auto, 32, 1);
             constexpr double device = 0.005;
             double now              = 0.0;
             int blocked             = 0;
@@ -126,7 +135,7 @@ int main() {
         // The waits of the rounds between 3 and 5 s, and after 11 s: 'b' blocked only, 's' spun
         // only, 'm' both.
         const auto waits = [&](double block_busy, double later_block_busy) {
-            RoundPacing pacing(nullptr, nullptr, 32, 1);
+            RoundPacing pacing(0, Wait::Auto, 32, 1);
             constexpr double device = 0.005;
             double now              = 0.0;
             std::array<std::array<int, 2>, 2> counts{};
@@ -155,9 +164,9 @@ int main() {
     {
         // The steps are a pure function of the setting and the allowed steps: no sequence of
         // rounds (quiet, lagging, gapped, slow) moves them.
-        const auto steps_after = [&](const char* setting, std::uint32_t allowed, double lag,
+        const auto steps_after = [&](std::uint32_t setting, std::uint32_t allowed, double lag,
                                      double device) {
-            RoundPacing pacing(setting, nullptr, 32, allowed);
+            RoundPacing pacing(setting, Wait::Auto, 32, allowed);
             std::uint32_t seen = pacing.steps();
             bool constant      = true;
             double now         = 0.0;
@@ -171,12 +180,12 @@ int main() {
         };
         for (const double lag : {0.0, 0.00005, 0.035, 0.5}) {
             for (const double device : {0.001, step, 0.2}) {
-                failures += check(steps_after(nullptr, 32, lag, device) == 1 &&
-                                      steps_after(nullptr, 1, lag, device) == 1 &&
-                                      steps_after("8", 32, lag, device) == 8 &&
-                                      steps_after("8", 4, lag, device) == 4 &&
-                                      steps_after("32", 32, lag, device) == 32 &&
-                                      steps_after("32", 1, lag, device) == 1,
+                failures += check(steps_after(0, 32, lag, device) == 1 &&
+                                      steps_after(0, 1, lag, device) == 1 &&
+                                      steps_after(8, 32, lag, device) == 8 &&
+                                      steps_after(8, 4, lag, device) == 4 &&
+                                      steps_after(32, 32, lag, device) == 32 &&
+                                      steps_after(32, 1, lag, device) == 1,
                                   "a round's steps depended on the host's timings");
             }
         }
@@ -187,7 +196,7 @@ int main() {
         // count, and a probe phase ends after kProbeLimitSeconds whatever its rounds. Spinning here
         // takes 0.5 s and 1.5 s by turns, blocking 0.9 s: blocking is faster, which only the long
         // spinning rounds show, and every round submitted after 6.5 s must block.
-        RoundPacing pacing("13", nullptr, 32, 32);
+        RoundPacing pacing(13, Wait::Auto, 32, 32);
         constexpr double device = 13 * step;
         double now              = 0.0;
         int spun_rounds         = 0;
@@ -209,7 +218,7 @@ int main() {
         // before a round counts for neither wait: here every fifth blocked round follows 100 ms
         // of it (a request boundary that fell in the blocking probe), which would make blocking
         // look slower than spinning.
-        RoundPacing pacing(nullptr, nullptr, 32, 1);
+        RoundPacing pacing(0, Wait::Auto, 32, 1);
         constexpr double device = 0.005;
         double now              = 0.0;
         int round               = 0;
@@ -227,7 +236,7 @@ int main() {
     {
         // A host that blocks well stops lagging, and its stall ends; when the lag returns, the
         // stall resumes the kept wait without probing again.
-        RoundPacing pacing(nullptr, nullptr, 32, 1);
+        RoundPacing pacing(0, Wait::Auto, 32, 1);
         constexpr double device = 0.005;
         double now              = 0.0;
         const auto lagging      = [&](bool blocked_better) {
@@ -252,38 +261,38 @@ int main() {
     }
 
     {
-        RoundPacing fixed("8", nullptr, 32, 32);
-        failures += check(fixed.steps() == 8, "NINFERNO_DECODE_STEPS=8 is not honoured");
-        RoundPacing capped("8", nullptr, 32, 4);
+        RoundPacing fixed(8, Wait::Auto, 32, 32);
+        failures += check(fixed.steps() == 8, "--decode-steps 8 is not honoured");
+        RoundPacing capped(8, Wait::Auto, 32, 4);
         failures += check(capped.steps() == 4, "fixed steps exceed the allowed steps");
-        RoundPacing off("1", "spin", 32, 32);
+        RoundPacing off(1, Wait::Spin, 32, 32);
         off.observe(1, 0.1, 0.02, at(0.0));
         off.observe(1, 0.1, 0.02, at(0.1));
-        failures += check(off.steps() == 1, "NINFERNO_DECODE_STEPS=1 runs ahead");
-        failures += check(!off.block(at(0.1)), "NINFERNO_DECODE_WAIT=spin blocks");
-        failures += check(refused("", nullptr) && refused("0", nullptr) && refused("33", nullptr) &&
-                              refused("4x", nullptr) && refused("-1", nullptr) &&
-                              refused("spin", nullptr) && refused(nullptr, "") &&
-                              refused(nullptr, "sleep") && refused(nullptr, "blocking"),
-                          "an invalid setting was accepted");
+        failures += check(off.steps() == 1, "--decode-steps 1 runs ahead");
+        failures += check(!off.block(at(0.1)), "--decode-wait spin blocks");
+        failures +=
+            check(steps_refused("") && steps_refused("0") && steps_refused("33") &&
+                      steps_refused("4x") && steps_refused("-1") && steps_refused("spin") &&
+                      wait_refused("") && wait_refused("sleep") && wait_refused("blocking") &&
+                      refused([] { (void)RoundPacing(33, Wait::Auto, 32, 32); }),
+                  "an invalid setting was accepted");
     }
 
     {
         // The CPU quota fact sets the default: kQuotaSteps where the engine can run ahead, else
-        // one step; NINFERNO_DECODE_STEPS=N replaces it, and "auto" warns and keeps it.
-        failures += check(RoundPacing(nullptr, nullptr, 32, 32, true).steps() == 16 &&
-                              RoundPacing(nullptr, nullptr, 32, 4, true).steps() == 4 &&
-                              RoundPacing(nullptr, nullptr, 32, 1, true).steps() == 1 &&
-                              RoundPacing(nullptr, nullptr, 32, 32, false).steps() == 1 &&
-                              RoundPacing("8", nullptr, 32, 32, true).steps() == 8 &&
-                              RoundPacing("1", nullptr, 32, 32, true).steps() == 1,
+        // one step; --decode-steps N replaces it.
+        failures += check(RoundPacing(0, Wait::Auto, 32, 32, true).steps() == 16 &&
+                              RoundPacing(0, Wait::Auto, 32, 4, true).steps() == 4 &&
+                              RoundPacing(0, Wait::Auto, 32, 1, true).steps() == 1 &&
+                              RoundPacing(0, Wait::Auto, 32, 32, false).steps() == 1 &&
+                              RoundPacing(8, Wait::Auto, 32, 32, true).steps() == 8 &&
+                              RoundPacing(1, Wait::Auto, 32, 32, true).steps() == 1,
                           "the CPU quota default is not the declared step count");
-        const RoundPacing automatic("auto", nullptr, 32, 32, true);
-        const RoundPacing quiet("auto", nullptr, 32, 32, false);
-        failures +=
-            check(automatic.auto_ignored() && automatic.steps() == 16 && !automatic.fixed_steps() &&
-                      quiet.steps() == 1 && !RoundPacing(nullptr, nullptr, 32, 32).auto_ignored(),
-                  "NINFERNO_DECODE_STEPS=auto did not fall back to the default");
+        // --decode-steps auto is the default: the quota fact's step count, not a fixed one.
+        const RoundPacing automatic(ninferno::parse_decode_steps("auto"), Wait::Auto, 32, 32, true);
+        const RoundPacing quiet(ninferno::parse_decode_steps("auto"), Wait::Auto, 32, 32, false);
+        failures += check(automatic.steps() == 16 && !automatic.fixed_steps() && quiet.steps() == 1,
+                          "--decode-steps auto is not the CPU quota default");
     }
 
     std::cout << (failures ? "FAIL" : "OK") << " round_pacing\n";

@@ -29,6 +29,7 @@
 #include "product/speculation/speculation.h"
 #include "product/speculative_options.h"
 #include "product/numeric_options.h"
+#include "product/route_labels.h"
 
 #include <cuda_runtime.h>
 
@@ -107,22 +108,56 @@ std::string corpus_digest(const spec::Corpus& corpus) {
     return ninferno::sha256_hex(bytes);
 }
 
-// The artifact's id, or its path's text when it has none readable (a drafter directory).
-// How the tune's engines wait for their decode rounds. Each round of a stalling host chooses
-// between spinning and blocking by a probe (NINFERNO_DECODE_WAIT=auto, round_pacing.h), so a busy
-// host would change what a tune measures and how; it waits as a quiet host does (spin) unless
-// NINFERNO_DECODE_WAIT is set. Called before the first engine is built.
-std::string pin_decode_wait() {
-    const char* set = std::getenv("NINFERNO_DECODE_WAIT");
-    if (set != nullptr && *set != '\0') { return set; }
-#ifdef _WIN32
-    _putenv_s("NINFERNO_DECODE_WAIT", "spin");
-#else
-    ::setenv("NINFERNO_DECODE_WAIT", "spin", 1);
-#endif
-    return "spin";
+// What the tune's engines run under besides the cell's own configuration.
+// - How they wait for their decode rounds (--decode-wait, DecodePacingOptions::wait). Each round
+//   of a stalling host chooses between spinning and blocking by a probe (auto, round_pacing.h),
+//   so a busy host would change what a tune measures and how; the tune waits as a quiet host does
+//   (spin) unless --decode-wait says otherwise.
+// - --cuda-sync, and the route tables under test (--route-table FILE, --route-dir DIR): a lab
+//   tunes speculation against the tables it is about to publish.
+struct TuneEngine {
+    DecodePacingOptions pacing{.wait = DecodeWait::Spin};
+    MaintainerOptions maintainer;
+
+    void apply(EngineOptions& options) const {
+        options.pacing     = pacing;
+        options.maintainer = maintainer;
+    }
+};
+
+TuneEngine tune_engine(const std::map<std::string, std::string>& flags) {
+    TuneEngine engine;
+    if (const auto it = flags.find("decode-wait"); it != flags.end()) {
+        engine.pacing.wait = parse_decode_wait(it->second);
+    }
+    if (const auto it = flags.find("cuda-sync"); it != flags.end()) {
+        engine.pacing.cuda_sync = parse_cuda_sync_schedule(it->second);
+    }
+    if (const auto it = flags.find("route-table"); it != flags.end()) {
+        engine.maintainer.route_table = it->second;
+    }
+    if (const auto it = flags.find("route-dir"); it != flags.end()) {
+        engine.maintainer.route_dir = it->second;
+    }
+    return engine;
 }
 
+// The tune engine's settings beside the wait, named only when given (an --out measured before
+// they existed still resumes): an explicit route table and a route directory by their content
+// (product/route_labels.h), so a resume refuses cells measured with other tables.
+void name_tune_engine(nlohmann::json& settings, const TuneEngine& engine) {
+    if (engine.pacing.cuda_sync != CudaSyncSchedule::Spin) {
+        settings["cuda_sync"] = cuda_sync_schedule_name(engine.pacing.cuda_sync);
+    }
+    if (!engine.maintainer.route_table.empty()) {
+        settings["route_table"] = product::route_table_label(engine.maintainer.route_table);
+    }
+    if (!engine.maintainer.route_dir.empty()) {
+        settings["route_dir"] = product::route_dir_label(engine.maintainer.route_dir);
+    }
+}
+
+// The artifact's id, or its path's text when it has none readable (a drafter directory).
 std::string artifact_id_or_path(const std::filesystem::path& artifact) {
     try {
         return spec::artifact_id_hex(artifact);
@@ -170,7 +205,8 @@ std::string artifact_id_or_path(const std::filesystem::path& artifact) {
 // server runs the width the bounds were measured at; without it every launch drafts at the
 // Engine's default and the table names none.
 int run_spec_tune_load(const std::string& artifact, const std::map<std::string, std::string>& flags,
-                       const std::string& decode_wait) {
+                       const TuneEngine& engine) {
+    const std::string decode_wait = decode_wait_name(engine.pacing.wait);
     const auto text = [&](const std::string& key, std::string fallback) {
         const auto it = flags.find(key);
         return it == flags.end() ? fallback : it->second;
@@ -294,6 +330,7 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
     if (width != spec::DraftWidth::Default) {
         settings["draft_width"] = std::string(spec::draft_width_name(width));
     }
+    name_tune_engine(settings, engine);
 
     // The cells measured so far (--resume: those of an earlier --out measured with the same
     // settings), and the ones no engine holds. --out is rewritten after every cell, so a tune
@@ -337,6 +374,7 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
 
         EngineOptions options;
         options.artifact_path                        = artifact;
+        engine.apply(options);
         options.device                               = device;
         options.max_context                          = max_context;
         options.max_concurrency                      = widest;
@@ -688,11 +726,12 @@ int run_spec_tune(int argc, char** argv) {
         flags[key.substr(2)] = argv[++i];
     }
     static const std::set<std::string, std::less<>> kKnown = {
-        "applies-to",    "budget-seconds", "configs",     "corpus",   "device",
-        "draft-width",   "gpu-class",      "kv-dtype",    "load",     "load-depths",
-        "max-context",   "max-tokens",     "measured-on", "min-gain", "out",
-        "prefill-chunk", "profile",        "publish",     "repeat",   "requires", "resume",
-        "temperature",   "thinking",       "tolerance",   "top-p"};
+        "applies-to",  "budget-seconds", "configs",     "corpus",           "cuda-sync",
+        "decode-wait", "device",         "draft-width", "drafter-registry", "gpu-class",
+        "kv-dtype",    "load",           "load-depths", "max-context",      "max-tokens",
+        "measured-on", "min-gain",       "out",         "prefill-chunk",    "profile",
+        "publish",     "repeat",         "requires",    "resume",           "route-dir",
+        "route-table", "temperature",    "thinking",    "tolerance",        "top-p"};
     for (const auto& [key, value] : flags) {
         if (!kKnown.contains(key)) {
             throw std::invalid_argument("spec-tune: unknown flag --" + key);
@@ -702,8 +741,13 @@ int run_spec_tune(int argc, char** argv) {
         const auto it = flags.find(key);
         return it == flags.end() ? fallback : it->second;
     };
-    const std::string decode_wait = pin_decode_wait();
-    if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, decode_wait); }
+    // --drafter-registry: a registry file in place of the compiled-in one, as ninferno takes it.
+    if (const auto it = flags.find("drafter-registry"); it != flags.end()) {
+        spec::Registry::use_file(it->second);
+    }
+    const TuneEngine engine       = tune_engine(flags);
+    const std::string decode_wait = decode_wait_name(engine.pacing.wait);
+    if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, engine); }
     const auto started = std::chrono::steady_clock::now();
     const int device   = parse_nonnegative_int(text("device", "0").c_str(), "device");
     std::optional<spec::Corpus> own;
@@ -782,6 +826,17 @@ int run_spec_tune(int argc, char** argv) {
                   text("prefill-chunk", "1024").c_str(), text("kv-dtype", "bf16").c_str(),
                   decode_wait.c_str());
     profile.settings = settings;
+    if (engine.pacing.cuda_sync != CudaSyncSchedule::Spin) {
+        profile.settings +=
+            std::string(", CUDA sync ") + cuda_sync_schedule_name(engine.pacing.cuda_sync);
+    }
+    if (!engine.maintainer.route_table.empty()) {
+        profile.settings +=
+            ", route table " + product::route_table_label(engine.maintainer.route_table);
+    }
+    if (!engine.maintainer.route_dir.empty()) {
+        profile.settings += ", route dir " + product::route_dir_label(engine.maintainer.route_dir);
+    }
 
     std::map<std::string, std::vector<TokenId>> reference;
     for (const auto& config : configs) {
@@ -791,6 +846,7 @@ int run_spec_tune(int argc, char** argv) {
         }
         EngineOptions options;
         options.artifact_path  = artifact;
+        engine.apply(options);
         options.device         = device;
         options.max_context    = max_context;
         options.kv_capacity    = KvCapacityPolicy::explicit_capacity(max_context);
@@ -905,8 +961,8 @@ int run_spec_reselect(int argc, char** argv) {
         throw std::invalid_argument(
             "usage: ninferno spec-reselect <profile.json> [--key value ...]");
     }
-    const std::set<std::string> known = {"publish", "gpu-class", "gpu", "applies-to", "measured-on",
-                                         "engine", "out"};
+    const std::set<std::string> known = {"publish",     "gpu-class", "gpu", "applies-to",
+                                         "measured-on", "engine",    "out", "drafter-registry"};
     std::map<std::string, std::string> flags;
     for (int i = 3; i < argc; ++i) {
         std::string key = argv[i];
@@ -922,6 +978,9 @@ int run_spec_reselect(int argc, char** argv) {
         if (!flags.contains(needed)) {
             throw std::invalid_argument(std::string("spec-reselect: --") + needed + " is needed");
         }
+    }
+    if (const auto it = flags.find("drafter-registry"); it != flags.end()) {
+        spec::Registry::use_file(it->second);
     }
     std::string error;
     std::optional<spec::Profile> profile = spec::read_profile(argv[2], &error);

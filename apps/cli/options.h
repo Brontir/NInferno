@@ -56,6 +56,10 @@ struct Options {
     // Omitted fields are resolved from the loaded model and rendered prompt mode by Engine.
     SamplingOverrides sampling;
     bool greedy                 = false;
+    DecodePacingOptions pacing;   // --decode-steps, --decode-wait, --cuda-sync
+    MaintainerOptions maintainer; // --route-table ... --debug-poison-skip
+    // --drafter-registry FILE (spec::Registry::use_file, before the model's profile is read).
+    std::filesystem::path drafter_registry;
     product::LogLevel log_level = product::LogLevel::Info;
 };
 

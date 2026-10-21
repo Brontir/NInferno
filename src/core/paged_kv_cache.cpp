@@ -226,7 +226,7 @@ DeviceKVPagePool::DeviceKVPagePool(DeviceSpan backing, const DeviceKVPagePoolLay
         }
         planes_.push_back(plane);
     }
-    // Debug poisoning (NINFERNO_DEBUG_POISON): every page of every plane,
+    // Debug poisoning (--debug-poison): every page of every plane,
     // values and scales alike, starts as the poison byte (0xFF: NaN in BF16/FP16/FP8, -1 in int8),
     // so a kernel that reads a slot no request has written -- past a sequence's length inside its
     // last page, or a page it was never given -- produces NaN instead of plausible zeros.

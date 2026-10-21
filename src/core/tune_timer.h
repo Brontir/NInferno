@@ -10,6 +10,7 @@
 // buffer, the times read a warm L2: the ranking mostly holds.
 
 #include "core/arena.h"
+#include "ninferno/option_enums.h"
 
 #include <cuda_runtime.h>
 
@@ -21,21 +22,6 @@
 #include <vector>
 
 namespace ninferno {
-
-// What a tuner's variable (NINFERNO_DENSE_TUNE, NINFERNO_MOE_TUNE) asks: unset, empty or "off"
-// reads the stored choices and times nothing; "on" times what they do not cover; "retune" times
-// everything again. Any other value is refused rather than read as off.
-enum class TuneMode { Off, On, Retune };
-
-[[nodiscard]] inline TuneMode tune_mode(const char* variable) {
-    const char* value           = std::getenv(variable);
-    const std::string_view mode = value != nullptr ? value : "";
-    if (mode.empty() || mode == "off") { return TuneMode::Off; }
-    if (mode == "on") { return TuneMode::On; }
-    if (mode == "retune") { return TuneMode::Retune; }
-    throw std::invalid_argument(std::string(variable) + " must be off, on or retune, not '" +
-                                std::string(mode) + "'");
-}
 
 // A tuner summary's time: microseconds with one decimal.
 [[nodiscard]] inline std::string format_us(double us) {

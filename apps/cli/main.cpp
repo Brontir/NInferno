@@ -1,3 +1,4 @@
+#include "core/removed_environment.h"
 #include "options.h"
 #include "spec_tune.h"
 #include "core/command_line.h"
@@ -7,6 +8,7 @@
 #include "product/prompt_input/prompt_input.h"
 #include "product/speculation/speculation.h"
 #include "product/speculative_options.h"
+#include "spec/registry.h"
 
 #include "ninferno/engine.h"
 
@@ -227,6 +229,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc >= 2 && std::string_view(argv[1]) == "spec-tune") {
+        ninferno::warn_removed_environment("ninferno spec-tune");
         try {
             return ninferno::cli::run_spec_tune(argc, argv);
         } catch (const std::exception& error) {
@@ -235,6 +238,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc >= 2 && std::string_view(argv[1]) == "spec-reselect") {
+        ninferno::warn_removed_environment("ninferno spec-reselect");
         try {
             return ninferno::cli::run_spec_reselect(argc, argv);
         } catch (const std::exception& error) {
@@ -254,6 +258,10 @@ int main(int argc, char** argv) {
         std::cout << ninferno::cli::usage_text(argv[0]);
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno");
+
+    if (!cli.drafter_registry.empty()) { ninferno::spec::Registry::use_file(cli.drafter_registry); }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno",
@@ -321,6 +329,8 @@ int main(int argc, char** argv) {
         }
         engine_options.enable_vision      = cli.enable_vision;
         engine_options.use_cuda_graph     = cli.use_cuda_graph;
+        engine_options.pacing             = cli.pacing;
+        engine_options.maintainer         = cli.maintainer;
         // One CLI invocation owns exactly one request, so retained cross-request context has no
         // consumer and must not reserve an extra Device StateImage or run terminal capture.
         engine_options.context_cache.disable();

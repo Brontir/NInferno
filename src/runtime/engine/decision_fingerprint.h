@@ -4,22 +4,21 @@
 // of every input the engine's decisions read, so that two runs with the same fingerprint are known
 // to have been asked the same thing on the same kind of machine.
 //
-// The inputs are seven sections of key -> value text:
+// The inputs are six sections of key -> value text:
 //   facts    the device's facts (DeviceClass, minus its name and ordinal; of its clocks the
 //            machine facts the decisions read, and the driver's only where they fed a fact), the
 //            build's feature row and the driver version;
 //   build    the release, its commit, the architecture it compiled for, PTX, NVFP4, the CUDA
 //            runtime it was built against;
 //   options  the options as the caller asked for them (before normalize_engine_options), the
-//            artifact's id and its prefill signature;
+//            decode pacing and the maintainer options among them, the artifact's id and its
+//            prefill signature;
 //   sources  the data files decisions were read from, by content (route table and its lenders,
 //            dense- and MoE-tune files, context-cost presets, speculation profile, drafter
 //            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
-//   env      every decision environment variable that is set (set to "" counts), by a hash of
-//            its value;
 //   plan     what startup resolved without reading the free memory: KV and state storage,
-//            speculative graph windows, route breakpoints and table;
-//   taint    the pillar violations present (an environment knob, the user's tune cache, floor
+//            speculative graph windows, route breakpoints and table, decode steps per round;
+//   taint    the pillar violations present (a maintainer option, the user's tune cache, floor
 //            calibration, no roofline, borrowed or foreign route data, a local spec-tune, a
 //            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
@@ -64,7 +63,6 @@ struct DecisionInputs {
     DecisionSection build;
     DecisionSection options;
     DecisionSection sources;
-    DecisionSection env;
     DecisionSection plan;
     DecisionSection taint;
     DecisionSection observed; // in the manifest, not the fingerprint
@@ -109,7 +107,8 @@ struct HostFacts {
 // (hex), its prefill signature (LoadSummary::prefill_signature) and a separate drafter's artifact
 // id (empty: none). Paths, the device ordinal, queue limits, media budgets, observers and
 // SpeculativeOptions::decision_sources do not enter (the drafter enters by its id, the sources
-// in their own section).
+// in their own section): a maintainer option naming a file or directory (--route-table,
+// --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content in sources.
 [[nodiscard]] DecisionSection options_of(const EngineOptions& requested,
                                          std::string_view artifact_id,
                                          std::string_view prefill_signature,
@@ -133,21 +132,19 @@ struct HostFacts {
 // them).
 [[nodiscard]] DecisionSection observed_of(const DeviceClass& device);
 
-// The environment variables that steer a decision (a tuner, a route table, a decode schedule,
-// a debug mode), and those the inventory test knows to steer none.
-[[nodiscard]] std::span<const std::string_view> decision_environment_variables();
+// The environment variables the products read. None steers a decision (an option does:
+// docs/maintainer/deterministic-decisions.md); the inventory test fails on a variable read in
+// src/ that is not on this list.
 [[nodiscard]] std::span<const std::string_view> non_decision_environment_variables();
 
-// One entry per decision variable `lookup` finds set (nullopt: unset), keyed by its name, valued
-// "sha256:" + 16 hex digits of its value. Any other variable is ignored.
-[[nodiscard]] DecisionSection
-env_of(const std::function<std::optional<std::string>(const char*)>& lookup);
-
-// The taint of the other sections: "env" (the decision variables set), "user_tune_cache" (which
-// tuners: "dense", "moe"), "clocks" (no roofline: a machine clock or bus width
-// of 0), "borrowed_routes" (route entries lent by another chip's table), "foreign_route_table" (a
-// table keyed by a class not in the device's own chain), "local_spec_tune", "spec_fit_fallback"
-// (the --spec auto fallback a capacity refusal forced, sources.spec_fit_fallback).
+// The taint of the other sections: "maintainer" (the maintainer options given, by name:
+// route_table, route_dir, dense_tune, moe_tune, tune_cache while a tuner is on,
+// debug_prefill_cuts, debug_poison, debug_poison_skip, and drafter_registry for a registry file
+// read in place of the compiled-in one), "user_tune_cache" (which tuners: "dense", "moe"),
+// "clocks" (no roofline: a machine clock or bus width of 0), "borrowed_routes" (route entries lent
+// by another chip's table), "foreign_route_table" (a table keyed by a class not in the device's
+// own chain), "local_spec_tune", "spec_fit_fallback" (the --spec auto fallback a capacity refusal
+// forced, sources.spec_fit_fallback).
 [[nodiscard]] DecisionSection taint_of(const DecisionInputs& inputs);
 
 } // namespace ninferno::runtime

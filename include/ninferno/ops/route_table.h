@@ -32,8 +32,8 @@
 // format does not have, duplicate problems, overlapping bands, unknown formats, compute classes,
 // epilogues and route names.
 //
-// Loading: explicitly through load_route_table(), or on first use from the file named by
-// NINFERNO_ROUTE_TABLE, or from `<dir>/<key>.json` for the first key of the device's class chain
+// Loading: explicitly through load_route_table() (the engine's --route-table), or on first use
+// from `<dir>/<key>.json` for the first key of the device's class chain
 // that has a file ("gb202:170sm", "gb202", "sm120", "*"; a ':' in a key is '-' in the file name,
 // "gb202-170sm.json", and stays ':' inside the file), where <dir> is route_table_dir(). A table
 // whose class is not in the device's chain is not applied. A malformed default table is not
@@ -44,6 +44,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -69,10 +70,18 @@ struct RouteTableStatus {
 // The current device's full class id (core/device_class.h), e.g. "gb202:170sm".
 [[nodiscard]] std::string route_gpu_class();
 
-// The directory the default table is looked up in: NINFERNO_ROUTE_DIR, else
-// the routes/ shipped beside the running binary (route_dir_beside), else the compiled default (the
-// repository's routes/, which exists only where the binary was built); empty when none is set.
+// The directory the default table is looked up in: the one set_route_table_dir() named (the
+// engine's --route-dir), else the routes/ shipped beside the running binary (route_dir_beside),
+// else the compiled default (the repository's routes/, which exists only where the binary was
+// built); empty when none is set.
 [[nodiscard]] std::string route_table_dir();
+
+// Names the default lookup's directory (empty: the shipped one) and returns every device to the
+// default lookup: a change of directory drops the tables found so far, and a table put in place
+// explicitly (load_route_table, clear_route_table) is dropped whatever the directory, so the next
+// lookup reads `dir`. The engine calls it for each construction that runs with no other engine
+// alive, before an explicit --route-table loads.
+void set_route_table_dir(const std::filesystem::path& dir);
 
 // The routes/ directory shipped with a binary at `exe`: <exe dir>/routes, else
 // <exe dir>/../share/ninferno/routes, the first that holds a table (a .json file); empty when

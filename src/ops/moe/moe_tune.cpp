@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -82,9 +83,12 @@ std::string layer_key(const MoeWeights& w, const MoeConfig& c) {
     return k.str();
 }
 
+// set_moe_tune: the mode and the cache directory (empty: NInferno's cache directory).
+std::atomic<TuneMode> g_mode{TuneMode::Off};
+std::filesystem::path g_cache_dir; // under g_mutex
+
 std::filesystem::path cache_path() {
-    if (const auto path = sys::env("NINFERNO_MOE_TUNE_CACHE"); !path.empty()) { return path; }
-    const auto dir = sys::cache_dir();
+    const auto dir = g_cache_dir.empty() ? sys::cache_dir() : g_cache_dir;
     return dir.empty() ? dir : dir / "moe_tune.json";
 }
 
@@ -163,16 +167,30 @@ void clear_tuned_plans() {
 
 std::map<std::string, std::string> moe_tune_sources() {
     std::map<std::string, std::string> out;
-    TuneMode mode = TuneMode::Off;
-    try {
-        mode = tune_mode("NINFERNO_MOE_TUNE");
-    } catch (const std::invalid_argument&) {}
-    if (mode != TuneMode::Off) {
-        const auto path      = detail::moe::cache_path();
+    using namespace detail::moe;
+    if (g_mode.load(std::memory_order_relaxed) != TuneMode::Off) {
+        std::filesystem::path path;
+        {
+            std::lock_guard lock(g_mutex);
+            path = cache_path();
+        }
         auto user            = path.empty() ? std::nullopt : named_file_sha256(path);
         out["moe_tune.user"] = user ? std::move(*user) : std::string("absent");
     }
     return out;
+}
+
+void set_moe_tune(TuneMode mode, const std::filesystem::path& cache_dir) {
+    using namespace detail::moe;
+    std::lock_guard lock(g_mutex);
+    // Another mode or file: no plan an earlier engine tuned or read stays, and the next layer
+    // reads the cache again.
+    if (g_cache_dir != cache_dir || g_mode.load(std::memory_order_relaxed) != mode) {
+        g_cache_dir    = cache_dir;
+        g_cache_loaded = false;
+        g_plans.clear();
+    }
+    g_mode.store(mode, std::memory_order_relaxed);
 }
 
 MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::int32_t max_tokens,
@@ -180,9 +198,9 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
     using namespace detail::moe;
     MoeTuneReport report;
     // Off unless asked: the engine starts with no timing, on the route table's MoE bands.
-    const TuneMode mode = tune_mode("NINFERNO_MOE_TUNE");
+    const TuneMode mode = g_mode.load(std::memory_order_relaxed);
     if (mode == TuneMode::Off) {
-        report.summary = "moe tune: off (NINFERNO_MOE_TUNE=on times the layer)";
+        report.summary = "moe tune: off (--moe-tune on times the layer)";
         return report;
     }
     max_tokens = std::clamp<std::int32_t>(max_tokens, 1, kTuneMaxTokens);

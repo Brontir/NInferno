@@ -11,11 +11,13 @@
 #include "core/tensor.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
+#include "ninferno/option_enums.h"
 
 #include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -189,14 +191,19 @@ struct MoeTuneReport {
     std::string summary;
 };
 
+/// The MoE tuner's mode (MaintainerOptions::moe_tune; TuneMode::Off by default: tune_moe times
+/// nothing) and where its file lives (MaintainerOptions::tune_cache: <dir>/moe_tune.json; empty:
+/// NInferno's cache directory). The engine sets both at construction.
+void set_moe_tune(TuneMode mode, const std::filesystem::path& cache_dir);
+
 /**
  * Tunes this layer's decode routes on this GPU: at T = 1..max_tokens (at most 16), every widths a
  * route table does not cover, the plan of the least time on the layer's own weights (each call
  * after an L2 flush, the median of nine), where it is at least 3 % under the default one; moe()
  * then takes it. Prefill routes (T >= 17, token-invariant) are not touched. The choices persist
- * per GPU class and layer (NINFERNO_MOE_TUNE_CACHE, else $XDG_CACHE_HOME or ~/.cache /ninferno/
- * moe_tune.json), so a restart takes the same plans and gives the same bytes without timing.
- * NINFERNO_MOE_TUNE=off keeps the default plans; =retune times again. Call it at load, outside
+ * per GPU class and layer (<tune cache>/moe_tune.json, set_moe_tune), so a restart takes the same
+ * plans and gives the same bytes without timing. Off (the default) keeps the default plans;
+ * Retune times again. Call it at load, outside
  * any stream capture, before the free memory is measured: it allocates its own buffers (x, out,
  * workspace, an L2 flush where it fits) and frees them on return. A layer tuned before (the same
  * key) returns at once. Invalid layers throw as moe() does; a failure while timing leaves the
@@ -206,7 +213,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
                        cudaStream_t stream);
 
 /// The file tune_moe's plans come from, for the decision fingerprint: "moe_tune.user", the user's
-/// own cache, which is read only while NINFERNO_MOE_TUNE times ("<file name> sha256:<hex of its
+/// own cache, which is read only while --moe-tune times ("<file name> sha256:<hex of its
 /// bytes>", "absent" when it does not exist yet). Empty while the tuner is off.
 [[nodiscard]] std::map<std::string, std::string> moe_tune_sources();
 

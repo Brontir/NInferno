@@ -117,6 +117,7 @@ struct SequencePlanningInputs {
     std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
     std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
     std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window
+    DecodePacingOptions decode_pacing;               // EngineOptions::pacing
     models::LoadOptions features;
     bool use_cuda_graph               = true;
     bool causal_scoring               = false;
@@ -163,6 +164,7 @@ struct SequencePlanImpl {
     std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
     std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
     std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window
+    DecodePacingOptions decode_pacing;               // EngineOptions::pacing
     models::LoadOptions features;
     bool use_cuda_graph               = true;
     bool causal_scoring               = false;

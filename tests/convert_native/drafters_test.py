@@ -3,7 +3,7 @@
     python drafters_test.py NINFERNO_CONVERT [REPOSITORY]
 
 Small synthetic Gemma-4-shaped checkpoints stand in for a target, its MTP assistant and its
-DFlash drafter; a registry file ($NINFERNO_DRAFTER_REGISTRY) names them. Checks that --fetch
+DFlash drafter; a registry file (--drafter-registry) names them. Checks that --fetch
 attaches, deterministically and without any search:
 
   * the registry's drafters for the target's repository id (fetched at the pinned revision,
@@ -147,7 +147,8 @@ def main() -> int:
 
         server, base = fetch_server.start(hub)
         environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
-        environment.update({"HF_ENDPOINT": base, "NINFERNO_DRAFTER_REGISTRY": str(registry_path)})
+        environment.update({"HF_ENDPOINT": base})
+        registry_flag = ["--drafter-registry", str(registry_path)]
 
         def served(repo):
             stats = json.loads(urllib.request.urlopen(base + "/stats").read())
@@ -157,7 +158,8 @@ def main() -> int:
             urllib.request.urlopen(base + "/reset").read()
 
         def convert(*args, check=True):
-            result = subprocess.run([str(native), *args, "--recipe", "gemma4_26b_a4b_nvfp4"], cwd=repository,
+            result = subprocess.run([str(native), *registry_flag, *args, "--recipe", "gemma4_26b_a4b_nvfp4"],
+                                    cwd=repository,
                                     capture_output=True, text=True, env=environment)
             if check and result.returncode:
                 errors.append(f"{args}: failed\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}")
@@ -228,7 +230,7 @@ def main() -> int:
 
         # 6. The plan, offline: an unreachable hub is never contacted.
         offline = {**environment, "HF_ENDPOINT": "http://127.0.0.1:9"}
-        result = subprocess.run([str(native), "--plan-drafters", "--model", str(target), "--model-id",
+        result = subprocess.run([str(native), *registry_flag, "--plan-drafters", "--model", str(target), "--model-id",
                                  "org/gemma-tiny"], cwd=repository, capture_output=True, text=True, env=offline)
         plan = json.loads(result.stdout) if result.returncode == 0 else {}
         case("plan without network",
@@ -238,7 +240,7 @@ def main() -> int:
         # 7. Attach to an existing artifact from given drafter artifacts (no fetch at all).
         existing = artifact_of("c5", "org/gemma-tiny")
         given = {d["name"]: d["artifact"] for d in manifest_of("c1", "org/gemma-tiny")["drafters"]}
-        result = subprocess.run([str(native), "--attach-drafters", "--target-artifact", str(existing),
+        result = subprocess.run([str(native), *registry_flag, "--attach-drafters", "--target-artifact", str(existing),
                                  "--model-id", "org/gemma-tiny",
                                  "--drafter-artifact", f"assistant={given['assistant']}",
                                  "--drafter-artifact", f"dflash={given['dflash']}"],
@@ -268,8 +270,8 @@ def main() -> int:
              and "q8_g32_fp16" in formats["assistant.q8"] and "q8_g32_fp16" not in formats["assistant"]
              and len(weights) == 1,
              f"{json.dumps(m)[:900]} {quant} {formats} weights={weights}")
-        result = subprocess.run([str(native), "--model", str(target), "--recipe", "gemma4_26b_a4b_nvfp4",
-                                 "--drafter-quant", "q8", "--out", str(work / "refused.ninferno")],
+        result = subprocess.run([str(native), *registry_flag, "--model", str(target), "--recipe",
+                                 "gemma4_26b_a4b_nvfp4", "--drafter-quant", "q8", "--out", str(work / "refused.ninferno")],
                                 cwd=repository, capture_output=True, text=True, env=environment)
         case("--drafter-quant refused on a target",
              result.returncode != 0 and "--drafter-quant applies to drafters" in result.stderr

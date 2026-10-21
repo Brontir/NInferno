@@ -31,6 +31,9 @@
 
 namespace {
 
+// The tuner's file under the test's --tune-cache directory (set_dense_tune).
+std::filesystem::path g_cache_file;
+
 using namespace ninferno;
 using namespace ninferno::test;
 using namespace ninferno::test::linear;
@@ -278,7 +281,7 @@ int check_case(const Case& c, cudaStream_t stream) {
 
     // Bands a failure skipped are timed again by the next process, alone: the decode widths stay.
     {
-        const char* path = std::getenv("NINFERNO_DENSE_TUNE_CACHE");
+        const std::filesystem::path& path = g_cache_file;
         std::stringstream text;
         text << std::ifstream(path).rdbuf();
         std::string json        = text.str();
@@ -353,10 +356,11 @@ int main() {
         return 77;
     }
     const auto cache = std::filesystem::temp_directory_path() /
-                       ("ninferno_dense_tune_test_" + std::to_string(::getpid()) + ".json");
-    std::filesystem::remove(cache);
-    ::setenv("NINFERNO_DENSE_TUNE_CACHE", cache.c_str(), 1);
-    ::setenv("NINFERNO_DENSE_TUNE", "on", 1); // off by default
+                       ("ninferno_dense_tune_test_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(cache);
+    std::filesystem::create_directories(cache);
+    g_cache_file = cache / "dense_tune.json";
+    generic::set_dense_tune(ninferno::TuneMode::On, cache); // off by default
     // The heuristic is what the tuner is compared against: no class table between them.
     ops::clear_route_table();
     generic::enable_dense_tune(true);
@@ -378,7 +382,8 @@ int main() {
     failures += check_capture(stream);
     cuda_check(cudaStreamDestroy(stream), "stream");
     generic::enable_dense_tune(false);
-    std::filesystem::remove(cache);
+    generic::set_dense_tune(ninferno::TuneMode::Off, {});
+    std::filesystem::remove_all(cache);
     if (failures == 0) std::cout << "dense tune: ok\n";
     return failures == 0 ? 0 : 1;
 }

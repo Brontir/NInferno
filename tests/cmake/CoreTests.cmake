@@ -7,22 +7,14 @@ add_test(NAME ninferno_public_api_test COMMAND ninferno_public_api_test)
 ninferno_add_test(ninferno_device_test       SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device.cpp"
   LIBRARIES ninferno_core)
 
-set_tests_properties(ninferno_device_test PROPERTIES
-  ENVIRONMENT_MODIFICATION "NINFERNO_CUDA_SYNC=unset:")
 set(sync_modes spin blocking yield auto)
 set(sync_flags 1 4 2 0)
 foreach(mode flags IN ZIP_LISTS sync_modes sync_flags)
-  add_test(NAME ninferno_device_sync_${mode}_test COMMAND ninferno_device_test ${flags})
-  set_tests_properties(ninferno_device_sync_${mode}_test PROPERTIES
-    ENVIRONMENT "NINFERNO_CUDA_SYNC=${mode}" SKIP_RETURN_CODE 77)
+  add_test(NAME ninferno_device_sync_${mode}_test COMMAND ninferno_device_test ${mode} ${flags})
+  set_tests_properties(ninferno_device_sync_${mode}_test PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
-foreach(mode IN ITEMS invalid empty)
-  add_test(NAME ninferno_device_sync_${mode}_test COMMAND ninferno_device_test --invalid-sync)
-endforeach()
-set_tests_properties(ninferno_device_sync_invalid_test PROPERTIES
-  ENVIRONMENT "NINFERNO_CUDA_SYNC=invalid")
-set_tests_properties(ninferno_device_sync_empty_test PROPERTIES
-  ENVIRONMENT "NINFERNO_CUDA_SYNC=")
+add_test(NAME ninferno_device_sync_invalid_test COMMAND ninferno_device_test --invalid-sync invalid)
+add_test(NAME ninferno_device_sync_empty_test COMMAND ninferno_device_test --invalid-sync "")
 
 # A build with a library that has no image for the device is refused at startup. The
 # stand-in library is one kernel compiled for sm_90 SASS only.

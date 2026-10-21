@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ninferno/option_enums.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -400,6 +402,47 @@ struct ContextCostOptions {
     std::filesystem::path preset_path;
 };
 
+// How decode rounds use the host (models/qwen3_5/program/round_pacing.h). It changes when tokens
+// are published and how the host waits, never which tokens.
+struct DecodePacingOptions {
+    // --decode-steps: 0 (auto) adapts; N in [1, 32] runs N steps in every round that can (1: no
+    // run-ahead). An engine that cannot run ahead says so once and runs one step per round.
+    std::uint32_t steps        = 0;
+    DecodeWait wait            = DecodeWait::Auto;
+    CudaSyncSchedule cuda_sync = CudaSyncSchedule::Spin;
+
+    bool operator==(const DecodePacingOptions&) const = default;
+};
+
+// Maintainer options: lab tools and debug aids. Each changes a decision only when set
+// explicitly, and the engine reports what it applied (docs/maintainer/environment.md). The
+// defaults are what a user's engine runs: the release's route tables, no timing, no debug aid.
+// The route table, tuners and poison are process-wide: the engine applies them at construction.
+struct MaintainerOptions {
+    // --route-table FILE: this route table alone, instead of the GPU class's own. A table for
+    // another GPU class, or a malformed one, is refused.
+    std::filesystem::path route_table;
+    // --route-dir DIR: the directory of per-GPU-class route tables. Empty: routes/ beside the
+    // binary, then share/ninferno/routes/ above it, then the tree it was built from.
+    std::filesystem::path route_dir;
+    TuneMode dense_tune = TuneMode::Off; // --dense-tune
+    TuneMode moe_tune   = TuneMode::Off; // --moe-tune
+    // --tune-cache DIR: where the tuners keep dense_tune.json and moe_tune.json, read only while
+    // a tuner is on. Empty: NInferno's cache directory.
+    std::filesystem::path tune_cache;
+    // --debug-prefill-cuts p1,p2,...: Qwen 3.5 ends a prefill call at each of these absolute
+    // positions, the way a restored or continued context meets the cache off the chunk grid.
+    std::vector<std::uint64_t> debug_prefill_cuts;
+    // --debug-poison BYTE: pooled device memory is overwritten with this byte when released
+    // (0xFF: NaN in every float format, -1 in indices), so a reader that skips initialization
+    // sees poison rather than the previous owner's data.
+    std::optional<std::uint8_t> debug_poison;
+    // --debug-poison-skip SITE,...: sites left unpoisoned (kv, ingress, state, weights).
+    std::vector<std::string> debug_poison_skip;
+
+    bool operator==(const MaintainerOptions&) const = default;
+};
+
 struct EngineOptions {
     std::filesystem::path artifact_path;
     std::filesystem::path chat_template_path;
@@ -470,6 +513,8 @@ struct EngineOptions {
     bool use_cuda_graph                    = true;  // decode through captured CUDA graphs
     ContextCacheOptions context_cache;
     ContextCostOptions context_cost;
+    DecodePacingOptions pacing;
+    MaintainerOptions maintainer;
     StartupObserver startup_observer;
 };
 

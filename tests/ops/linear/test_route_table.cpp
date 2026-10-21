@@ -68,21 +68,26 @@ bool refused(const std::string& gpu, const std::string& name, const std::string&
 
 } // namespace
 
-// A malformed default table (NINFERNO_ROUTE_TABLE) is not applied, and the status says which file
-// and why instead of reporting that nothing was loaded. Run in its own process: the
-// default lookup happens once.
+// A malformed default table (the device's own class file in the --route-dir directory) is not
+// applied, and the status says which directory and why instead of reporting that nothing was
+// loaded. Run in its own process: the default lookup happens once.
 int malformed_default() {
-    const auto path = scratch_dir() / "malformed-default.json";
-    std::filesystem::create_directories(path.parent_path());
+    std::string file = ninferno::ops::route_gpu_class();
+    for (char& c : file) {
+        if (c == ':') c = '-';
+    }
+    const auto dir  = scratch_dir() / "malformed";
+    const auto path = dir / (file + ".json");
+    std::filesystem::create_directories(dir);
     std::ofstream(path) << "{\"schema\": \"ninferno-route-table/1\", \"gpu\": ";
-    ::setenv("NINFERNO_ROUTE_TABLE", path.string().c_str(), 1);
+    ninferno::ops::set_route_table_dir(dir.string());
     const auto s = ninferno::ops::route_table_status();
     std::cout << "malformed default table: loaded=" << s.loaded << " message: " << s.message
               << '\n';
     int failures = check(!s.loaded, "a malformed default table is not applied");
-    failures += check(s.path == path.string() && s.message.find("refused") != std::string::npos &&
-                          s.message.find(path.string()) != std::string::npos,
-                      "the status names the refused file and the reason: " + s.message);
+    failures += check(s.path == dir.string() && s.message.find("refused") != std::string::npos &&
+                          s.message.find(dir.string()) != std::string::npos,
+                      "the status names the refused directory and the reason: " + s.message);
     std::error_code ec;
     std::filesystem::remove_all(scratch_dir(), ec);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table malformed default\n";
@@ -119,8 +124,7 @@ int similar_default() {
            "\"board\": {\"cc\": " + std::to_string(foreign_cc) + ", \"sms\": " +
                std::to_string(ninferno::device_class().sms) + "}}, \"entries\": [" + entry(4096, "rmma.m1.n1.w1x4") +
                "]}";
-    ::unsetenv("NINFERNO_ROUTE_TABLE");
-    ::setenv("NINFERNO_ROUTE_DIR", dir.string().c_str(), 1);
+    ninferno::ops::set_route_table_dir(dir.string());
     const generic::Problem own{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
                                4096, 1024, generic::Epilogue::Store};
     const generic::Problem lent{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
@@ -244,8 +248,8 @@ int main(int argc, char** argv) {
     const std::string gpu = ninferno::ops::route_gpu_class();
 
     // Default lookup, before anything else touches the table: the device's variant key
-    // ("gb202:170sm") is found as "gb202-170sm.json" in NINFERNO_ROUTE_DIR, and keeps its ':'
-    // inside.
+    // ("gb202:170sm") is found as "gb202-170sm.json" in the --route-dir directory
+    // (set_route_table_dir), and keeps its ':' inside.
     {
         std::string file = gpu;
         for (char& c : file) {
@@ -254,14 +258,24 @@ int main(int argc, char** argv) {
         const auto dir = scratch_dir() / "dir";
         std::filesystem::create_directories(dir);
         std::ofstream(dir / (file + ".json")) << table(gpu, "");
-        ::unsetenv("NINFERNO_ROUTE_TABLE");
-        ::setenv("NINFERNO_ROUTE_DIR", dir.string().c_str(), 1);
+        ninferno::ops::set_route_table_dir(dir.string());
         const auto s = ninferno::ops::route_table_status();
         failures += check(s.loaded && s.gpu_class == gpu &&
                               std::filesystem::path(s.path).filename() == file + ".json",
                           "the default lookup finds " + file + ".json for " + gpu + ": " + s.message);
         failures += check(ninferno::ops::route_table_dir() == dir.string(),
-                          "NINFERNO_ROUTE_DIR names the dir");
+                          "set_route_table_dir names the dir");
+        // An explicit table is dropped when the directory is named again, the same one included
+        // (an engine built with no --route-table after one that had it).
+        const auto explicit_path = write_file("explicit", table(gpu, ""));
+        (void)ninferno::ops::load_route_table(explicit_path);
+        failures += check(ninferno::ops::route_table_status().path == explicit_path,
+                          "the explicit table is not active");
+        ninferno::ops::set_route_table_dir(dir);
+        const auto back = ninferno::ops::route_table_status();
+        failures +=
+            check(back.loaded && std::filesystem::path(back.path).filename() == file + ".json",
+                  "an explicit table outlived set_route_table_dir: " + back.message);
     }
 
     const generic::Problem q8{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
@@ -525,7 +539,7 @@ int main(int argc, char** argv) {
 
     // Every shipped class file passes the loader's validation (the default lookup would otherwise
     // drop it silently).
-    ::unsetenv("NINFERNO_ROUTE_DIR");
+    ninferno::ops::set_route_table_dir("");
     const std::string shipped = ninferno::ops::route_table_dir();
     int files = 0;
     if (!shipped.empty() && std::filesystem::is_directory(shipped)) {

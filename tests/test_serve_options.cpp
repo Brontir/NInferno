@@ -70,6 +70,46 @@ int main() {
                       "Host context-cache defaults mismatch");
     failures += check(defaults.speculative.backend == ninferno::SpeculativeBackend::None,
                       "speculative decoding is not disabled by default");
+    // No timing, no alternative route table and no debug aid unless an option asks.
+    failures += check(defaults.pacing == ninferno::DecodePacingOptions{} &&
+                          defaults.maintainer == ninferno::MaintainerOptions{} &&
+                          defaults.drafter_registry.empty(),
+                      "pacing or maintainer options are not the defaults");
+    {
+        const ServeOptions lab = parse({"ninferno-serve",       "model.ninferno",
+                                        "--decode-steps",       "8",
+                                        "--decode-wait",        "block",
+                                        "--cuda-sync",          "yield",
+                                        "--route-table",        "t.json",
+                                        "--route-dir",          "r",
+                                        "--dense-tune",         "retune",
+                                        "--moe-tune",           "on",
+                                        "--tune-cache",         "c",
+                                        "--debug-prefill-cuts", "700,64",
+                                        "--debug-poison",       "nan",
+                                        "--debug-poison-skip",  "kv,state",
+                                        "--drafter-registry",   "reg.json"});
+        failures += check(lab.pacing.steps == 8 && lab.pacing.wait == ninferno::DecodeWait::Block &&
+                              lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Yield,
+                          "the pacing flags are not read");
+        const ninferno::MaintainerOptions& m = lab.maintainer;
+        failures += check(m.route_table == "t.json" && m.route_dir == "r" &&
+                              m.dense_tune == ninferno::TuneMode::Retune &&
+                              m.moe_tune == ninferno::TuneMode::On && m.tune_cache == "c" &&
+                              m.debug_prefill_cuts == std::vector<std::uint64_t>{700, 64} &&
+                              m.debug_poison == std::uint8_t{0xFF} &&
+                              m.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                              lab.drafter_registry == "reg.json",
+                          "the maintainer flags are not read");
+        for (const char* bad :
+             {"--decode-steps", "--decode-wait", "--dense-tune", "--debug-poison"}) {
+            bool refused = false;
+            try {
+                (void)parse({"ninferno-serve", "model.ninferno", bad, "x"});
+            } catch (const std::invalid_argument&) { refused = true; }
+            failures += check(refused, "an invalid pacing or maintainer value is accepted");
+        }
+    }
     failures += check(defaults.response_store_max_records == kDefaultResponseStoreRecords &&
                           defaults.response_store_max_bytes == kDefaultResponseStoreBytes,
                       "Responses store defaults mismatch");
