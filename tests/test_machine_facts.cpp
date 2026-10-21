@@ -57,11 +57,18 @@ void table_well_formed() {
         if (chip != gpu_arch_id(r.major, r.minor)) {
             expect(chip == r.chip, where + ": chip " + r.chip + " where gpu_chip says " + chip);
         }
-        // mma_slow: the chips without tensor cores (TU116, TU117) and the GTX 16 boards of TU106,
-        // the same fact chip_mma_slow (DeviceFeatures::mma_slow) keys by chip.
+        // mma_slow: every board of a chip without tensor cores (chip_mma_slow: TU116, TU117), so
+        // the table, which decides for the ids it lists (board_mma_slow), never contradicts the
+        // chip fallback the ids it lacks take; besides them only the GTX 16 boards of TU106. The
+        // name is read here only to audit the data, never by a decision.
         const bool gtx_on_tu106 = r.chip == "tu106" && r.name.find("GTX") != std::string::npos;
-        const bool slow_chip    = r.chip == "tu116" || r.chip == "tu117";
+        const bool slow_chip    = chip_mma_slow(r.major, r.minor, r.chip);
         expect(r.mma_slow == (slow_chip || gtx_on_tu106), where + ": mma_slow");
+        // The whole device path (gpu_chip, machine_facts with the row's architecture and SMs,
+        // board_mma_slow) lands on the row's fact, and on the chip's where the id is unknown.
+        const DeviceClass d = synthetic_device_class(r.pci_device_id, r.major, r.minor, r.sms,
+                                                     std::size_t{4} << 20, std::size_t{8} << 30);
+        expect(d.features.mma_slow == r.mma_slow, where + ": the device class takes the row's");
         // A laptop row carries the bottom of its published boost range (the clock it is priced
         // at); no other row does (the parser refuses one).
         expect((r.form == FormFactor::Laptop) == (r.boost_min_mhz > 0),
@@ -282,6 +289,51 @@ void device_class_wiring() {
     }
 }
 
+// One source for mma_slow: the table's row where it has the id, the chip's only where it has none.
+void mma_slow_one_source() {
+    // Every TU116 / TU117 board the table lists and the GTX 16 boards of TU106 (0x1F09 GTX 1660
+    // SUPER, 0x1F0A GTX 1650) carry it; the RTX boards of TU106 do not.
+    for (const std::uint32_t id : {0x1F09u, 0x1F0Au, 0x2182u, 0x21C4u, 0x2184u, 0x2187u, 0x2188u,
+                                   0x1F82u, 0x1FF2u, 0x1FB1u, 0x1FF0u}) {
+        const GpuFactsRow* r = find_gpu_facts(id);
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "0x%04X", id);
+        expect(r != nullptr && r->mma_slow, std::string(hex) + ": listed with mma_slow");
+        const DeviceClass d = synthetic_device_class(id, 7, 5, r != nullptr ? r->sms : 0,
+                                                     std::size_t{1} << 20, std::size_t{4} << 30);
+        expect(d.features.mma_slow, std::string(hex) + ": the class is mma_slow");
+    }
+    for (const std::uint32_t id : {0x1F02u, 0x1F06u, 0x1F07u, 0x1F08u}) {
+        expect(!synthetic_device_class(id, 7, 5, 36, std::size_t{4} << 20, std::size_t{8} << 30)
+                    .features.mma_slow,
+               "an RTX board on TU106 has tensor cores");
+    }
+    // The table is authoritative: a row's fact stands against its chip either way.
+    MachineFacts listed;
+    listed.sku      = "a listed board";
+    listed.mma_slow = false;
+    expect(!board_mma_slow(listed, 7, 5, "tu116"), "a row without mma_slow wins over TU116");
+    listed.mma_slow = true;
+    expect(board_mma_slow(listed, 7, 5, "tu106"), "a row with mma_slow wins over TU106");
+    // An id the table lacks: the chip's fact, by the id's block (0x1F99, TU117) or, the id
+    // unknown, by the SM-count guess (a 16-SM Turing is TU117, the conservative label).
+    const MachineFacts unlisted;
+    expect(board_mma_slow(unlisted, 7, 5, "tu117") && !board_mma_slow(unlisted, 7, 5, "tu106") &&
+               !board_mma_slow(unlisted, 8, 6, "tu116"),
+           "unlisted: the chip's fact, Turing only");
+    expect(find_gpu_facts(0x1F99) == nullptr &&
+               synthetic_device_class(0x1F99, 7, 5, 16, std::size_t{1} << 20, std::size_t{4} << 30)
+                   .features.mma_slow,
+           "0x1F99 (TU117 block, not listed): mma_slow by the chip");
+    expect(synthetic_device_class(0, 7, 5, 16, std::size_t{1} << 20, std::size_t{4} << 30)
+               .features.mma_slow,
+           "unknown id, 16 SMs: TU117 by the SM count, mma_slow");
+    // A listed id on another architecture is not the row: the chip decides.
+    expect(!synthetic_device_class(0x21C4, 8, 6, 22, std::size_t{1} << 20, std::size_t{4} << 30)
+                .features.mma_slow,
+           "a listed id reported by another architecture: not the row's fact");
+}
+
 void malformed_tables_refused() {
     const auto refused = [](std::string_view text, const char* what) {
         try {
@@ -325,6 +377,7 @@ int main() {
         grid();
         mig_and_zero_clocks();
         device_class_wiring();
+        mma_slow_one_source();
         malformed_tables_refused();
     } catch (const std::exception& e) {
         std::cerr << "FAIL: threw " << e.what() << '\n';

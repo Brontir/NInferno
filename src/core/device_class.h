@@ -52,13 +52,21 @@ struct DeviceFeatures {
     bool pdl          = false; // griddepcontrol (programmatic dependent launch)
     bool clusters     = false; // thread-block clusters and distributed shared memory (sm_90 on)
     bool mma_slow = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
-                           // run it on their FP16 units; known by the chip (PCI ID, else the
-                           // SM-count fallback of gpu_chip), not by the compute capability, OR
-                           // the PCI-ID table's fact (the GTX 16 boards on TU106)
+                           // run it on their FP16 units, as do the GTX 16 boards on TU106;
+                           // board_mma_slow, never the compute capability
 };
 
-// Whether a chip of this compute capability has mma.sync but no tensor cores (TU116, TU117).
+// Whether a chip of this compute capability has mma.sync but no tensor cores (TU116, TU117): the
+// fact of a chip, for a board the PCI-ID table lacks (board_mma_slow) and for the chips themselves
+// (the similar-chip lists, a measured table's board keyed by its chip).
 [[nodiscard]] bool chip_mma_slow(int major, int minor, std::string_view chip) noexcept;
+
+// The board's mma_slow, from one source: the PCI-ID table's row where the table knows the id
+// (`facts.sku` set, the row of the device's architecture), else the chip's (chip_mma_slow of the
+// chip the id's block names, or the SM-count guess for an unknown id). The table marks every
+// TU116 / TU117 board and the GTX 16 boards on TU106, whose chip has tensor cores.
+[[nodiscard]] bool board_mma_slow(const MachineFacts& facts, int major, int minor,
+                                  std::string_view chip) noexcept;
 
 // The architecture's feature set by compute capability: a table, not an ordering.
 [[nodiscard]] DeviceFeatures device_features_for(int major, int minor) noexcept;
@@ -151,7 +159,7 @@ struct Board {
     int sms          = 0;
     double l2_mib    = 0; // 0: unknown, not compared
     double dram_gbps = 0; // 0: unknown, not compared
-    bool mma_slow    = false; // DeviceFeatures::mma_slow: no tensor cores (TU116 / TU117)
+    bool mma_slow    = false; // DeviceFeatures::mma_slow: no tensor cores (board_mma_slow)
 };
 
 [[nodiscard]] Board board_of(const DeviceClass& d) noexcept;
@@ -220,7 +228,7 @@ template <class Measured, std::size_t Extent>
 // architecture (the same major and the same feature row: sm_80 and sm_86, sm_121 and sm_120), in
 // the same order; an architecture of other instructions is never similar. A board without tensor
 // cores (mma_slow) and one with them are never similar: `mma_slow` is the board's own (the
-// device's DeviceFeatures::mma_slow, which the PCI-ID table extends to the GTX boards of TU106),
+// device's DeviceFeatures::mma_slow, board_mma_slow: also the GTX boards of TU106),
 // chip_mma_slow(own_chip) when not given.
 [[nodiscard]] std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
                                                          std::string_view own_chip,

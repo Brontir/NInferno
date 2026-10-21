@@ -117,7 +117,14 @@ TargetGpu target_of(const GpuStat& stat) {
     out.fp4 = stat.cc_major == 12 && stat.cc_minor == 0;
     if (stat.cc_major > 0) {
         out.chip          = gpu_chip(stat.pci_device_id, stat.cc_major, stat.cc_minor, stat.sms);
-        out.profile_chain = gpu_similarity_chain(out.chip, stat.sms, stat.cc_major, stat.cc_minor);
+        // The board's mma_slow as the device query takes it (board_mma_slow: the PCI-ID table's
+        // row, else the chip's), so a GTX 16 board on TU106 borrows no tensor-core chip's profile.
+        const DriverReport driver{
+            .pci_device_id = stat.pci_device_id, .major = stat.cc_major, .minor = stat.cc_minor};
+        const bool slow   = board_mma_slow(machine_facts(driver), stat.cc_major, stat.cc_minor,
+                                           out.chip);
+        out.profile_chain =
+            gpu_similarity_chain(out.chip, stat.sms, stat.cc_major, stat.cc_minor, slow);
     }
     return out;
 }

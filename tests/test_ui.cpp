@@ -362,6 +362,29 @@ void test_catalog() {
     const auto borrowed = speculation_plan("qwen3.6-35b-a3b", ga102);
     check(borrowed.profile != "none", "3090: some profile");
     check(speculation_plan("no-such-model", ga102).profile == "none", "unknown model: none");
+    // The profile chain takes the board's mma_slow as the device query does: a GTX 1660 SUPER on
+    // TU106 (0x1F09, no tensor cores by the PCI-ID table) borrows only TU116 / TU117, an RTX 2070
+    // on the same chip (0x1F07) only the tensor-core chips.
+    const auto has = [](const std::vector<std::string>& chain, const char* key) {
+        return std::find(chain.begin(), chain.end(), key) != chain.end();
+    };
+    GpuStat gtx_stat;
+    gtx_stat.cc_major      = 7;
+    gtx_stat.cc_minor      = 5;
+    gtx_stat.pci_device_id = 0x1F09;
+    gtx_stat.sms           = 22;
+    const TargetGpu gtx    = target_of(gtx_stat);
+    check(gtx.chip == "tu106" && has(gtx.profile_chain, "tu116") &&
+              has(gtx.profile_chain, "tu117") && !has(gtx.profile_chain, "tu104") &&
+              !has(gtx.profile_chain, "tu102"),
+          "GTX on TU106: the profile chain borrows no tensor-core chip");
+    GpuStat rtx_stat       = gtx_stat;
+    rtx_stat.pci_device_id = 0x1F07;
+    rtx_stat.sms           = 36;
+    const TargetGpu rtx    = target_of(rtx_stat);
+    check(rtx.chip == "tu106" && has(rtx.profile_chain, "tu104") &&
+              !has(rtx.profile_chain, "tu116"),
+          "RTX on TU106: the profile chain borrows no chip without tensor cores");
 
     // A 16 GB card: no listed source of Qwen3.6 35B fits, the listing's largest 2-4 bit quant
     // that does is added, and the model becomes recommended.

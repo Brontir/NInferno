@@ -182,6 +182,13 @@ int check_feature_table() {
                                std::isinf(ninferno::board_distance(a, b)),
                            "mma_slow: TU116 / TU117 by chip (PCI ID, else SM count), no other "
                            "board; boards either side of it are apart");
+        // The PCI-ID table decides where it has the id: the GTX 16 boards on TU106 (0x1F09 GTX
+        // 1660 SUPER, 0x1F0A GTX 1650) are slow though their chip is not, an RTX board on TU106
+        // (0x1F07) is not. An id the table lacks takes its block's chip: 0x1F99 (TU117, a laptop
+        // GTX 1650 not in the table) is slow by the chip.
+        failures += expect(slow(0x1F09, 7, 5, 22) && slow(0x1F0A, 7, 5, 14) &&
+                               !slow(0x1F07, 7, 5, 36) && slow(0x1F99, 7, 5, 16),
+                           "mma_slow: the table's row where it has the id, else the chip's");
     }
     {
         const auto ampere = ninferno::gpu_similarity_chain("ga102", 82, 8, 6);
