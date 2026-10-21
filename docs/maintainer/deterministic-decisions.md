@@ -87,7 +87,7 @@ What the design guarantees once complete:
    what it depends on:
    - the target and drafter artifact ids;
    - the whole B1 byte class it was measured under (activation precision, summation class, KV
-     codec, parity);
+     codec, decode/verify parity, placement and plan level);
    - the sampling settings and the draft depth;
    - the corpus, by hash;
    - under `fast`, the lane count, because the bytes at T ≤ 16 depend on the batch.
