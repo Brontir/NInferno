@@ -655,13 +655,24 @@ struct QuantFacts {
     const char* pattern;
     double bytes_per_weight;
     bool kquant;
+    const char* format; // TargetFacts::weight_format
 };
+
 const QuantFacts kQuants[] = {
-    {"pirola-IQ3_XXS", 15.4 / 31.6, true}, {"IQ2_XXS|iq2xxs", 2.06 / 8, true},
-    {"IQ3_XXS", 3.06 / 8, true}, {"IQ4_XS", 4.25 / 8, true}, {"IQ3", 3.44 / 8, true},
-    {"Q4_K_XL", 4.9 / 8, true}, {"Q4_K_M", 4.85 / 8, true}, {"Q4_0|q40", 4.5 / 8, false},
-    {"nvfp4|NVFP4", 4.5 / 8, false}, {"MXFP4|gpt-oss-20b-gguf|openai/gpt-oss-20b", 4.25 / 8, false},
-    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false}, {"Q4", 0.53, false}, {".", 0.53, false},
+    {"pirola-IQ3_XXS", 15.4 / 31.6, true, "iq3_xxs"},
+    {"IQ2_XXS|iq2xxs", 2.06 / 8, true, "iq2_xxs"},
+    {"IQ3_XXS", 3.06 / 8, true, "iq3_xxs"},
+    {"IQ4_XS", 4.25 / 8, true, "iq4_xs"},
+    {"IQ3", 3.44 / 8, true, "iq3"},
+    {"Q4_K_XL", 4.9 / 8, true, "q4_k_xl"},
+    {"Q4_K_M", 4.85 / 8, true, "q4_k_m"},
+    {"Q4_0|q40", 4.5 / 8, false, "q4_0"},
+    {"nvfp4|NVFP4", 4.5 / 8, false, "nvfp4"},
+    {"MXFP4|gpt-oss-20b-gguf|openai/gpt-oss-20b", 4.25 / 8, false, "mxfp4"},
+    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false, "q8"},
+    {"BF16|bf16", 2.0, false, "bf16"},
+    {"Q4", 0.53, false, "q4_g64"},
+    {".", 0.53, false, "q4_g64"},
 };
 
 TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on) {
@@ -683,6 +694,7 @@ TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on
         if (std::regex_search(head, std::regex(q.pattern))) {
             t.bytes_per_weight = q.bytes_per_weight;
             t.kquant = q.kquant;
+            t.weight_format    = q.format;
             break;
         }
     }
@@ -747,6 +759,13 @@ int test_cost_model() {
     const auto oss_k = floor_of("gpt-oss-20b", "gb202", "gpt-oss-20b Q4_K_M", "dflash", "dflash:7");
     failures +=
         check(oss_k && !oss_k->fit.reliable, "gpt-oss GGUF k-quant on sm120: not covered, unsure");
+    // Only MXFP4 is covered: the same MoE in BF16, NVFP4, Q8 or Q4_0 on sm120 stays unsure.
+    for (const char* other :
+         {"gpt-oss-20b BF16", "gpt-oss-20b nvfp4", "gpt_oss_20b_q8.ninferno", "gpt-oss-20b Q4_0"}) {
+        const auto c = floor_of("gpt-oss-20b", "gb202", other, "dflash", "dflash:7");
+        failures += check(c && !c->fit.reliable,
+                          std::string("gpt-oss on sm120, ") + other + ": not covered, unsure");
+    }
     const auto muse =
         floor_of("muse-glimmer-30b", "gb202", "muse_glimmer_30b.ninferno", "dflash", "dflash:7");
     failures +=
@@ -934,13 +953,15 @@ int test_class_depths() {
     // A factor above 1 never takes a longer prompt deeper than Short's pick.
     const std::array<ClassFactor, kContextClasses> rising{
         ClassFactor{1.0, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}};
-    const auto up = class_depths(cost, 0.35, 0.97, captured, rising, 7);
+    // a 0.45: Short picks 3, while Mid at 1.5x the drafts would pick 5 without the cap.
+    const auto up = class_depths(cost, 0.45, 0.97, captured, rising, 7);
     failures +=
-        check(up[0].depth > 0 && up[1].depth <= up[0].depth && up[2].depth <= up[0].depth &&
-                  up[3].depth <= up[0].depth,
+        check(up[0].depth > 0 && up[0].depth < 7 && up[1].depth == up[0].depth &&
+                  up[2].depth == up[0].depth && up[3].depth == up[0].depth,
               "factor above 1: no class deeper than short's " + std::to_string(up[0].depth));
     const auto up_plain = class_depths(cost, 0.75, 0.97, captured, rising, 7, 10.0);
-    failures += check(up_plain[0].depth == 0 && up_plain[1].depth == 0 && up_plain[1].estimate,
+    failures += check(up_plain[0].depth == 0 && up_plain[1].depth == 0 && up_plain[1].estimate &&
+                          up_plain[1].reason == "plain: short is plain",
                       "short plain: every class plain (" + up_plain[1].reason + ")");
     // modeled_load under an unreliable fit: no deeper than kUnsureDepth at any load.
     RoundCost free_unsure;

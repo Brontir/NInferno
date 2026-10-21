@@ -66,18 +66,19 @@ constexpr DrafterKind kDrafterKinds[] = {
 // 25.5 %), sm89 gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one
 // card each. The sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b
 // (an MoE, the registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So
-// the key is what the points cover, (generation, family, MoE, k/IQ quant, drafter kind); a dense
-// target, a GGUF k-quant or another drafter on sm120 dense stays unsure.
+// the key is what the points cover, (generation, family, MoE, weight format, drafter kind); a dense
+// target, another weight format (BF16, NVFP4, Q8, Q4_0, a GGUF k-quant) or another drafter on sm120
+// dense stays unsure.
 struct Tested {
     int cc;
     std::string_view family;
     bool moe;
-    bool kquant;
+    std::string_view weight_format;
     std::string_view drafter;
 };
 
 constexpr Tested kTested[] = {
-    {120, "dense", true, false, "dflash"},
+    {120, "dense", true, "mxfp4", "dflash"},
 };
 
 ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::string_view drafter) {
@@ -89,12 +90,14 @@ ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::str
     }
     if (g->lab_cards < 2) { return {false, arch + ": fewer than two lab cards measured"}; }
     for (const Tested& t : kTested) {
-        if (t.cc == cc && t.family == family && t.moe == moe && t.kquant == target.kquant &&
-            t.drafter == drafter) {
+        if (t.cc == cc && t.family == family && t.moe == moe &&
+            t.weight_format == target.weight_format && t.drafter == drafter) {
             return {};
         }
     }
-    return {false, arch + " " + family + (moe ? " moe" : "") + (target.kquant ? " k-quant" : "") +
+    return {false, arch + " " + family + (moe ? " moe" : "") + " " +
+                       (target.weight_format.empty() ? std::string("unknown format")
+                                                     : target.weight_format) +
                        " " + std::string(drafter) +
                        ": not held out within the 10 % margin by the fit's points"};
 }

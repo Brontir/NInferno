@@ -78,6 +78,9 @@ struct TargetFacts {
     int experts = 0, experts_per_token = 0;
     double routed_expert_params = 0;
     std::string family; // the registry's engine ("gemma4", "qwen3_5", "nemotron_h", "dense")
+    // The weight format, lower case: "mxfp4", "nvfp4", "q4_g64", "q8", "q4_0", "bf16", or a GGUF
+    // type ("q4_k_m", "iq3_xxs"). "" unknown: never a covered pair.
+    std::string weight_format;
 };
 
 struct DrafterFacts {
@@ -118,8 +121,11 @@ struct DrafterFacts {
 // at `depth` (parse_load's "lanes:depth"); one row runs the deepest that pays, unbounded when that
 // is the deepest of `depths`. A depth never rises again once it fell (a row turned plain does not
 // resume). An unpriced cost: plain from one row ("1:0"); an unreliable fit (RoundCost::fit): no
-// deeper than kUnsureDepth at any load, as class_depths' fallback. Past one row this uses the
-// one-row fit beyond what it was fitted on (see the header comment).
+// deeper than kUnsureDepth at any load. The load table knows no prompt length: it is not
+// class_depths' rule, which under the same fit runs at most kUnsureDepth below 8K and plain past
+// it. A caller that has both takes the lower depth of the two, so past 8K an unsure fit decodes
+// plainly whatever this table allows. Past one row this uses the one-row fit beyond what it was
+// fitted on (see the header comment).
 [[nodiscard]] std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
                                                   std::span<const std::int32_t> depths,
                                                   std::int32_t max_rows);
@@ -145,8 +151,8 @@ struct ClassDepth {
 // per round at `factor_depth` (the depth the factors were measured at) are the class factor times
 // those of `a`. Mid, Long and Huge choose only among the captured depths up to Short's pick, even
 // with a factor above 1: a longer prompt never speculates deeper than a short one. A class whose
-// factor is unknown under a reliable cost takes the conservative depth capped at Short's pick, so a
-// longer prompt never speculates deeper than a short one. Short is the baseline (factor 1 by
+// factor is unknown under a reliable cost takes the conservative depth, also capped at Short's
+// pick. Short is the baseline (factor 1 by
 // definition, whatever `factors` says of it). No cost, an unreliable or unpriced fit
 // (RoundCost::fit, "mma emulated") or an unknown factor of another class: the deepest captured
 // depth up to kUnsureDepth for Short and Mid, 0 for Long and Huge, labelled "estimate: none
