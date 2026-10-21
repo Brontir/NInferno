@@ -908,6 +908,39 @@ int test_cost_model() {
         no_cc.compute_capability = 0;
         failures += check(!round_cost_of(no_cc, moe, DrafterFacts{.kind = "dflash"}),
                           "no compute capability: no model");
+        // DFlash's head variant: the fit never saw gpt-oss (or Gemma) with the proposal head, so
+        // that variant is unsure even where the plain head is covered; Qwen holds both.
+        const auto oss_head = round_cost_of(card_key(kCards[0]), moe,
+                                            DrafterFacts{.kind = "dflash", .proposal_head = true});
+        failures += check(oss_head && !oss_head->fit.reliable &&
+                              oss_head->fit.reason == "head variant not in the fit",
+                          "gpt-oss DFlash with the proposal head: head variant not in the fit");
+        {
+            RoundCost h = *oss_head;
+            const std::vector<std::int32_t> menu{3, 5, 7};
+            const std::array<ClassFactor, kContextClasses> ones{
+                ClassFactor{1.0, ""}, ClassFactor{1.0, ""}, ClassFactor{1.0, ""},
+                ClassFactor{1.0, ""}};
+            const auto rule = class_depths(h, 0.75, 0.97, menu, ones, 7);
+            failures += check(
+                rule[0].reason.starts_with("estimate: none (head variant not in the fit)"),
+                "head variant not in the fit: the conservative rule (" + rule[0].reason + ")");
+        }
+        const auto* q36             = registry.by_id("qwen3.6-35b-a3b");
+        const TargetFacts q36_facts = target_facts(*q36, "qwen3_6_35b_nvfp4.ninferno");
+        for (const bool head : {false, true}) {
+            const auto q = round_cost_of(card_key(kCards[0]), q36_facts,
+                                         DrafterFacts{.kind = "dflash", .proposal_head = head});
+            failures += check(q && q->fit.reason != "head variant not in the fit",
+                              std::string("Qwen3.6-35B DFlash, head ") + (head ? "on" : "off") +
+                                  ": a variant the fit holds");
+        }
+        const auto g_head =
+            round_cost_of(card_key(kCards[0]),
+                          target_facts(*registry.by_id("gemma-4-26b-a4b-it"), "gemma.ninferno"),
+                          DrafterFacts{.kind = "dflash2", .proposal_head = false});
+        failures += check(g_head && g_head->fit.reason == "head variant not in the fit",
+                          "Gemma with DFlash2: a variant the fit never saw");
         // The gate's tested shape includes the experts per token: gpt-oss-20b is 32 experts, top-4.
         TargetFacts top8       = moe;
         top8.experts_per_token = 8;

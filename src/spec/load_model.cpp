@@ -89,10 +89,39 @@ struct Tested {
 };
 
 constexpr Tested kTested[] = {
-    {120, "dense", 32, 4, 2880, "mxfp4", "dflash"},
+    {120, "dense", 32, 4, 2880, "mxfp4", "dflash"}, // without the proposal head (see below)
 };
 
-ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
+// DFlash's head variant: the draft projects onto the full vocabulary or onto Qwen's proposal rows
+// (models/qwen3_5/execution/draft.cpp), but the size term is h^2 either way. The floors cannot tell
+// the two apart: every pair of the same model and card that has both differs in its weight format
+// too (Q4_K_M or UD-Q4_K_XL without the head, Q4_G64 or NVFP4 with it). So a DFlash cost stands
+// only for the (kind, family, head) variants the fit's points hold; any other is unsure.
+struct HeadVariant {
+    std::string_view kind;
+    std::string_view family;
+    bool proposal_head;
+};
+
+constexpr HeadVariant kHeadVariants[] = {
+    {"dflash", "gemma4", false}, {"dflash", "dense", false},    {"dflash", "qwen3_5", false},
+    {"dflash", "qwen3_5", true}, {"dflash2", "qwen3_5", false}, {"dflash2", "qwen3_5", true},
+};
+
+bool head_variant_fitted(std::string_view kind, const std::string& family, bool proposal_head) {
+    if (kind != "dflash" && kind != "dflash2") { return true; } // MTP prices its head rows
+    for (const HeadVariant& v : kHeadVariants) {
+        if (v.kind == kind && v.family == family && v.proposal_head == proposal_head) {
+            return true;
+        }
+    }
+    return false;
+}
+
+ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter, bool proposal_head) {
+    if (!head_variant_fitted(drafter, target.family, proposal_head)) {
+        return {false, "head variant not in the fit"};
+    }
     const std::string& family = target.family;
     const bool moe            = target.experts > 0;
     // The quantized format of the set: one, beside unquantized ones only; "" when the set is empty
@@ -114,7 +143,7 @@ ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
         if (t.cc == cc && t.family == family && t.experts == target.experts &&
             t.experts_per_token == target.experts_per_token &&
             t.hidden_size == target.hidden_size && !quantized.empty() &&
-            t.weight_format == quantized && t.drafter == drafter) {
+            t.weight_format == quantized && t.drafter == drafter && !proposal_head) {
             return {};
         }
     }
@@ -198,7 +227,8 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
                    .knee           = 0,
                    .delta          = kind->cost * size,
                    .pass_per_draft = kind->pass_per_draft,
-                   .fit            = fit_of(gpu.compute_capability, target, kind->kind)};
+                   .fit =
+                       fit_of(gpu.compute_capability, target, kind->kind, drafter.proposal_head)};
     if (target.experts > 0) { // the MoE facts were checked together above
         cost.moe_pick  = static_cast<double>(target.experts_per_token) / target.experts;
         cost.moe_bytes = kMoeRead * target.routed_expert_params / target.active_params;
