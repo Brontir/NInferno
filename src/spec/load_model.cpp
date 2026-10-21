@@ -317,6 +317,32 @@ std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
     return out;
 }
 
+RoundCost startup_cost(const GpuKey& gpu) {
+    const std::string arch = "sm" + std::to_string(gpu.compute_capability);
+    std::string why;
+    if (gpu.mma_slow) {
+        why = "mma emulated";
+    } else if (gpu.compute_capability <= 0) {
+        why = "unknown compute capability";
+    } else {
+        const Generation* gen = nullptr;
+        for (const Generation& g : kGenerations) {
+            if (g.cc == gpu.compute_capability) { gen = &g; }
+        }
+        why = arch + (gen == nullptr       ? ": no lab card"
+                      : gen->lab_cards < 2 ? ": one lab card"
+                                           : ": no target facts at startup");
+    }
+    return RoundCost{.fit = ModelFit{false, why}, .priced = false};
+}
+
+LoadCeiling load_ceiling(const RoundCost& cost, double a, double d,
+                         std::span<const std::int32_t> depths) {
+    return LoadCeiling{.load   = lower_load({}, modeled_load(cost, a, d, depths, kCeilingRows)),
+                       .reason = "modeled_load: " + (cost.fit.reason.empty() ? std::string("priced")
+                                                                             : cost.fit.reason)};
+}
+
 std::array<ClassDepth, kContextClasses>
 class_depths(const std::optional<RoundCost>& cost, double a, double d,
              std::span<const std::int32_t> captured,

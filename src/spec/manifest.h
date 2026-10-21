@@ -68,6 +68,11 @@ struct ResolvedSpeculation {
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
     // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
+    // A stand-in from another architecture generation (spec::cross_generation) runs its load
+    // table under the load model's ceiling (spec::load_ceiling): the ceiling and why ("2:0
+    // (modeled_load: sm70: one lab card)"), empty otherwise; and whether it lowered the table.
+    std::string load_ceiling;
+    bool load_capped = false;
     // The model's published profiles (a JSON array: every GPU class it was measured on) whose
     // floors bound a foreign profile's; null for a built-in default (the registry median then).
     nlohmann::json floor_sources;
@@ -130,5 +135,14 @@ void require_named_tune(const ResolvedSpeculation& resolved);
 // A note names each raised choice.
 void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
                           std::vector<std::string>& notes);
+
+// A stand-in's load table from another architecture generation (`whose`: the note's reason)
+// runs no deeper than the load model allows on `gpu`: profile.load becomes lower_load(profile.load,
+// load_ceiling(startup_cost(gpu), ...)) over the depths the profile's choices draft at, and
+// resolved.load_ceiling and load_capped record it (a note when it lowers the table). The ceiling
+// reads facts only, so such a stand-in decodes plainly from two rows wherever the model has no
+// multi-row price (every GPU today), and one request keeps the profile's own pick.
+void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes, const std::string& whose);
 
 } // namespace ninferno::spec

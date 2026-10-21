@@ -58,6 +58,12 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
                           : resolved.found() ? "built-in default"
                                              : "none")
             : std::string(local ? "local tune" : "published") + " sha256:" + resolved.sha256;
+    // A stand-in from another generation runs under the load model's ceiling
+    // (spec::apply_load_ceiling).
+    if (!resolved.load_ceiling.empty()) {
+        out["speculation.load_ceiling"] =
+            resolved.load_ceiling + (resolved.load_capped ? " lowered" : " kept");
+    }
     // A registry file only when --drafter-registry named one (spec::Registry::use_file), else the
     // compiled-in one.
     try {
@@ -351,6 +357,7 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     out.engine.load = engine_load(profile.load, speculative_window(out.engine));
     out.engine.context_limit = profile.context_limit;
     out.engine.decision_sources = decision_sources_of(resolved);
+    if (resolved.load_capped) { out.load_ceiling = resolved.load_ceiling; }
     for (std::string& note : fit_draft_widths(out.engine, can)) {
         out.notes.push_back(std::move(note));
     }

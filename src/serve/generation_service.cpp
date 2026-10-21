@@ -304,6 +304,15 @@ std::string speculation_fallback(const GenerationMetrics& metrics, std::string_v
     return startup.empty() ? std::string("none") : std::string(startup);
 }
 
+// The "profile" step's note for a stand-in from another generation whose load table the load
+// model's ceiling lowered (product::ServedSpeculation::load_ceiling); empty otherwise.
+static std::string stand_in_note(const product::ServedSpeculation& served) {
+    return served.load_ceiling.empty()
+               ? std::string()
+               : "; stand-in from another generation: load capped by the cost model (" +
+                     served.load_ceiling + ")";
+}
+
 std::string auto_plain_reason(const std::string& refused, const std::string& why,
                               bool prefill_chunk_explicit) {
     return "--spec auto (" + refused +
@@ -673,7 +682,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                        .config    = primary.config.enabled() ? primary.config.label() : "plain",
                        .selection = options_.per_request_speculation ? "thinking" : "fixed",
                        .reason    = fell_back ? served_speculation_->fit_fallback
-                                              : "profile " + served_speculation_->source,
+                                              : "profile " + served_speculation_->source +
+                                      stand_in_note(*served_speculation_),
                        .fallback  = fell_back ? "fit_fallback" : "none",
         };
     } else if (!speculation_plain_reason_.empty()) {

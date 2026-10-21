@@ -2479,6 +2479,160 @@ int test_variants() {
     return failures;
 }
 
+// G2 PR-a: a stand-in profile from another architecture generation runs its load table under the
+// load model's ceiling; one of the same generation keeps stand_in_load's cap.
+int test_cross_generation() {
+    int failures = 0;
+    // bound_at and lower_load: the shallower bound at every row count from two on.
+    const auto lower = [](const char* a, const char* b) {
+        return load_label(lower_load(parse_load(a), parse_load(b)));
+    };
+    failures +=
+        check(!bound_at(parse_load("3:3"), 2) && bound_at(parse_load("3:3"), 4)->depth == 3 &&
+                  bound_at(parse_load("2:7,4:3"), 9)->depth == 3 &&
+                  bound_at({{1, 0}}, 2)->depth == 0 && !bound_at({{1, 0}}, 1),
+              "bound_at: the entry of the most lanes at or below the rows, from two");
+    failures += check(lower("2:7,3:3", "2:0") == "2:0" && lower("3:3", "") == "3:3" &&
+                          lower("", "") == "none" && lower("2:7,5:5", "3:3") == "2:7,3:3" &&
+                          lower("2:3:drafts,6:0", "4:2") == "2:3:drafts,4:2,6:0" &&
+                          load_label(lower_load({}, {{1, 0}})) == "2:0",
+                      "lower_load: the shallower bound per row count, plain stays plain");
+    // startup_cost: unpriced at startup (no target facts), labelled by the GPU's facts.
+    const auto key = [](int cc, bool mma_slow = false) {
+        GpuKey k;
+        k.compute_capability = cc;
+        k.mma_slow           = mma_slow;
+        return k;
+    };
+    const auto reason = [&](const GpuKey& k) {
+        const RoundCost c = startup_cost(k);
+        return c.priced || c.fit.reliable ? std::string("priced") : c.fit.reason;
+    };
+    failures += check(reason(key(70)) == "sm70: one lab card" &&
+                          reason(key(89)) == "sm89: no target facts at startup" &&
+                          reason(key(61)) == "sm61: no lab card" &&
+                          reason(key(75, true)) == "mma emulated" &&
+                          reason(key(0)) == "unknown compute capability",
+                      "startup_cost: unpriced, labelled by the GPU's facts");
+    const std::vector<std::int32_t> depths{3, 7};
+    for (const int cc : {70, 75, 80, 86, 89, 120}) {
+        const LoadCeiling c =
+            load_ceiling(startup_cost(key(cc)), kCeilingAcceptance, kCeilingDecay, depths);
+        failures +=
+            check(load_label(c.load) == "2:0" && c.reason.starts_with("modeled_load: "),
+                  "load_ceiling at startup: plain from two rows on sm" + std::to_string(cc));
+    }
+    failures += check(
+        load_label(
+            load_ceiling(RoundCost{.alpha = 0.01, .delta = 0.02}, 0.75, 0.97, depths).load) ==
+                "2:0" &&
+            load_ceiling(RoundCost{.fitted_rows = kCeilingRows}, 0.75, 0.97, depths).load.empty(),
+        "load_ceiling: the model's (a one-row fit plain from 2, free multi-row "
+        "rounds unbounded)");
+    // The generation of a donor class: by the full-chip table; "*" has none.
+    failures += check(profile_generation(Json{{"gpu_class", "ga102"}}) == 8 &&
+                          profile_generation(Json{{"gpu_class", "gb203:70sm"}}) == 12 &&
+                          profile_generation(Json{{"gpu_class", "sm89"}}) == 8 &&
+                          profile_generation(Json{{"gpu_class", "gv100"}}) == 7 &&
+                          profile_generation(Json{{"gpu_class", "*"}}) == 0,
+                      "profile_generation: the donor class's compute-capability major");
+
+    const Registry& registry = Registry::builtin();
+    // Volta: Nemotron 3.5 Lightning has no gv100 profile, so a V100 runs the RTX 3090's (ga102,
+    // Ampere) mtp:3. stand_in_load capped it at 80 SMs / 10 = 8 rows (C4 drafted at 0.82x
+    // plain); from another generation it runs under the ceiling: plain from two rows, one request
+    // keeps mtp:3.
+    if (const auto* nemo = registry.by_id("nemotron-3.5-lightning-30b-a3b")) {
+        const std::string repo = "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF";
+        GpuKey v100{ninferno::gpu_similarity_chain("gv100", 80, 7, 0), 32ULL << 30, false, 3, 80};
+        v100.compute_capability = 70;
+        const auto* donor       = select_published(nemo->profiles, v100, repo, nullptr);
+        failures += check(donor != nullptr && measured_elsewhere(v100, *donor) &&
+                              cross_generation(v100, *donor),
+                          "Nemotron 3.5 Lightning on a V100: a stand-in from another generation");
+        if (donor != nullptr) {
+            Profile p              = profile_from_published(*donor);
+            const std::string pick = p.overall.config.label();
+            ResolvedSpeculation r;
+            std::vector<std::string> notes;
+            apply_load_ceiling(p, v100, r, notes, "stand-in from another generation");
+            bool plain = true;
+            for (std::int32_t rows = 2; rows <= 8; ++rows) {
+                const auto bound = bound_at(p.load, rows);
+                plain            = plain && bound && bound->depth == 0;
+            }
+            failures +=
+                check(plain && load_label(p.load) == "2:0" && r.load_capped &&
+                          r.load_ceiling == "2:0 (modeled_load: sm70: one lab card)" &&
+                          notes.size() == 1 && p.overall.config.label() == pick && pick == "mtp:3",
+                      "Volta, a foreign-generation stand-in: plain at C>=2, mtp:3 alone");
+        }
+        // The same generation keeps its table: an A100 (sm80) runs the RTX 3090's (sm86) profile
+        // under stand_in_load's cap only (its 108 SMs: plain from 11 rows).
+        GpuKey a100{ninferno::gpu_similarity_chain("ga100", 108, 8, 0), 40ULL << 30, false, 3, 108};
+        a100.compute_capability = 80;
+        const auto* same        = select_published(nemo->profiles, a100, repo, nullptr);
+        failures += check(
+            same != nullptr && measured_elsewhere(a100, *same) && !cross_generation(a100, *same) &&
+                load_label(stand_in_load(profile_from_published(*same).load, a100.sms)) ==
+                    "2:3,11:0",
+            "A100, a same-generation stand-in: its table under the SM cap");
+    } else {
+        failures += check(false, "registry has nemotron-3.5-lightning-30b-a3b");
+    }
+    // A V100's own gpt-oss-20b profile is its own: no stand-in at all.
+    if (const auto* oss = registry.by_id("gpt-oss-20b")) {
+        GpuKey v100{ninferno::gpu_similarity_chain("gv100", 80, 7, 0), 32ULL << 30, false, 3, 80};
+        v100.compute_capability = 70;
+        const auto* own = select_published(oss->profiles, v100, "openai/gpt-oss-20b", nullptr);
+        failures += check(own != nullptr && own->value("gpu_class", "") == "gv100" &&
+                              !measured_elsewhere(v100, *own),
+                          "gpt-oss-20b on a V100: its own gv100 profile");
+    }
+
+    // End to end (resolve_speculation's take_published): one manifest, an Ampere (ga102) profile
+    // only, resolved on a V100 and on an A100.
+    namespace fs = std::filesystem;
+    const auto dir =
+        fs::temp_directory_path() / ("ninferno_spec_xgen_test_" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    const auto artifact = dir / "model.ninferno";
+    const Json manifest = {
+        {"schema", 1},
+        {"target", {{"artifact_id", "cccc"}, {"repo", "org/c"}, {"engine", "qwen3_5"}}},
+        {"source", "bundle"},
+        {"fallback", "none"},
+        {"drafters",
+         Json::array(
+             {{{"name", "mtp"}, {"kind", "mtp"}, {"component", "mtp"}, {"status", "embedded"}}})},
+        {"profiles", Json::parse(R"([
+            {"gpu_class": "ga102", "requires": ["mtp"], "default": {"config": "mtp:3", "drafter": "mtp", "floor_tokens_per_round": 1.5},
+             "load": [{"lanes": 2, "depth": 3}]}
+        ])")}};
+    std::ofstream(manifest_path(artifact)) << manifest.dump(1);
+    GpuKey v100{{"gv100:80sm", "gv100", "sm70", "*", "ga102"}, 32ULL << 30, false, 3, 80};
+    v100.compute_capability = 70;
+    GpuKey a100{{"ga100:108sm", "ga100", "sm80", "ga102", "*"}, 40ULL << 30, false, 3, 108};
+    a100.compute_capability = 80;
+    const auto on_v100      = resolve_speculation(artifact, "cccc", v100);
+    const auto on_a100      = resolve_speculation(artifact, "cccc", a100);
+    failures += check(on_v100.found() && on_v100.profile.overall.config.label() == "mtp:3" &&
+                          load_label(on_v100.profile.load) == "2:0" && on_v100.load_capped &&
+                          on_v100.load_ceiling == "2:0 (modeled_load: sm70: one lab card)" &&
+                          std::any_of(on_v100.notes.begin(), on_v100.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.find("stand-in from another generation (ga102 "
+                                                        "for sm70): load capped by the cost "
+                                                        "model") != std::string::npos;
+                                      }),
+                      "resolve: a V100 under an Ampere stand-in decodes plainly from two rows");
+    failures += check(on_a100.found() && load_label(on_a100.profile.load) == "2:3,11:0" &&
+                          on_a100.load_ceiling.empty() && !on_a100.load_capped,
+                      "resolve: an A100 under the same Ampere stand-in keeps 2:3 (SM cap)");
+    fs::remove_all(dir);
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -2498,6 +2652,7 @@ int main() {
     failures += test_context_classes();
     failures += test_variants();
     failures += test_resolve();
+    failures += test_cross_generation();
     if (failures == 0) { std::cout << "spec: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
 }

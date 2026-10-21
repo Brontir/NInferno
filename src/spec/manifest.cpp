@@ -4,6 +4,7 @@
 #include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
+#include "spec/load_model.h"
 #include "spec/registry.h"
 
 #include <algorithm>
@@ -42,7 +43,9 @@ std::vector<std::string> referenced(const Profile& p) {
 
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
 // measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
-// bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
+// bounds where it measured none, and a stand-in's bounds capped to this GPU: one from another
+// architecture generation under the load model's ceiling (apply_load_ceiling), one of the same
+// generation to its multiprocessors (stand_in_load). false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
@@ -71,6 +74,14 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
     if (out.foreign_floors) {
         out.floor_sources = profiles;
         raise_foreign_floors(p, out, out.notes);
+        if (cross_generation(gpu, published)) {
+            apply_load_ceiling(p, gpu, out, out.notes,
+                               "stand-in from another generation (" +
+                                   published.value("gpu_class", std::string()) + " for sm" +
+                                   std::to_string(gpu.compute_capability) +
+                                   "): load capped by the cost model");
+            return true;
+        }
         const auto capped = stand_in_load(p.load, gpu.sms);
         if (capped != p.load) {
             out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
@@ -307,6 +318,34 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
     }
 }
 
+void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes, const std::string& whose) {
+    std::vector<std::int32_t> depths;
+    const auto add = [&](const Choice& c) {
+        if (c.config.enabled()) { depths.push_back(c.config.k); }
+    };
+    add(profile.overall);
+    add(profile.thinking);
+    add(profile.non_thinking);
+    if (profile.fit_fallback) { add(*profile.fit_fallback); }
+    for (const auto* served : {&profile.served, &profile.portable}) {
+        if (!served->has_value()) { continue; }
+        add((*served)->overall);
+        add((*served)->thinking);
+        add((*served)->non_thinking);
+    }
+    const LoadCeiling ceiling =
+        load_ceiling(startup_cost(gpu), kCeilingAcceptance, kCeilingDecay, depths);
+    const auto lowered    = lower_load(profile.load, ceiling.load);
+    resolved.load_ceiling = load_label(ceiling.load) + " (" + ceiling.reason + ")";
+    resolved.load_capped  = lowered != profile.load;
+    if (resolved.load_capped) {
+        notes.push_back("load bounds " + load_label(profile.load) + " -> " + load_label(lowered) +
+                        ": " + whose + ", ceiling " + resolved.load_ceiling);
+        profile.load = lowered;
+    }
+}
+
 namespace {
 
 // Why `tuned` (read from `path`) does not serve `artifact_id` on `gpu_class`: a drafter replaced
@@ -427,6 +466,8 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                 if (published != nullptr && take_published(profiles, *published, gpu, scratch, p) &&
                     !p.load.empty() && p.overall.config.mode == out.profile.overall.config.mode) {
                     out.profile.load = std::move(p.load);
+                    out.load_ceiling = scratch.load_ceiling; // a stand-in's, under its ceiling
+                    out.load_capped  = scratch.load_capped;
                     out.notes.push_back("load bounds " + load_label(out.profile.load) + " from " +
                                         published_source(origin, *published) +
                                         ": the local tune measured none");
