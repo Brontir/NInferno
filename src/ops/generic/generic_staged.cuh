@@ -19,6 +19,7 @@
 // of row r is stored at chunk c ^ 4 (r & 1), so the eight lanes of a quarter-warp (two rows, four
 // chunks) read eight distinct bank groups.
 
+#include "ops/common/arch_limits.h"
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.cuh"
@@ -50,10 +51,10 @@ struct StagedShared {
     alignas(16) __nv_bfloat16 x[Stages][S::kTokens * 64];
 };
 
-// The schedule's pipeline depth, lowered until the stages fit one block (99 KiB).
+// The schedule's pipeline depth, lowered until the stages fit one block of this build.
 template <class S, int Stages = S::kStages>
 struct StagedStages {
-    static constexpr int value = sizeof(StagedShared<S, Stages>) <= 99 * 1024 || Stages == 2
+    static constexpr int value = sizeof(StagedShared<S, Stages>) <= kMaxSharedBytesPerBlock || Stages == 2
                                      ? Stages
                                      : StagedStages<S, Stages - 1>::value;
 };

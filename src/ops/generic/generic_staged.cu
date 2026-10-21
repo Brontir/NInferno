@@ -12,7 +12,8 @@ namespace ninferno::ops::detail::generic {
 namespace {
 
 // Keep in the order of kStagedSchedules in generic_gemm.cpp: rows (weight rows staged, SwiGLU gate
-// and up together), tokens, warps_m, warps_n, stages (every schedule's stages fit one block).
+// and up together), tokens, warps_m, warps_n, stages. 9 (64 KiB) runs two CTAs per SM where an SM
+// holds 128 KiB; 10-12 (144-160 KiB) exist only where one block holds them (GA100 and Orin).
 #define NINFERNO_GENERIC_STAGED_SCHEDULES(X)                                                       \
     X(0, 128, 128, 2, 4, 3)                                                                        \
     X(1, 128, 64, 2, 2, 4)                                                                         \
@@ -22,17 +23,17 @@ namespace {
     X(5, 64, 64, 2, 2, 4)                                                                          \
     X(6, 128, 64, 2, 2, 2)                                                                         \
     X(7, 64, 128, 1, 4, 2)                                                                         \
-    X(8, 64, 64, 2, 2, 3)
+    X(8, 64, 64, 2, 2, 3)                                                                              X(9, 128, 128, 2, 4, 2)                                                                            X(10, 128, 128, 2, 4, 5)                                                                           X(11, 256, 128, 4, 2, 3)                                                                           X(12, 128, 256, 2, 4, 3)
 
 template <class S, Epilogue E>
 void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
     constexpr int kRowsPerBlock = E == Epilogue::SwiGlu ? S::kRows / 2 : S::kRows;
-    constexpr int kShared       = staged_shared_bytes<S>();
-    static_assert(StagedStages<S>::value == S::kStages, "the route name states the stages it runs");
+    constexpr int kShared       = static_cast<int>(sizeof(StagedShared<S, S::kStages>));
     if constexpr (kShared > kMaxSharedBytesPerBlock) {
         // route_admits never names it (staged_fits); a direct call is refused.
         throw std::invalid_argument("generic staged: schedule exceeds this build's shared memory");
     } else {
+        static_assert(StagedStages<S>::value == S::kStages, "the route name states the stages it runs");
         static ::ninferno::PerDevice<bool> configured;
         ::ninferno::allow_dynamic_smem(configured, staged_kernel<S, E>, kShared);
         const dim3 grid((args.rows + kRowsPerBlock - 1) / kRowsPerBlock,
@@ -64,7 +65,7 @@ bool staged_fits(int schedule) {
     switch (schedule) {
 #define NINFERNO_GENERIC_FITS(I, R, T, WM, WN, ST)                                                 \
     case I:                                                                                        \
-        return staged_shared_bytes<StagedSchedule<R, T, WM, WN, ST>>() <= kMaxSharedBytesPerBlock;
+        return sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>) <= kMaxSharedBytesPerBlock;
         NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_GENERIC_FITS)
 #undef NINFERNO_GENERIC_FITS
     default:

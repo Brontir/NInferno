@@ -170,7 +170,7 @@ constexpr std::array<TiledScheduleInfo, 3> kTiledSchedules{{
 
 // Mirrors NINFERNO_GENERIC_STAGED_SCHEDULES (generic_staged.cu): rows, tokens, warps_m, warps_n,
 // stages.
-constexpr std::array<StagedScheduleInfo, 9> kStagedSchedules{{
+constexpr std::array<StagedScheduleInfo, 13> kStagedSchedules{{
     {128, 128, 2, 4, 3},
     {128, 64, 2, 2, 4},
     {64, 128, 1, 4, 4},
@@ -180,6 +180,10 @@ constexpr std::array<StagedScheduleInfo, 9> kStagedSchedules{{
     {128, 64, 2, 2, 2}, // 48 KiB: two CTAs per SM, for grids of fewer tiles than twice the SMs
     {64, 128, 1, 4, 2},
     {64, 64, 2, 2, 3},
+    {128, 128, 2, 4, 2}, // 64 KiB: two CTAs per SM where an SM holds 128 KiB
+    {128, 128, 2, 4, 5}, // 160 KiB, 144 KiB, 144 KiB: only where one block holds them (GA100, Orin)
+    {256, 128, 4, 2, 3},
+    {128, 256, 2, 4, 3},
 }};
 
 // Mirrors NINFERNO_GENERIC_NVFP4_TILED_SCHEDULES (generic_nvfp4_tiled.cu): classes (the register
