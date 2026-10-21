@@ -886,6 +886,21 @@ int check_r8_slices(const Format& f, Op op, std::int32_t out_rows, std::int32_t 
     std::vector<std::vector<std::uint16_t>> alone(kWide);
     for (std::int32_t token = 0; token < kWide; ++token) alone[token] = run(token, 1);
     int failures = 0;
+    // Where R8 takes the sliced widths (no tensor mma.sync), a caller sizing an exact width of
+    // 5..16 tokens reserves one slice's planes.
+    if (!ninferno::device_class().features.mma_tensor) {
+        const generic::Problem problem{f.qtype, ops::LinearPolicy::AllowA8, out_rows, k,
+                                       generic::Epilogue::Store};
+        const std::size_t slice = generic::route_workspace_bytes(route, k, 4);
+        for (std::int32_t t = 5; t <= kWide; ++t) {
+            if (generic::workspace_capacity_bytes(problem, &device.weight, t, t) < slice) {
+                std::cerr << f.name << " R8 slices: an exact " << t
+                          << "-token workspace holds no slice's planes\n";
+                ++failures;
+                break;
+            }
+        }
+    }
     for (const std::int32_t t : {7, kWide}) {
         const auto bits = run(0, t);
         for (std::int32_t token = 0; token < t; ++token) {
