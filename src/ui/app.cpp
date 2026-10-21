@@ -1431,6 +1431,31 @@ constexpr const char* kKeyPage =
     "<form method=get action=/><p>NInferno: access key</p><input name=key type=password "
     "autofocus required style='width:100%;font:inherit'><p><button>Open</button></p></form>";
 
+constexpr const char* kKeylessProxy =
+    "a proxy in front of ninferno-ui needs an access key: start it with NINFERNO_UI_KEY or "
+    "--access-key-file F (16-256 of A-Z a-z 0-9 . _ ~ -)";
+
+namespace {
+
+// A query component percent-encoded: everything but A-Z a-z 0-9 - . _ ~ (RFC 3986 unreserved).
+std::string url_component(std::string_view text) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : text) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+            c == '.' || c == '_' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 void App::install(httplib::Server& server) {
     const AccessPolicy policy = options_.access;
     server.set_pre_routing_handler([policy](const httplib::Request& req, httplib::Response& res) {
@@ -1438,13 +1463,17 @@ void App::install(httplib::Server& server) {
         res.set_header("X-Frame-Options", "DENY");
         res.set_header("Referrer-Policy", "no-referrer");
         res.set_header("Cache-Control", "no-store");
-        if (!host_allowed(policy, req.get_header_value("Host"))) {
-            reply_error(res, 403,
-                        "Host not allowed: ninferno-ui answers localhost only (see --listen)");
-            return httplib::Server::HandlerResponse::Handled;
-        }
         const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
                              req.has_header("X-Real-IP");
+        if (!host_allowed(policy, req.get_header_value("Host"))) {
+            // A keyless UI behind a proxy that forwards the public Host: the missing key is the
+            // cause, so say that rather than the Host.
+            reply_error(res, 403,
+                        proxied && policy.key.empty()
+                            ? kKeylessProxy
+                            : "Host not allowed: ninferno-ui answers localhost only (see --listen)");
+            return httplib::Server::HandlerResponse::Handled;
+        }
         switch (check_key(policy, req.remote_addr, req.get_header_value("Host"), proxied,
                           req.get_header_value("Cookie"), req.get_header_value("Authorization"),
                           req.get_param_value("key"))) {
@@ -1457,15 +1486,28 @@ void App::install(httplib::Server& server) {
                                     ? "; Secure"
                                     : ""));
             if (req.method == "GET") { // the key leaves the address bar and the history
-                const bool local = req.path.size() < 2 || (req.path[1] != '/' && req.path[1] != '\\');
-                res.set_redirect(local ? req.path : std::string("/"), 303);
+                // The path as the browser sent it (req.path is decoded: %09/evil.example would
+                // turn into a tab a browser strips, //evil.example), and only plain path bytes.
+                const std::string_view path =
+                    std::string_view(req.target).substr(0, req.target.find('?'));
+                const bool plain = std::all_of(path.begin(), path.end(), [](unsigned char c) {
+                    return c > 0x20 && c < 0x7f && c != '\\';
+                });
+                const bool local = plain && !path.empty() && path[0] == '/' &&
+                                   (path.size() < 2 || path[1] != '/');
+                // The other query parameters stay (an API GET keeps its arguments).
+                std::string query;
+                for (const auto& [name, value] : req.params) {
+                    if (name == "key") { continue; }
+                    query += (query.empty() ? "?" : "&") + url_component(name) + "=" +
+                             url_component(value);
+                }
+                res.set_redirect(local ? std::string(path) + query : std::string("/"), 303);
                 return httplib::Server::HandlerResponse::Handled;
             }
             break;
         case KeyCheck::keyless_proxy:
-            reply_error(res, 403,
-                        "a proxy in front of ninferno-ui needs an access key: start it with "
-                        "NINFERNO_UI_KEY or --access-key-file F (16-256 of A-Z a-z 0-9 . _ ~ -)");
+            reply_error(res, 403, kKeylessProxy);
             return httplib::Server::HandlerResponse::Handled;
         case KeyCheck::refused:
             if (req.path != "/") {
