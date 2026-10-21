@@ -292,9 +292,19 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     const double total_seconds = impl_->engine_elapsed_ns != 0
                                      ? static_cast<double>(impl_->engine_elapsed_ns) * 1.0e-9
                                      : load.load_seconds;
-    impl_->logger->info("engine ready | {} | total {} | weights {} | CUDA sync {}",
-                        format_pretty_text(load.model_name), format_pretty_duration(total_seconds),
-                        format_pretty_bytes(load.host_to_device_bytes), load.cuda_sync_mode);
+    // The decode pacing beside the CUDA synchronization schedule, on the same line (a compact
+    // start): the steps per round, and the CPU quota that chose them when there is one.
+    std::string quota;
+    if (load.cpu_quota_us != 0 && load.cpu_quota_period_us != 0) {
+        quota = fmt::format(" | CPU quota {:.2f} CPUs",
+                            static_cast<double>(load.cpu_quota_us) /
+                                static_cast<double>(load.cpu_quota_period_us));
+    }
+    impl_->logger->info(
+        "engine ready | {} | total {} | weights {} | CUDA sync {} | decode {} step(s) per round{}",
+        format_pretty_text(load.model_name), format_pretty_duration(total_seconds),
+        format_pretty_bytes(load.host_to_device_bytes), load.cuda_sync_mode,
+        load.decode_steps_per_round, quota);
     // Which per-GPU-class tuning the routes run with: a refused or missing table is not silent.
     if (!load.gpu_class.empty() || !load.route_table.empty()) {
         impl_->logger->info("routes | gpu class {} | {}", format_pretty_text(load.gpu_class),
@@ -326,14 +336,6 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
             if (end == std::string_view::npos) { break; }
             canonical.remove_prefix(end + 1);
         }
-    }
-    if (load.cpu_quota_us != 0 && load.cpu_quota_period_us != 0) {
-        impl_->logger->info(
-            "decode | {} step(s) per round | CPU quota {:.2f} CPUs", load.decode_steps_per_round,
-            static_cast<double>(load.cpu_quota_us) / static_cast<double>(load.cpu_quota_period_us));
-    } else {
-        impl_->logger->info("decode | {} step(s) per round | no CPU quota",
-                            load.decode_steps_per_round);
     }
     impl_->logger->debug(
         "load detail | architecture {} | artifact read {} | H2D {} | staging peak {} | device "

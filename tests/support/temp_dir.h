@@ -4,6 +4,8 @@
 // from an unseeded std::rand) is shared by every run on the machine: a run by another user leaves
 // it behind unwritable, and two runs at once write over each other's files.
 
+#include "core/sha256.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <random>
@@ -29,7 +31,8 @@
         std::error_code error;
         if (std::filesystem::create_directory(dir, error)) { return dir; }
     }
-    throw std::runtime_error("unique_temp_dir: no new directory under " + base.string());
+    throw std::runtime_error("unique_temp_dir: no new directory under " +
+                             ninferno::utf8_path(base));
 }
 
 // A unique_temp_dir removed with everything under it when the scope ends, however it ends.

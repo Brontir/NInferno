@@ -132,12 +132,15 @@ int main() {
             observer.callback({.phase      = ninferno::StartupPhase::EngineStartup,
                                .status     = ninferno::StartupStatus::Complete,
                                .elapsed_ns = 3'000'000'000});
-            startup.engine_ready({.model_name           = "qwen3.6-27b",
-                                  .cuda_sync_mode       = "blocking",
-                                  .weight_formats       = {"q4_g64_fp16", "q8_g32_fp16"},
-                                  .gpu_class            = "gb202:170sm",
-                                  .route_table          = "route table t.json refused (x)",
-                                  .host_to_device_bytes = 16ULL << 30});
+            startup.engine_ready({.model_name             = "qwen3.6-27b",
+                                  .cuda_sync_mode         = "blocking",
+                                  .weight_formats         = {"q4_g64_fp16", "q8_g32_fp16"},
+                                  .gpu_class              = "gb202:170sm",
+                                  .route_table            = "route table t.json refused (x)",
+                                  .decode_steps_per_round = 16,
+                                  .cpu_quota_us           = 200000,
+                                  .cpu_quota_period_us    = 100000,
+                                  .host_to_device_bytes   = 16ULL << 30});
             logging.flush();
         }
         startup_output = capture.finish();
@@ -150,7 +153,9 @@ int main() {
                 std::string::npos &&
             startup_output.find("engine ready | qwen3.6-27b | total 3.0s | weights 16.0 GiB") !=
                 std::string::npos &&
-            startup_output.find("CUDA sync blocking") != std::string::npos &&
+            // The decode pacing rides on the same line: no line of its own.
+            startup_output.find("CUDA sync blocking | decode 16 step(s) per round | CPU quota "
+                                "2.00 CPUs") != std::string::npos &&
             // The route table's state is part of startup, refused or not.
             startup_output.find(
                 "routes | gpu class gb202:170sm | route table t.json refused (x)") !=

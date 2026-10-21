@@ -259,9 +259,9 @@ void test_launch() {
         const auto& dir  = scratch.path();
         const auto model = dir / "m.ninferno";
         std::ofstream(model) << "not an artifact";
-        std::ofstream(model.string() + ".spec_profile.json") << "{}";
+        std::ofstream(fs::path(model) += ".spec_profile.json") << "{}";
         LaunchRequest local = request;
-        local.model         = model.string();
+        local.model         = ninferno::utf8_path(model);
         local.prepare_only  = false;
         const auto stale    = make_launch(options, local);
         check(std::find(stale.argv.begin(), stale.argv.end(), "--spec-profile") ==
@@ -329,14 +329,14 @@ void test_launch() {
         const TempDir scratch("ninferno_ui_test");
         const auto artifact = scratch.path() / "ninferno_ui_test.ninferno";
         std::ofstream(artifact) << "x";
-        const auto qwen =
-            make_tune(options, {.artifact = artifact.string(), .engine = "qwen3_5", .gpu = 0});
+        const auto qwen = make_tune(
+            options, {.artifact = ninferno::utf8_path(artifact), .engine = "qwen3_5", .gpu = 0});
         check(qwen.argv.size() >= 3 && same_path(qwen.argv[0], "/opt/ninferno/bin/ninferno") &&
-                  qwen.argv[1] == "spec-tune" && qwen.argv[2] == artifact.string() &&
+                  qwen.argv[1] == "spec-tune" && qwen.argv[2] == ninferno::utf8_path(artifact) &&
                   qwen.kind == "tune",
               "tune: ninferno spec-tune");
-        const auto gemma =
-            make_tune(options, {.artifact = artifact.string(), .engine = "gemma4", .gpu = 0});
+        const auto gemma = make_tune(
+            options, {.artifact = ninferno::utf8_path(artifact), .engine = "gemma4", .gpu = 0});
         check(same_path(gemma.argv[0], "/opt/ninferno/bin/ninferno-gemma4") &&
                   gemma.argv[2] == "spec-tune",
               "tune: ninferno-gemma4 <artifact> spec-tune");
