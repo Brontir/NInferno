@@ -221,6 +221,10 @@ BuiltOpenAIResponse build_response(const std::string& id, std::int64_t created_a
              {"output_tokens", outcome.completion_tokens},
              {"output_tokens_details", Json{{"reasoning_tokens", outcome.reasoning_tokens}}},
              {"total_tokens", outcome.prompt_tokens + outcome.completion_tokens}};
+    // The speculation the request ran, under an extension key OpenAI clients ignore.
+    if (Json speculation = speculation_summary_json(outcome.metrics); !speculation.is_null()) {
+        response["usage"]["ninferno"] = Json{{"speculation", std::move(speculation)}};
+    }
     built.body = std::move(response);
     return built;
 }

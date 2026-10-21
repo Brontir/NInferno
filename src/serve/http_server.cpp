@@ -667,9 +667,9 @@ void HttpServer::register_routes() {
 }
 
 void HttpServer::handle_models(const httplib::Request&, httplib::Response& res) const {
-    res.set_content(
-        make_models_list(public_model_id_, model_created_, options_.max_context, model_metadata_),
-        "application/json");
+    res.set_content(make_models_list(public_model_id_, model_created_, options_.max_context,
+                                     model_metadata_, &startup_speculation_),
+                    "application/json");
 }
 
 void HttpServer::handle_model(const httplib::Request& req, httplib::Response& res) const {
@@ -683,9 +683,9 @@ void HttpServer::handle_model(const httplib::Request& req, httplib::Response& re
         write_openai_error(res, error);
         return;
     }
-    res.set_content(
-        make_model_object(public_model_id_, model_created_, options_.max_context, model_metadata_),
-        "application/json");
+    res.set_content(make_model_object(public_model_id_, model_created_, options_.max_context,
+                                      model_metadata_, &startup_speculation_),
+                    "application/json");
 }
 
 bool HttpServer::bind() { return server_.bind_to_port(options_.host, options_.port); }
@@ -699,6 +699,7 @@ void HttpServer::attach(GenerationService& service) {
     model_created_                   = unix_time_now();
     sampling_defaults_header_ = sampling_defaults_header(service.sampling_defaults(), options_);
     model_metadata_                = service.model_metadata();
+    startup_speculation_           = service.startup_speculation();
     service_                       = &service;
     // An automatic max_context is what the Engine chose (/v1/models reports it).
     options_.max_context           = service.engine_options().max_context;

@@ -752,6 +752,20 @@ int test_aggregate_and_errors() {
                           clamped["usage"]["cache_read_input_tokens"] == 10,
                       "cache-read usage was not clamped to the prompt token count");
 
+    failures += check(!response["usage"].contains("ninferno"),
+                      "usage carries no extension without a speculation config");
+    outcome.metrics.speculative_config    = "dflash:7";
+    outcome.metrics.speculative_selection = "fixed";
+    outcome.metrics.speculative_reason    = "--spec-select fixed";
+    outcome.metrics.speculative_fallback  = "watchdog_plain";
+    const Json speculated = Json::parse(make_anthropic_messages_response(identity, outcome));
+    const Json& extension = speculated["usage"]["ninferno"]["speculation"];
+    failures += check(extension["config"] == "dflash:7" && extension["selection"] == "fixed" &&
+                          extension["reason"] == "--spec-select fixed" &&
+                          extension["fallback"] == "watchdog_plain" &&
+                          speculated["usage"]["input_tokens"] == 0,
+                      "usage.ninferno.speculation carries the speculation fallback");
+
     outcome               = {};
     outcome.finish_reason = ninferno::FinishReason::ContextCapacity;
     const Json empty      = Json::parse(make_anthropic_messages_response(identity, outcome));

@@ -1,4 +1,5 @@
 #include "serve/openai_common.h"
+#include "serve/generation_service.h"
 #include "serve/request_validation.h"
 
 #include "ninferno/types.h"
@@ -31,7 +32,8 @@ namespace {
 // per-request context ceiling (equal to max_model_len); n_ctx_train is the model's native
 // training context. ftype is the registered weights profile (the NInferno quantization name).
 Json make_model_object_json(const std::string& model_id, std::int64_t created,
-                            std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata) {
+                            std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
+                            const StartupSpeculation* speculation) {
     Json meta{{"n_vocab", metadata.vocab_size},
               {"n_ctx", max_model_len},
               {"n_ctx_train", metadata.native_context},
@@ -50,6 +52,13 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
     if (!metadata.decision_fingerprint.empty()) {
         meta["decision_fingerprint"] = metadata.decision_fingerprint;
         meta["decision_manifest"]    = metadata.decision_manifest;
+    }
+    // What the server runs since startup (GenerationService::startup_speculation).
+    if (speculation != nullptr) {
+        meta["speculation"] = Json{{"config", speculation->config},
+                                   {"selection", speculation->selection},
+                                   {"reason", speculation->reason},
+                                   {"fallback", speculation->fallback}};
     }
     return Json{{"id", model_id},
                 {"object", "model"},
@@ -222,16 +231,28 @@ void apply_openai_prompt_cache_policy(GenerationRequest& request, OpenAIPromptCa
     request.allow_engine_automatic_shared_prefixes = false;
 }
 
+Json speculation_summary_json(const GenerationMetrics& metrics) {
+    if (metrics.speculative_config.empty()) { return nullptr; }
+    Json out{{"config", metrics.speculative_config},
+             {"selection", metrics.speculative_selection},
+             {"reason", metrics.speculative_reason},
+             {"fallback", metrics.speculative_fallback.empty() ? std::string("none")
+                                                               : metrics.speculative_fallback}};
+    if (!metrics.speculative_note.empty()) { out["note"] = metrics.speculative_note; }
+    return out;
+}
+
 std::string make_models_list(const std::string& model_id, std::int64_t created,
-                             std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata) {
+                             std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
+                             const StartupSpeculation* speculation) {
     // vLLM/llama.cpp-compatible discovery metadata for the configured per-request context limit.
     // Codex also decodes a required top-level `models` array of its own backend's ModelInfo
     // (slug, shell_type, truncation_policy, ...). Nothing here can truthfully fill one, so it
     // is empty: the catalog refresh decodes and Codex keeps its fallback metadata.
-    const Json payload = {
-        {"object", "list"},
-        {"data", Json::array({make_model_object_json(model_id, created, max_model_len, metadata)})},
-        {"models", Json::array()}};
+    const Json payload = {{"object", "list"},
+                          {"data", Json::array({make_model_object_json(
+                                       model_id, created, max_model_len, metadata, speculation)})},
+                          {"models", Json::array()}};
     return payload.dump();
 }
 
@@ -298,9 +319,9 @@ std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
 }
 
 std::string make_model_object(const std::string& model_id, std::int64_t created,
-                              std::uint32_t max_model_len,
-                              const ninferno::ModelMetadata& metadata) {
-    return make_model_object_json(model_id, created, max_model_len, metadata).dump();
+                              std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
+                              const StartupSpeculation* speculation) {
+    return make_model_object_json(model_id, created, max_model_len, metadata, speculation).dump();
 }
 
 std::string make_error_body(const ApiError& error) {

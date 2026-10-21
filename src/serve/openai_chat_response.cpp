@@ -39,7 +39,7 @@ struct CompletionTimings {
     // Constrained decoding only: mask rows computed on the host and the host time they took.
     std::uint64_t constraint_masked_n = 0;
     double constraint_mask_ms         = 0.0;
-    // --spec auto: the speculation the request ran (config, selection, floor, ...).
+    // The speculation the request ran (config, selection, reason, fallback, floor, ...).
     Json speculation;
 };
 
@@ -108,10 +108,9 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
         outcome.metrics.speculative_accepted_tokens);
     timings.constraint_masked_n = outcome.metrics.constraint_masked_positions;
     if (!outcome.metrics.speculative_config.empty()) {
-        timings.speculation =
-            Json{{"config", outcome.metrics.speculative_config},
-                 {"selection", outcome.metrics.speculative_selection},
-                 {"floor", outcome.metrics.speculative_floor},
+        timings.speculation = speculation_summary_json(outcome.metrics);
+        timings.speculation.update(
+            Json{{"floor", outcome.metrics.speculative_floor},
                  {"watchdog_tripped", outcome.metrics.speculative_watchdog_tripped},
                  {"step_downs", outcome.metrics.speculative_step_downs},
                  {"final_draft_window", outcome.metrics.speculative_final_draft_window},
@@ -122,7 +121,8 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
                  {"copy_rounds", outcome.metrics.speculative_copy_rounds},
                  {"copy_accepted_tokens", outcome.metrics.speculative_copy_accepted},
                  {"shared_trip_deferrals", outcome.metrics.speculative_trips_held},
-                 {"load_plain", outcome.metrics.speculative_load_plain}};
+                 {"load_plain", outcome.metrics.speculative_load_plain},
+                 {"context_plain", outcome.metrics.speculative_context_plain}});
     }
     timings.constraint_mask_ms =
         finite_nonnegative(outcome.metrics.constraint_mask_host_seconds * 1000.0);

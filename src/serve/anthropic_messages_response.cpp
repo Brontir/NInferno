@@ -1,6 +1,7 @@
 #include "serve/anthropic_messages.h"
 
 #include "serve/generation_service.h"
+#include "serve/openai_common.h"
 #include "serve/request_validation.h"
 
 #include <nlohmann/json.hpp>
@@ -72,7 +73,7 @@ Json final_usage(const GenerationOutcome& outcome) {
     const int prompt = std::max(0, outcome.prompt_tokens);
     const int cached = static_cast<int>(std::min<std::uint64_t>(
         outcome.metrics.prefix_cache_hit_tokens, static_cast<std::uint64_t>(prompt)));
-    return Json{
+    Json usage{
         {"input_tokens", prompt - cached},
         {"cache_creation_input_tokens", nullptr},
         {"cache_read_input_tokens", cached},
@@ -82,6 +83,11 @@ Json final_usage(const GenerationOutcome& outcome) {
         {"server_tool_use", Json{{"web_search_requests", 0}, {"web_fetch_requests", 0}}},
         {"service_tier", nullptr},
         {"inference_geo", nullptr}};
+    // The speculation the request ran, under an extension key Anthropic clients ignore.
+    if (Json speculation = speculation_summary_json(outcome.metrics); !speculation.is_null()) {
+        usage["ninferno"] = Json{{"speculation", std::move(speculation)}};
+    }
+    return usage;
 }
 
 Json streaming_start_usage(int input_tokens, std::optional<int> cache_read_input_tokens) {

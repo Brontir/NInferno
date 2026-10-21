@@ -107,7 +107,7 @@ All other options (media, Host cache, response store, penalties, limits) are in 
 | Path | API | Notes |
 |---|---|---|
 | `GET /health` | server | `200 {"status":"ok"}` with the load gauges; `503` when unavailable, draining or stalled; no authentication |
-| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint) |
+| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
 | `GET /props` | llama.cpp | the model alias, context, vocabulary and slots llama.cpp's web UI reads |
 | `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill, and `ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1` |
 | `POST /v1/chat/completions` | OpenAI Chat | streaming, tools, images, `timings` extension |

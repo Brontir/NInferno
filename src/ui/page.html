@@ -261,7 +261,7 @@ const T = {
     llama:"llama.cpp",downloads:"downloads",likes:"likes",noDl:"No downloads.",done:"done",failed:"failed",cancel:"Cancel",here:"downloaded",
     localonly:"localhost only",exposed:"open to the network, with a key",nogpu:"no NVIDIA GPU visible",vision:"takes images",spec:"speculative heads",
     ago:"ago",justNow:"just now",min:"min",h:"h",d:"days",tokens:"tok",perReq:"per request",free:"freed",fail:"error",onGpu:"on GPU",openHf:"on Hugging Face",
-    nothing:"nothing found",loading:"loading…",readingRepo:"Reading the repository: its files, then the model header (a large GGUF repository takes a few seconds)…",speculation:"speculation",profOwn:"own profile",profSimilar:"profile from",profGeneric:"generic profile",profNone:"no profile",
+    nothing:"nothing found",loading:"loading…",readingRepo:"Reading the repository: its files, then the model header (a large GGUF repository takes a few seconds)…",speculation:"speculation",specFallback:"spec fallback",profOwn:"own profile",profSimilar:"profile from",profGeneric:"generic profile",profNone:"no profile",
     ctxCol:"Context",quantTip:"The weights' format as the repository publishes it; ★ is what we would pick for this card, ✓ is downloaded",
     sizeTip:"Download size of the weights",
     ctxColTip:"How much context the card holds beside the weights\n256K ×3 + 40K: three requests at the model's full length at once, and 40K of cache left over for one more, shorter one",
@@ -298,7 +298,7 @@ const T = {
     llama:"llama.cpp",downloads:"скачиваний",likes:"лайков",noDl:"Загрузок нет.",done:"готово",failed:"ошибка",cancel:"Отменить",here:"скачан",
     localonly:"только localhost",exposed:"открыт в сеть, по ключу",nogpu:"NVIDIA GPU не видно",vision:"понимает картинки",spec:"спекулятивные головы",
     ago:"назад",justNow:"только что",min:"мин",h:"ч",d:"дн",tokens:"ток",perReq:"на запрос",free:"освобождено",fail:"ошибка",onGpu:"на GPU",openHf:"на Hugging Face",
-    nothing:"ничего не найдено",loading:"загрузка…",readingRepo:"Читаю репозиторий: список файлов, затем заголовок модели (большой GGUF-репозиторий — несколько секунд)…",speculation:"спекуляция",profOwn:"свой профиль",profSimilar:"профиль от",profGeneric:"общий профиль",profNone:"нет профиля",
+    nothing:"ничего не найдено",loading:"загрузка…",readingRepo:"Читаю репозиторий: список файлов, затем заголовок модели (большой GGUF-репозиторий — несколько секунд)…",speculation:"спекуляция",specFallback:"спекуляция: запасной вариант",profOwn:"свой профиль",profSimilar:"профиль от",profGeneric:"общий профиль",profNone:"нет профиля",
     ctxCol:"Контекст",quantTip:"Формат весов, как его публикует репозиторий; ★ — что мы бы выбрали для этой карты, ✓ — уже скачан",
     sizeTip:"Сколько скачивать",
     ctxColTip:"Сколько контекста карта вмещает рядом с весами\n256K ×3 + 40K: три запроса с полным контекстом модели одновременно и ещё 40K кеша на четвёртый, покороче",
@@ -1104,7 +1104,8 @@ async function refreshState() {
     const used = g.memory_used / g.memory_total * 100;
     const runs = serving.filter(p => p.gpu === g.index).map(p => {
       const st = p.state === "ready" ? `<span class="pill ok">${t("ready")}</span>` : `<span class="pill warn">${p.percent >= 0 ? p.percent + "%" : t("starting")}</span>`;
-      return `<div class="run"><span class="nm" title="${esc(p.model)}">${esc(shortName(p.model))}</span>${st}
+      const fb = p.speculation_fallback ? `<span class="pill warn" title="${esc(p.speculation_fallback)}">${t("specFallback")}</span>` : "";
+      return `<div class="run"><span class="nm" title="${esc(p.model + (p.speculation ? "\n" + t("speculation") + ": " + p.speculation : ""))}">${esc(shortName(p.model))}</span>${st}${fb}
         ${p.state === "ready" ? `<button class="primary" data-chat="${p.id}">${t("chat")}</button>` : ""}
         <button class="ghost" data-log="${p.id}">${t("log")}</button><button class="ghost danger" data-stop="${p.id}">■</button></div>`;
     }).join("");

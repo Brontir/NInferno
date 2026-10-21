@@ -1197,6 +1197,23 @@ int test_response_object() {
                           omitted_summary.body.at("output")[0].at("summary").empty() &&
                           !omitted_summary.body.at("output")[0].contains("encrypted_content"),
                       "omitted reasoning output options retain the default Item shape");
+    failures += check(!omitted_summary.body.at("usage").contains("ninferno"),
+                      "usage carries no extension without a speculation config");
+    GenerationOutcome speculated             = sample_outcome();
+    speculated.metrics.speculative_config    = "mtp:3";
+    speculated.metrics.speculative_selection = "explicit";
+    speculated.metrics.speculative_reason    = "--spec";
+    speculated.metrics.speculative_fallback  = "step_down";
+    const Json extension =
+        make_openai_response_object("resp_spec", 123, omitted_request, runtime, speculated)
+            .body.at("usage")
+            .at("ninferno")
+            .at("speculation");
+    failures +=
+        check(extension.at("config") == "mtp:3" && extension.at("selection") == "explicit" &&
+                  extension.at("reason") == "--spec" && extension.at("fallback") == "step_down" &&
+                  !extension.contains("note"),
+              "usage.ninferno.speculation carries the speculation fallback");
 
     GenerationOutcome answer_only = sample_outcome();
     answer_only.reasoning.clear();

@@ -152,6 +152,7 @@ private:
     std::int64_t model_created_ = 0;       // the model object's `created`: when the model loaded
     std::string sampling_defaults_header_; // x-ninferno-sampling-defaults
     ninferno::ModelMetadata model_metadata_;
+    StartupSpeculation startup_speculation_; // /v1/models meta.speculation
     OpenAIResponsesStore openai_responses_store_;
     OperationalLog operational_log_;
     JsonlRequestLog request_jsonl_;

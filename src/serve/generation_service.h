@@ -42,9 +42,10 @@ struct GenerationMetrics {
     std::uint64_t speculative_accepted_tokens = 0;
     std::uint64_t speculative_fallback_steps  = 0;
     std::vector<std::uint64_t> speculative_accepted_per_position;
-    // The speculation this request ran (--spec auto): its configuration ("plain" when none), how
-    // that was chosen ("fixed", "thinking"), why, and what the profile would have chosen when the
-    // engine could not.
+    // The speculation this request ran: its configuration ("plain" when none), how that was chosen
+    // ("fixed", "thinking" by --spec auto's profile; "explicit" by --spec; "startup" when --spec
+    // auto runs nothing), why, and what the profile would have chosen when the engine could not.
+    // Every request carries them (StartupSpeculation when the server does not choose).
     std::string speculative_config;
     std::string speculative_selection;
     std::string speculative_reason;
@@ -58,6 +59,9 @@ struct GenerationMetrics {
     std::uint64_t speculative_copy_accepted  = 0; // the drafts those accepted
     std::uint64_t speculative_trips_held     = 0; // watchdog verdicts a shared launch held
     bool speculative_load_plain              = false; // a load bound of 0 turned it plain
+    bool speculative_context_plain           = false; // its prompt passed the context bound
+    // The fallback its speculation took (speculation_fallback()).
+    std::string speculative_fallback;
     bool speculative_watchdog_tripped        = false;
     std::uint64_t speculative_watchdog_round = 0;
     std::uint32_t speculative_step_downs     = 0; // watchdog trips that went shallower
@@ -68,6 +72,27 @@ struct GenerationMetrics {
     std::uint32_t prefix_cache_hit_tokens     = 0;
     ninferno::PrefixReusePath prefix_reuse_path = ninferno::PrefixReusePath::Root;
     ninferno::MaterializationDiagnostics materialization;
+};
+
+// The fallback a request's speculation took, the first that applies: "context_plain" (its prompt
+// passed the context bound, SpeculativeOptions::context_limit: plain from its first token),
+// "load_plain" (a load bound of 0), "watchdog_plain" (the acceptance watchdog stopped its
+// drafting), "step_down" (the watchdog moved it shallower), else the server's own since startup
+// (`startup`, StartupSpeculation::fallback), else "none".
+[[nodiscard]] std::string speculation_fallback(const GenerationMetrics& metrics,
+                                               std::string_view startup);
+
+// The speculation the server runs since startup, as /v1/models (meta.speculation) and the
+// startup log show it before any request: its configuration ("plain" when none; the menu's
+// primary under --spec auto), how it was chosen ("fixed" or "thinking" by the profile,
+// "explicit" by --spec, "startup" when --spec auto runs nothing), why, and the fallback startup
+// took: "fit_fallback" (the profile's choice did not fit and another runs), "startup_plain"
+// (nothing that drafts fit: plain decode), else "none".
+struct StartupSpeculation {
+    std::string config = "plain";
+    std::string selection;
+    std::string reason;
+    std::string fallback = "none";
 };
 
 struct GenerationOutcome {
@@ -126,6 +151,7 @@ struct PreparedRequest {
     std::string speculation_reason;
     std::string speculation_note;
     double speculation_floor = 0.0;
+    std::string speculation_fallback = "none"; // the server's (StartupSpeculation::fallback)
 };
 
 // Why --spec auto decodes plainly: `refused` (the choice's label) did not fit, the last refusal
@@ -190,6 +216,10 @@ public:
         return speculation_absent_notes_;
     }
 
+    [[nodiscard]] const StartupSpeculation& startup_speculation() const noexcept {
+        return startup_speculation_;
+    }
+
     // Set when an explicit --spec came without --draft-tokens: where its depth came from.
     [[nodiscard]] const std::string& draft_depth_source() const { return draft_depth_source_; }
 
@@ -244,6 +274,7 @@ private:
     std::optional<product::ServedSpeculation> served_speculation_;
     std::string speculation_plain_reason_;
     std::vector<std::string> speculation_absent_notes_;
+    StartupSpeculation startup_speculation_;
     std::string draft_depth_source_;
     std::unique_ptr<ninferno::Engine> engine_;
     std::shared_ptr<RequestCapacity> request_capacity_;

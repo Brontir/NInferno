@@ -1214,6 +1214,33 @@ int test_aggregate_response() {
             response["timings"]["draft_n"] == 9 && response["timings"]["draft_n_accepted"] == 6,
         "aggregate timings use exact cache and N-1 generation intervals");
 
+    failures += check(!response["timings"].contains("speculation"),
+                      "a request without a speculation config carries no timings.speculation");
+    GenerationOutcome fell             = sample_outcome();
+    fell.metrics.speculative_config    = "plain";
+    fell.metrics.speculative_selection = "startup";
+    fell.metrics.speculative_reason    = "dflash2 K=7 does not fit";
+    fell.metrics.speculative_fallback  = "startup_plain";
+    const Json startup_plain =
+        Json::parse(make_chat_completion_response(identity(), fell))["timings"]["speculation"];
+    failures +=
+        check(startup_plain["config"] == "plain" && startup_plain["selection"] == "startup" &&
+                  startup_plain["reason"] == "dflash2 K=7 does not fit" &&
+                  startup_plain["fallback"] == "startup_plain" &&
+                  startup_plain["context_plain"] == false && !startup_plain.contains("note"),
+              "timings.speculation says why a server is plain since startup");
+    fell.metrics.speculative_config        = "dflash:7";
+    fell.metrics.speculative_selection     = "fixed";
+    fell.metrics.speculative_note          = "fit fallback: x";
+    fell.metrics.speculative_context_plain = true;
+    fell.metrics.speculative_fallback      = speculation_fallback(fell.metrics, "fit_fallback");
+    const Json context_plain =
+        Json::parse(make_chat_completion_response(identity(), fell))["timings"]["speculation"];
+    failures += check(context_plain["fallback"] == "context_plain" &&
+                          context_plain["context_plain"] == true &&
+                          context_plain["note"] == "fit fallback: x",
+                      "timings.speculation names a request's own fallback and the note");
+
     outcome.text.clear();
     outcome.tool_calls.push_back(ninferno::GeneratedToolCall{
         .name = "Edit",
@@ -1406,6 +1433,22 @@ int test_common_objects() {
     failures += check(model["meta"]["n_embd"] == 5120 && model["meta"]["n_ctx_train"] == 262144 &&
                           model["meta"]["ftype"] == "groupwise-int",
                       "model lookup exposes the llama.cpp-compatible model meta");
+    failures += check(!list_meta.contains("speculation"),
+                      "models list without a service says nothing of speculation");
+    const StartupSpeculation startup{.config    = "plain",
+                                     .selection = "startup",
+                                     .reason    = "nothing fits",
+                                     .fallback  = "startup_plain"};
+    const Json listed_speculation = Json::parse(
+        make_models_list("qwen", 7, 240000, metadata, &startup))["data"][0]["meta"]["speculation"];
+    const Json model_speculation = Json::parse(
+        make_model_object("qwen", 7, 240000, metadata, &startup))["meta"]["speculation"];
+    failures += check(listed_speculation["config"] == "plain" &&
+                          listed_speculation["selection"] == "startup" &&
+                          listed_speculation["reason"] == "nothing fits" &&
+                          listed_speculation["fallback"] == "startup_plain" &&
+                          model_speculation == listed_speculation,
+                      "/v1/models meta.speculation shows the startup speculation and fallback");
     failures += check(!list_meta.contains("published_activations"),
                       "models list says nothing of activations a checkpoint does not describe");
     auto described                  = metadata;
