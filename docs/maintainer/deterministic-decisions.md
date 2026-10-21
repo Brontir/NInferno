@@ -12,14 +12,16 @@ This page states the rule and its target. The engine does not meet all of it yet
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;
-- the cost model reads driver clocks: they are 0 on MIG/WSL, overclocks leak into it, and without
-  NVML the chip is guessed from its SM count;
+- without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
+  speed estimates where it should have *no estimate*;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
-- the TU116/117 exception, the PCI-ID reference table, the speed labels and the kernel hash on
-  constants do not exist yet;
+- the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
+  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the TU116/117
+  `mma_slow` exception is still read from `chip_mma_slow`, not from the table's fact;
+- the speed labels and the kernel hash on constants do not exist yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
   memory picks the speculation; the fingerprint only records it, as the taint
@@ -40,6 +42,10 @@ This page states the rule and its target. The engine does not meet all of it yet
   yet cover the PCI-ID reference facts, plan levels, the constants and the kernel hash, nor the
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
+
+The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model, the
+board distance and the speculation load model read its facts (`DeviceClass::facts`), not the
+driver's clocks.
 
 Each gap is closed in its own change, which updates this list.
 

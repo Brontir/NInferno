@@ -256,8 +256,8 @@ struct GpuKey {
     int sms              = 0; // multiprocessors (0: unknown, no stand-in load cap)
     // The rates the speculation load model prices a verify round with (0: unknown, no model).
     int compute_capability = 0;   // 89: Ada
-    int sm_clock_khz       = 0;   // peak SM clock
-    double dram_gbps       = 0;   // peak memory bandwidth
+    int sm_clock_khz       = 0;   // reference SM clock (DeviceClass::facts, not the driver's)
+    double dram_gbps       = 0;   // nominal memory bandwidth (DeviceClass::facts)
 };
 
 // Whether the published profile's class is one of the device's own keys, and if not, the note

@@ -2288,11 +2288,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                    const DeviceClass& d, const Offer& offer) {
     // BF16 operands in the MMA itself (sm_80 on) imply tensor mma.sync (device_features_for).
     if (!d.features.mma_bf16_native || !allows_a8(problem.policy)) return;
-    // A device that reports no clock or bus width has no roofline: the A16 routes stand alone.
-    if (d.sms <= 0 || d.sm_clock_khz <= 0 || d.memory_clock_khz <= 0 || d.memory_bus_bits <= 0) return;
+    // A device without a roofline in its facts (an unknown id whose driver reports no clock or bus
+    // width) has none here: the A16 routes stand alone. The clock and the bandwidth are the
+    // board's reference facts (DeviceClass::facts, B2), never the driver's clocks.
+    if (d.sms <= 0 || !d.facts.has_roofline()) return;
     const GenerationRow& g = generation_row(d.major, d.minor);
-    const double clk     = d.sm_clock_khz * 1e3;
-    const double bw      = 2.0 * d.memory_clock_khz * 1e3 * d.memory_bus_bits / 8.0;
+    const double clk     = d.facts.reference_clock_hz();
+    const double bw      = d.facts.dram_bytes_per_s();
     const double sms     = d.sms;
     const double n = problem.n, k = problem.k, t = tokens;
     const double sets    = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
@@ -2375,8 +2377,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // runs them in series, the pipelined tiles (staged, tiled) overlap them at 0.9 / 0.8 of the
 // tensor rate; either is slowed in proportion when the SM holds fewer than 16 (register MMA) or 4
 // (pipelined) warps, and pays its warps' dependent chain of K steps per residency and the sum of
-// its split K (over a CTA's warps or a cluster). The device numbers come from its query (SMs, SM clock, bus width x memory
-// clock, threads, CTAs and shared memory per SM); the tensor rate per SM and clock from the
+// its split K (over a CTA's warps or a cluster). The device numbers come from its query (SMs,
+// threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory clock:
+// DeviceClass::facts); the tensor rate per SM and clock from the
 // generation row (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM
 // parts, 1536 where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile
 // token strip).
@@ -2384,20 +2387,22 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
 // without the chain and reduction terms; the optimum of every constant is flat (200 and 500
-// cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the device reports no clocks.
+// cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     DeviceClass d;
     try {
         d = device_class();
     } catch (const std::exception&) { return std::nullopt; }
-    if (d.sms <= 0 || d.sm_clock_khz <= 0 || d.memory_clock_khz <= 0 || d.memory_bus_bits <= 0 ||
-        problem.n <= 0 || problem.k <= 0 || weight.payload_bytes == 0) {
+    // The reference clock and bandwidth of the board's facts (B2: the PCI-ID table, else the
+    // driver's values on the 2^(1/16) grid), never the driver's clocks.
+    if (d.sms <= 0 || !d.facts.has_roofline() || problem.n <= 0 || problem.k <= 0 ||
+        weight.payload_bytes == 0) {
         return std::nullopt;
     }
     const GenerationRow& g = generation_row(d.major, d.minor);
     const bool emulated  = !d.features.mma_bf16_native;
-    const double clk     = d.sm_clock_khz * 1e3;
-    const double bw      = 2.0 * d.memory_clock_khz * 1e3 * d.memory_bus_bits / 8.0;
+    const double clk     = d.facts.reference_clock_hz();
+    const double bw      = d.facts.dram_bytes_per_s();
     const double sms     = d.sms;
     const double peak_sm = g.bf16 * clk;
     const double bw_sm   = bw / sms;

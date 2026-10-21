@@ -1,7 +1,14 @@
+# The PCI-ID reference table of board facts (machine_facts.cpp), a JSON file compiled in.
+ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json NINFERNO_FACTS
+  NINFERNO_GPU_FACTS_JSON)
+configure_file(embedded_gpu_facts.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_gpu_facts.h @ONLY)
+
 add_library(ninferno_core STATIC
   arena.cu
   device.cu
   device_class.cpp
+  machine_facts.cpp
   device_image_probe.cu
   tune_timer.cu
   dtype.cpp
@@ -22,5 +29,7 @@ add_library(ninferno_core STATIC
   debug_fault.cu
 )
 ninferno_internal_includes(ninferno_core)
+target_include_directories(ninferno_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 ninferno_cuda_archive(ninferno_core)
-target_link_libraries(ninferno_core PUBLIC ninferno::cudart CUDA::nvtx3 Threads::Threads)
+target_link_libraries(ninferno_core PUBLIC ninferno::cudart CUDA::nvtx3 Threads::Threads
+  PRIVATE ninferno::json)

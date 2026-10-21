@@ -157,6 +157,7 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->chip             = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
     out->chip_from_pci    = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
+    out->facts            = machine_facts_of(*out);
     return out;
 }
 
@@ -351,6 +352,18 @@ std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms)
     }
     return gpu_arch_id(major, minor);
 }
+
+DriverReport driver_report_of(const DeviceClass& d) noexcept {
+    return {.pci_device_id    = d.pci_device_id,
+            .major            = d.major,
+            .minor            = d.minor,
+            .sms              = d.sms,
+            .sm_clock_khz     = d.sm_clock_khz,
+            .memory_clock_khz = d.memory_clock_khz,
+            .memory_bus_bits  = d.memory_bus_bits};
+}
+
+MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
 
 Board board_of(const DeviceClass& d) noexcept {
     return {d.major, d.minor, d.sms, static_cast<double>(d.l2_bytes) / (1 << 20), d.dram_gbps(),

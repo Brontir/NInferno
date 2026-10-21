@@ -36,6 +36,7 @@ reference; the others own narrower contracts:
 | Document | Responsibility |
 |---|---|
 | [Deterministic decisions](maintainer/deterministic-decisions.md) | the pillar: decisions from chip facts, the artifact and options; tiers B1/B2/S, the fingerprint, what is promised and forbidden |
+| [GPU facts table](maintainer/gpu-facts.md) | the PCI-ID reference table: fields, the reference clock, how facts are derived, adding a SKU |
 | [Engine architecture](maintainer/engine-architecture.md) | model/config/weight ownership, loading-to-execution flow, requests, scheduling, transactions and graphs |
 | [Build system](maintainer/build-system.md) | CMake targets, source ownership, CUDA compilation boundaries, presets and developer configuration |
 | [Artifact container](maintainer/artifact-container.md) | the `.ninferno` directory, objects, logical bindings, uses, resources and file framing |

@@ -117,6 +117,7 @@ std::string dump_board(const GoldenBoard& b) {
     d.sm_clock_khz     = b.sm_clock_mhz * 1000;
     d.memory_clock_khz = b.memory_clock_mhz * 1000;
     d.memory_bus_bits  = b.bus_bits;
+    d.facts            = machine_facts_of(d); // as the query derives them from these values
     const ScopedDeviceClass scoped(d);
     std::ostringstream out;
     out << "# " << b.name << " " << device_class().id() << " " << device_class().arch() << '\n';

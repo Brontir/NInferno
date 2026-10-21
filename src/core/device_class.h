@@ -25,6 +25,8 @@
 // driver and 31.84 GiB under WDDM. A choice that depends on memory reads global_bytes (or free
 // memory) and compares ranges.
 
+#include "core/machine_facts.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -93,10 +95,17 @@ struct DeviceClass {
     int max_blocks_per_sm               = 0;
     int registers_per_sm                = 0;
     std::size_t persisting_l2_max_bytes = 0;
+    // What the driver reports: informational, and the input of `facts`. No decision reads these
+    // (docs/maintainer/deterministic-decisions.md): they are 0 on MIG and some WSL drivers and
+    // carry a board's factory overclock.
     int memory_bus_bits                 = 0;
     int memory_clock_khz                = 0;
     int sm_clock_khz                    = 0;
     DeviceFeatures features;
+    // The board's canonical facts (core/machine_facts.h): the PCI-ID table's row, else the driver
+    // values above on the 2^(1/16) grid. What the cost model, the board distance and the
+    // speculation load model read.
+    MachineFacts facts;
 
     // "<chip>:<sms>sm", for example "gb202:170sm" (RTX 5090) and "gb203:84sm" (RTX 5080).
     [[nodiscard]] std::string id() const;
@@ -117,11 +126,16 @@ struct DeviceClass {
     [[nodiscard]] std::int64_t wave(std::int64_t ctas_per_sm = 1) const noexcept {
         return static_cast<std::int64_t>(sms) * ctas_per_sm;
     }
-    // Nominal DRAM bandwidth in GB/s: two transfers per memory clock across the bus.
-    [[nodiscard]] double dram_gbps() const noexcept {
-        return 2.0 * memory_clock_khz * 1.0e3 * (memory_bus_bits / 8) / 1.0e9;
-    }
+    // Nominal DRAM bandwidth in GB/s from the facts (MachineFacts::dram_gbps); 0 when unknown.
+    [[nodiscard]] double dram_gbps() const noexcept { return facts.dram_gbps(); }
 };
+
+// The driver's values of `d` as machine_facts() takes them.
+[[nodiscard]] DriverReport driver_report_of(const DeviceClass& d) noexcept;
+
+// machine_facts(driver_report_of(d)): what the query stores in DeviceClass::facts. A test that
+// sets a substitute's driver clocks calls it after them.
+[[nodiscard]] MachineFacts machine_facts_of(const DeviceClass& d);
 
 // A board as per-card measured data sees it: its instruction set and the quantities a kernel's
 // best launch shape scales with. Data measured on one card (a route table, an R8 decode table, a
@@ -215,7 +229,8 @@ template <class Measured, std::size_t Extent>
 
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
-// limits of the architecture. For host tests of the heuristics and route tables that read a
+// limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
+// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
 // class, on GPUs this machine lacks.
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,
