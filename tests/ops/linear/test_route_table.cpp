@@ -170,7 +170,7 @@ int route_schedules(generic::Family family) {
     case generic::Family::RegisterMma:
         return generic::rmma_schedule_count();
     case generic::Family::W4a4Mma:
-        return generic::w4a4_schedule_count();
+        return generic::w4a4_schedule_names(); // compiled or not, as parse_route
     case generic::Family::TiledMma:
         return generic::tiled_schedule_count();
     case generic::Family::W4a8Mma:
@@ -184,7 +184,7 @@ int route_schedules(generic::Family family) {
     case generic::Family::I8Mma:
         return generic::i8_schedule_count();
     }
-    return 0;
+    return -1; // a family this switch lacks: the caller fails
 }
 
 int route_names_known() {
@@ -200,6 +200,12 @@ int route_names_known() {
     std::vector<std::pair<int, std::string>> names;
     for (int f = 0; f < kFamilies; ++f) {
         const auto family = static_cast<generic::Family>(f);
+        // Every family names at least one route: a count of 0 or less is a family this test
+        // does not enumerate (a new one inserted before I8Mma), or one with nothing to check.
+        if (route_schedules(family) <= 0) {
+            std::cerr << "FAILED: route family " << f << " has no schedules to check\n";
+            ++failures;
+        }
         for (int i = 0; i < route_schedules(family); ++i) {
             const auto name =
                 generic::route_name(generic::Route{family, static_cast<std::uint8_t>(i)});
