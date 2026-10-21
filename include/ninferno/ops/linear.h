@@ -118,10 +118,15 @@ enum class LinearPolicy : std::uint8_t {
  * choice. Every policy permits the existing A16 implementations of BF16 and Q4/Q5/Q6/Q8.
  * FP8 accepts all three policies; AllowA8 and AllowA4 permit the private resolver to select a
  * qualified A16 or A8 route for the registered problem and T. FP8 `[248320,5120]` retains A16
- * compute under every policy at every positive T. NVFP4 uses A16 for A16Only and
- * AllowA8; AllowA4 permits the private resolver to select either a qualified A16 route or
- * activation quantization to NVFP4 at every positive T. The selected route depends only on the
- * registered problem and T.
+ * compute under every policy at every positive T. NVFP4 uses A16 for A16Only. Under AllowA8 (A8
+ * without A4) a call of 17 tokens or more inside a prefill (ops::prefill_routes_active) takes the
+ * generic path's int8 W4A8 (activations quantized per 32 values) instead of the registered
+ * problem's A16 kernels; every other AllowA8 call (decode, speculative verify of any width) keeps
+ * them. AllowA4 permits the private resolver to select either a qualified A16 route or activation
+ * quantization to NVFP4 at every positive T. The selected route depends only on the registered
+ * problem, T and the route profile. A build without the native NVFP4 kernels runs every NVFP4
+ * call on the generic path: A16, or under AllowA8/AllowA4 int8 activations (W4A8 from 17 tokens,
+ * R8 at decode).
  *
  * @par Workspace
  * `workspace` is caller-owned call-scoped transient storage sized by

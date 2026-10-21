@@ -108,7 +108,9 @@ prepare_sparse_moe_weights(const WeightInput& router, const WeightInput& shared_
 // Op's form: every expert's gate and up rows, and every expert's down rows, must be consecutive
 // rows of one parent each (as a converter packs a bank); the shared gate and up one parent. Any
 // format the generic projection path computes (GGUF K-quant and i-quant banks included). The
-// expert policy is AllowA8 where every expert input allows A8, A16Only otherwise.
+// expert and shared policies are moe_policy's: A16Only unless every input of the pair allows A8,
+// then AllowA4 where one allows A4 (NVFP4 projections recorded for A4 stay A16 on builds with
+// W4A4 kernels), else AllowA8.
 [[nodiscard]] MoeWeights prepare_moe_weights(const WeightInput& router,
                                              const WeightInput& shared_score,
                                              std::span<const WeightInput> expert_gate_up,

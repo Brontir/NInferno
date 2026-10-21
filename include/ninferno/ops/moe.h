@@ -81,27 +81,33 @@ struct MoeWeights {
     Weight shared_down;
     Weight shared_gate;
     /// The shared expert's projections run on the generic projection path under this policy (the
-    /// artifact's, where both of them allow it; moe_policy). Under AllowA4 they run as under
-    /// AllowA8, except an NVFP4 projection where the build has the W4A4 kernels (sm_120a), which
-    /// runs A16 (moe.cpp shared_projection_policy).
+    /// artifact's, where both of them allow it; moe_policy). Under AllowA8 an NVFP4 projection
+    /// takes the generic int8 W4A8 from 17 tokens on every build (the generic path does not tell a
+    /// prefill from a wide verify), R8 at decode only without the native NVFP4 kernels. Under
+    /// AllowA4 (either projection recorded for A4) they run as under AllowA8, except an NVFP4
+    /// projection where the build has the W4A4 kernels (sm_120a), which runs A16 at every width
+    /// (moe.cpp shared_projection_policy).
     LinearPolicy shared_policy = LinearPolicy::A16Only;
-    /// The routed experts' policy (the artifact's, where both banks allow it; moe_policy). AllowA4
-    /// (an A4 bank) keeps NVFP4 banks on A16 where the build has W4A4 kernels, sm_120a, and
-    /// otherwise reads as AllowA8. Under AllowA8 a
-    /// codebook bank (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S) may compute a decode call (T <= 4,
-    /// as the dense R8) with the activation quantized to int8 per 32 values (the generic path's
-    /// R8 arithmetic), on the GPU classes whose default route lists it. A prefill call of at most
-    /// four tokens (a prompt that short) is a decode width too; a longer prompt's chunking never
-    /// leaves such a tail. Every other call (T >= 5, K too wide for a CTA's quantized activation:
-    /// above 10922 at T = 3 or 4, a route-table band marked A16), and every call under A16Only,
-    /// computes A16.
+    /// The routed experts' policy (the artifact's, where both banks allow it; moe_policy). NVFP4
+    /// banks under AllowA8 (A8 without A4) take the grouped int8 W4A8 on a prefill call of 17
+    /// tokens or more (the prefill route profile) on every build; on builds without the native
+    /// NVFP4 kernels also on a wide call of the speed profile (from kMoeW4a8SpeedMinTokens), which
+    /// sm_120a keeps on its A16 plan. AllowA4 (either bank recorded for A4) keeps NVFP4 banks on
+    /// A16 at every width where the build has W4A4 kernels (sm_120a) and otherwise reads as
+    /// AllowA8. Under AllowA8 a codebook bank (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S) may compute
+    /// a decode call (T <= 4, as the dense R8) with the activation quantized to int8 per 32 values
+    /// (the generic path's R8 arithmetic), on the GPU classes whose default route lists it. A
+    /// prefill call of at most four tokens (a prompt that short) is a decode width too; a longer
+    /// prompt's chunking never leaves such a tail. Every other call (T >= 5, K too wide for a CTA's
+    /// quantized activation: above 10922 at T = 3 or 4, a route-table band marked A16), and every
+    /// call under A16Only, computes A16.
     LinearPolicy expert_policy = LinearPolicy::A16Only;
 };
 
 /// A MoE pair's policy from its two projections' (the routed banks, or the shared expert's gate/up
-/// and down): A16Only unless both allow A8; then AllowA4 where either allows A4 (where the build
-/// has W4A4 kernels an NVFP4 projection recorded for A4 keeps the route it had, A16, and none of
-/// the pair takes the int8 W4A8 an A4 one would not), else AllowA8.
+/// and down): A16Only unless both allow A8; then AllowA4 where either allows A4, else AllowA8.
+/// Where the build has W4A4 kernels (sm_120a) an AllowA4 pair's NVFP4 projections stay A16 at every
+/// width (no W4A4 on this path, no int8 W4A8); elsewhere AllowA4 reads as AllowA8.
 LinearPolicy moe_policy(LinearPolicy gate_up, LinearPolicy down);
 
 /// The shared expert's policy from its projections': moe_policy.

@@ -69,8 +69,11 @@ void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& valu
  *   [2048,2048,6144,6144].
  *
  * The first three ranges are written contiguously to qkv and the final range is written to z.
- * Q8 uses A16 under every policy. NVFP4 uses A16 under A16Only/AllowA8; AllowA4 permits
- * private activation quantization at every positive T. FP8 accepts all policies; AllowA8/AllowA4
+ * Q8 uses A16 under every policy. NVFP4 uses A16 under A16Only. Under AllowA8 (A8 without A4)
+ * a call of 17 tokens or more inside a prefill (ops::prefill_routes_active) computes both parts on
+ * the generic path's int8 W4A8 (activations quantized per 32 values); every other AllowA8 call
+ * (decode, speculative verify of any width) keeps the A16 routes. AllowA4 permits private
+ * activation quantization at every positive T. FP8 accepts all policies; AllowA8/AllowA4
  * selects A16 through T=7 and private activation quantization followed by A8 Tensor Core
  * contraction at every T>=8. Every route writes the two independent final allocations directly.
  * The complete projection is evaluated against the same exact-decode/naive-FP64 oracle;
@@ -163,11 +166,12 @@ void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& qk_weight,
  * Single-parent form of gdn_input_proj_conv_snapshot. Registered parents are Q8_G32_FP16 RowSplit
  * [12288,2048], NVFP4 BlockScaleK16M128x4 [16384,5120], and FP8_E4M3FN_ROW_BF16 RowScale
  * [16384,5120], all in q/k/value/z row order. All policies permit Q8 A16. NVFP4 uses A16
- * under A16Only/AllowA8; AllowA4 may use A4. FP8 may use A8 under AllowA8/AllowA4. B=1 accepts
- * every positive W for FP8; the batched domain is B=2..8 and W=1..16. Tensor operands, the complete
- * FP8 parent, and live workspace must be mutually non-overlapping, except that the read-only
- * initial_state_slots and snapshot_base_slots selectors may alias each other; same-row state-slot
- * overlap remains governed by the snapshot state contract.
+ * under A16Only, and under AllowA8 except a prefill call of 17 tokens or more, whose projection
+ * runs on the generic int8 W4A8 (gdn_input_proj); AllowA4 may use A4. FP8 may use A8 under
+ * AllowA8/AllowA4. B=1 accepts every positive W for FP8; the batched domain is B=2..8 and W=1..16.
+ * Tensor operands, the complete FP8 parent, and live workspace must be mutually non-overlapping,
+ * except that the read-only initial_state_slots and snapshot_base_slots selectors may alias each
+ * other; same-row state-slot overlap remains governed by the snapshot state contract.
  */
 void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& query_key_value_z_weight,
                                   const Tensor& conv_weight, Tensor& conv_states,
@@ -200,7 +204,9 @@ void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& query_key_value
 /**
  * Returns the transient capacity for a registered [16384,5120] NVFP4 or row-scaled FP8
  * record-producing profile. Fused and materialized A16 routes require no storage. AllowA4/AllowA8
- * returns only the activation-quantization workspace selected by this complete-Op route;
+ * returns only the activation-quantization workspace selected by this complete-Op route (NVFP4
+ * AllowA8: the int8 W4A8 planes of a call of 17 tokens or more, reserved whether or not the call
+ * runs inside a prefill);
  * conv_record is caller-owned.
  */
 [[nodiscard]] std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
@@ -236,7 +242,8 @@ void gdn_input_proj_conv_record(const Tensor& x, const Weight& qk_weight,
 /**
  * Single-parent record-producing form. Registered parents are Q8_G32_FP16 [12288,2048], NVFP4
  * [16384,5120], and FP8_E4M3FN_ROW_BF16 [16384,5120]. All policies permit Q8 A16; NVFP4
- * uses A16 under A16Only/AllowA8 and may use A4 under AllowA4. FP8 may use A8 under
+ * uses A16 under A16Only, and under AllowA8 except a prefill call of 17 tokens or more (the
+ * generic int8 W4A8, as gdn_input_proj), and may use A4 under AllowA4. FP8 may use A8 under
  * AllowA8/AllowA4. Record and snapshot share arithmetic route selection. Every tensor operand, the
  * complete FP8 parent, and live workspace must be mutually non-overlapping.
  */

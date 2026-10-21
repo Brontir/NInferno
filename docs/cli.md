@@ -196,7 +196,7 @@ Override the template:
 |---|---|
 | `exact` | BF16 activations on every quantized linear. The answer does not depend on how the prompt is cut or on speculation. |
 | `fast` (default) | Encodes activations on wide calls (prefill, batched verify): 4 bits for NVFP4 weights; 8 bits (int8, one scale per 32 values) for 4/5/6-bit integer formats that record `AllowA8` (GGUF Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL, IQ4_XS, Q4_K, Q5_K, Q6_K and u4 with zero points). |
-| `int8` | As `fast`, and linears recorded BF16-only also take int8 activations (one scale per 32 values) where their route has one. Fastest, least accurate. Qwen models only; other families refuse it at startup. |
+| `int8` | As `fast`, and linears recorded BF16-only also take int8 activations (one scale per 32 values) where their route has one. NVFP4 weights recorded BF16-only (a W4A16 checkpoint) take int8 activations on prefill calls of 17 tokens or more on every GPU; on RTX 50 (FP4 tensor cores) decode keeps BF16, and so does speculative verify on the layers with native NVFP4 kernels, while GPUs without FP4 tensor cores use int8 there too. NVFP4 weights recorded for 4 bits keep their 4-bit route. Fastest, least accurate. Qwen models only; other families refuse it at startup. |
 
 `fast` also uses int8 activations (one scale per 32 values) for codebook experts at decode widths:
 the IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS and IQ3_S gate/up banks of the generic MoE layer, as in

@@ -1565,7 +1565,11 @@ not take at startup.
   activations. The answer can depend on the load.
 - `int8` (Qwen; other families refuse it at startup): also gives int8 activations to the sites the
   artifact kept BF16 (heads and
-  embeddings excepted), which may move quality.
+  embeddings excepted), which may move quality. NVFP4 weights the artifact kept BF16 (a W4A16
+  checkpoint) take them on prefill calls of 17 tokens or more on every GPU; on RTX 50 (FP4 tensor
+  cores) decode stays BF16, and so does speculative verify on the layers with native NVFP4
+  kernels, while GPUs without FP4 tensor cores use int8 there too. NVFP4 weights recorded for 4 bits (routed and shared experts included) keep their
+  route.
 
 ### Context cache
 

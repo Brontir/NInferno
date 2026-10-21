@@ -73,7 +73,10 @@ void attn_input_proj(const Tensor& x, const Weight& query_key_weight,
  *   BF16.
  *
  * `T` is the positive token extent of the Op contract. All three policies permit the BF16
- * and Q8_G32_FP16 A16 implementations. NVFP4 uses A16 under A16Only/AllowA8; AllowA4 permits the
+ * and Q8_G32_FP16 A16 implementations. NVFP4 uses A16 under A16Only. Under AllowA8 (A8 without
+ * A4) a call of 17 tokens or more inside a prefill (ops::prefill_routes_active) computes the four
+ * parts on the generic path's int8 W4A8 (activations quantized per 32 values); every other AllowA8
+ * call (decode, speculative verify of any width) keeps the A16 routes. AllowA4 permits the
  * resolver to select either a qualified A16 route or activation quantization to NVFP4 at every
  * positive T. FP8 accepts all policies at every positive T. AllowA8/AllowA4 permit the resolver to
  * choose a qualified A16 route or private activation quantization followed by A8 Tensor Core
