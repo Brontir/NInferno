@@ -1,4 +1,5 @@
 #include "serve/model_source.h"
+#include "artifact/source_identity.h"
 
 #include "convert/acquire.h"
 #include "convert/cache.h"
@@ -12,6 +13,25 @@
 #include <stdexcept>
 
 namespace ninferno::serve {
+namespace {
+
+// The artifact's source identity (artifact/source_identity.h), as the Engine computes it at
+// startup from the same directory: "none" for an artifact converted before its inputs were
+// recorded.
+void log_source_identity(const std::function<void(const std::string&)>& log,
+                         const std::string& artifact) {
+    if (!log) { return; }
+    try {
+        log("source identity " +
+            ninferno::artifact::source_identity(std::filesystem::path(artifact)).value_or("none") +
+            " (" + artifact + ")");
+    } catch (const std::exception& e) {
+        log(std::string("source identity unreadable: ") + e.what());
+    }
+}
+
+} // namespace
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -78,6 +98,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
                 log(std::string(cached.converted ? "converted" : "cached") + " artifact " +
                     out.artifact_path + " (recipe " + out.recipe + ")");
             }
+            log_source_identity(log, out.artifact_path);
             return out;
         }
         if (fs::is_directory(name)) {
@@ -129,6 +150,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
             out.artifact_path + " (" + out.repo + "@" + out.commit.substr(0, 12) + ", recipe " +
             out.recipe + ")");
     }
+    log_source_identity(log, out.artifact_path);
     return out;
 }
 
