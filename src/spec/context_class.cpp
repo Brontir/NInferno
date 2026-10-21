@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
 #include <regex>
 #include <stdexcept>
 
@@ -37,6 +39,11 @@ std::int32_t required_count(const Json& object, const char* key, const std::stri
 
 bool fast(const Json& byte_class) {
     return json_text(byte_class, "activations").starts_with("fast");
+}
+
+// A key value that stands for something not recorded: never matched to a running server.
+bool placeholder(std::string_view value) {
+    return value == "auto" || value.starts_with("placeholder:");
 }
 
 std::string percent(double fraction) {
@@ -72,6 +79,17 @@ std::vector<Field> compare(const AcceptanceKey& entry, const AcceptanceKey& want
 }
 
 } // namespace
+
+bool known_route(std::string_view route) {
+    static const std::regex name("[a-z0-9_]+(\\.[a-z0-9]+)*");
+    if (!std::regex_match(route.begin(), route.end(), name)) { return false; }
+    const auto family = route.substr(0, route.find('.'));
+    for (const char* known : {"scalar", "rmma", "w4a4", "tiled", "w4a8", "w4a8ws", "staged",
+                              "nvfp4t", "r8", "ggml_mmq", "ggml_vec", "i8"}) {
+        if (family == known) { return true; }
+    }
+    return false;
+}
 
 ContextClass class_of(std::int64_t prompt_tokens) noexcept {
     if (prompt_tokens < kContextBounds[0]) { return ContextClass::Short; }
@@ -110,12 +128,6 @@ ContextFactors parse_context_factors(const Json& object) {
         }
         out.bounds[i] = b.get<std::int64_t>();
     }
-    const auto tolerance = object.find("tolerance");
-    if (tolerance == object.end() || !tolerance->is_number() ||
-        !(tolerance->get<double>() > 0.0 && tolerance->get<double>() <= 0.5)) {
-        refuse("tolerance must be a fraction in (0, 0.5]");
-    }
-    out.tolerance      = tolerance->get<double>();
     const auto entries = object.value("entries", Json::array());
     if (!entries.is_array()) { refuse("entries must be a list"); }
     // A GPU class key as the profiles' gpu_class names it: a chip, optionally its SM count.
@@ -135,7 +147,13 @@ ContextFactors parse_context_factors(const Json& object) {
         key.lanes            = required_count(item, "lanes", where);
         entry.schedule       = required_text(item, "schedule", where);
         entry.source         = json_text(item, "source");
-        key.byte_class       = item.value("byte_class", Json());
+        const auto tolerance = item.find("tolerance");
+        if (tolerance == item.end() || !tolerance->is_number() ||
+            tolerance->get<double>() != kContextTolerance) {
+            refuse(where + ": tolerance must be " + std::to_string(kContextTolerance));
+        }
+        entry.tolerance = tolerance->get<double>();
+        key.byte_class  = item.value("byte_class", Json());
         if (!key.byte_class.is_object()) { refuse(where + ": byte_class must be an object"); }
         for (const char* field : {"activations", "kv", "summation", "parity"}) {
             (void)required_text(key.byte_class, field, where + " byte_class");
@@ -155,10 +173,25 @@ ContextFactors parse_context_factors(const Json& object) {
             CardFactors card;
             card.gpu_class = ascii_lower(json_text(c, "gpu_class"));
             card.arch      = gpu_chip_arch(card.gpu_class);
-            card.route     = json_text(c, "route");
+            card.route     = ascii_lower(json_text(c, "route"));
             if (!std::regex_match(card.gpu_class, gpu_class) || card.arch.empty()) {
                 refuse(where + ": '" + card.gpu_class +
                        "' is not a known GPU class (ga102, gb203:84sm, sm86)");
+            }
+            if (const auto colon = card.gpu_class.find(':'); colon != std::string::npos) {
+                const int sms  = std::atoi(card.gpu_class.c_str() + colon + 1);
+                const int full = gpu_chip_full_sms(card.gpu_class);
+                if (sms < 1 || (full > 0 && sms > full)) {
+                    refuse(where + ": " + card.gpu_class + " names more SMs than its chip has (" +
+                           std::to_string(full) + ")");
+                }
+            }
+            if (c.contains("route") && !known_route(card.route)) {
+                refuse(where + " " + card.gpu_class + ": unknown route '" + card.route + "'");
+            }
+            if (json_text(c, "schedule") != entry.schedule) {
+                refuse(where + " " + card.gpu_class + ": schedule '" + json_text(c, "schedule") +
+                       "' is not the entry's '" + entry.schedule + "'");
             }
             const auto same = [&](const CardFactors& o) {
                 return o.gpu_class == card.gpu_class && o.route == card.route;
@@ -227,6 +260,21 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
     }
     if (best == nullptr) { return unknown("no context_classes entry for model " + key.model); }
     if (!why.empty()) { return unknown(why); }
+    // A key with a placeholder matched only another placeholder: what it was measured for is not
+    // known, whatever the cards say.
+    const auto& k = best->key;
+    for (const auto& [field, value] : std::initializer_list<std::pair<std::string, std::string>>{
+             {"target_artifact", k.target_artifact},
+             {"drafter_artifact", k.drafter_artifact},
+             {"sampling", k.sampling}}) {
+        if (placeholder(value)) { return unknown("placeholder key: " + field + "=" + value); }
+    }
+    for (const auto& [field, value] : k.byte_class.items()) {
+        if (placeholder(value.get<std::string>())) {
+            return unknown("placeholder key: byte_class." + field + "=" + value.get<std::string>());
+        }
+    }
+    if (!k.corpus.starts_with("sha256:")) { return unknown("placeholder key: corpus=" + k.corpus); }
 
     const auto i = static_cast<std::size_t>(c);
     std::vector<const CardFactors*> measured;
@@ -251,17 +299,17 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
         return unknown("measured on " + std::to_string(measured.size()) + " card(s) (" + cards +
                        "): needs 2 cards of different generations or routes");
     }
-    double low = *measured[0]->factors[i], high = low, sum = 0.0;
+    double sum = 0.0;
+    for (const auto* card : measured) { sum += *card->factors[i]; }
+    const double mean = sum / static_cast<double>(measured.size());
+    double spread     = 0.0; // the farthest card from the mean, relative
     for (const auto* card : measured) {
-        low  = std::min(low, *card->factors[i]);
-        high = std::max(high, *card->factors[i]);
-        sum += *card->factors[i];
+        spread = std::max(spread, std::abs(*card->factors[i] - mean) / mean);
     }
-    const double mean   = sum / static_cast<double>(measured.size());
-    const double spread = (high - low) / mean;
-    if (spread > factors.tolerance) {
+    // (A card exactly at the tolerance stands: 1e-12 absorbs the rounding of the division.)
+    if (spread > best->tolerance + 1e-12) {
         return unknown("unreliable: hardware-dependent (cards disagree by " + percent(spread) +
-                       ", tolerance " + percent(factors.tolerance) + ")");
+                       " from their mean, tolerance " + percent(best->tolerance) + ")");
     }
     return ClassFactor{mean, {}};
 }

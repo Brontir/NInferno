@@ -188,6 +188,8 @@ template <class Measured, std::size_t Extent>
 // full-chip table; an architecture key ("sm86") is its own. Empty for a chip the table does
 // not know (lower-case keys only).
 [[nodiscard]] std::string gpu_chip_arch(std::string_view gpu_class);
+// The full-chip SM count of a chip or GPU class key by the same table; 0 when unknown.
+[[nodiscard]] int gpu_chip_full_sms(std::string_view gpu_class);
 
 // "<chip>:<sms>sm".
 [[nodiscard]] std::string gpu_class_id(std::string_view chip, int sms);

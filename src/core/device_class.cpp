@@ -396,6 +396,14 @@ std::string gpu_chip_arch(std::string_view gpu_class) {
     return {};
 }
 
+int gpu_chip_full_sms(std::string_view gpu_class) {
+    const auto chip = gpu_class.substr(0, gpu_class.find(':'));
+    for (const auto& full : kFullChips) {
+        if (chip == full.chip) { return full.sms; }
+    }
+    return 0;
+}
+
 std::string gpu_class_id(std::string_view chip, int sms) {
     return std::string(chip) + ":" + std::to_string(sms) + "sm";
 }
