@@ -1189,6 +1189,45 @@ int test_registry_and_corpus() {
     } else {
         failures += check(false, "registry has Qwen/Qwen3.8-27B");
     }
+    // gpt-oss-20b was tuned on an RTX 5070 Ti, published for its SM variant "gb203:70sm": the 5070 Ti
+    // runs it as its own (dflash:7, two lanes three deep), an RTX 5080 (no gb203 profile) takes the
+    // RTX 5090's as a stand-in (dflash:7 for the openai checkpoint, dflash:5 for the GGUFs), 2:3
+    // capped at 9 rows for its 84 SMs.
+    if (const auto* oss = registry.by_repo("openai/gpt-oss-20b")) {
+        const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
+                              "*"},
+                             15ULL << 30, true, 3, 84};
+        const GpuKey rtx5070ti{{"gb203:70sm", "gb203", "sm120", "gb205", "gb206", "gb202",
+                                "gb207", "*"},
+                               15ULL << 30, true, 3, 70};
+        const auto label = [](const nlohmann::json* p) {
+            return profile_from_published(*p).overall.config.label();
+        };
+        const auto load = [](const nlohmann::json* p) { return profile_from_published(*p).load; };
+        const auto* own = select_published(oss->profiles, rtx5070ti, "openai/gpt-oss-20b", nullptr);
+        failures += check(own != nullptr && own->value("gpu_class", "") == "gb203:70sm" &&
+                              label(own) == "dflash:7" &&
+                              load(own) == std::vector<LoadBound>{{2, 3}} &&
+                              !measured_elsewhere(rtx5070ti, *own),
+                          "gpt-oss-20b on the RTX 5070 Ti: its gb203:70sm profile, dflash:7, 2:3");
+        const auto* base = select_published(oss->profiles, rtx5080, "openai/gpt-oss-20b", nullptr);
+        const auto* gguf =
+            select_published(oss->profiles, rtx5080, "unsloth/gpt-oss-20b-GGUF", nullptr);
+        failures += check(base != nullptr && base->value("gpu_class", "") == "gb202" &&
+                              label(base) == "dflash:7" && measured_elsewhere(rtx5080, *base) &&
+                              stand_in_load(load(base), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "gpt-oss-20b on the RTX 5080: the RTX 5090's profile stands in, "
+                          "dflash:7, 2:3 capped at 9 rows");
+        failures += check(gguf != nullptr && gguf->value("gpu_class", "") == "gb202" &&
+                              label(gguf) == "dflash:5" &&
+                              stand_in_load(load(gguf), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "gpt-oss-20b (unsloth GGUF) on the RTX 5080: the RTX 5090's GGUF "
+                          "profile, dflash:5");
+    } else {
+        failures += check(false, "registry has openai/gpt-oss-20b");
+    }
     failures += check(registry.kind_for_architecture("DFlashDraftModel") == "dflash" &&
                           registry.supported("dflash2", "qwen3_5") &&
                           !registry.supported("eagle3", "gemma4"),
