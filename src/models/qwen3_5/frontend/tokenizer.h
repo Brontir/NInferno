@@ -41,7 +41,8 @@ struct TokenizerResources {
 
 using text::BpeMergeTable;
 
-// Byte-level BPE with NFC normalization and the Qwen pre-tokenizer, specialized for speed.
+// Byte-level BPE with NFC normalization and the Qwen pre-tokenizer, specialized for speed: the
+// Qwen3.5 Split regex or the Qwen2 one, as tokenizer.json declares.
 class Tokenizer final : public text::TokenCodec {
 public:
     explicit Tokenizer(TokenizerResources resources);
@@ -79,6 +80,8 @@ private:
     std::unordered_map<std::string, int> vocab_token_to_id_;
     BpeMergeTable bpe_merge_rules_;
     std::array<int, 256> byte_token_ids_{};
+    // tokenizer.json declares the Qwen2 Split regex: combining marks outside letter runs.
+    bool qwen2_split_ = false;
     // The most input bytes one BPE token covers (EncodeOptions::overflow_check_only).
     std::size_t max_token_bytes_ = 0;
     std::vector<AddedToken> added_tokens_;
