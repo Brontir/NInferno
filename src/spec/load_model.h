@@ -16,7 +16,12 @@
 // round_cost_of prices a card and a model from facts alone (the chip's rates, the artifact's shape,
 // quantization and experts, the drafter's kind), never a timing. At one row t(1, k) / t0 is the
 // registry's floor (spec-tune's seconds per round over seconds per plain token); the constants are
-// fitted on those floors, 9.8 % rms over them (audit1018/x3).
+// fitted on those floors (audit1018/x3): 9.94 % rms in sample (test_spec; 9.8 % in x3_fit.py before
+// rounding), 21 % with a card held out, 18 % with a model held out.
+//
+// One row only: the floors are measured at C1, so round_cost_of's constants (alpha, delta, the MoE
+// term) are fitted at rows = 1; beta and the knee come from older multi-row grids. A multi-row use
+// (modeled_load at rows > 1) waits for a multi-row fit and must not take this one's word for it.
 //
 // The i-th draft of a round is accepted, given the earlier ones, with probability a d^(i-1): the
 // acceptance falls along the block (RTX 4090 grid: DFlash2 a 0.75, d 0.97; MTP a 0.77, d 0.91 give
@@ -37,9 +42,10 @@ namespace ninferno::spec {
 
 // Whether the fit stands behind a prediction. Unreliable where the floors do not test it: a
 // generation with fewer than two lab cards measured, a generation and model family whose error on
-// a card left out of the fit passes 15 %, a family the generation never measured, or a generation
-// the table lacks (then priced as its costliest measured one). A caller should not trust the
-// depth it picks there: decode plainly, or no deeper than 3.
+// a card or a model left out of the fit passes kClassMargin (10 %), a family the generation never
+// measured, a generation the table lacks (then priced as its costliest measured one), or a board
+// without tensor cores (unpriced, "mma emulated"). A caller should not trust the depth it picks
+// there: decode plainly, or no deeper than 3.
 struct ModelFit {
     bool reliable = true;
     std::string reason; // why not ("" when reliable)
@@ -84,7 +90,9 @@ struct DrafterFacts {
 // alpha = (1/eta + kquant) 2 dram / (rate * sms * clock * bytes_per_weight), rate the generation
 // row's tensor rate per SM and clock (core/generation.h), sms, clock and dram the board's facts
 // (GpuKey from DeviceClass::facts), 1/eta per generation (V100: about 11 at its FP16 tensor rate,
-// its verify route) and kquant 0.46 more for GGUF k/IQ quants.
+// its verify route) and kquant more for GGUF k/IQ quants (0.46 at the fit's rate: 0.69 on Volta,
+// 1.38 on Turing in the generation row's unit). An mma_slow board: an unpriced cost labelled "mma
+// emulated".
 // delta is the drafter's pass, a cost per kind times its size (MTP: one target block and the head;
 // the others: hidden_size^2) over the target's active weights. An MoE target reads 0.30 of the
 // experts independent routing of the w columns would add. The knee is where the verify GEMM takes
@@ -93,7 +101,9 @@ struct DrafterFacts {
 [[nodiscard]] std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
                                                      const DrafterFacts& drafter);
 
-// The relative time of a round of `rows` rows at `depth` drafts (0: plain decode).
+// The relative time of a round of `rows` rows at `depth` drafts (0: plain decode). Throws
+// std::invalid_argument for an unpriced cost: check RoundCost::priced (class_depths and
+// modeled_load do).
 [[nodiscard]] double round_time(const RoundCost& cost, std::int32_t rows, std::int32_t depth);
 
 // E(depth) for first-draft acceptance `a` and decay `d` along the block.
@@ -107,7 +117,8 @@ struct DrafterFacts {
 // 1..max_rows, as a load table: an entry {lanes, depth} bounds every step of `lanes` rows or more
 // at `depth` (parse_load's "lanes:depth"); one row runs the deepest that pays, unbounded when that
 // is the deepest of `depths`. A depth never rises again once it fell (a row turned plain does not
-// resume).
+// resume). An unpriced cost: plain from one row ("1:0"). Past one row this uses the one-row fit
+// beyond what it was fitted on (see the header comment).
 [[nodiscard]] std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
                                                   std::span<const std::int32_t> depths,
                                                   std::int32_t max_rows);
@@ -115,7 +126,7 @@ struct DrafterFacts {
 // Context classes (idea 32, step 3): the draft depth each prompt-length class should run at one
 // row, from the round cost and the class's acceptance factor (spec/context_class.h). Lab
 // constants, not timings: a depth must beat plain decode by kClassMargin, the cost model's rms
-// error over the registry's floors (9.9 %), and where anything is unknown the choice is
+// error over the registry's floors in sample (9.94 %), and where anything is unknown the choice is
 // kUnsureDepth at most below 8K and plain beyond.
 inline constexpr double kClassMargin       = 0.10;
 inline constexpr std::int32_t kUnsureDepth = 3;
@@ -131,11 +142,12 @@ struct ClassDepth {
 // ignored), the one that maximizes tokens_per_round(a_c, d, k) / round_time(cost, 1, k), when it
 // beats plain by (1 + margin); otherwise 0. a_c is the first-draft acceptance whose accepted drafts
 // per round at `factor_depth` (the depth the factors were measured at) are the class factor times
-// those of `a`. Short is the baseline (factor 1 by definition, whatever `factors` says of it). No
-// cost, an unreliable or unpriced fit (RoundCost::fit, "mma emulated") or an unknown factor of
-// another class: the deepest captured depth up to kUnsureDepth for Short and Mid, 0 for Long and
-// Huge, labelled "estimate: none (<why>)". No caller
-// yet: routing a request by class is the next step.
+// those of `a`. A class whose factor is unknown under a reliable cost takes the conservative depth
+// capped at Short's pick, so a longer prompt never speculates deeper than a short one. Short is the
+// baseline (factor 1 by definition, whatever `factors` says of it). No cost, an unreliable or
+// unpriced fit (RoundCost::fit, "mma emulated") or an unknown factor of another class: the deepest
+// captured depth up to kUnsureDepth for Short and Mid, 0 for Long and Huge, labelled "estimate:
+// none (<why>)". No caller yet: routing a request by class is the next step.
 [[nodiscard]] std::array<ClassDepth, kContextClasses>
 class_depths(const std::optional<RoundCost>& cost, double a, double d,
              std::span<const std::int32_t> captured,

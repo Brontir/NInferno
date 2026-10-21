@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 
@@ -13,35 +14,39 @@ namespace ninferno::spec {
 namespace {
 
 // The fitted constants: audit1018/x3/x3_fit.py, form M3, least squares over the 116 non-adaptive
-// spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb (9.8 % rms; 21 % on a card
-// left out of the fit, 18 % on a model left out). Refit them with the script when the registry
-// gains floors. knee and beta come from the measured grids instead (27B Q4_G64, 8K, several rows):
-// at one row the floors never reach a knee.
+// spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb. In sample the fit errs by
+// 9.8 % rms in x3_fit.py and 9.94 % in test_spec (these constants rounded, the clocks and
+// bandwidths of the reference table); held out it errs by 21 % rms with a card left out of the fit
+// and 18 % with a model left out. Refit them with the script when the registry gains floors. knee
+// and beta come from the measured grids instead (27B Q4_G64, 8K, several rows): at one row the
+// floors never reach a knee. The fit is of one row only (the floors are C1): a multi-row use
+// (modeled_load) waits for a multi-row fit.
 //
 // The tensor rate per SM and clock is the chip's fact from core/generation.h (GenerationRow::bf16:
 // 512 on the consumer parts, 2048 on the A100, the fitted 1536 where Volta and Turing emulate the
-// BF16 MMA), so inv_eta is in units of that rate: the fit's V100 11.45 and RTX 2080 Ti 0.3337 at
-// their FP16 tensor rates (1024, 512) are 17.18 and 1.001 here, the same alpha.
+// BF16 MMA), so inv_eta and kquant are in units of that rate: the fit's V100 11.45 and RTX 2080 Ti
+// 0.3337 at their FP16 tensor rates (1024, 512) are 17.18 and 1.001 here, and its k/IQ-quant 0.46
+// is 0.69 and 1.38 there (0.46 x 1536 / 1024, x 1536 / 512): the same alpha.
 struct Generation {
     int cc;
     double inv_eta; // verify column cost over the generation row's tensor rate (Volta: its route)
+    double kquant;  // more for GGUF k/IQ-quant weights (the k-quant route), same unit
     std::int32_t knee; // 0: no grid measured one
     double beta;
     int lab_cards; // cards of the generation whose floors the fit saw
 };
 
 constexpr Generation kGenerations[] = {
-    {70, 17.18, 0, 0.0, 1},       // V100
-    {75, 1.001, 0, 0.0, 1},       // RTX 2080 Ti
-    {80, 2.793, 24, 0.0045, 1},   // A100
-    {86, 0.9557, 32, 0.0155, 1},  // RTX 3090
-    {89, 0.3600, 8, 0.0069, 5},   // RTX 4090, 4070 Ti, 4070 Ti SUPER, 4060 Ti, L4
-    {120, 0.4582, 12, 0.0122, 4}, // RTX 5090, 5080, 5070 Ti, 5060 Ti
+    {70, 17.18, 0.69, 0, 0.0, 1},       // V100
+    {75, 1.001, 1.38, 0, 0.0, 1},       // RTX 2080 Ti
+    {80, 2.793, 0.46, 24, 0.0045, 1},   // A100
+    {86, 0.9557, 0.46, 32, 0.0155, 1},  // RTX 3090
+    {89, 0.3600, 0.46, 8, 0.0069, 5},   // RTX 4090, 4070 Ti, 4070 Ti SUPER, 4060 Ti, L4
+    {120, 0.4582, 0.46, 12, 0.0122, 4}, // RTX 5090, 5080, 5070 Ti, 5060 Ti
 };
 
 double tensor_rate(int cc) noexcept { return generation_row(cc / 10, cc % 10).bf16; }
 
-constexpr double kKquantExtra = 0.46;   // GGUF k/IQ-quant verify, in units of the tensor peak's
 constexpr double kMoeRead     = 0.3019; // of the experts independent routing would add
 constexpr std::uint64_t kProposalHeadRows = 131072;
 struct DrafterKind {
@@ -50,22 +55,23 @@ struct DrafterKind {
     bool pass_per_draft;
 };
 constexpr DrafterKind kDrafterKinds[] = {
-    {"mtp", 0.7232, true},
-    {"gemma4_assistant", 67.09, true},
-    {"nemotron_h_mtp", 1.429, true},
-    {"dflash", 283.1, false},
-    {"dflash2", 329.2, false},
+    {"mtp", 0.7232, true},    {"gemma4_assistant", 67.09, true}, {"nemotron_h_mtp", 1.429, true},
+    {"dflash", 283.1, false}, {"dflash2", 329.2, false},
 };
-// The generation x family pairs the fit measured on two or more cards with at most 15 % rms error
-// on a card left out of the fit (x3_fit.py's leave-card-out by cc and engine). sm89 gemma4 (16 %)
-// and sm120 qwen3_5 (32 %, the RTX 5090 left out) miss it.
+
+// The generation x family pairs the fit stands behind: measured on two or more cards, and held out
+// within kClassMargin (10 %) both with a card left out and with a model left out (x3_fit.py's
+// pred_m3_loc and pred_m3_lom in points.csv, rms by cc and engine). Only sm120 dense passes (7.1 %,
+// 6.8 %); sm89 dense (11.0 % card-out), sm120 gemma4 (11.3 %, 16.1 %), sm89 qwen3_5 (12.2 %,
+// 25.5 %), sm89 gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one
+// card each.
 struct Tested {
     int cc;
     std::string_view family;
 };
+
 constexpr Tested kTested[] = {
-    {89, "dense"}, {89, "nemotron_h"}, {89, "qwen3_5"},
-    {120, "dense"}, {120, "gemma4"}, {120, "nemotron_h"},
+    {120, "dense"},
 };
 
 ModelFit fit_of(const Generation* g, int cc, const std::string& family) {
@@ -77,7 +83,7 @@ ModelFit fit_of(const Generation* g, int cc, const std::string& family) {
     for (const Tested& t : kTested) {
         if (t.cc == cc && t.family == family) { return {}; }
     }
-    return {false, arch + " " + family + ": not within 15 % on a card left out of the fit"};
+    return {false, arch + " " + family + ": held-out error past the 10 % margin"};
 }
 
 } // namespace
@@ -106,16 +112,17 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
     // A generation the table lacks: the costliest tensor-core generation measured (Volta's own
     // route aside), per unit of tensor rate, at its own generation row's rate; no knee.
     const double rate = tensor_rate(gpu.compute_capability);
-    Generation priced{gpu.compute_capability, 0, 0, 0.0, 0};
+    Generation priced{gpu.compute_capability, 0, 0, 0, 0.0, 0};
     for (const Generation& g : kGenerations) {
         if (g.cc != 70) {
             priced.inv_eta = std::max(priced.inv_eta, g.inv_eta / tensor_rate(g.cc) * rate);
+            priced.kquant  = std::max(priced.kquant, g.kquant / tensor_rate(g.cc) * rate);
         }
     }
     if (gen != nullptr) { priced = *gen; }
 
     const double flops   = rate * gpu.sms * gpu.sm_clock_khz * 1e3;
-    const double inv_eta = priced.inv_eta + (target.kquant ? kKquantExtra : 0.0);
+    const double inv_eta = priced.inv_eta + (target.kquant ? priced.kquant : 0.0);
     const double h = static_cast<double>(target.hidden_size);
     double size = h * h / target.active_params; // a DFlash block or an assistant: about h^2 a layer
     if (kind->kind == "mtp" || kind->kind == "nemotron_h_mtp") {
@@ -181,6 +188,8 @@ std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
     std::vector<std::int32_t> candidates(depths.begin(), depths.end());
     candidates.push_back(0);
     std::sort(candidates.begin(), candidates.end());
+    // An unpriced cost (mma_slow): plain from one row, never round_time.
+    if (!cost.priced) { return {LoadBound{.lanes = 1, .depth = 0}}; }
     const auto best_at = [&](std::int32_t rows, std::int32_t ceiling) {
         std::int32_t best = 0;
         double speed      = 1.0 / round_time(cost, rows, 0);
@@ -223,24 +232,29 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
     for (const std::int32_t k : depths) {
         if (k <= kUnsureDepth) { shallow = k; }
     }
-    const auto unsure = [&](ContextClass c, const std::string& why) {
-        const bool near = c == ContextClass::Short || c == ContextClass::Mid;
-        return ClassDepth{.depth    = near ? shallow : 0,
+    // `cap`: no deeper than Short's pick where the model made one, so a longer prompt never
+    // speculates deeper than a short one on the fallback.
+    const auto unsure = [&](ContextClass c, const std::string& why, std::int32_t cap) {
+        const bool near          = c == ContextClass::Short || c == ContextClass::Mid;
+        const std::int32_t depth = near ? std::min(shallow, cap) : 0;
+        return ClassDepth{.depth    = depth,
                           .estimate = false,
                           .reason   = "estimate: none (" + why + "): " +
-                                    (near ? "depth " + std::to_string(shallow) + " up to 8K"
+                                    (near ? "depth " + std::to_string(depth) + " up to 8K"
                                           : std::string("plain past 8K"))};
     };
+    constexpr std::int32_t kNoCap = std::numeric_limits<std::int32_t>::max();
 
     std::array<ClassDepth, kContextClasses> out{};
     for (std::size_t i = 0; i < kContextClasses; ++i) {
         const auto c = static_cast<ContextClass>(i);
         if (!cost) {
-            out[i] = unsure(c, "no cost model for this card, target or drafter");
+            out[i] = unsure(c, "no cost model for this card, target or drafter", kNoCap);
             continue;
         }
-        if (!cost->fit.reliable) {
-            out[i] = unsure(c, cost->fit.reason);
+        // An unpriced cost (mma_slow) is never reliable; it never reaches round_time.
+        if (!cost->priced || !cost->fit.reliable) {
+            out[i] = unsure(c, cost->fit.reason, kNoCap);
             continue;
         }
         // Short is the baseline the factors are relative to: 1 by definition, so an unknown Short
@@ -248,7 +262,8 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
         const bool baseline = c == ContextClass::Short;
         if (!baseline && !factors[i].value) {
             out[i] =
-                unsure(c, std::string(class_name(c)) + " acceptance unknown: " + factors[i].reason);
+                unsure(c, std::string(class_name(c)) + " acceptance unknown: " + factors[i].reason,
+                       out[0].depth);
             continue;
         }
         const double factor = baseline ? 1.0 : *factors[i].value;
