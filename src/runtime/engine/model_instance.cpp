@@ -21,6 +21,7 @@
 #include "ninferno/types.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/route_options.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <array>
@@ -166,6 +167,31 @@ void warm_up_request(models::qwen3_5::Program& program, const models::qwen3_5::F
 
 } // namespace
 
+namespace {
+
+// Route pins (ops/route_pins.h) that --activations makes meaningless, refused before the device is
+// touched (admit_engine_options) and again by validate_engine_options.
+void check_route_pin_options(const EngineOptions& options) {
+    const MaintainerOptions& pins = options.maintainer;
+    if (options.activations == ActivationMode::Exact &&
+        (pins.prefill_route != PrefillRoute::Auto || pins.decode_route != DecodeRoute::Auto)) {
+        throw std::invalid_argument(
+            std::string(pins.prefill_route != PrefillRoute::Auto ? "--prefill-route "
+                                                                 : "--decode-route ") +
+            (pins.prefill_route != PrefillRoute::Auto ? prefill_route_name(pins.prefill_route)
+                                                      : decode_route_name(pins.decode_route)) +
+            ": --activations exact runs the invariant routes (one summation order per problem at "
+            "every width, BF16 activations), which a route pin would change: drop one of the two");
+    }
+    if (options.activations == ActivationMode::Int8 && pins.prefill_route == PrefillRoute::W4a4) {
+        throw std::invalid_argument(
+            "--prefill-route w4a4: --activations int8 takes no four-bit activations; the families "
+            "it allows are a16, w4a8, i8 and mmq");
+    }
+}
+
+} // namespace
+
 void validate_engine_options(const EngineOptions& options) {
     if (options.artifact_path.empty()) {
         throw std::invalid_argument("Engine artifact_path must not be empty");
@@ -220,6 +246,7 @@ void validate_engine_options(const EngineOptions& options) {
     if (options.media_preprocess_threads > 64) {
         throw std::invalid_argument("Engine media_preprocess_threads must be in [0,64]");
     }
+    check_route_pin_options(options);
     if (options.recurrent_state != RecurrentStateStorage::FP32 &&
         options.activations == ActivationMode::Exact) {
         throw std::invalid_argument(
@@ -230,6 +257,7 @@ void validate_engine_options(const EngineOptions& options) {
 }
 
 EngineOptions admit_engine_options(EngineOptions options) {
+    check_route_pin_options(options);
     // A --route-dir or --route-table that cannot be read (or a malformed table) is refused before
     // the device is touched (ops/route_options.h): read as no table, it would run the heuristic.
     // The table's GPU class is checked when it loads on the device (engine.cpp).
@@ -1382,6 +1410,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     instance->decode_round_shape.verify_tokens_per_lane = pacing.verify_tokens_per_lane;
     for (auto& line : ops::detail::generic::dense_tune_report()) {
         summary.moe_tune.push_back(std::move(line));
+    }
+    // A route pin that no startup call of its band could take is refused, naming the families
+    // that could (ops/route_pins.h); the ones that took report what they cover.
+    if (const ops::RoutePins pins{options.maintainer.prefill_route, options.maintainer.decode_route,
+                                  options.maintainer.moe_path};
+        pins.any()) {
+        summary.route_pins = ops::check_route_pin_coverage(pins);
     }
     summary.gpu_class    = ops::route_gpu_class();
     summary.device_facts = device_fact_notes(device_class(options.device));

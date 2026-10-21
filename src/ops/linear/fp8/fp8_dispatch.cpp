@@ -5,6 +5,7 @@
 #include "ops/linear/fp8/fp8_format.h"
 #include "ops/linear/fp8/fp8_policy.h"
 #include "ops/common/route_probe.h"
+#include "ops/route_pins.h"
 #include <array>
 #include <stdexcept>
 
@@ -42,8 +43,15 @@ void fp8_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPoli
     validate_fp8_weight(weight, "fp8 linear");
     if (x.ne[1] <= 0) throw std::invalid_argument("fp8 linear: T must be positive");
     const auto& shape = resolve_shape(weight.n, weight.k, policy);
-    if (!fp8_a8_allowed(policy) || !route_quantized_activations(shape.uses_a8(x.ne[1], x.ne[1])))
-        return shape.a16(x, weight, out, stream);
+    bool a8 =
+        fp8_a8_allowed(policy) && route_quantized_activations(shape.uses_a8(x.ne[1], x.ne[1]));
+    // A route pin decides where no route probe does: a16 keeps BF16 activations (no pin names the
+    // FP8 activations of these shapes).
+    if (a8 && route_probe_state.quantized_act < 0) {
+        if (const auto pinned = pinned_shape_quantized(x.ne[1], std::nullopt)) a8 = *pinned;
+    }
+    note_shape_activations(x.ne[1], std::nullopt, a8);
+    if (!a8) return shape.a16(x, weight, out, stream);
     if (workspace == nullptr)
         throw std::invalid_argument("fp8 A8 linear requires caller workspace");
     auto scope         = workspace->scope();

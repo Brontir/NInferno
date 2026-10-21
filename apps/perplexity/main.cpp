@@ -162,8 +162,8 @@ Options parse_options(int argc, char** argv) {
         } else if (option == "--kld-top-k") {
             out.kld_top_k   = parse_count(value("--kld-top-k"), "kld-top-k");
             kld_top_k_given = true;
-        } else if (ninferno::product::is_decode_pacing_flag(option)) {
-            // Scoring runs no decode rounds: the pacing would change nothing.
+        } else if (ninferno::product::is_decode_only_flag(option)) {
+            // Scoring runs no decode rounds: the pacing or a decode route pin would change nothing.
             usage_error(std::string(option) + " does not apply: ninferno-perplexity scores, it "
                                               "does not decode");
         } else if (ninferno::product::parse_engine_flag(

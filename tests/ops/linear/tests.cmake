@@ -120,3 +120,10 @@ ninferno_add_op_test(ninferno_segmented_swiglu_test
 ninferno_add_op_test(ninferno_side_by_side_projection_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_side_by_side_projection.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The generic path under a route pin (--prefill-route, --decode-route) on substituted boards: the
+# pinned family takes every call it can compute, every other call keeps its automatic route, the
+# registered shapes' hand-off gates follow, and clearing the pins restores every route.
+ninferno_add_op_test(ninferno_route_pin_selector_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
+  LIBRARIES ninferno_linear_test_support)

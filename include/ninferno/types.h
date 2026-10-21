@@ -437,6 +437,13 @@ struct MaintainerOptions {
     std::optional<std::uint8_t> debug_poison;
     // --debug-poison-skip SITE,...: sites left unpoisoned (kv, ingress, state, weights).
     std::vector<std::string> debug_poison_skip;
+    // --prefill-route, --decode-route, --moe-path: a test pin of the kernel family the projections
+    // of prefill width, of decode width, or the routed experts take (option_enums.h). Auto is the
+    // release's selection; a pin that this card, build, model or --activations cannot run is
+    // refused at startup, naming what can (docs/maintainer/environment.md, Route pins).
+    PrefillRoute prefill_route = PrefillRoute::Auto;
+    DecodeRoute decode_route   = DecodeRoute::Auto;
+    MoePath moe_path           = MoePath::Auto;
 
     bool operator==(const MaintainerOptions&) const = default;
 };
@@ -1777,6 +1784,9 @@ struct LoadSummary {
     // The load-time route tuners: one line per tuned MoE layer shape (ops::tune_moe) and per dense
     // problem the generic path's tuner timed during the warm-up.
     std::vector<std::string> moe_tune;
+    // The route pins given (--prefill-route, --decode-route, --moe-path): one line per pin, with
+    // what the startup's calls in its band took (ops/route_pins.h). Empty without a pin.
+    std::vector<std::string> route_pins;
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.
     std::string drafter;
