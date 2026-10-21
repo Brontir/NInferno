@@ -62,7 +62,8 @@ int main() {
     using ninferno::product::route_dir_label;
     using ninferno::product::ToolArguments;
     using ninferno::product::tool_maintainer_options;
-    const auto root = unique_temp_dir("ninferno_tool_maintainer_test");
+    const TempDir scratch("ninferno_tool_maintainer_test");
+    const auto& root = scratch.path();
     write_file(root / "lab" / "t.json", kTable);
     std::filesystem::create_directories(root / "lab" / "routes");
 
@@ -201,7 +202,6 @@ int main() {
     check(refuses([&] { return ninferno::product::drafter_registry_label(root / "none.json"); },
                   "--drafter-registry"),
           "a missing drafter registry has a label");
-    std::filesystem::remove_all(root);
 
     std::cout << (failures ? "FAIL" : "OK") << " tool_maintainer\n";
     return failures ? 1 : 0;

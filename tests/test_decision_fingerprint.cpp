@@ -755,7 +755,8 @@ std::string with_source(const std::string& key, const std::string& value) {
 // when their bytes change, and none of the names throws, a non-ASCII one included.
 int file_sources() {
     int failures   = 0;
-    const auto dir = unique_temp_dir("ninferno_fingerprint");
+    const TempDir scratch("ninferno_fingerprint");
+    const auto& dir = scratch.path();
 
     // --context-cost-presets FILE.
     const auto presets = dir / "presets.json";
@@ -810,8 +811,6 @@ int file_sources() {
     failures += check(named && named->starts_with("\xd1\x87\xd0\xb5\xd1\x80"),
                       "a non-ASCII file name is named in UTF-8");
 
-    std::error_code ignored;
-    std::filesystem::remove_all(dir, ignored);
     return failures;
 }
 

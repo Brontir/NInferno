@@ -12,6 +12,7 @@
 // it is counted and not compared.
 #include "core/arena.h"
 #include "core/device.h"
+#include "core/sha256.h"
 #include "core/ggml_frag.h"
 #include "core/weight.h"
 #include "core/weight_view.h"
@@ -880,10 +881,11 @@ int check_r8_table() {
     const auto route = moe::a8_default_route();
     const std::string tuned_down = "rmma.m1.n1.w1x4";
     const std::string tuned      = "rmma.m1.n1.w4x1|" + tuned_down;
-    const std::string path =
-        (unique_temp_dir("ninferno_test_moe_r8_routes") / "routes.json").string();
+    const TempDir scratch("ninferno_test_moe_r8_routes");
+    const auto file        = scratch.path() / "routes.json";
+    const std::string path = utf8_path(file); // the route-table API takes UTF-8
     {
-        std::ofstream f(path);
+        std::ofstream f(file);
         const auto entry = [](const char* format, const std::string& plan, int t_max = 16) {
             return std::string(R"({"format": ")") + format +
                    R"(", "experts": 16, "top_k": 4, "hidden": 256, "inter": 512, )" +
@@ -895,7 +897,6 @@ int check_r8_table() {
           << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::kR8Tokens) << "]}";
     }
     const auto status = ops::load_route_table(path);
-    std::filesystem::remove_all(std::filesystem::path(path).parent_path());
     if (!status.loaded) {
         std::cerr << "A8 route table: the test table did not load: " << status.message << '\n';
         return 1;
@@ -1152,9 +1153,11 @@ Case qwen36_a3b_u4(QType format, QType shared) {
 }
 
 int check_table_plans() {
-    const std::string path = (unique_temp_dir("ninferno_test_moe_routes") / "routes.json").string();
+    const TempDir scratch("ninferno_test_moe_routes");
+    const auto file        = scratch.path() / "routes.json";
+    const std::string path = utf8_path(file); // the route-table API takes UTF-8
     {
-        std::ofstream f(path);
+        std::ofstream f(file);
         f << R"({"schema": "ninferno-route-table/1", "gpu": {"class": ")" << ops::route_gpu_class()
           << R"("}, "entries": [], "moe": [
   {"format": "mxfp4", "experts": 32, "top_k": 4, "hidden": 2880, "inter": 256,
@@ -1164,7 +1167,6 @@ int check_table_plans() {
    "prefill": "rmma.m1.n8.w4x1|rmma.m1.n4.w4x1"}]})";
     }
     const auto status = ops::load_route_table(path);
-    std::filesystem::remove_all(std::filesystem::path(path).parent_path());
     int failures = 0;
     if (!status.loaded) {
         std::cerr << "route-table plans: the test table did not load: " << status.message << '\n';
@@ -1271,7 +1273,8 @@ const char* qname(QType q) {
 int check_tuner() {
     namespace mo = ops::detail::moe;
     int failures   = 0;
-    const auto dir  = unique_temp_dir("ninferno_test_moe_tune");
+    const TempDir scratch("ninferno_test_moe_tune");
+    const auto& dir = scratch.path();
     const auto path = dir / "moe_tune.json";
     ops::set_moe_tune(TuneMode::On, dir);
     Case c;
@@ -1318,7 +1321,6 @@ int check_tuner() {
     ops::set_moe_tune(TuneMode::Off, {});
     const auto off = ops::tune_moe(l.weights, c.config, kWidths, nullptr);
     if (off.ran) { fail("TuneMode::Off tuned"); }
-    std::filesystem::remove_all(dir);
     mo::clear_tuned_plans();
     std::cout << "tuner: " << first.summary << '\n';
     return failures;

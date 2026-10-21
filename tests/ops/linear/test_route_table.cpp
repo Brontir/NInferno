@@ -12,6 +12,7 @@
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
 #include "spec/context_class.h"
+#include "support/temp_dir.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -26,23 +27,21 @@
 
 namespace {
 
+using ninferno::utf8_path;
 namespace generic = ninferno::ops::detail::generic;
 namespace detail  = ninferno::ops::detail;
 
+// Removed when the process ends (each mode runs in a process of its own).
 const std::filesystem::path& scratch_dir() {
-    static const std::filesystem::path dir = [] {
-        auto p = std::filesystem::temp_directory_path() /
-                 ("ninferno_route_table_test_" + std::to_string(::getpid()));
-        std::filesystem::create_directories(p);
-        return p;
-    }();
-    return dir;
+    static const TempDir dir("ninferno_route_table_test");
+    return dir.path();
 }
 
+// The table's path in UTF-8, as the route-table API takes it.
 std::string write_file(const std::string& name, const std::string& text) {
     const auto path = scratch_dir() / (name + ".json");
     std::ofstream(path) << text;
-    return path.string();
+    return utf8_path(path);
 }
 
 std::string table(const std::string& gpu_class, const std::string& entries) {
@@ -80,16 +79,14 @@ int malformed_default() {
     const auto path = dir / (file + ".json");
     std::filesystem::create_directories(dir);
     std::ofstream(path) << "{\"schema\": \"ninferno-route-table/1\", \"gpu\": ";
-    ninferno::ops::set_route_table_dir(dir.string());
+    ninferno::ops::set_route_table_dir(dir);
     const auto s = ninferno::ops::route_table_status();
     std::cout << "malformed default table: loaded=" << s.loaded << " message: " << s.message
               << '\n';
     int failures = check(!s.loaded, "a malformed default table is not applied");
-    failures += check(s.path == dir.string() && s.message.find("refused") != std::string::npos &&
-                          s.message.find(dir.string()) != std::string::npos,
+    failures += check(s.path == utf8_path(dir) && s.message.find("refused") != std::string::npos &&
+                          s.message.find(utf8_path(dir)) != std::string::npos,
                       "the status names the refused directory and the reason: " + s.message);
-    std::error_code ec;
-    std::filesystem::remove_all(scratch_dir(), ec);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table malformed default\n";
     return failures == 0 ? 0 : 1;
 }
@@ -124,7 +121,7 @@ int similar_default() {
            "\"board\": {\"cc\": " + std::to_string(foreign_cc) + ", \"sms\": " +
                std::to_string(ninferno::device_class().sms) + "}}, \"entries\": [" + entry(4096, "rmma.m1.n1.w1x4") +
                "]}";
-    ninferno::ops::set_route_table_dir(dir.string());
+    ninferno::ops::set_route_table_dir(dir);
     const generic::Problem own{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
                                4096, 1024, generic::Epilogue::Store};
     const generic::Problem lent{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
@@ -150,11 +147,9 @@ int similar_default() {
     failures += check(!generic::table_route(foreign, 4, false).has_value(),
                       "a table of another instruction set lends nothing");
     // An explicit table stands alone.
-    (void)ninferno::ops::load_route_table((dir / (file + ".json")).string());
+    (void)ninferno::ops::load_route_table(utf8_path(dir / (file + ".json")));
     failures += check(!generic::table_route(lent, 4, false).has_value(),
                       "an explicit table borrows nothing");
-    std::error_code ec;
-    std::filesystem::remove_all(scratch_dir(), ec);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table similar default\n";
     return failures == 0 ? 0 : 1;
 }
@@ -258,12 +253,13 @@ int main(int argc, char** argv) {
         const auto dir = scratch_dir() / "dir";
         std::filesystem::create_directories(dir);
         std::ofstream(dir / (file + ".json")) << table(gpu, "");
-        ninferno::ops::set_route_table_dir(dir.string());
+        ninferno::ops::set_route_table_dir(dir);
         const auto s = ninferno::ops::route_table_status();
-        failures += check(s.loaded && s.gpu_class == gpu &&
-                              std::filesystem::path(s.path).filename() == file + ".json",
-                          "the default lookup finds " + file + ".json for " + gpu + ": " + s.message);
-        failures += check(ninferno::ops::route_table_dir() == dir.string(),
+        failures +=
+            check(s.loaded && s.gpu_class == gpu &&
+                      ninferno::path_from_utf8(s.path).filename() == file + ".json",
+                  "the default lookup finds " + file + ".json for " + gpu + ": " + s.message);
+        failures += check(ninferno::ops::route_table_dir() == utf8_path(dir),
                           "set_route_table_dir names the dir");
         // An explicit table is dropped when the directory is named again, the same one included
         // (an engine built with no --route-table after one that had it).
@@ -274,7 +270,7 @@ int main(int argc, char** argv) {
         ninferno::ops::set_route_table_dir(dir);
         const auto back = ninferno::ops::route_table_status();
         failures +=
-            check(back.loaded && std::filesystem::path(back.path).filename() == file + ".json",
+            check(back.loaded && ninferno::path_from_utf8(back.path).filename() == file + ".json",
                   "an explicit table outlived set_route_table_dir: " + back.message);
     }
 
@@ -542,12 +538,13 @@ int main(int argc, char** argv) {
     ninferno::ops::set_route_table_dir("");
     const std::string shipped = ninferno::ops::route_table_dir();
     int files = 0;
-    if (!shipped.empty() && std::filesystem::is_directory(shipped)) {
-        for (const auto& f : std::filesystem::directory_iterator(shipped)) {
+    if (!shipped.empty() && std::filesystem::is_directory(ninferno::path_from_utf8(shipped))) {
+        for (const auto& f :
+             std::filesystem::directory_iterator(ninferno::path_from_utf8(shipped))) {
             if (f.path().extension() != ".json") continue;
             ++files;
             try {
-                const auto s = ninferno::ops::inspect_route_table(f.path().string());
+                const auto s = ninferno::ops::inspect_route_table(utf8_path(f.path()));
                 std::cout << f.path().filename().string() << ": " << s.gpu_class << ", "
                           << s.message << '\n';
                 failures += check(f.path().stem().string() ==
@@ -651,17 +648,17 @@ int main(int argc, char** argv) {
     // a table in it.
     {
         const auto pkg    = scratch_dir() / "pkg";
-        const auto exe    = (pkg / "bin" / "ninferno-serve").string();
+        const auto exe    = utf8_path(pkg / "bin" / "ninferno-serve");
         const auto beside = pkg / "bin" / "routes", share = pkg / "share" / "ninferno" / "routes";
         std::filesystem::create_directories(beside);
         std::filesystem::create_directories(share);
         failures += check(ninferno::ops::route_dir_beside(exe).empty(),
                           "routes beside the binary: none without a table");
         std::ofstream(share / "ad102.json") << "{}";
-        failures += check(ninferno::ops::route_dir_beside(exe) == share.string(),
+        failures += check(ninferno::ops::route_dir_beside(exe) == utf8_path(share),
                           "routes beside the binary: share/ninferno/routes");
         std::ofstream(beside / "ad102.json") << "{}";
-        failures += check(ninferno::ops::route_dir_beside(exe) == beside.string(),
+        failures += check(ninferno::ops::route_dir_beside(exe) == utf8_path(beside),
                           "routes beside the binary: bin/routes first");
     }
 
@@ -671,8 +668,6 @@ int main(int argc, char** argv) {
     failures += check(!generic::table_route(q8, 1, false) && detail::route_tokens(a4, 48) == 48,
                       "no table: no tuned route, no override");
 
-    std::error_code ec;
-    std::filesystem::remove_all(scratch_dir(), ec);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table\n";
     return failures == 0 ? 0 : 1;
 }

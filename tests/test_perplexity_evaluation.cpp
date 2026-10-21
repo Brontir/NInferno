@@ -92,7 +92,8 @@ int check_kld() {
                                {9, 1, 2, -1},
                                {-0.5F, -1.5F, -0.1F, none},
                                {-0.5F, -0.1F}});
-    const auto path = unique_temp_dir("ninferno_kld_reference_test") / "reference.bin";
+    const TempDir scratch("ninferno_kld_reference_test");
+    const auto path = scratch.path() / "reference.bin";
     pp::write_kld_reference(path, written);
     const pp::KldReference read = pp::read_kld_reference(path);
     std::filesystem::remove(path);
@@ -122,7 +123,6 @@ int check_kld() {
         std::filesystem::remove(path);
         failures += require(rejected, "KLD reference with an invalid slot is rejected");
     }
-    std::filesystem::remove_all(path.parent_path());
     return failures;
 }
 

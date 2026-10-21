@@ -31,3 +31,22 @@
     }
     throw std::runtime_error("unique_temp_dir: no new directory under " + base.string());
 }
+
+// A unique_temp_dir removed with everything under it when the scope ends, however it ends.
+class TempDir {
+public:
+    explicit TempDir(std::string_view stem) : path_(unique_temp_dir(stem)) {}
+
+    ~TempDir() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    TempDir(const TempDir&)            = delete;
+    TempDir& operator=(const TempDir&) = delete;
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path path_;
+};

@@ -255,7 +255,8 @@ void test_launch() {
     // refuse it): a note in the log says why.
     {
         namespace fs     = std::filesystem;
-        const auto dir   = unique_temp_dir("ninferno_ui_stale_tune");
+        const TempDir scratch("ninferno_ui_stale_tune");
+        const auto& dir  = scratch.path();
         const auto model = dir / "m.ninferno";
         std::ofstream(model) << "not an artifact";
         std::ofstream(model.string() + ".spec_profile.json") << "{}";
@@ -267,7 +268,6 @@ void test_launch() {
                       stale.argv.end() &&
                   stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
               "a stale tune beside the model is a note, not --spec-profile");
-        fs::remove_all(dir);
     }
 
     // A tune beside the model is named only for the GPU class it was made on, as the server keys
@@ -275,7 +275,8 @@ void test_launch() {
     // it over (the published profile runs rather than a refused start).
     {
         namespace fs   = std::filesystem;
-        const auto dir  = unique_temp_dir("ninferno_ui_tune_gpu");
+        const TempDir scratch("ninferno_ui_tune_gpu");
+        const auto& dir = scratch.path();
         const auto tune = dir / "m.ninferno.spec_profile.json";
         ninferno::spec::Profile tuned;
         tuned.key.artifact_id = "aaaa";
@@ -311,7 +312,6 @@ void test_launch() {
         check(launch_gpu(stats, -1) == nullptr, "several GPUs and none named: none known");
         stats.resize(1);
         check(launch_gpu(stats, -1) == &stats[0], "one GPU and none named: that one");
-        fs::remove_all(dir);
     }
 
     request.prepare_only = true;
@@ -326,7 +326,8 @@ void test_launch() {
     };
     // Calibration: the engine family picks the binary beside ninferno-serve.
     {
-        const auto artifact = unique_temp_dir("ninferno_ui_test") / "ninferno_ui_test.ninferno";
+        const TempDir scratch("ninferno_ui_test");
+        const auto artifact = scratch.path() / "ninferno_ui_test.ninferno";
         std::ofstream(artifact) << "x";
         const auto qwen =
             make_tune(options, {.artifact = artifact.string(), .engine = "qwen3_5", .gpu = 0});
@@ -339,7 +340,6 @@ void test_launch() {
         check(same_path(gemma.argv[0], "/opt/ninferno/bin/ninferno-gemma4") &&
                   gemma.argv[2] == "spec-tune",
               "tune: ninferno-gemma4 <artifact> spec-tune");
-        std::filesystem::remove_all(artifact.parent_path());
         try {
             (void)make_tune(options, {.artifact = "/etc/passwd", .engine = "", .gpu = 0});
             check(false, "tune: a non-artifact accepted");

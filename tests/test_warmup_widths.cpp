@@ -9,6 +9,8 @@
 
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/route_table.h"
+#include "core/sha256.h"
+#include "support/temp_dir.h"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
@@ -48,11 +50,10 @@ bool holds_any(const std::vector<std::uint32_t>& widths, std::uint32_t first, st
     return it != widths.end() && *it <= last;
 }
 
+// Removed when the process ends.
 std::filesystem::path scratch(const std::string& name) {
-    const auto dir = std::filesystem::temp_directory_path() /
-                     ("ninferno_warmup_widths_test_" + std::to_string(::getpid()));
-    std::filesystem::create_directories(dir);
-    return dir / name;
+    static const TempDir dir("ninferno_warmup_widths_test");
+    return dir.path() / name;
 }
 
 // The width set's own contract at one chunk.
@@ -174,7 +175,7 @@ int check_route_table() {
 
     const auto path = scratch("fixture.json");
     std::ofstream(path) << fixture_table();
-    const auto status = ninferno::ops::load_route_table(path.string());
+    const auto status = ninferno::ops::load_route_table(ninferno::utf8_path(path));
     failures += check(status.loaded, "the fixture table loads: " + status.message);
     const std::vector<std::int32_t> expected{100, 201, 300, 400, 500, 601, 700, 800, 901};
     failures += check(ninferno::ops::route_table_breakpoints(49) == expected,
@@ -254,7 +255,7 @@ int report_shipped_tables() {
         std::vector<std::int32_t> table_edges;
         std::string how = "as shipped";
         try {
-            (void)ninferno::ops::load_route_table(path.string());
+            (void)ninferno::ops::load_route_table(ninferno::utf8_path(path));
             table_edges = ninferno::ops::route_table_breakpoints(49);
         } catch (const std::runtime_error&) {
             how = "band widths only (this build refuses a route)";
@@ -262,7 +263,7 @@ int report_shipped_tables() {
         {
             // The same band widths under routes every build knows give the same breakpoints.
             std::ofstream(path) << widths_only(table).dump();
-            const auto status = ninferno::ops::load_route_table(path.string());
+            const auto status = ninferno::ops::load_route_table(ninferno::utf8_path(path));
             failures += check(status.loaded, std::string(name) + " loads: " + status.message);
             const std::vector<std::int32_t> edges = ninferno::ops::route_table_breakpoints(49);
             failures += check(table_edges.empty() || table_edges == edges,

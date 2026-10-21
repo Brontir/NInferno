@@ -41,7 +41,8 @@ bool refused(const ninferno::EngineOptions& options, const std::string& expected
 } // namespace
 
 int main() {
-    const auto root = unique_temp_dir("ninferno_engine_route_options_test");
+    const TempDir scratch("ninferno_engine_route_options_test");
+    const auto& root = scratch.path();
     write_file(root / "routes" / "gb202.json",
                R"({"schema":"ninferno-route-table/1","gpu":{"class":"gb202"},"entries":[]})");
     write_file(root / "bad.json", R"({"schema":"other"})");
@@ -76,7 +77,6 @@ int main() {
             check(false, std::string("readable route options were refused: ") + error.what());
         }
     }
-    std::filesystem::remove_all(root);
     std::cout << (failures ? "FAIL" : "OK") << " engine_route_options\n";
     return failures ? 1 : 0;
 }

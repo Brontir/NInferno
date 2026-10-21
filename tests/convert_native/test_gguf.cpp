@@ -234,7 +234,8 @@ void test_v2() {
 // another model's tokenizer.json beside the file is not read.
 void test_resources_beside() {
     namespace fs  = std::filesystem;
-    const auto dir   = unique_temp_dir("ninferno_test_gguf_beside");
+    const TempDir scratch("ninferno_test_gguf_beside");
+    const auto& dir  = scratch.path();
     const auto write = [&](const char* name, const std::string& text) {
         std::ofstream(dir / name, std::ios::binary) << text;
     };
@@ -267,7 +268,6 @@ void test_resources_beside() {
     Model matching;
     load_resources(matching, dir, 3, {}, nullptr, fallbacks);
     check(tokenizer_bytes(matching) == same, "this model's tokenizer.json beside the GGUF is read");
-    fs::remove_all(dir);
 }
 
 } // namespace

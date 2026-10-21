@@ -406,7 +406,8 @@ double table_distance(const Table& table) {
 std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
     std::vector<std::filesystem::path> files;
     std::error_code ec;
-    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    for (std::filesystem::directory_iterator it(path_from_utf8(dir), ec), end; !ec && it != end;
+         it.increment(ec)) {
         if (it->path().extension() == ".json" && it->is_regular_file(ec)) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end());
@@ -418,7 +419,7 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
             table = parse_table(utf8_path(file));
         } catch (const std::exception&) {
             for (const auto& key : own) {
-                if (route_table_file_name(key) == file.filename().string()) throw;
+                if (route_table_file_name(key) == utf8_file_name(file)) throw;
             }
             continue;
         }
@@ -542,12 +543,14 @@ RouteTableStatus install_locked(DeviceTables& d, const std::string& path) {
 void ensure_default_locked(DeviceTables& d) {
     if (d.default_attempted) return;
     d.default_attempted = true;
-    const std::string dir    = route_table_dir();
-    d.default_status         = {};
-    d.default_status.message = "no route table for " + route_gpu_class() +
-                               (dir.empty() ? "" : " in " + dir) + "; routes are untuned";
+    d.default_status    = {};
     std::string attempted;
     try {
+        // Inside the try: a directory whose name cannot be read is a refused lookup with its
+        // reason, never an attempt that installed nothing and says nothing.
+        const std::string dir    = route_table_dir();
+        d.default_status.message = "no route table for " + route_gpu_class() +
+                                   (dir.empty() ? "" : " in " + dir) + "; routes are untuned";
         if (!dir.empty()) {
             // The nearest measured board's table, its gaps filled from the next nearest.
             attempted   = dir;
@@ -566,8 +569,9 @@ void ensure_default_locked(DeviceTables& d) {
         d.table.reset();
         d.default_status      = {};
         d.default_status.path = attempted;
-        d.default_status.message =
-            "route table " + attempted + " refused (" + error.what() + "); routes are untuned";
+        d.default_status.message = "route table " +
+                                   (attempted.empty() ? std::string("directory") : attempted) +
+                                   " refused (" + error.what() + "); routes are untuned";
         std::fprintf(stderr, "ninferno: warning: %s\n", d.default_status.message.c_str());
     }
     publish_locked(d, d.table);
@@ -592,12 +596,12 @@ std::string route_gpu_class() {
 }
 
 std::string route_dir_beside(const std::string& exe) {
-    const std::filesystem::path bin = std::filesystem::path(exe).parent_path();
+    const std::filesystem::path bin = path_from_utf8(exe).parent_path();
     for (const auto& dir : {bin / "routes", bin.parent_path() / "share" / "ninferno" / "routes"}) {
         // A routes/ directory holds the per-GPU-class tables (<class>.json).
         std::error_code ec;
         for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-            if (it->path().extension() == ".json" && it->is_regular_file(ec)) return dir.string();
+            if (it->path().extension() == ".json" && it->is_regular_file(ec)) return utf8_path(dir);
         }
     }
     return {};
@@ -611,13 +615,13 @@ std::filesystem::path g_dir; // set_route_table_dir; empty: the shipped director
 std::string route_table_dir() {
     {
         std::lock_guard lock(g_dir_mutex);
-        if (!g_dir.empty()) return g_dir.string();
+        if (!g_dir.empty()) return utf8_path(g_dir);
     }
     // A binary copied off the machine that built it (a release, a copy on another machine) reads the
     // routes shipped beside it, not whatever the build's source tree holds now or nothing at all.
     static const std::string beside = [] {
         const auto exe = sys::self_exe();
-        return exe.empty() ? std::string() : route_dir_beside(exe.string());
+        return exe.empty() ? std::string() : route_dir_beside(utf8_path(exe));
     }();
     if (!beside.empty()) return beside;
     return NINFERNO_DEFAULT_ROUTE_DIR;

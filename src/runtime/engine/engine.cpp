@@ -138,7 +138,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     std::string route_table;
     if (routes.loaded) {
         in.sources["route_table"] =
-            utf8_file_name(std::filesystem::path(routes.path)) + " sha256:" + routes.content_sha256;
+            utf8_file_name(path_from_utf8(routes.path)) + " sha256:" + routes.content_sha256;
         in.sources["route_table.class"] = routes.gpu_class;
         route_table                     = routes.content_sha256;
         if (!routes.lender_sha256.empty()) {
