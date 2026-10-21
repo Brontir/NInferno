@@ -43,9 +43,9 @@ std::vector<std::string> referenced(const Profile& p) {
 
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
 // measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
-// bounds where it measured none, and a stand-in's bounds capped to this GPU: one from another
-// architecture generation under the load model's ceiling (apply_load_ceiling), one of the same
-// generation to its multiprocessors (stand_in_load). false, with a note, when it does not parse.
+// bounds where it measured none, and a stand-in's bounds capped to this GPU's multiprocessors
+// (stand_in_load), one from another architecture generation also under the load model's ceiling
+// (cross_generation, apply_load_ceiling). false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
@@ -74,14 +74,6 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
     if (out.foreign_floors) {
         out.floor_sources = profiles;
         raise_foreign_floors(p, out, out.notes);
-        if (cross_generation(gpu, published)) {
-            apply_load_ceiling(p, gpu, out, out.notes,
-                               "stand-in from another generation (" +
-                                   published.value("gpu_class", std::string()) + " for sm" +
-                                   std::to_string(gpu.compute_capability) +
-                                   "): load capped by the cost model");
-            return true;
-        }
         const auto capped = stand_in_load(p.load, gpu.sms);
         if (capped != p.load) {
             out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
@@ -90,6 +82,17 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
                                 std::to_string(capped.back().lanes) + " rows on this one's " +
                                 std::to_string(gpu.sms) + " multiprocessors");
             p.load = capped;
+        }
+        // From another generation, the SM cap's table also runs under the load model's ceiling:
+        // lower_load(stand_in_load(...), ceiling).
+        if (cross_generation(gpu, published)) {
+            const std::string device = gpu.compute_capability > 0
+                                           ? "sm" + std::to_string(gpu.compute_capability)
+                                           : std::string("this GPU");
+            apply_load_ceiling(p, gpu, out, out.notes,
+                               "stand-in from another generation (" +
+                                   published.value("gpu_class", std::string()) + " for " + device +
+                                   "): load capped by the cost model");
         }
     }
     return true;

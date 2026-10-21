@@ -2529,13 +2529,42 @@ int test_cross_generation() {
             load_ceiling(RoundCost{.fitted_rows = kCeilingRows}, 0.75, 0.97, depths).load.empty(),
         "load_ceiling: the model's (a one-row fit plain from 2, free multi-row "
         "rounds unbounded)");
-    // The generation of a donor class: by the full-chip table; "*" has none.
-    failures += check(profile_generation(Json{{"gpu_class", "ga102"}}) == 8 &&
-                          profile_generation(Json{{"gpu_class", "gb203:70sm"}}) == 12 &&
-                          profile_generation(Json{{"gpu_class", "sm89"}}) == 8 &&
-                          profile_generation(Json{{"gpu_class", "gv100"}}) == 7 &&
-                          profile_generation(Json{{"gpu_class", "*"}}) == 0,
-                      "profile_generation: the donor class's compute-capability major");
+    // The architecture of a donor class: by the full-chip table; "*" has none.
+    failures += check(profile_arch(Json{{"gpu_class", "ga102"}}) == 86 &&
+                          profile_arch(Json{{"gpu_class", "gb203:70sm"}}) == 120 &&
+                          profile_arch(Json{{"gpu_class", "sm89"}}) == 89 &&
+                          profile_arch(Json{{"gpu_class", "gv100"}}) == 70 &&
+                          profile_arch(Json{{"gpu_class", "*"}}) == 0,
+                      "profile_arch: the donor class's compute capability");
+    // cross_generation: another major, or on major 7 another architecture; unknown on either side
+    // counts; the "*" profile never does.
+    const auto device = [](int cc, int sms) {
+        GpuKey k;
+        k.compute_capability = cc;
+        k.sms                = sms;
+        return k;
+    };
+    const auto donor = [](const char* cls) { return Json{{"gpu_class", cls}}; };
+    failures += check(cross_generation(device(70, 80), donor("ga102")) &&
+                          cross_generation(device(70, 80), donor("tu102")) &&
+                          cross_generation(device(75, 68), donor("gv100")) &&
+                          cross_generation(device(120, 170), donor("ad102")),
+                      "cross_generation: another major, or Volta against Turing");
+    failures += check(!cross_generation(device(80, 108), donor("ga102")) &&
+                          !cross_generation(device(86, 82), donor("ga100")) &&
+                          !cross_generation(device(89, 58), donor("ad106")) &&
+                          !cross_generation(device(89, 128), donor("ga102")) &&
+                          !cross_generation(device(120, 170), donor("gb206")) &&
+                          !cross_generation(device(75, 68), donor("tu104")),
+                      "cross_generation: Ampere and Ada one generation, same arch on major 7");
+    failures += check(cross_generation(device(0, 80), donor("ga102")) &&
+                          cross_generation(device(86, 0), donor("ga102")) &&
+                          cross_generation(device(86, 82), donor("gx999")),
+                      "cross_generation: an unknown device (no compute capability or SMs) or "
+                      "an unknown donor class counts as another generation");
+    failures += check(!cross_generation(device(70, 80), donor("*")) &&
+                          !cross_generation(device(0, 0), donor("*")),
+                      "cross_generation: the \"*\" profile keeps the SM cap");
 
     const Registry& registry = Registry::builtin();
     // Volta: Nemotron 3.5 Lightning has no gv100 profile, so a V100 runs the RTX 3090's (ga102,
@@ -2629,6 +2658,45 @@ int test_cross_generation() {
     failures += check(on_a100.found() && load_label(on_a100.profile.load) == "2:3,11:0" &&
                           on_a100.load_ceiling.empty() && !on_a100.load_capped,
                       "resolve: an A100 under the same Ampere stand-in keeps 2:3 (SM cap)");
+    // An unknown device (no SM count: stand_in_load would keep the donor's whole table) runs
+    // under the ceiling too.
+    GpuKey unknown{{"gv100:80sm", "gv100", "sm70", "*", "ga102"}, 32ULL << 30, false, 3, 0};
+    const auto on_unknown = resolve_speculation(artifact, "cccc", unknown);
+    failures += check(on_unknown.found() && load_label(on_unknown.profile.load) == "2:0" &&
+                          on_unknown.load_capped,
+                      "resolve: an unknown device under a stand-in decodes plainly from two rows");
+    // A named local tune (#32) borrowing the stand-in's table takes it under the ceiling too.
+    Profile tuned;
+    tuned.key.artifact_id = "cccc";
+    tuned.key.gpu         = "gv100:80sm";
+    tuned.drafters.push_back({"mtp", "mtp", "mtp", "", "", "", "accepted", "", 2.0, 0.7});
+    tuned.overall.config  = SpecConfig::parse("mtp:2");
+    tuned.overall.drafter = "mtp";
+    const auto tune_path  = dir / "tune.json";
+    write_profile(tune_path, tuned);
+    const auto named = resolve_speculation(artifact, "cccc", v100, tune_path);
+    failures += check(named.source.starts_with("local tune") &&
+                          named.profile.overall.config.label() == "mtp:2" &&
+                          load_label(named.profile.load) == "2:0" && named.load_capped &&
+                          named.load_ceiling == "2:0 (modeled_load: sm70: one lab card)",
+                      "resolve: a named tune borrows a foreign-generation stand-in's table "
+                      "under the ceiling");
+    // Turing's profile on a V100 (both major 7) stands in from another architecture; the "*"
+    // profile keeps the SM cap.
+    for (const char* cls : {"tu102", "*"}) {
+        Json other                        = manifest;
+        other["profiles"][0]["gpu_class"] = cls;
+        std::ofstream(manifest_path(artifact)) << other.dump(1);
+        GpuKey volta{{"gv100:80sm", "gv100", "sm70", "*", "tu102"}, 32ULL << 30, false, 3, 80};
+        volta.compute_capability = 70;
+        const auto r             = resolve_speculation(artifact, "cccc", volta);
+        const bool star          = std::string(cls) == "*";
+        failures += check(r.found() && load_label(r.profile.load) == (star ? "2:3,8:0" : "2:0") &&
+                              r.load_capped == !star && r.load_ceiling.empty() == star,
+                          std::string("resolve: a V100 under a ") + cls +
+                              (star ? " stand-in keeps the SM cap (2:3,8:0)"
+                                    : " stand-in decodes plainly from two rows"));
+    }
     fs::remove_all(dir);
     return failures;
 }

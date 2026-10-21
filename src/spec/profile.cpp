@@ -604,16 +604,22 @@ std::vector<LoadBound> stand_in_load(std::vector<LoadBound> load, int sms) {
     return out;
 }
 
-int profile_generation(const Json& published) {
+int profile_arch(const Json& published) {
     const std::string arch = gpu_chip_arch(published.value("gpu_class", std::string()));
     if (arch.size() < 3) { return 0; }
-    return std::atoi(arch.c_str() + 2) / 10; // "sm86" -> 8, "sm120" -> 12
+    return std::atoi(arch.c_str() + 2); // "sm86" -> 86, "sm120" -> 120
 }
 
 bool cross_generation(const GpuKey& gpu, const Json& published) {
-    const int donor = profile_generation(published);
-    const int own   = gpu.compute_capability / 10;
-    return donor > 0 && own > 0 && donor != own;
+    if (published.value("gpu_class", std::string()) == "*") { return false; }
+    const int donor = profile_arch(published);
+    const int own   = gpu.compute_capability;
+    // Unknown on either side: nothing says the verify cost carries over.
+    if (donor <= 0 || own <= 0 || gpu.sms <= 0) { return true; }
+    if (donor / 10 != own / 10) { return true; }
+    // Major 7 splits: Volta verifies on its own route, Turing on its own tensor path. Ampere and
+    // Ada (sm80, sm86, sm89) share the mma.sync path and stay one generation.
+    return own / 10 == 7 && donor != own;
 }
 
 std::optional<LoadBound> bound_at(const std::vector<LoadBound>& load, std::int32_t rows) {

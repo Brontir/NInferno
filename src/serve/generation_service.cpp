@@ -425,8 +425,11 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         if (options_.speculation_load) {
             speculative.load = product::engine_load(*options_.speculation_load,
                                                     product::speculative_window(speculative));
+            // The given bounds replace the table the load model's ceiling capped.
+            speculative.decision_sources.erase("speculation.load_ceiling");
         }
         if (!served_speculation_) { return; }
+        if (options_.speculation_load) { served_speculation_->load_ceiling.clear(); }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
             served_speculation_->notes.push_back(std::move(note));
