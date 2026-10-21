@@ -74,6 +74,13 @@ void test_access() {
     check(!origin_allowed("http://localhost:8091", "localhost:8090"), "other port");
     check(!origin_allowed("https://evil.example", "localhost:8090"), "other site");
     check(!origin_allowed("null", "localhost:8090"), "opaque origin");
+    check(origin_refusal("https://ui.example", "127.0.0.1:8090", true)
+                      .find("the proxy must forward the browser's Host header") !=
+                  std::string::npos &&
+              origin_refusal("https://ui.example", "127.0.0.1:8090", false) ==
+                  "cross-origin request refused" &&
+              origin_refusal("null", "127.0.0.1:8090", true) == "cross-origin request refused",
+          "a proxy that rewrote Host is named in the refusal");
 
     const std::string key = new_access_key();
     check(key.size() == 32 && key.find_first_not_of("0123456789abcdef") == std::string::npos,

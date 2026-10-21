@@ -44,6 +44,24 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 | `--catalog-url URL` | `$NINFERNO_CATALOG_URL`, else built in | The recommended models from a `catalog.json` at URL, read at start and every 6 hours. |
 | `--chat-ui DIR` | the bundled one | The chat window's files (llama.cpp's llama-ui). |
 
+Behind a TLS proxy, the proxy must forward the browser's `Host` header (the page refuses a
+change whose `Origin` names another host than `Host`; `X-Forwarded-Host` is not trusted, since
+any client can send it), and send `X-Forwarded-For` and `X-Forwarded-Proto`. nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8090;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Caddy's `reverse_proxy` keeps `Host` and sends both headers by default
+(`ui.example.com { reverse_proxy 127.0.0.1:8090 }`; spelled out: `header_up Host {host}`).
+With `--listen 0.0.0.0` (or `::`) the log prints the URL with this machine's host name; where
+that name does not resolve, use the machine's address.
+
 The models the page starts inherit its environment: `NINFERNO_API_KEY` set for `ninferno-ui`
 makes them ask for that key, and the page's proxy to them sends it. The page checks the release
 manifest at start, at most once a day (`NINFERNO_UPDATE_CHECK=0` turns it off,

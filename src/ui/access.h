@@ -41,6 +41,12 @@ struct AccessPolicy {
 // Whether a state-changing request with this Origin header (empty when absent) is accepted.
 [[nodiscard]] bool origin_allowed(std::string_view origin, std::string_view host_header);
 
+// The reply to a request origin_allowed refuses. Through a proxy (`proxied`) the usual cause is
+// a proxy that sends its backend address as Host instead of the browser's: the reply says so.
+// X-Forwarded-Host is not trusted in its place (any client can send it).
+[[nodiscard]] std::string origin_refusal(std::string_view origin, std::string_view host_header,
+                                         bool proxied);
+
 inline constexpr std::string_view kKeyCookie = "ninferno_ui_key";
 
 enum class KeyCheck { pass, pass_set_cookie, refused };

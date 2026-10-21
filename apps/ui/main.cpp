@@ -22,6 +22,13 @@
 #ifdef _WIN32
 #include <io.h>
 #include <process.h>
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -137,6 +144,21 @@ bool executable(const std::filesystem::path& path) {
     std::cerr << "ninferno-ui: cannot start " << next << ": " << std::strerror(errno)
               << "; start ninferno-ui again\n";
     std::exit(1);
+}
+
+// This machine's host name, for the URL a wildcard listener (0.0.0.0, ::) prints; empty when
+// there is none.
+std::string machine_name() {
+#ifdef _WIN32
+    char name[256];
+    DWORD size = sizeof(name);
+    if (GetComputerNameExA(ComputerNameDnsHostname, name, &size) == 0) { return {}; }
+    return std::string(name, size);
+#else
+    char name[256] = {};
+    if (::gethostname(name, sizeof(name) - 1) != 0) { return {}; }
+    return name;
+#endif
 }
 
 } // namespace
@@ -267,9 +289,13 @@ int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
 #endif
     app.prefetch_listings();
-    const std::string host = options.access.listen.find(':') != std::string::npos
-                                 ? "[" + options.access.listen + "]"
-                                 : options.access.listen;
+    // A wildcard listener is reached by this machine's name or address, never as 0.0.0.0 or ::.
+    const std::string bound = ninferno::ui::host_of_authority(options.access.listen);
+    const bool wildcard     = bound.empty() || bound == "0.0.0.0" || bound == "::";
+    const std::string name  = wildcard ? machine_name() : std::string();
+    const std::string shown = name.empty() ? options.access.listen : name;
+    const std::string host =
+        shown.find(':') != std::string::npos && shown.front() != '[' ? "[" + shown + "]" : shown;
     const std::string url  = "http://" + (exposed ? host : std::string("localhost")) + ":" +
                             std::to_string(options.access.port) + "/";
     std::cout << "ninferno-ui: " << url << std::endl;
@@ -282,6 +308,12 @@ int main(int argc, char** argv) {
     if (exposed) {
         std::cout << "ninferno-ui: from other machines: " << url << "?key=" << options.access.key
                   << " (plain HTTP: a trusted network, or TLS in front)" << std::endl;
+        if (wildcard) {
+            std::cout << "ninferno-ui: if " << (name.empty() ? options.access.listen : name)
+                      << " does not resolve on the other machine, put this machine's address "
+                         "in its place"
+                      << std::endl;
+        }
     }
     if (!app.run()) {
         std::cerr << "ninferno-ui: cannot listen on " << options.access.listen << ":"

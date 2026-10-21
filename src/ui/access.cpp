@@ -75,6 +75,16 @@ bool origin_allowed(std::string_view origin, std::string_view host_header) {
     return ascii_lower(authority) == ascii_lower(host_header);
 }
 
+std::string origin_refusal(std::string_view origin, std::string_view host_header, bool proxied) {
+    std::string reply = "cross-origin request refused";
+    if (proxied && (origin.starts_with("http://") || origin.starts_with("https://"))) {
+        reply += ": Origin " + std::string(origin) + " is not Host " + std::string(host_header) +
+                 "; the proxy must forward the browser's Host header (nginx: proxy_set_header "
+                 "Host $host)";
+    }
+    return reply;
+}
+
 namespace {
 
 bool same_secret(std::string_view a, std::string_view b) noexcept {

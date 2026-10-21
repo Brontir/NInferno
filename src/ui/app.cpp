@@ -1473,7 +1473,10 @@ void App::install(httplib::Server& server) {
         }
         if (req.method != "GET" && req.method != "HEAD") {
             if (!origin_allowed(req.get_header_value("Origin"), req.get_header_value("Host"))) {
-                reply_error(res, 403, "cross-origin request refused");
+                reply_error(res, 403,
+                            origin_refusal(req.get_header_value("Origin"),
+                                           req.get_header_value("Host"),
+                                           proxied || req.has_header("X-Forwarded-Proto")));
                 return httplib::Server::HandlerResponse::Handled;
             }
             if (req.get_header_value("Content-Type").rfind("application/json", 0) != 0) {
