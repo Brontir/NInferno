@@ -12,6 +12,12 @@ This page states the rule and its target. The engine does not meet all of it yet
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV, offload and drafter room directly; the plan levels below do
   not exist yet;
+- the cost model reads driver clocks: they are 0 on MIG/WSL, overclocks leak into it, and without
+  NVML the chip is guessed from its SM count;
+- `fp32acc_full_rate` still stands in for per-segment instruction rates;
+- decode/verify parity is unverified for 18 formats;
+- the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
+- no CI property checks invariance yet;
 - the TU116/117 exception, the PCI-ID reference table, the speed labels, the kernel hash on
   constants and the fingerprint below do not exist yet.
 
@@ -134,5 +140,7 @@ When a change adds or alters a decision, its PR states:
 4. The lab cards that set its constants.
 5. A property test showing invariance where the tier requires it.
 
-Route tables and speculation profiles keyed by GPU class remain only as a transition. They must be
-deterministic per chip type, and no new decision keyed by card identity may be added.
+Route tables (`routes/*.json`, `routes/tuner/dense_tune.json`) and speculation profiles keyed by GPU
+class remain only as a transition. They must be deterministic per chip type, and no new decision
+keyed by card identity may be added. Once the lab experiments show what they are worth end to end,
+they move out of the runtime into lab tools, replaced by rules over facts.
