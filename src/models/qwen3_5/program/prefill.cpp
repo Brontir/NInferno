@@ -1,5 +1,6 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
+#include "models/qwen3_5/program/context_clock.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/program/planning/prefill_unit.h"
@@ -10,6 +11,7 @@
 #include "ninferno/ops/scalar.h"
 #include "ninferno/ops/scatter.h"
 #include "ninferno/ops/speculative_round.h"
+#include "runtime/contract/timing.h"
 
 #include <algorithm>
 #include <array>

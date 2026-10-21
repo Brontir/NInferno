@@ -10,9 +10,13 @@ This page states the rule and its target. The engine does not meet all of it yet
 - a constrained row's measured mask time decides whether its masks are filled before launch and
   whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
   wait cannot change bytes or batches;
-- a token mask the device does not see released within its wall-clock wait bound ends the request,
-  and the host-expert workers spin or sleep by idle time (latency only);
-- `tools/audit/decision_inputs.sh` checks the decision files it lists, not what they include;
+- a token mask the device does not see released within its wall-clock wait bound ends the request;
+- wall-clock bounds decide whether a request or the server goes on (outcome, not bytes): a queued
+  request expires after `--pending-timeout-ms` (also during media preparation), a DFlash round
+  whose drafts do not reach the host within 30 s fails, and a second transient CUDA error within
+  5 minutes restarts the server;
+- `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
+  the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;
@@ -102,8 +106,9 @@ What the design guarantees once complete:
    may be logged and exported, never read back by a decision. Counts that follow from the request
    schedule (drafts accepted, rounds run, requests runnable) are not observations of the machine.
    A planner reports the points of its search to a caller that times them, and reads nothing back.
-   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers out of the decision
-   files (see [Runtime observations](#runtime-observations)).
+   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads and timers
+   out of the text of the decision files it lists; what those files include is not checked (see
+   the known gaps and [Runtime observations](#runtime-observations)).
 4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
@@ -217,8 +222,10 @@ logged or exported only; (b) moves only scheduling or latency, not the bytes of 
 | Concurrent-prefill interleave | `engine_core.h`, `interleave_cost.h` | priced by shape, no clock |
 | Decode run-ahead | `round_pacing.h` | from the CPU-quota fact, no clock |
 | Decode wait, spin or block | `round_pacing.h` | (b), measured host lag |
-| Host-expert worker spin or sleep | `ops/host_experts/host_experts.cpp`, `host_pool.cpp` | (b), idle time |
 | Grammar compile timeout | `structured/constraint.cpp` | (b), fails a request, no bytes |
+| Queue expiry (`--pending-timeout-ms`) | `runtime/engine/engine_core.h` (submit, admission head and backfill), `qwen3_5/frontend/media_cache.cpp` | (b), expires a waiting request, no bytes |
+| DFlash draft arrival, 30 s | `qwen3_5/program/decode.cpp` (`fill_dflash_draft_masks`) | (b), fails a stuck round, no bytes |
+| Second transient CUDA error within 5 minutes | `runtime/engine/engine_core.h` (`kTransientCudaErrorWindow`) | (b), restarts the server instead of going on |
 | Mask fill order, constrained DFlash drafting | `structured/request_constraint.cpp` → `qwen3_5/program/decode.cpp` | (c), open |
 | Device mask-release wait bound | `ops/kernel/sampling_device.cuh` | (c), open: ends a request |
 | Load-time MoE and dense tuners | `ops/moe/moe_tune.cpp`, `ops/generic/generic_tune.cpp` | (c), opt-in by environment, off by default |

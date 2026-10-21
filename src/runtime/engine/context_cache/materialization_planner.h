@@ -4,6 +4,7 @@
 #include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/context_cache/context_portfolio_value.h"
 #include "runtime/engine/context_cache/materialization_budget.h"
+#include "runtime/engine/context_cache/planning_telemetry.h"
 #include "runtime/engine/context_cache/resource_search.h"
 
 #include <algorithm>
@@ -38,20 +39,8 @@ struct MaterializationOwnerPolicy {
     bool explicit_shared_credit            = false;
 };
 
-// Write-only telemetry of one planning call. The planner reports where its optional search starts,
-// first improves on the initial incumbent and ends; the caller times those points for the request
-// log. Nothing flows back: the planner reads no clock, and its search counts work units
-// (materialization_budget.h), so a planning problem has one answer on every host.
-class PlanningTelemetry {
-public:
-    virtual void search_started() noexcept {}
-
-    virtual void first_improvement() noexcept {}
-
-    virtual void search_ended() noexcept {}
-    virtual ~PlanningTelemetry() = default;
-};
-
+// The planner reads no clock: its search counts work units (materialization_budget.h) and it
+// reports the points of the search to a write-only PlanningTelemetry.
 template <class ModelContract>
 class MaterializationPlanner {
 public:

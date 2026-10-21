@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -2317,10 +2318,21 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
             "machine cost policy changed physical assessment or failed to change selection");
 }
 
-void test_candidate_search_prefers_deep_reuse_without_eviction() {
+// The deep-reuse pressure problem below, planned on a host whose assessments sleep
+// `assessment_delay_us` (0: a fast host), reporting to `telemetry`.
+struct DeepReusePlan {
+    std::optional<PlanningCandidateId> candidate;
+    std::vector<FakeTargetDecision> private_actions;
+    ninferno::MaterializationDiagnostics diagnostics;
+    std::uint64_t assessments = 0;
+};
+
+DeepReusePlan plan_deep_reuse(std::uint32_t assessment_delay_us               = 0,
+                              ninferno::runtime::PlanningTelemetry* telemetry = nullptr) {
     using Planner = ninferno::runtime::MaterializationPlanner<FakeModelContract>;
 
     FakeProgram program;
+    program.pressure_assessment_delay_us      = assessment_delay_us;
     program.required_pressure_actions         = 2;
     program.eviction_pressure_action_units    = 2;
     program.pressure_action_immediate_ns      = 1'000'000;
@@ -2416,15 +2428,105 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                               pressure_inputs, logical_goal);
+                               pressure_inputs, logical_goal, {}, telemetry);
+    DeepReusePlan out;
+    out.assessments = program.pressure_target_assessments;
+    if (result && result->plan) {
+        out.candidate       = result->candidate;
+        out.private_actions = result->plan->private_actions;
+        out.diagnostics     = result->diagnostics;
+    }
+    return out;
+}
 
-    require(result && result->plan && result->candidate == PlanningCandidateId{.value = 1},
+void test_candidate_search_prefers_deep_reuse_without_eviction() {
+    const DeepReusePlan result = plan_deep_reuse();
+    require(result.candidate == PlanningCandidateId{.value = 1},
             "shallow Root pressure path starved the cheaper reuse candidate");
-    require(result->plan->private_actions.size() == 2 &&
+    require(result.private_actions.size() == 2 &&
                 std::none_of(
-                    result->plan->private_actions.begin(), result->plan->private_actions.end(),
+                    result.private_actions.begin(), result.private_actions.end(),
                     [](const FakeTargetDecision& action) { return action.evicts_continuation; }),
             "one-step eviction outranked the multi-step preserving reuse closure");
+}
+
+// The search counts work, never time: a host whose assessments take 20 ms each walks the same
+// targets, stops for the same reason after the same work and grant, and makes the same plan.
+void test_slow_host_plans_like_a_fast_one() {
+    const DeepReusePlan fast = plan_deep_reuse(0);
+    const DeepReusePlan slow = plan_deep_reuse(20'000);
+    require(fast.candidate && fast.candidate == slow.candidate &&
+                fast.private_actions == slow.private_actions &&
+                fast.assessments == slow.assessments,
+            "a slower host searched a different number of targets or chose another plan");
+    const ninferno::MaterializationDiagnostics& f = fast.diagnostics;
+    const ninferno::MaterializationDiagnostics& w = slow.diagnostics;
+    require(f.stop_reason == w.stop_reason && f.search_work == w.search_work &&
+                f.search_granted_units == w.search_granted_units &&
+                f.search_units == w.search_units && f.planning_units == w.planning_units &&
+                f.targets_evaluated == w.targets_evaluated &&
+                f.predicted_total_ns == w.predicted_total_ns,
+            "a slower host stopped its search elsewhere");
+    // The planner leaves every wall-time field to its caller.
+    require(f.planning_elapsed_ns == 0 && f.search_elapsed_ns == 0 && !f.first_improvement_ns &&
+                w.planning_elapsed_ns == 0 && w.search_elapsed_ns == 0 && !w.first_improvement_ns,
+            "the planner timed its own search");
+}
+
+// The planner reports the points of its search, in order, to write-only telemetry.
+void test_planner_reports_search_points_in_order() {
+    struct Recorder final : ninferno::runtime::PlanningTelemetry {
+        std::string calls;
+
+        void search_started() noexcept override { calls.push_back('s'); }
+
+        void first_improvement() noexcept override { calls.push_back('i'); }
+
+        void search_ended() noexcept override { calls.push_back('e'); }
+    };
+
+    Recorder recorder;
+    const DeepReusePlan result = plan_deep_reuse(0, &recorder);
+    require(result.candidate.has_value(), "deep-reuse problem found no plan");
+    // The search starts (once more after the root-maximal incumbent is assessed), improves on
+    // that incumbent once, and ends once, last.
+    require(recorder.calls == "ssie" || recorder.calls == "sie",
+            "the planner reported its search points out of order");
+}
+
+// The stopwatch turns the reported points into the three wall-time fields, here on a clock that
+// advances one microsecond a read.
+struct TickClock {
+    using rep                       = std::int64_t;
+    using period                    = std::micro;
+    using duration                  = std::chrono::duration<rep, period>;
+    using time_point                = std::chrono::time_point<TickClock>;
+    static constexpr bool is_steady = true;
+    static inline rep ticks         = 0;
+
+    static time_point now() noexcept { return time_point(duration(++ticks)); }
+};
+
+void test_planning_stopwatch_fills_wall_time_fields() {
+    TickClock::ticks = 0;
+    ninferno::runtime::BasicPlanningStopwatch<TickClock> searched; // planning starts at 1
+    searched.search_started();                                     // 2
+    searched.first_improvement();                                  // 3
+    searched.first_improvement();                                  // only the first counts
+    searched.search_ended();                                       // 4
+    ninferno::MaterializationDiagnostics diagnostics;
+    searched.stamp(diagnostics); // 5
+    require(diagnostics.planning_elapsed_ns == 4'000 && diagnostics.search_elapsed_ns == 2'000 &&
+                diagnostics.first_improvement_ns == 1'000,
+            "the stopwatch misplaced a reported point");
+
+    TickClock::ticks = 0;
+    ninferno::runtime::BasicPlanningStopwatch<TickClock> identity_only; // 1
+    ninferno::MaterializationDiagnostics identity;
+    identity_only.stamp(identity); // 2
+    require(identity.planning_elapsed_ns == 1'000 && identity.search_elapsed_ns == 0 &&
+                !identity.first_improvement_ns,
+            "a plan without a search reported search time");
 }
 
 void test_feasible_identity_expands_when_pressure_can_remove_copy() {
@@ -3005,42 +3107,6 @@ void test_guided_pressure_reaches_deep_retention_before_maximal_fallback() {
     }
     require(program.pressure_target_assessments <= 8,
             "guided pressure search returned to eager breadth-first assessment");
-}
-
-// The search counts work, never time: a host whose assessments take 2 ms each walks the same
-// targets and adopts the same plan as a fast one.
-void test_slow_host_plans_like_a_fast_one() {
-    struct Outcome {
-        std::vector<std::uint64_t> started_actions;
-        std::uint64_t assessments = 0;
-    };
-
-    const auto plan_on = [](std::uint32_t assessment_delay_us) {
-        constexpr std::size_t owner_count = 7;
-        FakeManager manager               = make_manager(1, owner_count + 1U);
-        FakeProgram program;
-        for (std::size_t index = 0; index < owner_count; ++index) {
-            const std::uint32_t content = static_cast<std::uint32_t>(70U + index);
-            const ActiveRequest active =
-                start_active(manager, program, content, make_base(content), index + 1U);
-            (void)finish_active(manager, program, active);
-        }
-        program.required_pressure_actions     = 3;
-        program.private_pressure_alternatives = 4;
-        program.pressure_assessment_work      = 2'000;
-        program.pressure_assessment_delay_us  = assessment_delay_us;
-        auto inspection = manager.inspect(program, FakePreparedPrompt{90}, make_base(90), 20);
-        require(inspection.choice.has_value(), "slow-host pressure search found no plan");
-        program.abort_start = true;
-        (void)manager.reserve_materialization(program, std::move(*inspection.choice),
-                                              FakePreparedPrompt{90}, {});
-        return Outcome{.started_actions = program.started_action_ids,
-                       .assessments     = program.pressure_target_assessments};
-    };
-    const Outcome fast = plan_on(0);
-    const Outcome slow = plan_on(2'000);
-    require(fast.started_actions == slow.started_actions && fast.assessments == slow.assessments,
-            "a slower host searched a different number of targets or chose another plan");
 }
 
 void test_combined_target_reprices_cancelled_pressure_copy() {
@@ -3935,6 +4001,9 @@ int main() {
     run_test("guided deep retention",
              test_guided_pressure_reaches_deep_retention_before_maximal_fallback);
     run_test("slow host plans like a fast one", test_slow_host_plans_like_a_fast_one);
+    run_test("planner reports search points in order", test_planner_reports_search_points_in_order);
+    run_test("planning stopwatch fills wall-time fields",
+             test_planning_stopwatch_fills_wall_time_fields);
     run_test("combined target exact repricing",
              test_combined_target_reprices_cancelled_pressure_copy);
     run_test("in-progress and capture", test_in_progress_adoption_and_private_capture);

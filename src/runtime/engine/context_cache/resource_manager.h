@@ -6,12 +6,12 @@
 #include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/context_cache/materialization_planner.h"
 #include "runtime/engine/context_cache/capture_planner.h"
+#include "runtime/engine/context_cache/planning_stopwatch.h"
 #include "core/fnv.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -59,46 +59,6 @@ struct CheckpointObservation {
 
 // ResourceManager owns logical policy only.  Every physical feasibility decision and mutation is
 // represented by an opaque ModelContract::ResourcePlan sealed against Program::resource_revision().
-// Times the points a planning call reports (PlanningTelemetry) for its diagnostics. The monitor
-// is write-only: the planner reports into it and never reads it back.
-class PlanningStopwatch final : public PlanningTelemetry {
-public:
-    using Clock = std::chrono::steady_clock;
-
-    void search_started() noexcept override { search_started_ = Clock::now(); }
-
-    void first_improvement() noexcept override {
-        if (search_started_ && !first_improvement_) { first_improvement_ = Clock::now(); }
-    }
-
-    void search_ended() noexcept override { search_ended_ = Clock::now(); }
-
-    // Fills the wall-time fields of `diagnostics`: planning since `planning_started`, and the
-    // search (zero when the planner did not search).
-    void stamp(MaterializationDiagnostics& diagnostics,
-               Clock::time_point planning_started) const noexcept {
-        diagnostics.planning_elapsed_ns = elapsed_ns(planning_started, Clock::now());
-        diagnostics.search_elapsed_ns =
-            search_started_ && search_ended_ ? elapsed_ns(*search_started_, *search_ended_) : 0;
-        diagnostics.first_improvement_ns =
-            search_started_ && first_improvement_
-                ? std::optional<std::uint64_t>(elapsed_ns(*search_started_, *first_improvement_))
-                : std::nullopt;
-    }
-
-private:
-    [[nodiscard]] static std::uint64_t elapsed_ns(Clock::time_point begin,
-                                                  Clock::time_point end) noexcept {
-        const auto count =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
-        return count > 0 ? static_cast<std::uint64_t>(count) : 0;
-    }
-
-    std::optional<Clock::time_point> search_started_;
-    std::optional<Clock::time_point> first_improvement_;
-    std::optional<Clock::time_point> search_ended_;
-};
-
 template <class ModelContract>
 class ResourceManager {
 public:
@@ -338,7 +298,7 @@ public:
         if (!destination) { return {.readiness = Readiness::TemporarilyBlocked}; }
 
         // Wall time for the plan's diagnostics only: the planner itself reads no clock.
-        const auto planning_started = std::chrono::steady_clock::now();
+        PlanningStopwatch stopwatch;
         rebuild_prefix_index();
         PrefixDemandRecord provisional_demand;
         provisional_demand.domain =
@@ -442,7 +402,7 @@ public:
 
         std::optional<Choice> selected =
             plan_materialization(program, prompt, base, *destination, candidates, publication_order,
-                                 planning_started, provisional_demand, allowance);
+                                 stopwatch, provisional_demand, allowance);
         if (!selected) { return {.readiness = Readiness::TemporarilyBlocked}; }
         return {
             .readiness = selected->needs_transfer() ? Readiness::NeedsTransfer : Readiness::Ready,
@@ -2049,8 +2009,8 @@ private:
     plan_materialization(Program& program, const PreparedPrompt& prompt,
                          const RequestBasePlan& base, LaneId destination,
                          std::vector<Candidate>& candidates, std::uint64_t publication_order,
-                         std::chrono::steady_clock::time_point planning_started,
-                         PrefixDemandRecord& provisional_demand, PlanningAllowance allowance) {
+                         PlanningStopwatch& stopwatch, PrefixDemandRecord& provisional_demand,
+                         PlanningAllowance allowance) {
         std::vector<typename Planner::CandidateInput> candidate_inputs;
         std::vector<const ContinuationHandle*> private_owners;
         std::vector<PlanningOwnerId> private_owner_ids;
@@ -2307,10 +2267,10 @@ private:
                                                           provisional_demand, split_cost);
         };
 
-        PlanningStopwatch stopwatch;
         std::optional<typename Planner::Result> planned =
             planner_.plan(program, prompt, cost_model_, candidate_inputs, 0, build_pressure_inputs,
                           logical_goal, final_schedule, allowance, &stopwatch);
+        if (planned) { stopwatch.stamp(planned->diagnostics); }
         const auto selected_candidate =
             planned ? std::find_if(candidate_inputs.begin(), candidate_inputs.end(),
                                    [&](const typename Planner::CandidateInput& input) {
@@ -2333,7 +2293,6 @@ private:
         choice.publication_slot_               = planned->publication_slot;
         choice.selected_observation_           = candidate.selected_observation;
         choice.diagnostics_                    = planned->diagnostics;
-        stopwatch.stamp(choice.diagnostics_, planning_started);
         provisional_demand.selected_source_key = candidate.source_key;
         choice.demand_                         = std::move(provisional_demand);
         for (const PressureOwnerOutcome& outcome : planned->owner_outcomes) {

@@ -39,6 +39,7 @@
 #include "ninferno/ops/sigmoid_mul.h"
 #include "ninferno/ops/silu_mul.h"
 #include "ninferno/ops/softmax_attention.h"
+#include "runtime/contract/timing.h"
 
 #include <cuda_runtime.h>
 

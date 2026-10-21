@@ -33,6 +33,10 @@ add_test(NAME ninferno_file_modes_test
 set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Determinism, no GPU: decision code reads no clock, event timer or NVML (the monitor is
-# write-only; docs/maintainer/deterministic-decisions.md, principle 3).
-add_test(NAME ninferno_decision_inputs_test
-  COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
+# write-only; docs/maintainer/deterministic-decisions.md, principle 3). A POSIX shell check: on
+# native Windows `bash` may be WSL's, which cannot take the Windows source path, so it is
+# registered only on UNIX hosts (the Linux builds and CI run it).
+if(UNIX)
+  add_test(NAME ninferno_decision_inputs_test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
+endif()
