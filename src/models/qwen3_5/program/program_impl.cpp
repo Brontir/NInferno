@@ -57,7 +57,7 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       default_draft_depth(plan.default_draft_depth), speculative_backend(plan.speculative_backend),
       kv_storage(plan.kv_storage), proposal_head(plan.proposal_head), draft_width(plan.draft_width),
       watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
-      shared_trip_floor(plan.shared_trip_floor), calibrate_floor(plan.calibrate_floor),
+      shared_trip_floor(plan.shared_trip_floor),
       copy_window_drafts(plan.ngram_draft_tokens), copy_min_match(plan.ngram_min_match),
       default_step_down(plan.step_down), speculation_load(plan.load),
       speculation_context_limit(plan.context_limit),
@@ -786,13 +786,6 @@ void ProgramImpl::reset_memory_peaks() noexcept {
             std::max(workspace_logical_peak_bytes,
                      workspace_plan.vision->handoff_offset_bytes + active_handoff_bytes);
     }
-}
-
-double ProgramImpl::calibrated_floor(std::uint32_t depth, double floor) const noexcept {
-    for (const auto& [measured_depth, measured] : measured_round_floors) {
-        if (measured_depth == depth) { return std::max(floor, measured); }
-    }
-    return floor;
 }
 
 } // namespace ninferno::models::qwen3_5::detail

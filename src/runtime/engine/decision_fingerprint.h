@@ -138,7 +138,7 @@ struct HostFacts {
 env_of(const std::function<std::optional<std::string>(const char*)>& lookup);
 
 // The taint of the other sections: "env" (the decision variables set), "user_tune_cache" (which
-// tuners: "dense", "moe"), "calibrate_floor", "clocks" (no roofline: a machine clock or bus width
+// tuners: "dense", "moe"), "clocks" (no roofline: a machine clock or bus width
 // of 0), "borrowed_routes" (route entries lent by another chip's table), "foreign_route_table" (a
 // table keyed by a class not in the device's own chain), "local_spec_tune", "spec_fit_fallback"
 // (the --spec auto fallback a capacity refusal forced, sources.spec_fit_fallback).

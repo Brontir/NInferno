@@ -7,9 +7,11 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 namespace ninferno::spec {
@@ -39,8 +41,8 @@ std::vector<std::string> referenced(const Profile& p) {
 }
 
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
-// measured on another GPU calibrated here, another profile's load bounds where it measured none,
-// and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
+// measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
+// bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
@@ -67,6 +69,8 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
         return false;
     }
     if (out.foreign_floors) {
+        out.floor_sources = profiles;
+        raise_foreign_floors(p, out, out.notes);
         const auto capped = stand_in_load(p.load, gpu.sms);
         if (capped != p.load) {
             out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
@@ -198,9 +202,163 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
     }
 }
 
+namespace {
+
+// Every choice object under `j` (a "config" label beside a "floor_tokens_per_round") of exactly
+// `config`: mode, depth, adaptive floor depth and proposal head (mtp:8:2 is not mtp:8).
+void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>& floors) {
+    if (j.is_object()) {
+        const auto label = j.find("config");
+        const auto floor = j.find("floor_tokens_per_round");
+        if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
+            try {
+                const auto c = SpecConfig::parse(label->get<std::string>());
+                const auto k_min = [](const SpecConfig& s) { return s.adaptive() ? s.k_min : 0; };
+                if (c.mode == config.mode && c.k == config.k && k_min(c) == k_min(config) &&
+                    c.proposal_head == config.proposal_head && floor->get<double>() > 1.0) {
+                    floors.push_back(floor->get<double>());
+                }
+            } catch (const std::exception&) {
+            }
+        }
+        for (const auto& [key, value] : j.items()) { collect_floors(value, config, floors); }
+    } else if (j.is_array()) {
+        for (const auto& value : j) { collect_floors(value, config, floors); }
+    }
+}
+
+void raise_choice(Choice& choice, const char* name, const ResolvedSpeculation& resolved,
+                  std::vector<std::string>& notes) {
+    if (!choice.config.enabled()) { return; }
+    const double raised = foreign_floor(resolved, choice.config, choice.floor_tokens_per_round);
+    if (raised <= choice.floor_tokens_per_round) { return; }
+    const bool own_model = resolved.floor_sources.is_array() &&
+                           floor_ceiling(resolved.floor_sources, choice.config) > 0.0;
+    char text[96];
+    std::snprintf(text, sizeof(text), "%.2f -> %.2f", choice.floor_tokens_per_round, raised);
+    notes.push_back(std::string(name) + " " + choice.config.label() + ": watchdog floor " + text +
+                    " tokens a round (" +
+                    (own_model ? "the largest this model measured for it on any GPU"
+                               : "the registry's median for it: this model measured it nowhere") +
+                    "; the profile was not measured on this GPU)");
+    choice.floor_tokens_per_round = raised;
+}
+
+} // namespace
+
+double floor_ceiling(const Json& profiles, const SpecConfig& config) {
+    if (!config.enabled()) { return 0.0; }
+    std::vector<double> floors;
+    collect_floors(profiles, config, floors);
+    return floors.empty() ? 0.0 : *std::max_element(floors.begin(), floors.end());
+}
+
+double registry_floor_median(const SpecConfig& config) {
+    if (!config.enabled()) { return 0.0; }
+    std::vector<double> floors;
+    for (const auto& model : Registry::builtin().models()) {
+        collect_floors(model.profiles, config, floors);
+    }
+    if (floors.empty()) { return 0.0; }
+    std::sort(floors.begin(), floors.end());
+    const auto n = floors.size();
+    return n % 2 == 1 ? floors[n / 2] : 0.5 * (floors[n / 2 - 1] + floors[n / 2]);
+}
+
+namespace {
+
+// `own` raised to the model's ceiling for `config` (floor_ceiling over resolved.floor_sources), or
+// to the registry median for a configuration the model measured nowhere.
+double model_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    const double model = resolved.floor_sources.is_array()
+                             ? floor_ceiling(resolved.floor_sources, config)
+                             : 0.0;
+    return std::max(own, model > 0.0 ? model : registry_floor_median(config));
+}
+
+} // namespace
+
+double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    if (!resolved.foreign_floors || !config.enabled()) { return own; }
+    return model_floor(resolved, config, own);
+}
+
+double full_head_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    const double floor = foreign_floor(resolved, config, own);
+    if (!config.enabled() || !config.proposal_head) { return floor; }
+    SpecConfig full    = config;
+    full.proposal_head = false;
+    return std::max(floor, model_floor(resolved, full, own));
+}
+
+void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
+                          std::vector<std::string>& notes) {
+    raise_choice(profile.overall, "default", resolved, notes);
+    raise_choice(profile.thinking, "thinking", resolved, notes);
+    raise_choice(profile.non_thinking, "non-thinking", resolved, notes);
+    if (profile.fit_fallback) {
+        raise_choice(*profile.fit_fallback, "fit fallback", resolved, notes);
+    }
+    for (auto* served : {&profile.served, &profile.portable}) {
+        if (!served->has_value()) { continue; }
+        raise_choice((*served)->overall, "served default", resolved, notes);
+        raise_choice((*served)->thinking, "served thinking", resolved, notes);
+        raise_choice((*served)->non_thinking, "served non-thinking", resolved, notes);
+    }
+}
+
+namespace {
+
+// Why `tuned` (read from `path`) does not serve `artifact_id` on `gpu_class`: a drafter replaced
+// since the tune (or unreadable), then a key for another artifact, GPU or drafters. Empty: it serves.
+std::vector<std::string> tune_refusals(const Profile& tuned, const std::filesystem::path& path,
+                                       const std::string& artifact_id,
+                                       const std::string& gpu_class) {
+    std::vector<std::string> out;
+    ProfileKey expected;
+    expected.artifact_id = artifact_id;
+    expected.gpu         = gpu_class;
+    std::vector<std::string> ids;
+    for (const auto& d : tuned.drafters) {
+        if (d.artifact_id.empty()) { continue; } // built in, a component, or model-free
+        ids.push_back(d.artifact_id);
+        try {
+            if (artifact_id_hex(d.artifact) != d.artifact_id) {
+                out.push_back(path.string() + ": drafter " + d.artifact +
+                              " was replaced since the tune");
+            }
+        } catch (const std::exception& e) {
+            out.push_back(path.string() + ": drafter " + d.artifact + ": " + e.what());
+        }
+    }
+    expected.drafters   = drafter_key(ids);
+    const auto mismatch = key_mismatch(tuned.key, expected);
+    if (!mismatch.empty()) { out.push_back(path.string() + " was tuned for another " + mismatch); }
+    return out;
+}
+
+} // namespace
+
+std::string tune_refusal(const std::filesystem::path& tune, const std::string& artifact_id,
+                         const std::string& gpu_class) {
+    std::string why;
+    const auto tuned = read_profile(tune, &why);
+    if (!tuned) { return tune.string() + ": " + why; }
+    const auto refusals =
+        tune_refusals(*tuned, tune, artifact_id, gpu_class.empty() ? tuned->key.gpu : gpu_class);
+    return refusals.empty() ? std::string() : refusals.front();
+}
+
+void require_named_tune(const ResolvedSpeculation& resolved) {
+    if (resolved.named_tune_refused.empty()) { return; }
+    throw std::runtime_error("refusing the named speculation tune: " + resolved.named_tune_refused +
+                             " (name none to run the model's published profile)");
+}
+
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,
-                                        const GpuKey& gpu) {
+                                        const GpuKey& gpu,
+                                        const std::filesystem::path& local_profile) {
     const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
     ResolvedSpeculation out;
     std::optional<SpeculationManifest> manifest;
@@ -225,37 +383,28 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         if (manifest) { out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback; }
     }
 
-    // 1. A maintainer's own tune on this machine.
-    const auto tuned_path = default_profile_path(artifact);
+    // 1. A maintainer's own tune, only when named (--spec-profile): one left beside the artifact is
+    //    not read, so a machine's own measurement never steers what it runs by itself.
+    const auto& tuned_path = local_profile;
+    // Status that cannot be read (a looping symlink, no permission) only drops the note.
+    std::error_code beside_error;
+    if (tuned_path.empty() && std::filesystem::exists(default_profile_path(artifact), beside_error)) {
+        out.notes.push_back(default_profile_path(artifact).string() +
+                            " is not read: a local tune applies only when named "
+                            "(--spec-profile " +
+                            default_profile_path(artifact).string() + ")");
+    }
+    // A named tune that does not serve: a note, and the first reason the entry point refuses it
+    // with (require_named_tune), since it was named.
+    const auto refuse = [&](std::string reason) {
+        if (out.named_tune_refused.empty()) { out.named_tune_refused = reason; }
+        out.notes.push_back(std::move(reason));
+    };
     std::string why;
-    if (auto tuned = read_profile(tuned_path, &why)) {
-        ProfileKey expected;
-        expected.artifact_id = artifact_id;
-        expected.gpu         = gpu_class;
-        std::vector<std::string> ids;
-        std::map<std::string, std::string> paths;
-        bool drafters_ok = true;
-        for (const auto& d : tuned->drafters) {
-            if (d.artifact_id.empty()) { continue; } // built in, a component, or model-free
-            ids.push_back(d.artifact_id);
-            try {
-                if (artifact_id_hex(d.artifact) != d.artifact_id) {
-                    drafters_ok = false;
-                    out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact +
-                                        " was replaced since the tune");
-                }
-            } catch (const std::exception& e) {
-                drafters_ok = false;
-                out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact + ": " +
-                                    e.what());
-            }
-            paths[d.name.empty() ? d.kind : d.name] = d.artifact;
-        }
-        expected.drafters   = drafter_key(ids);
-        const auto mismatch = key_mismatch(tuned->key, expected);
-        if (!mismatch.empty()) {
-            out.notes.push_back(tuned_path.string() + " was tuned for another " + mismatch);
-        } else if (drafters_ok) {
+    if (auto tuned = tuned_path.empty() ? std::nullopt : read_profile(tuned_path, &why)) {
+        const auto refusals = tune_refusals(*tuned, tuned_path, artifact_id, gpu_class);
+        for (const auto& reason : refusals) { refuse(reason); }
+        if (refusals.empty()) {
             out.source  = "local tune " + tuned_path.string();
             out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);
@@ -283,8 +432,15 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         ": the local tune measured none");
                 }
             }
+            // The model's own floors bound a fallback the tune does not cover (the head fallback).
+            if (manifest) {
+                std::string origin;
+                out.floor_sources = manifest_profiles(*manifest, artifact, origin);
+            }
             return out;
         }
+    } else if (!tuned_path.empty()) {
+        refuse("the named tune " + tuned_path.string() + ": " + why);
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 
@@ -298,6 +454,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         std::string origin;
         std::string digest;
         const Json* profiles  = &manifest_profiles(*manifest, artifact, origin, &digest);
+        out.floor_sources     = *profiles; // also for a built-in default the caller falls to
         const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
         if (published == nullptr) {
             out.notes.push_back(origin + " has no profile for " + gpu_class +
@@ -340,6 +497,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         for (const char* name : {"mtp", "dflash", "dflash2"}) {
             if (components.contains(name)) { available.emplace_back(name); }
         }
+        out.floor_sources     = entry->profiles;
         const auto* published = select_published(entry->profiles, gpu, {}, &available);
         if (published == nullptr) {
             out.notes.push_back("registry " + entry->id + " (by the artifact's shape) has no " +

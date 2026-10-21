@@ -16,7 +16,7 @@
 //                 [--publish FILE --applies-to REPO,... --measured-on TEXT --gpu-class C]
 //
 // generate and batch speculate by default when the model came with speculation (spec/
-// manifest.h): a maintainer's <artifact>.spec_profile.json for this artifact and GPU, else the
+// manifest.h): a maintainer's tune named by --spec-profile for this artifact and GPU, else the
 // profile the model's <artifact>.speculation.json publishes for this GPU (its chip variant, chip,
 // architecture, then "*"; spec-tune publishes for the chip unless --gpu-class says), else prompt
 // lookup when that manifest says no drafter came with the model; an artifact without either decodes
@@ -140,7 +140,7 @@ Arguments parse(int argc, char** argv) {
             "prefill-split",
             "profile",     "prompt",      "publish",
             "repeat",      "rounds-out",  "seed",
-            "spec",        "stop",        "tag",
+            "spec",        "spec-profile", "stop",       "tag",
             "temperature", "tokens",      "top-k",
             "top-p",       "window"};
         if (!known.contains(key)) {
@@ -746,8 +746,12 @@ StartPlan start_plan(const Arguments& args, const std::string& artifact,
         }
     } else {
         const auto gpu       = spec::gpu_identity(device);
+        // A local tune only when named (--spec-profile): one beside the artifact is not read.
         const auto resolved  = spec::resolve_speculation(
-            artifact, spec::artifact_id_hex(artifact), gpu.key);
+            artifact, spec::artifact_id_hex(artifact), gpu.key,
+            args.flag("spec-profile") ? std::filesystem::path(args.text("spec-profile"))
+                                      : std::filesystem::path());
+        spec::require_named_tune(resolved);
         plan.notes = resolved.notes;
         if (resolved.found()) {
             const auto& choice = spec::pick(resolved.profile, thinking);
@@ -980,16 +984,21 @@ int main(int argc, char** argv) {
             std::vector<std::size_t> prompts;
         };
         std::vector<BatchGroup> batch_groups;
+        // A tune named by --spec-profile serves or the run does not start (whatever --spec,
+        // --drafter or --dflash say), as ninferno's and ninferno-serve's.
+        if ((args.command == "generate" || args.command == "batch") && args.flag("spec-profile")) {
+            spec::require_named_tune(spec::resolve_speculation(
+                artifact, spec::artifact_id_hex(artifact), spec::gpu_identity(device.device).key,
+                std::filesystem::path(args.text("spec-profile"))));
+        }
         StartPlan plan;
         if ((args.command == "generate" || args.command == "batch") && !args.flag("drafter") &&
             !args.flag("dflash")) {
             std::optional<std::string> fingerprint;
-            if (std::filesystem::exists(spec::manifest_path(artifact)) ||
-                std::filesystem::exists(spec::default_profile_path(artifact))) {
-                // The artifact tokenizer's fingerprint: the thinking marker's id.
-                if (const auto tokenizer = spec::artifact_tokenizer_json(artifact)) {
-                    fingerprint = spec::vocab_fingerprint(*tokenizer).value;
-                }
+            // The artifact tokenizer's fingerprint: the thinking marker's id. Read whatever names
+            // the profile (a sidecar, --spec-profile, or the registry by the artifact's shape).
+            if (const auto tokenizer = spec::artifact_tokenizer_json(artifact)) {
+                fingerprint = spec::vocab_fingerprint(*tokenizer).value;
             }
             // The plan of one prompt: its thinking marker, then the profile's default for it.
             std::map<int, StartPlan> plans;

@@ -355,40 +355,6 @@ void ProgramImpl::prepare_graphs() {
         };
     };
 
-    // calibrate_floor: the GPU time of a batch-1 pass, the best of three after the untimed one
-    // above it (lazy module loading, first touches). `prepare` runs before each, outside the
-    // timing.
-    const auto best_ms = [&](auto&& prepare, auto&& run) {
-        cudaEvent_t start = nullptr;
-        cudaEvent_t stop  = nullptr;
-        CUDA_CHECK(cudaEventCreate(&start));
-        CUDA_CHECK(cudaEventCreate(&stop));
-        float best = 0.0F;
-        for (int rep = 0; rep < 3; ++rep) {
-            prepare();
-            device.synchronize();
-            CUDA_CHECK(cudaEventRecord(start, device.stream));
-            run();
-            CUDA_CHECK(cudaEventRecord(stop, device.stream));
-            CUDA_CHECK(cudaEventSynchronize(stop));
-            float ms = 0.0F;
-            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-            best = rep == 0 ? ms : std::min(best, ms);
-        }
-        CUDA_CHECK(cudaEventDestroy(start));
-        CUDA_CHECK(cudaEventDestroy(stop));
-        return static_cast<double>(best);
-    };
-    double plain_ms         = 0.0;
-    const auto record_floor = [&](std::uint32_t depth, double round_ms) {
-        if (plain_ms <= 0.0) { return; }
-        measured_round_floors.emplace_back(depth, round_ms / plain_ms);
-        std::fprintf(stderr,
-                     "speculation floor calibration: depth %u round %.3f ms, plain step %.3f ms, "
-                     "break-even %.2f tokens per round\n",
-                     depth, round_ms, plain_ms, round_ms / plain_ms);
-    };
-
     // Plain decode graphs in every generation engine: a speculative engine decodes a request
     // whose acceptance watchdog tripped with them, beside its speculative launch.
     {
@@ -408,14 +374,6 @@ void ProgramImpl::prepare_graphs() {
         model.ordinary_decode_batch(ordinary_state, 1, {code_warm.min + 1, code_warm.max + 1},
                                     nullptr);
         device.synchronize();
-        if (calibrate_floor && speculative_backend != SpeculativeBackend::None) {
-            plain_ms =
-                best_ms([&] { prepare_representative(code_warm.min, 1, draft_window); },
-                        [&] {
-                            model.ordinary_decode_batch(
-                                ordinary_state, 1, {code_warm.min + 1, code_warm.max + 1}, nullptr);
-                        });
-        }
 
         ordinary_graphs.profiles.reserve(ordinary_profiles.size() * ordinary_batch_limit);
         for (std::uint32_t batch_size = 1; batch_size <= ordinary_batch_limit; ++batch_size) {
@@ -463,15 +421,6 @@ void ProgramImpl::prepare_graphs() {
                                    mtp_causal_attention_envelopes(code_warm.max, k, capacity),
                                    nullptr);
             device.synchronize();
-            if (calibrate_floor) {
-                record_floor(k, best_ms([&] { prepare_representative(code_warm.min, 1, k); },
-                                        [&] {
-                                            model.mtp_decode_batch(mtp_state, 1, k,
-                                                                   mtp_causal_attention_envelopes(
-                                                                       code_warm.max, k, capacity),
-                                                                   nullptr);
-                                        }));
-            }
 
             window.graphs.profiles.reserve(planned_profiles.size() * max_concurrency);
             for (std::uint32_t batch_size = first_batch; batch_size <= last_batch; ++batch_size) {
@@ -511,15 +460,6 @@ void ProgramImpl::prepare_graphs() {
             model.dflash_decode_batch(dflash_state, 1, k, dflash_envelopes(code_warm.max, k),
                                       code_warm_target, nullptr);
             device.synchronize();
-            if (calibrate_floor) {
-                record_floor(k, best_ms([&] { prepare_representative(code_warm.min, 1, k); },
-                                        [&] {
-                                            model.dflash_decode_batch(
-                                                dflash_state, 1, k,
-                                                dflash_envelopes(code_warm.max, k),
-                                                code_warm_target, nullptr);
-                                        }));
-            }
 
             window.graphs.profiles.reserve(batch_one_profiles.size() * max_concurrency);
             for (std::uint32_t batch_size = first_batch; batch_size <= last_batch; ++batch_size) {

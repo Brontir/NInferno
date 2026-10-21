@@ -65,17 +65,70 @@ struct ResolvedSpeculation {
     std::map<std::string, std::string> drafters;
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
-    // The profile was measured on another GPU (spec::measured_elsewhere): its watchdog floors are
-    // that GPU's, so the engine calibrates them here (SpeculativeOptions::calibrate_floor).
+    // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
+    // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
+    // The model's published profiles (a JSON array: every GPU class it was measured on) whose
+    // floors bound a foreign profile's; null for a built-in default (the registry median then).
+    nlohmann::json floor_sources;
+    // Why the tune named by `local_profile` does not serve (its path and the reason: unreadable,
+    // tuned for another artifact, GPU or drafters, or a drafter replaced since); empty when it
+    // serves or none was named. What resolves is then the published profile, which an entry point
+    // must not run in its place (require_named_tune).
+    std::string named_tune_refused;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
 
 // `artifact_id`: the target's id (hex); `gpu`: this device (a local tune must carry its full class
-// id, gpu.chain.front()).
+// id, gpu.chain.front()). `local_profile`: a maintainer's own tune (`ninferno spec-tune`'s output),
+// read only when named (serve/CLI --spec-profile): one beside the artifact is never read by
+// itself, so a machine's own measurement does not steer what it runs.
 [[nodiscard]] ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                                       const std::string& artifact_id,
-                                                      const GpuKey& gpu);
+                                                      const GpuKey& gpu,
+                                                      const std::filesystem::path& local_profile = {});
+
+// Why the tune at `tune` would not serve the artifact `artifact_id` on GPU class `gpu_class` (the
+// device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a
+// caller without a device such as the UI): unreadable, tuned for another artifact, GPU or
+// drafters, or a drafter replaced since. Empty when it would serve. For a tune found rather than
+// named (the UI's, spec-tune --load's own beside the artifact): passed over with a note.
+[[nodiscard]] std::string tune_refusal(const std::filesystem::path& tune,
+                                       const std::string& artifact_id,
+                                       const std::string& gpu_class = {});
+
+// A tune the user named (--spec-profile, spec-tune --load --profile) serves, or the entry point
+// refuses to start: throws std::runtime_error naming the tune and why it does not serve
+// (resolved.named_tune_refused). Nothing when it serves or none was named.
+void require_named_tune(const ResolvedSpeculation& resolved);
+
+// The largest break-even (floor_tokens_per_round) `profiles` (one model's published profiles,
+// every GPU class) measured for exactly this configuration (mode, depth, proposal head; adaptive
+// choices are not counted): lab constants of the same model on other GPUs. 0 when none.
+[[nodiscard]] double floor_ceiling(const nlohmann::json& profiles, const SpecConfig& config);
+
+// The median break-even of this configuration over every model and GPU class of the registry: the
+// floor of a model measured nowhere (a built-in default). 0 when the registry measured none.
+[[nodiscard]] double registry_floor_median(const SpecConfig& config);
+
+// The floor a profile measured elsewhere runs `config` at: its own, raised to the same model's
+// largest on any GPU (floor_ceiling over resolved.floor_sources) or, for a model measured nowhere,
+// to the registry median. `own` itself for a profile measured on this GPU.
+[[nodiscard]] double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config,
+                                   double own);
+
+// The floor a "+head" `config` runs at drafting with the full head (the artifact has no proposal
+// head): foreign_floor's, raised to the full head's ceiling over the model's floors (or the
+// registry median) whichever GPU measured the profile, since `own` is the optimized head's, a
+// cheaper round. foreign_floor's for a config without the head.
+[[nodiscard]] double full_head_floor(const ResolvedSpeculation& resolved, const SpecConfig& config,
+                                     double own);
+
+// A profile measured on another GPU, or measured nowhere, carries no break-even of this one: each
+// choice's floor is raised to foreign_floor (the conservative side: its watchdog trips sooner).
+// A note names each raised choice.
+void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
+                          std::vector<std::string>& notes);
 
 } // namespace ninferno::spec

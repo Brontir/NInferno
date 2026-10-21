@@ -3,6 +3,10 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "core/ascii.h"
+#include "core/device_class.h"
+#include "spec/fingerprint.h"
+#include "spec/manifest.h"
+#include "spec/profile.h"
 #include "spec/registry.h"
 #include "convert/fetch.h"
 #include "convert/acquire.h"
@@ -362,7 +366,34 @@ std::pair<std::string, std::string> split_model_tag(const std::string& model) {
     return {model.substr(0, colon), model.substr(colon + 1)};
 }
 
-LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
+std::string tune_refusal_on(const fs::path& tune, const std::string& artifact_id,
+                            const GpuStat* gpu) {
+    // The tune itself first: unreadable, another artifact, or a drafter replaced since.
+    if (auto why = spec::tune_refusal(tune, artifact_id); !why.empty()) { return why; }
+    if (gpu == nullptr || gpu->cc_major <= 0) {
+        return tune.string() + ": the GPU it would run on is unknown here";
+    }
+    // The server keys a tune by "<chip>:<sms>sm": boards of one chip differ in SM count (RTX 5090
+    // and RTX PRO 6000, RTX 4090 and L40), so without the count (NVML gave none, or a MIG slice)
+    // the class is unknown here.
+    if (gpu->sms <= 0) {
+        return tune.string() + ": the SM count of GPU " + std::to_string(gpu->index) +
+               " is unknown here";
+    }
+    const std::string chip = gpu_chip(gpu->pci_device_id, gpu->cc_major, gpu->cc_minor, gpu->sms);
+    // The class the server keys a tune by (device_class's id(), its similarity chain's front).
+    return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
+}
+
+const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
+    if (gpu < 0) { return stats.size() == 1 ? &stats.front() : nullptr; }
+    for (const auto& stat : stats) {
+        if (stat.index == gpu) { return &stat; }
+    }
+    return nullptr;
+}
+
+LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, const GpuStat* gpu) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
     if (model.front() == '-') { throw std::invalid_argument("a model name cannot start with '-'"); }
@@ -438,6 +469,29 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         // alone decodes plainly without --spec).
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
+        // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
+        // by its artifact path: named, since the server reads none by itself, and only when it
+        // would serve (a named tune that does not refuses to start): a stale one is passed over
+        // with a note in the log. Checked against the GPU the request runs on (tune_refusal_on):
+        // one not known well enough here passes the tune over too.
+        std::error_code ec;
+        const fs::path tune = spec::default_profile_path(model);
+        if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
+            std::string why;
+            try {
+                why = tune_refusal_on(tune, spec::artifact_id_hex(model), gpu);
+            } catch (const std::exception& e) {
+                why = std::string("the model's id is unreadable: ") + e.what();
+            }
+            if (why.empty()) {
+                spec.argv.push_back("--spec-profile");
+                spec.argv.push_back(tune.string());
+            } else {
+                spec.notes.push_back("the tune beside the model is passed over (" + why +
+                                     "); the published profile runs: calibrate again if "
+                                     "it is stale");
+            }
+        }
     }
     if (request.gpu >= 0) {
         spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
@@ -1112,7 +1166,7 @@ Json App::local_json() {
                        {"original_gib", gib2(original)},
                        {"running", running.contains(path.string())},
                        // Calibrated on this machine (spec-tune wrote it), else a registry profile.
-                       {"own_profile", fs::exists(path.string() + ".spec_profile.json", ec)}});
+                       {"own_profile", fs::exists(spec::default_profile_path(path), ec)}});
     };
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
     if (fs::is_directory(root, ec)) {
@@ -1603,8 +1657,10 @@ void App::install(httplib::Server& server) {
                                 request.quant.clear();
                             }
                         }
-                        request.port  = processes_.free_port();
-                        const auto id = processes_.start(make_launch(options_, request));
+                        request.port     = processes_.free_port();
+                        const auto stats = gpus_->snapshot();
+                        const auto id    = processes_.start(
+                            make_launch(options_, request, launch_gpu(stats, request.gpu)));
                         reply_json(res, {{"id", id}, {"port", request.port}});
                     } catch (const std::invalid_argument& error) {
                         reply_error(res, 400, error.what());
@@ -1612,9 +1668,9 @@ void App::install(httplib::Server& server) {
                         reply_error(res, 400, std::string("bad request body: ") + error.what());
                     } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
                 });
-    // Speculation calibration on this GPU: spec-tune's quick pass writes
-    // <artifact>.spec_profile.json, which the engines read at their next start in place of a
-    // profile borrowed from a similar chip.
+    // Speculation tuned on this GPU at the user's request: spec-tune's quick pass writes
+    // <artifact>.spec_profile.json, which this UI names (--spec-profile) when it starts the model
+    // again, in place of a profile borrowed from a similar chip.
     server.Post("/api/tune", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             const Json body = Json::parse(req.body);

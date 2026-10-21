@@ -677,16 +677,10 @@ public:
     const DFlashDraftWidth draft_width; // SpeculativeOptions::draft_width
     const spec::WatchdogPolicy watchdog_policy;
     const double shared_trip_floor; // SpeculativeOptions::shared_trip_floor
-    const bool calibrate_floor;     // SpeculativeOptions::calibrate_floor
     // Copy rounds: the copy window's drafts (SpeculativeOptions::ngram_draft_tokens; 0: none) and
     // the shortest suffix a copy proposal matches.
     const std::uint32_t copy_window_drafts;
     const std::uint32_t copy_min_match;
-    // prepare_graphs()'s break-evens under calibrate_floor: draft depth -> one batch-1 round's time
-    // over one plain step's. Empty when not calibrated.
-    std::vector<std::pair<std::uint32_t, double>> measured_round_floors;
-    // A request's floor at `depth`: at least the measured break-even there (0 when none).
-    [[nodiscard]] double calibrated_floor(std::uint32_t depth, double floor) const noexcept;
     const std::vector<SpeculationStep> default_step_down; // SpeculativeOptions::step_down
     const std::vector<SpeculationLoad> speculation_load;  // SpeculativeOptions::load
     const std::uint32_t speculation_context_limit;        // SpeculativeOptions::context_limit

@@ -238,6 +238,9 @@ std::uint64_t ProcessPool::start(LaunchSpec spec) {
     child->info.pid     = static_cast<int>(info.dwProcessId);
     child->info.state   = child->info.spec.kind == "serve" ? "starting" : "running";
     child->info.started = std::chrono::system_clock::now();
+    for (const auto& note : child->info.spec.notes) {
+        child->lines.push_back("ninferno-ui | " + note);
+    }
     child->process      = info.hProcess;
     child->job          = job;
     child->output       = read;
@@ -367,6 +370,9 @@ std::uint64_t ProcessPool::start(LaunchSpec spec) {
     child->info.pid     = pid;
     child->info.state   = child->info.spec.kind == "serve" ? "starting" : "running";
     child->info.started = std::chrono::system_clock::now();
+    for (const auto& note : child->info.spec.notes) {
+        child->lines.push_back("ninferno-ui | " + note);
+    }
     child->out_fd       = pipe_fds[0];
     Child* raw          = child.get();
     std::uint64_t id    = 0;

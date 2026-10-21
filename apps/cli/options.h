@@ -36,6 +36,9 @@ struct Options {
     // --spec given explicitly (mtp|dflash|dflash2|none); otherwise the artifact's speculation
     // profile, when it came with one, decides (--spec auto says so explicitly).
     bool spec_explicit = false;
+    // --spec-profile PATH: a maintainer's own tune in place of the published profile (read only
+    // when named).
+    std::filesystem::path spec_profile;
     // Watchdog floor in tokens per round (0: the profile's, or off without a profile).
     std::optional<float> acceptance_floor;
     bool enable_vision  = false;

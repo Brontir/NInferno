@@ -308,12 +308,6 @@ struct SpeculativeOptions {
     // long as it emits at least this many tokens per round, judged again after each round
     // (SpeculativeStats::shared_trip_deferrals). 1 or less: it stops at its floor.
     double shared_trip_floor = 1.4;
-    // Calibrate the floors on this GPU: at start the engine times one plain decode step and one
-    // round of each captured depth (batch 1, the best of three after an untimed pass), and a
-    // request's floor at a depth is at least that round's time over the step's, the round's
-    // break-even here. For a profile measured on another GPU, whose floors carry that GPU's round
-    // costs: there a request can draft below its break-even without reaching any floor.
-    bool calibrate_floor = false;
     // Where the product's speculation choices above came from, for the decision fingerprint
     // (runtime/engine/decision_fingerprint.h, section "sources"): "speculation.profile" and
     // "drafter_registry", each "<kind> sha256:<hex>", and "spec_fit_fallback" when a capacity

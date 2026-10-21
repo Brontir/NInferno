@@ -3,6 +3,7 @@
 
 #include "convert/acquire.h"
 #include "core/sys.h"
+#include "spec/profile.h"
 #include "ui/access.h"
 #include "ui/app.h"
 #include "ui/browser.h"
@@ -247,6 +248,71 @@ void test_launch() {
         const auto at         = std::find(argv.begin(), argv.end(), "--spec");
         check(at != argv.end() && at + 1 != argv.end() && *(at + 1) == "auto",
               "a launch without a named speculation runs --spec auto");
+    }
+
+    // A stale tune beside a model started by its artifact path is not named (the server would
+    // refuse it): a note in the log says why.
+    {
+        namespace fs     = std::filesystem;
+        const auto dir   = fs::temp_directory_path() / "ninferno_ui_stale_tune";
+        fs::create_directories(dir);
+        const auto model = dir / "m.ninferno";
+        std::ofstream(model) << "not an artifact";
+        std::ofstream(model.string() + ".spec_profile.json") << "{}";
+        LaunchRequest local = request;
+        local.model         = model.string();
+        local.prepare_only  = false;
+        const auto stale    = make_launch(options, local);
+        check(std::find(stale.argv.begin(), stale.argv.end(), "--spec-profile") ==
+                      stale.argv.end() &&
+                  stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
+              "a stale tune beside the model is a note, not --spec-profile");
+        fs::remove_all(dir);
+    }
+
+    // A tune beside the model is named only for the GPU class it was made on, as the server keys
+    // it ("<chip>:<sms>sm"); without the SM count the chip decides; an unknown GPU or chip passes
+    // it over (the published profile runs rather than a refused start).
+    {
+        namespace fs   = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "ninferno_ui_tune_gpu";
+        fs::create_directories(dir);
+        const auto tune = dir / "m.ninferno.spec_profile.json";
+        ninferno::spec::Profile tuned;
+        tuned.key.artifact_id = "aaaa";
+        tuned.key.gpu         = "gb202:170sm";
+        ninferno::spec::write_profile(tune, tuned);
+        GpuStat rtx5090;
+        rtx5090.index         = 1;
+        rtx5090.cc_major      = 12;
+        rtx5090.cc_minor      = 0;
+        rtx5090.pci_device_id = 0x2B85;
+        rtx5090.sms           = 170;
+        check(tune_refusal_on(tune, "aaaa", &rtx5090).empty(), "a tune made on this GPU's class");
+        check(!tune_refusal_on(tune, "bbbb", &rtx5090).empty(), "a tune of another artifact");
+        GpuStat other = rtx5090;
+        other.sms     = 188;
+        check(tune_refusal_on(tune, "aaaa", &other).find("another") != std::string::npos,
+              "a tune of another SM count of the chip is passed over");
+        other.pci_device_id = 0x2C02; // RTX 5080: gb203
+        other.sms           = 0;
+        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
+              "without the SM count, a tune of another chip is passed over");
+        other.pci_device_id = 0x2B85;
+        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
+              "without the SM count, even a tune of the same chip is passed over");
+        check(tune_refusal_on(tune, "aaaa", nullptr).find("unknown") != std::string::npos,
+              "an unknown GPU passes the tune over");
+        // The GPU a launch runs on: by NVML's index; none named, the only one, else none.
+        std::vector<GpuStat> stats(2);
+        stats[0].index = 0;
+        stats[1].index = 1;
+        check(launch_gpu(stats, 1) == &stats[1] && launch_gpu(stats, 2) == nullptr,
+              "a launch's GPU by its index");
+        check(launch_gpu(stats, -1) == nullptr, "several GPUs and none named: none known");
+        stats.resize(1);
+        check(launch_gpu(stats, -1) == &stats[0], "one GPU and none named: that one");
+        fs::remove_all(dir);
     }
 
     request.prepare_only = true;

@@ -358,6 +358,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.enable_vision            = options_.enable_vision;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
     engine_options.speculative              = options_.speculative;
+    // A tune named by --spec-profile serves or the server does not start (whatever --spec says).
+    product::require_named_tune(options_.artifact_path, options_.device, options_.spec_profile);
     // An explicit --spec without --drafter drafts with the drafter that came with the model.
     if (engine_options.speculative.drafter.empty()) {
         engine_options.speculative.drafter =
@@ -370,7 +372,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         std::vector<std::string> notes;
         const auto profiled =
             product::profile_speculation(options_.artifact_path, options_.device,
-                                         options_.enable_thinking.value_or(true), &source, &notes);
+                                         options_.enable_thinking.value_or(true), &source, &notes,
+                                         options_.spec_profile);
         const SpeculativeBackend backend = engine_options.speculative.backend;
         if (profiled && profiled->backend == backend && profiled->draft_tokens != 0) {
             engine_options.speculative.draft_tokens = profiled->draft_tokens;
@@ -386,13 +389,14 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     if (options_.speculation_from_profile) {
         served_speculation_ = product::served_speculation(
             options_.artifact_path, options_.device, options_.enable_thinking.value_or(true),
-            options_.per_request_speculation);
+            options_.per_request_speculation, options_.spec_profile);
         if (served_speculation_) {
             engine_options.speculative =
                 product::with_given_settings(served_speculation_->engine, options_.speculative);
         } else {
             speculation_absent_notes_ =
-                product::speculation_notes(options_.artifact_path, options_.device);
+                product::speculation_notes(options_.artifact_path, options_.device,
+                                           options_.spec_profile);
         }
     }
     // --spec-load replaces the profile's bounds under load (or bounds an explicit --spec), and
@@ -473,7 +477,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         std::string why = refused.what();
         bool built      = false;
         if (auto fallback = product::served_fit_fallback(options_.artifact_path, options_.device,
-                                                         options_.per_request_speculation)) {
+                                                         options_.per_request_speculation,
+                                                         options_.spec_profile)) {
             fallback->fit_fallback =
                 product::fit_refusal(refused_label, engine_options.max_context, why);
             engine_options.speculative =
@@ -498,7 +503,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         if (!built) {
             const auto shallower = [&](const spec::SpecConfig& config, double floor) {
                 return product::served_shallower(options_.artifact_path, options_.device,
-                                                 options_.per_request_speculation, config, floor);
+                                                 options_.per_request_speculation, config, floor,
+                                                 options_.spec_profile);
             };
             const std::string first_refusal = refused.what();
             // A candidate replaces the served speculation and builds the Engine (dropping one an
@@ -530,9 +536,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                         .has_value();
             // Then the model's own MTP head, before plain decode.
             if (!built) {
-                if (auto head = product::served_head_fallback(options_.artifact_path,
-                                                              options_.device,
-                                                              options_.per_request_speculation)) {
+                if (auto head = product::served_head_fallback(
+                        options_.artifact_path, options_.device,
+                        options_.per_request_speculation, options_.spec_profile)) {
                     built = fits(*head, "head");
                 }
             }
@@ -588,7 +594,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             bool head_kept = false;
             if (plain > with_drafter) {
                 if (auto head = product::served_head_fallback(
-                        options_.artifact_path, options_.device, options_.per_request_speculation)) {
+                        options_.artifact_path, options_.device, options_.per_request_speculation,
+                        options_.spec_profile)) {
                     engine_.reset();
                     head->fit_fallback = drafted_label + " leaves the KV pool " +
                                          std::to_string(with_drafter) + " of " +

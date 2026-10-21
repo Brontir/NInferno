@@ -3,7 +3,8 @@
 // The speculation an artifact came with, as the products run it: the CLI (one request, one
 // engine: the profile's default for the request's thinking flag) and the server (one
 // engine for every request: spec/menu.h lays the profile onto it, and each request picks its
-// entry). The profile comes from spec/manifest.h's resolve_speculation() for this GPU. Both run
+// entry). The profile comes from spec/manifest.h's resolve_speculation() for this GPU; each entry
+// point's `local_profile` is a maintainer's own tune named by --spec-profile (none: not read). Both run
 // only what the Engine's family implements (spec/engine_support.h, by the artifact's model_type):
 // a profile tuned where more runs (Gemma 4's Session: DFlash, adaptive depths, MTP windows past
 // 5) carries its served choices, the best the tune measured among those, and they are taken; a
@@ -43,7 +44,8 @@ namespace ninferno::product {
 // proposal head drafts with the full head (same drafter and K), and a note says so.
 [[nodiscard]] std::optional<SpeculativeOptions>
 profile_speculation(const std::filesystem::path& artifact, int device, std::optional<bool> thinking,
-                    std::string* source, std::vector<std::string>* notes);
+                    std::string* source, std::vector<std::string>* notes,
+                    const std::filesystem::path& local_profile = {});
 
 // The same for one choice of an already resolved profile (with the profile's context bound).
 [[nodiscard]] std::optional<SpeculativeOptions>
@@ -76,7 +78,7 @@ struct ServedSpeculation {
 // request runs the default for its own thinking flag.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_speculation(const std::filesystem::path& artifact, int device, bool thinking,
-                   bool per_request);
+                   bool per_request, const std::filesystem::path& local_profile = {});
 
 // The served configuration one draft shallower (`config` with k - 1, its watchdog at `floor`),
 // for every default: what a server runs when neither the profile's choice nor its fit fallback fits
@@ -84,7 +86,7 @@ served_speculation(const std::filesystem::path& artifact, int device, bool think
 // or when the artifact has no profile with a drafter for the configuration's mode.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_shallower(const std::filesystem::path& artifact, int device, bool per_request,
-                 const spec::SpecConfig& config, double floor);
+                 const spec::SpecConfig& config, double floor, const std::filesystem::path& local_profile = {});
 
 // The deepest configuration shallower than `tried` that `fits` accepts, with the same drafter: a
 // server whose profile's choice does not fit the requested context speculates at the deepest depth
@@ -116,23 +118,37 @@ shallower_profile(const spec::Profile& profile, const spec::SpecConfig& config, 
 // as its default.
 [[nodiscard]] double shallower_floor(const std::vector<std::pair<int, double>>& floors, int depth);
 
+// A tune named by --spec-profile (`local_profile`) that does not serve this artifact on this GPU
+// (unreadable, tuned for another artifact, GPU or drafters, or a drafter replaced since) refuses to
+// start: throws std::runtime_error naming it and why (spec::require_named_tune), whatever --spec
+// says. Every function here that takes `local_profile` throws the same. Nothing when none is named.
+void require_named_tune(const std::filesystem::path& artifact, int device,
+                        const std::filesystem::path& local_profile);
+
+// Why the tune at `tune` would not serve `artifact` on `device` (spec::tune_refusal with the
+// device's class); empty when it would. For a tune found beside the artifact rather than named.
+[[nodiscard]] std::string tune_refusal(const std::filesystem::path& artifact, int device,
+                                       const std::filesystem::path& tune);
+
 // Why the artifact came with no speculation profile for this GPU (each source passed over, such
 // as no manifest beside it); empty when served_speculation finds one.
 [[nodiscard]] std::vector<std::string> speculation_notes(const std::filesystem::path& artifact,
-                                                         int device);
+                                                         int device, const std::filesystem::path& local_profile = {});
 
 // The profile's fit fallback (spec::Profile::fit_fallback): what a product runs when the Engine
 // refuses the profile's choice with CapacityError (its drafter does not fit the requested context
 // on this device), as a menu whose every entry is the fallback. nullopt when the profile has none,
 // or the Engine cannot run it. Never for an explicit --spec. The caller logs the switch.
 [[nodiscard]] std::optional<ServedSpeculation>
-served_fit_fallback(const std::filesystem::path& artifact, int device, bool per_request);
+served_fit_fallback(const std::filesystem::path& artifact, int device, bool per_request,
+                    const std::filesystem::path& local_profile = {});
 // The model's own MTP head in place of a separate drafter that leaves the KV pool fewer full
 // contexts than the server serves: the built-in MTP default (as for a model with no profile), with
-// the watchdog floors calibrated here. nullopt when the served choice already drafts with MTP, the
+// the registry's watchdog floors (spec::raise_foreign_floors). nullopt when the served choice already drafts with MTP, the
 // artifact carries no MTP head, or the Engine cannot run it.
 [[nodiscard]] std::optional<ServedSpeculation>
-served_head_fallback(const std::filesystem::path& artifact, int device, bool per_request);
+served_head_fallback(const std::filesystem::path& artifact, int device, bool per_request,
+                     const std::filesystem::path& local_profile = {});
 
 // What the Engine runs of the artifact's speculation (none when its model_type is unreadable).
 [[nodiscard]] spec::EngineSupport engine_support(const std::filesystem::path& artifact);

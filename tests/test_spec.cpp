@@ -1307,8 +1307,9 @@ int test_registry_and_corpus() {
                                   std::string::npos &&
                               similarity_note(rtx5080, *published).empty(),
                           "an unmeasured GPU takes the most similar measured GPU's profile");
-        // A stand-in's floors are another GPU's: the engine calibrates them (calibrate_floor);
-        // the card's own profile, and a key list without own keys, keep theirs.
+        // A stand-in's floors are another GPU's: they are raised to the registry's
+        // (raise_foreign_floors); the card's own profile, and a key list without own keys, keep
+        // theirs.
         failures += check(measured_elsewhere(rtx3070, *stand_in) &&
                               measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "*"}}) &&
                               !measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "sm86"}}) &&
@@ -1604,7 +1605,9 @@ int test_registry_and_corpus() {
 
 int test_resolve() {
     int failures = 0;
-    const GpuKey rtx5090{{"gb202:170sm", "gb202", "sm120", "*"}, 32ULL << 30};
+    // The device's own keys are id, chip and architecture: a "*" profile is measured elsewhere.
+    GpuKey rtx5090{{"gb202:170sm", "gb202", "sm120", "*"}, 32ULL << 30};
+    rtx5090.own_keys = 3;
     const GpuKey pro6000{{"gb202:188sm", "gb202", "sm120", "*"}, 96ULL << 30};
     namespace fs = std::filesystem;
     const auto dir =
@@ -1640,8 +1643,11 @@ int test_resolve() {
     r = resolve_speculation(artifact, "bbbb", rtx5090);
     failures += check(!r.found() && !r.notes.empty(), "a manifest of another artifact is ignored");
     r = resolve_speculation(artifact, "aaaa", rtx5090);
+    // The "*" profile was measured on no GPU in particular: its floor is at least the largest the
+    // model's own profiles measured for the configuration (here its own, 1.6).
     failures += check(r.found() && r.profile.overall.config.label() == "mtp:5+head" &&
-                          r.drafters.at("mtp") == "component:mtp" &&
+                          r.drafters.at("mtp") == "component:mtp" && r.foreign_floors &&
+                          r.floor_sources.is_array() &&
                           r.profile.overall.floor_tokens_per_round == 1.6,
                       "the manifest's profile for the attached drafters");
     // A maintainer's tune for this artifact and GPU wins.
@@ -1652,16 +1658,62 @@ int test_resolve() {
     tuned.overall.config  = SpecConfig::parse("mtp:3+head");
     tuned.overall.drafter = "mtp";
     write_profile(default_profile_path(artifact), tuned);
+    // Left beside the artifact, it is not read (a machine's own measurement steers nothing by
+    // itself); a note names the option that reads it.
     r = resolve_speculation(artifact, "aaaa", rtx5090);
+    failures += check(r.found() && !r.source.starts_with("local tune") &&
+                          std::any_of(r.notes.begin(), r.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.find("is not read") != std::string::npos &&
+                                                 n.find("--spec-profile") != std::string::npos;
+                                      }),
+                      "a local tune beside the artifact is not read unless named");
+    const auto named = default_profile_path(artifact);
+    r                = resolve_speculation(artifact, "aaaa", rtx5090, named);
     failures += check(r.found() && r.source.starts_with("local tune") &&
                           r.profile.overall.config.label() == "mtp:3+head",
-                      "a local tune wins");
+                      "a named local tune wins");
+    {
+        bool refused = false;
+        try {
+            require_named_tune(r);
+        } catch (const std::exception&) { refused = true; }
+        failures += check(!refused && r.named_tune_refused.empty(), "a named tune that serves");
+    }
+    // The same check for a tune found rather than named (the UI's, spec-tune --load's own).
+    failures += check(tune_refusal(named, "aaaa", "gb202:170sm").empty() &&
+                          tune_refusal(named, "aaaa").empty(),
+                      "a tune found beside the artifact that would serve");
+    failures += check(tune_refusal(named, "aaaa", "gb202:188sm").find("was tuned for another") !=
+                              std::string::npos &&
+                          tune_refusal(named, "bbbb").find("was tuned for another") !=
+                              std::string::npos &&
+                          tune_refusal(artifact.parent_path() / "absent.json", "aaaa")
+                                  .find("absent.json") != std::string::npos,
+                      "a stale or unreadable tune found beside the artifact says why");
+    r = resolve_speculation(artifact, "aaaa", rtx5090, artifact.parent_path() / "absent.json");
+    failures += check(r.found() && !r.source.starts_with("local tune") &&
+                          std::any_of(r.notes.begin(), r.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.rfind("the named tune ", 0) == 0;
+                                      }),
+                      "an unreadable named tune is a note, and the published profile resolves");
+    {
+        bool refused = false;
+        try {
+            require_named_tune(r);
+        } catch (const std::runtime_error& e) {
+            refused = std::string(e.what()).find("absent.json") != std::string::npos;
+        }
+        failures += check(refused && !r.named_tune_refused.empty(),
+                          "an unreadable named tune refuses to start, naming its path");
+    }
     // The tune measured no load bounds: the published ones of its drafter kind apply.
     failures += check(r.profile.load.empty(), "no load bounds without a published table");
     manifest["profiles"][1]["load"] =
         Json::array({Json{{"lanes", 2}, {"depth", 2}}, Json{{"lanes", 4}, {"depth", 0}}});
     write(manifest_path(artifact), manifest);
-    r = resolve_speculation(artifact, "aaaa", rtx5090);
+    r = resolve_speculation(artifact, "aaaa", rtx5090, named);
     failures += check(r.source.starts_with("local tune") &&
                           r.profile.overall.config.label() == "mtp:3+head" &&
                           r.profile.load.size() == 2 && r.profile.load[0].depth == 2 &&
@@ -1674,9 +1726,77 @@ int test_resolve() {
                       "a local tune takes the published load bounds of its kind");
     manifest["profiles"][1].erase("load");
     write(manifest_path(artifact), manifest);
-    r = resolve_speculation(artifact, "aaaa", pro6000);
+    r = resolve_speculation(artifact, "aaaa", pro6000, named);
     failures += check(r.found() && r.source.starts_with("manifest"),
                       "a tune for another GPU class falls back to the manifest");
+    failures += check(r.named_tune_refused.find("was tuned for another") != std::string::npos,
+                      "a named tune for another GPU class is refused");
+    // A foreign profile's floors: the largest the same model measured for exactly that
+    // configuration on any GPU (another depth, head or an adaptive choice does not count), or the
+    // registry median for a model measured nowhere; raised, never lowered.
+    {
+        const Json sources = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "dflash:7", "floor_tokens_per_round": 1.8}},
+            {"gpu_class": "gv100", "default": {"config": "dflash:7", "floor_tokens_per_round": 2.6},
+             "thinking": {"config": "dflash:5", "floor_tokens_per_round": 9.0}},
+            {"gpu_class": "ad102", "default": {"config": "dflash:7:3", "floor_tokens_per_round": 9.0},
+             "thinking": {"config": "mtp:7+head", "floor_tokens_per_round": 9.0}}])");
+        failures += check(floor_ceiling(sources, SpecConfig::parse("dflash:7")) == 2.6 &&
+                              floor_ceiling(sources, SpecConfig::parse("dflash:6")) == 0.0 &&
+                              floor_ceiling(sources, SpecConfig{}) == 0.0,
+                          "a configuration's floor ceiling: exactly that one, over the model's GPUs");
+        // An adaptive choice (Gemma 4's mtp:8:2) is its own configuration: its floors count,
+        // matched on the floor depth too.
+        const Json adaptive = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "mtp:8:2", "floor_tokens_per_round": 1.9}},
+            {"gpu_class": "gv100", "default": {"config": "mtp:8", "floor_tokens_per_round": 4.0},
+             "thinking": {"config": "mtp:8:3", "floor_tokens_per_round": 5.0}}])");
+        failures += check(floor_ceiling(adaptive, SpecConfig::parse("mtp:8:2")) == 1.9 &&
+                              floor_ceiling(adaptive, SpecConfig::parse("mtp:8")) == 4.0 &&
+                              floor_ceiling(adaptive, SpecConfig::parse("mtp:15:2")) == 0.0 &&
+                              registry_floor_median(SpecConfig::parse("mtp:8:2")) > 1.0,
+                          "an adaptive configuration's floor ceiling and registry median");
+        ResolvedSpeculation from;
+        from.foreign_floors = true;
+        from.floor_sources  = sources;
+        Profile foreign;
+        foreign.overall.config                  = SpecConfig::parse("dflash:7");
+        foreign.overall.floor_tokens_per_round  = 1.1;
+        foreign.thinking.config                 = SpecConfig::parse("dflash:7");
+        foreign.thinking.floor_tokens_per_round = 3.0;
+        std::vector<std::string> raised;
+        raise_foreign_floors(foreign, from, raised);
+        ResolvedSpeculation own;
+        failures += check(foreign.overall.floor_tokens_per_round == 2.6 &&
+                              foreign.thinking.floor_tokens_per_round == 3.0 &&
+                              raised.size() == 1 &&
+                              foreign_floor(own, SpecConfig::parse("dflash:7"), 1.1) == 1.1,
+                          "a foreign profile's floors rise to its model's ceiling, never fall; a "
+                          "profile of this GPU keeps its own");
+        ResolvedSpeculation borrowed;
+        borrowed.foreign_floors = true;
+        borrowed.floor_sources  = adaptive;
+        failures += check(foreign_floor(borrowed, SpecConfig::parse("mtp:8:2"), 1.1) == 1.9,
+                          "a borrowed adaptive choice's floor rises to its model's ceiling");
+        // A "+head" choice drafting with the full head (no proposal head in the artifact): the full
+        // head's ceiling, under a profile of this GPU too.
+        ResolvedSpeculation here;
+        here.floor_sources = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "mtp:3+head", "floor_tokens_per_round": 1.5},
+             "thinking": {"config": "mtp:3", "floor_tokens_per_round": 2.1}}])");
+        failures += check(foreign_floor(here, SpecConfig::parse("mtp:3+head"), 1.5) == 1.5 &&
+                              full_head_floor(here, SpecConfig::parse("mtp:3+head"), 1.5) == 2.1 &&
+                              full_head_floor(here, SpecConfig::parse("mtp:3"), 1.5) == 1.5,
+                          "a +head choice run with the full head: the full head's floor on its "
+                          "own GPU's profile");
+        ResolvedSpeculation nowhere;
+        nowhere.foreign_floors = true;
+        const double median    = registry_floor_median(SpecConfig::parse("mtp:5"));
+        failures += check(median > 1.0 &&
+                              foreign_floor(nowhere, SpecConfig::parse("mtp:5"), 0.0) == median &&
+                              registry_floor_median(SpecConfig{}) == 0.0,
+                          "a model measured nowhere: the registry median");
+    }
     // A manifest the registry wrote, naming its entry: the profiles of the registry this binary
     // carries replace the (stale, here memory-keyed) copy taken at conversion.
     fs::remove(default_profile_path(artifact));

@@ -8,11 +8,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <iterator>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 namespace ninferno::product {
@@ -67,6 +69,30 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
     return out;
 }
 
+// The floor a configuration runs at under a profile measured elsewhere (spec::foreign_floor).
+// Where the artifact has no proposal head a "+head" choice drafts with the full head, a dearer
+// round, so the full head's ceiling counts too, under a profile of this GPU as well
+// (spec::full_head_floor); `notes` (when given) gets one note for that raise.
+double ran_floor(const spec::ResolvedSpeculation& resolved, const spec::SpecConfig& config,
+                 bool head_here, double own, std::vector<std::string>* notes) {
+    double floor = spec::foreign_floor(resolved, config, own);
+    if (config.proposal_head && !head_here) {
+        const double headless = spec::full_head_floor(resolved, config, own);
+        if (headless > floor && notes) {
+            char text[96];
+            std::snprintf(text, sizeof(text), "%.2f -> %.2f", floor, headless);
+            std::string note = config.label() + ": watchdog floor " + text +
+                               " tokens a round (the full head's: the artifact has no proposal "
+                               "head)";
+            if (std::find(notes->begin(), notes->end(), note) == notes->end()) {
+                notes->push_back(std::move(note));
+            }
+        }
+        floor = std::max(floor, headless);
+    }
+    return floor;
+}
+
 bool drafter_present(const spec::Choice& choice, const spec::ResolvedSpeculation& resolved) {
     return backend_of(choice.config.mode) != SpeculativeBackend::None &&
            resolved.drafters.contains(choice.drafter.empty() ? spec::mode_name(choice.config.mode)
@@ -97,8 +123,8 @@ SpeculativeBackend backend_of_kind(std::string_view kind) noexcept {
 
 // A model whose drafter is built in but which has no profile for this GPU (none tuned here, none
 // published along its similarity chain, no manifest at all): its drafter's default rather than
-// plain decode, with the watchdog floors calibrated on this GPU (as for a profile measured on
-// another one) so a configuration that does not pay here stops. MTP 3 (with the proposal head when
+// plain decode, with the watchdog floors raised to the registry's (raise_foreign_floors, as for a
+// profile measured on another GPU) so a configuration that does not pay here stops. MTP 3 (with the proposal head when
 // the artifact has one), else DFlash2 or DFlash 7. (RTX 5090: Qwen3.8 27B IQ3_S converted
 // from the HF GGUF with MTP and DFlash2 decoded 93 tok/s plain under --spec auto, 192 with MTP 3
 // and its head.) Nothing when the artifact carries no drafter.
@@ -137,17 +163,24 @@ void default_for_builtin_drafter(const std::filesystem::path& artifact,
     resolved.foreign_floors           = true;
     resolved.source                   = "the built-in " + choice.drafter + " drafter's default (" +
                       choice.config.label() + ", untuned on this GPU: spec-tune measures one)";
+    spec::raise_foreign_floors(resolved.profile, resolved, resolved.notes);
 }
 
 std::optional<spec::ResolvedSpeculation> resolve(const std::filesystem::path& artifact,
-                                                 int device) {
+                                                 int device, const std::filesystem::path& local_profile) {
     std::string id;
     try {
         id = spec::artifact_id_hex(artifact);
     } catch (const std::exception&) {
+        if (!local_profile.empty()) {
+            throw std::runtime_error("refusing the named speculation tune " +
+                                     local_profile.string() + ": the artifact's id is unreadable");
+        }
         return std::nullopt;
     }
-    auto resolved = spec::resolve_speculation(artifact, id, spec::gpu_identity(device).key);
+    auto resolved =
+        spec::resolve_speculation(artifact, id, spec::gpu_identity(device).key, local_profile);
+    spec::require_named_tune(resolved);
     if (!resolved.found()) { default_for_builtin_drafter(artifact, resolved); }
     return resolved;
 }
@@ -201,15 +234,11 @@ std::optional<SpeculativeOptions> speculation_of(const spec::Choice& choice,
         notes->push_back(choice.config.label() +
                          ": the artifact has no proposal head; drafting with the full head");
     }
-    out.acceptance_floor = watchdog_floor(choice.floor_tokens_per_round);
     // A profile measured on another GPU (a similar chip's, or the "*" one) brings that GPU's
-    // break-evens: the engine measures this one's, as the served menu does (V100, Gemma 4 31B, the
-    // "*" profile's mtp:10 at 2.0 tokens a round: 13.6 tok/s against 23.1 plain).
-    out.calibrate_floor = resolved.foreign_floors;
-    if (resolved.foreign_floors && notes) {
-        notes->push_back("watchdog floors calibrated on this GPU: the profile was measured on "
-                         "another one");
-    }
+    // break-evens: resolve_speculation raised them to the same model's largest on any GPU, or the
+    // registry median for a model measured nowhere (spec::raise_foreign_floors). Nothing is timed.
+    out.acceptance_floor = watchdog_floor(
+        ran_floor(resolved, choice.config, proposal_head, choice.floor_tokens_per_round, notes));
     out.context_limit = resolved.profile.context_limit; // as the served engine's
     out.decision_sources = decision_sources_of(resolved);
     return out;
@@ -229,8 +258,9 @@ SpeculativeOptions with_given_settings(SpeculativeOptions picked, const Speculat
 std::optional<SpeculativeOptions> profile_speculation(const std::filesystem::path& artifact,
                                                       int device, std::optional<bool> thinking,
                                                       std::string* source,
-                                                      std::vector<std::string>* notes) {
-    const auto resolved = resolve(artifact, device);
+                                                      std::vector<std::string>* notes,
+                                                      const std::filesystem::path& local_profile) {
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved) { return std::nullopt; }
     if (notes) { *notes = resolved->notes; }
     if (!resolved->found()) { return std::nullopt; }
@@ -295,13 +325,19 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
-    out.engine.acceptance_floor = watchdog_floor(out.menu.primary.floor);
-    out.engine.calibrate_floor  = resolved.foreign_floors;
-    if (resolved.foreign_floors) {
-        out.notes.push_back("watchdog floors calibrated on this GPU: the profile was measured on "
-                            "another one");
+    // A profile measured elsewhere: every entry's and depth's floor at least foreign_floor's there
+    // (a shallower-to-fit choice interpolates between raised floors, which can fall below its own;
+    // --spec-select thinking serves each entry per request).
+    const bool head_here = has_proposal_head(artifact);
+    for (spec::MenuChoice* entry :
+         {&out.menu.primary, &out.menu.thinking, &out.menu.non_thinking, &out.menu.overall}) {
+        entry->floor = ran_floor(resolved, entry->config, head_here, entry->floor, &out.notes);
     }
-    out.engine.step_down        = request_speculation(out.menu, out.menu.primary).step_down;
+    out.engine.acceptance_floor = watchdog_floor(out.menu.primary.floor);
+    // The step-down depths and floors are the menu's shallower entries' (SpeculationMenu::
+    // step_down), raised above at their own mode, depth and head (all ran_floor keys on): nothing
+    // to raise again.
+    out.engine.step_down = request_speculation(out.menu, out.menu.primary).step_down;
     if (per_request) {
         for (const std::int32_t depth : out.menu.depths()) {
             if (depth != out.menu.primary.config.k) {
@@ -334,8 +370,9 @@ spec::Profile fallback_profile(const spec::Profile& profile) {
 } // namespace
 
 std::optional<ServedSpeculation> served_speculation(const std::filesystem::path& artifact,
-                                                    int device, bool thinking, bool per_request) {
-    const auto resolved = resolve(artifact, device);
+                                                    int device, bool thinking, bool per_request,
+                                                    const std::filesystem::path& local_profile) {
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved || !resolved->found()) { return std::nullopt; }
     ServedSpeculation out;
     out.source                  = resolved->source;
@@ -382,9 +419,10 @@ std::optional<spec::Profile> shallower_profile(const spec::Profile& profile,
 
 std::optional<ServedSpeculation> served_shallower(const std::filesystem::path& artifact,
                                                   int device, bool per_request,
-                                                  const spec::SpecConfig& config, double floor) {
+                                                  const spec::SpecConfig& config, double floor,
+                                                  const std::filesystem::path& local_profile) {
     if (!config.enabled() || config.k <= 1) { return std::nullopt; }
-    const auto resolved = resolve(artifact, device);
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved || !resolved->found()) { return std::nullopt; }
     const auto profile = shallower_profile(resolved->profile, config, floor);
     if (!profile) { return std::nullopt; }
@@ -439,16 +477,35 @@ std::optional<ServedSpeculation> deepest_fitting_shallower(
     return best;
 }
 
-std::vector<std::string> speculation_notes(const std::filesystem::path& artifact, int device) {
-    const auto resolved = resolve(artifact, device);
+void require_named_tune(const std::filesystem::path& artifact, int device,
+                        const std::filesystem::path& local_profile) {
+    if (!local_profile.empty()) { (void)resolve(artifact, device, local_profile); }
+}
+
+std::string tune_refusal(const std::filesystem::path& artifact, int device,
+                         const std::filesystem::path& tune) {
+    std::string id;
+    try {
+        id = spec::artifact_id_hex(artifact);
+    } catch (const std::exception& e) {
+        return tune.string() + ": the artifact's id is unreadable (" + e.what() + ")";
+    }
+    const auto gpu = spec::gpu_identity(device).key;
+    return spec::tune_refusal(tune, id, gpu.chain.empty() ? std::string("*") : gpu.chain.front());
+}
+
+std::vector<std::string> speculation_notes(const std::filesystem::path& artifact, int device,
+                                           const std::filesystem::path& local_profile) {
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved) { return {"the artifact's id is unreadable"}; }
     if (resolved->found()) { return {}; }
     return resolved->notes;
 }
 
 std::optional<ServedSpeculation> served_fit_fallback(const std::filesystem::path& artifact,
-                                                     int device, bool per_request) {
-    const auto resolved = resolve(artifact, device);
+                                                     int device, bool per_request,
+                                                     const std::filesystem::path& local_profile) {
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved || !resolved->found() || !resolved->profile.fit_fallback) { return std::nullopt; }
     ServedSpeculation out;
     out.source = resolved->source + " (fit fallback " +
@@ -461,13 +518,15 @@ std::optional<ServedSpeculation> served_fit_fallback(const std::filesystem::path
 }
 
 std::optional<ServedSpeculation> served_head_fallback(const std::filesystem::path& artifact,
-                                                      int device, bool per_request) {
-    const auto resolved = resolve(artifact, device);
+                                                      int device, bool per_request,
+                                                      const std::filesystem::path& local_profile) {
+    const auto resolved = resolve(artifact, device, local_profile);
     if (!resolved || !resolved->found() ||
         engine_choices(resolved->profile, nullptr).overall.config.mode == spec::Mode::Mtp) {
         return std::nullopt;
     }
     spec::ResolvedSpeculation head;
+    head.floor_sources = resolved->floor_sources; // the model's own MTP floors, where it has them
     default_for_builtin_drafter(artifact, head);
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;

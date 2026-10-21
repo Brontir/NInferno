@@ -94,8 +94,22 @@ struct LaunchRequest {
     bool prepare_only = false;
 };
 
-// Throws std::invalid_argument on a value outside the allowed set.
-[[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request);
+// Throws std::invalid_argument on a value outside the allowed set. `gpu`: what NVML says of the GPU
+// the request runs on (nullptr: unknown), which a tune beside the model must have been made for.
+[[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
+                                     const GpuStat* gpu = nullptr);
+
+// Why the tune at `tune` (of the artifact `artifact_id`) would not serve on `gpu`; empty: it
+// serves. The GPU class the server keys a tune by ("gb202:170sm", spec::gpu_identity) from the PCI
+// id, the compute capability and the SM count. An unknown GPU, or one without an SM count (boards
+// of one chip differ in it; a MIG slice reports none), refuses: the published profile runs rather
+// than a tune the server may refuse to start with.
+[[nodiscard]] std::string tune_refusal_on(const std::filesystem::path& tune,
+                                          const std::string& artifact_id, const GpuStat* gpu);
+
+// The GPU a launch on `gpu` runs on (CUDA_VISIBLE_DEVICES in PCI order: NVML's index); none named
+// (gpu < 0): the only GPU there is, else none (nullptr: unknown).
+[[nodiscard]] const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu);
 
 // Speculation calibration of a converted model on one GPU (spec-tune --quick): the Qwen/dense
 // engines through `ninferno spec-tune`, Gemma 4 through `ninferno-gemma4 ... spec-tune`.
