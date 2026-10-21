@@ -448,10 +448,15 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             }
             if (served_speculation_) {
                 served_speculation_->engine.load = engine_options.speculative.load;
-                served_speculation_->notes.push_back(
+                const std::string why =
                     "load " + product::speculation_load_label(asked.load) +
                     " does not fit with graphs of its own on this device: bounds at captured "
-                    "depths instead");
+                    "depths instead";
+                served_speculation_->notes.push_back(why);
+                // A fit fallback like the profile's own (startup and request fallback reports).
+                if (served_speculation_->fit_fallback.empty()) {
+                    served_speculation_->fit_fallback = why;
+                }
             }
         }
     };
