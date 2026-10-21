@@ -2194,12 +2194,607 @@
      "rmma.m1.n4.w4x1"
     ]
    ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     63,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     96,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq1m",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     32,
+     191,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq1s",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n2.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     511,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2s",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     255,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xs",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     16,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     255,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "iq2xxs",
+   "k": 5120,
+   "n": 10240,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     255,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     2,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     3,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     96,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 6144,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     1023,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     96,
+     511,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 2560,
+   "n": 9216,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     48,
+     255,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 9216,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 2560,
+   "n": 8192,
+   "prefill": "rmma.m2.n2.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     128,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q5k",
+   "k": 4096,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     3,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     96,
+     511,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 151936,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     31,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     32,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     16777216,
+     "rmma.m1.n4.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 5120,
+   "n": 1280,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     255,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     95,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n4.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 5120,
+   "n": 256,
+   "prefill": "rmma.m1.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     512,
+     1023,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
   }
  ],
  "gpu": {
   "class": "tu102",
   "name": "NVIDIA GeForce RTX 2080 Ti",
-  "board": {"cc": 75, "sms": 68, "l2_mib": 5.5, "dram_gbps": 616}
+  "board": {
+   "cc": 75,
+   "sms": 68,
+   "l2_mib": 5.5,
+   "dram_gbps": 616
+  }
  },
  "schema": "ninferno-route-table/1"
 }
