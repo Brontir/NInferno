@@ -430,7 +430,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             spec::clear_load_ceiling(speculative.decision_sources);
         }
         if (!served_speculation_) { return; }
-        if (options_.speculation_load) { served_speculation_->load_ceiling.clear(); }
+        if (options_.speculation_load) { // nothing the ceiling capped runs: no note of it
+            served_speculation_->load_ceiling.clear();
+            spec::drop_ceiling_notes(served_speculation_->notes);
+        }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
             served_speculation_->notes.push_back(std::move(note));

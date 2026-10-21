@@ -2759,6 +2759,30 @@ int test_cross_generation() {
             check(!sources.contains(kLoadCeilingSource) && sources.contains("speculation.profile"),
                   "an explicit --spec-load clears the ceiling's source");
     }
+    // --spec-load none on a V100 without a profile: the built-in default's ceiling notes go too
+    // (generation_service: clear_load_ceiling, drop_ceiling_notes); other notes stay.
+    {
+        Profile p;
+        p.overall.config = SpecConfig::parse("mtp:3");
+        GpuKey k;
+        k.compute_capability = 70;
+        k.sms                = 80;
+        ResolvedSpeculation r;
+        std::vector<std::string> notes{"default mtp:3: watchdog floor 1.00 -> 1.40"};
+        apply_builtin_load(p, k, r, notes);
+        const auto ceiling_note = [](const std::string& n) {
+            return n.find(kCeilingNoteMark) != std::string::npos;
+        };
+        const bool noted = std::any_of(notes.begin(), notes.end(), ceiling_note);
+        std::map<std::string, std::string> sources{{kLoadCeilingSource, *load_ceiling_source(r)}};
+        const auto given = parse_load("none"); // --spec-load none: the table the server runs
+        clear_load_ceiling(sources);
+        drop_ceiling_notes(notes);
+        failures += check(noted && given.empty() && sources.empty() && notes.size() == 1 &&
+                              notes[0].starts_with("default mtp:3: watchdog floor") &&
+                              std::none_of(notes.begin(), notes.end(), ceiling_note),
+                          "--spec-load none: no ceiling note or source survives");
+    }
     return failures;
 }
 

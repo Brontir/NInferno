@@ -167,6 +167,11 @@ inline constexpr const char* kLoadCeilingSource = "speculation.load_ceiling";
 [[nodiscard]] std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved);
 // An explicit --spec-load replaces the table the ceiling capped: its source leaves `sources`.
 void clear_load_ceiling(std::map<std::string, std::string>& sources);
+// What every note of the ceiling says (apply_load_ceiling's, through the stand-in rule and the
+// built-in default). drop_ceiling_notes removes those notes and the SM cap's (stand_in_load's
+// "... multiprocessors"), for an explicit --spec-load, which replaces both caps.
+inline constexpr const char* kCeilingNoteMark = "load capped by the cost model";
+void drop_ceiling_notes(std::vector<std::string>& notes);
 
 void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
                         std::vector<std::string>& notes, const std::string& whose);

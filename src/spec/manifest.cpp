@@ -92,7 +92,7 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
             apply_load_ceiling(p, gpu, out, out.notes,
                                "stand-in from another generation (" +
                                    published.value("gpu_class", std::string()) + " for " + device +
-                                   "): load capped by the cost model");
+                                   "): " + kCeilingNoteMark);
         }
     }
     return true;
@@ -347,7 +347,7 @@ void apply_builtin_load(Profile& profile, const GpuKey& gpu, ResolvedSpeculation
     apply_load_ceiling(profile, gpu, resolved, notes,
                        "the built-in default was measured on another generation (sm86, sm89, "
                        "sm120; " +
-                           device + "): load capped by the cost model");
+                           device + "): " + kCeilingNoteMark);
 }
 
 std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved) {
@@ -357,6 +357,15 @@ std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolv
 
 void clear_load_ceiling(std::map<std::string, std::string>& sources) {
     sources.erase(kLoadCeilingSource);
+}
+
+void drop_ceiling_notes(std::vector<std::string>& notes) {
+    // The ceiling's notes, and the SM cap's ("load bounds ... plain from N rows on this GPU's M
+    // multiprocessors"): an explicit table replaces both caps.
+    std::erase_if(notes, [](const std::string& note) {
+        return note.find(kCeilingNoteMark) != std::string::npos ||
+               (note.starts_with("load bounds ") && note.ends_with(" multiprocessors"));
+    });
 }
 
 void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
