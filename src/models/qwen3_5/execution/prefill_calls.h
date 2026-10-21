@@ -14,10 +14,12 @@ namespace ninferno::models::qwen3_5::execution {
 // at least kPrefillMinTokens is computed by the prefill routes whatever the chunk size.
 inline constexpr std::uint32_t kPrefillMinTokens = 17;
 
-// The early stop lands on the absolute grid of the Gated DeltaNet scan blocks. The chunked scan
-// cuts a call into 64-token blocks from the call's first token and runs the remainder token by
-// token, and the two forms round differently; a call boundary on this grid is the only kind the
-// chunk size cannot move a token across.
+// The early stop lands on an absolute grid of the Gated DeltaNet scan's chunks. The chunked scan
+// cuts a call into 16-token chunks counted from the call's first token (the last one padded) and
+// folds each into the state as one block, so a call boundary that divides a chunk changes the bytes
+// after it; a boundary on this grid, a multiple of the 16-token chunk, is the only kind the chunk
+// size cannot move a token across. Under --activations exact the scan runs token by token and any
+// boundary is neutral for it (ops/linear_attention/gated_delta_net/gated_delta_net.cpp).
 inline constexpr std::uint32_t kPrefillGridTokens = 64;
 
 // Absolute end of the next prefill call over [cursor, end) when at most `chunk` fit in one call.
