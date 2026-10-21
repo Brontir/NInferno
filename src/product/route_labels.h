@@ -21,7 +21,8 @@ namespace ninferno::product {
                                                     std::string_view option) {
     const auto digest = file_sha256_hex(file);
     if (!digest) {
-        throw std::invalid_argument(std::string(option) + " " + file.string() + ": cannot be read");
+        throw std::invalid_argument(std::string(option) + " " + utf8_path(file) +
+                                    ": cannot be read");
     }
     return "sha256:" + *digest;
 }
@@ -38,14 +39,19 @@ namespace ninferno::product {
 
 // --route-dir DIR: "sha256:<hex>" over the files the engine reads from it (ops::route_dir_files:
 // the per-GPU-class tables and tuner/dense_tune.json, symlinks followed) in byte order of their
-// paths relative to DIR, each as "<relative path>\0<sha256 of its bytes>\n". Two directories with
-// the same tables carry one label wherever they are; a file the engine never reads changes nothing.
+// paths relative to DIR, each as "<relative path>\0<hex SHA-256 of its bytes>\n". Two directories
+// with the same tables carry one label wherever they are; a file the engine never reads changes
+// nothing.
 [[nodiscard]] inline std::string route_dir_label(const std::filesystem::path& dir) {
     std::string manifest;
     for (const auto& file : ops::route_dir_files(dir)) {
         manifest += file.relative;
         manifest += '\0';
-        manifest += file_content_label(file.path, "--route-dir");
+        const auto digest = file_sha256_hex(file.path);
+        if (!digest) {
+            throw std::invalid_argument("--route-dir: " + utf8_path(file.path) + " cannot be read");
+        }
+        manifest += *digest;
         manifest += '\n';
     }
     return "sha256:" + sha256_hex(std::string_view(manifest));

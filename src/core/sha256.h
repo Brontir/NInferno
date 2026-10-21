@@ -30,6 +30,9 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 // A path's file name as UTF-8 (path::string() throws on Windows for a name outside the ANSI code
 // page; this never throws for a name the file system gave).
 [[nodiscard]] std::string utf8_file_name(const std::filesystem::path& path);
+// A whole path as UTF-8, for messages (the same: path::string() throws on Windows for a character
+// outside the ANSI code page).
+[[nodiscard]] std::string utf8_path(const std::filesystem::path& path);
 // How the decision fingerprint names a source file: "<file name> sha256:<hex of its bytes>";
 // nullopt when it cannot be read. Never throws.
 [[nodiscard]] std::optional<std::string> named_file_sha256(const std::filesystem::path& path);

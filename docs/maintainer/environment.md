@@ -14,8 +14,9 @@ none of them changes what the engine computes.
 `--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
 `--resume` compares) by content, never by a local path: a route table or a drafter registry as
 the SHA-256 of its bytes, a route directory as the SHA-256 over the files the engine reads from it
-(every `*.json` table in it and `tuner/dense_tune.json`, symlinks followed), each by its relative
-path and digest, so `--resume` refuses cells measured with other tables. The family tools
+(every `*.json` table in it and `tuner/dense_tune.json`, symlinks followed), sorted by relative
+path, each as the line `<relative path>\0<hex SHA-256 of its bytes>\n`, so `--resume` refuses cells
+measured with other tables. The family tools
 `ninferno-gemma4` and `ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`,
 `--dense-tune`, `--tune-cache`, `--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also
 `--drafter-registry`), check them before anything is converted or loaded, and apply them to the
@@ -62,8 +63,8 @@ heuristic.
 
 | Option | Values | Effect |
 |---|---|---|
-| `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table that cannot be read, a malformed one or one for another GPU class fails startup. |
-| `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that is a dangling symlink or cannot be read, fails startup. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
+| `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table that cannot be read or a malformed one is refused before the device is touched; one for another GPU class fails startup when it loads. |
+| `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that cannot be resolved (with the file system's reason), is a dangling symlink or cannot be read, is refused before the device is touched. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
 | `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
 | `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner an Engine runs at model load (the family tools, which load no model through an Engine, refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
