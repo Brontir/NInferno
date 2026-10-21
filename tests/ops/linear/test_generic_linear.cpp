@@ -506,6 +506,13 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
         policy != ops::LinearPolicy::A16Only) {
         compute = ActivationCompute::A8;
     }
+    // So does R8 where the dispatch takes it past the section's model of it (without tensor
+    // mma.sync it takes 5..16 tokens in four-token slices, r8_call; a dense-tuner R8 pick): its x
+    // is int8 per 32 values, as at the verify widths.
+    if (taken.family == generic::Family::R8Mma && route == nullptr &&
+        compute == ActivationCompute::A16 && policy != ops::LinearPolicy::A16Only) {
+        compute = ActivationCompute::A8;
+    }
     // ... and where the cost model weighs an A16 tile faster than the int8 ones the section
     // expected (AllowA8 permits int8, it does not require it), x stays BF16.
     const bool a8_route = mmq_route || taken.family == generic::Family::W4a8Mma ||
