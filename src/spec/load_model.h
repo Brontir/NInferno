@@ -23,8 +23,10 @@
 // the measured tokens per round at every depth to 0.02). A round of k drafts then yields
 // E(k) = 1 + sum_{j=1..k} prod_{i=1..j} a d^(i-1) tokens, and a row's speed is E(k) / t(B, k).
 
+#include "spec/context_class.h"
 #include "spec/profile.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -76,8 +78,10 @@ struct DrafterFacts {
 
 // The round cost of `gpu` for `target` drafted by `drafter`, from facts: a verify column costs 2
 // flops a weight at the tensor cores' peak, a plain step reads every active weight once, so
-// alpha = (1/eta + kquant) 2 dram / (flops_per_clock_sm * sms * clock * bytes_per_weight), 1/eta
-// per generation (V100: about 11, its verify route) and kquant 0.46 more for GGUF k/IQ quants.
+// alpha = (1/eta + kquant) 2 dram / (rate * sms * clock * bytes_per_weight), rate the generation
+// row's tensor rate per SM and clock (core/generation.h), sms, clock and dram the board's facts
+// (GpuKey from DeviceClass::facts), 1/eta per generation (V100: about 11 at its FP16 tensor rate,
+// its verify route) and kquant 0.46 more for GGUF k/IQ quants.
 // delta is the drafter's pass, a cost per kind times its size (MTP: one target block and the head;
 // the others: hidden_size^2) over the target's active weights. An MoE target reads 0.30 of the
 // experts independent routing of the w columns would add. The knee is where the verify GEMM takes
@@ -104,5 +108,33 @@ struct DrafterFacts {
 [[nodiscard]] std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
                                                   std::span<const std::int32_t> depths,
                                                   std::int32_t max_rows);
+
+// Context classes (idea 32, step 3): the draft depth each prompt-length class should run at one
+// row, from the round cost and the class's acceptance factor (spec/context_class.h). Lab
+// constants, not timings: a depth must beat plain decode by kClassMargin, the cost model's rms
+// error over the registry's floors (9.9 %), and where anything is unknown the choice is
+// kUnsureDepth at most below 8K and plain beyond.
+inline constexpr double kClassMargin       = 0.10;
+inline constexpr std::int32_t kUnsureDepth = 3;
+
+struct ClassDepth {
+    std::int32_t depth = 0; // a captured depth, or 0: plain decode
+    // Whether the cost model and the class factor chose it (false: the conservative rule).
+    bool estimate = false;
+    std::string reason; // always set; the conservative rule's starts "estimate: none ("
+};
+
+// For each class: among the captured depths (`captured`, the graphs the engine holds; 0s
+// ignored), the one that maximizes tokens_per_round(a_c, d, k) / round_time(cost, 1, k), when it
+// beats plain by (1 + margin); otherwise 0. a_c is the first-draft acceptance whose accepted drafts
+// per round at `factor_depth` (the depth the factors were measured at) are the class factor times
+// those of `a`. No cost, an unreliable fit (RoundCost::fit) or an unknown factor: the deepest
+// captured depth up to kUnsureDepth for Short and Mid, 0 for Long and Huge, labelled. No caller
+// yet: routing a request by class is the next step.
+[[nodiscard]] std::array<ClassDepth, kContextClasses>
+class_depths(const std::optional<RoundCost>& cost, double a, double d,
+             std::span<const std::int32_t> captured,
+             const std::array<ClassFactor, kContextClasses>& factors, std::int32_t factor_depth,
+             double margin = kClassMargin);
 
 } // namespace ninferno::spec

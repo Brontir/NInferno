@@ -1,7 +1,10 @@
 #include "spec/load_model.h"
 
+#include "core/generation.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <string_view>
 
@@ -14,22 +17,30 @@ namespace {
 // left out of the fit, 18 % on a model left out). Refit them with the script when the registry
 // gains floors. knee and beta come from the measured grids instead (27B Q4_G64, 8K, several rows):
 // at one row the floors never reach a knee.
+//
+// The tensor rate per SM and clock is the chip's fact from core/generation.h (GenerationRow::bf16:
+// 512 on the consumer parts, 2048 on the A100, the fitted 1536 where Volta and Turing emulate the
+// BF16 MMA), so inv_eta is in units of that rate: the fit's V100 11.45 and RTX 2080 Ti 0.3337 at
+// their FP16 tensor rates (1024, 512) are 17.18 and 1.001 here, the same alpha.
 struct Generation {
     int cc;
-    double flops_per_clock_sm; // dense FP16 tensor flops with FP32 accumulation, per SM and clock
-    double inv_eta;            // verify column cost over the tensor peak's (Volta: its route)
-    std::int32_t knee;         // 0: no grid measured one
+    double inv_eta; // verify column cost over the generation row's tensor rate (Volta: its route)
+    std::int32_t knee; // 0: no grid measured one
     double beta;
     int lab_cards; // cards of the generation whose floors the fit saw
 };
+
 constexpr Generation kGenerations[] = {
-    {70, 1024, 11.45, 0, 0.0, 1},       // V100
-    {75, 512, 0.3337, 0, 0.0, 1},       // RTX 2080 Ti
-    {80, 2048, 2.793, 24, 0.0045, 1},   // A100
-    {86, 512, 0.9557, 32, 0.0155, 1},   // RTX 3090
-    {89, 512, 0.3600, 8, 0.0069, 5},    // RTX 4090, 4070 Ti, 4070 Ti SUPER, 4060 Ti, L4
-    {120, 512, 0.4582, 12, 0.0122, 4},  // RTX 5090, 5080, 5070 Ti, 5060 Ti
+    {70, 17.18, 0, 0.0, 1},       // V100
+    {75, 1.001, 0, 0.0, 1},       // RTX 2080 Ti
+    {80, 2.793, 24, 0.0045, 1},   // A100
+    {86, 0.9557, 32, 0.0155, 1},  // RTX 3090
+    {89, 0.3600, 8, 0.0069, 5},   // RTX 4090, 4070 Ti, 4070 Ti SUPER, 4060 Ti, L4
+    {120, 0.4582, 12, 0.0122, 4}, // RTX 5090, 5080, 5070 Ti, 5060 Ti
 };
+
+double tensor_rate(int cc) noexcept { return generation_row(cc / 10, cc % 10).bf16; }
+
 constexpr double kKquantExtra = 0.46;   // GGUF k/IQ-quant verify, in units of the tensor peak's
 constexpr double kMoeRead     = 0.3019; // of the experts independent routing would add
 constexpr std::uint64_t kProposalHeadRows = 131072;
@@ -88,14 +99,17 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
         if (g.cc == gpu.compute_capability) { gen = &g; }
     }
     // A generation the table lacks: the costliest tensor-core generation measured (Volta's own
-    // route aside), at the smallest flops per clock, no knee.
-    Generation priced{gpu.compute_capability, 512, 0, 0, 0.0, 0};
+    // route aside), per unit of tensor rate, at its own generation row's rate; no knee.
+    const double rate = tensor_rate(gpu.compute_capability);
+    Generation priced{gpu.compute_capability, 0, 0, 0.0, 0};
     for (const Generation& g : kGenerations) {
-        if (g.cc != 70) { priced.inv_eta = std::max(priced.inv_eta, g.inv_eta); }
+        if (g.cc != 70) {
+            priced.inv_eta = std::max(priced.inv_eta, g.inv_eta / tensor_rate(g.cc) * rate);
+        }
     }
     if (gen != nullptr) { priced = *gen; }
 
-    const double flops = priced.flops_per_clock_sm * gpu.sms * gpu.sm_clock_khz * 1e3;
+    const double flops   = rate * gpu.sms * gpu.sm_clock_khz * 1e3;
     const double inv_eta = priced.inv_eta + (target.kquant ? kKquantExtra : 0.0);
     const double h = static_cast<double>(target.hidden_size);
     double size = h * h / target.active_params; // a DFlash block or an assistant: about h^2 a layer
@@ -180,6 +194,82 @@ std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
             previous = depth;
         }
         if (depth == 0) { break; }
+    }
+    return out;
+}
+
+std::array<ClassDepth, kContextClasses>
+class_depths(const std::optional<RoundCost>& cost, double a, double d,
+             std::span<const std::int32_t> captured,
+             const std::array<ClassFactor, kContextClasses>& factors, std::int32_t factor_depth,
+             double margin) {
+    std::vector<std::int32_t> depths;
+    for (const std::int32_t k : captured) {
+        if (k > 0) { depths.push_back(k); }
+    }
+    std::sort(depths.begin(), depths.end());
+    depths.erase(std::unique(depths.begin(), depths.end()), depths.end());
+    // The conservative choice where the model or the factor is unknown: the deepest captured depth
+    // up to kUnsureDepth while the prompt is under kContextBounds[1] (8K), plain beyond.
+    std::int32_t shallow = 0;
+    for (const std::int32_t k : depths) {
+        if (k <= kUnsureDepth) { shallow = k; }
+    }
+    const auto unsure = [&](ContextClass c, const std::string& why) {
+        const bool near = c == ContextClass::Short || c == ContextClass::Mid;
+        return ClassDepth{.depth    = near ? shallow : 0,
+                          .estimate = false,
+                          .reason   = "estimate: none (" + why + "): " +
+                                    (near ? "depth " + std::to_string(shallow) + " up to 8K"
+                                          : std::string("plain past 8K"))};
+    };
+
+    std::array<ClassDepth, kContextClasses> out{};
+    for (std::size_t i = 0; i < kContextClasses; ++i) {
+        const auto c = static_cast<ContextClass>(i);
+        if (!cost) {
+            out[i] = unsure(c, "no cost model for this card, target or drafter");
+            continue;
+        }
+        if (!cost->fit.reliable) {
+            out[i] = unsure(c, "cost model unsure: " + cost->fit.reason);
+            continue;
+        }
+        if (!factors[i].value) {
+            out[i] =
+                unsure(c, std::string(class_name(c)) + " acceptance unknown: " + factors[i].reason);
+            continue;
+        }
+        if (depths.empty() || factor_depth < 1) {
+            out[i] = ClassDepth{.depth = 0, .estimate = true, .reason = "no captured depth: plain"};
+            continue;
+        }
+        // The factor scales the accepted drafts per round at the depth it was measured at.
+        const double drafts = (tokens_per_round(a, d, factor_depth) - 1.0) * *factors[i].value;
+        const double a_c    = first_draft_acceptance(1.0 + drafts, factor_depth, d);
+        std::int32_t best   = 0;
+        double speed        = 0; // over plain decode's
+        for (const std::int32_t k : depths) {
+            const double s =
+                tokens_per_round(a_c, d, k) / round_time(*cost, 1, k) * round_time(*cost, 1, 0);
+            if (s > speed) {
+                speed = s;
+                best  = k;
+            }
+        }
+        char ratio[32];
+        std::snprintf(ratio, sizeof ratio, "%.2f", speed);
+        if (speed > 1.0 + margin) {
+            out[i] =
+                ClassDepth{.depth    = best,
+                           .estimate = true,
+                           .reason = "depth " + std::to_string(best) + " at " + ratio + "x plain"};
+        } else {
+            out[i] = ClassDepth{.depth    = 0,
+                                .estimate = true,
+                                .reason   = std::string("plain: the best captured depth gives ") +
+                                          ratio + "x, not past the margin"};
+        }
     }
     return out;
 }

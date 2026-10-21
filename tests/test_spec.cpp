@@ -591,32 +591,47 @@ int test_load_model() {
 
 // The facts-only round cost (round_cost_of) against the registry's floors: a floor is spec-tune's
 // seconds per round over seconds per plain token, round_time(cost, 1, k). The facts here are what
-// a device and an artifact report (audit1018/x3/x3_fit.py's tables): each card's rates, each
+// a device and an artifact report (audit1018/x3/x3_fit.py's tables): each card's facts from the
+// PCI-ID reference table (core/data/gpu_facts.json, as DeviceClass::facts gives them), each
 // model's parameters and experts, each artifact's quantization read from its measured_on.
 struct CardFacts {
-    std::string_view name, gpu_class;
-    int cc, sms, mhz;
-    double dram_gbps;
-};
-constexpr CardFacts kCards[] = {
-    {"NVIDIA GeForce RTX 5090", "gb202", 120, 170, 2407, 1792},
-    {"NVIDIA GeForce RTX 5080", "gb203", 120, 84, 2617, 960},
-    {"NVIDIA GeForce RTX 5070 Ti", "gb203:70sm", 120, 70, 2452, 896},
-    {"NVIDIA GeForce RTX 5060 Ti", "gb206", 120, 36, 2572, 448},
-    {"NVIDIA GeForce RTX 4090", "ad102", 89, 128, 2520, 1008},
-    {"NVIDIA GeForce RTX 4070 Ti SUPER", "ad103", 89, 66, 2610, 672},
-    {"NVIDIA GeForce RTX 4070 Ti", "", 89, 60, 2610, 504},
-    {"NVIDIA GeForce RTX 4060 Ti", "ad106", 89, 34, 2535, 288},
-    {"NVIDIA L4", "", 89, 58, 2040, 300},
-    {"NVIDIA GeForce RTX 3090", "ga102", 86, 82, 1695, 936},
-    {"NVIDIA A100-SXM4-40GB", "ga100", 80, 108, 1410, 1555},
-    {"Tesla V100-SXM2-32GB", "gv100", 70, 80, 1530, 900},
-    {"NVIDIA GeForce RTX 2080 Ti", "tu102", 75, 68, 1545, 616},
+    std::string_view name, gpu_class; // the registry's gpu and gpu_class
+    std::string_view table_name;      // the reference table's row
 };
 
+constexpr CardFacts kCards[] = {
+    {"NVIDIA GeForce RTX 5090", "gb202", "GeForce RTX 5090"},
+    {"NVIDIA GeForce RTX 5080", "gb203", "GeForce RTX 5080"},
+    {"NVIDIA GeForce RTX 5070 Ti", "gb203:70sm", "GeForce RTX 5070 Ti"},
+    {"NVIDIA GeForce RTX 5060 Ti", "gb206", "GeForce RTX 5060 Ti"},
+    {"NVIDIA GeForce RTX 4090", "ad102", "GeForce RTX 4090"},
+    {"NVIDIA GeForce RTX 4070 Ti SUPER", "ad103", "GeForce RTX 4070 Ti SUPER"},
+    {"NVIDIA GeForce RTX 4070 Ti", "", "GeForce RTX 4070 Ti"},
+    {"NVIDIA GeForce RTX 4060 Ti", "ad106", "GeForce RTX 4060 Ti"},
+    {"NVIDIA L4", "", "L4"},
+    {"NVIDIA GeForce RTX 3090", "ga102", "GeForce RTX 3090"},
+    {"NVIDIA A100-SXM4-40GB", "ga100", "A100 SXM4 40GB"},
+    {"Tesla V100-SXM2-32GB", "gv100", "Tesla V100 SXM2 32GB"},
+    {"NVIDIA GeForce RTX 2080 Ti", "tu102", "GeForce RTX 2080 Ti"},
+};
+
+// The GpuKey a device of this table row gets (spec/gpu_identity.h): its reference clock and
+// bandwidth from machine_facts. An empty key (no model) when the table lacks the row.
 GpuKey card_key(const CardFacts& c) {
-    return GpuKey{.chain = {std::string(c.gpu_class)}, .sms = c.sms, .compute_capability = c.cc,
-                  .sm_clock_khz = c.mhz * 1000, .dram_gbps = c.dram_gbps};
+    for (const ninferno::GpuFactsRow& row : ninferno::gpu_facts_table()) {
+        if (row.name != c.table_name) { continue; }
+        const ninferno::MachineFacts facts =
+            ninferno::machine_facts(ninferno::DriverReport{.pci_device_id = row.pci_device_id,
+                                                           .major         = row.major,
+                                                           .minor         = row.minor,
+                                                           .sms           = row.sms});
+        return GpuKey{.chain              = {std::string(c.gpu_class)},
+                      .sms                = row.sms,
+                      .compute_capability = row.major * 10 + row.minor,
+                      .sm_clock_khz       = facts.reference_clock_khz,
+                      .dram_gbps          = facts.dram_gbps()};
+    }
+    return GpuKey{};
 }
 
 struct ParamFacts {
@@ -687,9 +702,15 @@ int test_cost_model() {
         }
         return static_cast<const CardFacts*>(nullptr);
     };
+    for (const CardFacts& c : kCards) {
+        const GpuKey key = card_key(c);
+        failures += check(key.sms > 0 && key.sm_clock_khz > 0 && key.dram_gbps > 0,
+                          "the reference table has " + std::string(c.table_name));
+    }
     const auto& registry = Registry::builtin();
-    const auto floor_of = [&](std::string_view model_id, std::string_view gpu, const std::string& measured_on,
-                              const std::string& kind, const std::string& label) -> std::optional<RoundCost> {
+    const auto floor_of  = [&](std::string_view model_id, std::string_view gpu,
+                              const std::string& measured_on, const std::string& kind,
+                              const std::string& label) -> std::optional<RoundCost> {
         const auto* model = registry.by_id(model_id);
         const auto* c = card(gpu);
         if (model == nullptr || c == nullptr) { return std::nullopt; }
@@ -785,6 +806,57 @@ int test_cost_model() {
     std::cout << "spec cost model: " << n << " registry floors, rms error " << 100.0 * rms << " %\n";
     failures += check(n >= 100, "the registry has the fit's floors (" + std::to_string(n) + ")");
     failures += check(rms < 0.15, "the cost model's rms error over the registry floors is under 15 %");
+    return failures;
+}
+
+// The depth per context class (class_depths): the model's pick where the cost and the factor are
+// known, captured depths only, and the labelled conservative rule elsewhere.
+int test_class_depths() {
+    using namespace ninferno::spec;
+    int failures = 0;
+    const RoundCost cost{.alpha = 0.02, .delta = 0.10, .pass_per_draft = false};
+    const std::vector<std::int32_t> captured{7, 0, 5, 3, 5};
+    const std::array<ClassFactor, kContextClasses> factors{
+        ClassFactor{1.0, ""}, ClassFactor{0.85, ""}, ClassFactor{0.6, ""},
+        ClassFactor{std::nullopt, "no data for the class"}};
+    const auto by = class_depths(cost, 0.75, 0.97, captured, factors, 7);
+    failures += check(by[0].estimate && by[0].depth == 7,
+                      "short: the deepest captured depth pays (" + by[0].reason + ")");
+    failures += check(by[1].estimate && by[1].depth > 0 && by[1].depth <= by[0].depth,
+                      "mid: a captured depth no deeper than short's (" + by[1].reason + ")");
+    failures += check(by[2].estimate && by[2].depth <= by[1].depth, "long: no deeper than mid's");
+    for (const ClassDepth& c : by) {
+        failures += check(c.depth == 0 || c.depth == 3 || c.depth == 5 || c.depth == 7,
+                          "a class picks only a captured depth or plain");
+    }
+    failures +=
+        check(!by[3].estimate && by[3].depth == 0 && by[3].reason.starts_with("estimate: none (") &&
+                  by[3].reason.find("huge acceptance unknown") != std::string::npos,
+              "huge, factor unknown: plain, labelled (" + by[3].reason + ")");
+    // Drafts that are almost never accepted, or a margin nothing beats: plain, by the model.
+    const std::array<ClassFactor, kContextClasses> poor{
+        ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}};
+    const auto low = class_depths(cost, 0.75, 0.97, captured, poor, 7);
+    failures += check(low[0].estimate && low[0].depth == 0 && low[0].reason.starts_with("plain:"),
+                      "low acceptance: plain by the model (" + low[0].reason + ")");
+    const auto strict = class_depths(cost, 0.75, 0.97, captured, factors, 7, 10.0);
+    failures += check(strict[0].depth == 0, "a margin no depth beats: plain");
+    // An unreliable fit or no cost model: the deepest captured depth up to 3 below 8K, plain past.
+    RoundCost unsure = cost;
+    unsure.fit       = ModelFit{false, "sm70: fewer than two lab cards measured"};
+    for (const auto& rule : {class_depths(unsure, 0.75, 0.97, captured, factors, 7),
+                             class_depths(std::nullopt, 0.75, 0.97, captured, factors, 7)}) {
+        failures += check(rule[0].depth == 3 && rule[1].depth == 3 && rule[2].depth == 0 &&
+                              rule[3].depth == 0 && !rule[0].estimate &&
+                              rule[0].reason.starts_with("estimate: none ("),
+                          "unsure: depth 3 below 8K, plain past (" + rule[0].reason + ")");
+    }
+    const std::vector<std::int32_t> deep{5, 7};
+    const auto none = class_depths(unsure, 0.75, 0.97, deep, factors, 7);
+    failures +=
+        check(none[0].depth == 0 && none[1].depth == 0, "unsure, no captured depth up to 3: plain");
+    const auto empty = class_depths(cost, 0.75, 0.97, std::vector<std::int32_t>{}, factors, 7);
+    failures += check(empty[0].depth == 0, "nothing captured: plain");
     return failures;
 }
 
@@ -2103,6 +2175,7 @@ int main() {
     failures += test_load();
     failures += test_load_model();
     failures += test_cost_model();
+    failures += test_class_depths();
     failures += test_select_published();
     failures += test_registry_and_corpus();
     failures += test_context_classes();
