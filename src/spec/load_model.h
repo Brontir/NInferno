@@ -7,9 +7,16 @@
 //
 // A round of B rows at depth k verifies w = B(k+1) columns. Relative to a plain step of one row
 // (grids on the RTX 4090, RTX 5090 and V100, 27B, per-request decode speed while in flight):
-//   t(B, k) / t0 = 1 + alpha (w - 1) + beta max(0, w - knee) + passes * delta,
-// passes k for an MTP round (one drafter pass per draft), 1 for a DFlash round (one block).
+//   t(B, k) / t0 = 1 + alpha (w - 1) + beta max(0, w - knee) + passes * delta
+//                    + moe_bytes ((1 - (1 - pick)^w) - pick),
+// passes k for an MTP round (one drafter pass per draft), 1 for a DFlash round (one block). The
+// last term is an MoE target's: w columns routed apart read more experts than one does.
 // Worst error 5.6-7.8 % over plain, MTP 1/2/3/5 and DFlash2 3/5/7 at C = 1, 2, 4, 8.
+//
+// round_cost_of prices a card and a model from facts alone (the chip's rates, the artifact's shape,
+// quantization and experts, the drafter's kind), never a timing. At one row t(1, k) / t0 is the
+// registry's floor (spec-tune's seconds per round over seconds per plain token); the constants are
+// fitted on those floors, 9.8 % rms over them (audit1018/x3).
 //
 // The i-th draft of a round is accepted, given the earlier ones, with probability a d^(i-1): the
 // acceptance falls along the block (RTX 4090 grid: DFlash2 a 0.75, d 0.97; MTP a 0.77, d 0.91 give
@@ -21,9 +28,20 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ninferno::spec {
+
+// Whether the fit stands behind a prediction. Unreliable where the floors do not test it: a
+// generation with fewer than two lab cards measured, a generation and model family whose error on
+// a card left out of the fit passes 15 %, a family the generation never measured, or a generation
+// the table lacks (then priced as its costliest measured one). A caller should not trust the
+// depth it picks there: decode plainly, or no deeper than 3.
+struct ModelFit {
+    bool reliable = true;
+    std::string reason; // why not ("" when reliable)
+};
 
 struct RoundCost {
     double alpha = 0;      // per verify column beyond the first
@@ -31,19 +49,42 @@ struct RoundCost {
     std::int32_t knee = 0;
     double delta = 0;      // per drafter pass
     bool pass_per_draft = true; // MTP: k passes; DFlash: one per round
+    // An MoE target: the routed experts' weights a step can read on top of a plain step's, over the
+    // weights a plain step reads, times the share of them that routing actually adds (0: dense),
+    // and one column's chance to pick an expert (experts per token / experts).
+    double moe_bytes = 0;
+    double moe_pick  = 0;
+    ModelFit fit;
 };
 
-// The round cost of `gpu` for a target of `bytes_per_weight` (0.53: Q4_G64), from its rates: a
-// verify column costs 2 flops a weight at the tensor cores' peak, a plain step reads every weight
-// once, so alpha = 2 dram / (eta * flops_per_clock_sm * sms * clock * bytes_per_weight). eta per
-// architecture folds in what the step spends past the weight read; calibrated on measured grids
-// (27B Q4_G64, 8K): Ada 0.99 (RTX 4090 alpha 0.0233), consumer Blackwell 1.13 (RTX 5090 0.0285),
-// A100 0.60 (0.0312), GeForce Ampere 1.125 (RTX 3090 0.0441). The knee is where the verify GEMM
-// takes its next tile (RTX 4090 8 columns, RTX 5090 12, A100 24, RTX 3090 32), delta the drafter's
-// pass (0.056-0.080 of a plain step on each of them). nullopt: an architecture no grid measured, or
-// unknown rates.
-[[nodiscard]] std::optional<RoundCost> round_cost_of(const GpuKey& gpu, double bytes_per_weight,
-                                                     bool pass_per_draft);
+// What the artifact says about the target (no measurement).
+struct TargetFacts {
+    double active_params    = 0; // weights one token reads (an MoE: shared plus its routed experts)
+    double bytes_per_weight = 0; // 0.53: Q4_G64
+    bool kquant             = false; // GGUF k- or IQ-quant weights: verified by the k-quant route
+    std::uint64_t hidden_size = 0, num_hidden_layers = 0, vocab_size = 0;
+    // An MoE target: routed experts, experts per token, the parameters of all routed experts (0: dense).
+    int experts = 0, experts_per_token = 0;
+    double routed_expert_params = 0;
+    std::string family; // the registry's engine ("gemma4", "qwen3_5", "nemotron_h", "dense")
+};
+
+struct DrafterFacts {
+    std::string kind;           // the registry's kind: mtp, gemma4_assistant, nemotron_h_mtp, dflash, dflash2
+    bool proposal_head = false; // +head: Qwen's 131072-row proposal head instead of the vocabulary
+};
+
+// The round cost of `gpu` for `target` drafted by `drafter`, from facts: a verify column costs 2
+// flops a weight at the tensor cores' peak, a plain step reads every active weight once, so
+// alpha = (1/eta + kquant) 2 dram / (flops_per_clock_sm * sms * clock * bytes_per_weight), 1/eta
+// per generation (V100: about 11, its verify route) and kquant 0.46 more for GGUF k/IQ quants.
+// delta is the drafter's pass, a cost per kind times its size (MTP: one target block and the head;
+// the others: hidden_size^2) over the target's active weights. An MoE target reads 0.30 of the
+// experts independent routing of the w columns would add. The knee is where the verify GEMM takes
+// its next tile (RTX 4090 8 columns, RTX 5090 12, A100 24, RTX 3090 32; measured grids, none on
+// Volta or Turing). nullopt: unknown rates or shape, or a drafter kind the fit has no cost for.
+[[nodiscard]] std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
+                                                     const DrafterFacts& drafter);
 
 // The relative time of a round of `rows` rows at `depth` drafts (0: plain decode).
 [[nodiscard]] double round_time(const RoundCost& cost, std::int32_t rows, std::int32_t depth);

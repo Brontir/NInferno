@@ -1,46 +1,134 @@
 #include "spec/load_model.h"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
+#include <string_view>
 
 namespace ninferno::spec {
 
-std::optional<RoundCost> round_cost_of(const GpuKey& gpu, double bytes_per_weight,
-                                       bool pass_per_draft) {
-    struct Arch {
-        int cc;
-        double flops_per_clock_sm; // dense FP16 tensor flops with FP32 accumulation, per SM and clock
-        double eta;
-        std::int32_t knee;
-        double beta;
-    };
-    static constexpr Arch kArchs[] = {
-        {80, 2048, 0.60, 24, 0.0045},
-        {86, 512, 1.125, 32, 0.0155},
-        {89, 512, 0.99, 8, 0.0069},
-        {120, 512, 1.13, 12, 0.0122},
-    };
-    if (gpu.sms <= 0 || gpu.sm_clock_khz <= 0 || gpu.dram_gbps <= 0 || bytes_per_weight <= 0) {
+namespace {
+
+// The fitted constants: audit1018/x3/x3_fit.py, form M3, least squares over the 116 non-adaptive
+// spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb (9.8 % rms; 21 % on a card
+// left out of the fit, 18 % on a model left out). Refit them with the script when the registry
+// gains floors. knee and beta come from the measured grids instead (27B Q4_G64, 8K, several rows):
+// at one row the floors never reach a knee.
+struct Generation {
+    int cc;
+    double flops_per_clock_sm; // dense FP16 tensor flops with FP32 accumulation, per SM and clock
+    double inv_eta;            // verify column cost over the tensor peak's (Volta: its route)
+    std::int32_t knee;         // 0: no grid measured one
+    double beta;
+    int lab_cards; // cards of the generation whose floors the fit saw
+};
+constexpr Generation kGenerations[] = {
+    {70, 1024, 11.45, 0, 0.0, 1},       // V100
+    {75, 512, 0.3337, 0, 0.0, 1},       // RTX 2080 Ti
+    {80, 2048, 2.793, 24, 0.0045, 1},   // A100
+    {86, 512, 0.9557, 32, 0.0155, 1},   // RTX 3090
+    {89, 512, 0.3600, 8, 0.0069, 5},    // RTX 4090, 4070 Ti, 4070 Ti SUPER, 4060 Ti, L4
+    {120, 512, 0.4582, 12, 0.0122, 4},  // RTX 5090, 5080, 5070 Ti, 5060 Ti
+};
+constexpr double kKquantExtra = 0.46;   // GGUF k/IQ-quant verify, in units of the tensor peak's
+constexpr double kMoeRead     = 0.3019; // of the experts independent routing would add
+constexpr std::uint64_t kProposalHeadRows = 131072;
+struct DrafterKind {
+    std::string_view kind;
+    double cost; // per pass, over the drafter's size relative to the target's active weights
+    bool pass_per_draft;
+};
+constexpr DrafterKind kDrafterKinds[] = {
+    {"mtp", 0.7232, true},
+    {"gemma4_assistant", 67.09, true},
+    {"nemotron_h_mtp", 1.429, true},
+    {"dflash", 283.1, false},
+    {"dflash2", 329.2, false},
+};
+// The generation x family pairs the fit measured on two or more cards with at most 15 % rms error
+// on a card left out of the fit (x3_fit.py's leave-card-out by cc and engine). sm89 gemma4 (16 %)
+// and sm120 qwen3_5 (32 %, the RTX 5090 left out) miss it.
+struct Tested {
+    int cc;
+    std::string_view family;
+};
+constexpr Tested kTested[] = {
+    {89, "dense"}, {89, "nemotron_h"}, {89, "qwen3_5"},
+    {120, "dense"}, {120, "gemma4"}, {120, "nemotron_h"},
+};
+
+ModelFit fit_of(const Generation* g, int cc, const std::string& family) {
+    const std::string arch = "sm" + std::to_string(cc);
+    if (g == nullptr) {
+        return {false, arch + ": a generation the fit never measured, priced as its costliest"};
+    }
+    if (g->lab_cards < 2) { return {false, arch + ": fewer than two lab cards measured"}; }
+    for (const Tested& t : kTested) {
+        if (t.cc == cc && t.family == family) { return {}; }
+    }
+    return {false, arch + " " + family + ": not within 15 % on a card left out of the fit"};
+}
+
+} // namespace
+
+std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
+                                       const DrafterFacts& drafter) {
+    if (gpu.sms <= 0 || gpu.sm_clock_khz <= 0 || gpu.dram_gbps <= 0 ||
+        target.bytes_per_weight <= 0 || target.active_params <= 0 || target.hidden_size == 0 ||
+        target.num_hidden_layers == 0) {
         return std::nullopt;
     }
-    for (const Arch& a : kArchs) {
-        if (a.cc != gpu.compute_capability) { continue; }
-        const double flops = a.eta * a.flops_per_clock_sm * gpu.sms * gpu.sm_clock_khz * 1e3;
-        return RoundCost{.alpha = 2.0 * gpu.dram_gbps * 1e9 / (flops * bytes_per_weight),
-                         .beta  = a.beta,
-                         .knee  = a.knee,
-                         .delta = pass_per_draft ? 0.070 : 0.060,
-                         .pass_per_draft = pass_per_draft};
+    const DrafterKind* kind = nullptr;
+    for (const DrafterKind& k : kDrafterKinds) {
+        if (k.kind == drafter.kind) { kind = &k; }
     }
-    return std::nullopt;
+    if (kind == nullptr) { return std::nullopt; }
+    const Generation* gen = nullptr;
+    for (const Generation& g : kGenerations) {
+        if (g.cc == gpu.compute_capability) { gen = &g; }
+    }
+    // A generation the table lacks: the costliest tensor-core generation measured (Volta's own
+    // route aside), at the smallest flops per clock, no knee.
+    Generation priced{gpu.compute_capability, 512, 0, 0, 0.0, 0};
+    for (const Generation& g : kGenerations) {
+        if (g.cc != 70) { priced.inv_eta = std::max(priced.inv_eta, g.inv_eta); }
+    }
+    if (gen != nullptr) { priced = *gen; }
+
+    const double flops = priced.flops_per_clock_sm * gpu.sms * gpu.sm_clock_khz * 1e3;
+    const double inv_eta = priced.inv_eta + (target.kquant ? kKquantExtra : 0.0);
+    const double h = static_cast<double>(target.hidden_size);
+    double size = h * h / target.active_params; // a DFlash block or an assistant: about h^2 a layer
+    if (kind->kind == "mtp" || kind->kind == "nemotron_h_mtp") {
+        // One target block and the head over the target's active weights.
+        const std::uint64_t rows = drafter.proposal_head ? kProposalHeadRows : target.vocab_size;
+        if (rows == 0) { return std::nullopt; }
+        size = (target.active_params / static_cast<double>(target.num_hidden_layers) +
+                static_cast<double>(rows) * h) / target.active_params;
+    }
+    RoundCost cost{.alpha = inv_eta * 2.0 * gpu.dram_gbps * 1e9 / (flops * target.bytes_per_weight),
+                   .beta  = priced.beta,
+                   .knee  = priced.knee,
+                   .delta = kind->cost * size,
+                   .pass_per_draft = kind->pass_per_draft,
+                   .fit = fit_of(gen, gpu.compute_capability, target.family)};
+    if (target.experts > 0 && target.experts_per_token > 0 && target.routed_expert_params > 0) {
+        cost.moe_pick  = static_cast<double>(target.experts_per_token) / target.experts;
+        cost.moe_bytes = kMoeRead * target.routed_expert_params / target.active_params;
+    }
+    return cost;
 }
 
 double round_time(const RoundCost& cost, std::int32_t rows, std::int32_t depth) {
     if (rows < 1 || depth < 0) { throw std::invalid_argument("round_time: rows >= 1, depth >= 0"); }
     const double w      = static_cast<double>(rows) * (depth + 1);
     const double passes = depth == 0 ? 0.0 : (cost.pass_per_draft ? depth : 1.0);
+    // Experts w columns routed independently read over the r of one: E (1 - (1 - r/E)^w) - r.
+    const double experts =
+        cost.moe_bytes > 0 ? cost.moe_bytes * (1.0 - std::pow(1.0 - cost.moe_pick, w) - cost.moe_pick)
+                           : 0.0;
     return 1.0 + cost.alpha * (w - 1.0) + cost.beta * std::max(0.0, w - cost.knee) +
-           passes * cost.delta;
+           passes * cost.delta + experts;
 }
 
 double tokens_per_round(double a, double d, std::int32_t depth) {

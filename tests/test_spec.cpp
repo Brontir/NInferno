@@ -27,6 +27,8 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <string>
@@ -579,21 +581,210 @@ int test_load_model() {
     failures += expect(ada_mtp, 0.77, 0.91, mtp, "1:3,5:2", "RTX 4090 MTP");
     failures += expect(bw_dflash, 0.75, 0.97, dflash, "2:5,3:3", "RTX 5090 DFlash2");
     failures += expect(bw_mtp, 0.77, 0.91, mtp, "1:3,4:2", "RTX 5090 MTP");
-    // The card rates give the grids' alpha (RTX 4090: 128 SMs, 2.52 GHz, 1008 GB/s; RTX 5090: 170, 2.407, 1792).
-    GpuKey ada{.chain = {"ad102"}, .sms = 128, .compute_capability = 89, .sm_clock_khz = 2520000, .dram_gbps = 1008};
-    GpuKey bw{.chain = {"gb202"}, .sms = 170, .compute_capability = 120, .sm_clock_khz = 2407000, .dram_gbps = 1792};
-    const auto ada_cost = round_cost_of(ada, 0.53, false);
-    const auto bw_cost  = round_cost_of(bw, 0.53, false);
-    failures += check(ada_cost && std::abs(ada_cost->alpha - 0.0233) < 0.001, "RTX 4090 alpha from its rates");
-    failures += check(bw_cost && std::abs(bw_cost->alpha - 0.0285) < 0.001, "RTX 5090 alpha from its rates");
-    if (ada_cost) { failures += expect(*ada_cost, 0.75, 0.97, dflash, "2:5,4:3", "RTX 4090 DFlash2 from its rates"); }
-    if (bw_cost) { failures += expect(*bw_cost, 0.75, 0.97, dflash, "2:5,3:3", "RTX 5090 DFlash2 from its rates"); }
-    GpuKey volta = ada; volta.compute_capability = 70;
-    failures += check(!round_cost_of(volta, 0.53, false), "no grid for Volta: no model");
+    // The round cost from the card's and the model's facts: test_cost_model.
     // A free round keeps the deepest at every load: no bound.
     failures += expect(RoundCost{}, 0.75, 0.97, dflash, "none", "free rounds");
     // Drafts that are never accepted never pay: plain from one row.
     failures += expect(ada_dflash, 0.0, 0.97, dflash, "1:0", "no acceptance");
+    return failures;
+}
+
+// The facts-only round cost (round_cost_of) against the registry's floors: a floor is spec-tune's
+// seconds per round over seconds per plain token, round_time(cost, 1, k). The facts here are what
+// a device and an artifact report (audit1018/x3/x3_fit.py's tables): each card's rates, each
+// model's parameters and experts, each artifact's quantization read from its measured_on.
+struct CardFacts {
+    std::string_view name, gpu_class;
+    int cc, sms, mhz;
+    double dram_gbps;
+};
+constexpr CardFacts kCards[] = {
+    {"NVIDIA GeForce RTX 5090", "gb202", 120, 170, 2407, 1792},
+    {"NVIDIA GeForce RTX 5080", "gb203", 120, 84, 2617, 960},
+    {"NVIDIA GeForce RTX 5070 Ti", "gb203:70sm", 120, 70, 2452, 896},
+    {"NVIDIA GeForce RTX 5060 Ti", "gb206", 120, 36, 2572, 448},
+    {"NVIDIA GeForce RTX 4090", "ad102", 89, 128, 2520, 1008},
+    {"NVIDIA GeForce RTX 4070 Ti SUPER", "ad103", 89, 66, 2610, 672},
+    {"NVIDIA GeForce RTX 4070 Ti", "", 89, 60, 2610, 504},
+    {"NVIDIA GeForce RTX 4060 Ti", "ad106", 89, 34, 2535, 288},
+    {"NVIDIA L4", "", 89, 58, 2040, 300},
+    {"NVIDIA GeForce RTX 3090", "ga102", 86, 82, 1695, 936},
+    {"NVIDIA A100-SXM4-40GB", "ga100", 80, 108, 1410, 1555},
+    {"Tesla V100-SXM2-32GB", "gv100", 70, 80, 1530, 900},
+    {"NVIDIA GeForce RTX 2080 Ti", "tu102", 75, 68, 1545, 616},
+};
+
+GpuKey card_key(const CardFacts& c) {
+    return GpuKey{.chain = {std::string(c.gpu_class)}, .sms = c.sms, .compute_capability = c.cc,
+                  .sm_clock_khz = c.mhz * 1000, .dram_gbps = c.dram_gbps};
+}
+
+struct ParamFacts {
+    std::string_view id;
+    double total_b, active_b; // billions
+    int experts, per_token;   // 0: dense
+};
+constexpr ParamFacts kParams[] = {
+    {"gemma-4-26b-a4b-it", 25.2, 3.8, 128, 8}, {"qwen3.6-35b-a3b", 35.0, 3.0, 256, 8},
+    {"gpt-oss-20b", 20.9, 3.6, 32, 4}, {"nemotron-3.5-lightning-30b-a3b", 31.6, 3.2, 128, 6},
+    {"gemma-4-31b-it", 30.7, 30.7, 0, 0}, {"gemma-4-12b-it", 12.0, 12.0, 0, 0},
+    {"qwen3.8-27b", 27.0, 27.0, 0, 0}, {"qwen3.6-27b", 27.0, 27.0, 0, 0},
+    {"qwen3.5-0.8b", 0.8, 0.8, 0, 0}, {"qwen3.5-2b", 2.0, 2.0, 0, 0},
+    {"qwen3.5-4b", 4.0, 4.0, 0, 0}, {"qwen3.5-9b", 9.0, 9.0, 0, 0},
+    {"muse-glimmer-30b", 30.0, 30.0, 0, 0},
+};
+
+// The target's weights in bytes each and whether they are a GGUF k/IQ quant, from the artifact a
+// profile names (the first pattern found in the head of measured_on).
+struct QuantFacts {
+    const char* pattern;
+    double bytes_per_weight;
+    bool kquant;
+};
+const QuantFacts kQuants[] = {
+    {"pirola-IQ3_XXS", 15.4 / 31.6, true}, {"IQ2_XXS|iq2xxs", 2.06 / 8, true},
+    {"IQ3_XXS", 3.06 / 8, true}, {"IQ4_XS", 4.25 / 8, true}, {"IQ3", 3.44 / 8, true},
+    {"Q4_K_XL", 4.9 / 8, true}, {"Q4_K_M", 4.85 / 8, true}, {"Q4_0|q40", 4.5 / 8, false},
+    {"nvfp4|NVFP4", 4.5 / 8, false}, {"MXFP4|gpt-oss-20b-gguf|openai/gpt-oss-20b", 4.25 / 8, false},
+    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false}, {"Q4", 0.53, false}, {".", 0.53, false},
+};
+
+TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on) {
+    TargetFacts t;
+    for (const ParamFacts& p : kParams) {
+        if (p.id != model.id) { continue; }
+        t.active_params = p.active_b * 1e9;
+        if (p.experts > 0) {
+            t.experts = p.experts;
+            t.experts_per_token = p.per_token;
+            // shared + all routed = total, shared + routed * r/E = active
+            t.routed_expert_params =
+                (p.total_b - p.active_b) * 1e9 / (1.0 - static_cast<double>(p.per_token) / p.experts);
+        }
+    }
+    std::string head = measured_on.substr(0, measured_on.find(" + "));
+    head = head.substr(0, head.find(','));
+    for (const QuantFacts& q : kQuants) {
+        if (std::regex_search(head, std::regex(q.pattern))) {
+            t.bytes_per_weight = q.bytes_per_weight;
+            t.kquant = q.kquant;
+            break;
+        }
+    }
+    t.hidden_size = model.geometry.hidden_size;
+    t.num_hidden_layers = model.geometry.num_hidden_layers;
+    t.vocab_size = model.geometry.vocab_size;
+    t.family = model.engine;
+    return t;
+}
+
+int test_cost_model() {
+    using namespace ninferno::spec;
+    int failures = 0;
+    const auto card = [](std::string_view name) {
+        for (const CardFacts& c : kCards) {
+            if (c.name == name || (!c.gpu_class.empty() && c.gpu_class == name)) { return &c; }
+        }
+        return static_cast<const CardFacts*>(nullptr);
+    };
+    const auto& registry = Registry::builtin();
+    const auto floor_of = [&](std::string_view model_id, std::string_view gpu, const std::string& measured_on,
+                              const std::string& kind, const std::string& label) -> std::optional<RoundCost> {
+        const auto* model = registry.by_id(model_id);
+        const auto* c = card(gpu);
+        if (model == nullptr || c == nullptr) { return std::nullopt; }
+        const auto config = SpecConfig::parse(label);
+        return round_cost_of(card_key(*c), target_facts(*model, measured_on),
+                             DrafterFacts{.kind = kind, .proposal_head = config.proposal_head});
+    };
+    // Anchors: the MoE expert term (Qwen3.6-35B-A3B, 256 experts, 8 a token: 2.04 measured) and
+    // gpt-oss-20b's DFlash (2.65-2.79 measured over two artifacts).
+    const auto q35 = floor_of("qwen3.6-35b-a3b", "gb202", "qwen3_6_35b_nvfp4.ninferno", "dflash", "dflash:5+head");
+    const double q35_floor = q35 ? round_time(*q35, 1, 5) : 0.0;
+    failures += check(std::abs(q35_floor - 2.03) < 0.08 * 2.03,
+                      "Qwen3.6-35B dflash:5 on the RTX 5090: floor " + std::to_string(q35_floor) + " (2.03)");
+    // Priced, yet labelled: Qwen3.5-family floors on sm120 miss by 32 % with the RTX 5090 held out.
+    failures += check(q35 && q35->moe_bytes > 0 && !q35->fit.reliable,
+                      "Qwen3.6-35B on sm120: MoE priced, the pair labelled unsure");
+    const auto oss = floor_of("gpt-oss-20b", "ad102", "openai/gpt-oss-20b MXFP4", "dflash", "dflash:7");
+    const double oss_floor = oss ? round_time(*oss, 1, 7) : 0.0;
+    failures += check(std::abs(oss_floor - 2.64) < 0.08 * 2.64,
+                      "gpt-oss dflash:7 on the RTX 4090: floor " + std::to_string(oss_floor) + " (2.64)");
+    failures += check(oss && oss->fit.reliable, "gpt-oss on sm89: a tested pair");
+    // Where the fit is unsure it says so: one lab card (V100), a pair past 15 % held out (sm89
+    // gemma4), a generation it never saw (priced as its costliest: dearer than Ada).
+    const auto v100 = floor_of("qwen3.8-27b", "gv100", "qwen3_8_27b.ninferno", "mtp", "mtp:3");
+    failures += check(v100 && !v100->fit.reliable && v100->fit.reason.find("fewer than two") != std::string::npos,
+                      "V100: one lab card, unsure");
+    const auto g12 = floor_of("gemma-4-12b-it", "ad102", "gemma4_12b.ninferno", "gemma4_assistant", "mtp:5");
+    failures += check(g12 && !g12->fit.reliable, "sm89 gemma4: past 15 % on a card left out, unsure");
+    const auto* model = registry.by_id("qwen3.8-27b");
+    if (model != nullptr) {
+        GpuKey future = card_key(kCards[4]);
+        future.compute_capability = 100;
+        const TargetFacts facts = target_facts(*model, "qwen3_8_27b.ninferno");
+        const auto unknown = round_cost_of(future, facts, DrafterFacts{.kind = "dflash2"});
+        const auto ada     = round_cost_of(card_key(kCards[4]), facts, DrafterFacts{.kind = "dflash2"});
+        failures += check(unknown && ada && !unknown->fit.reliable && unknown->alpha > ada->alpha,
+                          "an unknown generation: priced conservatively and unsure");
+        failures += check(!round_cost_of(card_key(kCards[4]), facts, DrafterFacts{.kind = "ngram"}),
+                          "a drafter kind without a fitted cost: no model");
+        failures += check(!round_cost_of(GpuKey{}, facts, DrafterFacts{.kind = "dflash2"}),
+                          "unknown rates: no model");
+    } else {
+        failures += check(false, "registry has qwen3.8-27b");
+    }
+
+    // Every non-adaptive spec-tune floor of the registry (the fit's 116): rms error under 15 %.
+    struct Floors {
+        std::vector<double> measured; // one per role that chose the configuration
+        std::string kind;
+    };
+    std::map<std::tuple<std::string, std::string, std::string, std::string>, Floors> floors;
+    for (const ModelEntry& m : registry.models()) {
+        for (const Json& p : m.profiles) {
+            const std::string gc   = p.value("gpu_class", std::string());
+            const std::string text = p.value("measured_on", std::string());
+            if (gc == "*" || text.starts_with("choices: the *") ||
+                text.find("fallback for unmeasured") != std::string::npos ||
+                text.find("ninferno-serve") != std::string::npos || text.find("spec-bench") != std::string::npos) {
+                continue; // fallbacks, and floors serve or spec-bench runs copied or estimated
+            }
+            const std::string gpu = p.value("gpu", gc);
+            for (const char* role : {"default", "non_thinking", "thinking", "fit_fallback"}) {
+                if (!p.contains(role)) { continue; }
+                const Json& c = p.at(role);
+                const std::string label = c.value("config", std::string("plain"));
+                const double floor      = c.value("floor_tokens_per_round", 0.0);
+                if (label == "plain" || floor <= 1.0 || SpecConfig::parse(label).adaptive()) { continue; }
+                Floors& f = floors[std::make_tuple(m.id, gpu, text, label)];
+                f.measured.push_back(floor);
+                const std::string drafter = split_variant(c.value("drafter", std::string())).first;
+                for (const DrafterDecl& d : m.drafters) {
+                    if (d.name == drafter) { f.kind = d.kind; }
+                }
+            }
+        }
+    }
+    double sum_sq = 0;
+    int n = 0;
+    for (const auto& [key, f] : floors) {
+        const auto& [id, gpu, text, label] = key;
+        double measured = 0;
+        for (const double v : f.measured) { measured += v / static_cast<double>(f.measured.size()); }
+        const auto cost = floor_of(id, gpu, text, f.kind, label);
+        if (!cost) {
+            failures += check(false, "the cost model prices " + id + " " + label + " on " + gpu);
+            continue;
+        }
+        const double e = (round_time(*cost, 1, SpecConfig::parse(label).k) - measured) / measured;
+        sum_sq += e * e;
+        ++n;
+    }
+    const double rms = n > 0 ? std::sqrt(sum_sq / n) : 1.0;
+    std::cout << "spec cost model: " << n << " registry floors, rms error " << 100.0 * rms << " %\n";
+    failures += check(n >= 100, "the registry has the fit's floors (" + std::to_string(n) + ")");
+    failures += check(rms < 0.15, "the cost model's rms error over the registry floors is under 15 %");
     return failures;
 }
 
@@ -1911,6 +2102,7 @@ int main() {
     failures += test_fit_fallback();
     failures += test_load();
     failures += test_load_model();
+    failures += test_cost_model();
     failures += test_select_published();
     failures += test_registry_and_corpus();
     failures += test_context_classes();
