@@ -70,13 +70,9 @@ int main() {
     check(v1_walked.quota_us == 25'000 && v1_walked.period_us == 50'000,
           "v1: the parent's tighter quota was not taken");
     // A hybrid host lists the unified hierarchy too; the cpu controller is on v1.
-    check(ninferno::read_cgroup_cpu_quota("4:cpu,cpuacct:/docker/x
-                                          0 :: /
-                                          docker /
-                                          x ",
-                                          reader(v1_files))
-                  .quota_us == 25'000,
-          "hybrid: the v1 cpu controller was not read");
+    const auto hybrid = ninferno::read_cgroup_cpu_quota(
+        "4:cpu,cpuacct:/docker/x\n0::/docker/x\n", reader(v1_files));
+    check(hybrid.quota_us == 25'000, "hybrid: the v1 cpu controller was not read");
 
     // Run-ahead follows the quota's ratio to min(4, logical cores) CPUs.
     const ninferno::HostCpuQuota three{.quota_us = 300'000, .period_us = 100'000};
