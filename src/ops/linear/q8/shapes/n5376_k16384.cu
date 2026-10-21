@@ -1,9 +1,6 @@
 #include "ops/linear/q8/q8_shapes.h"
 #include "ops/linear/q8/q8_instance_launch.cuh"
 
-#include "core/device_class.h"
-#include "ops/common/sm_wave_rules.h"
-
 // Gemma 4 [5376,16384]. Bands measured on the RTX 5090 with interleaved cold-weight timing over
 // T in {1..4096}; each band takes the winner at its upper edge.
 namespace ninferno::ops::detail {
@@ -11,8 +8,6 @@ namespace {
 using Geometry = Q8N5376K16384;
 using Access   = Q8ScaleAccess;
 using Stage    = Q8ActivationStage;
-
-int sm_count() { return device_class().sms; }
 } // namespace
 
 Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
@@ -49,15 +44,12 @@ Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
     if (tokens <= 192) return launch_q8_a16_mma_r48_t64;
     if (tokens <= 256) return launch_q8_a16_mma_r64_t128;
     if (tokens <= 384) return launch_q8_a16_mma_r64_t96;
-    // The 256-token tile (128 rows, one CTA an SM: MmaR128x64T256, 92 KiB of shared memory, launch
-    // bound one an SM) where its 42 row tiles by T/256 columns fill whole waves of the device's SMs
-    // and its waves cost no more than the 128-token tile's (64 rows, two CTAs an SM):
-    // sm_rules::fills_whole_waves and wide_tile_pays. On the RTX 5090's 170 SMs: T a multiple of
-    // 1024; never on the 4090's 128 or the 5070 Ti's 70 (measured slower there).
-    const int sms = sm_count();
-    if (sm_rules::fills_whole_waves(tokens, sms, 5376 / 128, 256, 1) &&
-        sm_rules::wide_tile_pays(tokens, sms, 5376, 128, 256, 64, 128))
-        return launch_q8_a16_mma_r128x64_t256;
+    // The 128-token tile on every board. The 256-token tile (MmaR128x64T256) won at the multiples
+    // of 1024 on the RTX 5090 (170 SMs, 2.6-5.7 %) and the RTX 4070 Ti (60 SMs, 2-6 % at 1024 and
+    // 2048) but lost on the RTX 5070 Ti (70 SMs, 4-20 %) and the RTX 4090 (128 SMs, 9-30 %), even
+    // where both grids fill their waves alike: no device fact tried (whole waves, wave cost, L2 or
+    // DRAM bandwidth per SM) orders the four boards, so the choice is the one whose worst case is
+    // small (principle 7: about 6 % at most, against 30 % for the wide tile).
     return launch_q8_a16_mma_r64x32_t128;
 }
 

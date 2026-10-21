@@ -28,11 +28,17 @@ This page states the rule and its target. The engine does not meet all of it yet
   CTAs) on the RTX 5090 and 5080, where an SM-count rule lost on the 5080; the generic R8 rule's
   IQ3 edge at 96 SMs (`generic_gemm.cpp`, `rules_r8`), an SM-count bound placed between the two
   measured boards (84 and 170). The literals that were the RTX 5090's 170 SMs and decided a grid
-  (the FP8 TMA split wave, the Gemma 4 Q8 5376x16384 256-token tile, the NVFP4 2048x5376 TMA
-  route) are rules over the device's SM count (`src/ops/common/sm_wave_rules.h`). The Q8 tile's
-  wave-cost margin (a 64th) is fitted on the RTX 5090, 4090 and 5070 Ti; its whole-wave bound (at
-  most a sixteenth of the wave idle) and the NVFP4 crossing are extrapolated from the RTX 5090
-  until measured on other boards;
+  (the FP8 TMA split wave, the NVFP4 2048x5376 TMA route) are rules over the device's SM count
+  (`src/ops/common/sm_wave_rules.h`); the NVFP4 crossing is extrapolated from the RTX 5090 and
+  checked on the RTX 5070 Ti only;
+- the Gemma 4 Q8 5376x16384 projection takes the 128-token tile on every board, the conservative
+  choice (principle 7), because no device fact explains where the 256-token tile pays. At the
+  multiples of 1024 it won on the RTX 5090 (170 SMs, 2.6-5.7 %) and the RTX 4070 Ti (60 SMs,
+  2-6 % at 1024 and 2048) and lost on the RTX 5070 Ti (70 SMs, 4-20 %) and the RTX 4090 (128
+  SMs, 9-30 %), also where both grids fill their waves alike; whole waves, wave cost, L2 per SM
+  (0.57 / 0.80 / 0.69 / 0.56 MB) and DRAM bytes per SM clock (4.4 / 3.2 / 5.2 / 3.1) do not order
+  the four boards. Always the 128-token tile costs at most about 6 % (4070 Ti) where the old
+  multiples-of-1024 rule cost up to 30 % (4090), and the 5090 gives up its 2.6-5.7 % there;
 - choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
   `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
   and spread gates): the nearest measured board, not a rule over facts;
