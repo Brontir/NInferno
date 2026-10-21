@@ -67,6 +67,20 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
     return out;
 }
 
+// The floor a configuration runs at under a profile measured elsewhere (spec::foreign_floor).
+// Where the artifact has no proposal head a "+head" choice drafts with the full head, a dearer
+// round, so the full head's ceiling counts too.
+double ran_floor(const spec::ResolvedSpeculation& resolved, const spec::SpecConfig& config,
+                 bool head_here, double own) {
+    double floor = spec::foreign_floor(resolved, config, own);
+    if (config.proposal_head && !head_here) {
+        spec::SpecConfig full = config;
+        full.proposal_head    = false;
+        floor                 = std::max(floor, spec::foreign_floor(resolved, full, own));
+    }
+    return floor;
+}
+
 bool drafter_present(const spec::Choice& choice, const spec::ResolvedSpeculation& resolved) {
     return backend_of(choice.config.mode) != SpeculativeBackend::None &&
            resolved.drafters.contains(choice.drafter.empty() ? spec::mode_name(choice.config.mode)
@@ -207,7 +221,7 @@ std::optional<SpeculativeOptions> speculation_of(const spec::Choice& choice,
     // break-evens: resolve_speculation raised them to the same model's largest on any GPU, or the
     // registry median for a model measured nowhere (spec::raise_foreign_floors). Nothing is timed.
     out.acceptance_floor = watchdog_floor(
-        spec::foreign_floor(resolved, choice.config, choice.floor_tokens_per_round));
+        ran_floor(resolved, choice.config, proposal_head, choice.floor_tokens_per_round));
     out.context_limit = resolved.profile.context_limit; // as the served engine's
     out.decision_sources = decision_sources_of(resolved);
     return out;
@@ -297,17 +311,18 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     // A profile measured elsewhere: every entry's and depth's floor at least foreign_floor's there
     // (a shallower-to-fit choice interpolates between raised floors, which can fall below its own;
     // --spec-select thinking serves each entry per request).
+    const bool head_here = has_proposal_head(artifact);
     for (spec::MenuChoice* entry :
          {&out.menu.primary, &out.menu.thinking, &out.menu.non_thinking, &out.menu.overall}) {
-        entry->floor = spec::foreign_floor(resolved, entry->config, entry->floor);
+        entry->floor = ran_floor(resolved, entry->config, head_here, entry->floor);
     }
     out.engine.acceptance_floor = watchdog_floor(out.menu.primary.floor);
     out.engine.step_down        = request_speculation(out.menu, out.menu.primary).step_down;
     if (resolved.foreign_floors) {
         for (auto& step : out.engine.step_down) {
-            spec::SpecConfig at       = out.menu.primary.config;
-            at.k                      = static_cast<std::int32_t>(step.draft_tokens);
-            step.acceptance_floor     = spec::foreign_floor(resolved, at, step.acceptance_floor);
+            spec::SpecConfig at   = out.menu.primary.config;
+            at.k                  = static_cast<std::int32_t>(step.draft_tokens);
+            step.acceptance_floor = ran_floor(resolved, at, head_here, step.acceptance_floor);
         }
     }
     if (per_request) {
