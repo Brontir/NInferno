@@ -15,12 +15,14 @@ namespace {
 
 // The fitted constants: audit1018/x3/x3_fit.py, form M3, least squares over the 116 non-adaptive
 // spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb. In sample the fit errs by
-// 9.8 % rms in x3_fit.py over the 116, and 9.47 % in test_spec over the 87 it prices (Ada and
+// 9.8 % rms in x3_fit.py over the 116, and 9.23 % in test_spec over the 87 it prices (Ada and
 // Blackwell; these constants rounded, the clocks and bandwidths of the reference table); held out
 // it errs by 21 % rms with a card left out of the fit and 18 % with a model left out. Refit them
-// with the script when the registry gains floors. knee and beta come from the measured grids
-// instead (27B Q4_G64, 8K, several rows): at one row the floors never reach a knee. The fit is of
-// one row only (the floors are C1): a multi-row use (modeled_load) waits for a multi-row fit.
+// with the script when the registry gains floors. knee and beta come from one card's measured
+// grid per generation (27B Q4_G64, 8K, several rows) and stay here as its record: round_cost_of
+// leaves them out (a lab constant needs two cards), which only the floors deeper than the knee
+// (depth 8+ on Ada, 12+ on Blackwell) notice. The fit is of one row only (the floors are C1):
+// modeled_load decodes plainly past RoundCost::fitted_rows until a multi-row fit exists.
 //
 // The tensor rate per SM and clock is the chip's fact from core/generation.h (GenerationRow::bf16:
 // 512 on the consumer parts, 2048 on the A100, the fitted 1536 where Volta and Turing emulate the
@@ -162,9 +164,10 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
                 static_cast<double>(rows) * h) / target.active_params;
     }
     RoundCost cost{.alpha = inv_eta * 2.0 * gpu.dram_gbps * 1e9 / (flops * target.bytes_per_weight),
-                   .beta  = priced.beta,
-                   .knee  = priced.knee,
-                   .delta = kind->cost * size,
+                   // knee and beta: one card's grid per generation; left out (see kGenerations)
+                   .beta           = 0.0,
+                   .knee           = 0,
+                   .delta          = kind->cost * size,
                    .pass_per_draft = kind->pass_per_draft,
                    .fit            = fit_of(gpu.compute_capability, target, kind->kind)};
     if (target.experts > 0 && target.experts_per_token > 0 && target.routed_expert_params > 0) {
@@ -240,6 +243,11 @@ std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
     std::vector<LoadBound> out;
     if (previous != deepest) { out.push_back(LoadBound{.lanes = 1, .depth = previous}); }
     for (std::int32_t rows = 2; rows <= max_rows; ++rows) {
+        // Past the rows the cost was fitted at (the facts-only fit: one), no model: plain.
+        if (rows > cost.fitted_rows) {
+            if (previous != 0) { out.push_back(LoadBound{.lanes = rows, .depth = 0}); }
+            break;
+        }
         const std::int32_t depth = best_at(rows, previous);
         if (depth != previous) {
             out.push_back(LoadBound{.lanes = rows, .depth = depth});

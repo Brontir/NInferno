@@ -54,7 +54,9 @@ This page states the rule and its target. The engine does not meet all of it yet
 
 The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model, the
 board distance and the speculation load model read its facts (`DeviceClass::facts`), not the
-driver's clocks.
+driver's clocks. The reference (boost) clock from the PCI facts table is a chip fact; the driver's
+live clocks are never read. The speculation load model stands behind a device only when its facts
+are the table's verified row (`GpuKey::facts_extrapolated` false).
 
 Each gap is closed in its own change, which updates this list.
 

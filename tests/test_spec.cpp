@@ -568,10 +568,31 @@ int test_load_model() {
 
     const std::int32_t dflash[] = {3, 5, 7};
     const std::int32_t mtp[]    = {1, 2, 3, 5};
-    const RoundCost ada_dflash{.alpha = 0.0233, .beta = 0.0069, .knee = 8, .delta = 0.056, .pass_per_draft = false};
-    const RoundCost ada_mtp{.alpha = 0.0233, .beta = 0.0069, .knee = 8, .delta = 0.080, .pass_per_draft = true};
-    const RoundCost bw_dflash{.alpha = 0.0285, .beta = 0.0122, .knee = 12, .delta = 0.066, .pass_per_draft = false};
-    const RoundCost bw_mtp{.alpha = 0.0285, .beta = 0.0122, .knee = 12, .delta = 0.066, .pass_per_draft = true};
+    // The measured grids (27B, C1..C8): costs fitted at eight rows.
+    const RoundCost ada_dflash{.alpha          = 0.0233,
+                               .beta           = 0.0069,
+                               .knee           = 8,
+                               .delta          = 0.056,
+                               .pass_per_draft = false,
+                               .fitted_rows    = 8};
+    const RoundCost ada_mtp{.alpha          = 0.0233,
+                            .beta           = 0.0069,
+                            .knee           = 8,
+                            .delta          = 0.080,
+                            .pass_per_draft = true,
+                            .fitted_rows    = 8};
+    const RoundCost bw_dflash{.alpha          = 0.0285,
+                              .beta           = 0.0122,
+                              .knee           = 12,
+                              .delta          = 0.066,
+                              .pass_per_draft = false,
+                              .fitted_rows    = 8};
+    const RoundCost bw_mtp{.alpha          = 0.0285,
+                           .beta           = 0.0122,
+                           .knee           = 12,
+                           .delta          = 0.066,
+                           .pass_per_draft = true,
+                           .fitted_rows    = 8};
     const auto expect = [&](const RoundCost& cost, double fa, double d, std::span<const std::int32_t> depths,
                             const char* want, const char* what) {
         const std::string got = load_label(modeled_load(cost, fa, d, depths, 8));
@@ -583,7 +604,13 @@ int test_load_model() {
     failures += expect(bw_mtp, 0.77, 0.91, mtp, "1:3,4:2", "RTX 5090 MTP");
     // The round cost from the card's and the model's facts: test_cost_model.
     // A free round keeps the deepest at every load: no bound.
-    failures += expect(RoundCost{}, 0.75, 0.97, dflash, "none", "free rounds");
+    failures += expect(RoundCost{.fitted_rows = 8}, 0.75, 0.97, dflash, "none", "free rounds");
+    // A one-row fit (round_cost_of's): the model at one row, plain from two rows on.
+    failures += expect(RoundCost{}, 0.75, 0.97, dflash, "2:0", "one-row fit: plain past one row");
+    RoundCost one_row   = ada_dflash;
+    one_row.fitted_rows = 1;
+    failures +=
+        expect(one_row, 0.75, 0.97, dflash, "2:0", "a grid cost fitted at one row: plain from 2");
     // Drafts that are never accepted never pay: plain from one row.
     failures += expect(ada_dflash, 0.0, 0.97, dflash, "1:0", "no acceptance");
     return failures;
@@ -866,7 +893,7 @@ int test_cost_model() {
 
     // Every non-adaptive spec-tune floor of the registry (the fit's 116) on a priced generation
     // (87, Ada and Blackwell; the 29 on one-lab-card generations are unpriced): rms error under 15
-    // %. IN SAMPLE: these are the floors the constants were fitted on (9.47 % here, 9.8 % over all
+    // %. IN SAMPLE: these are the floors the constants were fitted on (9.23 % here, 9.8 % over all
     // 116 in x3_fit.py). Held out (x3_fit.py, not re-run here) the error is 21 % rms with a card
     // left out and 18 % with a model left out; reliability (ModelFit) is judged on those, not on
     // this.
@@ -1014,12 +1041,13 @@ int test_class_depths() {
     // modeled_load under an unreliable fit: no deeper than kUnsureDepth at any load.
     RoundCost free_unsure;
     free_unsure.fit = ModelFit{false, "sm89 gemma4: not covered"};
+    free_unsure.fitted_rows = 8; // the cap alone, not the one-row rule
     const std::vector<std::int32_t> menu{3, 5, 7};
     const auto unsure_load = modeled_load(free_unsure, 0.75, 0.97, menu, 8);
     failures +=
         check(unsure_load.size() == 1 && unsure_load[0].lanes == 1 && unsure_load[0].depth == 3,
               "modeled_load, unreliable fit: capped at depth 3");
-    const auto sure_load = modeled_load(RoundCost{}, 0.75, 0.97, menu, 8);
+    const auto sure_load = modeled_load(RoundCost{.fitted_rows = 8}, 0.75, 0.97, menu, 8);
     failures += check(sure_load.empty(), "modeled_load, reliable free rounds: unbounded");
     // A board without tensor cores (mma_slow): no price, the conservative rule, labelled.
     const auto* qwen = Registry::builtin().by_id("qwen3.8-27b");

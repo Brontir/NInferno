@@ -29,7 +29,7 @@ inline GpuIdentity gpu_identity(int device) {
                 GpuKey{d.similarity_chain(), d.global_bytes, d.features.mma_mxf4nvf4,
                        d.class_chain().size() - 1, d.sms, d.compute_capability(),
                        d.facts.reference_clock_khz, d.dram_gbps(), d.features.mma_slow,
-                       d.facts.source != ninferno::FactSource::Verified}};
+                       d.facts.source != ninferno::FactSource::Verified || d.facts.driver_read}};
     } catch (const std::exception&) {
         return {"unknown", "unknown", "unknown", GpuKey{{"*"}, 0, false}};
     }

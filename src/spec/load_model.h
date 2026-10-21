@@ -16,12 +16,20 @@
 // round_cost_of prices a card and a model from facts alone (the chip's rates, the artifact's shape,
 // quantization and experts, the drafter's kind), never a timing. At one row t(1, k) / t0 is the
 // registry's floor (spec-tune's seconds per round over seconds per plain token); the constants are
-// fitted on those floors (audit1018/x3): in sample 9.8 % rms over the 116 in x3_fit.py, 9.47 %
+// fitted on those floors (audit1018/x3): in sample 9.8 % rms over the 116 in x3_fit.py, 9.23 %
 // over the 87 priced ones in test_spec; 21 % with a card held out, 18 % with a model held out.
 //
 // One row only: the floors are measured at C1, so round_cost_of's constants (alpha, delta, the MoE
-// term) are fitted at rows = 1; beta and the knee come from older multi-row grids. A multi-row use
-// (modeled_load at rows > 1) waits for a multi-row fit and must not take this one's word for it.
+// term) are fitted at rows = 1 (RoundCost::fitted_rows); beta and the knee come from one card's
+// multi-row grid per generation, so round_cost_of leaves them at 0 (they would matter at one row
+// only past depth 7 on Ada, 11 on Blackwell) and modeled_load decodes plainly past the fitted rows.
+// A multi-row use waits for a multi-row fit.
+//
+// Clocks: the clock and bandwidth are GpuKey's, the reference (boost) clock and memory rate of the
+// PCI facts table's row (DeviceClass::facts, source Verified), a chip fact; the driver's live
+// clocks are never read. A device whose facts are not the table's verified row (an unlisted id on
+// the driver's clocks, a laptop, a MIG slice: GpuKey::facts_extrapolated) is priced but never
+// reliable.
 //
 // The i-th draft of a round is accepted, given the earlier ones, with probability a d^(i-1): the
 // acceptance falls along the block (RTX 4090 grid: DFlash2 a 0.75, d 0.97; MTP a 0.77, d 0.91 give
@@ -69,6 +77,9 @@ struct RoundCost {
     // without tensor cores, "one lab card" or "no lab card" for its generation); round_time refuses
     // it, so the conservative fallback is the only use.
     bool priced = true;
+    // The rows the constants were fitted at: 1 for round_cost_of (the C1 floors). modeled_load
+    // decodes plainly past it; a cost from a measured multi-row grid sets its own.
+    std::int32_t fitted_rows = 1;
 };
 
 // What the artifact says about the target (no measurement).
@@ -143,7 +154,7 @@ struct DrafterFacts {
 // Context classes (idea 32, step 3): the draft depth each prompt-length class should run at one
 // row, from the round cost and the class's acceptance factor (spec/context_class.h). Lab
 // constants, not timings: a depth must beat plain decode by kClassMargin, the cost model's rms
-// error over the registry's floors in sample (9.8 %, 9.47 % on the priced ones), and where anything
+// error over the registry's floors in sample (9.8 %, 9.23 % on the priced ones), and where anything
 // is unknown the choice is kUnsureDepth at most below 8K and plain beyond.
 inline constexpr double kClassMargin       = 0.10;
 inline constexpr std::int32_t kUnsureDepth = 3;

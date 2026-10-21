@@ -262,7 +262,8 @@ struct GpuKey {
     // emulated, which the load model has no price for.
     bool mma_slow = false;
     // Whether the clock and bandwidth above are not the PCI-ID table's verified row (MachineFacts::
-    // source other than Verified: an unlisted id on the driver's clocks, a laptop, a MIG slice).
+    // source other than Verified, or a driver value read: an unlisted id on the driver's clocks, a
+    // laptop, a MIG slice).
     // The load model then prices the card but does not stand behind it.
     bool facts_extrapolated = false;
 };
