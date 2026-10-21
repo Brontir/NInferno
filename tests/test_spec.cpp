@@ -1114,10 +1114,12 @@ int test_registry_and_corpus() {
     }
     failures += check(registry.by_lineage("google/gemma-4-26B-A4B-it") != nullptr,
                       "lineage lookup");
-    // gb203 boards tune apart: the RTX 5080 (84 SMs) keeps its own google/gemma-4-26B-A4B-it
-    // profile (two lanes three deep, measured at C 2,3,4), the RTX 5070 Ti (70 SMs) has a profile
-    // of its SM variant "gb203:70sm" (mtp:2, two deep from two lanes), and a 5080 running another
-    // repository does not take the 5070 Ti's. Chains as ninferno::gpu_similarity_chain builds them.
+    // gb203 boards tune apart. The RTX 5070 Ti (70 SMs) has a profile of its SM variant
+    // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS: mtp:2, two
+    // deep from two lanes); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
+    // RTX 5080 measured for them (mtp:8:2, two lanes three deep), and a 5080 running a GGUF takes
+    // neither the 5070 Ti's nor a gb203 one: the RTX 5060 Ti's (gb206) stands in, capped to its
+    // 84 SMs. Chains as ninferno::gpu_similarity_chain builds them.
     if (const auto* g26 = registry.by_repo("google/gemma-4-26B-A4B-it")) {
         const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
                               "*"},
@@ -1125,25 +1127,67 @@ int test_registry_and_corpus() {
         const GpuKey rtx5070ti{{"gb203:70sm", "gb203", "sm120", "gb205", "gb206", "gb202",
                                 "gb207", "*"},
                                15ULL << 30, true, 3, 70};
-        const auto* on5080 =
-            select_published(g26->profiles, rtx5080, "google/gemma-4-26B-A4B-it", nullptr);
-        const auto* on5070ti =
-            select_published(g26->profiles, rtx5070ti, "google/gemma-4-26B-A4B-it", nullptr);
-        const auto* gguf5080 =
-            select_published(g26->profiles, rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF", nullptr);
-        failures += check(on5080 != nullptr && on5080->value("gpu_class", "") == "gb203" &&
-                              profile_from_published(*on5080).load ==
-                                  std::vector<LoadBound>{{2, 3}},
-                          "Gemma 4 26B on the RTX 5080 keeps its own load table 2:3");
-        failures += check(on5070ti != nullptr && on5070ti->value("gpu_class", "") == "gb203:70sm" &&
-                              profile_from_published(*on5070ti).overall.config.label() == "mtp:2" &&
-                              profile_from_published(*on5070ti).load ==
-                                  std::vector<LoadBound>{{2, 2}},
-                          "Gemma 4 26B on the RTX 5070 Ti: its SM variant's profile, 2:2");
-        failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") != "gb203:70sm",
-                          "an RTX 5080 does not take the RTX 5070 Ti's Gemma 4 26B profile");
+        const auto pick = [&](const GpuKey& gpu, const char* repo) {
+            return select_published(g26->profiles, gpu, repo, nullptr);
+        };
+        const auto label = [](const nlohmann::json* p) {
+            return profile_from_published(*p).overall.config.label();
+        };
+        const auto load = [](const nlohmann::json* p) { return profile_from_published(*p).load; };
+        const auto* google5080   = pick(rtx5080, "google/gemma-4-26B-A4B-it");
+        const auto* google5070ti = pick(rtx5070ti, "google/gemma-4-26B-A4B-it");
+        const auto* redhat5070ti = pick(rtx5070ti, "RedHatAI/gemma-4-26B-A4B-it-NVFP4");
+        const auto* gguf5070ti   = pick(rtx5070ti, "unsloth/gemma-4-26B-A4B-it-GGUF");
+        const auto* gguf5080     = pick(rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF");
+        failures += check(google5080 != nullptr && google5080->value("gpu_class", "") == "gb203" &&
+                              label(google5080) == "mtp:8:2" &&
+                              load(google5080) == std::vector<LoadBound>{{2, 3}},
+                          "Gemma 4 26B (google) on the RTX 5080: its gb203 profile, 2:3");
+        failures += check(google5070ti == google5080,
+                          "Gemma 4 26B (google) on the RTX 5070 Ti: the same gb203 profile");
+        const auto* lender =
+            redhat5070ti != nullptr ? select_load_fallback(g26->profiles, *redhat5070ti) : nullptr;
+        failures += check(redhat5070ti != nullptr &&
+                              redhat5070ti->value("gpu_class", "") == "gb203" &&
+                              label(redhat5070ti) == "mtp:8:2" && lender == google5080,
+                          "Gemma 4 26B (RedHatAI NVFP4) on the RTX 5070 Ti: its gb203 profile, "
+                          "the google gb203 load table");
+        failures += check(gguf5070ti != nullptr &&
+                              gguf5070ti->value("gpu_class", "") == "gb203:70sm" &&
+                              label(gguf5070ti) == "mtp:2" &&
+                              load(gguf5070ti) == std::vector<LoadBound>{{2, 2}} &&
+                              !measured_elsewhere(rtx5070ti, *gguf5070ti),
+                          "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:2, 2:2");
+        failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") == "gb206" &&
+                              label(gguf5080) == "mtp:8:2" &&
+                              load(gguf5080) == std::vector<LoadBound>{{2, 3}} &&
+                              measured_elsewhere(rtx5080, *gguf5080) &&
+                              stand_in_load(load(gguf5080), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "Gemma 4 26B (unsloth GGUF) on the RTX 5080: the gb206 stand-in, "
+                          "mtp:8:2, 2:3 capped at 9 rows");
     } else {
         failures += check(false, "registry has google/gemma-4-26B-A4B-it");
+    }
+    // Qwen3.8 27B on the RTX 4070 Ti (ad104, 60 SMs): the GGUF it was measured on drafts dflash2:7,
+    // three deep from three lanes; the safetensors checkpoint keeps the RTX 4070 Ti SUPER's
+    // profile measured for it (ad103).
+    if (const auto* q38 = registry.by_repo("Qwen/Qwen3.8-27B")) {
+        const GpuKey rtx4070ti{{"ad104:60sm", "ad104", "sm89", "ad103", "ad106", "ad102", "ad107",
+                                "*"},
+                               12ULL << 30, false, 3, 60};
+        const auto* gguf = select_published(q38->profiles, rtx4070ti, "unsloth/Qwen3.8-27B-GGUF",
+                                            nullptr);
+        const auto* base =
+            select_published(q38->profiles, rtx4070ti, "Qwen/Qwen3.8-27B", nullptr);
+        failures += check(gguf != nullptr && gguf->value("gpu_class", "") == "ad104" &&
+                              profile_from_published(*gguf).overall.config.label() == "dflash2:7" &&
+                              profile_from_published(*gguf).load == std::vector<LoadBound>{{3, 3}},
+                          "Qwen3.8 27B (unsloth GGUF) on the RTX 4070 Ti: ad104, dflash2:7, 3:3");
+        failures += check(base != nullptr && base->value("gpu_class", "") == "ad103",
+                          "Qwen3.8 27B (Qwen) on the RTX 4070 Ti: the ad103 profile stands in");
+    } else {
+        failures += check(false, "registry has Qwen/Qwen3.8-27B");
     }
     failures += check(registry.kind_for_architecture("DFlashDraftModel") == "dflash" &&
                           registry.supported("dflash2", "qwen3_5") &&

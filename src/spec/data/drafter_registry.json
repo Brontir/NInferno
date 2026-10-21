@@ -1291,7 +1291,10 @@
           "revision": "eca0e09781e2"
         },
         {
-          "applies_to": [],
+          "applies_to": [
+            "ggml-org/gemma-4-26B-A4B-it-GGUF",
+            "unsloth/gemma-4-26B-A4B-it-GGUF"
+          ],
           "default": {
             "acceptance": 0.7786001268767181,
             "config": "mtp:2",
@@ -1366,7 +1369,7 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:38:45Z",
-          "revision": "beae112a7cc5"
+          "revision": "9dc78acd0461"
         },
         {
           "applies_to": [
@@ -3634,7 +3637,9 @@
           "revision": "ba8088264ac2"
         },
         {
-          "applies_to": [],
+          "applies_to": [
+            "unsloth/Qwen3.8-27B-GGUF"
+          ],
           "default": {
             "acceptance": 0.47038552659918154,
             "config": "dflash2:7",
@@ -3712,7 +3717,7 @@
             }
           ],
           "load_measured_on": "qwen3.8-27b (unsloth/Qwen3.8-27B-GGUF --quant UD-IQ2_XXS --with-drafters artifact), NVIDIA GeForce RTX 4070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:03:18Z",
-          "revision": "b4f4f272d743"
+          "revision": "b831334eca12"
         },
         {
           "applies_to": [],
