@@ -1,13 +1,9 @@
 # Violations of the selector properties that exist today (test_selector_properties.cpp), one per
 # line: <property> <subject> [@<route set> ...] (no set: every set). Each is a known gap of
-# docs/maintainer/deterministic-decisions.md; remove the line in the change that closes it. Seen on
-# the full route set (120a); the other sets have not been run.
+# docs/maintainer/deterministic-decisions.md; remove the line in the change that closes it.
 
-# Environment knobs that move choices (gap: "environment knobs ... still steer choices").
-P2-env NINFERNO_ROUTE_DIR    # another routes/ directory: the board's table is not found
-P2-env NINFERNO_ROUTE_TABLE  # an explicit table (here unreadable: every problem untuned)
-P2-env NINFERNO_MMQ_VERIFY @full @base  # =0: the ggml matrix kernel's 9..16-token verify rule off
-                                         # (sm_75 takes the kernel by rule; sm_70 has none)
+# No environment variable moves a choice: the route-table, tuner and verify knobs became options
+# (#51), and the suite sets every NINFERNO_* variable (removed ones too) and sees no change.
 
 # The cost model reads the PCI-ID reference facts (#38); a board the table does not know takes the
 # driver's clocks (labelled extrapolated), so zero (MIG, WSL) or skewed clocks still move the speed
