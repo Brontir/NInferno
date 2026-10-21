@@ -938,7 +938,7 @@ void test_http() {
                     return c > 0x20 && c < 0x7f && c != '\\';
                 });
             };
-            // target -> the Location it must get ("" : any same-origin one)
+            // target -> the Location it must get
             const std::pair<std::string, std::string> targets[] = {
                 {"/\\evil?", "/"},
                 {"/%09/evil.example/?", "/%09/evil.example/"},
@@ -963,7 +963,7 @@ void test_http() {
                   "key: other parameters kept, every key dropped (Location " + kept + ")");
             res                       = raw.Get("/api/x?z=1&" + key + "&a=%2Fx%26y%3D&a=2", far);
             const std::string ordered = res ? res->get_header_value("Location") : "";
-            check(res && ordered == "/api/x?z=1&a=%2Fx%26y%3D&a=2",
+            check(res && res->status == 303 && ordered == "/api/x?z=1&a=%2Fx%26y%3D&a=2",
                   "key: reserved bytes re-encoded, the order sent kept (Location " + ordered + ")");
         }
         auto bearer_headers = far;
