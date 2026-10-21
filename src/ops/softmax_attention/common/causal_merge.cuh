@@ -38,7 +38,8 @@ causal_merge_natural_statistics(const float* partial_m, const float* partial_l, 
     return total;
 }
 
-template <class Geometry, int DChunk, bool MultiBatch, bool Masked, bool InverseRotation>
+template <class Geometry, int DChunk, bool MultiBatch, bool Masked, bool InverseRotation,
+          bool Aligned = false>
 __launch_bounds__(256) __global__
     void causal_natural_merge_kernel(const float* partial_acc, const float* partial_m,
                                      const float* partial_l, const std::int32_t* positions,
@@ -64,9 +65,9 @@ __launch_bounds__(256) __global__
         if (batch >= batch_size) return;
     }
     if constexpr (MultiBatch) positions += static_cast<std::int64_t>(batch) * tokens;
-    // Aligned: each column merges the splits its own position runs (CausalKvPartition::aligned_row),
-    // as a decode of that column alone does. Otherwise the call's window sets the partition.
-    const int window  = partition.aligned ? positions[token] + 1 : positions[tokens - 1] + 1;
+    // Aligned: each column merges the splits its own position runs
+    // (CausalKvPartition::aligned_row), as a decode of that column alone does. Otherwise the call's window sets the partition.
+    const int window  = Aligned ? positions[token] + 1 : positions[tokens - 1] + 1;
     int output_column = token;
     if constexpr (MultiBatch) output_column += batch * tokens;
     if constexpr (Masked) {
@@ -87,7 +88,8 @@ __launch_bounds__(256) __global__
         partial_m += static_cast<std::int64_t>(batch) * Geometry::QHeads * tokens * split_count;
         partial_l += static_cast<std::int64_t>(batch) * Geometry::QHeads * tokens * split_count;
     }
-    const int active_splits = partition.active(window);
+    const int active_splits =
+        Aligned ? CausalKvPartition::aligned_active(window) : partition.active(window);
     __shared__ float weights[256], warp_sums[8], scalars[2];
     const float head_l = causal_merge_natural_statistics<Geometry>(
         partial_m, partial_l, q_head, token, tokens, active_splits, weights, warp_sums, scalars);
@@ -114,7 +116,10 @@ __launch_bounds__(256) __global__
     }
 }
 
-template <class G, class S, bool MultiBatch, bool Masked, bool InverseRotation>
+// AlignedCapable: the call site may pass an aligned partition (the parallel tiles of the invariant
+// route profile); only those sites build the aligned merge.
+template <class G, class S, bool MultiBatch, bool Masked, bool InverseRotation,
+          bool AlignedCapable = false>
 void launch_causal_natural_merge(const CausalAttentionOperands& p,
                                  const std::int32_t* valid_columns, CausalKvPartition partition,
                                  CausalPartialView partial, cudaStream_t stream) {
@@ -123,11 +128,20 @@ void launch_causal_natural_merge(const CausalAttentionOperands& p,
     if (InverseRotation && p.gate)
         throw std::invalid_argument("causal merge: a gate needs the unrotated store");
     const dim3 grid(G::QHeads, div_up(G::kHeadDim, S::kDChunk), p.width * p.batch);
-    causal_natural_merge_kernel<G, S::kDChunk, MultiBatch, Masked, InverseRotation>
-        <<<grid, S::kThreads, 0, stream>>>(partial.acc, partial.maximum, partial.sum, p.positions,
-                                           valid_columns, p.width, p.batch, partition, p.out,
-                                           p.gate);
-    CUDA_CHECK(cudaGetLastError());
+    const auto launch = [&]<bool Aligned>() {
+        causal_natural_merge_kernel<G, S::kDChunk, MultiBatch, Masked, InverseRotation, Aligned>
+            <<<grid, S::kThreads, 0, stream>>>(partial.acc, partial.maximum, partial.sum,
+                                               p.positions, valid_columns, p.width, p.batch,
+                                               partition, p.out, p.gate);
+        CUDA_CHECK(cudaGetLastError());
+    };
+    if constexpr (AlignedCapable) {
+        if (partition.aligned) return launch.template operator()<true>();
+    } else {
+        if (partition.aligned)
+            throw std::invalid_argument("causal merge: aligned splits at a site that never takes them");
+    }
+    launch.template operator()<false>();
 }
 
 } // namespace ninferno::ops::detail

@@ -11,7 +11,7 @@ namespace ninferno::ops::detail {
 // Native INT8 QK accumulates each G64 group in INT32, then applies Q/K scales in FP32.
 // PV dequantizes represented V to FP16 and accumulates in FP32.
 template <class Geometry, class Schedule, bool MultiBatch, bool Masked, class CacheInput,
-          bool ParallelQueries = false>
+          bool ParallelQueries = false, bool Aligned = false>
 __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
     void int8_kv_grouped_mma_kernel(
         const __nv_bfloat16* q, CacheInput input, const std::int32_t* pos,
@@ -57,6 +57,8 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
 
     static_assert(TokenTile >= 1 && TokenTile * Geometry::GroupSize <= 64);
     static_assert(Bc == 32 || Bc == 64);
+    // Aligned: a row's split closes on a key tile boundary.
+    static_assert((1 << CausalKvPartition::kAlignedMinKeyShift) % Bc == 0);
     static_assert(RowTiles >= 1 && RowTiles <= 4);
     static_assert(Wc % RowTiles == 0);
     static_assert(PVNtPerWarp == 2 || PVNtPerWarp == 4 || PVNtPerWarp == 8 || PVNtPerWarp == 16);
@@ -130,12 +132,17 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
     if (valid_tokens == 0) return; // Merge writes exact zero for masked columns.
     if (pos[0] < 0 || last_pos < 0 || last_pos >= logical_capacity) return;
     const int window             = last_pos + 1;
-    const int active_split_count = partition.active(window);
+    // Aligned: the splits of the window's own shift (CausalKvPartition::aligned_active).
+    const int active_split_count =
+        Aligned ? CausalKvPartition::aligned_active(window) : partition.active(window);
     if (split >= active_split_count) return;
     const int logical_tiles    = div_up(window, Bc);
-    const int first_owned_tile = partition.first_tile(split, logical_tiles, active_split_count, Bc, window);
+    const int first_owned_tile =
+        Aligned ? CausalKvPartition::aligned_first_tile(split, logical_tiles, Bc, window)
+                : partition.first_tile(split, logical_tiles, active_split_count, Bc);
     const int end_owned_tile =
-        partition.first_tile(split + 1, logical_tiles, active_split_count, Bc, window);
+        Aligned ? CausalKvPartition::aligned_first_tile(split + 1, logical_tiles, Bc, window)
+                : partition.first_tile(split + 1, logical_tiles, active_split_count, Bc);
     const int split_start      = first_owned_tile * Bc;
     const int split_end        = min(end_owned_tile * Bc, window);
     const int first_tile       = split_start;
@@ -303,19 +310,27 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
     // row alone (CausalKvPartition::aligned_row). This CTA's split spans 2^tile_shift keys; a row
     // whose own splits are finer stores one at each of their boundaries inside it and starts the
     // next from a fresh state, exactly as the CTA of that split alone would. A warp's statistics
-    // (its producer rows) and accumulators (its consumer rows) belong to the same two rows.
-    const int tile_shift = partition.shift_for(window);
-    const int own_row0   = (warp % RowTiles) * 16 + gid;
-    const auto own_aligned_row = [&](int row) {
+    // (its producer rows) and accumulators (its consumer rows) belong to the same two rows. The
+    // other instances compile none of this.
+    [[maybe_unused]] const int tile_shift =
+        Aligned ? CausalKvPartition::aligned_key_shift(window) : 0;
+    [[maybe_unused]] const int own_row0 = (warp % RowTiles) * 16 + gid;
+    [[maybe_unused]] const auto own_aligned_row = [&](int row) {
         int q_head = 0, token = 0;
         causal_row_to_qt<Geometry>(row, kv_head, q_head, token);
-        return partition.aligned_row(row < RowCount && token < valid_tokens ? pos[token] : -1);
+        const int position = row < RowCount && token < valid_tokens ? pos[token] : -1;
+        return CausalKvPartition::aligned_row(position);
     };
-    const CausalAlignedRow own0 = own_aligned_row(own_row0);
-    const CausalAlignedRow own1 = own_aligned_row(own_row0 + 8);
-    // Stores the partials of the warp's two rows at their splits: statistics from the first lane
-    // of each row group of the producer warps, accumulators from every warp.
-    const auto store_partials = [&](bool store0, int split0, bool store1, int split1) {
+    [[maybe_unused]] const CausalAlignedRow own0 =
+        Aligned ? own_aligned_row(own_row0) : CausalAlignedRow{};
+    [[maybe_unused]] const CausalAlignedRow own1 =
+        Aligned ? own_aligned_row(own_row0 + 8) : CausalAlignedRow{};
+    // Aligned: stores the partials of the warp's two rows at their splits, statistics from the
+    // first lane of each row group of the producer warps, accumulators from every warp. The state
+    // comes in as arguments: a capture would reorder the other instances' registers.
+    [[maybe_unused]] const auto store_partials =
+        [&](bool store0, int split0, bool store1, int split1, float row_m0, float row_l0,
+            float row_m1, float row_l1, const float (&row_acc)[PVNtPerWarp][4]) {
         int q_head0 = 0, token0 = 0, q_head1 = 0, token1 = 0;
         causal_row_to_qt<Geometry>(own_row0, kv_head, q_head0, token0);
         causal_row_to_qt<Geometry>(own_row0 + 8, kv_head, q_head1, token1);
@@ -323,14 +338,14 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
             if (store0) {
                 const auto stat = causal_stat_index<Geometry>(q_head0, partial_begin + token0,
                                                               split0, partial_width);
-                partial_m[stat] = m0;
-                partial_l[stat] = l0;
+                partial_m[stat] = row_m0;
+                partial_l[stat] = row_l0;
             }
             if (store1) {
                 const auto stat = causal_stat_index<Geometry>(q_head1, partial_begin + token1,
                                                               split1, partial_width);
-                partial_m[stat] = m1;
-                partial_l[stat] = l1;
+                partial_m[stat] = row_m1;
+                partial_l[stat] = row_l1;
             }
         }
 #pragma unroll
@@ -339,12 +354,12 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
             if (store0) {
                 const std::int64_t dst = causal_partial_index<Geometry>(
                     q_head0, d0, partial_begin + token0, split0, partial_width);
-                causal_store_partial_pair(&partial_acc[dst], acc[n][0], acc[n][1]);
+                causal_store_partial_pair(&partial_acc[dst], row_acc[n][0], row_acc[n][1]);
             }
             if (store1) {
                 const std::int64_t dst = causal_partial_index<Geometry>(
                     q_head1, d0, partial_begin + token1, split1, partial_width);
-                causal_store_partial_pair(&partial_acc[dst], acc[n][2], acc[n][3]);
+                causal_store_partial_pair(&partial_acc[dst], row_acc[n][2], row_acc[n][3]);
             }
         }
     };
@@ -390,14 +405,14 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
 
     for (int kb = 0; kb < key_blocks; ++kb) {
         const int k0 = first_tile + kb * Bc;
-        if (partition.aligned && kb > 0) {
-            const bool close0 = own0.closes(k0, tile_shift);
-            const bool close1 = own1.closes(k0, tile_shift);
+        if constexpr (Aligned) {
+            const bool close0 = kb > 0 && own0.closes(k0, tile_shift);
+            const bool close1 = kb > 0 && own1.closes(k0, tile_shift);
             if (close0 || close1) {
                 const int closed0 = own0.split_of(k0) - 1;
                 const int closed1 = own1.split_of(k0) - 1;
                 store_partials(close0 && own0.stores(closed0), closed0,
-                               close1 && own1.stores(closed1), closed1);
+                               close1 && own1.stores(closed1), closed1, m0, l0, m1, l1, acc);
                 if (close0) {
                     m0 = -CUDART_INF_F;
                     l0 = 0.0F;
@@ -645,15 +660,63 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
         __syncthreads();
     }
 
-    if (partition.aligned) {
+    if constexpr (Aligned) {
         // A row's split holding the last key tile: the CTA's split for a row as coarse as it.
         const int last_k0 = first_tile + max(key_blocks - 1, 0) * Bc;
         const int split0  = own0.split_of(last_k0);
         const int split1  = own1.split_of(last_k0);
-        store_partials(own0.stores(split0), split0, own1.stores(split1), split1);
+        store_partials(own0.stores(split0), split0, own1.stores(split1), split1, m0, l0, m1, l1,
+                       acc);
     } else {
-        const int live_rows = tile_tokens * Geometry::GroupSize;
-        store_partials(own_row0 < live_rows, split, own_row0 + 8 < live_rows, split);
+
+        if (warp < RowTiles && lid == 0) {
+            const int row0 = warp * 16 + gid;
+            const int row1 = row0 + 8;
+            if (row0 < tile_tokens * Geometry::GroupSize) {
+                int q_head = 0;
+                int token  = 0;
+                causal_row_to_qt<Geometry>(row0, kv_head, q_head, token);
+                partial_m[causal_stat_index<Geometry>(q_head, partial_begin + token, split,
+                                                      partial_width)] = m0;
+                partial_l[causal_stat_index<Geometry>(q_head, partial_begin + token, split,
+                                                      partial_width)] = l0;
+            }
+            if (row1 < tile_tokens * Geometry::GroupSize) {
+                int q_head = 0;
+                int token  = 0;
+                causal_row_to_qt<Geometry>(row1, kv_head, q_head, token);
+                partial_m[causal_stat_index<Geometry>(q_head, partial_begin + token, split,
+                                                      partial_width)] = m1;
+                partial_l[causal_stat_index<Geometry>(q_head, partial_begin + token, split,
+                                                      partial_width)] = l1;
+            }
+        }
+
+#pragma unroll
+        for (int n = 0; n < PVNtPerWarp; ++n) {
+            const int consumer_tile     = warp % RowTiles;
+            const int consumer_slice    = warp / RowTiles;
+            const int consumer_row_base = consumer_tile * 16;
+            const int d0                = (consumer_slice * PVNtPerWarp + n) * 8 + 2 * lid;
+            const int row0              = consumer_row_base + gid;
+            const int row1              = row0 + 8;
+            if (row0 < tile_tokens * Geometry::GroupSize) {
+                int q_head = 0;
+                int token  = 0;
+                causal_row_to_qt<Geometry>(row0, kv_head, q_head, token);
+                const std::int64_t dst = causal_partial_index<Geometry>(
+                    q_head, d0, partial_begin + token, split, partial_width);
+                causal_store_partial_pair(&partial_acc[dst], acc[n][0], acc[n][1]);
+            }
+            if (row1 < tile_tokens * Geometry::GroupSize) {
+                int q_head = 0;
+                int token  = 0;
+                causal_row_to_qt<Geometry>(row1, kv_head, q_head, token);
+                const std::int64_t dst = causal_partial_index<Geometry>(
+                    q_head, d0, partial_begin + token, split, partial_width);
+                causal_store_partial_pair(&partial_acc[dst], acc[n][2], acc[n][3]);
+            }
+        }
     }
 }
 

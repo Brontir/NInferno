@@ -41,39 +41,29 @@ struct CausalKvPartition {
     int target                                  = 1;
     // log2 of the minimum KV keys per split: 64 keys on every geometry and width (the wave target
     // already bounds the split count, and a larger minimum starves short windows). An aligned
-    // partition takes its shift from the visible keys instead (shift_for).
+    // partition takes its shift from the visible keys instead (aligned_key_shift).
     int key_shift = 6;
     // Aligned (the invariant route profile, prefill_routes.h): split s of a token seeing v keys
-    // owns the keys [s << shift_for(v), (s + 1) << shift_for(v)), so a token's partial sums and
-    // their merge do not depend on the window, width, batch or KV row of the call that carries
-    // it. Otherwise the window's key tiles are spread evenly over the active splits.
+    // owns the keys [s << aligned_key_shift(v), (s + 1) << aligned_key_shift(v)), so a token's
+    // partial sums and their merge do not depend on the window, width, batch or KV row of the call
+    // that carries it. Otherwise the window's key tiles are spread evenly over the active splits.
+    // The kernels take the mode as a template argument (Aligned): the aligned_* members serve the
+    // aligned instances, active and first_tile the others.
     bool aligned = false;
 
-    // log2 of the keys a split owns for `visible` keys.
-    __host__ __device__ int shift_for(int visible) const {
-        return aligned ? aligned_key_shift(visible) : key_shift;
-    }
-
+    // The splits of a window of `visible` keys (not aligned).
     __host__ __device__ int active(int visible) const {
-        const int shift = shift_for(visible);
-        const int count = (visible + (1 << shift) - 1) >> shift;
+        const int count = (visible + (1 << key_shift) - 1) >> key_shift;
         return count < target ? count : target;
     }
 
-    // The first of `tiles` key tiles of `tile_keys` keys that split `split` of `splits` owns over
-    // a window of `window` keys (aligned: from the split's own key range, whatever `splits`);
-    // split + 1 gives the end of its range.
-    __host__ __device__ int first_tile(int split, int tiles, int splits, int tile_keys,
-                                       int window) const {
+    // The first of `tiles` key tiles of `tile_keys` keys that split `split` of `splits` owns at
+    // key_shift; split + 1 gives the end of its range. (An aligned partition's kernels take
+    // aligned_first_tile.)
+    __host__ __device__ int first_tile(int split, int tiles, int splits, int tile_keys) const {
         if (!aligned) return split * tiles / splits;
-        const int tile = (split << shift_for(window)) / tile_keys;
+        const int tile = (split << key_shift) / tile_keys;
         return tile < tiles ? tile : tiles;
-    }
-
-    // The aligned splits of the query row at `position` (negative: a row that stores none).
-    __host__ __device__ CausalAlignedRow aligned_row(int position) const {
-        if (position < 0) return {kAlignedMinKeyShift, 0};
-        return {shift_for(position + 1), active(position + 1)};
     }
 
     // log2 of the keys an aligned split owns for `visible` keys: 6..14, 6 up to 4096 keys, then
@@ -85,10 +75,36 @@ struct CausalKvPartition {
         return shift;
     }
 
+    // The aligned splits a token seeing `visible` keys runs (at most kAlignedSplits).
+    __host__ __device__ static constexpr int aligned_active(int visible) {
+        const int shift = aligned_key_shift(visible);
+        return (visible + (1 << shift) - 1) >> shift;
+    }
+
+    // The first of `tiles` key tiles of `tile_keys` keys that aligned split `split` owns over a
+    // window of `window` keys; split + 1 gives the end of its range.
+    __host__ __device__ static int aligned_first_tile(int split, int tiles, int tile_keys,
+                                                      int window) {
+        const int tile = (split << aligned_key_shift(window)) / tile_keys;
+        return tile < tiles ? tile : tiles;
+    }
+
+    // The aligned splits of the query row at `position` (negative: a row that stores none).
+    __host__ __device__ static CausalAlignedRow aligned_row(int position) {
+        if (position < 0) return {kAlignedMinKeyShift, 0};
+        return {aligned_key_shift(position + 1), aligned_active(position + 1)};
+    }
+
+    // The splits a window of `visible` keys runs, in either mode (the host's checks).
+    __host__ __device__ int splits(int visible) const {
+        return aligned ? aligned_active(visible) : active(visible);
+    }
+
     // The most aligned splits a token seeing up to max_visible_keys keys runs: 64 at 4096 keys
     // and past them (every v > 4096 runs at most 64), fewer below.
     static constexpr int aligned_capacity(int max_visible_keys) {
-        const int count = (max_visible_keys + (1 << kAlignedMinKeyShift) - 1) >> kAlignedMinKeyShift;
+        const int keys  = (1 << kAlignedMinKeyShift) - 1;
+        const int count = (max_visible_keys + keys) >> kAlignedMinKeyShift;
         return count < kAlignedSplits ? count : kAlignedSplits;
     }
 

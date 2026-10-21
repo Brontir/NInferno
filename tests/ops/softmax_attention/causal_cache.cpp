@@ -2879,15 +2879,13 @@ int verify_aligned_position_partition() {
     for (const int maximum : {1, 63, 64, 300, 4095, 4096, 4097, 65536, 262144, longest})
         plans.push_back(CausalKvPartition::aligned_to_positions(maximum));
     const auto reference = plans.back();
-    ops::detail::Bf16KvPartition bf16;
-    bf16.aligned = true;
-    int most     = 0;
+    int most             = 0;
     for (int visible = 1; visible <= longest; ++visible) {
-        const int shift  = reference.shift_for(visible);
-        const int splits = reference.active(visible);
+        const int shift  = CausalKvPartition::aligned_key_shift(visible);
+        const int splits = reference.splits(visible);
         most             = std::max(most, splits);
         const auto where = " at " + std::to_string(visible) + " keys";
-        if (shift != CausalKvPartition::aligned_key_shift(visible) || shift < 6 || shift > 14 ||
+        if (shift < 6 || shift > 14 ||
             splits < 1 || splits > CausalKvPartition::kAlignedSplits ||
             splits != (visible + (1 << shift) - 1) >> shift) {
             expect(false, "shift " + std::to_string(shift) + " runs " + std::to_string(splits) +
@@ -2895,7 +2893,7 @@ int verify_aligned_position_partition() {
             continue;
         }
         for (const auto& plan : plans)
-            if (plan.shift_for(visible) != shift || plan.active(visible) != splits) {
+            if (plan.splits(visible) != splits) {
                 expect(false, "the plan's capacity " + std::to_string(plan.capacity) +
                                   " changes the splits" + where);
                 break;
@@ -2905,12 +2903,13 @@ int verify_aligned_position_partition() {
         if (capacity != most)
             expect(false, "capacity " + std::to_string(capacity) + " is not the most splits " +
                               std::to_string(most) + where);
-        const auto row = reference.aligned_row(visible - 1);
+        const auto row = CausalKvPartition::aligned_row(visible - 1);
         if (row.shift != shift || row.splits != splits) expect(false, "aligned_row differs" + where);
-        const auto live = bf16.live(visible);
+        const auto live = ops::detail::Bf16KvPartition::aligned_live(visible);
         if (live.splits != splits || live.keys_per_split != (1 << shift))
             expect(false, "the BF16 live partition differs" + where);
-        if (visible + 63 <= longest && reference.shift_for(visible + 63) > shift + 1)
+        if (visible + 63 <= longest &&
+            CausalKvPartition::aligned_key_shift(visible + 63) > shift + 1)
             expect(false, "a 64-column tile sees three shifts" + where);
     }
     expect(CausalKvPartition::aligned_capacity(longest) == CausalKvPartition::kAlignedSplits,
@@ -3134,8 +3133,9 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
                     name + "cached W=" + std::to_string(width) + " vs W=300",
                     shaped_cached_output(geometry, storage, context, width), cached);
             // The KV row (block-table width and envelope) a session sizes from free memory: rows of
-            // 4K, 64K and 256K keys give the bytes of the cache's own row (the splits once
-            // followed the row: a 4K row split every 64 keys, a 256K row every 4096).
+            // 4K, 64K and 256K keys give the bytes of the cache's own row. The 4K row is the
+            // control (its splits were 64 keys before and are now); the splits once followed the
+            // row, so a 64K row split every 1024 keys and a 256K row every 4096.
             for (const int row_keys : {4096, 65536, 262144}) {
                 const std::string row = name + "row " + std::to_string(row_keys) + " keys ";
                 failures += verify_shape_prefix(

@@ -78,7 +78,7 @@ void parallel_grouped(const CausalAttentionOperands& p, Nvfp4KvReadView cache,
         launch_nvfp4_kv_grouped_mma<G, typename Instance::Schedule, MultiBatch, Masked, false,
                                     CausalCachedInput, true>(p, cache, {}, partition, partial,
                                                              stream);
-        launch_causal_natural_merge<G, typename Instance::Merge, MultiBatch, Masked, true>(
+        launch_causal_natural_merge<G, typename Instance::Merge, MultiBatch, Masked, true, true>(
             p, cache.valid_columns, partition, partial, stream);
     };
     if (p.batch == 1) {

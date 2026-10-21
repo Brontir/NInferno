@@ -11,11 +11,13 @@ template <class G, Bf16KvInstance Instance, bool Writable, class Input>
 void grouped(const CausalAttentionOperands& p, Bf16KvCacheView<Writable> cache, Input input,
              const Bf16KvCausalPlan& plan, CausalPartialView partial, cudaStream_t stream) {
     using S           = typename Bf16KvInstanceTraits<Instance>::Schedule;
+    // The invariant route profile runs Grouped32 only (make_bf16_kv_causal_plan).
+    constexpr bool aligned_capable = Instance == Bf16KvInstance::Grouped32;
     const auto invoke = [&]<bool MultiBatch, bool Masked>() {
-        launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked>(p, cache, input, plan.partition,
-                                                             partial, stream);
-        launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked>(
-            p, cache, plan.partition, partial, stream);
+        launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, Writable, Input, aligned_capable>(
+            p, cache, input, plan.partition, partial, stream);
+        launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, Writable,
+                             aligned_capable>(p, cache, plan.partition, partial, stream);
     };
     if (p.batch == 1) {
         if (cache.valid_columns)
