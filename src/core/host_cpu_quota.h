@@ -12,7 +12,12 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
+
+#if defined(__linux__)
+#    include <sched.h>
+#endif
 
 namespace ninferno {
 
@@ -45,6 +50,21 @@ struct HostCpuQuota {
         return quota_us < cpus * period_us;
     }
 };
+
+// The logical CPUs the process may run on: its affinity mask (sched_getaffinity, which a
+// container's cpuset and taskset narrow) on Linux, std::thread::hardware_concurrency() elsewhere or
+// when the mask cannot be read (0: unknown). A machine fact read once at startup, like the quota.
+[[nodiscard]] inline unsigned usable_logical_cores() noexcept {
+#if defined(__linux__)
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    if (sched_getaffinity(0, sizeof(mask), &mask) == 0) {
+        const int count = CPU_COUNT(&mask);
+        if (count > 0) { return static_cast<unsigned>(count); }
+    }
+#endif
+    return std::thread::hardware_concurrency();
+}
 
 // The tighter of two quotas (the lower quota / period); an unset one is no limit.
 [[nodiscard]] inline HostCpuQuota tighter_cpu_quota(const HostCpuQuota& a,
@@ -132,8 +152,11 @@ namespace detail {
 // ("0::PATH"): cpu.max under /sys/fs/cgroup; a container whose namespace hides the host's path
 // sees its own cgroup at the mount's root, which the walk reaches as the last ancestor. cgroup v1
 // (the line whose controllers include "cpu"): cpu.cfs_quota_us and cpu.cfs_period_us along the
-// same walk under the cpu controller's mount. A hybrid host lists both; the cpu controller is then
-// on v1, so a v1 cpu line wins.
+// same walk under the cpu controller's mount. A hybrid host lists both and mounts the unified
+// hierarchy at /sys/fs/cgroup/unified; its cpu controller is almost always on v1, so a v1 cpu line
+// whose files exist wins. In the rare hybrid setup that attaches the cpu controller to the unified
+// hierarchy instead, the v1 files are absent and the v2 walk reads cpu.max under
+// /sys/fs/cgroup/unified as well as /sys/fs/cgroup.
 template <class Reader>
 [[nodiscard]] HostCpuQuota read_cgroup_cpu_quota(std::string_view proc_self_cgroup, Reader&& read) {
     std::optional<std::string> v2;
@@ -151,26 +174,29 @@ template <class Reader>
         if (controllers.find(",cpu,") != std::string::npos) { v1 = line.substr(second + 1); }
     }
     HostCpuQuota tightest;
-    if (v2 && !v1) {
-        for (const std::string& suffix : detail::cgroup_lineage(*v2)) {
-            if (const auto text = read("/sys/fs/cgroup" + suffix + "/cpu.max")) {
-                tightest = tighter_cpu_quota(tightest, parse_cgroup_v2_cpu_max(*text));
+    if (v1) {
+        for (const char* mount :
+             {"/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct,cpu"}) {
+            bool found = false;
+            for (const std::string& suffix : detail::cgroup_lineage(*v1)) {
+                const std::string directory = std::string(mount) + suffix;
+                const auto quota            = read(directory + "/cpu.cfs_quota_us");
+                const auto period           = read(directory + "/cpu.cfs_period_us");
+                if (!quota || !period) { continue; }
+                found    = true;
+                tightest = tighter_cpu_quota(tightest, parse_cgroup_v1_cfs(*quota, *period));
+            }
+            if (found) { return tightest; }
+        }
+    }
+    if (v2) {
+        for (const char* mount : {"/sys/fs/cgroup", "/sys/fs/cgroup/unified"}) {
+            for (const std::string& suffix : detail::cgroup_lineage(*v2)) {
+                if (const auto text = read(std::string(mount) + suffix + "/cpu.max")) {
+                    tightest = tighter_cpu_quota(tightest, parse_cgroup_v2_cpu_max(*text));
+                }
             }
         }
-        return tightest;
-    }
-    for (const char* mount :
-         {"/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct,cpu"}) {
-        bool found = false;
-        for (const std::string& suffix : detail::cgroup_lineage(v1.value_or(""))) {
-            const std::string directory = std::string(mount) + suffix;
-            const auto quota            = read(directory + "/cpu.cfs_quota_us");
-            const auto period           = read(directory + "/cpu.cfs_period_us");
-            if (!quota || !period) { continue; }
-            found    = true;
-            tightest = tighter_cpu_quota(tightest, parse_cgroup_v1_cfs(*quota, *period));
-        }
-        if (found) { return tightest; }
     }
     return tightest;
 }

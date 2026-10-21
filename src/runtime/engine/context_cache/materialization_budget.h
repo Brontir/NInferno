@@ -24,7 +24,10 @@ namespace ninferno::runtime {
 // busy boundary of 10 000 units could then run 500 assessments, 100 ms of every waiting lane's
 // time. An assessment and an expansion are therefore charged at that worst cost, 200 units, so a
 // boundary's worst case stays at its former wall size: 10 000 units, at most 50 assessments or
-// about 10 ms, while other requests wait, 50 000 (about 50 ms) when none does. A typical
+// about 10 ms, while other requests wait, 50 000 (about 50 ms) when none does. A construction
+// option is charged its nominal 1 unit and assumed to cost at most kWorstOptionUs (1 us): a
+// boundary of options alone stays within 10 ms only while that holds, which no lab host has
+// measured yet. A typical
 // assessment costs far less, so a typical search now does fewer assessments than the clock
 // allowed. Every constant here is a declared estimate awaiting calibration on lab hosts against
 // the request log's materialization telemetry (search_elapsed_ns against search_units,
@@ -36,8 +39,10 @@ struct PlanningWork {
     static constexpr std::uint64_t kOption     = 1;
     static constexpr std::uint64_t kAssessment = 200;
     static constexpr std::uint64_t kExpansion  = 200;
-    // The worst host cost of one assessment the boundary sizes are checked against.
+    // The worst host cost of one assessment, and the assumed worst of one construction option,
+    // the boundary sizes are checked against.
     static constexpr std::uint64_t kWorstAssessmentUs = 200;
+    static constexpr std::uint64_t kWorstOptionUs     = 1;
     // Units of one Engine admission boundary.
     static constexpr std::uint64_t kIdleBoundary = 50'000;
     static constexpr std::uint64_t kBusyBoundary = 10'000;
@@ -60,6 +65,9 @@ static_assert(PlanningWork::kIdleBoundary / PlanningWork::kAssessment *
                       PlanningWork::kWorstAssessmentUs <=
                   50'000,
               "an idle boundary's worst case exceeds 50 ms");
+static_assert(PlanningWork::kBusyBoundary / PlanningWork::kOption * PlanningWork::kWorstOptionUs <=
+                  10'000,
+              "a busy boundary of options exceeds 10 ms");
 
 // The units spent at one Engine admission boundary: the head inspection and every backfill
 // inspection charge the same ledger, so none of them resets the boundary's allowance.

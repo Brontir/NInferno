@@ -1,5 +1,6 @@
 #include "ninferno/engine.h"
 
+#include "core/host_cpu_quota.h"
 #include "core/device.h"
 #include "core/device_class.h"
 #include "core/host_memory.h"
@@ -70,7 +71,7 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
 
 runtime::HostFacts host_facts() {
     runtime::HostFacts host;
-    host.logical_cores = std::thread::hardware_concurrency();
+    host.logical_cores = usable_logical_cores();
     try {
         if (const auto memory = read_host_memory()) { host.ram_bytes = memory->total_bytes; }
     } catch (const std::exception&) {}

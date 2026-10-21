@@ -785,7 +785,9 @@ operation itself. One unit is the nominal host cost of one construction-option s
 The planner predicts the next operation's cost from the units the previous ones were charged. Nothing bounds the search's
 wall time but these units, so an assessment and an expansion are charged at the worst host cost expected of one (about
 200 µs, against a typical 20 µs): at 200 µs an assessment, a busy boundary still ends within about 10 ms and an idle one
-within 50 ms. Every unit cost and boundary size is a declared estimate awaiting calibration on lab hosts against the
+within 50 ms. A construction option is charged 1 unit and assumed to take at most 1 µs, which is not measured yet. A
+capture decision assesses at most 50 targets over all its scenarios and its private fallback (`kDecisionTargets`: 10 ms at
+a worst 200 µs a target), whatever the economic grant. Every unit cost and boundary size is a declared estimate awaiting calibration on lab hosts against the
 request log's `search_elapsed_ns` against `search_units` and `planning_elapsed_ns` against `planning_units`; a wrong one changes
 only how much optional planning a boundary does.
 

@@ -777,6 +777,15 @@ public:
                                                       private_baseline.transfer_requirements)
                 : 0U;
         bool portfolio_built = false;
+        // Every scenario and the private fallback share one count of targets
+        // (CapturePlanner::kDecisionTargets), so a capture decision holds the lanes for a bounded
+        // worst time; the fallback keeps half when it may run.
+        const bool private_fallback =
+            private_baseline.publishes_private && !private_baseline.physically_feasible;
+        std::uint32_t decision_targets_left = CapturePlanner::kDecisionTargets;
+        const std::uint32_t shared_targets  = private_fallback
+                                                  ? CapturePlanner::kDecisionTargets / 2U
+                                                  : CapturePlanner::kDecisionTargets;
         if (candidate.publishes_shared) {
             const bool pressure_evidence =
                 has_shared_candidate_evidence(candidate.shared_evidence,
@@ -823,13 +832,19 @@ public:
             const std::uint32_t scenario_budget =
                 scenarios.empty()
                     ? 0
-                    : std::max<std::uint32_t>(1U, CapturePlanner::kTargetBudget /
+                    : std::max<std::uint32_t>(1U, shared_targets /
                                                       static_cast<std::uint32_t>(scenarios.size()));
+            std::uint32_t shared_left = shared_targets;
             for (CaptureScenario& scenario : scenarios) {
+                if (shared_left == 0) { break; }
                 std::optional<typename CapturePlanner::Result> planned = plan_scenario(
                     scenario, pressure_evidence,
                     scenario.assessment.publishes_private ? private_candidate_weight : 0U,
-                    private_baseline_immediate_ns, scenario_budget);
+                    private_baseline_immediate_ns, std::min(scenario_budget, shared_left));
+                const std::uint32_t used =
+                    std::min(shared_left, capture_planner_.last_targets_evaluated());
+                shared_left -= used;
+                decision_targets_left -= used;
                 if (!planned) { continue; }
                 const bool better =
                     !selected || planned->net_gain > selected->plan.net_gain ||
@@ -850,16 +865,14 @@ public:
         // weighted by the continuation's retention, against what its pressure takes from the
         // inactive owners. The request's own lineage is the evidence a private checkpoint needs,
         // so every eligible owner may be a victim.
-        if (!selected && private_baseline.publishes_private &&
-            !private_baseline.physically_feasible) {
+        if (!selected && private_fallback && decision_targets_left != 0) {
             if (!portfolio_built) { build_portfolio(); }
             CaptureScenario scenario{
                 .assessment     = private_baseline,
                 .stable_ordinal = 0,
             };
             std::optional<typename CapturePlanner::Result> planned =
-                plan_scenario(scenario, true, private_candidate_weight, 0U,
-                              CapturePlanner::kTargetBudget);
+                plan_scenario(scenario, true, private_candidate_weight, 0U, decision_targets_left);
             if (planned) {
                 selected.emplace(SelectedCapture{
                     .scenario = std::move(scenario),

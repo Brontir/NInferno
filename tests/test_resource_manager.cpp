@@ -2116,6 +2116,11 @@ void test_capture_search_grant_counts_targets() {
     require(Planner::economic_grant_targets(20'000'000, 3) == 25,
             "capture grant is shared by the waiting requests");
     require(Planner::economic_grant_targets(1'000'000'000, 0) == 500, "capture grant ceiling");
+    // Whatever the grant, a capture decision assesses at most kDecisionTargets over all its
+    // scenarios: 10 ms at a worst 200 us a target.
+    require(Planner::kDecisionTargets == 50 &&
+                Planner::kDecisionTargets * Planner::kWorstTargetUs <= 10'000,
+            "a capture decision's targets are not bounded to 10 ms");
 
     constexpr std::size_t private_owner_count = 16;
     constexpr std::size_t shared_owner_count  = 4;

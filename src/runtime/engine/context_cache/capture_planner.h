@@ -87,6 +87,11 @@ public:
         std::uint32_t targets_evaluated       = 0;
     };
 
+    // Targets the last plan() assessed, whether or not it selected one.
+    [[nodiscard]] std::uint32_t last_targets_evaluated() const noexcept {
+        return last_targets_evaluated_;
+    }
+
     CapturePublicationPlanner() : target_ledger_(kTargetBudget + 1U) {
         queue_.reserve(kTargetBudget);
         impact_scratch_.reserve(64);
@@ -97,6 +102,7 @@ public:
     [[nodiscard]] std::optional<Result>
     plan(Program& program, const ContextMachineCostModel& machine_cost, const Input& input) {
         validate(input);
+        last_targets_evaluated_ = 0;
         queue_.clear();
         target_ledger_.reset(static_cast<std::size_t>(input.target_budget) + 1U);
 
@@ -196,6 +202,7 @@ public:
             }
         }
 
+        last_targets_evaluated_ = targets_evaluated;
         if (!incumbent) { return std::nullopt; }
         std::optional<CapturePressurePlan> pressure = session.seal(std::move(*incumbent->assessed));
         if (!pressure) {
@@ -224,11 +231,23 @@ public:
     // Uncapped, the search walked up to 4096 targets in 39-43 ms a capture (Qwen3.6-35B C=8 on an
     // RTX 5090: 1225 against 1261 tok/s with the former 0.2-5 ms wall grant), about 10 us a target,
     // so the bounds are that grant at the nominal cost. The nominal cost is that one measurement's
-    // mean and awaits calibration across catalogs and hosts like PlanningWork's constants; at a
-    // worst 200 us a target, kMaximumTargets would hold the lanes for 100 ms.
+    // mean and awaits calibration across catalogs and hosts like PlanningWork's constants.
     static constexpr std::uint64_t kNominalTargetNs = 10'000;
     static constexpr std::uint32_t kMinimumTargets  = 20;
     static constexpr std::uint32_t kMaximumTargets  = 500;
+
+    // No clock bounds the search, so a count must bound its wall time on the slowest host, as
+    // PlanningWork's units bound an admission boundary: a target's assessment can cost about
+    // kWorstTargetUs, and a capture decision (every scenario, the four-fold grant while no target
+    // is selectable, and the private fallback together) assesses at most kDecisionTargets, so it
+    // holds the lanes for at most kWorstDecisionUs. At the measured 10 us a target that is 0.5 ms.
+    // Both worst-case numbers await calibration like kNominalTargetNs.
+    static constexpr std::uint64_t kWorstTargetUs   = 200;
+    static constexpr std::uint64_t kWorstDecisionUs = 10'000;
+    static constexpr std::uint32_t kDecisionTargets =
+        static_cast<std::uint32_t>(kWorstDecisionUs / kWorstTargetUs);
+    static_assert(kDecisionTargets * kWorstTargetUs <= kWorstDecisionUs,
+                  "a capture decision's worst case exceeds 10 ms");
 
     [[nodiscard]] static constexpr std::uint32_t
     economic_grant_targets(std::uint64_t candidate_rebuild_ns,
@@ -471,6 +490,7 @@ private:
     ContextPortfolioValue portfolio_value_;
     std::vector<QueuedTarget> queue_;
     BoundedTargetLedger target_ledger_;
+    std::uint32_t last_targets_evaluated_ = 0;
     std::vector<CombinedImpact> impact_scratch_;
     std::vector<ContextPortfolioOwnerPolicy> owner_scratch_;
     std::vector<ContextPortfolioCheckpointValue> checkpoint_scratch_;

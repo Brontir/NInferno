@@ -366,8 +366,7 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         // The CPU quota and the logical cores are machine facts read once per process
         // (host_cpu_quota.h); both enter the decision fingerprint's host facts.
         static const HostCpuQuota cpu_quota = read_host_cpu_quota();
-        static const bool quota_limits =
-            cpu_quota.limits_run_ahead(std::thread::hardware_concurrency());
+        static const bool quota_limits      = cpu_quota.limits_run_ahead(usable_logical_cores());
         const RoundPacing pacing(
             std::getenv("NINFERNO_DECODE_STEPS"), std::getenv("NINFERNO_DECODE_WAIT"),
             qwen3_5::kMaximumOrdinaryDecodeSteps,

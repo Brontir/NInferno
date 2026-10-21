@@ -22,8 +22,11 @@
 // - A round runs steps_per_round steps (round_pacing.h: 16 under a CPU quota, else 1, or
 //   --decode-steps), each reading the weights again; a speculative round runs one verify step of
 //   verify_tokens_per_lane tokens per lane (the largest draft window plus the bonus token), which
-//   reads the weights once and computes and attends for every token. A step's growth of the
-//   contexts within a round is not priced.
+//   reads the weights once and computes and attends for every token. The engine prices a round
+//   before it runs and does not know whether a speculative lane will draft: a lane that stopped
+//   drafting (load_plain, context_plain) or a shallower window verifies fewer tokens, so such a
+//   round is priced above its cost and decode gets somewhat less than its equal share beside a
+//   prefill. A step's growth of the contexts within a round is not priced.
 //
 // The ratios are estimates to refit on lab cards; a wrong ratio only moves the split of GPU time
 // between prefill and decode, never a request's output. Arithmetic is integer and saturating.
