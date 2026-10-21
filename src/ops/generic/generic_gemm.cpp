@@ -1501,6 +1501,14 @@ TiledScheduleInfo tiled_schedule_info(int index) {
     return kTiledSchedules.at(static_cast<std::size_t>(index));
 }
 int staged_schedule_count() { return static_cast<int>(kStagedSchedules.size()); }
+// The build admits a tile its architecture holds; an sm_80 build run on a later 99 KiB part
+// (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
+bool staged_device_fits(int schedule) {
+    const auto s     = kStagedSchedules.at(static_cast<std::size_t>(schedule));
+    const auto bytes = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    const auto limit = device_class().smem_per_block_optin;
+    return limit == 0 || bytes <= limit;
+}
 StagedScheduleInfo staged_schedule_info(int index) {
     return kStagedSchedules.at(static_cast<std::size_t>(index));
 }
@@ -2031,7 +2039,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
                (w4a8_schedule_info(route.schedule).producers == 0 || w4a8_ws_admits(w));
     case Family::StagedMma:
         return route.schedule < staged_schedule_count() && staged_fits(route.schedule) &&
-               codec_of(w) == WeightCodec::Bf16 && (w.k % 64) == 0 && aligned_to(w.qdata, 16);
+               staged_device_fits(route.schedule) && codec_of(w) == WeightCodec::Bf16 &&
+               (w.k % 64) == 0 && aligned_to(w.qdata, 16);
     case Family::Nvfp4TiledMma:
         // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once. The
         // schedules parse on every build, but their kernels are 120a-only: elsewhere the tuner

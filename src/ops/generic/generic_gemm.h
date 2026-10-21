@@ -321,6 +321,7 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 [[nodiscard]] bool tiled_fits(int schedule, WeightCodec codec);
 // The staged schedule's shared stages fit one block of this build (generic_staged.cu).
 [[nodiscard]] bool staged_fits(int schedule);
+[[nodiscard]] bool staged_device_fits(int schedule);
 // The W4A8 schedule's buffers for the format fit one block of this build (the producer ring needs
 // 99 KiB).
 [[nodiscard]] bool w4a8_fits(int schedule, QType qtype);
