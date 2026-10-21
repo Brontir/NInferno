@@ -72,8 +72,44 @@ std::string ids_text(const std::vector<int>& ids) {
     return text;
 }
 
-int check_variant(const char* name, std::string_view regex,
-                  std::vector<int> fix::Case::* expected) {
+std::string offsets_text(const std::vector<std::size_t>& offsets) {
+    std::string text;
+    for (const std::size_t offset : offsets) {
+        text += (text.empty() ? "" : " ") + std::to_string(offset);
+    }
+    return text;
+}
+
+// The byte offsets inside the NFC text where the splitter ends a pre-token (or an added token):
+// asked at every codepoint boundary, an offset is one exactly when the tokens through it are
+// whole (exact_frontier) and as many as through the last pre-token ending there or before
+// (stable_frontier). Inside a pre-token the stable frontier stays behind its first token.
+std::vector<std::size_t> split_ends(const fi::Tokenizer& tokenizer, std::string_view text,
+                                    const std::vector<int>& ids, int& failures,
+                                    const std::string& where) {
+    std::vector<std::size_t> offsets;
+    for (std::size_t offset = 1; offset < text.size(); ++offset) {
+        if ((static_cast<unsigned char>(text[offset]) & 0xC0) != 0x80) {
+            offsets.push_back(offset);
+        }
+    }
+    const auto encoded = tokenizer.encode_with_boundaries(text, offsets);
+    if (encoded.input_ids != ids) {
+        std::fprintf(stderr, "%s: ids with boundaries differ\n", where.c_str());
+        ++failures;
+    }
+    std::vector<std::size_t> ends;
+    for (std::size_t index = 0; index < offsets.size(); ++index) {
+        const auto& boundary = encoded.boundaries[index];
+        if (boundary.exact_frontier && *boundary.exact_frontier == boundary.stable_frontier) {
+            ends.push_back(offsets[index]);
+        }
+    }
+    return ends;
+}
+
+int check_variant(const char* name, std::string_view regex, std::vector<int> fix::Case::* expected,
+                  std::vector<std::size_t> fix::Case::* expected_ends) {
     const std::string json = tokenizer_json(regex);
     const fi::Tokenizer tokenizer({.tokenizer_json         = json,
                                    .tokenizer_config_json  = "{}",
@@ -85,6 +121,17 @@ int check_variant(const char* name, std::string_view regex,
         if (got != item.*expected) {
             std::fprintf(stderr, "%s split, case %zu: ids [%s], tokenizer.json gives [%s]\n", name,
                          index, ids_text(got).c_str(), ids_text(item.*expected).c_str());
+            ++failures;
+        }
+        // The pre-token boundaries themselves: ids alone can hide a missing split when the
+        // fixture's few merges join nothing across it.
+        const std::string where = std::string(name) + " split, case " + std::to_string(index);
+        const std::vector<std::size_t> ends =
+            split_ends(tokenizer, item.normalized, item.*expected, failures, where);
+        if (ends != item.*expected_ends) {
+            std::fprintf(stderr, "%s: pre-tokens end at [%s], tokenizer.json at [%s]\n",
+                         where.c_str(), offsets_text(ends).c_str(),
+                         offsets_text(item.*expected_ends).c_str());
             ++failures;
         }
         const std::string decoded = tokenizer.decode(item.*expected);
@@ -100,11 +147,15 @@ int check_variant(const char* name, std::string_view regex,
 
 int main() {
     try {
-        int failures = check_variant("Qwen3.5", fix::kQwen35Split, &fix::Case::qwen35);
-        failures += check_variant("Qwen2", fix::kQwen2Split, &fix::Case::qwen2);
+        int failures = check_variant("Qwen3.5", fix::kQwen35Split, &fix::Case::qwen35,
+                                     &fix::Case::qwen35_ends);
+        failures +=
+            check_variant("Qwen2", fix::kQwen2Split, &fix::Case::qwen2, &fix::Case::qwen2_ends);
         // The fixture exercises the difference: some texts split apart under the two regexes.
         std::size_t differ = 0;
-        for (const auto& item : fix::kCases) { differ += item.qwen35 != item.qwen2 ? 1 : 0; }
+        for (const auto& item : fix::kCases) {
+            differ += item.qwen35_ends != item.qwen2_ends ? 1 : 0;
+        }
         if (differ == 0) {
             std::fprintf(stderr, "no fixture text tells the two Split regexes apart\n");
             ++failures;

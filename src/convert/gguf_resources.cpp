@@ -496,6 +496,13 @@ RebuiltResources gguf_frontend_resources(const GgufFile& file) {
         arch->get<std::string>().starts_with("nemotron_h")) {
         gpt2 = gpt2_pre("tekken");
     }
+    // Qwen3.5's own fix-ups below follow the model, not the pre-tokenizer name: a qwen35 /
+    // qwen35moe file may name llama.cpp's "qwen2" pre-tokenizer (the regex transformers 5
+    // re-saves of Qwen3.5+ checkpoints write), which the Qwen3.5 frontend reads as well.
+    const auto* arch_v = file.find("general.architecture");
+    const auto arch_s  = arch_v && arch_v->is_string() ? arch_v->get<std::string>() : std::string();
+    const bool qwen35_model =
+        kind == "gpt2" && (pre_s == "qwen35" || arch_s == "qwen35" || arch_s == "qwen35moe");
     const bool declared = add_bos && add_bos->is_boolean();
     // llama.cpp's defaults: per gpt2 pre-tokenizer, and true for SentencePiece.
     const bool adds_bos = declared ? add_bos->get<bool>() : (gpt2 && gpt2->add_bos) || kind == "llama";
@@ -575,20 +582,21 @@ RebuiltResources gguf_frontend_resources(const GgufFile& file) {
         out.notes.push_back("tokenizer_config.json: add_bos_token true (llama.cpp's default for " +
                             (gpt2 ? "pre " + pre_s : std::string("SentencePiece")) +
                             "; the GGUF does not say)");
-    } else if (bos && kind == "gpt2" && pre_s == "qwen35") {
+    } else if (bos && qwen35_model) {
         // A named BOS the GGUF does not ask to prepend (unsloth's Qwen3.8 files carry
         // bos_token_id without add_bos_token): llama.cpp adds none for this pre-tokenizer, and
         // an absent flag next to a bos_token would read as "adds BOS" to the Qwen3.5 frontend.
         config["add_bos_token"] = false;
         out.notes.push_back("tokenizer_config.json: add_bos_token false (llama.cpp's default for "
-                            "pre qwen35; the GGUF names a BOS token but does not say)");
+                            "pre " +
+                            pre_s + " of Qwen3.5; the GGUF names a BOS token but does not say)");
     }
     // The rebuilt byte-level BPE pre-tokenizer adds no prefix space (tokenizer.ggml has no key
     // for it; llama.cpp's gpt2 tokenizer adds none either).
     if (kind == "gpt2") { config["add_prefix_space"] = false; }
     // Qwen3.5's official resources pad with <|endoftext|>, which the engine checks; a GGUF
     // publisher's own pad id (unsloth writes <|vision_pad|>) never reaches inference.
-    if (kind == "gpt2" && pre_s == "qwen35") {
+    if (qwen35_model) {
         const auto official = std::find(v.tokens.begin(), v.tokens.end(), "<|endoftext|>");
         if (official != v.tokens.end() && config["pad_token"] != OJson("<|endoftext|>")) {
             out.notes.push_back("tokenizer_config.json: pad_token <|endoftext|> (the official "

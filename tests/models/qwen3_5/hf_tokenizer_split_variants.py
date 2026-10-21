@@ -51,6 +51,9 @@ TEXTS = [
     "́́\n",
     "She said: \"नमस्ते!\" 'll",
     "<|im_start|>user\nनमस्ते<|im_end|>\n",
+    # \s is Unicode White_Space: U+0085 and the Z* spaces, not U+001C..U+001F.
+    "a \u0085 b\u0085\u0085\nc !\u0085! x\u0085",
+    "a   b 　x y \u001c z",
 ]
 
 ADDED = [(248044, "<|endoftext|>"), (248045, "<|im_start|>"), (248046, "<|im_end|>")]
@@ -104,13 +107,18 @@ def main() -> int:
 
     used: set[tuple[str, str]] = set()
     expected = {}
+    ends = {}
     for name, d in (("qwen35", new_dir), ("qwen2", old_dir)):
         tok = Tokenizer.from_file(str(d / "tokenizer.json"))
         expected[name] = []
+        ends[name] = []
         for text in TEXTS:
             ref = tok.encode(text, add_special_tokens=False).ids
-            # The same ids by hand: added tokens, then NFC + Split + ByteLevel + BPE.
+            # The same ids by hand: added tokens, then NFC + Split + ByteLevel + BPE; on the way,
+            # the byte offsets in the NFC text where pre-tokens and added tokens end.
             mine = []
+            cuts = []
+            offset = 0
             rest = text
             while rest:
                 cut = min((rest.find(c), c) for c in added if rest.find(c) >= 0) if any(
@@ -120,11 +128,18 @@ def main() -> int:
                     normalized = unicodedata.normalize("NFC", piece)
                     for word, _ in tok.pre_tokenizer.pre_tokenize_str(normalized):
                         mine += [vocab[s] for s in bpe(word, ranks, used)]
+                        offset += len(word)  # one byte-level character per byte
+                        cuts.append(offset)
                 if cut[1] is not None:
                     mine.append(added[cut[1]])
                     rest = rest[len(cut[1]):]
+                    offset += len(cut[1].encode("utf-8"))
+                    cuts.append(offset)
             assert mine == ref, (name, text, mine, ref)
+            total = len(unicodedata.normalize("NFC", text).encode("utf-8"))
+            assert offset == total, (name, text)
             expected[name].append(ref)
+            ends[name].append(sorted(set(c for c in cuts if 0 < c < total)))
 
     kept = sorted(used, key=lambda m: ranks[m])
     symbols = set(byte_symbols) | {a + b for a, b in kept}
@@ -153,6 +168,7 @@ def main() -> int:
         "// texts below use, their symbols with the checkpoint's ids, and each file's ids. Do not edit.",
         "#pragma once",
         "",
+        "#include <cstddef>",
         "#include <string_view>",
         "#include <utility>",
         "#include <vector>",
@@ -177,21 +193,29 @@ def main() -> int:
     lines += ["};", "", "inline const std::vector<Symbol> kAdded = {"]
     for id, content in ADDED:
         lines.append("    {" + c_string(content) + ", " + str(id) + "},")
-    lines += ["};", "", "struct Case {", "    std::string_view text;", "    std::vector<int> qwen35;",
-              "    std::vector<int> qwen2;", "    std::string_view decoded;", "};", "",
+    lines += ["};", "",
+              "// text, its NFC form, each file's ids, the decoded ids, and the byte offsets inside the NFC",
+              "// form where each file's pre-tokens (and added tokens) end.",
+              "struct Case {", "    std::string_view text;", "    std::string_view normalized;",
+              "    std::vector<int> qwen35;", "    std::vector<int> qwen2;", "    std::string_view decoded;",
+              "    std::vector<std::size_t> qwen35_ends;", "    std::vector<std::size_t> qwen2_ends;", "};", "",
               "inline const std::vector<Case> kCases = {"]
     for i, text in enumerate(TEXTS):
         a, b = expected["qwen35"][i], expected["qwen2"][i]
         dec = decoder.decode(a, skip_special_tokens=False)
         assert dec == decoder.decode(b, skip_special_tokens=False)
         lines.append("    {" + c_string(text) + ",")
+        lines.append("     " + c_string(unicodedata.normalize("NFC", text)) + ",")
         lines.append("     {" + ", ".join(map(str, a)) + "},")
         lines.append("     {" + ", ".join(map(str, b)) + "},")
-        lines.append("     " + c_string(dec) + "},")
+        lines.append("     " + c_string(dec) + ",")
+        lines.append("     {" + ", ".join(map(str, ends["qwen35"][i])) + "},")
+        lines.append("     {" + ", ".join(map(str, ends["qwen2"][i])) + "}},")
     lines += ["};", "", "} // namespace split_variants_fixture", ""]
     out.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     differ = sum(expected["qwen35"][i] != expected["qwen2"][i] for i in range(len(TEXTS)))
-    print(json.dumps({"texts": len(TEXTS), "differ": differ, "merges": len(kept),
+    split_differ = sum(ends["qwen35"][i] != ends["qwen2"][i] for i in range(len(TEXTS)))
+    print(json.dumps({"texts": len(TEXTS), "differ": differ, "split_differ": split_differ, "merges": len(kept),
                       "symbols": len(symbols), "out": str(out)}))
     return 0
 

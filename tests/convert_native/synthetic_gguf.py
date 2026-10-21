@@ -198,8 +198,9 @@ def compact(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def tokenizer_metadata(g: G, family: str) -> dict:
-    """Write tokenizer.ggml.* for VOCAB tokens; return the files the converter must rebuild."""
+def tokenizer_metadata(g: G, family: str, qwen35: bool = False) -> dict:
+    """Write tokenizer.ggml.* for VOCAB tokens; return the files the converter must rebuild.
+    `qwen35`: a Qwen3.5 model (its tokenizer_config fix-ups whatever the pre-tokenizer)."""
     if family == "spm":
         return spm_metadata(g)
     tokens = [f"t{i}" for i in range(VOCAB)]
@@ -291,7 +292,7 @@ def tokenizer_metadata(g: G, family: str) -> dict:
         "tokenizer_config.json": compact({"added_tokens_decoder": decoder, "bos_token": tokens[2],
                                           "eos_token": tokens[1], "pad_token": tokens[0], "unk_token": tokens[9],
                                           **({"add_bos_token": True} if adds_bos
-                                             else {"add_bos_token": False} if family == "qwen35" else {}),
+                                             else {"add_bos_token": False} if family == "qwen35" or qwen35 else {}),
                                           **({"add_prefix_space": False} if gpt2 else {})}),
         "generation_config.json": compact({"bos_token_id": 2,
                                            "eos_token_id": [1, 3, 10, 11, 12] if family == "gemma4" else [1, 3],
@@ -480,11 +481,12 @@ def grouped(values, dim, head_dim):
 
 def qwen_case(work: Path, moe: bool, quant: dict | None, seed: int, rebuilt: bool = False,
               base_model: str | None = None, files: bool = True, q8_ggml: bool = False,
-              dt_bias: int | None = None):
+              dt_bias: int | None = None, pre: str = "qwen35"):
     """O -> G (llama.cpp's transforms) -> T (inverse, from G); returns (G dir, T dir, stats).
     With `rebuilt`, G carries tokenizer metadata instead of files beside it; `base_model` names
     a repository URL as general.base_model.0.repo_url; `files` writes resources beside G;
-    `dt_bias` stores blk.N.ssm_dt.bias (a tensor without .weight) in that ggml block type."""
+    `dt_bias` stores blk.N.ssm_dt.bias (a tensor without .weight) in that ggml block type;
+    `pre` is the rebuilt tokenizer's tokenizer.ggml.pre."""
     rng = np.random.default_rng(seed)
     arch = "qwen35moe" if moe else "qwen35"
     gdir = work / "gguf"
@@ -663,7 +665,7 @@ def qwen_case(work: Path, moe: bool, quant: dict | None, seed: int, rebuilt: boo
     for gname, hf in (("nextn.enorm", "pre_fc_norm_embedding"), ("nextn.hnorm", "pre_fc_norm_hidden"),
                       ("nextn.shared_head_norm", "norm")):
         norm(mtp + gname + ".weight", "mtp." + hf + ".weight", H)
-    expected = tokenizer_metadata(g, "qwen35") if rebuilt else None
+    expected = tokenizer_metadata(g, pre, qwen35=True) if rebuilt else None
     if base_model:
         g.writer.add_string("general.base_model.0.repo_url", base_model)
     g.save(gdir, files=files and not rebuilt)
@@ -2409,6 +2411,10 @@ def main() -> int:
                          "qwen3_6_27b_nvfp4", "text,mtp", {True, False}),
         # No tokenizer files beside the GGUF: rebuilt from its tokenizer.ggml metadata.
         "qwen35-rebuilt-resources": (lambda w: qwen_case(w, False, None, 11, rebuilt=True),
+                                     "qwen3_6_27b", "text,mtp", set()),
+        # A Qwen3.5 GGUF naming the "qwen2" pre-tokenizer (a transformers 5 re-save converted):
+        # the Qwen2 regex, and Qwen3.5's add_bos_token false all the same.
+        "qwen35-rebuilt-qwen2-pre": (lambda w: qwen_case(w, False, None, 19, rebuilt=True, pre="qwen2"),
                                      "qwen3_6_27b", "text,mtp", set()),
         "gemma4-rebuilt-resources": (lambda w: gemma_case(w, False, "bf16", 12, rebuilt=True),
                                      "gemma4_31b_nvfp4", "text", set()),
