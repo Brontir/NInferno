@@ -428,9 +428,18 @@ DecisionSection taint_of(const DecisionInputs& in) {
         return it == section.end() ? std::string() : it->second;
     };
     std::vector<std::string> maintainer;
+    // --tune-cache is read only while a tuner is on: alone it changes nothing.
+    const bool tuner_on = value(in.options, "maintainer.dense_tune") != "off" ||
+                          value(in.options, "maintainer.moe_tune") != "off";
     for (const auto& [key, release] : kMaintainerDefaults) {
+        if (key == "tune_cache" && !tuner_on) { continue; }
         const auto it = in.options.find("maintainer." + std::string(key));
         if (it != in.options.end() && it->second != release) { maintainer.emplace_back(key); }
+    }
+    // --drafter-registry: a registry file in place of the compiled-in one (sources.drafter_registry
+    // "file sha256:..."; product/speculation/speculation.cpp).
+    if (value(in.sources, "drafter_registry").starts_with("file")) {
+        maintainer.emplace_back("drafter_registry");
     }
     if (!maintainer.empty()) { out["maintainer"] = joined(maintainer); }
     std::vector<std::string> tuners;

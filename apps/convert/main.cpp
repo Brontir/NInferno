@@ -2,6 +2,7 @@
 // dense and MoE decoders, Nemotron-H, drafters) into a .ninferno artifact, from a local
 // directory or file or one fetched from a hub; plans, attaches and relays out artifacts.
 
+#include "core/removed_environment.h"
 #include "convert/acquire.h"
 #include "convert/convert.h"
 #include "convert/drafters.h"
@@ -201,6 +202,8 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-convert");
     ninferno::convert::ConvertOptions options;
     options.components_auto = true; // until --components names them
     ninferno::convert::FetchOptions fetch;

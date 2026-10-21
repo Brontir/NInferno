@@ -138,8 +138,9 @@ struct HostFacts {
 [[nodiscard]] std::span<const std::string_view> non_decision_environment_variables();
 
 // The taint of the other sections: "maintainer" (the maintainer options given, by name:
-// route_table, route_dir, dense_tune, moe_tune, tune_cache, debug_prefill_cuts, debug_poison,
-// debug_poison_skip), "user_tune_cache" (which tuners: "dense", "moe"),
+// route_table, route_dir, dense_tune, moe_tune, tune_cache while a tuner is on,
+// debug_prefill_cuts, debug_poison, debug_poison_skip, and drafter_registry for a registry file
+// read in place of the compiled-in one), "user_tune_cache" (which tuners: "dense", "moe"),
 // "clocks" (no roofline: a machine clock or bus width of 0), "borrowed_routes" (route entries lent
 // by another chip's table), "foreign_route_table" (a table keyed by a class not in the device's
 // own chain), "local_spec_tune", "spec_fit_fallback" (the --spec auto fallback a capacity refusal

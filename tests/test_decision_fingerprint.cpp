@@ -11,6 +11,7 @@
 #include "core/sha256.h"
 #include "ninferno/ops/moe.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "core/removed_environment.h"
 #include "runtime/engine/decision_sources.h"
 
 #include <algorithm>
@@ -424,6 +425,24 @@ int maintainer_options() {
                       "the maintainer options given are taint by name: " +
                           (taints(lab).contains("maintainer") ? taints(lab).at("maintainer")
                                                               : std::string("none")));
+    // --tune-cache is read only while a tuner is on: alone it is not taint.
+    ninferno::EngineOptions cache_only;
+    cache_only.maintainer.tune_cache = "cache";
+    failures += check(!taints(cache_only).contains("maintainer"),
+                      "--tune-cache with both tuners off is taint");
+    cache_only.maintainer.dense_tune = ninferno::TuneMode::On;
+    failures += check(taints(cache_only).at("maintainer") == "dense_tune,tune_cache",
+                      "--tune-cache with a tuner on is not taint");
+    // A drafter registry file in place of the compiled-in one is taint, the compiled-in one not.
+    rt::DecisionInputs registry          = sample_inputs();
+    registry.options                     = rt::options_of(release, "id", "sig", "");
+    registry.sources["drafter_registry"] = "builtin sha256:ab";
+    failures += check(!rt::taint_of(registry).contains("maintainer"),
+                      "the compiled-in drafter registry is taint");
+    registry.sources["drafter_registry"] = "file sha256:ab";
+    failures += check(rt::taint_of(registry).contains("maintainer") &&
+                          rt::taint_of(registry).at("maintainer") == "drafter_registry",
+                      "--drafter-registry is not taint");
     return failures;
 }
 
@@ -620,6 +639,38 @@ int sha256_vectors() {
     return failures;
 }
 
+// A removed decision variable that is still set gets one warning naming its replacement; unset
+// ones and every other variable get none.
+int removed_environment() {
+    int failures      = 0;
+    const auto is_set = [](std::set<std::string> names) {
+        return [names](const char* name) { return names.contains(name); };
+    };
+    failures += check(ninferno::removed_environment_warnings(is_set({})).empty(),
+                      "removed variables: a warning with none set");
+    failures += check(ninferno::removed_environment_warnings(is_set({"NINFERNO_API_KEY"})).empty(),
+                      "removed variables: a warning for a variable still read");
+    const auto warnings = ninferno::removed_environment_warnings(
+        is_set({"NINFERNO_DECODE_STEPS", "NINFERNO_MOE_TUNE_CACHE", "NINFERNO_MMQ_VERIFY"}));
+    failures +=
+        check(warnings.size() == 3 && warnings[0].starts_with("NINFERNO_DECODE_STEPS is set") &&
+                  warnings[0].ends_with("use --decode-steps instead") &&
+                  warnings[1].ends_with("use --tune-cache instead") &&
+                  warnings[2].ends_with("removed with no replacement"),
+              "removed variables: the warnings do not name their replacements");
+    std::set<std::string> names;
+    for (const auto& removed : ninferno::kRemovedEnvironmentVariables) {
+        failures +=
+            check(names.emplace(removed.name).second && removed.name.starts_with("NINFERNO_"),
+                  std::string(removed.name) + " is listed once");
+    }
+    for (const auto name : rt::non_decision_environment_variables()) {
+        failures += check(!names.contains(std::string(name)),
+                          std::string(name) + " is both read and removed");
+    }
+    return failures;
+}
+
 // Every NINFERNO_* name quoted in src/ is known to steer no decision (a decision is an option). A
 // new variable fails here until it is listed, and one that would steer a decision must be an
 // option instead.
@@ -642,6 +693,12 @@ int environment_inventory() {
     std::set<std::string> known;
     for (const auto name : rt::non_decision_environment_variables()) {
         failures += check(known.emplace(name).second, std::string(name) + " is on one list only");
+    }
+    // The removed decision variables are quoted only to warn that they change nothing
+    // (core/removed_environment.h).
+    for (const auto& removed : ninferno::kRemovedEnvironmentVariables) {
+        failures += check(known.emplace(removed.name).second,
+                          std::string(removed.name) + " is on one list only");
     }
     for (const auto& name : found) {
         failures += check(known.contains(name), name + " is read in src/ but is on neither list "
@@ -752,6 +809,7 @@ int main() {
     failures += taint();
     failures += sha256_vectors();
     failures += environment_inventory();
+    failures += removed_environment();
     failures += file_sources();
     std::cout << (failures == 0 ? "OK" : "FAIL") << " decision_fingerprint (" << failures
               << " failures)\n";

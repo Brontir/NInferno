@@ -1,3 +1,4 @@
+#include "core/removed_environment.h"
 #include "core/cache_file.h"
 #include "core/clock.h"
 #include "core/command_line.h"
@@ -84,7 +85,7 @@ std::string usage_text() {
            "       [--output <directory>]\n"
            "       [--kld-out <file> [--kld-top-k N] | --kld <file>]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
-           std::string(ninferno::product::kEngineFlagsUsage) +
+           std::string(ninferno::product::kScoringEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
@@ -161,6 +162,10 @@ Options parse_options(int argc, char** argv) {
         } else if (option == "--kld-top-k") {
             out.kld_top_k   = parse_count(value("--kld-top-k"), "kld-top-k");
             kld_top_k_given = true;
+        } else if (ninferno::product::is_decode_pacing_flag(option)) {
+            // Scoring runs no decode rounds: the pacing would change nothing.
+            usage_error(std::string(option) + " does not apply: ninferno-perplexity scores, it "
+                                              "does not decode");
         } else if (ninferno::product::parse_engine_flag(
                        option, [&] { return value(argv[i]); }, out.pacing, out.maintainer)) {
         } else {
@@ -620,6 +625,8 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-perplexity");
     Options options;
     try {
         options = parse_options(argc, argv);

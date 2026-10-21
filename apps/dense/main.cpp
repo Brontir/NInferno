@@ -31,11 +31,15 @@
 // attention envelope of its own frontier, as ninferno-serve --no-cuda-graph decodes), --kv-dtype
 // bf16|fp8 (keys and values in BF16, the default, or FP8 E4M3 with a scale per row: half the KV
 // bytes). Every result is one JSON object on stdout.
+// Maintainer options (docs/maintainer/environment.md): --route-table FILE,
+// --route-dir DIR, --dense-tune/--moe-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE and
+// --debug-poison-skip SITES, applied to the process as an Engine applies them.
 //
 // <artifact> may also be a Hugging Face checkpoint directory: it is converted once, in-process,
 // with the official recipe for its architecture into <dir>/.ninferno-cache/<recipe>.ninferno, and
 // that artifact is loaded; later runs load it directly.
 
+#include "core/removed_environment.h"
 #include "convert/cache.h"
 #include "core/clock.h"
 #include "core/device.h"
@@ -46,6 +50,7 @@
 #include "models/speculation/dflash.h"
 #include "product/numeric_options.h"
 #include "product/tool_args.h"
+#include "product/tool_maintainer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -104,6 +109,8 @@ void write_all(const std::string& path, const std::vector<T>& values) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-dense");
     try {
         const auto args   = parse(argc, argv);
         const auto cached = convert::cached_artifact(args.artifact, {}, {}, false);
@@ -112,7 +119,9 @@ int main(int argc, char** argv) {
                          args.artifact.c_str(), cached.recipe.c_str(), cached.path.c_str(),
                          cached.seconds);
         }
+        const MaintainerOptions maintainer = product::tool_maintainer_options(args);
         DeviceContext device(0);
+        product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
         const bool exact = product::parse_activation_mode(args.text("activations", "fast")) ==
                            ActivationMode::Exact;

@@ -175,10 +175,12 @@ int main() {
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
     // Schema 28: the decode pacing and maintainer options the server was started with.
     failures += check(kRequestLogSchemaVersion == 28 &&
+                          server.at("engine").at("decode_pacing").at("steps") == "auto" &&
                           server.at("engine").at("decode_pacing").at("wait") == "auto" &&
                           server.at("engine").at("decode_pacing").at("cuda_sync") == "spin" &&
                           server.at("engine").at("maintainer").at("dense_tune") == "off" &&
-                          server.at("engine").at("maintainer").at("debug_poison").is_null(),
+                          server.at("engine").at("maintainer").at("debug_poison").is_null() &&
+                          server.at("engine").at("maintainer").at("drafter_registry") == "",
                       "schema 28: decode pacing or maintainer options missing");
     failures += check(server.at("engine").at("kv_capacity") == 524288, "KV capacity missing");
     failures += check(server.at("engine").at("kv_capacity_mode") == "explicit" &&

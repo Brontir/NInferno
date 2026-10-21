@@ -8,9 +8,15 @@ none of them changes what the engine computes.
 
 ## Options
 
-`ninferno`, `ninferno-serve` and `ninferno-perplexity` take all of these (`ninferno spec-tune`
-takes `--decode-wait`, `--cuda-sync`, `--route-table` and `--route-dir`); `EngineOptions::pacing`
-and `EngineOptions::maintainer` (`include/ninferno/types.h`) carry them for the Engine API.
+`ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
+`--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
+`ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table` and `--route-dir`, and
+records an explicit route table in the profile's settings by its content (`sha256:...`) and a route
+directory as `set`, never by a local path. The family tools `ninferno-gemma4` and `ninferno-dense`
+take `--route-table`, `--route-dir`, `--dense-tune`, `--moe-tune`, `--tune-cache`, `--debug-poison`
+and `--debug-poison-skip` (`ninferno-gemma4` also `--cuda-sync`) and apply them to the process as an
+Engine does. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
+carry them for the Engine API.
 
 The maintainer options and `--cuda-sync` are process-wide. An Engine built while no other Engine
 of the process is alive applies its own values afresh: the route tables return to the default
@@ -22,7 +28,10 @@ since it would change their decisions.
 The [decision fingerprint](deterministic-decisions.md#fingerprint) hashes all of them with the
 other options (`options.pacing.*`, `options.maintainer.*`; an option naming a file or directory
 enters as `set`, the files themselves by content among the sources), and a maintainer option
-given is taint (`taint.maintainer`, by name).
+given is taint (`taint.maintainer`, by name). `--tune-cache` is taint only while a tuner is on (it is
+read only then), and a `--drafter-registry` file in place of the compiled-in registry is taint too
+(`drafter_registry`). The request log's `server_start` record carries them (`engine.decode_pacing`,
+`engine.maintainer` with `drafter_registry`; `--decode-steps` as `auto` or its integer).
 
 ### Decode pacing
 
@@ -54,7 +63,7 @@ heuristic.
 
 | Option | Takes it | Effect |
 |---|---|---|
-| `--drafter-registry FILE` | `ninferno`, `ninferno-serve`, `ninferno-convert` | A drafter registry JSON to use instead of the compiled-in one. |
+| `--drafter-registry FILE` | `ninferno`, `ninferno-serve`, `ninferno-convert`, `ninferno spec-tune`, `ninferno spec-reselect` | A drafter registry JSON to use instead of the compiled-in one. |
 | `--corpus FILE` | `ninferno spec-tune`, `ninferno-gemma4` | The prompt corpus to measure on, instead of the compiled-in one. |
 
 The token-frequency rankings a drafter conversion names are found in `tools/spec/rankings` of the
@@ -69,7 +78,28 @@ from; `ninferno-convert --ranking FILE` names the target's own.
 | `--debug-poison` | `0` (default), `1`/`nan`, a byte `1..255` | Overwrites pooled device memory with that byte whenever it is released (`1` and `nan` mean `0xFF`: NaN in every float format, -1 in indices), so a reader that skips initialization sees poison rather than the previous owner's data. |
 | `--debug-poison-skip SITE,...` | `kv`, `ingress`, `state`, `weights` | Leaves these sites unpoisoned, for bisecting which poisoned memory changed a result. |
 
-Removed with no replacement: `NINFERNO_MMQ_VERIFY` (an A/B knob of the IQ formats' verify rule).
+### Removed variables
+
+These variables used to steer a decision. No program reads them to decide anything any more; every
+product binary (`ninferno` with `spec-tune` and `spec-reselect`, `ninferno-serve`,
+`ninferno-perplexity`, `ninferno-gemma4`, `ninferno-dense`, `ninferno-convert`) warns once at
+startup for each one still set, naming its replacement (`src/core/removed_environment.h`).
+
+| Variable | Replacement |
+|---|---|
+| `NINFERNO_CUDA_SYNC` | `--cuda-sync` |
+| `NINFERNO_DECODE_STEPS` | `--decode-steps` |
+| `NINFERNO_DECODE_WAIT` | `--decode-wait` |
+| `NINFERNO_ROUTE_TABLE` | `--route-table` |
+| `NINFERNO_ROUTE_DIR` | `--route-dir` |
+| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` |
+| `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE_CACHE` | `--tune-cache` (one directory for both tuners) |
+| `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-prefill-cuts` |
+| `NINFERNO_DEBUG_POISON`, `NINFERNO_DEBUG_POISON_SKIP` | `--debug-poison`, `--debug-poison-skip` |
+| `NINFERNO_DRAFTER_REGISTRY` | `--drafter-registry` |
+| `NINFERNO_SPEC_CORPUS` | `--corpus` (`ninferno spec-tune`, `ninferno-gemma4`); elsewhere the compiled-in corpus |
+| `NINFERNO_RANKING_DIR` | none: rankings are found in `tools/spec/rankings`, then beside the binary, then in the source tree; `ninferno-convert --ranking FILE` names one |
+| `NINFERNO_MMQ_VERIFY` | none (an A/B knob of the IQ formats' verify rule) |
 
 ### Outside the engine
 

@@ -65,7 +65,7 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
     return true;
 }
 
-// The usage lines of those flags.
+// The usage lines of those flags, for a program that decodes.
 inline constexpr const char* kEngineFlagsUsage =
     "       [--decode-steps auto|N] [--decode-wait auto|spin|block]\n"
     "       [--cuda-sync spin|blocking|yield|auto]\n"
@@ -73,5 +73,18 @@ inline constexpr const char* kEngineFlagsUsage =
     "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
     "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
     "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+
+// The same without the decode pacing, for a program that only scores (ninferno-perplexity).
+inline constexpr const char* kScoringEngineFlagsUsage =
+    "       [--cuda-sync spin|blocking|yield|auto]\n"
+    "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
+    "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
+    "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+
+// The decode pacing flags, which a scoring program refuses.
+[[nodiscard]] inline bool is_decode_pacing_flag(std::string_view arg) noexcept {
+    return arg == "--decode-steps" || arg == "--decode-wait";
+}
 
 } // namespace ninferno::product

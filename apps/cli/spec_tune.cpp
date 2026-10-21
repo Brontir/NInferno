@@ -141,18 +141,23 @@ TuneEngine tune_engine(const std::map<std::string, std::string>& flags) {
     return engine;
 }
 
+// How a profile names an explicit route table: by its content ("sha256:<hex>"), never by a path
+// local to the machine that measured it.
+std::string route_table_label(const std::filesystem::path& table) {
+    const auto digest = file_sha256_hex(table);
+    return digest ? "sha256:" + *digest : std::string("unreadable");
+}
+
 // The tune engine's settings beside the wait, named only when given (an --out measured before
-// they existed still resumes).
+// they existed still resumes): an explicit route table by its content, a route directory as "set".
 void name_tune_engine(nlohmann::json& settings, const TuneEngine& engine) {
     if (engine.pacing.cuda_sync != CudaSyncSchedule::Spin) {
         settings["cuda_sync"] = cuda_sync_schedule_name(engine.pacing.cuda_sync);
     }
     if (!engine.maintainer.route_table.empty()) {
-        settings["route_table"] = engine.maintainer.route_table.string();
+        settings["route_table"] = route_table_label(engine.maintainer.route_table);
     }
-    if (!engine.maintainer.route_dir.empty()) {
-        settings["route_dir"] = engine.maintainer.route_dir.string();
-    }
+    if (!engine.maintainer.route_dir.empty()) { settings["route_dir"] = "set"; }
 }
 
 // The artifact's id, or its path's text when it has none readable (a drafter directory).
@@ -724,11 +729,12 @@ int run_spec_tune(int argc, char** argv) {
         flags[key.substr(2)] = argv[++i];
     }
     static const std::set<std::string, std::less<>> kKnown = {
-        "applies-to",  "budget-seconds", "configs",     "corpus",    "cuda-sync", "decode-wait",
-        "device",      "draft-width",    "gpu-class",   "kv-dtype",  "load",      "load-depths",
-        "max-context", "max-tokens",     "measured-on", "min-gain",  "out",       "prefill-chunk",
-        "profile",     "publish",        "repeat",      "requires",  "resume",    "route-dir",
-        "route-table", "temperature",    "thinking",    "tolerance", "top-p"};
+        "applies-to",  "budget-seconds", "configs",     "corpus",           "cuda-sync",
+        "decode-wait", "device",         "draft-width", "drafter-registry", "gpu-class",
+        "kv-dtype",    "load",           "load-depths", "max-context",      "max-tokens",
+        "measured-on", "min-gain",       "out",         "prefill-chunk",    "profile",
+        "publish",     "repeat",         "requires",    "resume",           "route-dir",
+        "route-table", "temperature",    "thinking",    "tolerance",        "top-p"};
     for (const auto& [key, value] : flags) {
         if (!kKnown.contains(key)) {
             throw std::invalid_argument("spec-tune: unknown flag --" + key);
@@ -738,6 +744,10 @@ int run_spec_tune(int argc, char** argv) {
         const auto it = flags.find(key);
         return it == flags.end() ? fallback : it->second;
     };
+    // --drafter-registry: a registry file in place of the compiled-in one, as ninferno takes it.
+    if (const auto it = flags.find("drafter-registry"); it != flags.end()) {
+        spec::Registry::use_file(it->second);
+    }
     const TuneEngine engine       = tune_engine(flags);
     const std::string decode_wait = decode_wait_name(engine.pacing.wait);
     if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, engine); }
@@ -824,11 +834,9 @@ int run_spec_tune(int argc, char** argv) {
             std::string(", CUDA sync ") + cuda_sync_schedule_name(engine.pacing.cuda_sync);
     }
     if (!engine.maintainer.route_table.empty()) {
-        profile.settings += ", route table " + engine.maintainer.route_table.string();
+        profile.settings += ", route table " + route_table_label(engine.maintainer.route_table);
     }
-    if (!engine.maintainer.route_dir.empty()) {
-        profile.settings += ", route dir " + engine.maintainer.route_dir.string();
-    }
+    if (!engine.maintainer.route_dir.empty()) { profile.settings += ", route dir set"; }
 
     std::map<std::string, std::vector<TokenId>> reference;
     for (const auto& config : configs) {
@@ -953,8 +961,8 @@ int run_spec_reselect(int argc, char** argv) {
         throw std::invalid_argument(
             "usage: ninferno spec-reselect <profile.json> [--key value ...]");
     }
-    const std::set<std::string> known = {"publish", "gpu-class", "gpu", "applies-to", "measured-on",
-                                         "engine", "out"};
+    const std::set<std::string> known = {"publish",     "gpu-class", "gpu", "applies-to",
+                                         "measured-on", "engine",    "out", "drafter-registry"};
     std::map<std::string, std::string> flags;
     for (int i = 3; i < argc; ++i) {
         std::string key = argv[i];
@@ -970,6 +978,9 @@ int run_spec_reselect(int argc, char** argv) {
         if (!flags.contains(needed)) {
             throw std::invalid_argument(std::string("spec-reselect: --") + needed + " is needed");
         }
+    }
+    if (const auto it = flags.find("drafter-registry"); it != flags.end()) {
+        spec::Registry::use_file(it->second);
     }
     std::string error;
     std::optional<spec::Profile> profile = spec::read_profile(argv[2], &error);

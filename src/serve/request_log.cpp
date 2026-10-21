@@ -99,14 +99,17 @@ Json requested_reasoning_effort_json(const std::optional<ninferno::ReasoningEffo
                      : Json(nullptr);
 }
 
+// --decode-steps as given: "auto" (0) or the integer, as the decision fingerprint names it.
 Json decode_pacing_record(const ninferno::DecodePacingOptions& pacing) {
-    return Json{{"steps", pacing.steps},
+    return Json{{"steps", pacing.steps == 0 ? Json("auto") : Json(pacing.steps)},
                 {"wait", ninferno::decode_wait_name(pacing.wait)},
                 {"cuda_sync", ninferno::cuda_sync_schedule_name(pacing.cuda_sync)}};
 }
 
-// What the maintainer options asked for (all defaults: the release's behaviour).
-Json maintainer_record(const ninferno::MaintainerOptions& m) {
+// What the maintainer options asked for (all defaults: the release's behaviour), with
+// --drafter-registry (empty: the compiled-in registry).
+Json maintainer_record(const ninferno::MaintainerOptions& m,
+                       const std::filesystem::path& drafter_registry) {
     Json poison = nullptr;
     if (m.debug_poison) { poison = *m.debug_poison; }
     return Json{{"route_table", m.route_table.string()},
@@ -116,7 +119,8 @@ Json maintainer_record(const ninferno::MaintainerOptions& m) {
                 {"tune_cache", m.tune_cache.string()},
                 {"debug_prefill_cuts", m.debug_prefill_cuts},
                 {"debug_poison", poison},
-                {"debug_poison_skip", m.debug_poison_skip}};
+                {"debug_poison_skip", m.debug_poison_skip},
+                {"drafter_registry", drafter_registry.string()}};
 }
 
 const char* proposal_head_name(ninferno::ProposalHead proposal) {
@@ -507,7 +511,7 @@ std::string format_server_start_json(
              {"vision", engine_options.enable_vision},
              {"cuda_graph", engine_options.use_cuda_graph},
              {"decode_pacing", decode_pacing_record(engine_options.pacing)},
-             {"maintainer", maintainer_record(engine_options.maintainer)},
+             {"maintainer", maintainer_record(engine_options.maintainer, options.drafter_registry)},
              {"prefix_reuse", options.allow_prefix_reuse},
              {"speculative_backend",
               product::speculative_backend_name(engine_options.speculative.backend)},

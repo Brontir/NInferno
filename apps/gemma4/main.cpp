@@ -57,6 +57,9 @@
 // --a16-full weights, and every op on its invariant route profile (ops/prefill_routes.h), the
 // prefill profile on every prefill call; its tokens equal the Engine's byte for byte. Every result
 // is one JSON object on stdout.
+// Maintainer options (docs/maintainer/environment.md): --cuda-sync, --route-table FILE,
+// --route-dir DIR, --dense-tune/--moe-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE and
+// --debug-poison-skip SITES, applied to the process as an Engine applies them.
 //
 // <artifact>, --drafter and --dflash also accept a Hugging Face checkpoint directory. It is
 // converted once, in-process, with the official recipe for its architecture, into
@@ -66,6 +69,7 @@
 // --consume-source lets that conversion release the checkpoint's space as it goes (the
 // checkpoint's weights are destroyed; the artifact then lives on in .ninferno-cache).
 
+#include "core/removed_environment.h"
 #include "convert/cache.h"
 #include "core/clock.h"
 #include "core/device.h"
@@ -83,6 +87,7 @@
 #include "spec/registry.h"
 #include "product/numeric_options.h"
 #include "product/tool_args.h"
+#include "product/tool_maintainer.h"
 
 #include <cuda_runtime.h>
 
@@ -133,16 +138,17 @@ Arguments parse(int argc, char** argv) {
             "applies-to",  "block",       "budget-seconds",
             "chunk",       "configs",     "consume-source",
             "context",     "corpus",      "cuda-sync",   "cuts",
+            "debug-poison", "debug-poison-skip", "dense-tune",
             "decode",      "dflash",      "draft",
             "draft-min",   "drafter",     "drafter-variant",
             "dump",        "dump-tokens", "gpu-class",
-            "kv-dtype",    "list",        "measured-on",
+            "kv-dtype",    "list",        "measured-on", "moe-tune",
             "no-warm-up",  "no-watchdog", "out",
             "prefill-split",
             "profile",     "prompt",      "publish",
-            "repeat",      "rounds-out",  "seed",
+            "repeat",      "rounds-out",  "route-dir",   "route-table", "seed",
             "spec",        "spec-profile", "stop",       "tag",
-            "temperature", "tokens",      "top-k",
+            "temperature", "tokens",      "top-k",       "tune-cache",
             "top-p",       "window"};
         if (!known.contains(key)) {
             throw std::invalid_argument("unknown option --" + key +
@@ -817,6 +823,8 @@ StartPlan drafter_plan(const Arguments& args, bool mtp, bool dflash, std::int32_
 } // namespace
 
 int main(int argc, char** argv) {
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-gemma4");
     try {
         const auto args = parse(argc, argv);
         // Checkpoint directories are converted before the device is touched.
@@ -848,7 +856,9 @@ int main(int argc, char** argv) {
                                    : profile == ActivationProfile::A16Full ? "a16_full"
                                    : profile == ActivationProfile::A16   ? "a16"
                                                                          : "artifact";
+        const MaintainerOptions maintainer = product::tool_maintainer_options(args);
         DeviceContext device(0, parse_cuda_sync_schedule(args.text("cuda-sync", "spin")));
+        product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
         auto model            = Model::load(artifact, device, profile);
         const double load_s   = ninferno::seconds_since(load_start);

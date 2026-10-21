@@ -1,3 +1,4 @@
+#include "core/removed_environment.h"
 #include "options.h"
 #include "spec_tune.h"
 #include "core/command_line.h"
@@ -227,6 +228,8 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno");
     if (argc >= 2 && std::string_view(argv[1]) == "spec-tune") {
         try {
             return ninferno::cli::run_spec_tune(argc, argv);

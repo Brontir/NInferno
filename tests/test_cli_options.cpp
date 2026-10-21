@@ -1,5 +1,6 @@
 #include "options.h"
 
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -144,5 +145,68 @@ int main() {
             (void)parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--top-k", "65"});
         }),
         "CLI accepted top_k beyond the executable candidate domain");
+    // The decode pacing, maintainer and drafter-registry options (docs/maintainer/environment.md).
+    const ninferno::cli::Options lab = parse({"ninferno-cli",
+                                              "model.ninferno",
+                                              "--prompt",
+                                              "hello",
+                                              "--decode-steps",
+                                              "4",
+                                              "--decode-wait",
+                                              "block",
+                                              "--cuda-sync",
+                                              "blocking",
+                                              "--route-table",
+                                              "t.json",
+                                              "--route-dir",
+                                              "routes",
+                                              "--dense-tune",
+                                              "on",
+                                              "--moe-tune",
+                                              "retune",
+                                              "--tune-cache",
+                                              "cache",
+                                              "--debug-prefill-cuts",
+                                              "700,900",
+                                              "--debug-poison",
+                                              "nan",
+                                              "--debug-poison-skip",
+                                              "kv,state",
+                                              "--drafter-registry",
+                                              "registry.json"});
+    failures += check(lab.pacing.steps == 4 && lab.pacing.wait == ninferno::DecodeWait::Block &&
+                          lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Blocking,
+                      "decode pacing options were not parsed");
+    failures +=
+        check(lab.maintainer.route_table == "t.json" && lab.maintainer.route_dir == "routes" &&
+                  lab.maintainer.dense_tune == ninferno::TuneMode::On &&
+                  lab.maintainer.moe_tune == ninferno::TuneMode::Retune &&
+                  lab.maintainer.tune_cache == "cache" &&
+                  lab.maintainer.debug_prefill_cuts == std::vector<std::uint64_t>{700, 900} &&
+                  lab.maintainer.debug_poison == std::uint8_t{0xFF} &&
+                  lab.maintainer.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                  lab.drafter_registry == "registry.json",
+              "maintainer options were not parsed");
+    failures += check(
+        parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--decode-steps", "auto"})
+                .pacing.steps == 0,
+        "--decode-steps auto is not the default");
+    for (const std::vector<std::string>& bad : {std::vector<std::string>{"--decode-steps", "33"},
+                                                {"--decode-steps", "0"},
+                                                {"--decode-wait", "sleep"},
+                                                {"--cuda-sync", "busy"},
+                                                {"--dense-tune", "yes"},
+                                                {"--debug-poison", "300"}}) {
+        std::vector<std::string> arguments{"ninferno-cli", "model.ninferno", "--prompt", "hello"};
+        arguments.insert(arguments.end(), bad.begin(), bad.end());
+        failures += check(rejects([&] { (void)parse(arguments); }),
+                          ("CLI accepted " + bad[0] + " " + bad[1]).c_str());
+    }
+    for (const char* flag : {"--decode-steps", "--decode-wait", "--cuda-sync", "--route-table",
+                             "--route-dir", "--dense-tune", "--moe-tune", "--tune-cache",
+                             "--debug-prefill-cuts", "--debug-poison", "--drafter-registry"}) {
+        failures += check(help.find(flag) != std::string::npos,
+                          (std::string("CLI help omits ") + flag).c_str());
+    }
     return failures == 0 ? 0 : 1;
 }

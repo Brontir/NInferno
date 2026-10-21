@@ -1,3 +1,4 @@
+#include "core/removed_environment.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/update/update_check.h"
@@ -139,6 +140,8 @@ int print_version() {
 
 int main(int argc, char** argv) {
     std::set_terminate(log_terminate);
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-serve");
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.
     timeBeginPeriod(1);
