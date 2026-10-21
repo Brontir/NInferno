@@ -10,6 +10,17 @@ The user-facing variables are documented with the options they belong to:
 `NINFERNO_DECODE_WAIT` in the [CLI reference](../cli.md), and `NINFERNO_DEBUG_NAN_FILE` in the
 [serving reference](../reference/serving.md).
 
+A variable that steers a decision enters the
+[decision fingerprint](deterministic-decisions.md#fingerprint) whenever it is set (set to the empty
+string counts), by a hash of its value, and is listed as taint: `NINFERNO_ROUTE_TABLE`,
+`NINFERNO_ROUTE_DIR`, `NINFERNO_DENSE_TUNE`, `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE`,
+`NINFERNO_MOE_TUNE_CACHE`, `NINFERNO_DRAFTER_REGISTRY`, `NINFERNO_MMQ_VERIFY`,
+`NINFERNO_DECODE_STEPS`, `NINFERNO_DECODE_WAIT`, `NINFERNO_QWEN_PREFILL_CUTS`, `NINFERNO_CUDA_SYNC`,
+`NINFERNO_DEBUG_POISON` and `NINFERNO_DEBUG_POISON_SKIP`. The others (dumps, records, debug files,
+I/O modes, credentials, update checks) steer none. A new variable read in `src/` fails
+`ninferno_decision_fingerprint_test` until it is put on one of the two lists in
+`src/runtime/engine/decision_fingerprint.cpp`.
+
 ## Tuning caches and route tables
 
 These are lab tools. Under [deterministic decisions](deterministic-decisions.md), a user's engine

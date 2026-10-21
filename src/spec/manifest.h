@@ -57,6 +57,9 @@ struct SpeculationManifest {
 
 struct ResolvedSpeculation {
     std::string source; // "local tune <path>" | "manifest <path> (<gpu class>)" | ""
+    // SHA-256 (lowercase hex) of what the profile was read from: the local tune's file, the
+    // manifest's, or the drafter registry's (Registry::source_sha256); empty when none was found.
+    std::string sha256;
     Profile profile;    // the choices (and, for a local tune, its drafter records)
     // Drafter name -> artifact path (separate drafters) or "component:<name>" (inside the target).
     std::map<std::string, std::string> drafters;

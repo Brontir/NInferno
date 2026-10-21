@@ -102,7 +102,23 @@ int main() {
     stats.decode_row_rounds       = 6;
     stats.waiting_requests        = 2;
     stats.materializing_requests  = 5;
-    const std::string metrics     = ninferno::serve::make_prometheus_metrics(stats, 3);
+    ninferno::ModelMetadata fingerprinted;
+    fingerprinted.decision_fingerprint = "nf1-0123456789abcdef";
+    fingerprinted.decision_manifest    = "nm1-fedcba9876543210";
+    const std::string metrics = ninferno::serve::make_prometheus_metrics(stats, 3, fingerprinted);
+    failures += check(
+        metrics.find("# TYPE ninferno_decision_fingerprint_info gauge\n"
+                     "ninferno_decision_fingerprint_info{fingerprint=\"nf1-0123456789abcdef\","
+                     "manifest=\"nm1-fedcba9876543210\",schema=\"ninferno-fingerprint/1\"} 1\n") !=
+                std::string::npos &&
+            ninferno::serve::make_prometheus_metrics(stats, 3, ninferno::ModelMetadata{})
+                    .find("ninferno_decision_fingerprint_info") == std::string::npos,
+        "/metrics must carry the decision fingerprint as an info gauge when there is one");
+    const Json models = Json::parse(ninferno::serve::make_models_list("m", 0, 4096, fingerprinted));
+    failures += check(
+        models.at("data").at(0).at("meta").at("decision_fingerprint") == "nf1-0123456789abcdef" &&
+            models.at("data").at(0).at("meta").at("decision_manifest") == "nm1-fedcba9876543210",
+        "/v1/models meta must carry the decision fingerprint and manifest");
     failures +=
         check(metrics.find("# TYPE llamacpp:prompt_tokens_total counter\n"
                            "llamacpp:prompt_tokens_total 7\n") != std::string::npos &&

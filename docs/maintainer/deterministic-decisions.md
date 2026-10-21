@@ -18,8 +18,17 @@ This page states the rule and its target. The engine does not meet all of it yet
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
-- the TU116/117 exception, the PCI-ID reference table, the speed labels, the kernel hash on
-  constants and the fingerprint below do not exist yet.
+- the TU116/117 exception, the PCI-ID reference table, the speed labels and the kernel hash on
+  constants do not exist yet;
+- the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
+  `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the build,
+  the requested options, the route table, dense-tune files, speculation profile and drafter
+  registry by content, the decision environment variables that are set, the plan startup resolved
+  (context, chunk, KV, cached states, Host tier, MoE offload, speculative windows, route
+  breakpoints) and the violations of this page present (taint). It does not yet cover the PCI-ID
+  reference facts, plan levels (there are none: the plan is the free-memory result itself), the
+  constants and the kernel hash, nor the route each shape took: two runs with equal fingerprints
+  read the same inputs, which is not yet proof of the same decisions.
 
 Each gap is closed in its own change, which updates this list.
 
@@ -92,8 +101,13 @@ The fingerprint is a hash of the following, plus a digest of the decision manife
 - the constants;
 - the kernel hash.
 
-The engine is to print it at startup, export it in `/metrics` and write it into every bench row.
-Two runs with the same fingerprint must make the same decisions.
+The engine prints it at startup (`fingerprint | nf1-… | manifest nm1-… | ninferno-fingerprint/1`;
+the canonical text and the taint at debug level), exports it in `/metrics`
+(`ninferno_decision_fingerprint_info`) and `/v1/models` (`meta.decision_fingerprint`,
+`meta.decision_manifest`), writes it into the server-start record of the request log, and
+`tools/bench/perf_matrix.py` writes it into every bench row. Two runs with the same fingerprint
+must make the same decisions. The manifest, `nm1-…`, hashes the plan alone: an option change moves
+the fingerprint only, a plan change both.
 
 ## What will be promised
 

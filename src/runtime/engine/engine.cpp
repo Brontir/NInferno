@@ -1,22 +1,32 @@
 #include "ninferno/engine.h"
 
+#include "artifact/reader.h"
 #include "core/device.h"
+#include "core/device_class.h"
+#include "core/hex.h"
 #include "core/nvtx.h"
 #include "core/startup.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
+#include "ninferno/ops/route_table.h"
+#include "ops/generic/generic_gemm.h"
 #include "runtime/engine/backend.h"
+#include "runtime/engine/decision_fingerprint.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/model_instance.h"
 #include "structured/constraint.h"
 #include "structured/output_constraint.h"
 #include "structured/schema_support.h"
 
+#include <cuda_runtime_api.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -53,6 +63,71 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     resolved.output                            = options.output;
     resolved.constraint                        = std::move(options.constraint);
     return resolved;
+}
+
+// The id (hex) of the artifact at `path`; "unreadable: <why>" when it cannot be opened again.
+std::string artifact_id_of(const std::filesystem::path& path) {
+    try {
+        const artifact::Reader reader(path);
+        const auto& id = reader.artifact_id();
+        return hex_encode(id.data(), id.size());
+    } catch (const std::exception& error) { return std::string("unreadable: ") + error.what(); }
+}
+
+// The decision fingerprint of a constructed Engine (runtime/engine/decision_fingerprint.h): the
+// facts, sources and environment are collected here, where CUDA and files may be read, and handed
+// to the pure collectors. `requested`: the options as the caller passed them; `resolved`:
+// Engine::options() after the plan.
+void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
+                           const EngineOptions& resolved, const MemorySummary& memory) {
+    runtime::DecisionInputs in;
+    int driver_version = 0;
+    if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
+        (void)cudaGetLastError();
+        driver_version = 0;
+    }
+    in.facts   = runtime::facts_of(device_class(resolved.device), build_features(), driver_version);
+    in.build   = runtime::build_of();
+    in.options = runtime::options_of(
+        requested, artifact_id_of(requested.artifact_path), load.prefill_signature,
+        requested.speculative.drafter.empty() ? std::string()
+                                              : artifact_id_of(requested.speculative.drafter));
+    for (const auto& [key, value] : requested.speculative.decision_sources) {
+        in.sources[key] = value;
+    }
+    const ops::RouteTableStatus routes = ops::route_table_status();
+    std::string route_table;
+    if (routes.loaded) {
+        in.sources["route_table"] = std::filesystem::path(routes.path).filename().string() +
+                                    " sha256:" + routes.content_sha256;
+        in.sources["route_table.class"] = routes.gpu_class;
+        route_table                     = routes.content_sha256;
+        if (!routes.lender_sha256.empty()) {
+            in.sources["route_table.lenders"] = routes.lender_sha256;
+            route_table += " + " + routes.lender_sha256;
+        }
+    } else {
+        in.sources["route_table"] = "none";
+    }
+    for (auto& [key, value] : ops::detail::generic::dense_tune_sources()) {
+        in.sources[key] = std::move(value);
+    }
+    in.env   = runtime::env_of([](const char* name) -> std::optional<std::string> {
+        const char* value = std::getenv(name);
+        return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
+    });
+    in.plan  = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table);
+    in.taint = runtime::taint_of(in);
+    const runtime::DecisionFingerprint fingerprint = runtime::decision_fingerprint(in);
+    load.decision_fingerprint                      = fingerprint.value;
+    load.decision_manifest                         = fingerprint.manifest;
+    load.decision_canonical                        = fingerprint.canonical;
+    load.metadata.decision_fingerprint             = fingerprint.value;
+    load.metadata.decision_manifest                = fingerprint.manifest;
+    load.decision_taint.clear();
+    for (const auto& [what, detail] : in.taint) {
+        load.decision_taint.push_back(what + "=" + detail);
+    }
 }
 
 std::string context_capacity_error(std::size_t prompt_tokens, std::uint32_t max_context) {
@@ -150,8 +225,11 @@ GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView
 class Engine::Impl {
 public:
     explicit Impl(EngineOptions engine_options)
-        : options(runtime::normalize_engine_options(std::move(engine_options))),
-          device(initialize_device(options)) {
+        : Impl(engine_options, runtime::normalize_engine_options(engine_options)) {}
+
+    // `requested`: the options as the caller passed them, which the decision fingerprint records.
+    Impl(const EngineOptions& requested, EngineOptions normalized)
+        : options(std::move(normalized)), device(initialize_device(options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
@@ -167,6 +245,7 @@ public:
         load                = backend->load_summary();
         load.cuda_sync_mode = device.sync_mode();
         sampling_defaults   = backend->sampling_defaults();
+        fingerprint_decisions(load, requested, options, memory);
     }
 
     ~Impl() noexcept {

@@ -5,6 +5,7 @@
 // not have, duplicates) and tolerance of keys no consumer reads. Every shipped routes/*.json must
 // pass the same validation.
 #include "core/device_class.h"
+#include "core/sha256.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_table.h"
@@ -128,6 +129,11 @@ int similar_default() {
                       "a problem of the own table keeps its route");
     failures += check(route_or_none(generic::table_route(lent, 4, false)) == "rmma.m1.n1.w2x2",
                       "a problem the own table lacks takes the similar chip's entry");
+    failures +=
+        check(s.lender_sha256 ==
+                  similar.front() + " " +
+                      ninferno::file_sha256_hex(dir / (similar.front() + ".json")).value_or(""),
+              "the status names each lending table by its content: " + s.lender_sha256);
     failures += check(s.borrowed_entries == 1 && s.borrowed_from.find(similar.front()) == 0 &&
                           s.message.find("from the next nearest (" + similar.front() + " 1)") != std::string::npos,
                       "the status says what was borrowed from whom: " + s.message);
@@ -200,10 +206,17 @@ int main(int argc, char** argv) {
                  "k": 5120, "route_as": [[48, 96, 192]], "evidence_us": [[48, 1.0, 0.5]]},
                 {"format": "fp8", "compute": "a8", "n": 5120, "k": 6144,
                  "route_as": [[20, 40, 64]]})");
-    const auto status = ninferno::ops::load_route_table(write_file("good", good));
+    const auto good_path = write_file("good", good);
+    const auto status    = ninferno::ops::load_route_table(good_path);
     failures += check(status.loaded && status.entries == 3 && status.generic_entries == 1 &&
                           status.route_as_entries == 3,
                       "a valid table loads, both dialects counted: " + status.message);
+    // The decision fingerprint names the table by the bytes that were parsed.
+    failures +=
+        check(status.content_sha256.size() == 64 &&
+                  status.content_sha256 == ninferno::file_sha256_hex(good_path).value_or("") &&
+                  status.lender_sha256.empty(),
+              "the status carries the SHA-256 of the file's bytes: " + status.content_sha256);
     failures += check(route_or_none(generic::table_route(q8, 1, false)) == "rmma.m1.n1.w1x8",
                       "T=1 takes the first band");
     failures += check(route_or_none(generic::table_route(q8, 16, false)) == "rmma.m1.n1.w1x4",

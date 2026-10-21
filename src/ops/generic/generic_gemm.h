@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -638,6 +639,11 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream);
 // Off until enabled: the engine enables it for a loaded model, tests and benches keep the heuristic.
 void enable_dense_tune(bool on);
 void clear_dense_tune();
+// The files the tuner's choices come from, for the decision fingerprint: "dense_tune.shipped",
+// the release's routes/tuner/dense_tune.json, and "dense_tune.user", the user's own cache, which
+// is read only while NINFERNO_DENSE_TUNE times ("absent" when it does not exist yet). Each value
+// is "<file name> sha256:<hex of its bytes>". Empty while the tuner is off.
+[[nodiscard]] std::map<std::string, std::string> dense_tune_sources();
 
 // Runs one call on an explicit route (the tuner and tests), or on select_route's choice.
 // released (when given): whether the launch lets the next kernel start early (Call::release_next

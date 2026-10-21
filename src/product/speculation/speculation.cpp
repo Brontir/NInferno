@@ -4,11 +4,14 @@
 #include "spec/fingerprint.h"
 #include "spec/gpu_identity.h"
 #include "spec/manifest.h"
+#include "spec/registry.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <iterator>
+#include <map>
 #include <set>
 #include <string>
 
@@ -41,6 +44,23 @@ bool has_proposal_head(const std::filesystem::path& artifact) {
 double watchdog_floor(double measured) noexcept { return measured > 1.0 ? measured : 1.2; }
 
 namespace {
+
+// What the decision fingerprint names the resolved speculation by (SpeculativeOptions::
+// decision_sources): the profile's file and the drafter registry, by content.
+std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpeculation& resolved) {
+    std::map<std::string, std::string> out;
+    const bool local = resolved.source.starts_with("local tune ");
+    out["speculation.profile"] =
+        resolved.sha256.empty()
+            ? std::string(resolved.found() ? "built-in default" : "none")
+            : std::string(local ? "local tune" : "published") + " sha256:" + resolved.sha256;
+    try {
+        out["drafter_registry"] =
+            std::string(std::getenv("NINFERNO_DRAFTER_REGISTRY") != nullptr ? "file" : "built-in") +
+            " sha256:" + spec::Registry::builtin().source_sha256();
+    } catch (const std::exception&) { out["drafter_registry"] = "unreadable"; }
+    return out;
+}
 
 bool drafter_present(const spec::Choice& choice, const spec::ResolvedSpeculation& resolved) {
     return backend_of(choice.config.mode) != SpeculativeBackend::None &&
@@ -186,6 +206,7 @@ std::optional<SpeculativeOptions> speculation_of(const spec::Choice& choice,
                          "another one");
     }
     out.context_limit = resolved.profile.context_limit; // as the served engine's
+    out.decision_sources = decision_sources_of(resolved);
     return out;
 }
 
@@ -290,6 +311,7 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     }
     out.engine.load = engine_load(profile.load, speculative_window(out.engine));
     out.engine.context_limit = profile.context_limit;
+    out.engine.decision_sources = decision_sources_of(resolved);
     for (std::string& note : fit_draft_widths(out.engine, can)) {
         out.notes.push_back(std::move(note));
     }

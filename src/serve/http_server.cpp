@@ -616,7 +616,7 @@ void HttpServer::register_routes() {
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
         const ninferno::RuntimeStats stats =
             service_ != nullptr ? service_->runtime_stats() : ninferno::RuntimeStats{};
-        res.set_content(make_prometheus_metrics(stats, active_requests_.load()),
+        res.set_content(make_prometheus_metrics(stats, active_requests_.load(), model_metadata_),
                         "text/plain; version=0.0.4");
     });
     server_.Get(

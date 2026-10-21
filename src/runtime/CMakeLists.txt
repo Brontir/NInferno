@@ -3,11 +3,32 @@ add_library(ninferno_runtime_support STATIC
   engine/admission_policy.cpp
   engine/context_cache/context_cost.cpp
   engine/context_cache/context_cost_defaults.cpp
+  engine/decision_fingerprint.cpp
   engine/kv_capacity.cpp
   engine/public_types.cpp
 )
 ninferno_internal_includes(ninferno_runtime_support)
 target_link_libraries(ninferno_runtime_support PUBLIC ninferno_core PRIVATE ninferno::json ninferno::cudart)
+# The build section of the decision fingerprint: the commit the tree was configured at ("unknown"
+# outside a git checkout; a commit made since without reconfiguring is not seen), and the build
+# options, defined on this source alone so that no other object rebuilds when they change.
+find_package(Git QUIET)
+set(NINFERNO_GIT_COMMIT "unknown")
+if(GIT_FOUND)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    OUTPUT_VARIABLE ninferno_git_commit OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE ninferno_git_result ERROR_QUIET)
+  if(ninferno_git_result EQUAL 0 AND ninferno_git_commit MATCHES "^[0-9a-f]+$")
+    set(NINFERNO_GIT_COMMIT "${ninferno_git_commit}")
+  endif()
+endif()
+set(ninferno_embed_ptx 0)
+if(NINFERNO_CUDA_EMBED_PTX)
+  set(ninferno_embed_ptx 1)
+endif()
+set_source_files_properties(engine/decision_fingerprint.cpp PROPERTIES COMPILE_DEFINITIONS
+  "NINFERNO_VERSION_STRING=\"${NINFERNO_VERSION_STRING}\";NINFERNO_GIT_COMMIT=\"${NINFERNO_GIT_COMMIT}\";NINFERNO_CUDA_EMBED_PTX=${ninferno_embed_ptx}")
 
 # Public Engine and common contracts; model execution remains in the model layer.
 add_library(ninferno_engine STATIC

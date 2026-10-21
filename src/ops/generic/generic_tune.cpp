@@ -45,6 +45,7 @@
 // NINFERNO_DENSE_TUNE_CACHE names the file.
 
 #include "core/arena.h"
+#include "core/sha256.h"
 #include "core/sys.h"
 #include "core/cache_file.h"
 #include "core/device.h"
@@ -770,6 +771,31 @@ void enable_dense_tune(bool on) {
     // A misspelt mode is refused at load, not at the first projection the tuner sees.
     if (on) { (void)tune_mode("NINFERNO_DENSE_TUNE"); }
     g_enabled.store(on, std::memory_order_relaxed);
+}
+
+std::map<std::string, std::string> dense_tune_sources() {
+    std::map<std::string, std::string> out;
+    if (!g_enabled.load(std::memory_order_relaxed)) { return out; }
+    const auto named = [](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto digest = file_sha256_hex(path);
+        if (!digest) { return std::nullopt; }
+        return path.filename().string() + " sha256:" + *digest;
+    };
+    if (const std::string dir = route_table_dir(); !dir.empty()) {
+        if (auto shipped = named(std::filesystem::path(dir) / "tuner" / "dense_tune.json")) {
+            out["dense_tune.shipped"] = std::move(*shipped);
+        }
+    }
+    TuneMode mode = TuneMode::Off;
+    try {
+        mode = tune_mode("NINFERNO_DENSE_TUNE");
+    } catch (const std::invalid_argument&) {}
+    if (mode != TuneMode::Off) {
+        const auto path        = cache_path();
+        auto user              = path.empty() ? std::nullopt : named(path);
+        out["dense_tune.user"] = user ? std::move(*user) : std::string("absent");
+    }
+    return out;
 }
 
 void clear_dense_tune() {

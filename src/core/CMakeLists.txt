@@ -19,6 +19,7 @@ add_library(ninferno_core STATIC
   ggml_frag.cpp
   decode_graph.cpp
   debug_poison.cpp
+  sha256.cpp
   debug_fault.cu
 )
 ninferno_internal_includes(ninferno_core)

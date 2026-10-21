@@ -46,6 +46,11 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
         }
         meta["published_activations"] = published;
     }
+    // The decision fingerprint the engine printed at startup (LoadSummary::decision_fingerprint).
+    if (!metadata.decision_fingerprint.empty()) {
+        meta["decision_fingerprint"] = metadata.decision_fingerprint;
+        meta["decision_manifest"]    = metadata.decision_manifest;
+    }
     return Json{{"id", model_id},
                 {"object", "model"},
                 {"created", created},
@@ -244,7 +249,8 @@ std::string make_props(const std::string& model_id, std::uint32_t max_context,
 }
 
 std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
-                                    std::uint32_t http_active_requests) {
+                                    std::uint32_t http_active_requests,
+                                    const ninferno::ModelMetadata& metadata) {
     std::string out;
     const auto metric = [&out](const char* name, const char* type, const char* help,
                                double value) {
@@ -279,6 +285,15 @@ std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
            static_cast<double>(stats.materializing_requests));
     metric("ninferno_http_active_requests", "gauge", "HTTP requests being served.",
            static_cast<double>(http_active_requests));
+    // An info gauge: the value is 1, the labels carry the fingerprint (hex and dashes only, no
+    // label escaping needed).
+    if (!metadata.decision_fingerprint.empty()) {
+        out += "# HELP ninferno_decision_fingerprint_info Decision fingerprint of the running "
+               "engine.\n# TYPE ninferno_decision_fingerprint_info gauge\n"
+               "ninferno_decision_fingerprint_info{fingerprint=\"" +
+               metadata.decision_fingerprint + "\",manifest=\"" + metadata.decision_manifest +
+               "\",schema=\"ninferno-fingerprint/1\"} 1\n";
+    }
     return out;
 }
 

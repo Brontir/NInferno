@@ -396,7 +396,7 @@ prefix so that a following compatible turn can reuse it.
 | `GET /health` | Engine readiness |
 | `GET /v1/models` | configured OpenAI model alias, effective `max_model_len`, and a llama.cpp-compatible `meta` object |
 | `GET /props` | llama.cpp-style server properties (model alias, context, training context, vocabulary size, slots) |
-| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests` |
+| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauge `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` (value 1) |
 | `GET /v1/models/{id}` | lookup of the configured alias, `max_model_len`, and `meta` object |
 | `POST /v1/chat/completions` | OpenAI-style chat generation |
 | `POST /v1/responses` | OpenAI Responses Core generation, state, typed Items, and SSE |
@@ -487,6 +487,8 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `n_params` | total logical weight elements across the registered artifact tensors |
 | `size` | encoded weight payload bytes of the registered artifact |
 | `ftype` | encoded tensor formats of the artifact, joined with `+` when mixed |
+| `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
+| `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
 
 `GET /v1/models/{id}` returns the same object for the single configured alias and `404` for any
 other id.
@@ -1676,7 +1678,7 @@ Serve writes human-readable operational records to stderr as
 
 | Event | Contents |
 |---|---|
-| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; the decision fingerprint (`decision`: fingerprint, manifest, taint and canonical text); resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |

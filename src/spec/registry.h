@@ -102,6 +102,10 @@ public:
     // and "revision" (a hash of its content).
     [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
 
+    // SHA-256 (lowercase hex) of the text builtin() parsed (the compiled-in registry or the file
+    // at $NINFERNO_DRAFTER_REGISTRY); empty for a registry parse() built.
+    [[nodiscard]] const std::string& source_sha256() const noexcept { return source_sha256_; }
+
     // The entry naming `repo` exactly (case-insensitive).
     [[nodiscard]] const ModelEntry* by_repo(std::string_view repo) const;
     // The entry covering a model whose declared base-model lineage contains one of its lineage
@@ -130,6 +134,7 @@ private:
     std::vector<KindInfo> kinds_;
     std::string published_;
     std::uint64_t version_ = 0;
+    std::string source_sha256_;
 };
 
 // A model entry from a bundle declaration or a registry "models" item.
