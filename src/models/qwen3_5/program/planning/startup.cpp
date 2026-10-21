@@ -701,6 +701,12 @@ WorkspacePlan build_workspace_plan(const execution::Parameters& parameters,
                                          {0, plan.capacity}, width, width, batch)));
                     for (const auto& block : parameters.draft->layers) {
                         add_scratch(layout, block.output, tokens, tokens);
+                        // Q/K/V not one RowSplit Q8 parent: the generic bank (draft.cpp, fused_q8).
+                        if (block.query_key_value.weight.qtype != QType::Q8_G32_FP16 ||
+                            block.query_key_value.weight.layout != QuantLayout::RowSplit) {
+                            scratch(layout, ops::segmented_projection_workspace_capacity_bytes(
+                                                block.query_key_value_bank, tokens, tokens));
+                        }
                     }
                 }
                 {

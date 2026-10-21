@@ -62,8 +62,8 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
 bool cache_current(const std::filesystem::path& artifact, const std::string& recipe) {
     const int revision = cached_revision(artifact);
     if (revision >= kCacheRevision) { return true; }
-    return revision >= 3 &&
-           !(recipe == "qwen3_5_published" && unquantized_drafter_attention(artifact));
+    (void)recipe;
+    return revision >= 3 && !unquantized_drafter_attention(artifact);
 }
 
 void stamp_revision(const std::filesystem::path& artifact) {
