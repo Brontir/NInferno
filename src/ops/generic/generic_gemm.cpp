@@ -14,6 +14,7 @@
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/vec_verify_rule.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 
 #include <cuda_bf16.h>
@@ -564,8 +565,12 @@ std::int32_t vec_rule_max_tokens() {
     return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
 
+// Q6_K takes the register MMA from T = 2 where tensor mma.sync runs (vec_verify_rule.h: the X6
+// matrices).
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
+    const std::int32_t widest = vec_rule_max_tokens();
+    return tokens >= 2 && tokens <= widest && vec_call(w, policy, tokens) &&
+           vec_verify_format(w.qtype, widest == kVecRuleMaxTokens);
 }
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the

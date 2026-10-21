@@ -31,6 +31,11 @@ ninferno_add_test(ninferno_machine_facts_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
 
+# The formats ggml's vector kernel takes by rule at T = 2..4 (ops/generic/vec_verify_rule.h). No GPU.
+ninferno_add_test(ninferno_vec_verify_rule_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_vec_verify_rule.cpp"
+  LIBRARIES ninferno_core)
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 
