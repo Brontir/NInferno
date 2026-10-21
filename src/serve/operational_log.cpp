@@ -579,6 +579,29 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                   product::format_pretty_count(memory.kv_capacity_max_page_groups),
                   product::format_pretty_bytes(memory.runtime_reservation_bytes),
                   product::format_pretty_bytes(memory.available_after_startup_bytes));
+    // What the checkpoint's publisher validated its kept matrices with, against the mode in use.
+    if (const auto& model = service.load_summary().metadata; !model.published_activations.empty()) {
+        std::string widths;
+        for (auto it = model.published_activations.rbegin(); it != model.published_activations.rend();
+             ++it) {
+            widths += (widths.empty() ? "" : ", ") +
+                      (it->first == 0 ? std::string("unnamed") : std::to_string(it->first) + "-bit") +
+                      " on " + std::to_string(it->second);
+        }
+        const auto below = engine.activations == ninferno::ActivationMode::Int8
+                               ? model.below_published_activations_int8
+                           : engine.activations == ninferno::ActivationMode::Fast
+                               ? model.below_published_activations
+                               : 0;
+        if (below > 0) {
+            logger_->warn("activations | the publisher validated {} matrices; {} allows {} of them "
+                          "fewer bits where this card has the route (--activations exact keeps the "
+                          "published width)",
+                          widths, product::activation_mode_name(engine.activations), below);
+        } else {
+            logger_->info("activations | the publisher validated {} matrices", widths);
+        }
+    }
     // An explicit context with an automatic KV capacity (several slots, no --kv-capacity): every
     // slot's full context when it fits, else the most that does.
     if (const auto shortfall = render_kv_shortfall(memory, engine.max_concurrency)) {

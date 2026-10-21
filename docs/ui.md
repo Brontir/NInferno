@@ -32,8 +32,9 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 | Option | Default | Meaning |
 |---|---|---|
 | `--version` | | Print the version and exit. |
-| `--listen ADDR` | `127.0.0.1` | Address to bind. Anything but a loopback address opens the page to the network **with no password**: whoever reaches it can start models on your GPUs. |
+| `--listen ADDR` | `127.0.0.1` | Address to bind. On another address, other machines need the access key: the log prints `http://ADDR:PORT/?key=KEY`, which opens the page and keeps the key in a cookie (`ninferno_ui_key_PORT`: UIs on other ports keep their own); scripts send `Authorization: Bearer KEY`. Plain HTTP: use a trusted network, or put TLS in front; a proxy on this machine must send `X-Forwarded-For` (else its requests count as local), and the cookie reaches other services on the same host name (marked `Secure` when the proxy sends `X-Forwarded-Proto: https`). |
 | `--port N` | `8090` | Port. |
+| `--access-key-file F` | `$NINFERNO_UI_KEY`, else made once into `<hub cache>/ninferno-ui/access-key` | The access key: F's first line, 16–256 characters of `A-Z a-z 0-9 . _ ~ -`. |
 | `--no-browser` | off | Do not open the page in a browser; only print its address. |
 | `--serve PATH` | beside `ninferno-ui` | The `ninferno-serve` binary to start. |
 | `--hub-cache DIR` | `$HF_HUB_CACHE`, `$HF_HOME/hub`, `$XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub` | Where downloads go. |
@@ -42,6 +43,26 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 | `--keep-originals` | off | Keep a model's download after it was converted (by default it is removed once the converted model loaded; nothing reads it again). |
 | `--catalog-url URL` | `$NINFERNO_CATALOG_URL`, else built in | The recommended models from a `catalog.json` at URL, read at start and every 6 hours. |
 | `--chat-ui DIR` | the bundled one | The chat window's files (llama.cpp's llama-ui). |
+
+Behind a TLS proxy, give the UI a key (`NINFERNO_UI_KEY` or `--access-key-file F`): without one
+it refuses every proxied request, since its default 127.0.0.1 listener makes no key of its own.
+The proxy must forward the browser's `Host` header (the page refuses a
+change whose `Origin` names another host than `Host`; `X-Forwarded-Host` is not trusted, since
+any client can send it), and send `X-Forwarded-For` and `X-Forwarded-Proto`. nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8090;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Caddy's `reverse_proxy` keeps `Host` and sends both headers by default
+(`ui.example.com { reverse_proxy 127.0.0.1:8090 }`; spelled out: `header_up Host {hostport}`).
+With `--listen 0.0.0.0` (or `::`) the log prints the URL with this machine's host name; where
+that name does not resolve, use the machine's address.
 
 The models the page starts inherit its environment: `NINFERNO_API_KEY` set for `ninferno-ui`
 makes them ask for that key, and the page's proxy to them sends it. The page checks the release

@@ -106,8 +106,14 @@ struct RecipeChoice {
 // a file mixing NVFP4 with other types takes the plain recipe (note says why).
 // A directory is judged by its config.json alone, so a consumed checkpoint still answers. An
 // architecture without a recipe throws naming the supported ones.
+// `mtp`: the conversion keeps the checkpoint's MTP layers (converts_mtp), so a recipe is planned
+// with them; without, a recipe the text alone fits is chosen whatever the MTP layers hold.
 [[nodiscard]] RecipeChoice choose_recipe(const std::filesystem::path& checkpoint,
-                                         GgufRequest request = GgufRequest::Model);
+                                         GgufRequest request = GgufRequest::Model, bool mtp = true);
+
+// Whether a conversion with `options` keeps a checkpoint's MTP layers: --components names mtp, or
+// none were named (components_auto) and the checkpoint carries them.
+[[nodiscard]] bool converts_mtp(const ConvertOptions& options);
 
 // The architectures the native converter has adapters and official recipes for.
 [[nodiscard]] const std::string& supported_architectures_text();

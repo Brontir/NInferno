@@ -16,9 +16,15 @@ Every conversion runs without --recipe, as a user would:
                          note, instead of a refusal for missing NVFP4 tensors; the MoE has no
                          unquantized recipe, so the conversion is then refused as NInferno's own
                          quantization (and runs with --maintainer-quantize);
-  qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: the engine's NVFP4 MoE
-                         runs all four expert matrices in NVFP4 or none, so this is refused, by
-                         the shared expert's name, at conversion;
+  qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: qwen3_6_35b_a3b_nvfp4 has
+                         no NVFP4 source for the shared expert, so qwen3_5_published runs it as
+                         published (routed NVFP4, shared BF16: the generic MoE op), with a note;
+  qwen-cached-text       NVFP4 experts with FP8 MTP attention: --components=text plans the text
+                         alone and keeps qwen3_6_35b_a3b_nvfp4 (converted into the checkpoint's
+                         cache); a default conversion keeps the MTP layers, which that text-only
+                         artifact proves nothing about, so the planner runs and chooses
+                         qwen3_5_published; with mtp recorded in the cached artifact's report,
+                         its recipe answers without planning;
   gemma-bf16-layer       a Gemma 4 MoE checkpoint whose layer 1 is BF16 throughout (its experts
                          too) while layer 0 is NVFP4 and quantization_config ignores nothing: layer
                          0 imported as NVFP4, layer 1 quantized from BF16, per site;
@@ -84,6 +90,21 @@ def qwen_moe(root: Path, *, nvfp4: bool, quantization_config, bf16_shared=False)
     if quantization_config is not None:
         config["quantization_config"] = quantization_config
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+def fp8_mtp_attention(root: Path) -> None:
+    """The MTP layer's attention projections published as FP8 (channel scales)."""
+    rng = np.random.default_rng(27)
+    encode = fmt.enc_fp8("channel", "BF16")
+
+    def change(t):
+        for name in [n for n in t if n.startswith("mtp.layers.0.self_attn.")
+                     and n.endswith("_proj.weight")]:
+            n, k = t[name][1]
+            del t[name]
+            for suffix, value in encode(n, k, rng).q.items():
+                t[name[:-len(".weight")] + suffix] = value
+    rewrite_checkpoint(root, change)
 
 
 def gemma_mixed(root: Path) -> None:
@@ -317,9 +338,55 @@ def main() -> int:
 
         root = work / "qwen-bf16-shared"
         qwen_moe(root, nvfp4=True, quantization_config=ignore_only_head, bf16_shared=True)
-        run = convert(native, repository, root, work / "qwen-bf16-shared.ninferno")
-        case("qwen-bf16-shared", [] if run.returncode and "shared_expert" in run.stderr else [
-            f"a BF16 shared expert next to NVFP4 routed experts was not refused by name (rc {run.returncode})"])
+        out = work / "qwen-bf16-shared.ninferno"
+        run = convert(native, repository, root, out)
+        log = run.stdout + run.stderr
+        errors = []
+        if run.returncode:
+            errors.append(f"conversion failed: {log.strip().splitlines()[-1][:300]}")
+        else:
+            if "recipe qwen3_5_published (chosen" not in log or "does not fit this checkpoint" not in log:
+                errors.append(f"expected qwen3_5_published with a note: {[l for l in log.splitlines() if 'recipe' in l]}")
+            banks = {"routed": set(), "shared": set()}
+            for m in methods(out):
+                names = m["parameters"]
+                if (any("/moe/" in p for p in names) and not any("mtp" in p for p in names)
+                        and not any(p.endswith(("/router", "/shared_score")) for p in names)):
+                    kind = "shared" if any("/moe/shared/" in p for p in names) else "routed"
+                    banks[kind].add((m["format"], m["method"]))
+            if banks["routed"] != {("nvfp4", "import_encoded")} or not banks["shared"] or \
+                    any(format != "bf16" for format, _ in banks["shared"]):
+                errors.append(f"expected every routed bank NVFP4 kept and the shared expert BF16: {banks}")
+        case("qwen-bf16-shared", errors)
+
+        root = work / "qwen-cached-text"
+        qwen_moe(root, nvfp4=True, quantization_config=ignore_only_head)
+        fp8_mtp_attention(root)
+        cached = root / ".ninferno-cache" / "qwen3_6_35b_a3b_nvfp4.ninferno"
+        cached.parent.mkdir()
+        errors = []
+
+        def chose(run, want, label, converts=True):
+            log = run.stdout + run.stderr
+            if f"recipe {want} (chosen" not in log:
+                errors.append(f"{label}: expected {want}: {[l for l in log.splitlines() if 'recipe' in l]}")
+            elif converts and run.returncode:
+                errors.append(f"{label}: conversion failed: {log.strip().splitlines()[-1][:300]}")
+
+        chose(convert(native, repository, root, cached, "--components=text"),
+              "qwen3_6_35b_a3b_nvfp4", "--components=text")
+        report_path = Path(str(cached) + ".conversion.json")
+        if report_path.exists():
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if sorted(report["components"]) != ["text"]:
+                errors.append(f"text-only report components: {sorted(report['components'])}")
+            chose(convert(native, repository, root, work / "qwen-cached-text.ninferno"),
+                  "qwen3_5_published", "default after a text-only cache")
+            report["components"]["mtp"] = {}
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            chose(convert(native, repository, root, work / "qwen-cached-mtp.ninferno"),
+                  "qwen3_6_35b_a3b_nvfp4", "default with mtp cached", converts=False)
+        case("qwen-cached-text", errors)
 
         root = work / "gemma-bf16-layer"
         gemma_mixed(root)
