@@ -1388,7 +1388,7 @@ int test_resolve() {
     failures += check(r.found() && !r.source.starts_with("local tune") &&
                           std::any_of(r.notes.begin(), r.notes.end(),
                                       [](const std::string& n) {
-                                          return n.rfind("--spec-profile ", 0) == 0;
+                                          return n.rfind("the named tune ", 0) == 0;
                                       }),
                       "an unreadable named tune is a note, and the published profile runs");
     // The tune measured no load bounds: the published ones of its drafter kind apply.

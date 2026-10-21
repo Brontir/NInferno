@@ -438,8 +438,8 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         // alone decodes plainly without --spec).
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
-        // The tune the user ran from this UI (/api/tune) for this artifact: named, since the
-        // server reads none by itself.
+        // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
+        // by its artifact path: named, since the server reads none by itself.
         std::error_code ec;
         const fs::path tune = model + ".spec_profile.json";
         if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {

@@ -7,6 +7,7 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -229,12 +230,14 @@ void raise_choice(Choice& choice, const char* name, const ResolvedSpeculation& r
     if (!choice.config.enabled()) { return; }
     const double raised = foreign_floor(resolved, choice.config, choice.floor_tokens_per_round);
     if (raised <= choice.floor_tokens_per_round) { return; }
-    notes.push_back(std::string(name) + " " + choice.config.label() + ": watchdog floor " +
-                    std::to_string(choice.floor_tokens_per_round) + " -> " +
-                    std::to_string(raised) + " tokens a round (" +
-                    (resolved.floor_sources.is_array()
-                         ? "the largest this model measured on any GPU"
-                         : "the registry's median for it: the model was measured nowhere") +
+    const bool own_model = resolved.floor_sources.is_array() &&
+                           floor_ceiling(resolved.floor_sources, choice.config) > 0.0;
+    char text[96];
+    std::snprintf(text, sizeof(text), "%.2f -> %.2f", choice.floor_tokens_per_round, raised);
+    notes.push_back(std::string(name) + " " + choice.config.label() + ": watchdog floor " + text +
+                    " tokens a round (" +
+                    (own_model ? "the largest this model measured for it on any GPU"
+                               : "the registry's median for it: this model measured it nowhere") +
                     "; the profile was not measured on this GPU)");
     choice.floor_tokens_per_round = raised;
 }
@@ -242,14 +245,14 @@ void raise_choice(Choice& choice, const char* name, const ResolvedSpeculation& r
 } // namespace
 
 double floor_ceiling(const Json& profiles, const SpecConfig& config) {
-    if (!config.enabled()) { return 0.0; }
+    if (!config.enabled() || config.adaptive()) { return 0.0; }
     std::vector<double> floors;
     collect_floors(profiles, config, floors);
     return floors.empty() ? 0.0 : *std::max_element(floors.begin(), floors.end());
 }
 
 double registry_floor_median(const SpecConfig& config) {
-    if (!config.enabled()) { return 0.0; }
+    if (!config.enabled() || config.adaptive()) { return 0.0; }
     std::vector<double> floors;
     for (const auto& model : Registry::builtin().models()) {
         collect_floors(model.profiles, config, floors);
@@ -262,10 +265,10 @@ double registry_floor_median(const SpecConfig& config) {
 
 double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
     if (!resolved.foreign_floors || !config.enabled()) { return own; }
-    const double bound = resolved.floor_sources.is_array()
+    const double model = resolved.floor_sources.is_array()
                              ? floor_ceiling(resolved.floor_sources, config)
-                             : registry_floor_median(config);
-    return std::max(own, bound);
+                             : 0.0;
+    return std::max(own, model > 0.0 ? model : registry_floor_median(config));
 }
 
 void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
@@ -380,7 +383,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             return out;
         }
     } else if (!tuned_path.empty()) {
-        out.notes.push_back("--spec-profile " + tuned_path.string() + ": " + why);
+        out.notes.push_back("the named tune " + tuned_path.string() + ": " + why);
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 
@@ -394,6 +397,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         std::string origin;
         std::string digest;
         const Json* profiles  = &manifest_profiles(*manifest, artifact, origin, &digest);
+        out.floor_sources     = *profiles; // also for a built-in default the caller falls to
         const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
         if (published == nullptr) {
             out.notes.push_back(origin + " has no profile for " + gpu_class +
@@ -436,6 +440,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         for (const char* name : {"mtp", "dflash", "dflash2"}) {
             if (components.contains(name)) { available.emplace_back(name); }
         }
+        out.floor_sources     = entry->profiles;
         const auto* published = select_published(entry->profiles, gpu, {}, &available);
         if (published == nullptr) {
             out.notes.push_back("registry " + entry->id + " (by the artifact's shape) has no " +

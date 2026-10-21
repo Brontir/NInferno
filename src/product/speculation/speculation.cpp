@@ -294,10 +294,13 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
-    // A profile measured elsewhere: every depth's floor at least foreign_floor's there (a
-    // shallower-to-fit choice interpolates between raised floors, which can fall below its own).
-    out.menu.primary.floor =
-        spec::foreign_floor(resolved, out.menu.primary.config, out.menu.primary.floor);
+    // A profile measured elsewhere: every entry's and depth's floor at least foreign_floor's there
+    // (a shallower-to-fit choice interpolates between raised floors, which can fall below its own;
+    // --spec-select thinking serves each entry per request).
+    for (spec::MenuChoice* entry :
+         {&out.menu.primary, &out.menu.thinking, &out.menu.non_thinking, &out.menu.overall}) {
+        entry->floor = spec::foreign_floor(resolved, entry->config, entry->floor);
+    }
     out.engine.acceptance_floor = watchdog_floor(out.menu.primary.floor);
     out.engine.step_down        = request_speculation(out.menu, out.menu.primary).step_down;
     if (resolved.foreign_floors) {
@@ -478,6 +481,7 @@ std::optional<ServedSpeculation> served_head_fallback(const std::filesystem::pat
         return std::nullopt;
     }
     spec::ResolvedSpeculation head;
+    head.floor_sources = resolved->floor_sources; // the model's own MTP floors, where it has them
     default_for_builtin_drafter(artifact, head);
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;
