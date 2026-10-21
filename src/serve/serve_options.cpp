@@ -32,7 +32,7 @@ using product::parse_u64;
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
-           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--with-drafters] "
+           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] [--with-drafters] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
@@ -81,6 +81,10 @@ std::string serve_usage_text(const char* argv0) {
            "       else on the machine is searched. $HF_TOKEN authorizes gated models,\n"
            "       $HF_HUB_OFFLINE=1 uses the cache only. The served model id is the hub id.\n"
            "       --prepare-only fetches and converts, then exits (no GPU).\n"
+           "       --plan prints the memory plan ladder these options give (every rung's bytes),\n"
+           "       the rung the free GPU memory picks now and what would get more, then exits\n"
+           "       without serving (the weights are loaded to size the rungs, then released);\n"
+           "       --json prints it as JSON.\n"
            "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
            "       download); a checkpoint's are attached without it.\n"
            "       --default-max-tokens defaults to " +
@@ -106,14 +110,18 @@ std::string serve_usage_text(const char* argv0) {
            "       --health-stall-ms (default 60000; 0 off): /health is 503 while the engine has "
            "work and makes no progress that long\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
-           "       --max-context defaults to automatic: the model's own context "
-           "(max_position_embeddings) when it fits the free GPU memory, else the longest whole "
-           "number of 64-token KV pages (at least 1024 tokens) that fits; below 8192 tokens it "
-           "gives up cached device "
-           "states of the context cache (all of them when the Host tier keeps states), then "
-           "prefill width; the startup log states the choice\n"
-           "       --prefill-chunk defaults to 1024, halved down to 128 when the context would not "
-           "fit or (automatic) stay below 8192 tokens with it; an explicit value is kept\n"
+           "       --max-context defaults to automatic: the free GPU memory picks the first rung "
+           "that fits of a declared plan ladder (the same for the same model, options and card "
+           "type): the model's own context (max_position_embeddings) for every slot, then the "
+           "cached device states down to one per slot, the KV pool down to one context, with a "
+           "Host tier (the default) the cached device states down to none, the context down by "
+           "steps of 2^(-1/16) to 8192 tokens at chunk 1024, then survival rungs served with a "
+           "warning and without the Windows reserve (8192 tokens at chunk 1024, the chunk "
+           "halving to 128, the remaining cached states, shorter contexts); more free memory "
+           "never selects less; the startup log names the rung (plan | rung k of N) and --plan "
+           "prints the ladder\n"
+           "       --prefill-chunk defaults to 1024, halved down to 128 by the ladder's survival "
+           "rungs; an explicit value is kept\n"
            "       --kv-lease-window N: a request reserves KV for its prompt and N output tokens "
            "(at least one speculative round) instead of its whole max_tokens, and extends it as "
            "it decodes, releasing idle cached context when the pool is short; when one still "
@@ -123,14 +131,18 @@ std::string serve_usage_text(const char* argv0) {
            "when every running request waits) (default 4096; 0 reserves the whole output)\n"
            "       --kv-capacity defaults to auto with an automatic context, to --max-context "
            "with one slot, and with several to auto within --max-concurrency x --max-context "
-           "(at least one context); auto plans every runtime byte (KV, cached states, "
-           "workspace, CUDA graphs; a drafter's weights are loaded first) and leaves " +
+           "(at least one context); auto takes the ladder rung's pool (from every slot's "
+           "context down to one), each rung counting every runtime byte (KV, cached states, "
+           "workspace, CUDA graphs; a drafter's weights are loaded first), and leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
-           " MiB (--kv-auto-headroom-mib) for the CUDA driver's own allocations (under WSL 2, "
-           "where Windows shares the "
-           "card and pages it out to Host memory when full, a 32nd of it, at most 1 GiB, as far as "
-           "the "
-           "free memory allows)\n"
+           " MiB (--kv-auto-headroom-mib) for the CUDA driver's own allocations (under WDDM, "
+           "native Windows or WSL 2, where Windows shares the card and pages it out to Host "
+           "memory when full, a 32nd of it, at most 1 GiB, an 8th, at most 4 GiB, on a card "
+           "driving the display; an 8th, at least 4 GiB, on a GPU sharing the host's memory; "
+           "only a survival rung or a plan that fits no rung with it gives it up, with a "
+           "warning; an explicit --kv-capacity, and an "
+           "explicit --max-context at --max-concurrency 1, which makes the pool that context, "
+           "keep none)\n"
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default)\n"
            "       --concurrent-prefill admits waiting requests while others prefill; the\n"
            "       prefilling requests take chunks in turn (a later request's first token\n"
@@ -496,6 +508,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.quant = require_value("--quant");
         } else if (arg == "--prepare-only") {
             options.prepare_only = true;
+        } else if (arg == "--plan") {
+            options.plan_only = true;
+        } else if (arg == "--json") {
+            options.plan_json = true;
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
         } else if (arg == "--log-level") {
@@ -522,6 +538,12 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 "--kv-auto-headroom-mib needs an automatic KV capacity (--kv-capacity auto)");
         }
         options.kv_capacity.automatic_headroom_bytes = *kv_auto_headroom_bytes;
+    }
+    if (options.plan_json && !options.plan_only) {
+        throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.plan_only && options.prepare_only) {
+        throw std::invalid_argument("--plan and --prepare-only exclude each other");
     }
     // The default Host tier is a default: the Engine fits it to what the host can pin.
     options.context_cache.host_tier_automatic = !host_tier_explicit;

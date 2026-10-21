@@ -79,6 +79,9 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
     summary.model_name           = options.artifact_path.stem().string();
     summary.upload_seconds       = model.upload_seconds();
     summary.host_to_device_bytes = model.host_to_device_bytes();
+    // A separate drafter uploads its own weights: the plan ladder's weight bytes and the startup
+    // log count them with the target's.
+    if (loaded->drafter) { summary.host_to_device_bytes += loaded->drafter->device_bytes(); }
     summary.prefill_signature    = "gemma4-prefill-1:" + std::to_string(config.layers) + "x" +
                                 std::to_string(config.hidden_size) + ":" +
                                 std::to_string(config.vocab_size) +

@@ -71,11 +71,13 @@ std::string usage_text(const char* argv0) {
            "again over its measurements (maintainers; docs/cli.md lists their flags).\n"
            "--thinking-budget caps model-origin thinking tokens; inserted control tokens count "
            "toward --max-new.\n"
-           "--kv-capacity auto plans every runtime byte and leaves " +
+           "--kv-capacity auto takes the first rung of the declared plan ladder the free memory "
+           "fits (each rung plans every runtime byte) and leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB for the CUDA driver's own allocations (under WSL 2, where Windows shares the "
-           "card and pages it out to Host memory when full, a 32nd of it, at most 1 GiB, as far "
-           "as the free memory allows).\n"
+           "card and pages it out to Host memory when full, a 32nd of it, at most 1 GiB, an 8th, "
+           "at most 4 GiB, on a card driving the display; ninferno-serve --plan prints the "
+           "ladder).\n"
            "Sampling defaults come from the loaded model and thinking mode; flags override "
            "individual fields.\n";
 }

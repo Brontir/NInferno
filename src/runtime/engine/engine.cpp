@@ -307,6 +307,7 @@ public:
         }
         load                = backend->load_summary();
         load.cuda_sync_mode = device.sync_mode();
+        load.metadata.plan  = memory.plan;
         sampling_defaults   = backend->sampling_defaults();
         fingerprint_decisions(load, requested, options, memory);
     }
@@ -583,6 +584,15 @@ LoadSummary Engine::load_summary() const {
 ModelMetadata Engine::model_metadata() const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
     return impl_->load.metadata;
+}
+
+PlanSummary plan_engine(EngineOptions options) {
+    const EngineOptions normalized = runtime::normalize_engine_options(std::move(options));
+    // The maintainer options (a route table among them) apply to the dry run as to a start, under
+    // the same process-wide lease, held while it plans.
+    ProcessOptionsLease process_options(normalized);
+    DeviceContext device = initialize_device(normalized, process_options);
+    return runtime::plan_model(normalized, device);
 }
 
 MemorySummary Engine::memory_summary() const {

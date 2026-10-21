@@ -33,6 +33,10 @@ struct ServeOptions {
     std::string recipe;        // --recipe: the conversion of a hub model ("" for the official)
     std::string quant;         // --quant: the GGUF quantization of a hub model
     bool prepare_only = false; // --prepare-only: fetch and convert, then exit
+    // --plan: print the memory plan ladder and the rung the free memory picks, then exit without
+    // serving (GenerationService::plan); --json prints it as JSON.
+    bool plan_only = false;
+    bool plan_json = false;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
@@ -42,8 +46,8 @@ struct ServeOptions {
     std::string api_key;                          // empty => no auth
     std::optional<std::string> model_id_override; // unset => artifact metadata.name
     std::string request_log_jsonl;                // empty => structured request logging disabled
-    // 0 (no --max-context): automatic, the model's own context or the largest that fits the free
-    // Device memory (EngineOptions::max_context_automatic); the Engine reports the choice.
+    // 0 (no --max-context): automatic, the context of the plan ladder's rung the free Device
+    // memory picks (EngineOptions::max_context_automatic); the Engine reports the rung.
     std::uint32_t max_context          = 0;
     // Unset --kv-capacity: automatic with an automatic context, else max_context tokens.
     KvCapacityPolicy kv_capacity       = KvCapacityPolicy::automatic();

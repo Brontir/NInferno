@@ -171,20 +171,18 @@ inline constexpr std::size_t kDefaultKvCapacityHeadroomBytes = 32ULL * 1024ULL *
 struct KvCapacityPolicy {
     KvCapacityMode mode                  = KvCapacityMode::Explicit;
     std::uint32_t explicit_tokens        = 2048;
+    // What an automatic pool leaves the driver's own allocations (the plan ladder's base margin;
+    // a GPU Windows shares keeps its class reserve beside it, runtime/engine/plan_ladder.h).
     std::size_t automatic_headroom_bytes = 0;
-    // Kept back beside the headroom when the free memory allows, never refused for: an automatic
-    // pool gives up its pages for it down to the minimum reservation (a GPU shared through WDDM,
-    // runtime/engine/kv_capacity.h with_paravirtual_headroom).
-    std::size_t best_effort_headroom_bytes = 0;
 
     [[nodiscard]] static constexpr KvCapacityPolicy
     explicit_capacity(std::uint32_t tokens) noexcept {
-        return KvCapacityPolicy{KvCapacityMode::Explicit, tokens, 0, 0};
+        return KvCapacityPolicy{KvCapacityMode::Explicit, tokens, 0};
     }
 
     [[nodiscard]] static constexpr KvCapacityPolicy
     automatic(std::size_t headroom_bytes = kDefaultKvCapacityHeadroomBytes) noexcept {
-        return KvCapacityPolicy{KvCapacityMode::Automatic, 0, headroom_bytes, 0};
+        return KvCapacityPolicy{KvCapacityMode::Automatic, 0, headroom_bytes};
     }
 };
 
@@ -1458,6 +1456,56 @@ struct ConcurrencyFit {
     std::uint32_t max_context     = 0;
 };
 
+// One rung of the startup plan ladder (src/runtime/engine/plan_ladder.h): a complete memory plan
+// derived from the artifact, the options and the device's discrete facts.
+struct PlanRungSummary {
+    std::uint32_t max_context          = 0;
+    std::uint32_t kv_tokens            = 0; // the pool, every lane's
+    std::uint32_t cached_device_states = 0;
+    std::uint32_t prefill_chunk        = 0;
+    std::string step;      // the axis it stepped: top, pool, states, context, chunk, survival, ...
+    bool survival = false; // below the context floor: served with a warning
+    // Its Program reservation with the CUDA graph allowance, and what the selection needs free
+    // after the weights for it: every margin, a survival rung without the class reserve (0 for
+    // both: the family cannot plan this shape).
+    std::uint64_t bytes        = 0;
+    std::uint64_t needed_bytes = 0;
+};
+
+// The plan ladder as startup used it: the rung the free memory picked (1 is the top) and why.
+struct PlanSummary {
+    std::uint32_t rung  = 0; // 1-based; 0: no ladder (the causal-scoring Engine)
+    std::uint32_t rungs = 0;
+    // The rung the measurement before the kernel warm-up picked; the warm-up may only move the
+    // plan to a lower rung, recorded here (equal to `rung` when it did not).
+    std::uint32_t selected_rung = 0;
+    // How the rung was admitted: "kept" (every margin), "soft" (without the class reserve of a GPU
+    // Windows shares), "warm_up" (on the warm-up's measured graphs).
+    std::string reserve;
+    PlanRungSummary chosen;
+    std::uint64_t device_total_bytes = 0;
+    std::uint64_t weight_bytes       = 0; // the target's and a separate drafter's
+    std::uint64_t free_bytes         = 0; // free after the weights, as the selection read it
+    std::uint64_t base_margin_bytes  = 0;
+    std::uint64_t reserve_bytes      = 0; // the class reserve (includes the base margin)
+    std::uint64_t allowance_bytes    = 0; // the kernel warm-up's declared allowance
+    // How much more free memory the top rung, and the rung above the chosen one, would need (0:
+    // the chosen rung is the top).
+    std::uint64_t top_shortfall_bytes  = 0;
+    std::uint64_t next_shortfall_bytes = 0;
+    // When the rung above the chosen one fits without the class reserve: the longest context, and
+    // its pool, of the rungs above that do (the reserve, not the memory, limits the plan; an
+    // explicit --max-context at one lane, or --kv-capacity, gives the reserve up). 0: none.
+    std::uint32_t reserve_limited_context   = 0;
+    std::uint32_t reserve_limited_kv_tokens = 0;
+    // What the ladder's planners and the selection took, for the log only (no decision reads it).
+    std::uint32_t planning_milliseconds = 0;
+    // What would get more, one sentence each ("--max-concurrency 2 fits 98,304 tokens").
+    std::vector<std::string> advice;
+    // Every rung, top first: filled by the dry run (ninferno-serve --plan) only.
+    std::vector<PlanRungSummary> ladder;
+};
+
 struct MemorySummary {
     int device                                = 0;
     std::uint32_t max_context                 = 0;
@@ -1535,6 +1583,9 @@ struct MemorySummary {
     // pinned bytes), measured by the warm-up and reserved in the fit.
     std::size_t host_pin_device_bytes             = 0;
     std::size_t graph_returned_bytes              = 0;
+    // The plan ladder's rung the free memory picked (context, pool, cached states and chunk above
+    // are its sizes).
+    PlanSummary plan;
 };
 
 // Worker-owned monotonic nanosecond counters. Top-level Host phases are mutually exclusive;
@@ -1708,6 +1759,9 @@ struct ModelMetadata {
     // The decision fingerprint (LoadSummary::decision_fingerprint) and its plan manifest.
     std::string decision_fingerprint;
     std::string decision_manifest;
+    // The plan ladder's rung the free memory picked at startup (MemorySummary::plan, without the
+    // ladder), for /v1/models meta.plan_level and meta.plan.
+    PlanSummary plan;
 };
 
 struct LoadSummary {

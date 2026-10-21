@@ -140,4 +140,12 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
+// The dry run of an Engine's memory plan (ninferno-serve --plan): the plan ladder of these options
+// with every rung's bytes and the rung the free Device memory picks now, as an Engine built with
+// them would before its kernel warm-up (which may only move the plan to a lower rung). The family
+// load uploads the weights (the planner sizes each rung from the bound model) and releases them on
+// return; no tuner, warm-up or Program runs. Throws as the Engine does for invalid options; a plan
+// that fits no rung is reported (rung 0, the refusal in `advice`), not thrown.
+[[nodiscard]] PlanSummary plan_engine(EngineOptions options);
+
 } // namespace ninferno

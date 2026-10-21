@@ -65,8 +65,8 @@ struct ContextResolution {
     bool automatic       = false;
     std::uint32_t native = 0; // the model's position capacity (ModelTraits::max_positions)
     std::uint32_t tokens = 0; // the max_context the Engine serves
-    // Lower concurrencies and the longer automatic contexts they fit, when the served one is
-    // below the automatic floor (MemorySummary::lower_concurrency_fits).
+    // Lower concurrencies and the longer automatic contexts their ladders fit, when the served
+    // rung's context is below the floor (MemorySummary::lower_concurrency_fits).
     std::vector<ConcurrencyFit> lower_concurrency_fits;
 };
 
@@ -111,6 +111,7 @@ struct ModelInstance {
     KernelWarmUpResolution kernel_warm_up;
     // The served model's shape facts the decode-round price reads (interleave_cost.h).
     DecodeRoundShape decode_round_shape;
+    PlanSummary plan;             // the plan ladder's rung (runtime/engine/plan_ladder.h)
     const std::uint32_t capacity; // the longest admitted prompt: the resolved max_context
     std::unique_ptr<models::qwen3_5::Program> program;
 
@@ -139,6 +140,12 @@ struct ConstructedModel {
 [[nodiscard]] ConstructedModel construct_model(const EngineOptions& options, DeviceContext& device);
 [[nodiscard]] ConstructedModel construct_model(const EngineOptions& options, DeviceContext& device,
                                                FamilyLoader load);
+
+// The dry run of construct_model (ninferno-serve --plan): loads the artifact with its family (the
+// planner sizes every rung from the bound model), builds the plan ladder and picks the rung the
+// free memory fits, with every rung's bytes; no tuner, no kernel warm-up, no Program. The model
+// is released on return.
+[[nodiscard]] PlanSummary plan_model(const EngineOptions& options, DeviceContext& device);
 
 // The family loaders of this build (family_registry.cpp lists them by model_type).
 // Qwen 3.5 / 3.6: dense and MoE GDN hybrids with MTP, DFlash and Vision.

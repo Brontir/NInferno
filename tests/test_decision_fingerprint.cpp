@@ -153,8 +153,6 @@ int options_reach_their_section() {
         {"kv_capacity",
          [](EngineOptions& o) { o.kv_capacity = ninferno::KvCapacityPolicy::automatic(); }},
         {"kv_capacity.tokens", [](EngineOptions& o) { o.kv_capacity.explicit_tokens = 4096; }},
-        {"kv_capacity.best_effort",
-         [](EngineOptions& o) { o.kv_capacity.best_effort_headroom_bytes = 1; }},
         {"max_concurrency", [](EngineOptions& o) { o.max_concurrency = 4; }},
         {"concurrent_prefill", [](EngineOptions& o) { o.concurrent_prefill = true; }},
         {"prefill_chunk", [](EngineOptions& o) { o.prefill_chunk = 512; }},
@@ -268,15 +266,34 @@ int plan_reaches_its_section() {
         {"kv_cache", [](MemorySummary& m) { m.kv_cache = ninferno::KvCacheStorage::Nvfp4Group16; }},
         {"speculative_windows",
          [](MemorySummary& m) { m.speculative_graph_windows = {{.draft_tokens = 3}}; }},
-    };
-    int failures = each_field_reaches("plan", MemorySummary{}, collect, edits);
-    // What the free memory sized is observed, not planned: two identical starts that found a few
-    // MiB more or less keep one fingerprint.
-    std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> sized{
+        // The plan ladder's rung and its sizes are the plan: the free memory picks a declared
+        // rung, and the fingerprint records which (docs/maintainer/deterministic-decisions.md).
+        {"rung", [](MemorySummary& m) { m.plan.rung = 3; }},
+        {"rungs", [](MemorySummary& m) { m.plan.rungs = 40; }},
         {"max_context", [](MemorySummary& m) { m.max_context = 4096; }},
         {"prefill_chunk", [](MemorySummary& m) { m.prefill_chunk = 512; }},
         {"kv_tokens", [](MemorySummary& m) { m.kv_capacity = 8192; }},
         {"cached_device_states", [](MemorySummary& m) { m.cached_device_states = 3; }},
+    };
+    int failures = each_field_reaches("plan", MemorySummary{}, collect, edits);
+    // What the free memory measured itself never enters: two identical starts that found a few
+    // MiB more or less pick the same rung and keep one fingerprint and one manifest.
+    {
+        MemorySummary roomier;
+        roomier.plan.free_bytes               = 1ULL << 30;
+        roomier.available_after_weights_bytes = 1ULL << 30;
+        roomier.plan.top_shortfall_bytes      = 5;
+        roomier.planned_slack_bytes           = 7;
+        failures += check(collect(roomier) == collect(MemorySummary{}) &&
+                              rt::observed_of(roomier) == rt::observed_of(MemorySummary{}),
+                          "the free memory itself reached the plan or the observed section");
+    }
+    // The Host tier is sized from the Host memory, and the rung the selection picked before the
+    // warm-up and its admission tier are the warm-up's measurement: observed, not planned (a
+    // warm-up move keeps nf1 when it ends on the same rung).
+    std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> sized{
+        {"rung_selected", [](MemorySummary& m) { m.plan.selected_rung = 2; }},
+        {"rung_reserve", [](MemorySummary& m) { m.plan.reserve = "soft"; }},
         {"host_state_slots", [](MemorySummary& m) { m.host_state_capacity_slots = 3; }},
         {"host_kv_bytes", [](MemorySummary& m) { m.host_kv_capacity_bytes = 3; }},
     };

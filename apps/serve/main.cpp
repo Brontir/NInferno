@@ -5,6 +5,7 @@
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
 #include "serve/model_source.h"
+#include "serve/plan_report.h"
 #include "serve/serve_options.h"
 #include "spec/registry.h"
 
@@ -189,6 +190,17 @@ int main(int argc, char** argv) {
         if (options.prepare_only) {
             logger->info("model | prepared {}", options.artifact_path);
             return 0;
+        }
+        // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
+        // bound or served.
+        if (options.plan_only) {
+            const ninferno::serve::ServePlan plan =
+                ninferno::serve::GenerationService::plan(options);
+            std::cout << (options.plan_json
+                              ? ninferno::serve::render_plan_json(plan) + '\n'
+                              : ninferno::serve::render_plan_text(plan, options.max_concurrency));
+            std::cout.flush();
+            return plan.plan.rung != 0 || (plan.plain && plan.plain->rung != 0) ? 0 : 2;
         }
 
         ninferno::serve::HttpServer server(options, logger);

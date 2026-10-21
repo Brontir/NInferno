@@ -153,6 +153,7 @@ struct PreparedRequest {
     std::string speculation_note;
     double speculation_floor = 0.0;
     std::string speculation_fallback = "none"; // the server's (StartupSpeculation::fallback)
+    std::uint32_t plan_level         = 0;      // the plan ladder's rung (PlanSummary::rung)
 };
 
 // Why --spec auto decodes plainly: `refused` (the choice's label) did not fit, the last refusal
@@ -164,9 +165,22 @@ struct PreparedRequest {
 [[nodiscard]] std::string auto_then_plain_refusal(const std::string& refused,
                                                   const std::string& plain);
 
+// The --plan dry run of a server's options: the plan ladder of the Engine it would build first
+// (with the speculation --spec auto chooses, or as asked) and the rung the free memory picks now.
+struct ServePlan {
+    ninferno::PlanSummary plan;
+    std::string speculation; // the speculation planned ("plain" without)
+    // --spec auto when no rung fits beside the drafter: plain decode's ladder, which the server
+    // falls back to after its shallower drafts.
+    std::optional<ninferno::PlanSummary> plain;
+};
+
 class GenerationService {
 public:
     explicit GenerationService(ServeOptions options, StartupObserver startup_observer = {});
+
+    // The --plan dry run (ServePlan): no Engine is kept, nothing is served.
+    [[nodiscard]] static ServePlan plan(ServeOptions options);
 
     [[nodiscard]] const ServeOptions& options() const noexcept { return options_; }
 
@@ -272,6 +286,8 @@ private:
                             PreparedRequest& prepared) const;
 
     ServeOptions options_;
+    std::optional<ServePlan> plan_; // ServeOptions::plan_only: the dry run's result, no Engine
+    std::uint32_t plan_level_ = 0;  // the served plan ladder's rung (PlanSummary::rung)
     std::optional<product::ServedSpeculation> served_speculation_;
     std::string speculation_plain_reason_;
     std::vector<std::string> speculation_absent_notes_;

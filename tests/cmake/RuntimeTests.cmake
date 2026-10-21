@@ -17,6 +17,11 @@ ninferno_add_test(ninferno_interleave_cost_test SOURCES "${CMAKE_CURRENT_LIST_DI
 ninferno_add_test(ninferno_kv_capacity_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_kv_capacity.cpp"
   LIBRARIES ninferno_runtime_support)
 
+# The startup plan ladder: its rungs, their bytes, the selection and the warm-up's check, the
+# explicit pins, and the plan-levels review's scenarios against a continuous fit. CPU.
+ninferno_add_test(ninferno_plan_ladder_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_ladder.cpp"
+  LIBRARIES ninferno_runtime_support)
+
 ninferno_add_test(ninferno_context_cache_defaults_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_context_cache_defaults.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)

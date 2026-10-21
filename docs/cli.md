@@ -68,7 +68,7 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 |---|---|---|
 | `--device N` | `0` | CUDA device index. |
 | `--max-context N` | `2048` | Per-sequence logical context ceiling. |
-| `--kv-capacity N\|auto` | `--max-context` (`2048`) | Shared Main Text KV pool size. `auto` maximizes it from the free GPU memory. Must be at least `--max-context`. |
+| `--kv-capacity N\|auto` | `--max-context` (`2048`) | Shared Main Text KV pool size. `auto` takes the plan ladder's pool rung the free GPU memory fits. Must be at least `--max-context`. |
 | `--prefill-chunk N` | `1024` | Text-prefill chunk. Positive multiple of 128. |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV storage. `auto` follows the model family (see [KV storage](#kv-storage-and-context)). |
 | `--sliding-kv-dtype bf16\|fp8` | `bf16` | Storage of sliding-window KV. |
@@ -308,15 +308,22 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
 - `--kv-capacity N` sets the shared physical Main Text KV pool independently, rounded up to the
   64-token page size. The one-request CLI normally omits it so it follows `--max-context`; the
   distinction matters mainly for a concurrent Engine or server.
-- `--kv-capacity auto` loads the weights, measures the remaining GPU memory, and directly picks the
-  largest legal page capacity for the whole enabled runtime layout: selected speculative backend,
-  fixed sequence state, unified workspace and CUDA Graph allowance. It leaves 32 MiB unallocated
-  for the CUDA driver's own allocations (streams, events, kernel code loaded on first launch);
-  under WSL 2, where Windows shares the card and pages it out to Host memory when full, it leaves
-  a 32nd of it, at most 1 GiB (an eighth, at most 4 GiB, on a card that also drives the display),
-  as far as free memory allows. On GPUs that share memory with the host (GB10, Jetson) it leaves
-  an eighth, at least 4 GiB, and the Host tiers are off. It does not probe allocations or
-  resize the pool at request time.
+- `--kv-capacity auto` loads the weights, measures the remaining GPU memory once, and takes the
+  first rung of the declared plan ladder that fits (the pool steps down from every request's full
+  context by about 4.2 % a step; with an automatic context the context then steps the same way
+  down to 8,192 tokens; a prefill chunk narrower than 1024 is a survival rung, served with a
+  warning (the one-request CLI keeps no cached states); the rungs come
+  from the model, the options and the planner's bytes for the whole enabled runtime layout:
+  selected speculative backend, fixed sequence state, unified workspace and CUDA Graph allowance).
+  Beside a rung it keeps 32 MiB for the CUDA driver's own allocations (streams, events, kernel code
+  loaded on first launch) and 64 MiB for the kernel warm-up; under WDDM (native Windows and WSL 2),
+  where Windows shares the card and pages it out to Host memory when full, a class reserve of a
+  32nd of it, at most 1 GiB (an eighth, at most 4 GiB, on a card that also drives the display). On
+  GPUs that share memory with the host (GB10, Jetson) the reserve is an eighth, at least 4 GiB, and
+  the Host tiers are off. Only a survival rung or a plan that fits nothing else gives it up. The
+  same model, options and card type give the same ladder
+  ([plan levels](maintainer/deterministic-decisions.md#plan-levels)); the pool is not probed or
+  resized at request time. `ninferno-serve --plan` prints the ladder.
 
 ### Workspace
 

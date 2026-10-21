@@ -432,6 +432,21 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.media_live_bytes         = options_.media_live_bytes;
     engine_options.media_preprocess_threads = options_.media_preprocess_threads;
     engine_options.startup_observer         = std::move(startup_observer);
+    // The --plan dry run stops here: the ladder of the first Engine the server would build.
+    if (options_.plan_only) {
+        ServePlan dry;
+        dry.plan        = ninferno::plan_engine(engine_options);
+        dry.speculation = engine_options.speculative.backend == SpeculativeBackend::None
+                              ? std::string("plain")
+                              : product::speculation_label(engine_options.speculative);
+        if (dry.plan.rung == 0 && served_speculation_) {
+            ninferno::EngineOptions plain = engine_options;
+            plain.speculative             = SpeculativeOptions{};
+            dry.plain                     = ninferno::plan_engine(plain);
+        }
+        plan_ = std::move(dry);
+        return;
+    }
     // A load bound at a depth the menu does not capture needs graphs of its own. When the Engine
     // refuses the plan and moving such bounds to captured depths (product::snap_load_to_captured)
     // changes it, the moved plan is tried once; if it is refused as well, the first refusal stands
@@ -496,8 +511,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             }
         }
         // Then shallower drafts with the same drafter: the deepest that fits runs (a few builds,
-        // product::deepest_fitting_shallower; the Engine has already narrowed an automatic prefill
-        // chunk as far as it fits: 1024 halved down to 128). An explicit --prefill-chunk stays as
+        // product::deepest_fitting_shallower; the Engine's plan ladder has already narrowed an
+        // automatic prefill chunk: 1024 halved down to 128). An explicit --prefill-chunk stays as
         // given and the shallower drafts are tried beside it: --spec auto asks for what fits, and
         // a depth step costs far less than plain decode (RTX 4080 SUPER, Qwen3.8-27B IQ3 dflash2
         // K=7 missed 26 MB at max_context 32768 with --prefill-chunk 2048 and decoded a 24K
@@ -679,6 +694,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                 .selection = "explicit",
                                 .reason    = "--spec"};
     }
+    // The plan ladder's rung the free memory picked, for every request record.
+    plan_level_ = engine_->memory_summary().plan.rung;
     // An explicit --spec runs the engine's own watchdog floor.
     if (!served_speculation_ && engine_->options().speculative.backend != SpeculativeBackend::None) {
         startup_speculation_.floor = engine_->options().speculative.acceptance_floor;
@@ -687,6 +704,12 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests);
     count_capacity_ = std::make_shared<RequestCapacity>(
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests);
+}
+
+ServePlan GenerationService::plan(ServeOptions options) {
+    options.plan_only = true;
+    GenerationService service(std::move(options));
+    return std::move(*service.plan_);
 }
 
 std::shared_ptr<RequestLifetime>
@@ -819,6 +842,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
 void GenerationService::choose_speculation(bool thinking, ninferno::RequestOptions& request_options,
                                            PreparedRequest& prepared) const {
     prepared.speculation_fallback = startup_speculation_.fallback;
+    prepared.plan_level           = plan_level_;
     if (!served_speculation_) {
         prepared.speculation_config    = startup_speculation_.config;
         prepared.speculation_selection = startup_speculation_.selection;

@@ -43,6 +43,25 @@ int main() {
                           parse({"ninferno-serve", "--device", "0", "-h"}).help_requested,
                       "--help or -h after other arguments is not a help request");
 
+    // --plan prints the plan ladder and exits; --json needs it, --prepare-only excludes it.
+    {
+        const ServeOptions plan = parse({"ninferno-serve", "model.ninferno", "--plan", "--json"});
+        const ServeOptions text = parse({"ninferno-serve", "model.ninferno", "--plan"});
+        failures += check(plan.plan_only && plan.plan_json && text.plan_only && !text.plan_json &&
+                              !parse({"ninferno-serve", "model.ninferno"}).plan_only,
+                          "--plan [--json] is not parsed");
+        const auto refused = [&](std::vector<std::string> arguments) {
+            try {
+                (void)parse(std::move(arguments));
+            } catch (const std::invalid_argument&) { return true; }
+            return false;
+        };
+        failures +=
+            check(refused({"ninferno-serve", "model.ninferno", "--json"}) &&
+                      refused({"ninferno-serve", "model.ninferno", "--plan", "--prepare-only"}),
+                  "--json without --plan or --plan with --prepare-only is accepted");
+    }
+
     const ServeOptions defaults = parse({"ninferno-serve", "model.ninferno"});
     failures += check(defaults.allow_prefix_reuse, "prefix reuse is not enabled by default");
     failures +=

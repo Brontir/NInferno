@@ -16,17 +16,19 @@
 //   sources  the data files decisions were read from, by content (route table and its lenders,
 //            dense- and MoE-tune files, context-cost presets, speculation profile, drafter
 //            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
-//   plan     what startup resolved without reading the free memory: KV and state storage,
-//            speculative graph windows, route breakpoints and table, decode steps per round;
+//   plan     what startup resolved: KV and state storage, speculative graph windows, route
+//            breakpoints and table, the decode steps per round, and the plan ladder's rung the
+//            plan runs at (its index and the ladder's length) with the rung's sizes (context,
+//            chunk, KV tokens, cached states);
 //   taint    the pillar violations present (a maintainer option, the user's tune cache, floor
 //            calibration, no roofline, borrowed or foreign route data, a local spec-tune, a
 //            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
-//   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
-//            cached states, Host tier), and the driver's clocks where they fed no fact
-//            (MachineFacts::driver_read), so no decision reads them. Until the plan levels of
-//            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
-//            two identical starts, so they enter the manifest only.
+//   observed what startup measured beside the plan: the rung the selection picked before the
+//            kernel warm-up and the tier it admitted it at (rung_selected, rung_reserve), what it
+//            sized from the Host memory (the Host tier), and the driver's clocks where they fed
+//            no fact (MachineFacts::driver_read), so no decision reads them; they enter the
+//            manifest only.
 //
 // The canonical text is "schema\tninferno-fingerprint/1\n" followed by one
 // "<section>.<key>\t<value>\n" line per entry in byte order (tab, newline, carriage return and
@@ -115,16 +117,19 @@ struct HostFacts {
                                          std::string_view drafter_id);
 
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
-// `memory` the MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and
-// `route_table` the effective route table's content (its hash and its lenders'; empty: none) and
-// `decode_steps_per_round` the steps an ordinary decode round runs (LoadSummary).
+// `memory` the MemorySummary (with the plan ladder's rung, MemorySummary::plan),
+// `route_breakpoints` ops::route_table_breakpoints(17), `route_table` the effective route table's
+// content (its hash and its lenders'; empty: none) and `decode_steps_per_round` the steps an
+// ordinary decode round runs (LoadSummary).
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
                                       std::string_view route_table,
                                       std::uint32_t decode_steps_per_round);
 
-// What startup sized from the free memory (the observed section): max_context, prefill_chunk,
-// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes.
+// What startup observed beside the plan (the observed section): the rung the selection picked
+// before the kernel warm-up and the tier it admitted the rung at (rung_selected, rung_reserve: the
+// warm-up's measurement, not a decision of its own), and what it sized from the Host memory
+// (host_state_slots, host_kv_bytes).
 [[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
 // The device's observed values: the driver's clocks and bus width ("driver.*") when they fed no

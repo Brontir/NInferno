@@ -17,6 +17,7 @@ add_library(ninferno_serve STATIC
   generation_service.cpp
   request_events.cpp
   operational_log.cpp
+  plan_report.cpp
   request_log.cpp
   http_server.cpp
   openai_responses_http.cpp
