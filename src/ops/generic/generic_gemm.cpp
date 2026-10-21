@@ -1506,7 +1506,12 @@ int staged_schedule_count() { return static_cast<int>(kStagedSchedules.size()); 
 bool staged_device_fits(int schedule) {
     const auto s     = kStagedSchedules.at(static_cast<std::size_t>(schedule));
     const auto bytes = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
-    const auto limit = device_class().smem_per_block_optin;
+    std::size_t limit = 0;
+    try {
+        limit = device_class().smem_per_block_optin;
+    } catch (const std::exception&) {
+        return true; // no device (a CPU-only tool): staged_fits holds the build ceiling
+    }
     return limit == 0 || bytes <= limit;
 }
 StagedScheduleInfo staged_schedule_info(int index) {
