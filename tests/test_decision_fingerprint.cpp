@@ -13,6 +13,7 @@
 #include "runtime/engine/decision_fingerprint.h"
 #include "core/removed_environment.h"
 #include "runtime/engine/decision_sources.h"
+#include "support/temp_dir.h"
 
 #include <algorithm>
 #include <array>
@@ -771,9 +772,8 @@ std::string with_source(const std::string& key, const std::string& value) {
 // when their bytes change, and none of the names throws, a non-ASCII one included.
 int file_sources() {
     int failures   = 0;
-    const auto dir = std::filesystem::temp_directory_path() /
-                     ("ninferno_fingerprint_" + std::to_string(std::rand()));
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("ninferno_fingerprint");
+    const auto& dir = scratch.path();
 
     // --context-cost-presets FILE.
     const auto presets = dir / "presets.json";
@@ -828,8 +828,6 @@ int file_sources() {
     failures += check(named && named->starts_with("\xd1\x87\xd0\xb5\xd1\x80"),
                       "a non-ASCII file name is named in UTF-8");
 
-    std::error_code ignored;
-    std::filesystem::remove_all(dir, ignored);
     return failures;
 }
 

@@ -1,9 +1,10 @@
 // The Engine refuses a --route-dir or --route-table that cannot be read before it touches the
-// device: Engine::Impl normalizes its options (runtime::normalize_engine_options) before the
-// process-options lease and the device, and the normalization checks them (ops/route_options.h).
+// device: Engine::Impl admits its options (runtime::admit_engine_options) before the
+// process-options lease and the device, and admission checks them (ops/route_options.h).
 // Read as no table, they would run the heuristic routes. CPU-only.
 
 #include "runtime/engine/model_instance.h"
+#include "support/temp_dir.h"
 
 #include <filesystem>
 #include <fstream>
@@ -26,10 +27,10 @@ void write_file(const std::filesystem::path& path, const std::string& text) {
     std::ofstream(path, std::ios::binary) << text;
 }
 
-// Whether normalizing `options` is refused with a message that holds `expected`.
+// Whether admitting `options` is refused with a message that holds `expected`.
 bool refused(const ninferno::EngineOptions& options, const std::string& expected) {
     try {
-        (void)ninferno::runtime::normalize_engine_options(options);
+        (void)ninferno::runtime::admit_engine_options(options);
     } catch (const std::invalid_argument& error) {
         if (std::string(error.what()).find(expected) != std::string::npos) { return true; }
         std::cerr << "  refused with: " << error.what() << '\n';
@@ -40,8 +41,8 @@ bool refused(const ninferno::EngineOptions& options, const std::string& expected
 } // namespace
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / "ninferno_engine_route_options_test";
-    std::filesystem::remove_all(root);
+    const TempDir scratch("ninferno_engine_route_options_test");
+    const auto& root = scratch.path();
     write_file(root / "routes" / "gb202.json",
                R"({"schema":"ninferno-route-table/1","gpu":{"class":"gb202"},"entries":[]})");
     write_file(root / "bad.json", R"({"schema":"other"})");
@@ -68,7 +69,7 @@ int main() {
         o.maintainer.route_dir   = root / "routes";
         o.maintainer.route_table = root / "routes" / "gb202.json";
         try {
-            const auto normalized = ninferno::runtime::normalize_engine_options(o);
+            const auto normalized = ninferno::runtime::admit_engine_options(o);
             check(normalized.maintainer.route_dir == o.maintainer.route_dir &&
                       normalized.maintainer.route_table == o.maintainer.route_table,
                   "readable route options did not pass through");
@@ -76,7 +77,6 @@ int main() {
             check(false, std::string("readable route options were refused: ") + error.what());
         }
     }
-    std::filesystem::remove_all(root);
     std::cout << (failures ? "FAIL" : "OK") << " engine_route_options\n";
     return failures ? 1 : 0;
 }

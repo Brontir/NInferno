@@ -5,6 +5,8 @@
 #include "ninferno/ops/route_table.h"
 #include "ops/common/route_probe.h"
 #include "ops/common/shape_routes.h"
+#include "core/sha256.h"
+#include "support/temp_dir.h"
 
 #include <cuda_runtime.h>
 
@@ -30,11 +32,13 @@ void expect(bool ok, const std::string& what) {
     }
 }
 
+// The table's path in UTF-8, as the route-table API takes it; removed with the process's scratch
+// directory.
 std::string write_file(const std::string& name, const std::string& text) {
-    const auto path = std::filesystem::temp_directory_path() /
-                      ("ninferno_shape_routes_" + std::to_string(::getpid()) + "_" + name);
+    static const TempDir scratch("ninferno_shape_routes");
+    const auto path = scratch.path() / name;
     std::ofstream(path) << text;
-    return path.string();
+    return utf8_path(path);
 }
 
 std::string table_json(const std::string& gpu_class, const std::string& entries) {
@@ -148,11 +152,6 @@ int main() {
     expect(route_tokens(kA4, 256) == 256, "cleared table still steers");
     expect(!ops::route_table_status().loaded, "cleared table reported loaded");
 
-    for (const auto& path : {good, other, arch, overlap, bad_band, epilogue, format, dup, schema,
-                             broken}) {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-    }
     if (failures == 0) std::cout << "shape routes: ok\n";
     return failures == 0 ? 0 : 1;
 }

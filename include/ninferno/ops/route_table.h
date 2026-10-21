@@ -52,7 +52,7 @@ namespace ninferno::ops {
 
 struct RouteTableStatus {
     bool loaded = false;
-    std::string path;
+    std::string path; // UTF-8
     std::string gpu_class;
     std::size_t entries          = 0; // problems in the file
     std::size_t generic_entries  = 0; // problems with bands or a prefill route
@@ -73,7 +73,8 @@ struct RouteTableStatus {
 // The directory the default table is looked up in: the one set_route_table_dir() named (the
 // engine's --route-dir), else the routes/ shipped beside the running binary (route_dir_beside),
 // else the compiled default (the repository's routes/, which exists only where the binary was
-// built); empty when none is set.
+// built); empty when none is set. In UTF-8, as every path this API takes or reports
+// (load_route_table, RouteTableStatus::path).
 [[nodiscard]] std::string route_table_dir();
 
 // Names the default lookup's directory (empty: the shipped one) and returns every device to the
@@ -85,11 +86,12 @@ void set_route_table_dir(const std::filesystem::path& dir);
 
 // The routes/ directory shipped with a binary at `exe`: <exe dir>/routes, else
 // <exe dir>/../share/ninferno/routes, the first that holds a table (a .json file); empty when
-// neither does.
+// neither does. `exe` and the result in UTF-8.
 [[nodiscard]] std::string route_dir_beside(const std::string& exe);
 
-// Replaces the active table. Throws std::runtime_error on a malformed file; a GPU-class mismatch
-// is returned as an unloaded status and the active table stays.
+// Replaces the active table. `path` is UTF-8 (the status reports it so). Throws std::runtime_error
+// on a malformed file; a GPU-class mismatch is returned as an unloaded status and the active table
+// stays.
 RouteTableStatus load_route_table(const std::string& path);
 
 // Every token count at or above `from` where the loaded route table's width-dependent choices
@@ -102,7 +104,8 @@ RouteTableStatus load_route_table(const std::string& path);
 // without bands changes nothing at any width.
 [[nodiscard]] std::vector<std::int32_t> route_table_breakpoints(std::int32_t from);
 
-// Parses and validates a table file without applying it (same refusals as load_route_table).
+// Parses and validates a table file (`path` in UTF-8) without applying it (same refusals as
+// load_route_table).
 [[nodiscard]] RouteTableStatus inspect_route_table(const std::string& path);
 
 // Drops the active table and skips the default lookup: every consumer answers as untuned.

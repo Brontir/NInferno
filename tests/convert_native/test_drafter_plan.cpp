@@ -13,6 +13,7 @@
 #include "convert/drafters.h"
 
 #include "spec/manifest.h"
+#include "support/temp_dir.h"
 
 #include <nlohmann/json.hpp>
 
@@ -387,8 +388,8 @@ void similar() {
 
 // The engine of a checkpoint directory comes from its config.json architecture.
 void checkpoint_engine() {
-    const auto dir = std::filesystem::temp_directory_path() / "ninferno_drafter_plan_ckpt";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("ninferno_drafter_plan_ckpt");
+    const auto& dir      = scratch.path();
     const auto engine_of = [&](const std::string& architecture) {
         std::ofstream(dir / "config.json") << Json{{"architectures", Json::array({architecture})},
                                                    {"hidden_size", 256},
@@ -403,13 +404,12 @@ void checkpoint_engine() {
     expect(engine_of("NemotronHForCausalLM") == "nemotron_h", "Nemotron-H keeps its engine");
     expect(engine_of("NemotronHMtpForCausalLM").empty(), "a Nemotron-H MTP sidecar is no target");
     expect(engine_of("UnknownForCausalLM").empty(), "an unknown architecture has no engine");
-    std::filesystem::remove_all(dir);
 }
 
 // A failed drafter is retried by the next run; a failed own quantization is not.
 void retry_failed_drafter() {
-    const auto dir = std::filesystem::temp_directory_path() / "ninferno_drafter_plan_manifest";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("ninferno_drafter_plan_manifest");
+    const auto& dir     = scratch.path();
     const auto artifact = dir / "model.ninferno";
     const auto with     = [&](const std::string& text) {
         std::ofstream(ninferno::spec::manifest_path(artifact)) << text;
@@ -422,7 +422,6 @@ void retry_failed_drafter() {
                                    {"name": "dflash.q8", "quant": "q8", "status": "failed: x"}]})"),
            "a failed own quantization is not retried");
     expect(with("{"), "an unreadable manifest: attaching is to do");
-    std::filesystem::remove_all(dir);
 }
 
 } // namespace

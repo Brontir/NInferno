@@ -248,7 +248,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
             g_plans[key]   = plans;
             report.ran     = true;
             report.cached  = true;
-            report.summary = "moe tune " + key + ": from " + cache_path().string();
+            report.summary = "moe tune " + key + ": from " + utf8_path(cache_path());
             return report;
         }
     }

@@ -58,8 +58,14 @@ struct RouteDirFile {
         if (it->path().extension() == ".json") { take(it->path(), utf8_file_name(it->path())); }
     }
     if (error) { refuse(error.message()); }
-    const fs::path tuner = dir / "tuner" / "dense_tune.json";
-    if (fs::exists(fs::symlink_status(tuner, error))) { take(tuner, "tuner/dense_tune.json"); }
+    // Absent is the release's state (no measurements); any other error (permission denied on
+    // DIR/tuner) is refused: the engine would read nothing there and run other routes.
+    const fs::path tuner             = dir / "tuner" / "dense_tune.json";
+    const fs::file_status tuner_link = fs::symlink_status(tuner, error);
+    if (error && tuner_link.type() != fs::file_type::not_found) {
+        refuse("tuner/dense_tune.json: " + error.message());
+    }
+    if (fs::exists(tuner_link)) { take(tuner, "tuner/dense_tune.json"); }
     std::sort(out.begin(), out.end(),
               [](const RouteDirFile& a, const RouteDirFile& b) { return a.relative < b.relative; });
     return out;
@@ -72,7 +78,7 @@ inline void check_route_options(const std::filesystem::path& table,
     if (!dir.empty()) { (void)route_dir_files(dir); }
     if (table.empty()) { return; }
     try {
-        (void)inspect_route_table(table.string());
+        (void)inspect_route_table(utf8_path(table));
     } catch (const std::exception& error) {
         throw std::invalid_argument("--route-table " + utf8_path(table) + ": " + error.what());
     }
@@ -83,7 +89,7 @@ inline void check_route_options(const std::filesystem::path& table,
 inline RouteTableStatus load_route_table_option(const std::filesystem::path& table) {
     RouteTableStatus status;
     try {
-        status = load_route_table(table.string());
+        status = load_route_table(utf8_path(table));
     } catch (const std::exception& error) {
         throw std::invalid_argument("--route-table " + utf8_path(table) + ": " + error.what());
     }

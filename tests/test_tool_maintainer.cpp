@@ -6,6 +6,7 @@
 #include "ops/route_options.h"
 #include "product/route_labels.h"
 #include "product/tool_maintainer.h"
+#include "support/temp_dir.h"
 
 #include <filesystem>
 #include <fstream>
@@ -41,6 +42,17 @@ bool refuses(Call&& call, const std::string& expected) {
     return false;
 }
 
+// Gives a directory its owner's permissions back when the scope ends, however the checks end, so
+// that the test's directory can be removed.
+struct Unlock {
+    std::filesystem::path dir;
+
+    ~Unlock() {
+        std::error_code ignored;
+        std::filesystem::permissions(dir, std::filesystem::perms::owner_all, ignored);
+    }
+};
+
 constexpr const char* kTable =
     R"({"schema":"ninferno-route-table/1","gpu":{"class":"gb202"},"entries":[]})";
 
@@ -50,8 +62,8 @@ int main() {
     using ninferno::product::route_dir_label;
     using ninferno::product::ToolArguments;
     using ninferno::product::tool_maintainer_options;
-    const auto root = std::filesystem::temp_directory_path() / "ninferno_tool_maintainer_test";
-    std::filesystem::remove_all(root);
+    const TempDir scratch("ninferno_tool_maintainer_test");
+    const auto& root = scratch.path();
     write_file(root / "lab" / "t.json", kTable);
     std::filesystem::create_directories(root / "lab" / "routes");
 
@@ -146,6 +158,7 @@ int main() {
         std::filesystem::create_directories(root / "d");
         std::filesystem::create_symlink(root / "locked" / "gb202.json", root / "d" / "gb202.json");
         std::filesystem::permissions(root / "locked", std::filesystem::perms::none);
+        const Unlock unlock{root / "locked"};
         std::error_code probe;
         (void)std::filesystem::status(root / "d" / "gb202.json", probe);
         if (probe && probe != std::errc::no_such_file_or_directory) {
@@ -155,9 +168,29 @@ int main() {
         } else {
             std::cout << "a directory without permissions is searchable here: not checked\n";
         }
-        std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
     } else {
         std::cout << "symlinks unavailable here (" << link_error.message() << "): not checked\n";
+    }
+    // DIR/tuner that may not be searched is refused with the reason; only an absent one is the
+    // release's state.
+    {
+        write_file(root / "e" / "gb202.json", kTable);
+        write_file(root / "e" / "tuner" / "dense_tune.json", "{}");
+        std::filesystem::permissions(root / "e" / "tuner", std::filesystem::perms::none);
+        const Unlock unlock{root / "e" / "tuner"};
+        std::error_code probe;
+        (void)std::filesystem::symlink_status(root / "e" / "tuner" / "dense_tune.json", probe);
+        if (probe && probe != std::errc::no_such_file_or_directory) {
+            check(refuses([&] { return ninferno::ops::route_dir_files(root / "e"); },
+                          "tuner/dense_tune.json: " + probe.message()),
+                  "an unsearchable tuner directory was not refused with its reason");
+        } else {
+            std::cout << "a directory without permissions is searchable here: not checked\n";
+        }
+        std::filesystem::create_directories(root / "f");
+        write_file(root / "f" / "gb202.json", kTable);
+        check(ninferno::ops::route_dir_files(root / "f").size() == 1,
+              "a route directory without tuner/ was refused");
     }
 
     const std::string table = ninferno::product::route_table_label(root / "b" / "gb202.json");
@@ -169,7 +202,6 @@ int main() {
     check(refuses([&] { return ninferno::product::drafter_registry_label(root / "none.json"); },
                   "--drafter-registry"),
           "a missing drafter registry has a label");
-    std::filesystem::remove_all(root);
 
     std::cout << (failures ? "FAIL" : "OK") << " tool_maintainer\n";
     return failures ? 1 : 0;

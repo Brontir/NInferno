@@ -214,9 +214,8 @@ void load_cache_locked(bool user_file) {
     // The release's measurements (routes/tuner/dense_tune.json, keyed like this file: GPU class,
     // format, policy, geometry, schedule sets): the entries the user's own file lacks.
     if (const std::string dir = route_table_dir(); !dir.empty()) {
-        if (std::optional<Json> shipped =
-                read_cache_file(std::filesystem::path(dir) / "tuner" / "dense_tune.json", kSchema,
-                                "problems")) {
+        if (std::optional<Json> shipped = read_cache_file(
+                path_from_utf8(dir) / "tuner" / "dense_tune.json", kSchema, "problems")) {
             auto& problems = g_cache["problems"];
             for (auto it = (*shipped)["problems"].begin(); it != (*shipped)["problems"].end();
                  ++it) {
@@ -795,8 +794,7 @@ std::map<std::string, std::string> dense_tune_sources() {
     std::map<std::string, std::string> out;
     if (!g_enabled.load(std::memory_order_relaxed)) { return out; }
     if (const std::string dir = route_table_dir(); !dir.empty()) {
-        if (auto shipped =
-                named_file_sha256(std::filesystem::path(dir) / "tuner" / "dense_tune.json")) {
+        if (auto shipped = named_file_sha256(path_from_utf8(dir) / "tuner" / "dense_tune.json")) {
             out["dense_tune.shipped"] = std::move(*shipped);
         }
     }

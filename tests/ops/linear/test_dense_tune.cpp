@@ -12,6 +12,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/generic/generic_gemm.h"
+#include "support/temp_dir.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -355,10 +356,8 @@ int main() {
         std::cout << "CUDA unavailable; skipping dense tune test\n";
         return 77;
     }
-    const auto cache = std::filesystem::temp_directory_path() /
-                       ("ninferno_dense_tune_test_" + std::to_string(::getpid()));
-    std::filesystem::remove_all(cache);
-    std::filesystem::create_directories(cache);
+    const TempDir scratch("ninferno_dense_tune_test");
+    const auto& cache = scratch.path();
     g_cache_file = cache / "dense_tune.json";
     generic::set_dense_tune(ninferno::TuneMode::On, cache); // off by default
     // The heuristic is what the tuner is compared against: no class table between them.
@@ -383,7 +382,6 @@ int main() {
     cuda_check(cudaStreamDestroy(stream), "stream");
     generic::enable_dense_tune(false);
     generic::set_dense_tune(ninferno::TuneMode::Off, {});
-    std::filesystem::remove_all(cache);
     if (failures == 0) std::cout << "dense tune: ok\n";
     return failures == 0 ? 0 : 1;
 }
