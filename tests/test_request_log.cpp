@@ -452,10 +452,9 @@ int main() {
                           .first_improvement_ns       = 2000,
                           .incumbent_improvements     = 2,
                           .search_work                = 42,
-                          .search_granted_ns          = 8000,
+                          .search_granted_units       = 8000,
                           .search_renewals            = 1,
                           .search_discovery_used      = true,
-                          .search_overshoot_ns        = 0,
     };
     outcome.thinking = ninferno::ThinkingBudgetStats{.configured_budget     = 256,
                                                    .model_thinking_tokens = 256,
@@ -465,7 +464,7 @@ int main() {
     const Json done = Json::parse(format_request_done_json("serve-test", 3000, context, outcome));
     failures += check(done.at("materialization").at("initial_predicted_total_ns") == 500000 &&
                           done.at("materialization").at("first_improvement_ns") == 2000 &&
-                          done.at("materialization").at("search_granted_ns") == 8000 &&
+                          done.at("materialization").at("search_granted_units") == 8000 &&
                           done.at("materialization").at("search_renewals") == 1 &&
                           done.at("materialization").at("search_discovery_used") == true,
                       "materialization search quality or cumulative budget diagnostics missing");

@@ -1280,7 +1280,7 @@ enum class MaterializationStopReason : std::uint8_t {
     QueueExhausted,
     TargetBudget,
     ExpansionCapacity,
-    TimeBudget,
+    PlanningBudget,
     InsufficientExpectedGain,
     WorkBudget,
 };
@@ -1296,8 +1296,8 @@ materialization_stop_reason_name(MaterializationStopReason reason) noexcept {
         return "target_budget";
     case MaterializationStopReason::ExpansionCapacity:
         return "expansion_capacity";
-    case MaterializationStopReason::TimeBudget:
-        return "time_budget";
+    case MaterializationStopReason::PlanningBudget:
+        return "planning_budget";
     case MaterializationStopReason::InsufficientExpectedGain:
         return "insufficient_expected_gain";
     case MaterializationStopReason::WorkBudget:
@@ -1351,10 +1351,9 @@ struct MaterializationDiagnostics {
     std::optional<std::uint64_t> first_improvement_ns;
     std::uint32_t incumbent_improvements         = 0;
     std::uint64_t search_work                    = 0;
-    std::uint64_t search_granted_ns              = 0;
+    std::uint64_t search_granted_units           = 0;
     std::uint32_t search_renewals                = 0;
     bool search_discovery_used                   = false;
-    std::uint64_t search_overshoot_ns            = 0;
     MaterializationSearchPhase search_stop_phase = MaterializationSearchPhase::None;
     bool search_boundary_limited                 = false;
 

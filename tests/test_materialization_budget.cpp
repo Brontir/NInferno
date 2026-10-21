@@ -1,5 +1,10 @@
+// The admission search budget is counted work, not time: every decision is a pure function of the
+// boundary ledger's position, the declared operation costs and the predicted gains, so the same
+// inputs give the same answers on any machine and on a CPU.
+
 #include "runtime/engine/context_cache/materialization_budget.h"
 
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 
@@ -10,68 +15,108 @@ static void require(bool value, const char* message) {
 }
 
 int main() {
-    constexpr std::uint64_t ms = 1'000'000;
+    // Predicted device nanoseconds whose economic share is one work unit.
+    constexpr std::uint64_t unit_gain =
+        PlanningWork::kEconomicShare * PlanningWork::kPredictedNsPerUnit;
     try {
-        auto idle = PlanningAllowance::boundary(0, 0);
-        MaterializationSearchBudget expensive(idle, 0, 80'000 * ms);
-        require(expensive.allow(4 * ms, 2 * ms, 3 * ms, 70'000 * ms, true, 1),
+        require(PlanningAllowance::boundary(0).limit == 50'000 &&
+                    PlanningAllowance::boundary(3).limit == 10'000 &&
+                    PlanningAllowance::boundary(3).affected_requests == 4,
+                "boundary allowances are not the declared unit counts");
+        require(economic_planning_units(80'000 * unit_gain, 1) == 80'000 &&
+                    economic_planning_units(80'000 * unit_gain, 4) == 20'000 &&
+                    economic_planning_units(UINT64_MAX, 1) == 0,
+                "economic share is not a twentieth of the predicted saving per unit");
+
+        auto idle = PlanningAllowance::boundary(0);
+        MaterializationSearchBudget expensive(idle, 0, 80'000 * unit_gain);
+        require(expensive.granted_units() == PlanningWork::kInitialGrant,
+                "the first window is not the declared grant");
+        require(expensive.allow(4'000, 2'000, 3'000, 70'000 * unit_gain, true, 1),
                 "valuable completion could not cross the initial window");
-        require(expensive.granted_ns() == 10 * ms && expensive.renewals() == 1,
+        require(expensive.granted_units() == 10'000 && expensive.renewals() == 1,
                 "extension did not retain cumulative accounting");
-        require(!expensive.allow(9 * ms, 2 * ms, 2 * ms, ms, true, 2),
+        require(!expensive.allow(9'000, 2'000, 2'000, unit_gain, true, 2),
                 "improved incumbent retained the expensive root's budget");
         require(expensive.stop_reason() ==
                     ninferno::MaterializationStopReason::InsufficientExpectedGain,
-                "economic stopping was reported as wall exhaustion");
+                "economic stopping was reported as budget exhaustion");
 
-        MaterializationSearchBudget discovery(idle, 0, 80'000 * ms);
-        require(discovery.allow(5 * ms, ms, 4 * ms, 70'000 * ms, false, 1),
+        MaterializationSearchBudget discovery(idle, 0, 80'000 * unit_gain);
+        require(discovery.allow(5'000, 1'000, 4'000, 70'000 * unit_gain, false, 1),
                 "unknown candidate could not receive bounded discovery");
-        require(!discovery.allow(10 * ms, ms, ms, 70'000 * ms, false, 2),
+        require(!discovery.allow(10'000, 1'000, 1'000, 70'000 * unit_gain, false, 2),
                 "unknown candidate repeatedly renewed discovery");
-        require(discovery.allow(10 * ms, ms, ms, 70'000 * ms, true, 2),
+        require(discovery.allow(10'000, 1'000, 1'000, 70'000 * unit_gain, true, 2),
                 "complete prediction could not continue after discovery");
 
-        auto busy = PlanningAllowance::boundary(2, 0);
-        MaterializationSearchBudget first(busy, busy.limit_ns - 4 * ms, 80'000 * ms);
-        require(first.granted_ns() == 4 * ms, "mandatory work did not consume boundary time");
-        MaterializationSearchBudget backfill(busy, busy.limit_ns - ms, 80'000 * ms);
-        require(backfill.granted_ns() == ms, "backfill reset the boundary allowance");
-        require(!backfill.allow(busy.limit_ns, 1, 1, 70'000 * ms, true, 1),
+        // Head and backfill inspections share one boundary ledger.
+        PlanningLedger ledger;
+        auto busy    = PlanningAllowance::boundary(2, &ledger);
+        ledger.spent = busy.limit - 4'000;
+        MaterializationSearchBudget first(busy, ledger.spent, 80'000 * unit_gain);
+        require(first.granted_units() == 4'000, "mandatory work did not consume boundary units");
+        busy.charge(3'000);
+        MaterializationSearchBudget backfill(busy, ledger.spent, 80'000 * unit_gain);
+        require(backfill.granted_units() == 1'000, "backfill reset the boundary allowance");
+        require(!backfill.allow(busy.limit, 1, 1, 70'000 * unit_gain, true, 1) &&
+                    backfill.boundary_limited() &&
+                    backfill.stop_reason() == ninferno::MaterializationStopReason::PlanningBudget,
                 "search delayed runnable requests beyond their boundary");
-        require(backfill.overshoot(busy.limit_ns + ms) == ms,
-                "indivisible overrun was not measured");
+        busy.charge(UINT64_MAX);
+        require(ledger.spent == UINT64_MAX && busy.remaining() == 0, "the ledger did not saturate");
 
-        // The concurrent 55K rotation spends ~3.5 ms preparing/validating identities. A useful
-        // complete target must still be assessable; discarding the whole cache makes all six
-        // subsequent continuations cold. The old 5 ms boundary left only 1.5 ms and failed here.
-        MaterializationSearchBudget restore_after_setup(busy, 3 * ms + ms / 2, 80'000 * ms);
-        require(restore_after_setup.allow(3 * ms + ms / 2, 2 * ms, 2 * ms, 70'000 * ms, true, 1),
+        // Mandatory setup must leave a busy boundary room for the first complete reuse
+        // assessment: discarding the whole cache makes every later continuation cold.
+        MaterializationSearchBudget restore_after_setup(PlanningAllowance::boundary(2), 3'500,
+                                                        80'000 * unit_gain);
+        require(restore_after_setup.allow(3'500, PlanningWork::kAssessment,
+                                          PlanningWork::kAssessment, 70'000 * unit_gain, true, 1),
                 "mandatory setup starved the first complete reuse assessment in a busy boundary");
 
-        MaterializationSearchBudget cheap(idle, 0, ms);
-        require(cheap.granted_ns() == ms / 20, "cheap request received a minimum 5 ms grant");
-        require(!cheap.allow(ms / 20, ms, ms, ms, false, 1),
+        MaterializationSearchBudget cheap(idle, 0, 1'000 * unit_gain);
+        require(cheap.granted_units() == 1'000, "cheap request received the full initial grant");
+        require(!cheap.allow(1'000, 20'000, 20'000, 1'000 * unit_gain, false, 1),
                 "discovery ignored the economic cap for a cheap request");
         MaterializationSearchBudget saturated(idle, 0, UINT64_MAX);
-        require(saturated.granted_ns() == 0 && !saturated.allow(0, ms, ms, UINT64_MAX, true, 1),
+        require(saturated.granted_units() == 0 &&
+                    !saturated.allow(0, 1'000, 1'000, UINT64_MAX, true, 1),
                 "saturated cost was used as evidence of unlimited gain");
-        MaterializationSearchBudget seeded(idle, 0, 80'000 * ms);
-        require(!seeded.allow(5 * ms, ms, ms, 70'000 * ms, false, 1, false),
+        MaterializationSearchBudget seeded(idle, 0, 80'000 * unit_gain);
+        require(!seeded.allow(5'000, 1'000, 1'000, 70'000 * unit_gain, false, 1, false),
                 "an already-seeded candidate renewed solely on an incomplete optimistic estimate");
-        require(seeded.allow(5 * ms, ms, ms, 70'000 * ms, true, 1, false),
+        require(seeded.allow(5'000, 1'000, 1'000, 70'000 * unit_gain, true, 1, false),
                 "a complete profitable refinement was denied after seeding");
         std::atomic<bool> cancelled{false};
-        auto controlled                = PlanningAllowance::boundary(0, 0);
-        controlled.cancellation        = &cancelled;
-        controlled.control_deadline_ns = 3 * ms;
-        require(controlled.remaining(2 * ms) == ms, "control deadline did not constrain planning");
+        auto controlled         = PlanningAllowance::boundary(0);
+        controlled.cancellation = &cancelled;
+        require(controlled.remaining(49'000) == 1'000, "remaining units are not the limit's rest");
         cancelled.store(true);
         require(controlled.remaining(0) == 0, "cancelled request kept optional planning headroom");
-        MaterializationSearchBudget stalled(idle, 0, 80'000 * ms);
-        require(stalled.allow(5 * ms, ms, ms, 70'000 * ms, true, 7), "first forecast grant failed");
-        require(!stalled.allow(10 * ms, ms, ms, 70'000 * ms, true, 7),
+        MaterializationSearchBudget stalled(idle, 0, 80'000 * unit_gain);
+        require(stalled.allow(5'000, 1'000, 1'000, 70'000 * unit_gain, true, 7),
+                "first forecast grant failed");
+        require(!stalled.allow(10'000, 1'000, 1'000, 70'000 * unit_gain, true, 7),
                 "stalled work renewed its allowance");
+
+        // Purity: two budgets fed the same sequence answer identically, step for step.
+        const auto replay = [&](std::uint32_t other_runnable) {
+            MaterializationSearchBudget budget(PlanningAllowance::boundary(other_runnable), 0,
+                                               80'000 * unit_gain);
+            std::uint64_t spent = 0;
+            std::uint64_t trace = 0;
+            for (std::uint64_t step = 0; step < 4'000; ++step) {
+                const std::uint64_t cost =
+                    step % 3 == 0 ? PlanningWork::kAssessment : PlanningWork::kOption;
+                const bool allowed = budget.allow(spent, cost, cost * 4,
+                                                  (80'000 - step) * unit_gain, step % 5 != 0, step);
+                trace = trace * 1'000'003U + (allowed ? 1U : 2U) + budget.granted_units();
+                if (allowed) { spent += cost; }
+            }
+            return trace ^ spent;
+        };
+        require(replay(0) == replay(0) && replay(3) == replay(3) && replay(0) != replay(3),
+                "the budget is not a pure function of its inputs");
         std::cout << "ok\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

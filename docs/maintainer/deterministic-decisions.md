@@ -7,7 +7,10 @@ reach the runtime only as facts or as constants.
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
 - the attention split under `exact` follows the free-memory-sized context;
-- environment knobs and budgets in milliseconds still steer choices;
+- environment knobs still steer choices;
+- a constrained row's measured mask time decides whether its masks are filled before launch and
+  whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
+  wait cannot change bytes or batches;
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;

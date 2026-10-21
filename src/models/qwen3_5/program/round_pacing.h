@@ -3,41 +3,45 @@
 // How a decode round uses the host: how many steps an ordinary round runs back to back
 // (ProgramImpl::launch_ordinary) and whether the host spins or blocks on a round's end.
 //
-// On a quiet host a round runs one step and the host spins on its end: each token is published
-// as soon as it exists, nothing runs past a stop, and the host core stays hot for the next launch.
+// The step count is a fixed declared rule, never a timing: it decides which requests share each
+// step's batch (one step per round admits and retires requests between steps, a run-ahead round
+// keeps its batch for all its steps), so it must be the same on every machine for the same
+// requests (docs/maintainer/deterministic-decisions.md). A round runs one step unless
+// NINFERNO_DECODE_STEPS asks for N, and then min(N, allowed_steps): allowed_steps is 1 where rows
+// past a stop could not stay invisible (recurrent state, a full sliding ring, a speculative
+// engine) and the model's uncommitted-row headroom otherwise. One step publishes each token as
+// soon as it exists and runs nothing past a stop. A host whose CPU quota stalls it (a container's
+// CFS bandwidth limit stops every thread of the cgroup for the rest of its 100 ms period) asks for
+// run-ahead explicitly: the later steps feed on the sampled tokens on the device, so the GPU keeps
+// running while the host is stopped.
 //
-// A container's CPU quota (CFS bandwidth limit) is shared by every thread of the process's
-// cgroup. Once the cgroup has used it, a thread that needs more CPU is stopped for the rest of the
-// 100 ms quota period, whatever its nice value. A decode that waits for every step before
-// submitting the next then loses the whole stall each time. The policy measures the host's lag in
-// every round (its wall time beyond the round's device time); two lagging rounds close together
-// mark the host as stalling until a hold period after the last one. While it stalls:
+// The wait is the only timing-driven choice, and it cannot change a round's output bytes or the
+// next round's batch: the round is fully submitted before the host waits, and the wait only moves
+// when the host returns to a boundary whose contents it does not choose. The policy measures the
+// host's lag in every round (its wall time beyond the round's device time); two lagging rounds
+// close together mark the host as stalling until a hold period after the last one. While it
+// stalls the host waits for the round's end by spinning, or by blocking (a blocking-sync event)
+// where that decodes faster. Blocking spends almost none of the quota, which usually wins; but
+// when many runnable threads drain the quota early in every period, a blocked host can wake too
+// late to get any of it, and a spinning host does better. The policy probes both waits for
+// kProbeSeconds each (the steps of their rounds over the rounds' finish-to-finish wall time),
+// spinning first when a stall begins and the kept wait first afterwards, blocks for kKeepSeconds
+// only if that was faster by kBlockGain, and probes again. It probes again at once when the kept
+// wait's rate moves by more than kShift (the load changed). The choice outlasts a pause in the
+// stall (a host that blocks well stops lagging, and its stall ends until the lag returns), so a
+// returning stall resumes it at once.
 //
-// - a round runs enough steps for kRoundSeconds of device work, so the GPU keeps running while
-//   the host is stopped (the later steps feed on the sampled tokens on the device);
-// - the host waits for the round's end by spinning, or by blocking (a blocking-sync event) where
-//   that decodes faster. Blocking spends almost none of the quota, which usually wins; but when
-//   many runnable threads drain the quota early in every period, a blocked host can wake too late
-//   to get any of it, and a spinning host does better. The policy probes both waits for
-//   kProbeSeconds each (the steps of their rounds over the rounds' finish-to-finish wall time),
-//   spinning first when a stall begins and the kept wait first afterwards, blocks for
-//   kKeepSeconds only if that was faster by kBlockGain, and probes again. It probes again at once
-//   when the kept wait's rate moves by more than kShift (the load changed). The choice outlasts a
-//   pause in the stall (a host that blocks well stops lagging, and its stall ends until the lag
-//   returns), so a returning stall resumes it at once.
-//
-// A speculative engine's rounds (a verify and the drafting that follows it) cannot run
-// ahead: the next round's drafts and rows depend on this round's acceptance. They run one step
-// and use only the wait, each round counting as one step of the probe's rate: the probe compares
-// rounds, not tokens, per second. A round's device time does not depend on how many of its drafts
-// are accepted, while its tokens do, and acceptance follows the text, not the wait.
+// A speculative engine's rounds (a verify and the drafting that follows it) cannot run ahead: the
+// next round's drafts and rows depend on this round's acceptance. They run one step and use only
+// the wait, each round counting as one step of the probe's rate: the probe compares rounds, not
+// tokens, per second. A round's device time does not depend on how many of its drafts are
+// accepted, while its tokens do, and acceptance follows the text, not the wait.
 
 #include "core/parse.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -58,14 +62,8 @@ public:
     static constexpr double kPairSeconds = 1.0;
     // until this long after the last lagging round.
     static constexpr double kHoldSeconds = 5.0;
-    // Device work of a round while the host stalls: longer than a CFS bandwidth period (100 ms),
-    // so a stopped host finds the GPU still busy when it runs again.
-    static constexpr double kRoundSeconds = 0.25;
-    // The step time the run-ahead is sized by follows a shorter step at once and a longer one
-    // (a longer context, a wider batch) by at most this fraction per round.
-    static constexpr double kStepRise = 0.01;
     // While the host stalls, each wait is probed for at least this long and kProbeRounds rounds
-    // (a run-ahead round lasts a quarter of a second, and throttling periods make the rate of a
+    // (a run-ahead round can last a quarter of a second, and throttling periods make the rate of a
     // few rounds noisy), or for kProbeLimitSeconds when rounds are slower than that. Blocking is
     // kept for kKeepSeconds if its rate beat spinning's by kBlockGain, spinning otherwise. The
     // kept wait's rate is measured in windows of kShiftSeconds, and one that moves by more than
@@ -88,20 +86,19 @@ public:
         Block, // block on every round's end
     };
 
-    // `steps_setting` is NINFERNO_DECODE_STEPS: null or "auto" adapts; an integer N in
-    // [1, maximum_steps] runs N steps in every round that can (1: one step per round).
+    // `steps_setting` is NINFERNO_DECODE_STEPS: null runs one step per round; an integer N in
+    // [1, maximum_steps] runs N steps in every round that can.
     // `wait_setting` is NINFERNO_DECODE_WAIT: null or "auto", "spin" or "block". A round runs at
     // most `allowed_steps` steps (1 where rows past a stop could not stay invisible).
     RoundPacing(const char* steps_setting, const char* wait_setting,
                         std::uint32_t maximum_steps, std::uint32_t allowed_steps)
         : allowed_steps_(std::clamp(allowed_steps, 1U, std::max(maximum_steps, 1U))) {
         if (maximum_steps == 0) { throw std::invalid_argument("a decode round runs a step"); }
-        if (steps_setting != nullptr && std::string_view(steps_setting) != "auto") {
+        if (steps_setting != nullptr) {
             const auto value = parse_exact<std::uint32_t>(steps_setting);
             if (!value || *value == 0 || *value > maximum_steps) {
-                throw std::invalid_argument(
-                    "NINFERNO_DECODE_STEPS must be auto or an integer in [1, " +
-                    std::to_string(maximum_steps) + "]");
+                throw std::invalid_argument("NINFERNO_DECODE_STEPS must be an integer in [1, " +
+                                            std::to_string(maximum_steps) + "]");
             }
             fixed_steps_ = *value;
         }
@@ -120,13 +117,10 @@ public:
     // NINFERNO_DECODE_STEPS as an integer, if it gave one.
     [[nodiscard]] std::optional<std::uint32_t> fixed_steps() const noexcept { return fixed_steps_; }
 
-    // The steps the next round asks for; launch_ordinary may run fewer.
-    [[nodiscard]] std::uint32_t steps(Clock::time_point now) const noexcept {
-        if (fixed_steps_) { return std::min(*fixed_steps_, allowed_steps_); }
-        if (!stalling(now) || step_seconds_ <= 0.0) { return 1; }
-        const double wanted = std::ceil(kRoundSeconds / step_seconds_);
-        return static_cast<std::uint32_t>(
-            std::clamp(wanted, 1.0, static_cast<double>(allowed_steps_)));
+    // The steps every round asks for, a function of the setting and the allowed steps alone;
+    // launch_ordinary may run fewer (a row's remaining limit).
+    [[nodiscard]] std::uint32_t steps() const noexcept {
+        return fixed_steps_ ? std::min(*fixed_steps_, allowed_steps_) : 1U;
     }
 
     [[nodiscard]] bool stalling(Clock::time_point now) const noexcept {
@@ -149,12 +143,6 @@ public:
     void observe(std::uint32_t steps, double wall_seconds, double device_seconds,
                  Clock::time_point now, bool follows_round = true) noexcept {
         if (steps == 0 || !(device_seconds > 0.0) || !(wall_seconds >= 0.0)) { return; }
-        const double per_step = device_seconds / steps;
-        // The lower envelope of the step time sizes the run-ahead: a host stopped while it
-        // submits a round's launches leaves gaps in the round's device time.
-        step_seconds_ = step_seconds_ > 0.0
-                            ? std::min(per_step, step_seconds_ * (1.0 + kStepRise))
-                            : per_step;
         // A round the host submitted while stalling waited as the probe chose, unless the host
         // was idle before it (the time since the previous round's end beyond this round's own).
         const Clock::time_point submitted = now - seconds(wall_seconds);
@@ -257,8 +245,7 @@ private:
 
     std::uint32_t allowed_steps_ = 1;
     std::optional<std::uint32_t> fixed_steps_;
-    Wait wait_           = Wait::Auto;
-    double step_seconds_ = 0.0; // lower envelope of device seconds per step
+    Wait wait_ = Wait::Auto;
     std::optional<Clock::time_point> last_lag_;
     std::optional<Clock::time_point> hold_until_;
     // The wait probe while the host stalls: steps, finish-to-finish wall seconds and rounds of

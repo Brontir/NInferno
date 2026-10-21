@@ -743,7 +743,7 @@ root candidate
 ```
 
 The root maximal target is built from the candidate-specific eligible domain; the selected source has no victim cell. It retains no
-sacrificable cache value, but guarantees that a heuristic, target budget, or wall budget failure does not misjudge a runnable request as blocked.
+sacrificable cache value, but guarantees that a heuristic, target budget, or planning budget failure does not misjudge a runnable request as blocked.
 Active requirements, source required coverage, the writer, and transaction pins always stay in the Program's requirement
 union.
 
@@ -765,21 +765,45 @@ Within one planning problem:
    require earlier exact feedback. Ordinary alternatives are kept outside the local construction.
 4. The complete joint post-state settles unique objects, aliases, Move/Fork, COW, Host geometry, and stage peaks.
    Only results that are physically feasible and logically adoptable participate in the final J and the stable tie-break comparison.
-5. When any optional time, work, or capacity budget is exhausted, the best verified incumbent is returned.
+5. When any optional planning, work, or capacity budget is exhausted, the best verified incumbent is returned.
 
 Construction, repair, ordinary expansion, the maximal target, and seal share the candidate-specific domain and the exact evaluator.
 Cursors, the target arena, and borrowed summaries are valid only within the same planning session/revision; stopping or discarding a batch cannot produce a
 real resource mutation. After the search ends, old state is not resumed across decode/prefill.
 
-The Engine provides an optional time quota shared across the admission boundary, which head/backfill inspections cannot each reset.
-The budget accounts for other runnable requests and the time already spent at this boundary. The planner first searches with a short window, then decides whether to extend the quota based on the
-expected improvement still obtainable and the completion cost; an incomplete prediction gets only a limited exploration opportunity, and realized gains cannot be used repeatedly to extend the quota.
-Targets, work, and session storage are still independently bounded.
+The budgets are counted work, never time (`materialization_budget.h`,
+[Deterministic decisions](deterministic-decisions.md)): the same catalog, prompt and boundary select the same cached states on
+every machine, and a CPU test replays any decision. Every Program operation is charged work units from discrete facts of the
+operation itself. One unit is the nominal host cost of one construction-option step (about 1 µs):
 
-The identity and root maximal correctness assessments are not cancelled when the optional quota is exhausted. Time is checked between Program
-operations, and estimation error can cause a single-step overrun; the final seal must still complete. The budget therefore affects only cache quality,
-does not change mandatory readiness, and does not promise that the whole planning call can be interrupted at an arbitrary moment.
-Shared capture keeps an independent fixed target budget and a Skip incumbent.
+| Operation | Units |
+|---|---|
+| construction option | 1 |
+| exact target assessment (identity, maximal, constructed, pending) | 20 + its projection work (one per owner decision or checkpoint-recovery alternative it projected) |
+| target expansion | 20 + the targets it committed |
+
+The base costs are the seed estimates the planner used to refine with wall-clock samples; it now predicts the next
+operation's cost from the units the previous ones were charged.
+
+The Engine provides an optional quota shared across the admission boundary: one ledger that the head and every backfill
+inspection charge, so none of them resets it. It is 50 000 units when no other request is runnable and 10 000 when others
+wait (the former 50 ms and 10 ms at the nominal unit). The mandatory identity assessments are charged to it too. The planner
+first searches with a window of at most 5 000 units, then decides whether to extend it from the expected improvement still
+obtainable and the completion cost: a search may spend a twentieth of the predicted saving, at 1 000 predicted device
+nanoseconds a unit, shared by the affected requests. An incomplete prediction gets only one exploration episode of at most
+5 000 units, and realized gains cannot be used repeatedly to extend the quota. Targets, work, and session storage are still
+independently bounded. A cancelled request keeps no optional headroom; its queue deadline is checked before inspection and
+does not shorten the search.
+
+The identity and root maximal correctness assessments are not cancelled when the optional quota is exhausted. The quota is
+checked between Program operations against each operation's predicted cost; the final seal must still complete. The budget
+therefore affects only cache quality, does not change mandatory readiness, and does not promise that the whole planning call
+can be interrupted at an arbitrary moment.
+
+Shared capture keeps an independent fixed target budget and a Skip incumbent. Its search may assess, once a target is
+selectable, a twentieth of the capture's predicted rebuild saving shared by the waiting requests at a nominal 10 µs a target,
+between 20 and 500 targets (four times that while no target is selectable). Uncapped it walked up to 4096 targets in 39-43 ms
+(Qwen3.6-35B, concurrency 8, RTX 5090), about 10 µs a target, so the bounds equal the former 0.2-5 ms wall grant.
 
 ### 8.8 Objective Function and Determinism
 
@@ -805,8 +829,8 @@ Under equal `J`, the preferences in order are:
 6. the stable ordinal of candidate and target.
 
 The stop reason describes only the actual boundary: `no_pressure`, `queue_exhausted`, `target_budget`,
-`expansion_capacity`, `time_budget`, `work_budget`, or `insufficient_expected_gain`.
-`time_budget` also covers the case where the next indivisible operation is predicted not to fit in the remaining margin. None of them claims global optimality of the current target graph or of the real
+`expansion_capacity`, `planning_budget`, `work_budget`, or `insufficient_expected_gain`.
+`planning_budget` also covers the case where the next indivisible operation is predicted not to fit in the remaining margin. None of them claims global optimality of the current target graph or of the real
 TTFT.
 
 ### 8.9 Readiness

@@ -7,7 +7,6 @@
 #include "runtime/engine/context_cache/resource_search.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -69,9 +68,10 @@ public:
         std::uint32_t blocked_runnable_requests     = 0;
         std::uint32_t stable_scenario_ordinal       = 0;
         std::uint32_t target_budget                 = kTargetBudget;
-        // Wall time the search may take once a target has been assessed (four times this while
-        // no target is selectable); 0 leaves it bounded by target_budget alone.
-        std::uint64_t search_grant_ns = 0;
+        // Targets the search may assess once one is selectable (four times this while none is);
+        // 0 leaves it bounded by target_budget alone. A count, never a clock: the same catalog
+        // makes the same capture decision on every machine (economic_grant_targets()).
+        std::uint32_t search_grant_targets = 0;
     };
 
     struct Result {
@@ -99,8 +99,6 @@ public:
         validate(input);
         queue_.clear();
         target_ledger_.reset(static_cast<std::size_t>(input.target_budget) + 1U);
-        const auto started = std::chrono::steady_clock::now();
-        const std::chrono::nanoseconds grant{input.search_grant_ns};
 
         auto session = program.begin_capture_pressure_planning(
             *input.capture, input.private_owners, input.private_owner_ids, input.shared_owners,
@@ -126,9 +124,9 @@ public:
         std::size_t cursor              = 0;
 
         while (cursor < queue_.size() && targets_evaluated < input.target_budget) {
-            if (input.search_grant_ns != 0 && targets_evaluated != 0) {
-                const auto elapsed = std::chrono::steady_clock::now() - started;
-                if (elapsed >= (incumbent ? grant : 4 * grant)) { break; }
+            if (input.search_grant_targets != 0 &&
+                targets_evaluated >= (incumbent ? 1ULL : 4ULL) * input.search_grant_targets) {
+                break;
             }
             const QueuedTarget queued = queue_[cursor++];
             if (target_marked(queued.ordinal, kTargetAssessed)) { continue; }
@@ -220,19 +218,23 @@ public:
     static constexpr std::uint32_t kTargetBudget = 4096;
 
     // The search runs on the Engine thread while every runnable lane waits, so it gets the
-    // admission search's economic grant (MaterializationSearchBudget): a twentieth of the
-    // capture's rebuild saving shared by the waiting requests, between 0.2 and 5 ms. Uncapped, it
-    // walked up to 4096 targets in 39-43 ms a capture (Qwen3.6-35B C=8 on an RTX 5090: 1225
-    // against 1261 tok/s with the grant).
-    [[nodiscard]] static constexpr std::uint64_t
-    economic_grant_ns(std::uint64_t candidate_rebuild_ns,
-                      std::uint32_t blocked_runnable_requests) noexcept {
-        constexpr std::uint64_t kMinimumNs = 200'000;
-        constexpr std::uint64_t kMaximumNs = 5'000'000;
+    // admission search's economic share (MaterializationSearchBudget): a twentieth of the
+    // capture's predicted rebuild saving, shared by the waiting requests, counted in targets at a
+    // declared kNominalTargetNs each and kept between kMinimumTargets and kMaximumTargets.
+    // Uncapped, the search walked up to 4096 targets in 39-43 ms a capture (Qwen3.6-35B C=8 on an
+    // RTX 5090: 1225 against 1261 tok/s with the former 0.2-5 ms wall grant), about 10 us a target,
+    // so the bounds are that grant at the nominal cost.
+    static constexpr std::uint64_t kNominalTargetNs = 10'000;
+    static constexpr std::uint32_t kMinimumTargets  = 20;
+    static constexpr std::uint32_t kMaximumTargets  = 500;
 
-        const std::uint64_t share = candidate_rebuild_ns / 20U /
+    [[nodiscard]] static constexpr std::uint32_t
+    economic_grant_targets(std::uint64_t candidate_rebuild_ns,
+                           std::uint32_t blocked_runnable_requests) noexcept {
+        const std::uint64_t share = candidate_rebuild_ns / 20U / kNominalTargetNs /
                                     (1U + static_cast<std::uint64_t>(blocked_runnable_requests));
-        return std::clamp(share, kMinimumNs, kMaximumNs);
+        return static_cast<std::uint32_t>(
+            std::clamp<std::uint64_t>(share, kMinimumTargets, kMaximumTargets));
     }
 
 private:

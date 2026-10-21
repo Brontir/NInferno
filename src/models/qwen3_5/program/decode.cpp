@@ -537,7 +537,7 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
     // column masked.
     dflash_masks_follow_drafts = !mtp && speculative.size != 0 && masks.any() &&
                                  drafted_cost_ns <= ops::kTokenMaskReleaseWaitNs / 8U;
-    const std::uint32_t requested_steps = timed_round ? round_pacing->steps(started) : 1U;
+    const std::uint32_t requested_steps = timed_round ? round_pacing->steps() : 1U;
     const bool follows_round            = !round_after_other_work;
     round_after_other_work              = !timed_round;
     auto launched                       = started;

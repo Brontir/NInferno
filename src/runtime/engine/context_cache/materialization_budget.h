@@ -4,71 +4,120 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <limits>
 
 namespace ninferno::runtime {
 
-template <class Clock = std::chrono::steady_clock>
-[[nodiscard]] std::uint64_t planning_now_ns() noexcept {
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch())
-            .count());
-}
-
-// One Engine admission boundary, including all head/backfill inspections. Correctness work and
-// sealing cannot be cancelled by this allowance, but their elapsed time reduces optional headroom.
-struct PlanningAllowance {
-    std::uint64_t started_ns              = planning_now_ns();
-    std::uint64_t limit_ns                = 50'000'000;
-    std::uint32_t affected_requests       = 1;
-    const std::atomic<bool>* cancellation = nullptr;
-    std::uint64_t control_deadline_ns     = std::numeric_limits<std::uint64_t>::max();
-
-    [[nodiscard]] static PlanningAllowance
-    boundary(std::uint32_t other_runnable, std::uint64_t now = planning_now_ns()) noexcept {
-        return {.started_ns        = now,
-                .limit_ns          = other_runnable == 0 ? 50'000'000ULL : 10'000'000ULL,
-                .affected_requests = 1U + other_runnable};
-    }
-
-    [[nodiscard]] std::uint64_t remaining(std::uint64_t now) const noexcept {
-        if ((cancellation && cancellation->load(std::memory_order_relaxed)) ||
-            now >= control_deadline_ns) {
-            return 0;
-        }
-        const auto elapsed = now > started_ns ? now - started_ns : 0;
-        return std::min(elapsed < limit_ns ? limit_ns - elapsed : 0, control_deadline_ns - now);
-    }
+// Optional admission planning is bounded by counted work, never by a clock, so the same catalog,
+// prompt and boundary make the same plan on every machine and on a CPU
+// (docs/maintainer/deterministic-decisions.md). Each Program operation of the search is charged
+// in work units from discrete facts of the operation itself. One unit is the nominal host cost of
+// one construction-option step (about 1 us); the base costs were the seed estimates (1 us an
+// option, 20 us an assessment or an expansion) the planner used to refine with wall-clock
+// samples. An assessment adds one unit per owner decision or checkpoint-recovery alternative it
+// projected (its projection_work), an expansion one per target it committed, so a larger catalog
+// costs more without a clock. The boundary sizes are the former 50 ms (no other runnable request)
+// and 10 ms (others wait) at the nominal unit; the planner predicts the next operation's cost from
+// the units the previous ones were charged.
+struct PlanningWork {
+    // Per operation: a construction option; an exact target assessment, plus its projections;
+    // a target expansion, plus its new targets.
+    static constexpr std::uint64_t kOption     = 1;
+    static constexpr std::uint64_t kAssessment = 20;
+    static constexpr std::uint64_t kExpansion  = 20;
+    // Units of one Engine admission boundary.
+    static constexpr std::uint64_t kIdleBoundary = 50'000;
+    static constexpr std::uint64_t kBusyBoundary = 10'000;
+    // The first window of a search, and the most one discovery episode may add.
+    static constexpr std::uint64_t kInitialGrant   = 5'000;
+    static constexpr std::uint64_t kDiscoveryGrant = 5'000;
+    // The economic rule: a search may spend a twentieth of the predicted saving, shared by the
+    // affected requests; one unit is worth kPredictedNsPerUnit predicted device nanoseconds.
+    static constexpr std::uint64_t kEconomicShare      = 20;
+    static constexpr std::uint64_t kPredictedNsPerUnit = 1'000;
 };
 
-// Integer timestamps make wall-budget decisions reproducible without sleeping in policy tests.
-// Estimates control optional work only; they never certify feasibility or a search bound.
+// The units spent at one Engine admission boundary: the head inspection and every backfill
+// inspection charge the same ledger, so none of them resets the boundary's allowance.
+struct PlanningLedger {
+    std::uint64_t spent = 0;
+};
+
+// One Engine admission boundary. Correctness work and sealing cannot be cancelled by this
+// allowance; the mandatory identity assessments are charged to it all the same, so they reduce the
+// optional headroom left to the search.
+struct PlanningAllowance {
+    std::uint64_t limit                   = PlanningWork::kIdleBoundary;
+    std::uint32_t affected_requests       = 1;
+    const std::atomic<bool>* cancellation = nullptr;
+    // Null: the allowance belongs to one planning call (the planner then keeps its own ledger).
+    PlanningLedger* ledger = nullptr;
+
+    [[nodiscard]] static PlanningAllowance boundary(std::uint32_t other_runnable,
+                                                    PlanningLedger* ledger = nullptr) noexcept {
+        return {.limit =
+                    other_runnable == 0 ? PlanningWork::kIdleBoundary : PlanningWork::kBusyBoundary,
+                .affected_requests = 1U + other_runnable,
+                .ledger            = ledger};
+    }
+
+    [[nodiscard]] std::uint64_t spent() const noexcept { return ledger ? ledger->spent : 0; }
+
+    void charge(std::uint64_t units) const noexcept {
+        if (ledger == nullptr) { return; }
+        ledger->spent = units > std::numeric_limits<std::uint64_t>::max() - ledger->spent
+                            ? std::numeric_limits<std::uint64_t>::max()
+                            : ledger->spent + units;
+    }
+
+    // Units left once `spent` of the boundary is used. A cancelled request (the client's own
+    // action, not a timing) keeps no optional headroom.
+    [[nodiscard]] std::uint64_t remaining(std::uint64_t spent) const noexcept {
+        if (cancellation && cancellation->load(std::memory_order_relaxed)) { return 0; }
+        return spent < limit ? limit - spent : 0;
+    }
+
+    [[nodiscard]] std::uint64_t remaining() const noexcept { return remaining(spent()); }
+};
+
+// The economic cap in units for a predicted saving of `gain_ns` shared by `affected` requests.
+// A saturated (unknown) cost is no evidence of an unlimited gain.
+[[nodiscard]] constexpr std::uint64_t economic_planning_units(std::uint64_t gain_ns,
+                                                              std::uint32_t affected) noexcept {
+    if (gain_ns == std::numeric_limits<std::uint64_t>::max()) { return 0; }
+    return gain_ns / PlanningWork::kEconomicShare / PlanningWork::kPredictedNsPerUnit /
+           std::max(1U, affected);
+}
+
+// A pure function of its inputs: `spent` is the boundary ledger's position (the planner passes it,
+// never a clock), operation and completion costs are in work units, and gains are predicted device
+// nanoseconds. Estimates control optional work only; they never certify feasibility or a search
+// bound.
 class MaterializationSearchBudget {
 public:
     MaterializationSearchBudget(PlanningAllowance allowance, std::uint64_t started,
-                                std::uint64_t initial_cost) noexcept
+                                std::uint64_t initial_cost_ns) noexcept
         : allowance_(allowance), started_(started),
-          granted_(std::min(
-              {std::uint64_t{5'000'000}, economic(initial_cost), allowance.remaining(started)})) {}
+          granted_(std::min({PlanningWork::kInitialGrant, economic(initial_cost_ns),
+                             allowance.remaining(started)})) {}
 
-    [[nodiscard]] bool allow(std::uint64_t now, std::uint64_t next_operation_ns,
-                             std::uint64_t completion_ns, std::uint64_t gain_ns,
+    [[nodiscard]] bool allow(std::uint64_t spent, std::uint64_t next_operation,
+                             std::uint64_t completion, std::uint64_t gain_ns,
                              bool complete_prediction, std::uint64_t progress,
                              bool discovery_eligible = true) noexcept {
         boundary_limited_             = false;
-        const std::uint64_t elapsed   = now > started_ ? now - started_ : 0;
-        const std::uint64_t remaining = allowance_.remaining(now);
-        next_operation_ns             = std::max<std::uint64_t>(1, next_operation_ns);
-        completion_ns                 = std::max(next_operation_ns, completion_ns);
-        if (next_operation_ns > remaining) {
+        const std::uint64_t used      = spent > started_ ? spent - started_ : 0;
+        const std::uint64_t remaining = allowance_.remaining(spent);
+        next_operation                = std::max<std::uint64_t>(1, next_operation);
+        completion                    = std::max(next_operation, completion);
+        if (next_operation > remaining) {
             boundary_limited_ = true;
-            reason_           = MaterializationStopReason::TimeBudget;
+            reason_           = MaterializationStopReason::PlanningBudget;
             return false;
         }
-        if (elapsed < granted_ && next_operation_ns <= granted_ - elapsed) { return true; }
-        if (completion_ns > remaining || completion_ns > economic(gain_ns)) {
+        if (used < granted_ && next_operation <= granted_ - used) { return true; }
+        if (completion > remaining || completion > economic(gain_ns)) {
             reason_ = MaterializationStopReason::InsufficientExpectedGain;
             return false;
         }
@@ -81,12 +130,12 @@ public:
             reason_ = MaterializationStopReason::InsufficientExpectedGain;
             return false;
         }
-        const auto hard = elapsed + remaining; // bounded by the allowance's representable duration
-        const auto growth = std::max(granted_, next_operation_ns);
+        const auto hard   = used + remaining;
+        const auto growth = std::max(granted_, next_operation);
         auto added        = std::min(growth, hard > granted_ ? hard - granted_ : 0);
-        if (!complete_prediction) { added = std::min<std::uint64_t>(added, 5'000'000); }
-        if (added == 0 || elapsed + next_operation_ns > granted_ + added) {
-            reason_ = MaterializationStopReason::TimeBudget;
+        if (!complete_prediction) { added = std::min(added, PlanningWork::kDiscoveryGrant); }
+        if (added == 0 || used + next_operation > granted_ + added) {
+            reason_ = MaterializationStopReason::PlanningBudget;
             return false;
         }
         granted_ += added;
@@ -96,7 +145,7 @@ public:
         return true;
     }
 
-    [[nodiscard]] std::uint64_t granted_ns() const noexcept { return granted_; }
+    [[nodiscard]] std::uint64_t granted_units() const noexcept { return granted_; }
 
     [[nodiscard]] std::uint32_t renewals() const noexcept { return renewals_; }
 
@@ -106,15 +155,9 @@ public:
 
     [[nodiscard]] MaterializationStopReason stop_reason() const noexcept { return reason_; }
 
-    [[nodiscard]] std::uint64_t overshoot(std::uint64_t now) const noexcept {
-        const auto elapsed = now > started_ ? now - started_ : 0;
-        return elapsed > granted_ ? elapsed - granted_ : 0;
-    }
-
 private:
-    [[nodiscard]] std::uint64_t economic(std::uint64_t gain) const noexcept {
-        if (gain == std::numeric_limits<std::uint64_t>::max()) { return 0; }
-        return gain / 20U / std::max(1U, allowance_.affected_requests);
+    [[nodiscard]] std::uint64_t economic(std::uint64_t gain_ns) const noexcept {
+        return economic_planning_units(gain_ns, allowance_.affected_requests);
     }
 
     bool boundary_limited_ = false;
@@ -124,7 +167,7 @@ private:
     std::uint64_t renewal_progress_   = 0;
     std::uint32_t renewals_           = 0;
     bool discovery_used_              = false;
-    MaterializationStopReason reason_ = MaterializationStopReason::TimeBudget;
+    MaterializationStopReason reason_ = MaterializationStopReason::PlanningBudget;
 };
 
 } // namespace ninferno::runtime

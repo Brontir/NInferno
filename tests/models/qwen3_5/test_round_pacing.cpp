@@ -1,7 +1,8 @@
-// Ordinary decode round pacing: a quiet host keeps one step per round and spins on its end; a
-// host that lags behind the GPU gets rounds of about kRoundSeconds of device work and waits for
-// their end by spinning, or by blocking where its probes found that faster, until the lag stops;
-// NINFERNO_DECODE_STEPS and NINFERNO_DECODE_WAIT fix the policy or are refused.
+// Ordinary decode round pacing: the steps of a round are a pure function of NINFERNO_DECODE_STEPS
+// and the allowed steps, whatever the host's timings (one step by default); a quiet host spins on
+// a round's end, and a host that lags behind the GPU waits by spinning, or by blocking where its
+// probes found that faster, until the lag stops; NINFERNO_DECODE_STEPS and NINFERNO_DECODE_WAIT
+// fix the policy or are refused.
 
 #include "models/qwen3_5/program/round_pacing.h"
 
@@ -46,7 +47,7 @@ int main() {
         RoundPacing pacing(nullptr, nullptr, 32, 32);
         double now = 0.0;
         for (int round = 0; round < 500; ++round) {
-            failures += check(pacing.steps(at(now)) == 1, "a quiet host runs more than one step");
+            failures += check(pacing.steps() == 1, "a quiet host runs more than one step");
             failures += check(!pacing.block(at(now)), "a quiet host blocks");
             pacing.observe(1, step + 0.00005, step, at(now += step));
         }
@@ -56,26 +57,27 @@ int main() {
             pacing.observe(1, step + 0.0001, step, at(now += step));
         }
         pacing.observe(1, step + 0.030, step, at(now += step + 0.030));
-        failures += check(!pacing.stalling(at(now)) && pacing.steps(at(now)) == 1,
+        failures += check(!pacing.stalling(at(now)) && pacing.steps() == 1,
                           "lags a second apart marked the host as stalling");
     }
 
     {
         // A throttled host: the process stops for tens of milliseconds in every 100 ms.
-        RoundPacing pacing("auto", "auto", 32, 32);
+        // The stall changes only the wait, never the steps: a timing may not choose a batch.
+        RoundPacing pacing(nullptr, "auto", 32, 32);
         double now = 0.0;
         pacing.observe(1, step + 0.040, step, at(now += step + 0.040));
-        failures += check(pacing.steps(at(now)) == 1, "a single lag marked a stall");
+        failures += check(!pacing.stalling(at(now)), "a single lag marked a stall");
         pacing.observe(1, step, step, at(now += step));
         pacing.observe(1, step + 0.035, step, at(now += step + 0.035));
-        const std::uint32_t steps = pacing.steps(at(now));
-        failures += check(steps == 13, "a stalling host does not run kRoundSeconds per round");
+        failures += check(pacing.stalling(at(now)) && pacing.steps() == 1,
+                          "a stalling host changed its steps per round");
         failures += check(!pacing.block(at(now)), "a stalling host does not probe spinning first");
 
         // Lags keep recurring while the stall lasts; each one extends the hold.
-        pacing.observe(steps, steps * step + 0.040, steps * step, at(now += 3.0));
-        failures += check(pacing.steps(at(now + 4.9)) == 13, "a recurring lag did not hold");
-        failures += check(pacing.steps(at(now + 5.1)) == 1 && !pacing.block(at(now + 5.1)),
+        pacing.observe(1, step + 0.040, step, at(now += 3.0));
+        failures += check(pacing.stalling(at(now + 4.9)), "a recurring lag did not hold");
+        failures += check(!pacing.stalling(at(now + 5.1)) && !pacing.block(at(now + 5.1)),
                           "the stall outlived its hold");
     }
 
@@ -83,7 +85,7 @@ int main() {
         // NINFERNO_DECODE_WAIT=block blocks on a quiet host too.
         RoundPacing pacing(nullptr, "block", 32, 32);
         pacing.observe(1, step, step, at(0.0));
-        failures += check(pacing.block(at(0.0)) && pacing.steps(at(0.0)) == 1,
+        failures += check(pacing.block(at(0.0)) && pacing.steps() == 1,
                           "NINFERNO_DECODE_WAIT=block does not block alone");
     }
 
@@ -151,37 +153,52 @@ int main() {
     }
 
     {
-        // A round whose device time has gaps (the host stopped while it submitted the launches)
-        // does not shrink the next rounds; a longer step is followed slowly.
-        RoundPacing pacing(nullptr, nullptr, 32, 32);
-        pacing.observe(1, step + 0.04, step, at(0.0));
-        pacing.observe(1, step + 0.04, step, at(0.1));
-        failures += check(pacing.steps(at(0.1)) == 13, "a stalling host does not run ahead");
-        pacing.observe(13, 1.0, 26 * step, at(1.1));
-        failures += check(pacing.steps(at(1.1)) == 13,
-                          "gaps in a round's device time shrank the rounds");
-        for (int round = 0; round < 200; ++round) { pacing.observe(13, 1.0, 26 * step, at(1.2)); }
-        failures += check(pacing.steps(at(1.2)) == 7, "a longer step was not followed");
+        // The steps are a pure function of the setting and the allowed steps: no sequence of
+        // rounds (quiet, lagging, gapped, slow) moves them.
+        const auto steps_after = [&](const char* setting, std::uint32_t allowed, double lag,
+                                     double device) {
+            RoundPacing pacing(setting, nullptr, 32, allowed);
+            std::uint32_t seen = pacing.steps();
+            bool constant      = true;
+            double now         = 0.0;
+            for (int round = 0; round < 400; ++round) {
+                const std::uint32_t steps = pacing.steps();
+                constant                  = constant && steps == seen;
+                now += steps * device + lag;
+                pacing.observe(steps, steps * device + lag, steps * device, at(now));
+            }
+            return constant ? seen : 0U;
+        };
+        for (const double lag : {0.0, 0.00005, 0.035, 0.5}) {
+            for (const double device : {0.001, step, 0.2}) {
+                failures += check(steps_after(nullptr, 32, lag, device) == 1 &&
+                                      steps_after(nullptr, 1, lag, device) == 1 &&
+                                      steps_after("8", 32, lag, device) == 8 &&
+                                      steps_after("8", 4, lag, device) == 4 &&
+                                      steps_after("32", 32, lag, device) == 32 &&
+                                      steps_after("32", 1, lag, device) == 1,
+                                  "a round's steps depended on the host's timings");
+            }
+        }
     }
 
     {
-        // Rounds longer than a second (a throttled host that spins through 13 steps) still count,
-        // and a probe phase ends after kProbeLimitSeconds whatever its rounds. Spinning here takes
-        // 0.5 s and 1.5 s by turns, blocking 0.9 s: blocking is faster, which only the long
-        // spinning rounds show, and every round submitted after 5.5 s must block.
-        RoundPacing pacing(nullptr, nullptr, 32, 32);
+        // Rounds longer than a second (a throttled host that spins through 13 fixed steps) still
+        // count, and a probe phase ends after kProbeLimitSeconds whatever its rounds. Spinning here
+        // takes 0.5 s and 1.5 s by turns, blocking 0.9 s: blocking is faster, which only the long
+        // spinning rounds show, and every round submitted after 6.5 s must block.
+        RoundPacing pacing("13", nullptr, 32, 32);
         constexpr double device = 13 * step;
         double now              = 0.0;
         int spun_rounds         = 0;
         int late_spins          = 0;
-        while (now < 12.0) {
-            const std::uint32_t steps = pacing.steps(at(now));
+        while (now < 14.0) {
+            const std::uint32_t steps = pacing.steps();
             const bool block          = pacing.block(at(now));
-            double round              = step + 0.05;
-            if (steps > 1) { round = block ? 0.9 : (++spun_rounds % 2 == 0 ? 1.5 : 0.5); }
-            if (steps > 1 && !block && now > 5.5) { ++late_spins; }
+            const double round        = block ? 0.9 : (++spun_rounds % 2 == 0 ? 1.5 : 0.5);
+            if (!block && now > 6.5) { ++late_spins; }
             now += round;
-            pacing.observe(steps, round, steps == 1 ? step : device, at(now));
+            pacing.observe(steps, round, device, at(now));
         }
         failures += check(late_spins == 0 && pacing.block(at(now)),
                           "rounds longer than a second kept a probe from ending or from counting");
@@ -235,30 +252,18 @@ int main() {
     }
 
     {
-        // Fast steps are capped at the allowed steps; a model that cannot run ahead runs one step.
-        RoundPacing fast(nullptr, nullptr, 32, 32);
-        fast.observe(1, 0.010, 0.001, at(0.0));
-        fast.observe(1, 0.010, 0.001, at(0.5));
-        failures += check(fast.steps(at(0.5)) == 32, "fast steps are not capped at 32");
-        RoundPacing single(nullptr, nullptr, 32, 1);
-        single.observe(1, 0.030, 0.005, at(0.0));
-        single.observe(1, 0.030, 0.005, at(0.5));
-        failures += check(single.steps(at(0.5)) == 1, "a single-step model ran ahead");
-    }
-
-    {
         RoundPacing fixed("8", nullptr, 32, 32);
-        failures += check(fixed.steps(at(0.0)) == 8, "NINFERNO_DECODE_STEPS=8 is not honoured");
+        failures += check(fixed.steps() == 8, "NINFERNO_DECODE_STEPS=8 is not honoured");
         RoundPacing capped("8", nullptr, 32, 4);
-        failures += check(capped.steps(at(0.0)) == 4, "fixed steps exceed the allowed steps");
+        failures += check(capped.steps() == 4, "fixed steps exceed the allowed steps");
         RoundPacing off("1", "spin", 32, 32);
         off.observe(1, 0.1, 0.02, at(0.0));
         off.observe(1, 0.1, 0.02, at(0.1));
-        failures += check(off.steps(at(0.1)) == 1, "NINFERNO_DECODE_STEPS=1 runs ahead");
+        failures += check(off.steps() == 1, "NINFERNO_DECODE_STEPS=1 runs ahead");
         failures += check(!off.block(at(0.1)), "NINFERNO_DECODE_WAIT=spin blocks");
-        failures += check(refused("", nullptr) && refused("0", nullptr) &&
-                              refused("33", nullptr) && refused("4x", nullptr) &&
-                              refused("-1", nullptr) && refused("spin", nullptr) &&
+        failures += check(refused("", nullptr) && refused("0", nullptr) && refused("33", nullptr) &&
+                              refused("4x", nullptr) && refused("-1", nullptr) &&
+                              refused("spin", nullptr) && refused("auto", nullptr) &&
                               refused(nullptr, "") && refused(nullptr, "sleep") &&
                               refused(nullptr, "blocking"),
                           "an invalid setting was accepted");

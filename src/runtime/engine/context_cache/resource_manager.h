@@ -750,8 +750,8 @@ public:
                 .blocked_runnable_requests          = blocked_runnable_requests,
                 .stable_scenario_ordinal            = scenario.stable_ordinal,
                 .target_budget                      = budget,
-                .search_grant_ns =
-                    CapturePlanner::economic_grant_ns(rebuild_ns, blocked_runnable_requests),
+                .search_grant_targets =
+                    CapturePlanner::economic_grant_targets(rebuild_ns, blocked_runnable_requests),
             };
             return capture_planner_.plan(program, cost_model_, input);
         };

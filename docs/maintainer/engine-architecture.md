@@ -361,7 +361,10 @@ This proof does not use a "borrower is expected to finish first" timing assumpti
 The Scheduler guarantees:
 
 - at most one staged-prefill request at a time;
-- existing decode work is not starved by consecutive prefills;
+- existing decode work is not starved by consecutive prefills; under `--concurrent-prefill` a prefill chunk of P prompt
+  tokens serving one of `prefilling` requests owes the D decoding lanes P·D/`prefilling` tokens' worth of decode, and each
+  decode round of L lanes pays 32 + 8·(L−1) of it (`Scheduler::fair_decode_credit`). The interleaving, and so each
+  round's batch, is counted, never timed;
 - a decode round contains all and only the currently decode-ready requests;
 - the batch uses the exact `B` and is not padded with inactive lanes up to `max_concurrency`.
 
@@ -525,8 +528,9 @@ The following constraints belong to the Engine architecture, while the concrete 
 - State/KV mapping stays stable within one GPU execution unit;
 - CUDA Graphs are built per legal exact-`B` topology; request identity and page IDs are stable input data, not graph keys;
 - ordinary decode runs no catalog scan, pressure search, or background replica scan;
-- when the host misses the end of a step (for example when the container CPU quota is exhausted and the whole process stalls until the next quota period), ordinary decode
-  may run several steps back to back within one execution unit (`round_pacing.h`, `NINFERNO_DECODE_STEPS`):
+- ordinary decode runs one step per execution unit unless `NINFERNO_DECODE_STEPS=N` asks for N (for example on a host whose container CPU quota stalls the whole
+  process until the next quota period); the count never follows a timing, since it decides which requests share each step's batch (`round_pacing.h`). It then
+  runs several steps back to back within one execution unit:
   later steps take the previous step's sampled result as input on the device. This applies only to models in which rows that were executed but not committed are invisible to later rows
   (`ModelExecution::uncommitted_row_limit`: no recurrent state, and the sliding ring has headroom); non-terminal
   rows commit all steps, and terminal rows commit only the accepted prefix;
