@@ -40,10 +40,11 @@ This page states the rule and its target. The engine does not meet all of it yet
   workflow: determinism, no environment or clock input, capability safety, one summation order
   under the exact and prefill profiles, per-board digests). Its known violations are listed in
   `tests/ops/linear/selector_properties_known.txt`: `NINFERNO_ROUTE_DIR`, `NINFERNO_ROUTE_TABLE`
-  and `NINFERNO_MMQ_VERIFY` move routes; driver clocks move the speed and prefill profiles; ggml's
-  matrix kernel serves prefill widths although its stream-k is not token-invariant. The shape
-  tables, MoE, attention and speculation choices have no property check, and the rules' remaining
-  environment, timer and file reads are listed in `tools/audit/selection_static_allow.txt`;
+  and `NINFERNO_MMQ_VERIFY` move routes; on a board the PCI-ID table does not know, driver clocks
+  move the speed profile; ggml's matrix kernel serves prefill widths although its stream-k is not
+  token-invariant. The shape tables, MoE, attention and speculation choices have no property
+  check, and the rules' remaining environment, timer and file reads are listed in
+  `tools/audit/selection_static_allow.txt`;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;

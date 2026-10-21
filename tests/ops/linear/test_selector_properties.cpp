@@ -266,6 +266,9 @@ int run_child(const TestBoard& b, std::string_view clock, bool repeat) {
         d.sm_clock_khz     = d.sm_clock_khz * 4 / 5;
         d.memory_clock_khz = d.memory_clock_khz * 5 / 4;
     }
+    // The facts as the query derives them from the varied driver values (a known PCI id keeps the
+    // table's; an unknown one takes the driver's, labelled extrapolated).
+    d.facts = machine_facts_of(d);
     const ScopedDeviceClass scoped(d);
     Violations v;
     // The substituted class carries only what this build compiled, as the device query does

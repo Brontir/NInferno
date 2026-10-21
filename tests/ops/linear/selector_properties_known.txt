@@ -8,11 +8,11 @@ P2-env NINFERNO_ROUTE_DIR    # another routes/ directory: the board's table is n
 P2-env NINFERNO_ROUTE_TABLE  # an explicit table (here unreadable: every problem untuned)
 P2-env NINFERNO_MMQ_VERIFY   # =0: the ggml matrix kernel's 9..16-token verify rule off
 
-# The cost model reads driver clocks (gap: "the cost model reads driver clocks"): zero clocks (MIG,
-# WSL) or a skewed SM/memory clock move the speed profile on every board, and on one board
-# (rtx5070ti, skewed) the prefill profile. The invariant profile does not move.
+# The cost model reads the PCI-ID reference facts (#38); a board the table does not know takes the
+# driver's clocks (labelled extrapolated), so zero (MIG, WSL) or skewed clocks still move the speed
+# profile on the 31 boards with an unknown PCI id (b300, gb10-spark, unknown-sm120-48sm and every
+# synthetic board), and on none of the known ones. The prefill and invariant profiles do not move.
 P2-clock speed
-P2-clock prefill
 
 # The prefill profile takes ggml's matrix kernel for the ggml formats under AllowA8 from 17 tokens
 # on the boards whose measured gate says it pays (mmq_prefill_wins, 20 of the 44 boards), a route
