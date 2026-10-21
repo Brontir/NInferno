@@ -27,10 +27,19 @@ namespace uni = ninferno::text::unicode_internal;
 
 constexpr std::int64_t kMaxTokenId = 1'000'000;
 
+// Qwen3.5 / 3.6 / 3.8: combining marks (\p{M}) belong to letter runs.
 constexpr std::string_view kQwenSplitPattern =
     R"qwen((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)qwen";
+// Qwen2 / Qwen3: the same regex without \p{M}, so a mark ends a letter run and falls into the
+// punctuation run (or prefixes the letters after it). transformers 5's Qwen2Tokenizer writes this
+// one into every tokenizer.json it saves, so Qwen3.5+ checkpoints re-saved by it (the community
+// NVFP4A16 builds of Qwen3.8-27B) ship it; llama.cpp's pre-tokenizer "qwen2" is the same regex.
+constexpr std::string_view kQwen2SplitPattern =
+    R"qwen((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)qwen";
 
-void validate_pipeline(const Json& root, const Json& model) {
+// Returns whether the declared Split is the Qwen2 regex (marks outside letter runs).
+bool validate_pipeline(const Json& root, const Json& model) {
+    bool qwen2_split   = false;
     const auto require = [](bool valid, const char* field) {
         if (!valid) {
             throw std::invalid_argument(std::string("tokenizer.json ") + field +
@@ -50,8 +59,12 @@ void validate_pipeline(const Json& root, const Json& model) {
                 "pre_tokenizer");
         const auto& split = pre["pretokenizers"][0];
         const auto& bytes = pre["pretokenizers"][1];
-        require(type(split, "Split") && split.contains("pattern") && split["pattern"].is_object() &&
-                    split["pattern"].value("Regex", std::string{}) == kQwenSplitPattern &&
+        const std::string regex =
+            type(split, "Split") && split.contains("pattern") && split["pattern"].is_object()
+                ? split["pattern"].value("Regex", std::string{})
+                : std::string{};
+        qwen2_split = regex == kQwen2SplitPattern;
+        require((regex == kQwenSplitPattern || qwen2_split) &&
                     split.value("behavior", std::string{}) == "Isolated" &&
                     split.value("invert", Json(false)) == false,
                 "pre_tokenizer.Split");
@@ -70,6 +83,7 @@ void validate_pipeline(const Json& root, const Json& model) {
         require(!model.contains(field) || model[field].is_null() || model[field] == "", field);
     }
     require(model.value("ignore_merges", Json(false)) == false, "model.ignore_merges");
+    return qwen2_split;
 }
 
 struct VocabMetadata {
@@ -456,17 +470,21 @@ std::array<std::string, 256> build_byte_level_encoder() {
 
 bool is_newline(std::int32_t codepoint) noexcept { return codepoint == '\r' || codepoint == '\n'; }
 
-bool is_letter_or_mark(std::int32_t codepoint) noexcept {
-    return uni::is_letter(codepoint) || uni::is_mark(codepoint);
+// A letter run: [\p{L}\p{M}] (Qwen3.5) or \p{L} (Qwen2).
+template <bool kMarksJoinLetters>
+bool is_word_char(std::int32_t codepoint) noexcept {
+    return uni::is_letter(codepoint) || (kMarksJoinLetters && uni::is_mark(codepoint));
 }
 
 bool is_non_newline_non_letter_non_number(std::int32_t codepoint) noexcept {
     return !is_newline(codepoint) && !uni::is_letter(codepoint) && !uni::is_number(codepoint);
 }
 
-bool is_non_space_non_letter_mark_number(std::int32_t codepoint) noexcept {
+// A punctuation run: [^\s\p{L}\p{M}\p{N}] (Qwen3.5) or [^\s\p{L}\p{N}] (Qwen2).
+template <bool kMarksJoinLetters>
+bool is_punctuation_char(std::int32_t codepoint) noexcept {
     return !uni::is_whitespace(codepoint) && !uni::is_letter(codepoint) &&
-           !uni::is_mark(codepoint) && !uni::is_number(codepoint);
+           !(kMarksJoinLetters && uni::is_mark(codepoint)) && !uni::is_number(codepoint);
 }
 
 bool ascii_ci_matches(std::string_view text, std::size_t offset, std::string_view suffix) {
@@ -483,7 +501,13 @@ uni::CodepointSpan qwen_codepoint_at(std::string_view text, std::size_t offset) 
     return uni::utf8_codepoint_at(text, offset, "Tokenizer::encode input");
 }
 
+// The end of the pre-token at begin under the Split regex (kQwenSplitPattern when
+// kMarksJoinLetters, else kQwen2SplitPattern): the first alternative that matches there, each
+// greedy (no alternative's match depends on backtracking into a shorter one).
+template <bool kMarksJoinLetters>
 std::size_t qwen_word_end(std::string_view text, std::size_t begin) {
+    constexpr auto is_word         = is_word_char<kMarksJoinLetters>;
+    constexpr auto is_punctuation  = is_punctuation_char<kMarksJoinLetters>;
     const uni::CodepointSpan first = qwen_codepoint_at(text, begin);
     const std::size_t after_first  = begin + first.length;
     const std::int32_t cp          = first.value;
@@ -497,12 +521,11 @@ std::size_t qwen_word_end(std::string_view text, std::size_t begin) {
 
     const bool has_next     = after_first < text.size();
     const std::int32_t next = has_next ? qwen_codepoint_at(text, after_first).value : 0;
-    if (is_letter_or_mark(cp) ||
-        (is_non_newline_non_letter_non_number(cp) && has_next && is_letter_or_mark(next))) {
-        std::size_t end = is_letter_or_mark(cp) ? begin : after_first;
+    if (is_word(cp) || (is_non_newline_non_letter_non_number(cp) && has_next && is_word(next))) {
+        std::size_t end = is_word(cp) ? begin : after_first;
         while (end < text.size()) {
             const uni::CodepointSpan value = qwen_codepoint_at(text, end);
-            if (!is_letter_or_mark(value.value)) { break; }
+            if (!is_word(value.value)) { break; }
             end += value.length;
         }
         return end;
@@ -510,12 +533,11 @@ std::size_t qwen_word_end(std::string_view text, std::size_t begin) {
 
     if (uni::is_number(cp)) { return after_first; }
 
-    if ((cp == ' ' && has_next && is_non_space_non_letter_mark_number(next)) ||
-        is_non_space_non_letter_mark_number(cp)) {
+    if ((cp == ' ' && has_next && is_punctuation(next)) || is_punctuation(cp)) {
         std::size_t end = cp == ' ' ? after_first : begin;
         while (end < text.size()) {
             const uni::CodepointSpan value = qwen_codepoint_at(text, end);
-            if (!is_non_space_non_letter_mark_number(value.value)) { break; }
+            if (!is_punctuation(value.value)) { break; }
             end += value.length;
         }
         while (end < text.size()) {
@@ -595,7 +617,7 @@ std::array<int, 256> load_byte_token_ids(const std::unordered_map<std::string, i
 // overflow_token_bytes, when not 0, is the most bytes one token covers: the rest of the text needs
 // at least its bytes / overflow_token_bytes tokens, so once that passes max_tokens the encoding
 // stops with max_tokens ids that are not its prefix (EncodeOptions::overflow_check_only).
-bool append_normalized_bpe_ids(std::vector<int>& ids, std::string_view normalized,
+bool append_normalized_bpe_ids(std::vector<int>& ids, std::string_view normalized, bool qwen2_split,
                                const BpeMergeTable& merge_rules,
                                const std::array<int, 256>& byte_token_ids, std::size_t max_tokens,
                                std::size_t overflow_token_bytes,
@@ -614,7 +636,8 @@ bool append_normalized_bpe_ids(std::vector<int>& ids, std::string_view normalize
                 return false;
             }
         }
-        const std::size_t end = qwen_word_end(normalized, begin);
+        const std::size_t end = qwen2_split ? qwen_word_end<false>(normalized, begin)
+                                            : qwen_word_end<true>(normalized, begin);
         const std::string_view word(normalized.data() + begin, end - begin);
         std::vector<BpeNode> nodes(word.size());
         for (std::size_t index = 0; index < word.size(); ++index) {
@@ -698,7 +721,7 @@ struct IndexedByteBoundary {
 
 bool append_ordinary_text(BoundaryEncodedText& encoded, std::string_view text,
                           std::size_t text_offset, std::span<const IndexedByteBoundary> boundaries,
-                          const BpeMergeTable& merge_rules,
+                          bool qwen2_split, const BpeMergeTable& merge_rules,
                           const std::array<int, 256>& byte_token_ids, std::size_t max_tokens,
                           std::size_t overflow_token_bytes) {
     const std::size_t token_base = encoded.input_ids.size();
@@ -719,8 +742,8 @@ bool append_ordinary_text(BoundaryEncodedText& encoded, std::string_view text,
     std::vector<std::size_t> token_ends;
     std::vector<BpeWordEnd> word_ends;
     if (has_internal_boundary) { token_ends.reserve(normalized.size()); }
-    if (!append_normalized_bpe_ids(encoded.input_ids, normalized, merge_rules, byte_token_ids,
-                                   max_tokens, overflow_token_bytes,
+    if (!append_normalized_bpe_ids(encoded.input_ids, normalized, qwen2_split, merge_rules,
+                                   byte_token_ids, max_tokens, overflow_token_bytes,
                                    has_internal_boundary ? &token_ends : nullptr,
                                    has_internal_boundary ? &word_ends : nullptr)) {
         return false;
@@ -807,7 +830,7 @@ Tokenizer::Tokenizer(TokenizerResources resources) {
     const Json tokenizer_config =
         read_json_asset(resources.tokenizer_config_json, tokenizer_config_label);
     const Json& model = require_object_field(root, "model", tokenizer_label);
-    validate_pipeline(root, model);
+    qwen2_split_      = validate_pipeline(root, model);
 
     VocabMetadata vocab_metadata = load_vocab(model, tokenizer_label);
     decoded_token_bytes_         = std::move(vocab_metadata.id_to_token);
@@ -891,12 +914,12 @@ BoundaryEncodedText Tokenizer::encode_with_boundaries(
     };
     const auto append_ordinary = [&](std::size_t begin, std::size_t end) {
         const std::size_t request_end = boundary_end_through(end);
-        const bool complete =
-            append_ordinary_text(encoded, text.substr(begin, end - begin), begin,
-                                 std::span<const IndexedByteBoundary>(boundaries)
-                                     .subspan(boundary_cursor, request_end - boundary_cursor),
-                                 bpe_merge_rules_, byte_token_ids_, options.max_tokens,
-                                 options.overflow_check_only ? max_token_bytes_ : 0);
+        const bool complete           = append_ordinary_text(
+            encoded, text.substr(begin, end - begin), begin,
+            std::span<const IndexedByteBoundary>(boundaries)
+                .subspan(boundary_cursor, request_end - boundary_cursor),
+            qwen2_split_, bpe_merge_rules_, byte_token_ids_, options.max_tokens,
+            options.overflow_check_only ? max_token_bytes_ : 0);
         boundary_cursor = request_end;
         return complete;
     };
