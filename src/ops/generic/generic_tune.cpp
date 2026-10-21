@@ -168,6 +168,8 @@ std::string problem_key(const Problem& p) {
     // Without tensor mma.sync the one-tile register MMA sums lane by lane (mma_step_local): entries
     // from before timed the shuffled emulation.
     if (!device_class().features.mma_tensor) k << "|ll4";
+    // Nor, on a chip without tensor cores (mma_slow), the vector kernel and mmq rules it has.
+    if (device_class().features.mma_slow) k << "|slow";
     // Where BF16 MMA is emulated the 5..16-token band is ggml's matrix kernel by heuristic, which
     // entries from before timed nothing against.
     if (ggml_mmq_format(p.qtype) && p.policy != LinearPolicy::A16Only &&

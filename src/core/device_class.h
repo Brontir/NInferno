@@ -48,7 +48,13 @@ struct DeviceFeatures {
     bool tma          = false; // cp.async.bulk with mbarrier transaction counts
     bool pdl          = false; // griddepcontrol (programmatic dependent launch)
     bool clusters     = false; // thread-block clusters and distributed shared memory (sm_90 on)
+    bool mma_slow     = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
+                               // run it on their FP16 units; known by the chip (PCI ID, else the
+                               // SM-count fallback of gpu_chip), not by the compute capability
 };
+
+// Whether a chip of this compute capability has mma.sync but no tensor cores (TU116, TU117).
+[[nodiscard]] bool chip_mma_slow(int major, int minor, std::string_view chip) noexcept;
 
 // The architecture's feature set by compute capability: a table, not an ordering.
 [[nodiscard]] DeviceFeatures device_features_for(int major, int minor) noexcept;
@@ -128,6 +134,7 @@ struct Board {
     int sms          = 0;
     double l2_mib    = 0; // 0: unknown, not compared
     double dram_gbps = 0; // 0: unknown, not compared
+    bool mma_slow    = false; // DeviceFeatures::mma_slow: no tensor cores (TU116 / TU117)
 };
 
 [[nodiscard]] Board board_of(const DeviceClass& d) noexcept;

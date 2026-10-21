@@ -512,8 +512,9 @@ bool vec_admits(const Weight& w, LinearPolicy policy) {
 // emulated tiles 1.0..2.6 ms a call, 67 % of the run).
 std::int32_t vec_max_tokens() {
     try {
-        return device_class().features.mma_tensor ? ggml_mmq::kVecMaxColumns
-                                                  : 2 * ggml_mmq::kVecMaxColumns;
+        const auto& f = device_class().features;
+        return f.mma_tensor && !f.mma_slow ? ggml_mmq::kVecMaxColumns
+                                           : 2 * ggml_mmq::kVecMaxColumns;
     } catch (const std::exception&) { return ggml_mmq::kVecMaxColumns; }
 }
 

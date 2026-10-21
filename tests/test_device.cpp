@@ -154,7 +154,9 @@ int check_feature_table() {
                    ninferno::gpu_similar_chips(8, 6, 82, "ga102") ==
                        std::vector<std::string>{"ga103", "ga104", "ga106", "ga107", "ga100"} &&
                    ninferno::gpu_similar_chips(7, 5, 68, "tu102") ==
-                       std::vector<std::string>{"tu104", "tu106", "tu116", "tu117"} &&
+                       std::vector<std::string>{"tu104", "tu106"} &&
+                   ninferno::gpu_similar_chips(7, 5, 22, "tu116") ==
+                       std::vector<std::string>{"tu117"} &&
                    ninferno::gpu_similar_chips(8, 0, 108, "") ==
                        std::vector<std::string>{"ga100", "ga102", "ga103", "ga104", "ga106",
                                                 "ga107"} &&
@@ -163,6 +165,24 @@ int check_feature_table() {
                    ninferno::gpu_similar_chips(8, 9, 46, "ad104").size() == 4,
                "similar chips: the same architecture by SM count on a log scale, then a "
                "sibling architecture of the same feature row, never another");
+    {
+        // GTX 1660 Super (TU116 by PCI ID), the same board with its PCI ID unknown (the SM-count
+        // fallback names TU116 too), an RTX 2080 Ti (TU102) and a V100.
+        const auto slow = [](std::uint32_t id, int major, int minor, int sms) {
+            return ninferno::synthetic_device_class(id, major, minor, sms, 1536u << 10, 6ull << 30)
+                .features.mma_slow;
+        };
+        const auto a = ninferno::board_of(ninferno::synthetic_device_class(0x21C4, 7, 5, 22,
+                                                                           1536u << 10, 6ull << 30));
+        const auto b = ninferno::board_of(ninferno::synthetic_device_class(0x1F08, 7, 5, 30,
+                                                                           3u << 20, 6ull << 30));
+        failures += expect(slow(0x21C4, 7, 5, 22) && slow(0, 7, 5, 22) && slow(0x1F82, 7, 5, 14) &&
+                               !slow(0x1E07, 7, 5, 68) && !slow(0x1F08, 7, 5, 30) &&
+                               !slow(0x1DB5, 7, 0, 80) && a.mma_slow && !b.mma_slow &&
+                               std::isinf(ninferno::board_distance(a, b)),
+                           "mma_slow: TU116 / TU117 by chip (PCI ID, else SM count), no other "
+                           "board; boards either side of it are apart");
+    }
     {
         const auto ampere = ninferno::gpu_similarity_chain("ga102", 82, 8, 6);
         const auto at     = [&](const std::string& key) {
