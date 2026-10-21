@@ -444,7 +444,7 @@ int main() {
                           .projection_work            = 31,
                           .planning_elapsed_ns        = 9000,
                           .search_elapsed_ns          = 6000,
-                          .stop_reason                = ninferno::MaterializationStopReason::QueueExhausted,
+                          .stop_reason                = ninferno::MaterializationStopReason::PlanningBudget,
                           .budget_exhausted           = false,
                           .selected_degradation_units = 2,
                           .selected_maximal_fallback  = false,
@@ -468,6 +468,13 @@ int main() {
                           done.at("materialization").at("search_renewals") == 1 &&
                           done.at("materialization").at("search_discovery_used") == true,
                       "materialization search quality or cumulative budget diagnostics missing");
+    // Schema 26: the planning budgets are counted in work units, not nanoseconds.
+    failures += check(kRequestLogSchemaVersion == 26 &&
+                          done.at("materialization").at("stop_reason") == "planning_budget" &&
+                          !done.at("materialization").contains("search_granted_ns") &&
+                          !done.at("materialization").contains("search_overshoot_ns"),
+                      "schema 26: search_granted_units and planning_budget replace the "
+                      "nanosecond budget keys");
     failures +=
         check(done.at("result").at("finish_reason") == "output_limit", "finish reason missing");
     failures += check(done.at("result").at("prompt_tokens") == 401, "prompt tokens missing");

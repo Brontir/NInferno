@@ -76,7 +76,7 @@ rt::DecisionInputs sample_inputs() {
         return std::nullopt;
     });
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
-    in.plan  = rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab");
+    in.plan  = rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
     in.taint = rt::taint_of(in);
     in.observed = rt::observed_of(ninferno::MemorySummary{});
     in.observed.merge(rt::observed_of(sample_device()));
@@ -237,7 +237,7 @@ int plan_reaches_its_section() {
     using ninferno::MemorySummary;
     const std::array<std::int32_t, 2> breakpoints{17, 64};
     const auto collect = [&](const MemorySummary& m) {
-        return rt::plan_of(ninferno::EngineOptions{}, m, breakpoints, "ab");
+        return rt::plan_of(ninferno::EngineOptions{}, m, breakpoints, "ab", 1);
     };
     std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> edits{
         {"kv_cache", [](MemorySummary& m) { m.kv_cache = ninferno::KvCacheStorage::Nvfp4Group16; }},
@@ -267,14 +267,21 @@ int plan_reaches_its_section() {
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
     failures +=
-        check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab") != collect(MemorySummary{}),
+        check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab", 1) != collect(MemorySummary{}),
               "plan: recurrent_state reaches the section");
     const std::array<std::int32_t, 2> other{17, 128};
-    failures += check(rt::plan_of({}, MemorySummary{}, other, "ab") != collect(MemorySummary{}),
+    failures += check(rt::plan_of({}, MemorySummary{}, other, "ab", 1) != collect(MemorySummary{}),
                       "plan: route breakpoints reach the section");
     failures +=
-        check(rt::plan_of({}, MemorySummary{}, breakpoints, "cd") != collect(MemorySummary{}),
+        check(rt::plan_of({}, MemorySummary{}, breakpoints, "cd", 1) != collect(MemorySummary{}),
               "plan: the route table reaches the section");
+    // The decode round's step count (16 under a CPU quota, 1 without, or --decode-steps) decides
+    // which requests share a step's batch.
+    const auto sixteen = rt::plan_of({}, MemorySummary{}, breakpoints, "ab", 16);
+    failures += check(sixteen != collect(MemorySummary{}) &&
+                          sixteen.at("decode.steps_per_round") == "16" &&
+                          collect(MemorySummary{}).at("decode.steps_per_round") == "1",
+                      "plan: decode.steps_per_round reaches the section");
     return failures;
 }
 
@@ -352,6 +359,17 @@ int facts_reach_their_section() {
     failures += check(with_host(host).at("host.ram_gib_class") == "128", "facts: 130 GiB is 128");
     host.ram_bytes = 0;
     failures += check(with_host(host).at("host.ram_gib_class") == "0", "facts: unknown RAM is 0");
+    // The CPU bandwidth quota, which the decode round's default step count follows.
+    host               = kHost;
+    host.cpu_quota_us  = 200'000;
+    host.cpu_period_us = 100'000;
+    failures += check(with_host(host) != collect(sample_device()) &&
+                          with_host(host).at("host.cpu_quota") == "200000/100000" &&
+                          collect(sample_device()).at("host.cpu_quota") == "none",
+                      "facts: host.cpu_quota");
+    host.cpu_quota_us = 150'000;
+    failures += check(with_host(host).at("host.cpu_quota") == "150000/100000",
+                      "facts: a different quota is a different fact");
     DeviceClass renamed = sample_device();
     renamed.name        = "another board name";
     renamed.device      = 0;
