@@ -3,6 +3,8 @@
 #include "core/sha256.h"
 
 #include <array>
+#include <filesystem>
+#include <utility>
 #include <bit>
 #include <cstdio>
 #include <string>
@@ -31,26 +33,31 @@ const char* build_git_commit() noexcept;
 
 namespace {
 
-constexpr std::array<std::string_view, 14> kDecisionVariables{
-    "NINFERNO_CUDA_SYNC",        "NINFERNO_DEBUG_POISON",     "NINFERNO_DEBUG_POISON_SKIP",
-    "NINFERNO_DECODE_STEPS",     "NINFERNO_DECODE_WAIT",      "NINFERNO_DENSE_TUNE",
-    "NINFERNO_DENSE_TUNE_CACHE", "NINFERNO_DRAFTER_REGISTRY", "NINFERNO_MMQ_VERIFY",
-    "NINFERNO_MOE_TUNE",         "NINFERNO_MOE_TUNE_CACHE",   "NINFERNO_QWEN_PREFILL_CUTS",
-    "NINFERNO_ROUTE_DIR",        "NINFERNO_ROUTE_TABLE",
-};
-
 // Read by the products, steering no decision: outputs (dumps, records, debug files), I/O modes,
-// credentials, update checks and where a tool finds its inputs.
+// credentials, update checks and where a tool finds its inputs. Every decision is an option.
 // The <dump>_ROWS names are built at run time from their dump's name (models/common/layer_dump.h).
-constexpr std::array<std::string_view, 21> kNonDecisionVariables{
+constexpr std::array<std::string_view, 19> kNonDecisionVariables{
     "NINFERNO_DENSE_DUMP_ROWS",   "NINFERNO_GEMMA4_DUMP_ROWS",   "NINFERNO_QWEN_DUMP_ROWS",
     "NINFERNO_API_KEY",           "NINFERNO_ARTIFACT_DIRECT_IO", "NINFERNO_DEBUG_CUDA_ERROR_FILE",
     "NINFERNO_DEBUG_FREEZE_FILE", "NINFERNO_DEBUG_NAN_FILE",     "NINFERNO_DEBUG_TRAP_FILE",
     "NINFERNO_DENSE_DUMP",        "NINFERNO_GEMMA4_DUMP",        "NINFERNO_PDFIUM",
-    "NINFERNO_QWEN_DUMP",         "NINFERNO_QWEN_DUMP_KINDS",    "NINFERNO_RANKING_DIR",
-    "NINFERNO_ROUTE_RECORD",      "NINFERNO_SCORE_ARGMAX",       "NINFERNO_SCORE_LOGITS",
-    "NINFERNO_SPEC_CORPUS",       "NINFERNO_UPDATE_CHECK",       "NINFERNO_UPDATE_URL",
+    "NINFERNO_QWEN_DUMP",         "NINFERNO_QWEN_DUMP_KINDS",    "NINFERNO_ROUTE_RECORD",
+    "NINFERNO_SCORE_ARGMAX",      "NINFERNO_SCORE_LOGITS",       "NINFERNO_UPDATE_CHECK",
+    "NINFERNO_UPDATE_URL",
 };
+
+// The maintainer options' keys in the options section with their release values: one given
+// otherwise is taint.
+constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kMaintainerDefaults{{
+    {"route_table", "unset"},
+    {"route_dir", "unset"},
+    {"dense_tune", "off"},
+    {"moe_tune", "off"},
+    {"tune_cache", "unset"},
+    {"debug_prefill_cuts", ""},
+    {"debug_poison", "unset"},
+    {"debug_poison_skip", ""},
+}};
 
 std::string number(std::uint64_t value) { return std::to_string(value); }
 
@@ -59,6 +66,8 @@ std::string number(int value) { return std::to_string(value); }
 std::string number(std::uint32_t value) { return std::to_string(value); }
 
 std::string flag(bool value) { return value ? "1" : "0"; }
+
+std::string given(const std::filesystem::path& path) { return path.empty() ? "unset" : "set"; }
 
 std::string bits(float value) {
     char text[16];
@@ -197,7 +206,6 @@ std::string canonical_text(const DecisionInputs& inputs) {
     // The section names in byte order, none a prefix of another: each section's lines follow the
     // one before in the order of the whole "<section>.<key>" strings.
     section_into(out, "build", inputs.build);
-    section_into(out, "env", inputs.env);
     section_into(out, "facts", inputs.facts);
     section_into(out, "options", inputs.options);
     section_into(out, "plan", inputs.plan);
@@ -354,6 +362,22 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["speculative.watchdog_window"]     = number(s.watchdog_window);
     out["speculative.watchdog_min_rounds"] = number(s.watchdog_min_rounds);
     out["speculative.shared_trip_floor"]   = bits(s.shared_trip_floor);
+    const DecodePacingOptions& p           = o.pacing;
+    out["pacing.decode_steps"]             = p.steps == 0 ? std::string("auto") : number(p.steps);
+    out["pacing.decode_wait"]              = decode_wait_name(p.wait);
+    out["pacing.cuda_sync"]                = cuda_sync_schedule_name(p.cuda_sync);
+    const MaintainerOptions& m             = o.maintainer;
+    out["maintainer.route_table"]          = given(m.route_table);
+    out["maintainer.route_dir"]            = given(m.route_dir);
+    out["maintainer.dense_tune"]           = tune_mode_name(m.dense_tune);
+    out["maintainer.moe_tune"]             = tune_mode_name(m.moe_tune);
+    out["maintainer.tune_cache"]           = given(m.tune_cache);
+    std::vector<std::string> cuts;
+    for (const std::uint64_t cut : m.debug_prefill_cuts) { cuts.push_back(number(cut)); }
+    out["maintainer.debug_prefill_cuts"] = joined(cuts);
+    out["maintainer.debug_poison"] =
+        m.debug_poison ? number(static_cast<std::uint32_t>(*m.debug_poison)) : "unset";
+    out["maintainer.debug_poison_skip"] = joined(m.debug_poison_skip);
     return out;
 }
 
@@ -393,19 +417,8 @@ DecisionSection observed_of(const DeviceClass& device) {
     return out;
 }
 
-std::span<const std::string_view> decision_environment_variables() { return kDecisionVariables; }
-
 std::span<const std::string_view> non_decision_environment_variables() {
     return kNonDecisionVariables;
-}
-
-DecisionSection env_of(const std::function<std::optional<std::string>(const char*)>& lookup) {
-    DecisionSection out;
-    for (const std::string_view name : kDecisionVariables) {
-        const std::string key(name);
-        if (const auto value = lookup(key.c_str())) { out[key] = "sha256:" + short_hash(*value); }
-    }
-    return out;
 }
 
 DecisionSection taint_of(const DecisionInputs& in) {
@@ -414,11 +427,12 @@ DecisionSection taint_of(const DecisionInputs& in) {
         const auto it = section.find(key);
         return it == section.end() ? std::string() : it->second;
     };
-    if (!in.env.empty()) {
-        std::vector<std::string> names;
-        for (const auto& [name, hash] : in.env) { names.push_back(name); }
-        out["env"] = joined(names);
+    std::vector<std::string> maintainer;
+    for (const auto& [key, release] : kMaintainerDefaults) {
+        const auto it = in.options.find("maintainer." + std::string(key));
+        if (it != in.options.end() && it->second != release) { maintainer.emplace_back(key); }
     }
+    if (!maintainer.empty()) { out["maintainer"] = joined(maintainer); }
     std::vector<std::string> tuners;
     for (const char* tuner : {"dense", "moe"}) {
         if (in.sources.contains(std::string(tuner) + "_tune.user")) { tuners.emplace_back(tuner); }

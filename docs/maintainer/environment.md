@@ -19,6 +19,11 @@ loads, the tuners forget what an earlier engine tuned or read, and the debug aid
 An Engine built while others are alive must ask for the same values; otherwise it is refused,
 since it would change their decisions.
 
+The [decision fingerprint](deterministic-decisions.md#fingerprint) hashes all of them with the
+other options (`options.pacing.*`, `options.maintainer.*`; an option naming a file or directory
+enters as `set`, the files themselves by content among the sources), and a maintainer option
+given is taint (`taint.maintainer`, by name).
+
 ### Decode pacing
 
 Documented with [decode round pacing](../cli.md#decode-round-pacing) and
@@ -77,7 +82,10 @@ Two variables steer choices outside the engine and its products, and stay variab
 
 ## Environment variables
 
-None of these changes a decision. Each is read once and costs nothing when unset.
+None of these changes a decision, and none enters the fingerprint. Each is read once and costs
+nothing when unset. A new variable read in `src/` fails `ninferno_decision_fingerprint_test`
+until it is listed in `src/runtime/engine/decision_fingerprint.cpp`, which lists only variables
+that steer nothing: a choice belongs in an option.
 
 The user-facing ones are documented where they belong: `NINFERNO_API_KEY` in
 [Serving](../serving.md), `NINFERNO_UI_KEY`, `NINFERNO_CATALOG_URL`, `NINFERNO_UPDATER`,

@@ -3,7 +3,6 @@
 #include "core/cuda_error.h"
 #include "core/device_class.h"
 #include "core/tensor.h"
-#include "ninferno/option_enums.h"
 
 #include <cuda_runtime.h>
 
@@ -13,6 +12,10 @@
 #include <string>
 
 namespace ninferno {
+
+// The CUDA synchronization schedule (ninferno/option_enums.h, --cuda-sync), declared opaque: this
+// header is also read by targets that see src/ alone (ops/generic/ggml_mmq), not include/.
+enum class CudaSyncSchedule : std::uint8_t;
 
 // Throws CudaError when err is not cudaSuccess (after printing the call and its place to stderr).
 void cuda_check(cudaError_t err, const char* expr, const char* file, int line);
@@ -54,8 +57,10 @@ struct DeviceContext {
     cudaStream_t transfer_stream = nullptr;
     cudaDeviceProp props{};
 
-    // `sync`: the CUDA synchronization schedule the device runs (EngineOptions::pacing).
-    explicit DeviceContext(int device_id = 0, CudaSyncSchedule sync = CudaSyncSchedule::Spin);
+    // The device under the spin synchronization schedule, or under `sync`
+    // (EngineOptions::pacing.cuda_sync).
+    explicit DeviceContext(int device_id = 0);
+    DeviceContext(int device_id, CudaSyncSchedule sync);
     ~DeviceContext();
 
     DeviceContext(const DeviceContext&)            = delete;

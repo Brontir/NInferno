@@ -100,6 +100,8 @@ public:
     // registry. Called before the first builtin(); a later call naming another file throws
     // std::logic_error (the registry already answered from the other one).
     static void use_file(const std::filesystem::path& path);
+    // The file use_file() named; empty: the compiled-in registry.
+    [[nodiscard]] static std::filesystem::path file();
 
     [[nodiscard]] const std::vector<ModelEntry>& models() const noexcept { return models_; }
     [[nodiscard]] const std::vector<KindInfo>& kinds() const noexcept { return kinds_; }
@@ -116,7 +118,7 @@ public:
     }
 
     // SHA-256 (lowercase hex) of the text builtin() parsed (the compiled-in registry or the file
-    // at $NINFERNO_DRAFTER_REGISTRY); empty for a registry parse() built.
+    // use_file() named); empty for a registry parse() built.
     [[nodiscard]] const std::string& source_sha256() const noexcept { return source_sha256_; }
 
     // The entry naming `repo` exactly (case-insensitive).

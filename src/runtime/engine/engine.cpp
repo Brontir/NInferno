@@ -212,10 +212,6 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     for (auto& [key, value] : ops::moe_tune_sources()) { in.sources[key] = std::move(value); }
     in.sources["context_cost.presets"] =
         runtime::context_cost_presets_source(requested.context_cost.preset_path);
-    in.env   = runtime::env_of([](const char* name) -> std::optional<std::string> {
-        const char* value = std::getenv(name);
-        return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
-    });
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
                                    load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);

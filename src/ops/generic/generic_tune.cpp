@@ -800,12 +800,12 @@ std::map<std::string, std::string> dense_tune_sources() {
             out["dense_tune.shipped"] = std::move(*shipped);
         }
     }
-    TuneMode mode = TuneMode::Off;
-    try {
-        mode = tune_mode("NINFERNO_DENSE_TUNE");
-    } catch (const std::invalid_argument&) {}
-    if (mode != TuneMode::Off) {
-        const auto path        = cache_path();
+    if (g_mode.load(std::memory_order_relaxed) != TuneMode::Off) {
+        std::filesystem::path path;
+        {
+            std::lock_guard lock(g_mutex);
+            path = cache_path();
+        }
         auto user              = path.empty() ? std::nullopt : named_file_sha256(path);
         out["dense_tune.user"] = user ? std::move(*user) : std::string("absent");
     }

@@ -155,6 +155,11 @@ void Registry::use_file(const std::filesystem::path& path) {
     g_file = path;
 }
 
+std::filesystem::path Registry::file() {
+    std::lock_guard lock(g_file_mutex);
+    return g_file;
+}
+
 const Registry& Registry::builtin() {
     static const Registry registry = [] {
         std::lock_guard lock(g_file_mutex);

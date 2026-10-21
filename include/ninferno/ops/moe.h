@@ -213,7 +213,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
                        cudaStream_t stream);
 
 /// The file tune_moe's plans come from, for the decision fingerprint: "moe_tune.user", the user's
-/// own cache, which is read only while NINFERNO_MOE_TUNE times ("<file name> sha256:<hex of its
+/// own cache, which is read only while --moe-tune times ("<file name> sha256:<hex of its
 /// bytes>", "absent" when it does not exist yet). Empty while the tuner is off.
 [[nodiscard]] std::map<std::string, std::string> moe_tune_sources();
 

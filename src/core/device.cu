@@ -1,5 +1,6 @@
 #include "core/device.h"
 #include "core/cuda_error.h"
+#include "ninferno/option_enums.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -63,6 +64,8 @@ void rethrow_with_context(const std::string& context) {
         throw std::runtime_error(context + ": " + error.what());
     }
 }
+
+DeviceContext::DeviceContext(int device_id) : DeviceContext(device_id, CudaSyncSchedule::Spin) {}
 
 DeviceContext::DeviceContext(int device_id, CudaSyncSchedule sync) : device(device_id) {
     const unsigned int sync_flags = sync_schedule_flags(sync);

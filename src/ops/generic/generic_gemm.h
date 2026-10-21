@@ -650,7 +650,7 @@ void set_dense_tune(TuneMode mode, const std::filesystem::path& cache_dir);
 void clear_dense_tune();
 // The files the tuner's choices come from, for the decision fingerprint: "dense_tune.shipped",
 // the release's routes/tuner/dense_tune.json, and "dense_tune.user", the user's own cache, which
-// is read only while NINFERNO_DENSE_TUNE times ("absent" when it does not exist yet). Each value
+// is read only while --dense-tune times ("absent" when it does not exist yet). Each value
 // is "<file name> sha256:<hex of its bytes>". Empty while the tuner is off.
 [[nodiscard]] std::map<std::string, std::string> dense_tune_sources();
 

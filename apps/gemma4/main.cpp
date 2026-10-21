@@ -69,6 +69,7 @@
 #include "convert/cache.h"
 #include "core/clock.h"
 #include "core/device.h"
+#include "ninferno/option_enums.h"
 #include "models/gemma4/gemma4.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "product/activation_options.h"
