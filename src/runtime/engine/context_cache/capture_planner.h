@@ -223,7 +223,9 @@ public:
     // declared kNominalTargetNs each and kept between kMinimumTargets and kMaximumTargets.
     // Uncapped, the search walked up to 4096 targets in 39-43 ms a capture (Qwen3.6-35B C=8 on an
     // RTX 5090: 1225 against 1261 tok/s with the former 0.2-5 ms wall grant), about 10 us a target,
-    // so the bounds are that grant at the nominal cost.
+    // so the bounds are that grant at the nominal cost. The nominal cost is that one measurement's
+    // mean and awaits calibration across catalogs and hosts like PlanningWork's constants; at a
+    // worst 200 us a target, kMaximumTargets would hold the lanes for 100 ms.
     static constexpr std::uint64_t kNominalTargetNs = 10'000;
     static constexpr std::uint32_t kMinimumTargets  = 20;
     static constexpr std::uint32_t kMaximumTargets  = 500;

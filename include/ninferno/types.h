@@ -1352,6 +1352,10 @@ struct MaterializationDiagnostics {
     std::uint32_t incumbent_improvements         = 0;
     std::uint64_t search_work                    = 0;
     std::uint64_t search_granted_units           = 0;
+    // Work units this planning call, and its optional search, charged to the boundary
+    // (materialization_budget.h): what planning_elapsed_ns and search_elapsed_ns calibrate.
+    std::uint64_t planning_units = 0;
+    std::uint64_t search_units   = 0;
     std::uint32_t search_renewals                = 0;
     bool search_discovery_used                   = false;
     MaterializationSearchPhase search_stop_phase = MaterializationSearchPhase::None;

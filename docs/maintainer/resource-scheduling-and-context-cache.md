@@ -779,15 +779,19 @@ operation itself. One unit is the nominal host cost of one construction-option s
 | Operation | Units |
 |---|---|
 | construction option | 1 |
-| exact target assessment (identity, maximal, constructed, pending) | 20 + its projection work (one per owner decision or checkpoint-recovery alternative it projected) |
-| target expansion | 20 + the targets it committed |
+| exact target assessment (identity, maximal, constructed, pending) | 200 + its projection work (one per owner decision or checkpoint-recovery alternative it projected) |
+| target expansion | 200 + the targets it committed |
 
-The base costs are the seed estimates the planner used to refine with wall-clock samples; it now predicts the next
-operation's cost from the units the previous ones were charged.
+The planner predicts the next operation's cost from the units the previous ones were charged. Nothing bounds the search's
+wall time but these units, so an assessment and an expansion are charged at the worst host cost expected of one (about
+200 µs, against a typical 20 µs): at 200 µs an assessment, a busy boundary still ends within about 10 ms and an idle one
+within 50 ms. Every unit cost and boundary size is a declared estimate awaiting calibration on lab hosts against the
+request log's `search_elapsed_ns` against `search_units` and `planning_elapsed_ns` against `planning_units`; a wrong one changes
+only how much optional planning a boundary does.
 
 The Engine provides an optional quota shared across the admission boundary: one ledger that the head and every backfill
 inspection charge, so none of them resets it. It is 50 000 units when no other request is runnable and 10 000 when others
-wait (the former 50 ms and 10 ms at the nominal unit). The mandatory identity assessments are charged to it too. The planner
+wait (the former 50 ms and 10 ms at the nominal unit, and at most 250 and 50 assessments). The mandatory identity assessments are charged to it too. The planner
 first searches with a window of at most 5 000 units, then decides whether to extend it from the expected improvement still
 obtainable and the completion cost: a search may spend a twentieth of the predicted saving, at 1 000 predicted device
 nanoseconds a unit, shared by the affected requests. An incomplete prediction gets only one exploration episode of at most

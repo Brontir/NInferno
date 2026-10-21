@@ -309,6 +309,8 @@ Json materialization_json(const ninferno::MaterializationDiagnostics& diagnostic
         {"incumbent_improvements", diagnostics.incumbent_improvements},
         {"search_work", diagnostics.search_work},
         {"search_granted_units", diagnostics.search_granted_units},
+        {"search_units", diagnostics.search_units},
+        {"planning_units", diagnostics.planning_units},
         {"search_renewals", diagnostics.search_renewals},
         {"search_discovery_used", diagnostics.search_discovery_used},
         {"search_stop_phase",

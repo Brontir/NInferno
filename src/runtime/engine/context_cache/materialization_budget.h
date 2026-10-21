@@ -13,19 +13,31 @@ namespace ninferno::runtime {
 // prompt and boundary make the same plan on every machine and on a CPU
 // (docs/maintainer/deterministic-decisions.md). Each Program operation of the search is charged
 // in work units from discrete facts of the operation itself. One unit is the nominal host cost of
-// one construction-option step (about 1 us); the base costs were the seed estimates (1 us an
-// option, 20 us an assessment or an expansion) the planner used to refine with wall-clock
-// samples. An assessment adds one unit per owner decision or checkpoint-recovery alternative it
-// projected (its projection_work), an expansion one per target it committed, so a larger catalog
-// costs more without a clock. The boundary sizes are the former 50 ms (no other runnable request)
-// and 10 ms (others wait) at the nominal unit; the planner predicts the next operation's cost from
-// the units the previous ones were charged.
+// one construction-option step (about 1 us). An assessment adds one unit per owner decision or
+// checkpoint-recovery alternative it projected (its projection_work), an expansion one per target
+// it committed, so a larger catalog costs more without a clock. The planner predicts the next
+// operation's cost from the units the previous ones were charged.
+//
+// No clock bounds the search, so the units must bound its wall time on the slowest host. The
+// seed estimates were 20 us an assessment or an expansion, but an assessment of a large catalog
+// can take about 200 us of host time beyond what its projection count shows; charged 20 units, a
+// busy boundary of 10 000 units could then run 500 assessments, 100 ms of every waiting lane's
+// time. An assessment and an expansion are therefore charged at that worst cost, 200 units, so a
+// boundary's worst case stays at its former wall size: 10 000 units, at most 50 assessments or
+// about 10 ms, while other requests wait, 50 000 (about 50 ms) when none does. A typical
+// assessment costs far less, so a typical search now does fewer assessments than the clock
+// allowed. Every constant here is a declared estimate awaiting calibration on lab hosts against
+// the request log's materialization telemetry (search_elapsed_ns against search_units,
+// planning_elapsed_ns against planning_units); a wrong one changes how much optional planning a
+// boundary does, never a request's output.
 struct PlanningWork {
     // Per operation: a construction option; an exact target assessment, plus its projections;
     // a target expansion, plus its new targets.
     static constexpr std::uint64_t kOption     = 1;
-    static constexpr std::uint64_t kAssessment = 20;
-    static constexpr std::uint64_t kExpansion  = 20;
+    static constexpr std::uint64_t kAssessment = 200;
+    static constexpr std::uint64_t kExpansion  = 200;
+    // The worst host cost of one assessment the boundary sizes are checked against.
+    static constexpr std::uint64_t kWorstAssessmentUs = 200;
     // Units of one Engine admission boundary.
     static constexpr std::uint64_t kIdleBoundary = 50'000;
     static constexpr std::uint64_t kBusyBoundary = 10'000;
@@ -37,6 +49,17 @@ struct PlanningWork {
     static constexpr std::uint64_t kEconomicShare      = 20;
     static constexpr std::uint64_t kPredictedNsPerUnit = 1'000;
 };
+
+// A busy boundary at the worst assessment cost stays within its former 10 ms of wall time, an idle
+// one within 50 ms.
+static_assert(PlanningWork::kBusyBoundary / PlanningWork::kAssessment *
+                      PlanningWork::kWorstAssessmentUs <=
+                  10'000,
+              "a busy boundary's worst case exceeds 10 ms");
+static_assert(PlanningWork::kIdleBoundary / PlanningWork::kAssessment *
+                      PlanningWork::kWorstAssessmentUs <=
+                  50'000,
+              "an idle boundary's worst case exceeds 50 ms");
 
 // The units spent at one Engine admission boundary: the head inspection and every backfill
 // inspection charge the same ledger, so none of them resets the boundary's allowance.

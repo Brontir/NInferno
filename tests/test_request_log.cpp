@@ -453,6 +453,8 @@ int main() {
                           .incumbent_improvements     = 2,
                           .search_work                = 42,
                           .search_granted_units       = 8000,
+                          .planning_units             = 9100,
+                          .search_units               = 7600,
                           .search_renewals            = 1,
                           .search_discovery_used      = true,
     };
@@ -471,6 +473,8 @@ int main() {
     // Schema 26: the planning budgets are counted in work units, not nanoseconds.
     failures += check(kRequestLogSchemaVersion == 26 &&
                           done.at("materialization").at("stop_reason") == "planning_budget" &&
+                          done.at("materialization").at("planning_units") == 9100 &&
+                          done.at("materialization").at("search_units") == 7600 &&
                           !done.at("materialization").contains("search_granted_ns") &&
                           !done.at("materialization").contains("search_overshoot_ns"),
                       "schema 26: search_granted_units and planning_budget replace the "

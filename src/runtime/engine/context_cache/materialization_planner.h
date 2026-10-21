@@ -114,6 +114,7 @@ public:
         // Without a boundary ledger the allowance belongs to this call alone.
         PlanningLedger call_ledger;
         if (allowance.ledger == nullptr) { allowance.ledger = &call_ledger; }
+        const std::uint64_t units_before = allowance.spent();
         queue_.clear();
         pending_.clear();
         const std::size_t frontier_capacity = candidates.size() + 1U + kTargetBudget;
@@ -199,6 +200,7 @@ public:
                                           : MaterializationStopReason::NoPressure,
                     false);
                 diagnostics.budget_exhausted  = needs_optional_search;
+                diagnostics.planning_units    = allowance.spent() - units_before;
                 diagnostics.search_stop_phase = needs_optional_search
                                                     ? MaterializationSearchPhase::Setup
                                                     : MaterializationSearchPhase::None;
@@ -272,7 +274,8 @@ public:
         }
 
         if (!identity_best) { search_started = Clock::now(); }
-        MaterializationSearchBudget search_budget(allowance, allowance.spent(),
+        const std::uint64_t search_units_before = allowance.spent();
+        MaterializationSearchBudget search_budget(allowance, search_units_before,
                                                   incumbent.cost.total_ns);
         const auto initial_cost_ns = incumbent.cost.total_ns;
         std::optional<std::uint64_t> first_improvement_ns;
@@ -742,6 +745,8 @@ public:
         diagnostics.incumbent_improvements     = incumbent_improvements;
         diagnostics.search_work                = search_work;
         diagnostics.search_granted_units       = search_budget.granted_units();
+        diagnostics.search_units               = allowance.spent() - search_units_before;
+        diagnostics.planning_units             = allowance.spent() - units_before;
         diagnostics.search_renewals            = search_budget.renewals();
         diagnostics.search_discovery_used      = search_budget.discovery_used();
         diagnostics.search_stop_phase          = search_phase;

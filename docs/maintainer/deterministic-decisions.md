@@ -29,6 +29,10 @@ This page states the rule and its target. The engine does not meet all of it yet
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;
 - model constants (speculative acceptance) do not record their keys, corpus hash and tolerance yet;
+- the admission planner's work units (1 an option, 200 an assessment or expansion, 10 000 / 50 000 a
+  boundary) and the capture search's 10 us a target are declared estimates sized for a worst
+  case of about 200 us an assessment; they await calibration against the request log's
+  `search_elapsed_ns` / `search_units` and `planning_elapsed_ns` / `planning_units` on lab hosts;
 - run-ahead under a CPU quota is a declared rule not yet calibrated: a round runs 16 steps when the
   process's CPU bandwidth quota is below min(4, logical cores) CPUs, else 1 (both numbers await
   measurements on lab containers). Nothing measures the host, so a host stalled by other
