@@ -185,6 +185,8 @@ std::string forwarded_proto(std::string_view forwarded) {
         } else if (in_value && c == '"' && trimmed(value).empty()) {
             value.clear();
             quoted = was_quoted = true;
+        } else if (was_quoted && (c == ' ' || c == '\t')) {
+            // optional whitespace after the closing quote, before the ';' or ','
         } else {
             (in_value ? value : name) += c;
         }

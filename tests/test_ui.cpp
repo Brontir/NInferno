@@ -90,6 +90,9 @@ void test_access() {
               !usable_key("sixteen chars;x&y#z") && !usable_key("0123456789abcdef\r") &&
               !usable_key(std::string(257, 'k')),
           "key: URL- and cookie-safe characters only");
+    check(forwarded_https("", "for=1.2.3.4;proto=\"https\" ;by=proxy") &&
+              forwarded_https("", "proto=\"https\"\t, for=x"),
+          "Forwarded: whitespace after a quoted proto");
     check(forwarded_https("https", "") && forwarded_https("HTTPS, http", "") &&
               forwarded_https("", "for=1.2.3.4;proto=https") && !forwarded_https("http", "") &&
               !forwarded_https("", ""),
