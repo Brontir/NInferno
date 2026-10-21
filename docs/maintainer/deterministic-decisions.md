@@ -1,10 +1,20 @@
 # Deterministic decisions
 
-Every runtime decision is derived from the chip's specification, the artifact and the user's
-explicit options. Nothing is measured on the user's machine. Measurements happen in the lab and
+Every runtime decision must be derived from the chip's specification, the artifact and the user's
+explicit options. Nothing may be measured on the user's machine. Measurements happen in the lab and
 reach the runtime only as facts or as constants.
 
-What a user gets from this:
+This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
+
+- the attention split under `exact` follows the free-memory-sized context;
+- the dense tuner's user cache, local spec-tune, environment knobs, `calibrate_floor` and budgets in
+  milliseconds still steer choices;
+- MMQ prefill bytes depend on where a chunk is cut;
+- the fingerprint below does not exist yet.
+
+Each gap is closed in its own change, which updates this list.
+
+What the design guarantees once complete:
 
 - No timing, tuning or calibration at startup.
 - The same decisions on every machine with the same chip type, changing only with a release.
@@ -18,7 +28,8 @@ What a user gets from this:
    into three tiers:
    - **B1, the byte class.** Activation precision, summation class, KV codec, decode/verify parity,
      placement and plan level. It reads only discrete device facts, the artifact and the options.
-     `--activations exact` reads nothing else, so its bytes are the same across a generation.
+     `--activations exact` must read nothing else, so that its bytes are the same across a
+     generation.
    - **B2, routes and depth under `fast`.** It may also read canonical continuous facts from the
      PCI-ID reference table. Its bytes are the same for the same chip type and the same request
      schedule.
@@ -35,6 +46,18 @@ What a user gets from this:
 8. **Every decision is reproducible on a CPU.** The rules may not read CUDA, clocks, the
    environment or files. They get their facts passed in.
 
+## Layers of rules
+
+Rules apply in this order:
+
+1. **Capability gates:** what can run at all (tensor MMA, BF16, FP8, FP4, TMA).
+2. **B1.**
+3. **B2.**
+4. **S.**
+5. **Speed estimates.** These use a per generation x mechanism efficiency measured in the lab. A
+   law relating SM count and clock to speed serves only as a prior, and only for a generation with
+   no lab card.
+
 ## Facts
 
 | Kind | Source | Examples |
@@ -46,8 +69,8 @@ What a user gets from this:
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid and is labelled
   *extrapolated*.
 - PCIe is the highest generation the link supports, never the current one.
-- Free memory is the only observation made while running. It selects one of at most four declared
-  plan levels, and the chosen level goes into the fingerprint.
+- Free memory must be the only observation made while running. It selects one of at most four
+  declared plan levels, and the chosen level goes into the fingerprint.
 
 ## Fingerprint
 
@@ -60,10 +83,10 @@ The fingerprint is a hash of the following, plus a digest of the decision manife
 - the constants;
 - the kernel hash.
 
-The engine prints it at startup, exports it in `/metrics` and writes it into every bench row. Two
-runs with the same fingerprint make the same decisions.
+The engine is to print it at startup, export it in `/metrics` and write it into every bench row.
+Two runs with the same fingerprint must make the same decisions.
 
-## What is promised
+## What will be promised
 
 - Same fingerprint: same decisions.
 - `--activations exact`: the same bytes on every card of a generation.
@@ -81,9 +104,16 @@ runs with the same fingerprint make the same decisions.
 - A reference table that stores decisions.
 - A law that turns SM count and clock into speed, used inside a decision. It may only serve as a
   prior for UI estimates.
-- Power-limit corrections in decisions.
+- Corrections by enforced over default power limit.
+- 5 % clock buckets: they move the discontinuity, they do not remove it.
 - Memory type (HBM/GDDR) as an input to a decision.
-- Promises of a confidence level that two lab cards per generation cannot support.
+- An MMQ gate on `!fp32acc_full_rate`: it only works on wrong rates.
+- A decision tree per generation: it overfits.
+- Batch-invariant `fast` by default: its cost is too high.
+- A per-site profile (`--site-profile`). It is deferred until more than 10 % of covered cards leave
+  their band.
+- Promises of a confidence level that two lab cards per generation cannot support, such as "at
+  least 90 %" or n/(n+1).
 
 ## Review checklist
 

@@ -12,6 +12,10 @@ The user-facing variables are documented with the options they belong to:
 
 ## Tuning caches and route tables
 
+These are lab tools. Under [deterministic decisions](deterministic-decisions.md), a user's engine
+must not time anything or read state from an earlier run. Reading the cache with tuning off is a
+known gap, being removed.
+
 | Variable | Values | Effect |
 |---|---|---|
 | `NINFERNO_DENSE_TUNE` | `off` (default), `on`, `retune` | The dense GEMM tuner. Off, the engine starts with no timing: routes come from the choices already stored (the cache file, then the release's `routes/tuner/dense_tune.json`), then the GPU class's route table, else the heuristic. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `retune` ignores the stored choices; any other value is refused. Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
