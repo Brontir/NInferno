@@ -220,13 +220,14 @@ def best_multi(settings):
 
 
 def best_long(settings):
-    """(prefill, decode) records of the setting with the fastest decode after a long prompt."""
-    cands = [(c[k], s) for s, c in settings.items() for k in c if k[0] == "long"]
+    """The fastest prefill and the fastest decode after a long prompt of the same length, each at
+    its own best setting (speculation does not change the prefill; the two need not agree)."""
+    cands = [c[k] for c in settings.values() for k in c if k[0] == "long"]
     if not cands:
         return None, None
-    r, s = max(cands, key=lambda x: x[0]["value"])
-    pre = settings[s].get(("prefill", prompt_k(r)))
-    return pre, r
+    r = max(cands, key=lambda x: x["value"])
+    pres = [c[k] for c in settings.values() for k in c if k == ("prefill", prompt_k(r))]
+    return (max(pres, key=lambda x: x["value"]) if pres else None), r
 
 
 def summary_ratio(speed, refs):
