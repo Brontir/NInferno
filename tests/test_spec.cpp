@@ -1631,16 +1631,73 @@ int test_context_classes() {
                           !known_route("RMMA") && !known_route(""),
                       "known_route takes the GEMM route families");
 
-    // The shipped registry: the RTX 3090 X13 entries, one card each and placeholder ids, so every
-    // factor is unknown.
+    // The shipped registry: the RTX 3090 X13 entries (one card each, placeholder ids) and the
+    // Qwen3.8-27B UD-IQ3_XXS ones measured on an RTX 4090 (ad102, sm89) and an RTX 5070 Ti (gb203,
+    // sm120), one per drafter and temperature, whose target names the parts of its source identity
+    // that are proven and the missing ones; so every factor is unknown.
     const auto& shipped = Registry::builtin().context_classes();
-    failures += check(shipped.present && shipped.entries.size() == 3,
-                      "the registry carries three X13 entries");
+    failures += check(shipped.present && shipped.entries.size() == 7,
+                      "the registry carries seven X13 entries");
     for (const auto& entry : shipped.entries) {
         const auto mid = factor(shipped, entry.key, ContextClass::Mid);
         failures += check(entry.tolerance == kContextTolerance && !mid.value &&
                               mid.reason.starts_with("placeholder key: "),
                           "the X13 entries are placeholders: unknown (" + mid.reason + ")");
+    }
+
+    // With a source identity in place of the missing parts, every UD-IQ3_XXS entry gives the mean
+    // of its two cards (two generations that agree within the tolerance in Mid and Long), not
+    // unknown; Huge was not measured.
+    {
+        const std::string missing =
+            "placeholder key: target=missing:inputs.side_files_and_resources,tensor_index";
+        auto known               = shipped;
+        const std::string target = std::string(64, 'c');
+        int measured             = 0;
+        for (auto& entry : known.entries) {
+            if (entry.target_missing.empty()) { continue; }
+            ++measured;
+            const auto mid = factor(shipped, entry.key, ContextClass::Mid);
+            failures += check(!mid.value && mid.reason == missing,
+                              "an entry with missing target parts is unknown (" + mid.reason + ")");
+            failures +=
+                check(entry.target_parts["inputs"][0]["files"][0]["sha256"] ==
+                              "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee" &&
+                          entry.target_parts["quant"] == "UD-IQ3_XXS",
+                      "the proven parts name the GGUF by its content");
+            entry.key.target = target;
+        }
+        failures += check(measured == 4, "four UD-IQ3_XXS entries (dflash2:7, mtp:5; t0, t1)");
+        for (const auto& entry : known.entries) {
+            if (entry.target_missing.empty()) { continue; }
+            const auto& key  = entry.key; // the running server's key, field for field
+            const auto label = key.drafter + ":" + std::to_string(key.depth) + " " + key.sampling;
+            failures += check(entry.cards.size() == 2 && entry.cards[0].arch != entry.cards[1].arch,
+                              "the " + label + " entry has two cards of different generations");
+            for (const auto c : {ContextClass::Mid, ContextClass::Long}) {
+                const auto i      = static_cast<std::size_t>(c);
+                const double mean = (*entry.cards[0].factors[i] + *entry.cards[1].factors[i]) / 2;
+                const auto got    = factor(known, key, c);
+                failures +=
+                    check(got.value && got.reason.empty() && std::abs(*got.value - mean) < 1e-12,
+                          "the " + label + " " + class_name(c) + " factor is the cards' mean (" +
+                              got.reason + ")");
+            }
+            failures += check(factor(known, key, ContextClass::Short).value == 1.0,
+                              "the " + label + " short factor is 1");
+            const auto huge = factor(known, key, ContextClass::Huge);
+            failures += check(!huge.value && huge.reason.starts_with("no huge context factor"),
+                              "the " + label + " huge factor is unknown (" + huge.reason + ")");
+            if (key.drafter == "dflash2" && key.sampling == "t0") {
+                const auto mid = factor(known, key, ContextClass::Mid);
+                failures += check(mid.value && std::abs(*mid.value - (0.872 + 0.863) / 2) < 1e-12,
+                                  "dflash2:7 t0 mid factor 0.8675 (4090 0.872, 5070 Ti 0.863)");
+                auto other     = key;
+                other.sampling = "pooled t0+t1";
+                failures += check(!factor(known, other, ContextClass::Mid).value,
+                                  "another sampling than the entries' is unknown");
+            }
+        }
     }
 
     const auto key_json = [](const std::string& cards) {
