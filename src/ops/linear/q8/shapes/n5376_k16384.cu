@@ -49,10 +49,14 @@ Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
     if (tokens <= 192) return launch_q8_a16_mma_r48_t64;
     if (tokens <= 256) return launch_q8_a16_mma_r64_t128;
     if (tokens <= 384) return launch_q8_a16_mma_r64_t96;
-    // The 256-token tile where its 42 row tiles by T/256 columns fill whole waves of the device's
-    // SMs (sm_rules::fills_whole_waves; on the RTX 5090's 170 SMs: T a multiple of 1024). The tile
-    // holds one CTA an SM (MmaR128x64T256: 92 KiB of shared memory, launch bound one an SM).
-    if (sm_rules::fills_whole_waves(tokens, sm_count(), 5376 / 128, 256, 1))
+    // The 256-token tile (128 rows, one CTA an SM: MmaR128x64T256, 92 KiB of shared memory, launch
+    // bound one an SM) where its 42 row tiles by T/256 columns fill whole waves of the device's SMs
+    // and its waves cost no more than the 128-token tile's (64 rows, two CTAs an SM):
+    // sm_rules::fills_whole_waves and wide_tile_pays. On the RTX 5090's 170 SMs: T a multiple of
+    // 1024; never on the 4090's 128 or the 5070 Ti's 70 (measured slower there).
+    const int sms = sm_count();
+    if (sm_rules::fills_whole_waves(tokens, sms, 5376 / 128, 256, 1) &&
+        sm_rules::wide_tile_pays(tokens, sms, 5376, 128, 256, 64, 128))
         return launch_q8_a16_mma_r128x64_t256;
     return launch_q8_a16_mma_r64x32_t128;
 }

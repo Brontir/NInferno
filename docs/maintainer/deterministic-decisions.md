@@ -29,9 +29,10 @@ This page states the rule and its target. The engine does not meet all of it yet
   IQ3 edge at 96 SMs (`generic_gemm.cpp`, `rules_r8`), an SM-count bound placed between the two
   measured boards (84 and 170). The literals that were the RTX 5090's 170 SMs and decided a grid
   (the FP8 TMA split wave, the Gemma 4 Q8 5376x16384 256-token tile, the NVFP4 2048x5376 TMA
-  route) are rules over the device's SM count (`src/ops/common/sm_wave_rules.h`); off 170 SMs the
-  Q8 tile's whole-wave bound (at most a sixteenth of the wave idle) and the NVFP4 crossing are
-  extrapolated from the RTX 5090 until measured on other boards;
+  route) are rules over the device's SM count (`src/ops/common/sm_wave_rules.h`). The Q8 tile's
+  wave-cost margin (a 64th) is fitted on the RTX 5090, 4090 and 5070 Ti; its whole-wave bound (at
+  most a sixteenth of the wave idle) and the NVFP4 crossing are extrapolated from the RTX 5090
+  until measured on other boards;
 - choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
   `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
   and spread gates): the nearest measured board, not a rule over facts;

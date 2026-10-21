@@ -46,7 +46,8 @@ bool same(const sm_rules::SplitTail& a, const sm_rules::SplitTail& b) {
 bool old_q8_t256(std::int32_t tokens) { return tokens % 1024 == 0; }
 
 bool new_q8_t256(std::int32_t tokens, int sms) {
-    return sm_rules::fills_whole_waves(tokens, sms, 5376 / 128, 256);
+    return sm_rules::fills_whole_waves(tokens, sms, 5376 / 128, 256, 1) &&
+           sm_rules::wide_tile_pays(tokens, sms, 5376, 128, 256, 64, 128);
 }
 
 // Gemma 4 NVFP4 2048x5376 A4 past T = 640 before: the 128-token MMA tile through 1280, TMA after.
@@ -57,8 +58,10 @@ bool new_nvfp4_tma(std::int32_t tokens, int sms) {
 }
 
 constexpr std::int32_t kMaxTokens = 65536;
-constexpr int kBlockK             = 128;
-constexpr int kMaxParts           = 4;
+// The Q8 rule's wave arithmetic drifts from the multiples of 1024 only far out: checked to 2^20.
+constexpr std::int32_t kMaxQ8Tokens = 1 << 20;
+constexpr int kBlockK               = 128;
+constexpr int kMaxParts             = 4;
 // The K of every shape that runs an FP8 split schedule.
 constexpr int kFp8Ks[] = {5120, 6144, 17408};
 
@@ -71,7 +74,7 @@ void check_tuned_board_unchanged() {
                        std::to_string(k));
         }
     }
-    for (std::int32_t t = 385; t <= kMaxTokens; ++t) {
+    for (std::int32_t t = 385; t <= kMaxQ8Tokens; ++t) {
         expect(new_q8_t256(t, kTunedSms) == old_q8_t256(t),
                "q8 5376x16384 tile differs on 170 SMs at T " + std::to_string(t));
     }
@@ -130,8 +133,8 @@ void report_nvfp4(int sms) {
 int main() {
     check_tuned_board_unchanged();
     std::printf("170 SMs: every decision unchanged (fp8 split, tiles 1..16384 x K %d/%d/%d; "
-                "q8 tile and nvfp4 route, T up to %d)\n",
-                kFp8Ks[0], kFp8Ks[1], kFp8Ks[2], kMaxTokens);
+                "q8 tile to T %d, nvfp4 route to T %d)\n",
+                kFp8Ks[0], kFp8Ks[1], kFp8Ks[2], kMaxQ8Tokens, kMaxTokens);
 
     // Boards of the lab and the PCI-ID table: 84 RTX 5080, 76 RTX 4080, 58 L4, 46 RTX 4070,
     // 34 RTX 4060 Ti, 108 A100, 80 V100 / RTX 4080 SUPER, 68 RTX 2080 Ti, 188 RTX PRO
@@ -149,8 +152,12 @@ int main() {
     expect(new_q8_t256(512, 84) && !new_q8_t256(768, 84) && new_q8_t256(1024, 84),
            "84 SMs: q8 tile at multiples of 512");
     expect(!new_q8_t256(1024, 76) && !new_q8_t256(512, 76), "76 SMs: q8 tile never");
-    expect(new_q8_t256(768, 128) && !new_q8_t256(1024, 128),
-           "128 SMs: q8 tile at multiples of 768");
+    // Measured (op level, ABBA against the old multiples of 1024): the 256-token tile lost at every
+    // measured T on the RTX 5070 Ti (70 SMs) and the RTX 4090 (128 SMs), 768-multiples included.
+    for (std::int32_t t : {512, 768, 1024, 1536, 2048, 2304, 3072, 4096}) {
+        expect(!new_q8_t256(t, 70), "70 SMs: q8 tile at T " + std::to_string(t));
+        expect(!new_q8_t256(t, 128), "128 SMs: q8 tile at T " + std::to_string(t));
+    }
     expect(!new_q8_t256(1024, 188), "188 SMs: q8 tile never");
     expect(!new_q8_t256(1024, 34), "34 SMs: one column overruns the wave, q8 tile never");
     expect(new_nvfp4_tma(641, 84) && !new_nvfp4_tma(640, 84), "84 SMs: TMA from 641");
