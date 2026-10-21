@@ -38,9 +38,9 @@ struct HostCpuQuota {
     // The threshold is a declared rule awaiting calibration on lab hosts, like kQuotaSteps.
     [[nodiscard]] bool limits_run_ahead(unsigned logical_cores) const noexcept {
         if (!set()) { return false; }
-        const std::uint64_t cpus =
-            logical_cores == 0 ? kRunAheadCpus
-                               : std::min<std::uint64_t>(kRunAheadCpus, logical_cores);
+        const std::uint64_t cpus = logical_cores == 0
+                                       ? kRunAheadCpus
+                                       : std::min<std::uint64_t>(kRunAheadCpus, logical_cores);
         // quota / period < cpus, without division.
         return quota_us < cpus * period_us;
     }
@@ -179,8 +179,8 @@ template <class Reader>
 [[nodiscard]] inline HostCpuQuota read_host_cpu_quota() {
 #if defined(__linux__)
     const auto groups = detail::read_small_file("/proc/self/cgroup");
-    return read_cgroup_cpu_quota(groups.value_or(""),
-                                 [](const std::string& path) { return detail::read_small_file(path); });
+    return read_cgroup_cpu_quota(
+        groups.value_or(""), [](const std::string& path) { return detail::read_small_file(path); });
 #else
     return {};
 #endif

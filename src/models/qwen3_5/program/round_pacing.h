@@ -9,16 +9,15 @@
 // requests (docs/maintainer/deterministic-decisions.md). It reads machine facts, read once at
 // startup: the process's CPU bandwidth quota (host_cpu_quota.h) against the logical cores; the
 // quota limits the host when it is below min(4, cores) CPUs (HostCpuQuota::limits_run_ahead,
-// which says why). A container's
-// CFS limit stops every thread of the cgroup for the rest of its 100 ms period once the quota is
-// used; a decode that waits for each step then leaves the GPU idle for the stall (30-40 % of the
-// time on throttled lab containers). Under such a quota a round runs kQuotaSteps steps where the engine
-// can run ahead, the later steps feeding on the sampled tokens on the device so the GPU keeps
-// running while the host is stopped; without one it runs one step, which publishes each token as
-// soon as it exists and runs nothing past a stop. NINFERNO_DECODE_STEPS=N replaces that default.
-// A round runs at most allowed_steps: 1 where rows past a stop could not stay invisible (recurrent
-// state, a full sliding ring, a speculative engine), the model's uncommitted-row headroom
-// otherwise.
+// which says why). A container's CFS limit stops every thread of the cgroup for the rest of its
+// 100 ms period once the quota is used; a decode that waits for each step then leaves the GPU
+// idle for the stall (30-40 % of the time on throttled lab containers). Under such a quota a round
+// runs kQuotaSteps steps where the engine can run ahead, the later steps feeding on the sampled
+// tokens on the device so the GPU keeps running while the host is stopped; without one it runs one
+// step, which publishes each token as soon as it exists and runs nothing past a stop.
+// NINFERNO_DECODE_STEPS=N replaces that default. A round runs at most allowed_steps: 1 where rows
+// past a stop could not stay invisible (recurrent state, a full sliding ring, a speculative
+// engine), the model's uncommitted-row headroom otherwise.
 //
 // The wait is the only timing-driven choice, and it cannot change a round's output bytes or the
 // next round's batch: the round is fully submitted before the host waits, and the wait only moves

@@ -92,8 +92,8 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     runtime::HostFacts host = host_facts();
     host.cpu_quota_us       = load.cpu_quota_us;
     host.cpu_period_us      = load.cpu_quota_period_us;
-    in.facts = runtime::facts_of(device_class(resolved.device), build_features(), driver_version,
-                                 host);
+    in.facts =
+        runtime::facts_of(device_class(resolved.device), build_features(), driver_version, host);
     in.build   = runtime::build_of();
     in.options = runtime::options_of(
         requested, load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
@@ -125,8 +125,8 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
         const char* value = std::getenv(name);
         return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
     });
-    in.plan  = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
-                                load.decode_steps_per_round);
+    in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
+                                   load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));

@@ -36,7 +36,7 @@ int main() {
           "v1 unlimited read as a quota");
     // The tightest quota along the cgroup and its parents binds (v2): a parent's 1 CPU beats the
     // own 3; a container's namespace root is the last ancestor.
-    using Files = std::map<std::string, std::string>;
+    using Files       = std::map<std::string, std::string>;
     const auto reader = [](const Files& files) {
         return [&files](const std::string& path) -> std::optional<std::string> {
             const auto it = files.find(path);

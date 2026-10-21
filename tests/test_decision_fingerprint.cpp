@@ -76,7 +76,8 @@ rt::DecisionInputs sample_inputs() {
         return std::nullopt;
     });
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
-    in.plan  = rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
+    in.plan =
+        rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
     in.taint = rt::taint_of(in);
     in.observed = rt::observed_of(ninferno::MemorySummary{});
     in.observed.merge(rt::observed_of(sample_device()));
@@ -266,9 +267,9 @@ int plan_reaches_its_section() {
     }
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
-    failures +=
-        check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab", 1) != collect(MemorySummary{}),
-              "plan: recurrent_state reaches the section");
+    failures += check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab", 1) !=
+                          collect(MemorySummary{}),
+                      "plan: recurrent_state reaches the section");
     const std::array<std::int32_t, 2> other{17, 128};
     failures += check(rt::plan_of({}, MemorySummary{}, other, "ab", 1) != collect(MemorySummary{}),
                       "plan: route breakpoints reach the section");
@@ -278,10 +279,10 @@ int plan_reaches_its_section() {
     // The decode round's step count (16 under a CPU quota, 1 without, or --decode-steps) decides
     // which requests share a step's batch.
     const auto sixteen = rt::plan_of({}, MemorySummary{}, breakpoints, "ab", 16);
-    failures += check(sixteen != collect(MemorySummary{}) &&
-                          sixteen.at("decode.steps_per_round") == "16" &&
-                          collect(MemorySummary{}).at("decode.steps_per_round") == "1",
-                      "plan: decode.steps_per_round reaches the section");
+    failures +=
+        check(sixteen != collect(MemorySummary{}) && sixteen.at("decode.steps_per_round") == "16" &&
+                  collect(MemorySummary{}).at("decode.steps_per_round") == "1",
+              "plan: decode.steps_per_round reaches the section");
     return failures;
 }
 
