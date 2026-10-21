@@ -497,10 +497,19 @@ def page_run(g, m, gpus, models, speed, refs, quality):
                       + " | Same top token |" + (" llama.cpp |" if with_ref else "") + " Measured |",
                       "|---|---|---:|---:|---:|---:|---:|" + ("---:|" if with_ref else "") + "---|"]
             order = {"exact": 0, "fast": 1, "int8": 2}
+
+            def same(a, b):  # two modes that ran the same kernels: every quality number identical
+                return all(a.get(x, {}).get("value") == b.get(x, {}).get("value") for x in ("perplexity", "kld"))
+
+            names = {}
+            for (w, mode) in list(by):  # int8 differs from fast only on weights fast keeps in 16 bits
+                if mode == "int8" and (w, "fast") in by and same(by[(w, "int8")], by[(w, "fast")]):
+                    del by[(w, "int8")]
+                    names[(w, "fast")] = "fast = int8"
             for (w, mode), d in sorted(by.items(), key=lambda x: (x[0][0], order.get(x[0][1], 9))):
                 p, k, o = d.get("perplexity"), d.get("kld"), d.get("llama.cpp")
                 pk = max((k for k in {c for s in settings.values() for c in s} if k[0] == "prefill"), default=None)
-                row = [w, mode, speed_of(w, mode, ("chat", 1)), speed_of(w, mode, pk) if pk else "–",
+                row = [w, names.get((w, mode), mode), speed_of(w, mode, ("chat", 1)), speed_of(w, mode, pk) if pk else "–",
                        f"{p['value']:.4f}" if p else "–",
                        "reference" if mode == ref_name else (f"{k['value']:.5f}" if k else "–"),
                        "" if mode == ref_name else (f"{k['top1_agreement'] * 100:.2f} %" if k else "–")]
@@ -508,6 +517,9 @@ def page_run(g, m, gpus, models, speed, refs, quality):
                     row.append(f"{o['value']:.4f}" if o else "–")
                 row.append(max(day(r) for r in d.values()))
                 lines.append("| " + " | ".join(row) + " |")
+            if names:
+                lines += ["", "**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` "
+                          "takes the same kernels and gives the same numbers."]
             lines.append("")
         spec = [r for r in q if r["metric"] in ("acceptance", "greedy_match")]
         if spec:

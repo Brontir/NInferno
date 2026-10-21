@@ -33,8 +33,9 @@ What each `--activations` mode gives: its speed (the fastest setting measured in
 | Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from exact | Same top token | Measured |
 |---|---|---:|---:|---:|---:|---:|---|
 | UD-IQ3_XXS | exact | – | – | 4.4192 | reference |  | 2026-10-20 |
-| UD-IQ3_XXS | fast | 120 | 2,070 | 4.4188 | 0.00198 | 98.38 % | 2026-10-20 |
-| UD-IQ3_XXS | int8 | – | – | 4.4188 | 0.00198 | 98.38 % | 2026-10-20 |
+| UD-IQ3_XXS | fast = int8 | 120 | 2,070 | 4.4188 | 0.00198 | 98.38 % | 2026-10-20 |
+
+**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` takes the same kernels and gives the same numbers.
 
 
 ## Measurement
