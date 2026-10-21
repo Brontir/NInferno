@@ -380,6 +380,11 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         ": the local tune measured none");
                 }
             }
+            // The model's own floors bound a fallback the tune does not cover (the head fallback).
+            if (manifest) {
+                std::string origin;
+                out.floor_sources = manifest_profiles(*manifest, artifact, origin);
+            }
             return out;
         }
     } else if (!tuned_path.empty()) {
