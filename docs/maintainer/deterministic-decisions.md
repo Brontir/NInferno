@@ -42,6 +42,7 @@ This page states the rule and its target. The engine does not meet all of it yet
   yet cover the PCI-ID reference facts, plan levels, the constants and the kernel hash, nor the
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
+
 Each gap is closed in its own change, which updates this list.
 
 What the design guarantees once complete:

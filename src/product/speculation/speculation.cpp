@@ -52,7 +52,9 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
     const bool local = resolved.source.starts_with("local tune ");
     out["speculation.profile"] =
         resolved.sha256.empty()
-            ? std::string(resolved.found() ? "built-in default" : "none")
+            ? std::string(local               ? "local tune unreadable"
+                          : resolved.found() ? "built-in default"
+                                             : "none")
             : std::string(local ? "local tune" : "published") + " sha256:" + resolved.sha256;
     // A registry file only when the variable names one: set empty, it is the compiled-in one
     // (spec::Registry::builtin).

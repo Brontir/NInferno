@@ -5,7 +5,8 @@
 # rewritten only when its text changes, so an unchanged commit rebuilds nothing.
 #
 # Inputs: SOURCE_DIR (the project's source tree), OUTPUT, GIT_EXECUTABLE (empty: git absent).
-# The commit is `git describe --always --dirty`, or "unknown" when git is absent, fails, or this
+# The commit is the full `git rev-parse HEAD` hash, with "-dirty" when tracked files differ from it
+# (the same name on every clone, shallow or not, with or without tags), or "unknown" when git is absent, fails, or this
 # source tree is not itself the top of a git checkout (a tree unpacked inside another repository
 # does not take that one's commit).
 cmake_minimum_required(VERSION 3.28)
@@ -20,12 +21,20 @@ if(GIT_EXECUTABLE AND EXISTS "${GIT_EXECUTABLE}")
     file(REAL_PATH "${git_top}" git_top)
     file(REAL_PATH "${SOURCE_DIR}" source_top)
     if(git_top STREQUAL source_top)
-      execute_process(COMMAND "${GIT_EXECUTABLE}" describe --always --dirty
+      execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
         WORKING_DIRECTORY "${SOURCE_DIR}"
-        OUTPUT_VARIABLE described OUTPUT_STRIP_TRAILING_WHITESPACE
+        OUTPUT_VARIABLE head OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE git_result ERROR_QUIET)
-      if(git_result EQUAL 0 AND described MATCHES "^[0-9A-Za-z._/-]+$")
-        set(commit "${described}")
+      if(git_result EQUAL 0 AND head MATCHES "^[0-9a-f]+$")
+        set(commit "${head}")
+        execute_process(COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=no
+          WORKING_DIRECTORY "${SOURCE_DIR}"
+          OUTPUT_VARIABLE changed RESULT_VARIABLE dirty_result ERROR_QUIET)
+        if(NOT dirty_result EQUAL 0 OR NOT changed STREQUAL "")
+          string(APPEND commit "-dirty")
+        endif()
+      else()
+        message(STATUS "GitCommit: git failed in ${SOURCE_DIR}; build commit is \"unknown\"")
       endif()
     endif()
   endif()
