@@ -53,9 +53,6 @@ bool corpus_hash(const std::string& corpus) {
     return std::regex_match(corpus, hash);
 }
 
-// The family of a route name: the text before its first '.' ("rmma" of "rmma.m1.n8.w4x1").
-std::string_view route_family(std::string_view route) { return route.substr(0, route.find('.')); }
-
 std::string percent(double fraction) {
     char text[32];
     std::snprintf(text, sizeof text, "%.1f %%", 100.0 * fraction);
@@ -89,6 +86,13 @@ std::vector<Field> compare(const AcceptanceKey& entry, const AcceptanceKey& want
 }
 
 } // namespace
+
+std::string_view route_family(std::string_view route) {
+    const auto prefix = route.substr(0, route.find('.'));
+    // route_name names Family::W4a8Mma "w4a8." and, with producer warps, "w4a8ws.": one family.
+    if (prefix == "w4a8ws") { return "w4a8"; }
+    return prefix;
+}
 
 bool known_route(std::string_view route) {
     static const std::regex name("[a-z0-9_]+(\\.[a-z0-9]+)*");
@@ -275,7 +279,9 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
     // known, whatever the cards say.
     const auto& k = best->key;
     for (const auto& [field, value] : std::initializer_list<std::pair<std::string, std::string>>{
+             {"model", k.model},
              {"target_artifact", k.target_artifact},
+             {"drafter", k.drafter},
              {"drafter_artifact", k.drafter_artifact},
              {"sampling", k.sampling}}) {
         if (placeholder(value)) { return unknown("placeholder key: " + field + "=" + value); }

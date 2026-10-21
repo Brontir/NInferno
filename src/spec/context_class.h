@@ -25,11 +25,12 @@
 //
 // A factor is the class's acceptance (accepted drafts per round) over the Short class's, so Short
 // is 1. It is known only when at least two cards that differ in generation (architecture) or both
-// name routes that differ measured it, each within the tolerance of their mean
+// name routes of different families (route_family) measured it, each within the tolerance of their
+// mean
 // (|v - mean| / mean); the estimate is that mean. Routes count by family (the text before the
-// first '.'). A key holding a placeholder ("auto", an id "placeholder:...", in any case, or a
-// corpus that is no "sha256:" and 64 lower-case hex digits) is never known. Otherwise factor() says
-// unknown and why. Unknown is never 1.0.
+// first '.', route_family). A key holding a placeholder ("auto", an id "placeholder:...", in any
+// case, or a corpus that is no "sha256:" and 64 lower-case hex digits) is never known. Otherwise
+// factor() says unknown and why. Unknown is never 1.0.
 //
 // No decision reads factor() yet: this is the data and the API (idea 32, step 2); the rule that
 // picks a depth per class comes next.
@@ -96,6 +97,10 @@ struct ContextFactors {
 // scalar, rmma, w4a4, tiled, w4a8, w4a8ws, staged, nvfp4t, r8, ggml_mmq, ggml_vec, i8), as a family
 // alone or a full name ("rmma.m1.n8.w4x1"). Lower case only.
 [[nodiscard]] bool known_route(std::string_view route);
+// The route family a route name belongs to, as route_name assigns them: the text before the first
+// '.', with "w4a8ws" (W4A8 with producer warps) folded into "w4a8". Two cards on one architecture
+// differ in route only when their families differ.
+[[nodiscard]] std::string_view route_family(std::string_view route);
 
 // Parses a "context_classes" object. Throws std::invalid_argument naming what is wrong: bounds
 // other than kContextBounds, an entry missing a key field, with a tolerance other than

@@ -1071,6 +1071,13 @@ int test_context_classes() {
                 key, ContextClass::Mid)
              .value,
         "two names of one route family on one generation: unknown");
+    failures += check(!factor(parsed(pair(card("ga102", 0.9, "w4a8.64x128"),
+                                          card("ga104", 0.9, "w4a8ws.64x128.p1"))),
+                              key, ContextClass::Mid)
+                              .value &&
+                          route_family("w4a8ws.64x128.p1") == "w4a8" &&
+                          route_family("rmma.m1.n8.w4x1") == "rmma",
+                      "W4A8 with and without producer warps: one family, unknown");
     // Every key field: a different one is unknown, the reason naming it.
     const std::vector<std::pair<std::string, std::function<void(AcceptanceKey&)>>> fields = {
         {"target_artifact differs", [](AcceptanceKey& k) { k.target_artifact = "t2"; }},
@@ -1100,6 +1107,8 @@ int test_context_classes() {
          "placeholder key: target_artifact=placeholder:t1"},
         {R"("kv": "k8v4")", R"("kv": "auto")", "placeholder key: byte_class.kv=auto"},
         {R"("kv": "k8v4")", R"("kv": "AUTO")", "placeholder key: byte_class.kv=AUTO"},
+        {R"("drafter": "dflash")", R"("drafter": "auto")", "placeholder key: drafter=auto"},
+        {R"("model": "m")", R"("model": "placeholder:m")", "placeholder key: model=placeholder:m"},
         {R"("target_artifact": "t1")", R"("target_artifact": "Placeholder:t1")",
          "placeholder key: target_artifact=Placeholder:t1"},
         {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
