@@ -6,7 +6,8 @@
 # Environment knobs that move choices (gap: "environment knobs ... still steer choices").
 P2-env NINFERNO_ROUTE_DIR    # another routes/ directory: the board's table is not found
 P2-env NINFERNO_ROUTE_TABLE  # an explicit table (here unreadable: every problem untuned)
-P2-env NINFERNO_MMQ_VERIFY   # =0: the ggml matrix kernel's 9..16-token verify rule off
+P2-env NINFERNO_MMQ_VERIFY @full @base  # =0: the ggml matrix kernel's 9..16-token verify rule off
+                                         # (sm_75 takes the kernel by rule; sm_70 has none)
 
 # The cost model reads the PCI-ID reference facts (#38); a board the table does not know takes the
 # driver's clocks (labelled extrapolated), so zero (MIG, WSL) or skewed clocks still move the speed
@@ -15,18 +16,18 @@ P2-env NINFERNO_MMQ_VERIFY   # =0: the ggml matrix kernel's 9..16-token verify r
 P2-clock speed
 
 # The prefill profile takes ggml's matrix kernel for the ggml formats under AllowA8 from 17 tokens
-# on the boards whose measured gate says it pays (mmq_prefill_wins, 20 of the 44 boards), a route
+# on the boards whose measured gate says it pays (mmq_prefill_wins, 19 of the 44 boards; none in the sm_70 build), a route
 # route_is_token_invariant() itself calls width-dependent (stream-k splits K by the call's tiles),
 # so a token's bytes follow its chunk's width (gap: "MMQ prefill bytes depend on where a
 # chunk is cut").
-P4 iq2s prefill mmq
-P4 iq3s prefill mmq
-P4 iq3xxs prefill mmq
-P4 iq4nl prefill mmq
-P4 iq4xs prefill mmq
-P4 q2k prefill mmq
-P4 q3k prefill mmq
-P4 q40 prefill mmq
-P4 q4k prefill mmq
-P4 q5k prefill mmq
-P4 q6k prefill mmq
+P4 iq2s prefill mmq @full @base @sm75
+P4 iq3s prefill mmq @full @base @sm75
+P4 iq3xxs prefill mmq @full @base @sm75
+P4 iq4nl prefill mmq @full @base @sm75
+P4 iq4xs prefill mmq @full @base @sm75
+P4 q2k prefill mmq @full @base @sm75
+P4 q3k prefill mmq @full @base @sm75
+P4 q40 prefill mmq @full @base @sm75
+P4 q4k prefill mmq @full @base @sm75
+P4 q5k prefill mmq @full @base @sm75
+P4 q6k prefill mmq @full @base @sm75

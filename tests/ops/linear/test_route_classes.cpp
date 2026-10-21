@@ -150,7 +150,17 @@ int run_board(const TestBoard& b) {
             }
         }
     }
-    const auto status     = ops::route_table_status();
+    const auto status = ops::route_table_status();
+    // A tensor-core board under a build without tensor mma.sync (sm_70: the class keeps only what
+    // the build compiled, as the query does) sums a one-tile register MMA lane by lane, so its
+    // tables' prefill bands no longer sum in their prefill route's order and the loader refuses
+    // them: routes are untuned there, by design. The choices above are still checked.
+    if (device_features_for(b.major, b.minor).mma_tensor && !d.features.mma_tensor) {
+        std::cout << b.name << " (" << d.id() << ", " << d.arch() << "): " << checked
+                  << " route choices, " << failures << " failures (no tensor MMA in this build: "
+                  << "table not expected)\n";
+        return failures == 0 ? 0 : 1;
+    }
     const bool want_table = std::string_view(b.table) != "";
     if (status.loaded != want_table) {
         fail(std::string("route table ") + (status.loaded ? "loaded" : "not loaded") + " (" +
