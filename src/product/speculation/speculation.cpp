@@ -71,14 +71,13 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
 
 // The floor a configuration runs at under a profile measured elsewhere (spec::foreign_floor).
 // Where the artifact has no proposal head a "+head" choice drafts with the full head, a dearer
-// round, so the full head's ceiling counts too; `notes` (when given) gets one note for that raise.
+// round, so the full head's ceiling counts too, under a profile of this GPU as well
+// (spec::full_head_floor); `notes` (when given) gets one note for that raise.
 double ran_floor(const spec::ResolvedSpeculation& resolved, const spec::SpecConfig& config,
                  bool head_here, double own, std::vector<std::string>* notes) {
     double floor = spec::foreign_floor(resolved, config, own);
     if (config.proposal_head && !head_here) {
-        spec::SpecConfig full = config;
-        full.proposal_head    = false;
-        const double headless = spec::foreign_floor(resolved, full, own);
+        const double headless = spec::full_head_floor(resolved, config, own);
         if (headless > floor && notes) {
             char text[96];
             std::snprintf(text, sizeof(text), "%.2f -> %.2f", floor, headless);

@@ -1458,6 +1458,17 @@ int test_resolve() {
                               floor_ceiling(sources, SpecConfig::parse("dflash:6")) == 0.0 &&
                               floor_ceiling(sources, SpecConfig{}) == 0.0,
                           "a configuration's floor ceiling: exactly that one, over the model's GPUs");
+        // An adaptive choice (Gemma 4's mtp:8:2) is its own configuration: its floors count,
+        // matched on the floor depth too.
+        const Json adaptive = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "mtp:8:2", "floor_tokens_per_round": 1.9}},
+            {"gpu_class": "gv100", "default": {"config": "mtp:8", "floor_tokens_per_round": 4.0},
+             "thinking": {"config": "mtp:8:3", "floor_tokens_per_round": 5.0}}])");
+        failures += check(floor_ceiling(adaptive, SpecConfig::parse("mtp:8:2")) == 1.9 &&
+                              floor_ceiling(adaptive, SpecConfig::parse("mtp:8")) == 4.0 &&
+                              floor_ceiling(adaptive, SpecConfig::parse("mtp:15:2")) == 0.0 &&
+                              registry_floor_median(SpecConfig::parse("mtp:8:2")) > 1.0,
+                          "an adaptive configuration's floor ceiling and registry median");
         ResolvedSpeculation from;
         from.foreign_floors = true;
         from.floor_sources  = sources;
@@ -1475,6 +1486,22 @@ int test_resolve() {
                               foreign_floor(own, SpecConfig::parse("dflash:7"), 1.1) == 1.1,
                           "a foreign profile's floors rise to its model's ceiling, never fall; a "
                           "profile of this GPU keeps its own");
+        ResolvedSpeculation borrowed;
+        borrowed.foreign_floors = true;
+        borrowed.floor_sources  = adaptive;
+        failures += check(foreign_floor(borrowed, SpecConfig::parse("mtp:8:2"), 1.1) == 1.9,
+                          "a borrowed adaptive choice's floor rises to its model's ceiling");
+        // A "+head" choice drafting with the full head (no proposal head in the artifact): the full
+        // head's ceiling, under a profile of this GPU too.
+        ResolvedSpeculation here;
+        here.floor_sources = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "mtp:3+head", "floor_tokens_per_round": 1.5},
+             "thinking": {"config": "mtp:3", "floor_tokens_per_round": 2.1}}])");
+        failures += check(foreign_floor(here, SpecConfig::parse("mtp:3+head"), 1.5) == 1.5 &&
+                              full_head_floor(here, SpecConfig::parse("mtp:3+head"), 1.5) == 2.1 &&
+                              full_head_floor(here, SpecConfig::parse("mtp:3"), 1.5) == 1.5,
+                          "a +head choice run with the full head: the full head's floor on its "
+                          "own GPU's profile");
         ResolvedSpeculation nowhere;
         nowhere.foreign_floors = true;
         const double median    = registry_floor_median(SpecConfig::parse("mtp:5"));

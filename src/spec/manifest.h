@@ -118,6 +118,13 @@ void require_named_tune(const ResolvedSpeculation& resolved);
 [[nodiscard]] double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config,
                                    double own);
 
+// The floor a "+head" `config` runs at drafting with the full head (the artifact has no proposal
+// head): foreign_floor's, raised to the full head's ceiling over the model's floors (or the
+// registry median) whichever GPU measured the profile, since `own` is the optimized head's, a
+// cheaper round. foreign_floor's for a config without the head.
+[[nodiscard]] double full_head_floor(const ResolvedSpeculation& resolved, const SpecConfig& config,
+                                     double own);
+
 // A profile measured on another GPU, or measured nowhere, carries no break-even of this one: each
 // choice's floor is raised to foreign_floor (the conservative side: its watchdog trips sooner).
 // A note names each raised choice.

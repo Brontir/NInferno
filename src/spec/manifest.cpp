@@ -205,7 +205,7 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
 namespace {
 
 // Every choice object under `j` (a "config" label beside a "floor_tokens_per_round") of exactly
-// `config` (mode, depth, proposal head; an adaptive choice is another configuration).
+// `config`: mode, depth, adaptive floor depth and proposal head (mtp:8:2 is not mtp:8).
 void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>& floors) {
     if (j.is_object()) {
         const auto label = j.find("config");
@@ -213,7 +213,8 @@ void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>
         if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
             try {
                 const auto c = SpecConfig::parse(label->get<std::string>());
-                if (c.mode == config.mode && c.k == config.k && !c.adaptive() &&
+                const auto k_min = [](const SpecConfig& s) { return s.adaptive() ? s.k_min : 0; };
+                if (c.mode == config.mode && c.k == config.k && k_min(c) == k_min(config) &&
                     c.proposal_head == config.proposal_head && floor->get<double>() > 1.0) {
                     floors.push_back(floor->get<double>());
                 }
@@ -246,14 +247,14 @@ void raise_choice(Choice& choice, const char* name, const ResolvedSpeculation& r
 } // namespace
 
 double floor_ceiling(const Json& profiles, const SpecConfig& config) {
-    if (!config.enabled() || config.adaptive()) { return 0.0; }
+    if (!config.enabled()) { return 0.0; }
     std::vector<double> floors;
     collect_floors(profiles, config, floors);
     return floors.empty() ? 0.0 : *std::max_element(floors.begin(), floors.end());
 }
 
 double registry_floor_median(const SpecConfig& config) {
-    if (!config.enabled() || config.adaptive()) { return 0.0; }
+    if (!config.enabled()) { return 0.0; }
     std::vector<double> floors;
     for (const auto& model : Registry::builtin().models()) {
         collect_floors(model.profiles, config, floors);
@@ -264,12 +265,30 @@ double registry_floor_median(const SpecConfig& config) {
     return n % 2 == 1 ? floors[n / 2] : 0.5 * (floors[n / 2 - 1] + floors[n / 2]);
 }
 
-double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
-    if (!resolved.foreign_floors || !config.enabled()) { return own; }
+namespace {
+
+// `own` raised to the model's ceiling for `config` (floor_ceiling over resolved.floor_sources), or
+// to the registry median for a configuration the model measured nowhere.
+double model_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
     const double model = resolved.floor_sources.is_array()
                              ? floor_ceiling(resolved.floor_sources, config)
                              : 0.0;
     return std::max(own, model > 0.0 ? model : registry_floor_median(config));
+}
+
+} // namespace
+
+double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    if (!resolved.foreign_floors || !config.enabled()) { return own; }
+    return model_floor(resolved, config, own);
+}
+
+double full_head_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    const double floor = foreign_floor(resolved, config, own);
+    if (!config.enabled() || !config.proposal_head) { return floor; }
+    SpecConfig full    = config;
+    full.proposal_head = false;
+    return std::max(floor, model_floor(resolved, full, own));
 }
 
 void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
