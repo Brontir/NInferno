@@ -3,6 +3,7 @@
 // what an artifact came with (spec/manifest.h) from files next to it.
 
 #include "spec/config.h"
+#include "spec/context_class.h"
 #include "spec/corpus.h"
 #include "spec/engine_support.h"
 #include "spec/fingerprint.h"
@@ -942,6 +943,92 @@ int test_select_published() {
     return failures;
 }
 
+// Context classes (spec/context_class.h): the bounds, and a factor only from two cards of this
+// engine version, never a silent 1.0.
+int test_context_classes() {
+    int failures                                         = 0;
+    const std::pair<std::int64_t, ContextClass> bounds[] = {
+        {0, ContextClass::Short},    {1023, ContextClass::Short},  {1024, ContextClass::Mid},
+        {8191, ContextClass::Mid},   {8192, ContextClass::Long},   {24575, ContextClass::Long},
+        {24576, ContextClass::Huge}, {1 << 20, ContextClass::Huge}};
+    for (const auto& [tokens, want] : bounds) {
+        failures += check(class_of(tokens) == want,
+                          "class_of(" + std::to_string(tokens) + ") is " + class_name(want));
+    }
+
+    // The shipped registry: measured on one card (the RTX 3090), so every factor is unknown.
+    const auto& shipped = Registry::builtin().context_classes();
+    failures += check(shipped.present && shipped.factors.size() == 3,
+                      "the registry carries context classes for dflash, dflash2 and mtp");
+    const auto one_card = factor(shipped, "dflash", ContextClass::Mid);
+    failures += check(!one_card.value && one_card.reason.find("cards") != std::string::npos,
+                      "one card: unknown, naming the cards (" + one_card.reason + ")");
+    failures += check(!factor(shipped, Mode::DFlash2, ContextClass::Long).value,
+                      "one card: unknown by mode too");
+
+    const auto synthetic = [](const char* measured_on, const char* engine) {
+        return parse_context_factors(
+            Json::parse(std::string(R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": ")") +
+                        engine + R"(", "measured_on": )" + measured_on +
+                        R"(, "source": "test"}, "factors": {"dflash": [1, 0.9, 0.75, null],
+                                                "mtp": [1.0, 0.85, 0.8, 0.7]}})"));
+    };
+    const auto two = synthetic(R"(["ga102", "ad102"])", kSpecEngineVersion);
+    const auto mid = factor(two, "dflash", ContextClass::Mid);
+    failures += check(mid.value && *mid.value == 0.9 && mid.reason.empty(), "two cards: mid 0.9");
+    failures += check(factor(two, "dflash", ContextClass::Short).value == 1.0, "short is 1");
+    const auto huge = factor(two, Mode::Mtp, ContextClass::Huge);
+    failures += check(huge.value && *huge.value == 0.7, "two cards: mtp huge 0.7 by mode");
+    const auto null_class = factor(two, "dflash", ContextClass::Huge);
+    failures += check(!null_class.value && null_class.reason.find("huge") != std::string::npos,
+                      "a null class is unknown, labelled (" + null_class.reason + ")");
+    const auto no_kind = factor(two, "dflash2", ContextClass::Mid);
+    failures += check(!no_kind.value && no_kind.reason.find("dflash2") != std::string::npos,
+                      "a kind without factors is unknown");
+    failures += check(!factor(two, Mode::Ngram, ContextClass::Mid).value, "ngram has no factors");
+    const auto stale =
+        factor(synthetic(R"(["ga102", "ad102"])", "ninferno-spec-0"), "dflash", ContextClass::Mid);
+    failures += check(!stale.value && stale.reason.find("ninferno-spec-0") != std::string::npos,
+                      "another engine version's stamp is unknown (" + stale.reason + ")");
+    failures += check(
+        !factor(synthetic(R"(["ga102", "ga102"])", kSpecEngineVersion), "dflash", ContextClass::Mid)
+             .value,
+        "the same card twice is one card");
+    const auto absent = factor(ContextFactors{}, "dflash", ContextClass::Short);
+    failures += check(!absent.value && !absent.reason.empty(), "absent context_classes: unknown");
+    failures += check(!Registry::parse(R"({"schema": 1, "models": []})").context_classes().present,
+                      "a registry without context_classes has none");
+
+    // Refusals.
+    const auto refuses = [](const char* object) {
+        return rejects([&] { (void)parse_context_factors(Json::parse(object)); });
+    };
+    for (
+        const char* bad : {
+            R"({"bounds": [1024, 1024, 24576], "stamp": {"engine": "e"}})",
+            R"({"bounds": [8192, 1024, 24576], "stamp": {"engine": "e"}})",
+            R"({"bounds": [1024, 8192], "stamp": {"engine": "e"}})",
+            R"({"bounds": [0, 8192, 24576], "stamp": {"engine": "e"}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0.8]}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0, null]}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 1.6, 0.8, null]}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [0.9, 0.9, 0.8, null]}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, "x", 0.8, null]}})",
+            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": "ga102"}})",
+        }) {
+        failures += check(refuses(bad), std::string("context_classes refuses ") + bad);
+    }
+    failures += check(
+        rejects([] {
+            (void)Registry::parse(
+                R"({"schema": 1, "models": [], "context_classes": {"bounds": [1024, 8192, 24576],
+                                 "stamp": {"engine": "e"}, "factors": {"eagle": [1, 1, 1, 1]}}})");
+        }),
+        "the registry refuses factors for an undeclared kind");
+    return failures;
+}
+
 int test_registry_and_corpus() {
     int failures = 0;
     const auto& registry = Registry::builtin();
@@ -1506,6 +1593,7 @@ int main() {
     failures += test_load_model();
     failures += test_select_published();
     failures += test_registry_and_corpus();
+    failures += test_context_classes();
     failures += test_variants();
     failures += test_resolve();
     if (failures == 0) { std::cout << "spec: all checks passed\n"; }

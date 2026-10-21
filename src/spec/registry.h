@@ -11,6 +11,8 @@
 // A model bundle can declare the same thing itself: ninferno_speculation.json in the checkpoint
 // (a "model" object of this schema without "match"). A bundle declaration wins over the registry.
 
+#include "spec/context_class.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -102,6 +104,12 @@ public:
     // and "revision" (a hash of its content).
     [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
 
+    // The top-level "context_classes" (spec/context_class.h); not present when it is absent,
+    // so every factor reads unknown.
+    [[nodiscard]] const ContextFactors& context_classes() const noexcept {
+        return context_classes_;
+    }
+
     // SHA-256 (lowercase hex) of the text builtin() parsed (the compiled-in registry or the file
     // at $NINFERNO_DRAFTER_REGISTRY); empty for a registry parse() built.
     [[nodiscard]] const std::string& source_sha256() const noexcept { return source_sha256_; }
@@ -134,6 +142,7 @@ private:
     std::vector<KindInfo> kinds_;
     std::string published_;
     std::uint64_t version_ = 0;
+    ContextFactors context_classes_;
     std::string source_sha256_;
 };
 

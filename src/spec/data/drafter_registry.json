@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 107,
+  "version": 108,
   "published": "2026-10-21",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -68,6 +68,40 @@
       "engines": [],
       "architectures": [
         "MedusaModel"
+      ]
+    }
+  },
+  "context_classes": {
+    "bounds": [
+      1024,
+      8192,
+      24576
+    ],
+    "stamp": {
+      "engine": "ninferno-spec-1",
+      "measured_on": [
+        "ga102"
+      ],
+      "source": "X13, RTX 3090, accepted drafts per round by prompt length (<1K, 1-8K, 8-24K; chat prompts under 128 tokens counted as <1K): 35B dflash:7 2.56/2.26/1.91, 27B dflash2:7 3.25/2.71/2.04, 27B mtp:5 2.69/2.40/2.20; factor = class / short. One card: unknown until a second."
+    },
+    "factors": {
+      "dflash": [
+        1.0,
+        0.883,
+        0.746,
+        null
+      ],
+      "dflash2": [
+        1.0,
+        0.834,
+        0.628,
+        null
+      ],
+      "mtp": [
+        1.0,
+        0.892,
+        0.818,
+        null
       ]
     }
   },
