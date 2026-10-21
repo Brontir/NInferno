@@ -66,6 +66,12 @@ void test_access() {
     check(host_allowed(local, "127.0.0.1:8090"), "local: 127.0.0.1");
     check(!host_allowed(local, "evil.example:8090"), "local: rebinding refused");
     check(!host_allowed(local, ""), "local: no Host refused");
+    const AccessPolicy keyed_local{.listen = "127.0.0.1", .port = 8090, .key = "0123456789abcdef"};
+    check(host_allowed(keyed_local, "ui.example.com"),
+          "keyed loopback behind a proxy: the public Host passes on to the key check");
+    check(check_key(keyed_local, "127.0.0.1", "ui.example.com", false, "", "", "") ==
+              KeyCheck::refused,
+          "keyed loopback: a rebound name still needs the key");
     AccessPolicy open{.listen = "0.0.0.0", .port = 8090};
     check(host_allowed(open, "192.168.1.5:8090"), "exposed: any name");
 

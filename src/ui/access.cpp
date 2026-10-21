@@ -52,9 +52,11 @@ bool host_allowed(const AccessPolicy& policy, std::string_view host_header) {
     if (host_header.empty()) { return false; }
     const std::string host = host_of_authority(host_header);
     if (is_loopback_host(host)) { return true; }
-    // A listener the user opened to the network on purpose answers any name it is reached by;
-    // the loopback default answers only loopback names.
-    return !is_loopback_host(host_of_authority(policy.listen));
+    // A listener the user opened to the network on purpose answers any name it is reached by, and
+    // so does a keyed one (127.0.0.1 behind a TLS proxy that forwards the public Host): the key
+    // check follows, and a rebound name has no key cookie. The keyless loopback default answers
+    // only loopback names.
+    return !is_loopback_host(host_of_authority(policy.listen)) || !policy.key.empty();
 }
 
 bool origin_allowed(std::string_view origin, std::string_view host_header) {
