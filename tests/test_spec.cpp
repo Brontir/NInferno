@@ -782,56 +782,80 @@ int test_cost_model() {
         const auto two = round_cost_of(card_key(kCards[0]), mixed, DrafterFacts{.kind = "dflash"});
         failures +=
             check(two && !two->fit.reliable, "gpt-oss on sm120, mxfp4 beside ggml_q4_k: unsure");
+        // Another MoE of the same family, format and drafter: a shape the points never covered.
+        TargetFacts other = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        other.experts     = 128;
+        const auto wide = round_cost_of(card_key(kCards[0]), other, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(wide && !wide->fit.reliable, "an MXFP4 MoE of 128 experts on sm120: unsure");
+        other             = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        other.hidden_size = 4096;
+        const auto big = round_cost_of(card_key(kCards[0]), other, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(big && !big->fit.reliable, "an MXFP4 MoE of hidden 4096 on sm120: unsure");
     }
     const auto muse =
         floor_of("muse-glimmer-30b", "gb202", "muse_glimmer_30b.ninferno", "dflash", "dflash:7");
     failures +=
         check(muse && !muse->fit.reliable, "a dense non-MoE target on sm120: not covered, unsure");
-    // Where the fit is unsure it says so: one lab card (V100), a pair past the margin held out
-    // (sm89 gemma4), a generation it never saw (priced as its costliest: dearer than Ada).
-    const auto v100 = floor_of("qwen3.8-27b", "gv100", "qwen3_8_27b.ninferno", "mtp", "mtp:3");
-    failures += check(v100 && !v100->fit.reliable && v100->fit.reason.find("fewer than two") != std::string::npos,
-                      "V100: one lab card, unsure");
+    // Where the fit is unsure it says so: a pair past the margin held out (sm89 gemma4); a
+    // generation measured on one lab card (V100, RTX 2080 Ti, A100, RTX 3090) or none is unpriced.
+    for (const auto& [gpu, cc_name] :
+         {std::pair{"gv100", "V100"}, std::pair{"tu102", "RTX 2080 Ti"}, std::pair{"ga100", "A100"},
+          std::pair{"ga102", "RTX 3090"}}) {
+        const auto one = floor_of("qwen3.8-27b", gpu, "qwen3_8_27b.ninferno", "mtp", "mtp:3");
+        failures +=
+            check(one && !one->priced && !one->fit.reliable && one->fit.reason == "one lab card",
+                  std::string(cc_name) + ": one lab card, unpriced");
+    }
     const auto g12 = floor_of("gemma-4-12b-it", "ad102", "gemma4_12b.ninferno", "gemma4_assistant", "mtp:5");
-    failures += check(g12 && !g12->fit.reliable, "sm89 gemma4: held out past the margin, unsure");
+    failures += check(g12 && g12->priced && !g12->fit.reliable,
+                      "sm89 gemma4: held out past the margin, unsure");
     const auto* model = registry.by_id("qwen3.8-27b");
     if (model != nullptr) {
         GpuKey future = card_key(kCards[4]);
         future.compute_capability = 100;
         const TargetFacts facts = target_facts(*model, "qwen3_8_27b.ninferno");
         const auto unknown = round_cost_of(future, facts, DrafterFacts{.kind = "dflash2"});
-        const auto ada     = round_cost_of(card_key(kCards[4]), facts, DrafterFacts{.kind = "dflash2"});
-        failures += check(unknown && ada && !unknown->fit.reliable && unknown->alpha > ada->alpha,
-                          "an unknown generation: priced conservatively and unsure");
-        // A GGUF k-quant on the RTX 2080 Ti: 1/eta plus the k-quant term is the fit's (0.3337 +
-        // 0.46) at the FP16 tensor rate 512, i.e. 2.38 in the generation row's unit (1536).
+        failures += check(unknown && !unknown->priced && unknown->fit.reason == "no lab card",
+                          "an unknown generation: unpriced, no lab card");
+        // The fit's record for the RTX 2080 Ti (one lab card, so unpriced): a GGUF k-quant's 1/eta
+        // plus the k-quant term is (0.3337 + 0.46) at the FP16 tensor rate 512, 2.38 in the
+        // generation row's unit (1536).
         TargetFacts gguf      = facts;
         gguf.kquant           = true;
         gguf.bytes_per_weight = 4.85 / 8;
-        const GpuKey tu102    = card_key(kCards[12]);
-        const auto turing     = round_cost_of(tu102, gguf, DrafterFacts{.kind = "mtp"});
-        const double unit =
-            2.0 * tu102.dram_gbps * 1e9 /
-            (static_cast<double>(tu102.sms) * tu102.sm_clock_khz * 1e3 * gguf.bytes_per_weight);
-        const double eta_rate = turing ? turing->alpha / unit * 1536.0 : 0.0;
-        failures +=
-            check(std::abs(eta_rate - 2.38) < 0.01,
-                  "RTX 2080 Ti GGUF: 1/eta + kquant " + std::to_string(eta_rate) + " (2.38)");
-        failures += check(turing && std::abs(turing->alpha - (0.3337 + 0.46) / 512.0 * unit) <
-                                        1e-3 * turing->alpha,
-                          "RTX 2080 Ti GGUF: the fit's alpha at its own rate");
-        GpuKey future_gguf             = tu102;
-        future_gguf.compute_capability = 100;
-        const auto unknown_gguf = round_cost_of(future_gguf, gguf, DrafterFacts{.kind = "mtp"});
-        TargetFacts q4          = gguf;
-        q4.kquant               = false;
-        const auto plain_q      = round_cost_of(future_gguf, q4, DrafterFacts{.kind = "mtp"});
-        // sm100's row rate is 2048: the costliest k-quant term per unit of rate (0.46 / 512) x
-        // 2048.
-        failures += check(
-            unknown_gguf && plain_q &&
-                std::abs((unknown_gguf->alpha - plain_q->alpha) / unit * 2048.0 - 1.84) < 0.01,
-            "an unknown generation: the k-quant term scaled to its rate as 1/eta is");
+        const auto turing = round_cost_of(card_key(kCards[12]), gguf, DrafterFacts{.kind = "mtp"});
+        failures += check(turing && !turing->priced && turing->fit.reason == "one lab card",
+                          "RTX 2080 Ti GGUF: one lab card, unpriced");
+        // An unsupported drafter kind: no model on any GPU, an mma_slow one included.
+        GpuKey slow_key   = card_key(kCards[4]);
+        slow_key.mma_slow = true;
+        failures += check(!round_cost_of(slow_key, facts, DrafterFacts{.kind = "ngram"}),
+                          "mma_slow, ngram: no model");
+        // An unlisted board's extrapolated rates: the covered gpt-oss pair turns unsure, labelled,
+        // and class_depths takes the conservative rule.
+        if (const auto* oss_m = registry.by_id("gpt-oss-20b")) {
+            GpuKey unlisted             = card_key(kCards[0]);
+            unlisted.facts_extrapolated = true;
+            const auto ex =
+                round_cost_of(unlisted, target_facts(*oss_m, "openai/gpt-oss-20b MXFP4"),
+                              DrafterFacts{.kind = "dflash"});
+            failures += check(ex && ex->priced && !ex->fit.reliable &&
+                                  ex->fit.reason == "extrapolated device facts",
+                              "extrapolated device facts: unsure");
+            if (ex) {
+                const std::vector<std::int32_t> menu{3, 5, 7};
+                const std::array<ClassFactor, kContextClasses> ones{
+                    ClassFactor{1.0, ""}, ClassFactor{1.0, ""}, ClassFactor{1.0, ""},
+                    ClassFactor{1.0, ""}};
+                const auto rule = class_depths(ex, 0.75, 0.97, menu, ones, 7);
+                failures += check(
+                    rule[0].depth == 3 && rule[2].depth == 0 &&
+                        rule[0].reason.starts_with("estimate: none (extrapolated device facts)"),
+                    "extrapolated device facts: the conservative rule (" + rule[0].reason + ")");
+            }
+        }
         failures += check(!round_cost_of(card_key(kCards[4]), facts, DrafterFacts{.kind = "ngram"}),
                           "a drafter kind without a fitted cost: no model");
         failures += check(!round_cost_of(GpuKey{}, facts, DrafterFacts{.kind = "dflash2"}),
@@ -840,9 +864,10 @@ int test_cost_model() {
         failures += check(false, "registry has qwen3.8-27b");
     }
 
-    // Every non-adaptive spec-tune floor of the registry (the fit's 116): rms error under 15 %. IN
-    // SAMPLE: these are the floors the constants were fitted on (9.94 % here, 9.8 % in x3_fit.py
-    // before rounding). Held out (x3_fit.py, not re-run here) the error is 21 % rms with a card
+    // Every non-adaptive spec-tune floor of the registry (the fit's 116) on a priced generation
+    // (87, Ada and Blackwell; the 29 on one-lab-card generations are unpriced): rms error under 15
+    // %. IN SAMPLE: these are the floors the constants were fitted on (9.47 % here, 9.8 % over all
+    // 116 in x3_fit.py). Held out (x3_fit.py, not re-run here) the error is 21 % rms with a card
     // left out and 18 % with a model left out; reliability (ModelFit) is judged on those, not on
     // this.
     struct Floors {
@@ -876,7 +901,7 @@ int test_cost_model() {
         }
     }
     double sum_sq = 0;
-    int n = 0;
+    int n = 0, unpriced = 0;
     for (const auto& [key, f] : floors) {
         const auto& [id, gpu, text, label] = key;
         double measured = 0;
@@ -886,14 +911,20 @@ int test_cost_model() {
             failures += check(false, "the cost model prices " + id + " " + label + " on " + gpu);
             continue;
         }
+        if (!cost->priced) { // a one-lab-card generation: unpriced by rule, not part of the check
+            ++unpriced;
+            continue;
+        }
         const double e = (round_time(*cost, 1, SpecConfig::parse(label).k) - measured) / measured;
         sum_sq += e * e;
         ++n;
     }
     const double rms = n > 0 ? std::sqrt(sum_sq / n) : 1.0;
-    std::cout << "spec cost model: " << n << " registry floors, in-sample rms error " << 100.0 * rms
+    std::cout << "spec cost model: " << n << " priced registry floors (" << unpriced
+              << " on one-lab-card generations unpriced), in-sample rms error " << 100.0 * rms
               << " %\n";
-    failures += check(n >= 100, "the registry has the fit's floors (" + std::to_string(n) + ")");
+    failures += check(n >= 85 && n + unpriced >= 110,
+                      "the registry has the fit's floors (" + std::to_string(n) + " priced)");
     failures += check(
         rms < 0.15, "in sample: the cost model's rms error over the registry floors is under 15 %");
     return failures;

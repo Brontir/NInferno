@@ -15,12 +15,12 @@ namespace {
 
 // The fitted constants: audit1018/x3/x3_fit.py, form M3, least squares over the 116 non-adaptive
 // spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb. In sample the fit errs by
-// 9.8 % rms in x3_fit.py and 9.94 % in test_spec (these constants rounded, the clocks and
-// bandwidths of the reference table); held out it errs by 21 % rms with a card left out of the fit
-// and 18 % with a model left out. Refit them with the script when the registry gains floors. knee
-// and beta come from the measured grids instead (27B Q4_G64, 8K, several rows): at one row the
-// floors never reach a knee. The fit is of one row only (the floors are C1): a multi-row use
-// (modeled_load) waits for a multi-row fit.
+// 9.8 % rms in x3_fit.py over the 116, and 9.47 % in test_spec over the 87 it prices (Ada and
+// Blackwell; these constants rounded, the clocks and bandwidths of the reference table); held out
+// it errs by 21 % rms with a card left out of the fit and 18 % with a model left out. Refit them
+// with the script when the registry gains floors. knee and beta come from the measured grids
+// instead (27B Q4_G64, 8K, several rows): at one row the floors never reach a knee. The fit is of
+// one row only (the floors are C1): a multi-row use (modeled_load) waits for a multi-row fit.
 //
 // The tensor rate per SM and clock is the chip's fact from core/generation.h (GenerationRow::bf16:
 // 512 on the consumer parts, 2048 on the A100, the fitted 1536 where Volta and Turing emulate the
@@ -66,22 +66,24 @@ constexpr DrafterKind kDrafterKinds[] = {
 // 25.5 %), sm89 gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one
 // card each. The sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b
 // (an MoE, the registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So
-// the key is what the points cover, (generation, family, MoE, weight format, drafter kind); a dense
-// target, another weight format (BF16, NVFP4, Q8, Q4_0, a GGUF k-quant) or another drafter on sm120
-// dense stays unsure.
+// the key is what the points cover: the generation, the family, the target's shape as far as the
+// facts tell it (its routed experts, 32, and hidden size, 2880: gpt-oss-20b), the weight format and
+// the drafter kind. A dense target, another MoE, another weight format (BF16, NVFP4, Q8, Q4_0, a
+// GGUF k-quant) or another drafter on sm120 dense stays unsure.
 struct Tested {
     int cc;
     std::string_view family;
-    bool moe;
+    int experts; // routed experts (0: dense)
+    std::uint64_t hidden_size;
     std::string_view weight_format; // the one quantized format (format_name spelling)
     std::string_view drafter;
 };
 
 constexpr Tested kTested[] = {
-    {120, "dense", true, "mxfp4", "dflash"},
+    {120, "dense", 32, 2880, "mxfp4", "dflash"},
 };
 
-ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::string_view drafter) {
+ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
     const std::string& family = target.family;
     const bool moe            = target.experts > 0;
     // The quantized format of the set: one, beside unquantized ones only; "" when the set is empty
@@ -99,12 +101,9 @@ ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::str
         formats += (formats.empty() ? "" : "+") + f;
     }
     const std::string arch = "sm" + std::to_string(cc);
-    if (g == nullptr) {
-        return {false, arch + ": a generation the fit never measured, priced as its costliest"};
-    }
-    if (g->lab_cards < 2) { return {false, arch + ": fewer than two lab cards measured"}; }
     for (const Tested& t : kTested) {
-        if (t.cc == cc && t.family == family && t.moe == moe && !quantized.empty() &&
+        if (t.cc == cc && t.family == family && t.experts == target.experts &&
+            t.hidden_size == target.hidden_size && !quantized.empty() &&
             t.weight_format == quantized && t.drafter == drafter) {
             return {};
         }
@@ -124,31 +123,32 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
         target.num_hidden_layers == 0) {
         return std::nullopt;
     }
-    if (gpu.mma_slow) {
-        // TU116 / TU117 and the GTX 16 boards: the verify MMA runs on the FP16 units, a cost no
-        // floor measured. Not priced as the generation's tensor-core boards: unpriced, labelled.
-        return RoundCost{.fit = ModelFit{false, "mma emulated"}, .priced = false};
-    }
+    // An unsupported drafter kind has no model on any GPU, mma_slow or not.
     const DrafterKind* kind = nullptr;
     for (const DrafterKind& k : kDrafterKinds) {
         if (k.kind == drafter.kind) { kind = &k; }
     }
     if (kind == nullptr) { return std::nullopt; }
+    if (gpu.mma_slow) {
+        // TU116 / TU117 and the GTX 16 boards: the verify MMA runs on the FP16 units, a cost no
+        // floor measured. Not priced as the generation's tensor-core boards: unpriced, labelled.
+        return RoundCost{.fit = ModelFit{false, "mma emulated"}, .priced = false};
+    }
     const Generation* gen = nullptr;
     for (const Generation& g : kGenerations) {
         if (g.cc == gpu.compute_capability) { gen = &g; }
     }
-    // A generation the table lacks: the costliest tensor-core generation measured (Volta's own
-    // route aside), per unit of tensor rate, at its own generation row's rate; no knee.
-    const double rate = tensor_rate(gpu.compute_capability);
-    Generation priced{gpu.compute_capability, 0, 0, 0, 0.0, 0};
-    for (const Generation& g : kGenerations) {
-        if (g.cc != 70) {
-            priced.inv_eta = std::max(priced.inv_eta, g.inv_eta / tensor_rate(g.cc) * rate);
-            priced.kquant  = std::max(priced.kquant, g.kquant / tensor_rate(g.cc) * rate);
-        }
+    // A lab constant needs two or more cards that differ: a generation the fit saw on one card
+    // (V100, RTX 2080 Ti, A100, RTX 3090: their constants stay in the table as the fit's record) or
+    // never saw is unpriced, and its caller takes the conservative fallback.
+    if (gen == nullptr) {
+        return RoundCost{.fit = ModelFit{false, "no lab card"}, .priced = false};
     }
-    if (gen != nullptr) { priced = *gen; }
+    if (gen->lab_cards < 2) {
+        return RoundCost{.fit = ModelFit{false, "one lab card"}, .priced = false};
+    }
+    const Generation& priced = *gen;
+    const double rate        = tensor_rate(gpu.compute_capability);
 
     const double flops   = rate * gpu.sms * gpu.sm_clock_khz * 1e3;
     const double inv_eta = priced.inv_eta + (target.kquant ? priced.kquant : 0.0);
@@ -166,11 +166,14 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
                    .knee  = priced.knee,
                    .delta = kind->cost * size,
                    .pass_per_draft = kind->pass_per_draft,
-                   .fit            = fit_of(gen, gpu.compute_capability, target, kind->kind)};
+                   .fit            = fit_of(gpu.compute_capability, target, kind->kind)};
     if (target.experts > 0 && target.experts_per_token > 0 && target.routed_expert_params > 0) {
         cost.moe_pick  = static_cast<double>(target.experts_per_token) / target.experts;
         cost.moe_bytes = kMoeRead * target.routed_expert_params / target.active_params;
     }
+    // Rates the PCI-ID table does not vouch for (an unlisted board, a laptop, a MIG slice): priced,
+    // never reliable, so callers take the conservative fallback.
+    if (gpu.facts_extrapolated) { cost.fit = ModelFit{false, "extrapolated device facts"}; }
     return cost;
 }
 

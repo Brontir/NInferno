@@ -16,8 +16,8 @@
 // round_cost_of prices a card and a model from facts alone (the chip's rates, the artifact's shape,
 // quantization and experts, the drafter's kind), never a timing. At one row t(1, k) / t0 is the
 // registry's floor (spec-tune's seconds per round over seconds per plain token); the constants are
-// fitted on those floors (audit1018/x3): 9.94 % rms in sample (test_spec; 9.8 % in x3_fit.py before
-// rounding), 21 % with a card held out, 18 % with a model held out.
+// fitted on those floors (audit1018/x3): in sample 9.8 % rms over the 116 in x3_fit.py, 9.47 %
+// over the 87 priced ones in test_spec; 21 % with a card held out, 18 % with a model held out.
 //
 // One row only: the floors are measured at C1, so round_cost_of's constants (alpha, delta, the MoE
 // term) are fitted at rows = 1; beta and the knee come from older multi-row grids. A multi-row use
@@ -41,11 +41,13 @@
 namespace ninferno::spec {
 
 // Whether the fit stands behind a prediction. Unreliable where the floors do not test it: a
-// generation with fewer than two lab cards measured, a generation and model family whose error on
-// a card or a model left out of the fit passes kClassMargin (10 %), a family the generation never
-// measured, a generation the table lacks (then priced as its costliest measured one), or a board
-// without tensor cores (unpriced, "mma emulated"). A caller should not trust the depth it picks
-// there: decode plainly, or no deeper than 3.
+// generation, family, target shape, weight format and drafter kind whose error on a card or a model
+// left out of the fit passes kClassMargin (10 %) or that the points do not cover; and, unpriced as
+// well, a generation measured on one lab card or none ("one lab card", "no lab card": a lab
+// constant needs two cards that differ) and a board without tensor cores ("mma emulated"); and any
+// card whose clock or bandwidth are not the PCI-ID table's verified row ("extrapolated device
+// facts", GpuKey::facts_extrapolated). A caller
+// should not trust the depth it picks there: decode plainly, or no deeper than 3.
 struct ModelFit {
     bool reliable = true;
     std::string reason; // why not ("" when reliable)
@@ -64,7 +66,8 @@ struct RoundCost {
     double moe_pick  = 0;
     ModelFit fit;
     // false: no price at all (fit unreliable, its reason says why: "mma emulated" on a board
-    // without tensor cores); round_time refuses it, so the conservative fallback is the only use.
+    // without tensor cores, "one lab card" or "no lab card" for its generation); round_time refuses
+    // it, so the conservative fallback is the only use.
     bool priced = true;
 };
 
@@ -98,13 +101,16 @@ struct DrafterFacts {
 // row's tensor rate per SM and clock (core/generation.h), sms, clock and dram the board's facts
 // (GpuKey from DeviceClass::facts), 1/eta per generation (V100: about 11 at its FP16 tensor rate,
 // its verify route) and kquant more for GGUF k/IQ quants (0.46 at the fit's rate: 0.69 on Volta,
-// 1.38 on Turing in the generation row's unit). An mma_slow board: an unpriced cost labelled "mma
-// emulated".
+// 1.38 on Turing in the generation row's unit). Only generations with two or more lab cards are
+// priced (Ada, Blackwell): the others return an unpriced cost labelled "one lab card" (V100, RTX
+// 2080 Ti, A100, RTX 3090; their fitted constants are kept as a record) or "no lab card"; an
+// mma_slow board one labelled "mma emulated".
 // delta is the drafter's pass, a cost per kind times its size (MTP: one target block and the head;
 // the others: hidden_size^2) over the target's active weights. An MoE target reads 0.30 of the
 // experts independent routing of the w columns would add. The knee is where the verify GEMM takes
 // its next tile (RTX 4090 8 columns, RTX 5090 12, A100 24, RTX 3090 32; measured grids, none on
-// Volta or Turing). nullopt: unknown rates or shape, or a drafter kind the fit has no cost for.
+// Volta or Turing). nullopt: unknown rates or shape, or a drafter kind the fit has no cost for (on
+// every GPU, an mma_slow one too).
 [[nodiscard]] std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
                                                      const DrafterFacts& drafter);
 
@@ -137,8 +143,8 @@ struct DrafterFacts {
 // Context classes (idea 32, step 3): the draft depth each prompt-length class should run at one
 // row, from the round cost and the class's acceptance factor (spec/context_class.h). Lab
 // constants, not timings: a depth must beat plain decode by kClassMargin, the cost model's rms
-// error over the registry's floors in sample (9.94 %), and where anything is unknown the choice is
-// kUnsureDepth at most below 8K and plain beyond.
+// error over the registry's floors in sample (9.8 %, 9.47 % on the priced ones), and where anything
+// is unknown the choice is kUnsureDepth at most below 8K and plain beyond.
 inline constexpr double kClassMargin       = 0.10;
 inline constexpr std::int32_t kUnsureDepth = 3;
 
