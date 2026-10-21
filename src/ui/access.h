@@ -31,7 +31,8 @@ struct AccessPolicy {
 [[nodiscard]] bool is_loopback_host(std::string_view host) noexcept;
 
 // The host part of a Host header or of an origin's authority: "[::1]:8090" -> "::1",
-// "localhost:8090" -> "localhost", "example.com" -> "example.com". Lower-cased.
+// "localhost:8090" -> "localhost", "example.com" -> "example.com". Lower-cased. A bare IPv6
+// address (more than one colon, no brackets: --listen ::1) is a host without a port.
 [[nodiscard]] std::string host_of_authority(std::string_view authority);
 
 // Whether a request with this Host header is served at all.
@@ -59,8 +60,9 @@ enum class KeyCheck { pass, pass_set_cookie, refused };
 // cookie as they are).
 [[nodiscard]] bool usable_key(std::string_view key) noexcept;
 
-// Whether a request reached the proxy in front over HTTPS (X-Forwarded-Proto or Forwarded proto):
-// the cookie is then marked Secure.
+// Whether a request reached the proxy in front over HTTPS (X-Forwarded-Proto, or the proto
+// parameter of Forwarded's first element, RFC 7239: a token or a quoted string, the name in any
+// case): the cookie is then marked Secure.
 [[nodiscard]] bool forwarded_https(std::string_view x_forwarded_proto,
                                    std::string_view forwarded);
 

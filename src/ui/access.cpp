@@ -40,7 +40,9 @@ std::string host_of_authority(std::string_view authority) {
         if (close == std::string_view::npos) { return ascii_lower(authority); }
         return ascii_lower(authority.substr(1, close - 1));
     }
-    if (const auto colon = authority.find(':'); colon != std::string_view::npos) {
+    if (const auto colon = authority.find(':');
+        colon != std::string_view::npos &&
+        authority.find(':', colon + 1) == std::string_view::npos) {
         authority = authority.substr(0, colon);
     }
     return ascii_lower(authority);
@@ -131,11 +133,58 @@ bool usable_key(std::string_view key) noexcept {
     return true;
 }
 
+namespace {
+
+std::string_view trimmed(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) { text.remove_suffix(1); }
+    return text;
+}
+
+// The proto value of a Forwarded header's first element (RFC 7239: elements split by commas,
+// pairs by semicolons, each value a token or a quoted string with \-escapes); empty when absent.
+std::string forwarded_proto(std::string_view forwarded) {
+    std::string name, value;
+    bool in_value = false, quoted = false, was_quoted = false;
+    for (std::size_t i = 0; i <= forwarded.size(); ++i) {
+        const char c = i < forwarded.size() ? forwarded[i] : ',';
+        if (quoted) {
+            if (c == '\\' && i + 1 < forwarded.size()) {
+                value += forwarded[++i];
+            } else if (c == '"') {
+                quoted = false;
+            } else {
+                value += c;
+            }
+        } else if (c == ';' || c == ',') {
+            if (ascii_lower(trimmed(name)) == "proto") {
+                return ascii_lower(was_quoted ? std::string_view(value) : trimmed(value));
+            }
+            if (c == ',') { return {}; } // only the first element: the proxy nearest the client
+            name.clear();
+            value.clear();
+            in_value = was_quoted = false;
+        } else if (!in_value && c == '=') {
+            in_value = true;
+        } else if (in_value && c == '"' && trimmed(value).empty()) {
+            value.clear();
+            quoted = was_quoted = true;
+        } else {
+            (in_value ? value : name) += c;
+        }
+    }
+    return {};
+}
+
+} // namespace
+
 bool forwarded_https(std::string_view x_forwarded_proto, std::string_view forwarded) {
-    if (ascii_lower(x_forwarded_proto.substr(0, x_forwarded_proto.find(','))) == "https") {
+    if (ascii_lower(trimmed(x_forwarded_proto.substr(0, x_forwarded_proto.find(',')))) == "https") {
         return true;
     }
-    return ascii_lower(forwarded).find("proto=https") != std::string::npos;
+    return forwarded_proto(forwarded) == "https";
 }
 
 std::string new_access_key() {

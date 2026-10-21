@@ -54,6 +54,12 @@ void test_access() {
     check(!is_loopback_host("0.0.0.0"), "any address");
     check(host_of_authority("[::1]:8090") == "::1", "bracketed v6");
     check(host_of_authority("LocalHost:8090") == "localhost", "lower-cased, port dropped");
+    check(host_of_authority("::1") == "::1" && is_loopback_host(host_of_authority("::1")) &&
+              host_of_authority("[::1]:8090") == "::1" && host_of_authority("[::1]") == "::1" &&
+              host_of_authority("FE80::1") == "fe80::1" &&
+              !is_loopback_host(host_of_authority("fe80::1")) &&
+              host_of_authority("127.0.0.1:8090") == "127.0.0.1",
+          "bare v6 listen address is a host, not host:port");
 
     AccessPolicy local;
     check(host_allowed(local, "localhost:8090"), "local: localhost");
@@ -81,6 +87,17 @@ void test_access() {
               forwarded_https("", "for=1.2.3.4;proto=https") && !forwarded_https("http", "") &&
               !forwarded_https("", ""),
           "key: HTTPS seen through the proxy");
+    check(forwarded_https(" https ", "") && forwarded_https("", "for=1.2.3.4;proto=\"https\"") &&
+              forwarded_https("", "for=\"[2001:db8::1]:443\"; Proto=HTTPS;by=x") &&
+              forwarded_https("", "PROTO=\"HTTPS\", proto=http") &&
+              forwarded_https("", "for=\"a,b;proto=http\";proto=https") &&
+              forwarded_https("", "proto=\"ht\\tps\""),
+          "Forwarded: quoted values, any case, separators inside quotes");
+    check(!forwarded_https("", "proto=http, proto=https") &&
+              !forwarded_https("", "for=\"x;proto=https\"") &&
+              !forwarded_https("", "for=1.2.3.4;proto=httpsx") &&
+              !forwarded_https("", "xproto=https") && !forwarded_https("", "for=proto=https"),
+          "Forwarded: only the first element's proto parameter");
     check(cookie_value("a=1; ninferno_ui_key=k1; b=2", "ninferno_ui_key") == "k1", "cookie found");
     // The kept key: made once, kept, an unusable one replaced, and one key for starters at once.
     {
