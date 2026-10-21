@@ -372,12 +372,13 @@ class Recipe:
                     "NVFP4 sources quantised against different divisors must be complete "
                     "matrices with equal row counts"
                 )
-            # Each divisor covers its source's rows, and a 128-row scale tile may not span two
-            # of them (block_scale_k16_m128x4_v1).
+            # Each divisor covers its source's rows. The artifact allows one to end inside a
+            # 128-row scale tile, but this writer streams each source from a tile start
+            # (TensorOutput.write_codes); the native converter writes such a plane.
             if sources[0].shape[0] % 128:
                 raise ValueError(
                     "NVFP4 sources quantised against different divisors must each be whole "
-                    "128-row scale tiles (a tile would span two divisors), not "
+                    "128-row scale tiles in the Python converter (the native one takes them), not "
                     f"{sources[0].shape[0]} rows"
                 )
             return len(sources)

@@ -500,9 +500,8 @@ Explicit organization:
 - Explicit groups must be disjoint and use unsplit selections with matching format, layout, method
   and method parameters.
 - NVFP4 parents also need a common weight divisor. The exception is an explicit group of
-  equal-shaped members, which keeps one divisor per member when each member is whole 128-row scale
-  tiles. The native converter refuses a published expert bank whose NVFP4 experts end inside a
-  scale tile and differ in divisor, and names the bank.
+  equal-shaped members, which keeps one divisor per member (an expert bank of
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4: 1856 rows each, 80 divisors).
 - Automatic grouping is limited to built-in methods; custom methods can request explicit groups.
 
 Grouping chooses storage. Model execution code chooses the supported fused implementation. The

@@ -1309,7 +1309,6 @@ void gemma4_kept(Model& model, Recipe& recipe, const Checkpoint& base, bool publ
                 const auto it = encoded.find(i);
                 return it != encoded.end() && it->second.format == QType::NVFP4;
             })) {
-            refuse_split_nvfp4_tiles(model, recipe, names);
             recipe.explicit_groups.push_back(names);
         }
     }

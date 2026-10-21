@@ -281,13 +281,8 @@ def block_scale_geometry(
         raise ValueError("block_scale_k16_m128x4_v1 requires K divisible by 64")
     if divisors < 1 or n % divisors:
         raise ValueError("NVFP4 divisor count must divide the plane's rows")
-    # Each divisor covers one source matrix, and a 128-row scale tile may not span two of them:
-    # the swizzled scale plane is addressed in whole tiles and the engine takes the divisor from
-    # the row.
-    if divisors > 1 and (n // divisors) % 128:
-        raise ValueError(
-            "each NVFP4 divisor must cover a whole number of 128-row scale tiles"
-        )
+    # Each divisor covers one source matrix, which may end inside a 128-row scale tile: the scale
+    # words are per row and the engine takes the divisor from the row.
     # The scale plane is addressed in whole 128-row tiles: a last tile N does not fill is
     # completed, the scale words of its rows past N zero.
     scale_rows = align_up(n, 128)
