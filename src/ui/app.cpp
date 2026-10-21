@@ -1462,6 +1462,11 @@ void App::install(httplib::Server& server) {
                 return httplib::Server::HandlerResponse::Handled;
             }
             break;
+        case KeyCheck::keyless_proxy:
+            reply_error(res, 403,
+                        "a proxy in front of ninferno-ui needs an access key: start it with "
+                        "NINFERNO_UI_KEY or --access-key-file F (16-256 of A-Z a-z 0-9 . _ ~ -)");
+            return httplib::Server::HandlerResponse::Handled;
         case KeyCheck::refused:
             if (req.path != "/") {
                 reply_error(res, 401, "access key required");

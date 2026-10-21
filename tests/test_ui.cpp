@@ -150,6 +150,8 @@ void test_access() {
         return check_key(keyed, peer, host, proxied, c, a, q);
     };
     check(check_key(local, "10.0.0.2", "x:1", false, "", "", "") == KeyCheck::pass, "no key: all pass");
+    check(check_key(local, "127.0.0.1", "ui.example", true, "", "", "") == KeyCheck::keyless_proxy,
+          "no key behind a proxy: refused, the proxy would publish the page");
     check(keyed_check("127.0.0.1", "localhost:8090", false, "", "", "") == KeyCheck::pass,
           "this machine passes");
     check(keyed_check("::ffff:127.0.0.1", "127.0.0.1:8090", false, "", "", "") == KeyCheck::pass,

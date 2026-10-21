@@ -44,7 +44,9 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 | `--catalog-url URL` | `$NINFERNO_CATALOG_URL`, else built in | The recommended models from a `catalog.json` at URL, read at start and every 6 hours. |
 | `--chat-ui DIR` | the bundled one | The chat window's files (llama.cpp's llama-ui). |
 
-Behind a TLS proxy, the proxy must forward the browser's `Host` header (the page refuses a
+Behind a TLS proxy, give the UI a key (`NINFERNO_UI_KEY` or `--access-key-file F`): without one
+it refuses every proxied request, since its default 127.0.0.1 listener makes no key of its own.
+The proxy must forward the browser's `Host` header (the page refuses a
 change whose `Origin` names another host than `Host`; `X-Forwarded-Host` is not trusted, since
 any client can send it), and send `X-Forwarded-For` and `X-Forwarded-Proto`. nginx:
 

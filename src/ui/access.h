@@ -53,7 +53,9 @@ inline constexpr std::string_view kKeyCookie = "ninferno_ui_key";
 // on one host with different keys (--access-key-file, NINFERNO_UI_KEY) keep one cookie each.
 [[nodiscard]] std::string key_cookie(int port);
 
-enum class KeyCheck { pass, pass_set_cookie, refused };
+// keyless_proxy: a proxied request to a UI without a key (127.0.0.1 behind a TLS proxy would
+// otherwise serve the public endpoint to anyone).
+enum class KeyCheck { pass, pass_set_cookie, refused, keyless_proxy };
 
 // Whether a request from `remote_addr` comes from this machine (`proxied`: it carries a proxy's
 // header) or carries the policy's key in its Cookie header, its Authorization header or its ?key=
