@@ -43,6 +43,12 @@ namespace ninferno::ops {
  * one private BF16 Q/K packet per Q/K head. FP32 control matrices and residuals feed native TF32
  * products; readout and state updates use BF16 MMA operands with FP32 accumulators. The master
  * state remains FP32 throughout. Scratch capacity is independent of normalize_qk.
+ * The chunked route cuts a call into 16-token chunks from its first token, so its bytes depend on
+ * where calls start: a split of one call in two is byte-equal only at a multiple of 16 tokens.
+ * Under the invariant route profile (ScopedInvariantRoutes, --activations exact) every call, of
+ * any T, takes the recurrent kernel instead: one transition per token, the one decode and verify
+ * use, so a split anywhere and a call per token give the same outputs and state; it needs no
+ * workspace.
  * `execution` supplies the stream and physical SM count for launch decomposition.
  * Inputs and out do not overlap state or one another. `ws` supplies transient storage reported by
  * gated_delta_net_workspace_capacity_bytes; scratch is scoped to the call. T may be any positive

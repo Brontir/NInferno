@@ -6,13 +6,17 @@
 // Every prefill op and registered shape of the two v3 artifacts is run once over the widest call
 // and again over windows that cross each route and tile frontier (T from 17 up), at the start of
 // the input and at offsets inside it. Stateful ops are checked by splitting one call in two and
-// carrying the state: the causal convolution at any cut, the Gated DeltaNet scan at cuts on its
-// absolute 64-token block grid. A cut off that grid is reported, not failed: the scan runs a
-// call's trailing partial block token by token, which rounds differently from the block form, so
-// such a cut is a known, documented exception.
+// carrying the state: the causal convolution at any cut, the Gated DeltaNet chunked scan at cuts on
+// its 16-token chunk grid (counted from the call's first token, so a multiple of 16 after the
+// call's start). A cut off that grid is reported, not failed: the scan folds the chunk the cut
+// divides into the state as two blocks, which rounds differently from one, so such a cut is a known
+// exception of the prefill profile; the Qwen planner keeps every call boundary it chooses on a
+// 64-token grid (models/qwen3_5/execution/prefill_calls.h).
 //
 // The NVFP4 A16Only rows are the exact activation contract (--activations exact): there every width
-// counts, decode and speculative verify included, so their windows start at T = 1.
+// counts, decode and speculative verify included, so their windows start at T = 1. Under it the
+// Gated DeltaNet runs token by token, and a cut anywhere, a restore at any position and the
+// one-token decode steps all leave every output and the state byte-equal.
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
@@ -664,13 +668,17 @@ int check_conv_split(std::int32_t c0, std::int32_t c1, std::int32_t c2, const ch
     return failures;
 }
 
-// Gated DeltaNet prefill scan. Cuts on the 64-token grid must be invariant; cuts off it are
-// reported with the first differing column (known exception, see the header).
-int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* name) {
+// Gated DeltaNet prefill scan. One call over kT tokens is the reference; each cut runs the same
+// tokens as [0, cut) and [cut, kT), carrying the FP32 state. Under the prefill profile a cut on the
+// 16-token chunk grid must be invariant and a cut off it is reported with the first differing
+// column (known exception, see the header). Under the invariant profile (`exact`) every cut must be
+// invariant, and so must the same tokens fed one call per token, as decode feeds them.
+int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* name, bool exact) {
     constexpr std::int32_t kD = 128;
-    // Not a whole number of blocks: the reference call ends in a 20-token partial block, which a
-    // cut at 4160 hands to a call of its own.
+    // Not a whole number of chunks: the reference call ends in a 4-token partial chunk, which a
+    // cut at 4176 hands to a call of its own.
     constexpr std::int32_t kT = 4180;
+    const ops::ScopedInvariantRoutes invariant(exact);
     const auto q    = upload(random_bf16(static_cast<std::size_t>(kD) * qk_heads * kT, 101U, 1.0F));
     const auto k    = upload(random_bf16(static_cast<std::size_t>(kD) * qk_heads * kT, 102U, 1.0F));
     const auto v    = upload(random_bf16(static_cast<std::size_t>(kD) * v_heads * kT, 103U, 1.0F));
@@ -678,7 +686,7 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
     const auto beta = upload(random_f32(static_cast<std::size_t>(v_heads) * kT, 105U, 0.1F, 0.9F));
     const auto s0   = upload(random_f32(static_cast<std::size_t>(kD) * kD * v_heads, 106U, -0.05F,
                                         0.05F));
-    DeviceBuffer s_a(s0.bytes), s_b(s0.bytes);
+    DeviceBuffer s_a(s0.bytes), s_b(s0.bytes), s_c(s0.bytes);
     DeviceBuffer out(static_cast<std::size_t>(kD) * v_heads * kT * 2);
     const std::size_t capacity =
         ops::gated_delta_net_workspace_capacity_bytes(qk_heads, v_heads, 1, kT);
@@ -706,31 +714,64 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
     const auto reference       = download(out.p, out.bytes);
     const auto reference_state = download(s_a.p, s_a.bytes);
     const std::size_t column   = static_cast<std::size_t>(kD) * v_heads * 2;
-    int failures               = 0;
-    for (const std::int32_t cut : {64, 128, 1024, 1088, 2048, 4096, 4160, 17, 100, 1000, 4001}) {
+    const auto first_difference = [&](const std::vector<std::uint8_t>& got,
+                                      const std::vector<std::uint8_t>& want, std::int32_t columns) {
+        for (std::int32_t c = 0; c < columns; ++c) {
+            if (std::memcmp(got.data() + c * column, want.data() + c * column, column) != 0) {
+                return c;
+            }
+        }
+        return std::int32_t{-1};
+    };
+    const char* mode = exact ? " exact" : "";
+    int failures     = 0;
+    for (const std::int32_t cut : {16, 48, 64, 128, 1024, 1088, 2048, 4096, 4160, 4176, 1, 7, 15,
+                                   17, 33, 100, 1000, 4001, 4179}) {
         call(s0, s_a, 0, cut);
         call(s_a, s_b, cut, kT - cut);
         cuda_synchronize();
-        const auto got   = download(out.p, out.bytes);
-        std::int32_t first = -1;
-        for (std::int32_t c = 0; c < kT && first < 0; ++c) {
-            if (std::memcmp(got.data() + c * column, reference.data() + c * column, column) != 0) {
-                first = c;
-            }
-        }
-        const bool state_same = download(s_b.p, s_b.bytes) == reference_state;
-        const bool on_grid    = cut % 64 == 0;
+        const std::int32_t first = first_difference(download(out.p, out.bytes), reference, kT);
+        const bool state_same    = download(s_b.p, s_b.bytes) == reference_state;
         if (first < 0 && state_same) { continue; }
-        if (on_grid) {
+        if (exact || cut % 16 == 0) {
             ++failures;
-            std::cout << "DIFFERS " << name << " cut " << cut << " first column " << first
+            std::cout << "DIFFERS " << name << mode << " cut " << cut << " first column " << first
                       << (state_same ? "" : ", final state differs") << '\n';
         } else {
             std::cout << "known off-grid exception " << name << " cut " << cut
                       << ": first differing column " << first << '\n';
         }
     }
-    std::cout << (failures == 0 ? "invariant on the 64-token grid " : "VARIANT ") << name << '\n';
+    if (exact) {
+        // Decode's shape: one call per token, each carrying the state of the one before. The
+        // states alternate between s_a and s_c; the reference is one call over the same tokens.
+        constexpr std::int32_t kSteps = 40;
+        call(s0, s_a, 0, kSteps);
+        cuda_synchronize();
+        const auto wide       = download(out.p, out.bytes);
+        const auto wide_state = download(s_a.p, s_a.bytes);
+        call(s0, s_c, 0, 1);
+        for (std::int32_t t = 1; t < kSteps; ++t) {
+            if (t % 2 == 1) {
+                call(s_c, s_b, t, 1);
+            } else {
+                call(s_b, s_c, t, 1);
+            }
+        }
+        cuda_synchronize();
+        const DeviceBuffer& stepped = kSteps % 2 == 0 ? s_b : s_c;
+        const std::int32_t first    = first_difference(download(out.p, out.bytes), wide, kSteps);
+        const bool state_same       = download(stepped.p, stepped.bytes) == wide_state;
+        if (first >= 0 || !state_same) {
+            ++failures;
+            std::cout << "DIFFERS " << name << mode << " one call per token: first column " << first
+                      << (state_same ? "" : ", state differs") << '\n';
+        }
+    }
+    std::cout << (failures != 0 ? "VARIANT "
+                  : exact       ? "invariant at every cut and per token "
+                                : "invariant on the 16-token chunk grid ")
+              << name << mode << '\n';
     return failures;
 }
 
@@ -762,7 +803,8 @@ int main() {
         failures += check_rmsnorm(inputs, 5120, "27B rmsnorm 5120");
         failures += check_gated_rmsnorm(inputs, 48, "27B gated_rmsnorm 48x128");
         failures += check_conv_split(2048, 2048, 6144, "27B causal_conv1d_silu_split");
-        failures += check_gdn_split(16, 48, "27B gated_delta_net");
+        failures += check_gdn_split(16, 48, "27B gated_delta_net", false);
+        failures += check_gdn_split(16, 48, "27B gated_delta_net", true);
         // qwen3_6_27b_nvfp4 under --activations exact (A16Only): every width.
         failures += check_gdn_input(inputs, make_nvfp4_weight, 16384, 5120, 10240,
                                     ops::LinearPolicy::A16Only, "27B gdn_input_proj NVFP4 exact",
@@ -829,7 +871,8 @@ int main() {
         failures += check_rmsnorm(inputs, 2048, "35B rmsnorm 2048");
         failures += check_gated_rmsnorm(inputs, 32, "35B gated_rmsnorm 32x128");
         failures += check_conv_split(2048, 2048, 4096, "35B causal_conv1d_silu_split");
-        failures += check_gdn_split(16, 32, "35B gated_delta_net");
+        failures += check_gdn_split(16, 32, "35B gated_delta_net", false);
+        failures += check_gdn_split(16, 32, "35B gated_delta_net", true);
     } catch (const std::exception& error) {
         std::cerr << "Qwen prefill token invariance: " << error.what() << '\n';
         return 1;

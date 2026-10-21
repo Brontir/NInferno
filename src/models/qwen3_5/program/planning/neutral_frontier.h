@@ -12,10 +12,11 @@ namespace ninferno::models::qwen3_5::runtime_support {
 // boundary leave every token's bytes as they are:
 //   - a static execution frontier of the prompt (its rewrite execution frontiers): every
 //     execution of the prompt, cache on or off, splits there;
-//   - a point on the 64-token grid of the Gated DeltaNet scan blocks, inside a static segment that
-//     itself starts on the grid, at least kNeutralMinTokens before the segment's end: the calls on
-//     both sides stay on the grid and at least 17 tokens long, so they take the prefill routes
-//     and cut the scan into the same absolute blocks (see execution::prefill_call_end).
+//   - a point on the 64-token grid (a multiple of the Gated DeltaNet scan's 16-token chunk), inside
+//     a static segment that itself starts on the grid, at least kNeutralMinTokens before the
+//     segment's end: the calls on both sides stay on the grid and at least 17 tokens long, so they
+//     take the prefill routes and cut the scan into the same absolute chunks (see
+//     execution::prefill_call_end).
 // A capture or restore frontier anywhere else changes the bytes of the tokens after it.
 inline constexpr std::uint32_t kNeutralGridTokens = 64;
 inline constexpr std::uint32_t kNeutralMinTokens  = 17;

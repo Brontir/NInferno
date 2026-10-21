@@ -14,6 +14,11 @@ This page states the rule and its target. The engine does not meet all of it yet
   yet;
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
+- under `fast`, the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
+  start, so after a call that starts off that grid (a turn's rewrite frontier, a private endpoint
+  restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
+  prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
+  the run it replaces; `exact` runs the scan token by token and is free of this;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;

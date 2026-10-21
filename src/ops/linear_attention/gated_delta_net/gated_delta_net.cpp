@@ -175,6 +175,28 @@ void validate_chunked(const Tensor& q, const Tensor& k, const Tensor& v, const T
     require_contiguous_nonnull(ssm_state_in, "ssm_state_in");
 }
 
+// The token-serial recurrent kernel or the chunked scan.
+//
+// The chunked scan cuts a call into 16-token chunks counted from the call's first token (the last
+// one padded) and folds each chunk into the state as one block product, which rounds differently
+// from the same tokens taken one at a time or cut into other chunks. A call boundary that is not a
+// multiple of 16 tokens after the previous one therefore changes the bytes of every later token.
+//
+// Under the invariant route profile (--activations exact) every call takes the recurrent kernel,
+// whatever its width: one transition per token, the same one decode, verify and replay run, so a
+// token's output and the state after it do not depend on where its prompt was cut, on a prefix
+// cache restore (whatever position it starts from), on a KV-lease re-prefill or on speculation.
+// That costs the chunked scan's tensor-core throughput on long prefill calls.
+//
+// Otherwise, under the prefill route profile a call of any width takes the chunked path (the
+// recurrent kernel's q/k normalization rounds differently, so a token of a short prefill call would
+// not match the same token in a longer one); decode and verify calls below 16 tokens keep the
+// recurrent kernel.
+bool takes_recurrent_path(std::int32_t tokens) noexcept {
+    return invariant_routes_active() ||
+           (tokens < detail::gated_delta_net::chunked::kMinTokens && !prefill_routes_active());
+}
+
 } // namespace
 
 std::size_t gated_delta_net_workspace_capacity_bytes(std::int32_t qk_heads,
@@ -186,9 +208,9 @@ std::size_t gated_delta_net_workspace_capacity_bytes(std::int32_t qk_heads,
         throw std::invalid_argument("gated_delta_net workspace: invalid profile or interval");
     }
     namespace chunked = detail::gated_delta_net::chunked;
-    // The query takes the call's path: below kMinTokens the recurrent kernel, which needs none,
-    // unless the prefill route profile is active (planning sizes prefill under it, as it runs).
-    return max_tokens < chunked::kMinTokens && !prefill_routes_active()
+    // The query takes the call's path (planning sizes each phase under the profiles it runs
+    // under): the recurrent kernel needs none.
+    return takes_recurrent_path(max_tokens)
                ? 0
                : chunked::workspace_layout(qk_heads, value_heads, max_tokens).total_bytes;
 }
@@ -223,10 +245,7 @@ void gated_delta_net(const Tensor& q, const Tensor& k, const Tensor& v, const Te
         throw std::invalid_argument("gated_delta_net: invalid SM count");
     }
     namespace chunked = detail::gated_delta_net::chunked;
-    // Under the prefill route profile a call of any width takes the chunked path: the recurrent
-    // kernel's in-place q/k normalization rounds differently, so a token of a short prefill call
-    // would not match the same token in a longer one. Decode and verify calls keep it.
-    if (q.ne[2] < chunked::kMinTokens && !prefill_routes_active()) {
+    if (takes_recurrent_path(q.ne[2])) {
         detail::gated_delta_net::launch_recurrent_inout(q, k, v, g, beta, scale, normalize_qk,
                                                         ssm_state_in, ssm_state_out, out,
                                                         execution.stream);
