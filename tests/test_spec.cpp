@@ -860,6 +860,24 @@ int test_cost_model() {
         slow_key.mma_slow = true;
         failures += check(!round_cost_of(slow_key, facts, DrafterFacts{.kind = "ngram"}),
                           "mma_slow, ngram: no model");
+        // An MTP target without a vocabulary (and no fixed proposal head): no model on any GPU,
+        // whatever its generation, mma_slow or provenance.
+        TargetFacts no_vocab      = facts;
+        no_vocab.vocab_size       = 0;
+        GpuKey ex_key             = card_key(kCards[0]);
+        ex_key.facts_extrapolated = true;
+        for (const GpuKey& key : {card_key(kCards[0]), card_key(kCards[4]), card_key(kCards[11]),
+                                  card_key(kCards[12]), future, slow_key, ex_key}) {
+            for (const char* kind : {"mtp", "nemotron_h_mtp"}) {
+                failures += check(!round_cost_of(key, no_vocab, DrafterFacts{.kind = kind}),
+                                  std::string("no vocabulary, ") + kind + ": no model on sm" +
+                                      std::to_string(key.compute_capability));
+            }
+        }
+        failures += check(round_cost_of(card_key(kCards[0]), no_vocab,
+                                        DrafterFacts{.kind = "mtp", .proposal_head = true})
+                              .has_value(),
+                          "no vocabulary but the fixed proposal head: priced");
         // An unlisted board's extrapolated rates: the covered gpt-oss pair turns unsure, labelled,
         // and class_depths takes the conservative rule.
         if (const auto* oss_m = registry.by_id("gpt-oss-20b")) {

@@ -137,6 +137,18 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
         if (k.kind == drafter.kind) { kind = &k; }
     }
     if (kind == nullptr) { return std::nullopt; }
+    // The drafter's size: every shape check that yields nullopt runs here, before any generation,
+    // mma_slow or provenance outcome, so a malformed target has no model on every GPU.
+    const double h = static_cast<double>(target.hidden_size);
+    double size = h * h / target.active_params; // a DFlash block or an assistant: about h^2 a layer
+    if (kind->kind == "mtp" || kind->kind == "nemotron_h_mtp") {
+        // One target block and the head over the target's active weights.
+        const std::uint64_t rows = drafter.proposal_head ? kProposalHeadRows : target.vocab_size;
+        if (rows == 0) { return std::nullopt; }
+        size = (target.active_params / static_cast<double>(target.num_hidden_layers) +
+                static_cast<double>(rows) * h) /
+               target.active_params;
+    }
     if (gpu.mma_slow) {
         // TU116 / TU117 and the GTX 16 boards: the verify MMA runs on the FP16 units, a cost no
         // floor measured. Not priced as the generation's tensor-core boards: unpriced, labelled.
@@ -160,15 +172,6 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
 
     const double flops   = rate * gpu.sms * gpu.sm_clock_khz * 1e3;
     const double inv_eta = priced.inv_eta + (target.kquant ? priced.kquant : 0.0);
-    const double h = static_cast<double>(target.hidden_size);
-    double size = h * h / target.active_params; // a DFlash block or an assistant: about h^2 a layer
-    if (kind->kind == "mtp" || kind->kind == "nemotron_h_mtp") {
-        // One target block and the head over the target's active weights.
-        const std::uint64_t rows = drafter.proposal_head ? kProposalHeadRows : target.vocab_size;
-        if (rows == 0) { return std::nullopt; }
-        size = (target.active_params / static_cast<double>(target.num_hidden_layers) +
-                static_cast<double>(rows) * h) / target.active_params;
-    }
     RoundCost cost{.alpha = inv_eta * 2.0 * gpu.dram_gbps * 1e9 / (flops * target.bytes_per_weight),
                    // knee and beta: one card's grid per generation; left out (see kGenerations)
                    .beta           = 0.0,
