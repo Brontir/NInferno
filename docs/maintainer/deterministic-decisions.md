@@ -81,6 +81,13 @@ What the design guarantees once complete:
 4. **Constants are fitted on at least two lab cards of a generation.** Each constant records the
    hash of the kernels it was fitted on. When those kernels change and nobody refits, the
    generation's speed estimates become "no estimate".
+   This covers constants about the hardware and its kernels (costs, efficiencies, rates).
+   Constants about a model, such as a drafter's acceptance per context class, are keyed by
+   what they depend on instead: the target and drafter artifact ids, the activation byte class
+   they were measured under, and the corpus hash. They need at least two lab cards of any
+   generations whose values agree within a stated tolerance; when the cards disagree, the
+   constant is hardware-dependent, is labelled "no estimate", and is fitted per generation like
+   a cost.
 5. **Capabilities decide what is admissible; speeds decide what pays.**
 6. **Decisions compare ratios, not absolute times.**
 7. **The unknown is conservative and labelled.** This covers an unknown PCI ID, MIG, laptops, JIT
