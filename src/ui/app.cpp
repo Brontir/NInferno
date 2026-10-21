@@ -1486,7 +1486,15 @@ void App::install(httplib::Server& server) {
                                     ? "; Secure"
                                     : ""));
             if (req.method == "GET") { // the key leaves the address bar and the history
-                const bool local = req.path.size() < 2 || (req.path[1] != '/' && req.path[1] != '\\');
+                // The path as the browser sent it (req.path is decoded: %09/evil.example would
+                // turn into a tab a browser strips, //evil.example), and only plain path bytes.
+                const std::string_view path =
+                    std::string_view(req.target).substr(0, req.target.find('?'));
+                const bool plain = std::all_of(path.begin(), path.end(), [](unsigned char c) {
+                    return c > 0x20 && c < 0x7f && c != '\\';
+                });
+                const bool local = plain && !path.empty() && path[0] == '/' &&
+                                   (path.size() < 2 || path[1] != '/');
                 // The other query parameters stay (an API GET keeps its arguments).
                 std::string query;
                 for (const auto& [name, value] : req.params) {
@@ -1494,7 +1502,7 @@ void App::install(httplib::Server& server) {
                     query += (query.empty() ? "?" : "&") + url_component(name) + "=" +
                              url_component(value);
                 }
-                res.set_redirect(local ? req.path + query : std::string("/"), 303);
+                res.set_redirect(local ? std::string(path) + query : std::string("/"), 303);
                 return httplib::Server::HandlerResponse::Handled;
             }
             break;
