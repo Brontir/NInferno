@@ -443,6 +443,10 @@ std::string format_server_start_json(
                                                           {"host_object_count", load.host_object_count},
                                                           {"load_seconds", load.load_seconds},
                                                           {"upload_seconds", load.upload_seconds}};
+    record["decision"] =
+        Json{{"schema", "ninferno-fingerprint/1"},   {"fingerprint", load.decision_fingerprint},
+             {"manifest", load.decision_manifest},   {"taint", load.decision_taint},
+             {"canonical", load.decision_canonical}, {"observed", load.decision_observed}};
     const ninferno::ContextCacheOptions& cache       = engine_options.context_cache;
     const ninferno::ContextCostSummary& context_cost = load.context_cost;
     const std::uint64_t total_device_state_slots =

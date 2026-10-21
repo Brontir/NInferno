@@ -4,6 +4,7 @@
 // tables' "route_as" (ops/common/shape_routes.h).
 #include "core/per_device.h"
 #include "ninferno/ops/route_table.h"
+#include "core/sha256.h"
 #include "core/sys.h"
 
 #include "core/device_class.h"
@@ -20,6 +21,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -302,11 +304,14 @@ void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
 }
 
 std::shared_ptr<Table> parse_table(const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("route table: cannot open " + path);
+    // The bytes are hashed as read, so the status names exactly what was parsed.
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) throw std::runtime_error("route table: cannot read " + path);
     Json root;
     try {
-        in >> root;
+        root = Json::parse(bytes);
     } catch (const std::exception& e) {
         throw std::runtime_error("route table: " + path + ": " + e.what());
     }
@@ -315,7 +320,8 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
     }
     auto table = std::make_shared<Table>();
     try {
-        table->status.path      = path;
+        table->status.path           = path;
+        table->status.content_sha256 = sha256_hex(std::string_view(bytes));
         table->status.gpu_class = root.at("gpu").at("class").get<std::string>();
         // "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300}: the card it was
         // measured on, which the default lookup ranks tables by (board_distance). "mma_slow"
@@ -438,6 +444,7 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
 void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders) {
     std::size_t added = 0;
     std::string from;
+    std::string hashes;
     for (const auto& other : lenders) {
         std::size_t lent = 0;
         for (auto& [key, entry] : other->generic) {
@@ -450,11 +457,14 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
         if (lent == 0) continue;
         added += lent;
         from += (from.empty() ? "" : ", ") + other->status.gpu_class + " " + std::to_string(lent);
+        hashes += (hashes.empty() ? "" : ", ") + other->status.gpu_class + " " +
+                  other->status.content_sha256;
     }
     if (added == 0) return;
     table.status.generic_entries += added;
     table.status.borrowed_entries = added;
     table.status.borrowed_from    = from;
+    table.status.lender_sha256    = hashes;
 }
 
 // The table state of one device: each GPU of a mixed host reads its own class's table.

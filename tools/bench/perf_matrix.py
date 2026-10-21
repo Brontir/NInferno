@@ -60,7 +60,12 @@ class Server:
     def __init__(self, host, port):
         self.base = f"http://{host}:{port}"
         with urllib.request.urlopen(self.base + "/v1/models", timeout=30) as r:
-            self.model = json.load(r)["data"][0]["id"]
+            model = json.load(r)["data"][0]
+        self.model = model["id"]
+        # The decision fingerprint the server started with (absent on other engines).
+        meta = model.get("meta") or {}
+        self.fingerprint = {key: meta[key] for key in ("decision_fingerprint", "decision_manifest")
+                            if key in meta}
 
     def chat(self, prompt, max_tokens, top_p=None):
         body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
@@ -184,6 +189,7 @@ def main():
             common["version"] = args.version
         if args.engine != "ninferno":
             common["engine"] = args.engine
+        common.update(server.fingerprint)
         with args.jsonl.open("a", encoding="utf-8") as f:
             for row in results:
                 f.write(json.dumps({**common, **row}) + "\n")

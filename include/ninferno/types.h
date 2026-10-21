@@ -314,6 +314,13 @@ struct SpeculativeOptions {
     // break-even here. For a profile measured on another GPU, whose floors carry that GPU's round
     // costs: there a request can draft below its break-even without reaching any floor.
     bool calibrate_floor = false;
+    // Where the product's speculation choices above came from, for the decision fingerprint
+    // (runtime/engine/decision_fingerprint.h, section "sources"): "speculation.profile" and
+    // "drafter_registry", each "<kind> sha256:<hex>", and "spec_fit_fallback" when a capacity
+    // refusal made --spec auto fall back (src/serve/generation_service.cpp). The Engine reads no
+    // profile itself; the product code that resolved one (src/product/speculation) fills this.
+    // Never read by a decision.
+    std::map<std::string, std::string> decision_sources;
 };
 
 enum class StartupPhase : std::uint8_t {
@@ -1697,6 +1704,9 @@ struct ModelMetadata {
     std::map<int, std::uint64_t> published_activations;
     std::uint64_t below_published_activations      = 0; // under --activations fast
     std::uint64_t below_published_activations_int8 = 0; // under --activations int8
+    // The decision fingerprint (LoadSummary::decision_fingerprint) and its plan manifest.
+    std::string decision_fingerprint;
+    std::string decision_manifest;
 };
 
 struct LoadSummary {
@@ -1722,6 +1732,22 @@ struct LoadSummary {
     std::size_t host_object_count      = 0;
     ContextCostSummary context_cost;
     ModelMetadata metadata;
+    // The decision fingerprint (docs/maintainer/deterministic-decisions.md, Fingerprint):
+    // "nf1-" + 16 hex digits of SHA-256 over decision_canonical, the canonical text of every input
+    // the engine's decisions read (device facts, build, requested options, source files, decision
+    // environment variables, the resolved plan, taint); decision_manifest, "nm1-" + 16 hex digits,
+    // covers the resolved plan and the observed sizes (decision_observed). decision_taint lists
+    // the pillar violations present ("<what>=<detail>"), each also in the canonical text. Both are
+    // "unreadable" when an input could not be read; the start goes on.
+    std::string decision_fingerprint;
+    std::string decision_manifest;
+    std::string decision_canonical;
+    std::vector<std::string> decision_taint;
+    // The sizes startup took from the free memory (the "observed" section): in the manifest, not in
+    // the fingerprint, until plan levels exist.
+    std::string decision_observed;
+    // The artifact's id (16 bytes, lowercase hex), as the load read it.
+    std::string artifact_id;
 };
 
 } // namespace ninferno

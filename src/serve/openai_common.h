@@ -39,9 +39,11 @@ std::string make_model_object(const std::string& model_id, std::int64_t created,
 std::string make_props(const std::string& model_id, std::uint32_t max_context,
                        std::uint32_t slots, const ninferno::ModelMetadata& metadata);
 // GET /metrics: Prometheus text exposition under llama.cpp's metric names (dashboards made for it
-// read ours), plus ninferno's own counters.
+// read ours), plus ninferno's own counters and the decision fingerprint's info gauge
+// (ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1, when metadata carries one).
 std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
-                                    std::uint32_t http_active_requests);
+                                    std::uint32_t http_active_requests,
+                                    const ninferno::ModelMetadata& metadata);
 std::string make_error_body(const ApiError& error);
 std::int64_t unix_time_now();
 

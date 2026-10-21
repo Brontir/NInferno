@@ -1,6 +1,7 @@
 #include "spec/manifest.h"
 
 #include "artifact/reader.h"
+#include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
 #include "spec/registry.h"
@@ -81,16 +82,20 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
 
 // The profiles `manifest` serves from: the registry this binary carries when the manifest came
 // from it (profiles are re-measured and republished; a model converted earlier takes them without
-// being converted again), else the manifest's own copy. Where they come from into `origin`.
+// being converted again), else the manifest's own copy. Where they come from into `origin`, and
+// into `digest` the SHA-256 of what the profiles were read from (ResolvedSpeculation::sha256).
 const Json& manifest_profiles(const SpeculationManifest& manifest,
-                              const std::filesystem::path& artifact, std::string& origin) {
+                              const std::filesystem::path& artifact, std::string& origin,
+                              std::string* digest = nullptr) {
     origin = "manifest " + manifest_path(artifact).string();
     if (manifest.source == "registry" && !manifest.entry.empty()) {
         if (const auto* entry = Registry::builtin().by_id(manifest.entry)) {
             origin = "registry " + entry->id + " for " + manifest_path(artifact).string();
+            if (digest) { *digest = Registry::builtin().source_sha256(); }
             return entry->profiles;
         }
     }
+    if (digest) { *digest = file_sha256_hex(manifest_path(artifact)).value_or(""); }
     return manifest.profiles;
 }
 
@@ -252,6 +257,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             out.notes.push_back(tuned_path.string() + " was tuned for another " + mismatch);
         } else if (drafters_ok) {
             out.source  = "local tune " + tuned_path.string();
+            out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);
             for (const auto& d : out.profile.drafters) {
                 const auto name = d.name.empty() ? d.kind : d.name;
@@ -290,7 +296,8 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             if (d.usable()) { available.push_back(d.name); }
         }
         std::string origin;
-        const Json* profiles  = &manifest_profiles(*manifest, artifact, origin);
+        std::string digest;
+        const Json* profiles  = &manifest_profiles(*manifest, artifact, origin, &digest);
         const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
         if (published == nullptr) {
             out.notes.push_back(origin + " has no profile for " + gpu_class +
@@ -322,6 +329,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             }
         }
         out.source  = published_source(origin, *published);
+        out.sha256  = std::move(digest);
         out.profile = std::move(p);
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {
@@ -353,6 +361,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         }
         out.source =
             published_source("registry " + entry->id + " by the artifact's shape", *published);
+        out.sha256  = Registry::builtin().source_sha256();
         out.profile = std::move(p);
     }
     return out;

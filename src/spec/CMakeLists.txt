@@ -20,7 +20,6 @@ add_library(ninferno_spec STATIC
   profile.cpp
   registry.cpp
 )
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 ninferno_internal_includes(ninferno_spec)
 target_include_directories(ninferno_spec PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-target_link_libraries(ninferno_spec PUBLIC ninferno_artifact ninferno::json PRIVATE OpenSSL::Crypto)
+target_link_libraries(ninferno_spec PUBLIC ninferno_artifact ninferno::json)

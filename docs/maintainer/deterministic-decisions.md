@@ -18,8 +18,30 @@ This page states the rule and its target. The engine does not meet all of it yet
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
-- the TU116/117 exception, the PCI-ID reference table, the speed labels, the kernel hash on
-  constants and the fingerprint below do not exist yet.
+- the TU116/117 exception, the PCI-ID reference table, the speed labels and the kernel hash on
+  constants do not exist yet;
+- under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
+  profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
+  memory picks the speculation; the fingerprint only records it, as the taint
+  `spec_fit_fallback=<steps>`;
+- the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
+  `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the host's
+  logical CPU count, CPU instruction set and RAM class, the build (the git commit is read at every
+  build, not at configure), the requested options, the route table, dense- and MoE-tune files,
+  context-cost presets, speculation profile and drafter registry by content, a separate drafter by
+  its artifact id, the decision environment variables that are set, the plan startup resolved
+  without the free memory (KV and state storage, MoE offload mode, and its compute unless the
+  offload is automatic, speculative windows, route breakpoints) and the violations of this page
+  present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
+  127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
+  startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier,
+  offloaded MoE layers, and under an automatic offload its compute and CPU instruction set) is
+  observed and enters only the manifest, so `nf1` is the same across identical starts on one
+  machine while `nm1` v1 still varies with the free memory until the plan levels exist. An input
+  that cannot be read makes the fingerprint `unreadable` without stopping the start. It does not
+  yet cover the PCI-ID reference facts, plan levels, the constants and the kernel hash, nor the
+  route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
+  proof of the same decisions.
 
 Each gap is closed in its own change, which updates this list.
 
@@ -92,8 +114,13 @@ The fingerprint is a hash of the following, plus a digest of the decision manife
 - the constants;
 - the kernel hash.
 
-The engine is to print it at startup, export it in `/metrics` and write it into every bench row.
-Two runs with the same fingerprint must make the same decisions.
+The engine prints it at startup (`fingerprint | nf1-… | manifest nm1-… | ninferno-fingerprint/1`;
+the canonical text and the taint at debug level), exports it in `/metrics`
+(`ninferno_decision_fingerprint_info`) and `/v1/models` (`meta.decision_fingerprint`,
+`meta.decision_manifest`), writes it into the server-start record of the request log, and
+`tools/bench/perf_matrix.py` writes it into every bench row. Two runs with the same fingerprint
+must make the same decisions. The manifest, `nm1-…`, hashes the plan and the observed sizes: an
+option change moves the fingerprint only, a plan change both, an observed size the manifest only.
 
 ## What will be promised
 

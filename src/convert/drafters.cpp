@@ -4,6 +4,7 @@
 #include "convert/files.h"
 #include "core/cache_file.h"
 #include "core/clock.h"
+#include "core/sha256.h"
 #include "core/sys.h"
 #include "convert/cache.h"
 
@@ -741,7 +742,7 @@ std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path&
 }
 
 std::string ranking_label(const std::string& name, const fs::path& path) {
-    return name + " sha256:" + spec::sha256_hex(read_file(path, "ranking"));
+    return name + " sha256:" + ninferno::sha256_hex(read_file(path, "ranking"));
 }
 
 std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan,

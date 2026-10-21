@@ -5,6 +5,7 @@
 #include "artifact/formats.h"
 #include "core/arena.h"
 #include "core/device_class.h"
+#include "core/hex.h"
 #include "core/host_memory.h"
 #include "core/paged_kv_cache.h"
 #include "core/startup.h"
@@ -434,14 +435,17 @@ namespace {
 // The static /v1/models facts of any family: the identity and dimensions from the loaded model's
 // traits, the parameters, weight bytes and weights profile from the artifact's tensor inventory
 // (every component, as llama.cpp counts a whole GGUF).
+// `artifact_id`: the artifact's id (hex), from the same read.
 ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const LoadSummary& summary,
-                             const models::qwen3_5::detail::ModelTraits& traits) {
+                             const models::qwen3_5::detail::ModelTraits& traits,
+                             std::string& artifact_id) {
     ModelMetadata metadata;
     metadata.model_id       = summary.model_name;
     metadata.vocab_size     = static_cast<std::uint64_t>(traits.public_tokens);
     metadata.embedding_size = static_cast<std::uint64_t>(traits.hidden);
     metadata.native_context = traits.max_positions;
     const artifact::Reader reader(artifact_path);
+    artifact_id = hex_encode(reader.artifact_id().data(), reader.artifact_id().size());
     std::set<std::string> formats;
     for (const auto& object : reader.directory().objects) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&object);
@@ -1223,8 +1227,8 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     summary.route_table  = ops::route_table_status().message;
     summary.load_seconds = std::chrono::duration<double>(Clock::now() - start).count();
     summary.context_cost = std::move(context_cost.summary);
-    summary.metadata =
-        model_metadata(options.artifact_path, summary, instance->execution->traits());
+    summary.metadata = model_metadata(options.artifact_path, summary, instance->execution->traits(),
+                                      summary.artifact_id);
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};
 }

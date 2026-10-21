@@ -1,24 +1,38 @@
 #include "ninferno/engine.h"
 
 #include "core/device.h"
+#include "core/device_class.h"
+#include "core/host_memory.h"
 #include "core/nvtx.h"
+#include "core/sha256.h"
 #include "core/startup.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
+#include "ninferno/ops/moe.h"
+#include "ninferno/ops/route_table.h"
+#include "ops/generic/generic_gemm.h"
+#include "ops/host_experts/host_kernels.h"
 #include "runtime/engine/backend.h"
+#include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/model_instance.h"
 #include "structured/constraint.h"
 #include "structured/output_constraint.h"
 #include "structured/schema_support.h"
 
+#include <cuda_runtime_api.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace ninferno {
@@ -53,6 +67,97 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     resolved.output                            = options.output;
     resolved.constraint                        = std::move(options.constraint);
     return resolved;
+}
+
+runtime::HostFacts host_facts() {
+    runtime::HostFacts host;
+    host.logical_cores = std::thread::hardware_concurrency();
+    host.cpu_isa       = ops::host::isa_name(ops::host::detect_isa());
+    try {
+        if (const auto memory = read_host_memory()) { host.ram_bytes = memory->total_bytes; }
+    } catch (const std::exception&) {}
+    return host;
+}
+
+// The decision fingerprint of a constructed Engine (runtime/engine/decision_fingerprint.h): the
+// facts, sources and environment are collected here, where CUDA and files may be read, and handed
+// to the pure collectors. `requested`: the options as the caller passed them; `resolved`:
+// Engine::options() after the plan.
+void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requested,
+                                    const EngineOptions& resolved, const MemorySummary& memory) {
+    runtime::DecisionInputs in;
+    int driver_version = 0;
+    if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
+        (void)cudaGetLastError();
+        driver_version = 0;
+    }
+    in.facts   = runtime::facts_of(device_class(resolved.device), build_features(), driver_version,
+                                   host_facts());
+    in.build   = runtime::build_of();
+    in.options = runtime::options_of(
+        requested, load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
+        load.prefill_signature, runtime::drafter_identity(requested.speculative.drafter));
+    for (const auto& [key, value] : requested.speculative.decision_sources) {
+        in.sources[key] = value;
+    }
+    const ops::RouteTableStatus routes = ops::route_table_status();
+    std::string route_table;
+    if (routes.loaded) {
+        in.sources["route_table"] =
+            utf8_file_name(std::filesystem::path(routes.path)) + " sha256:" + routes.content_sha256;
+        in.sources["route_table.class"] = routes.gpu_class;
+        route_table                     = routes.content_sha256;
+        if (!routes.lender_sha256.empty()) {
+            in.sources["route_table.lenders"] = routes.lender_sha256;
+            route_table += " + " + routes.lender_sha256;
+        }
+    } else {
+        in.sources["route_table"] = "none";
+    }
+    for (auto& [key, value] : ops::detail::generic::dense_tune_sources()) {
+        in.sources[key] = std::move(value);
+    }
+    for (auto& [key, value] : ops::moe_tune_sources()) { in.sources[key] = std::move(value); }
+    in.sources["context_cost.presets"] =
+        runtime::context_cost_presets_source(requested.context_cost.preset_path);
+    in.env   = runtime::env_of([](const char* name) -> std::optional<std::string> {
+        const char* value = std::getenv(name);
+        return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
+    });
+    in.plan  = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table);
+    in.taint    = runtime::taint_of(in);
+    in.observed = runtime::observed_of(memory);
+    const runtime::DecisionFingerprint fingerprint = runtime::decision_fingerprint(in);
+    load.decision_fingerprint                      = fingerprint.value;
+    load.decision_manifest                         = fingerprint.manifest;
+    load.decision_canonical                        = fingerprint.canonical;
+    load.decision_observed                         = fingerprint.observed;
+    load.metadata.decision_fingerprint             = fingerprint.value;
+    load.metadata.decision_manifest                = fingerprint.manifest;
+    load.decision_taint.clear();
+    for (const auto& [what, detail] : in.taint) {
+        load.decision_taint.push_back(what + "=" + detail);
+    }
+}
+
+// Fingerprinting never stops a start: an input that cannot be read (a file, a name the platform
+// cannot convert) leaves the fingerprint "unreadable" and says why in the taint.
+void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
+                           const EngineOptions& resolved, const MemorySummary& memory) {
+    std::string why;
+    try {
+        fingerprint_decisions_or_throw(load, requested, resolved, memory);
+        return;
+    } catch (const std::exception& error) { why = error.what(); } catch (...) {
+        why = "unknown error";
+    }
+    load.decision_fingerprint          = "unreadable";
+    load.decision_manifest             = "unreadable";
+    load.metadata.decision_fingerprint = "unreadable";
+    load.metadata.decision_manifest    = "unreadable";
+    load.decision_canonical.clear();
+    load.decision_observed.clear();
+    load.decision_taint = {"fingerprint=unreadable: " + why};
 }
 
 std::string context_capacity_error(std::size_t prompt_tokens, std::uint32_t max_context) {
@@ -150,8 +255,11 @@ GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView
 class Engine::Impl {
 public:
     explicit Impl(EngineOptions engine_options)
-        : options(runtime::normalize_engine_options(std::move(engine_options))),
-          device(initialize_device(options)) {
+        : Impl(engine_options, runtime::normalize_engine_options(engine_options)) {}
+
+    // `requested`: the options as the caller passed them, which the decision fingerprint records.
+    Impl(const EngineOptions& requested, EngineOptions normalized)
+        : options(std::move(normalized)), device(initialize_device(options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
@@ -167,6 +275,7 @@ public:
         load                = backend->load_summary();
         load.cuda_sync_mode = device.sync_mode();
         sampling_defaults   = backend->sampling_defaults();
+        fingerprint_decisions(load, requested, options, memory);
     }
 
     ~Impl() noexcept {

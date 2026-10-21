@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/sha256.h"
+
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -9,7 +11,7 @@
 
 namespace ninferno::models::qwen3_5::frontend {
 
-using Sha256Digest = std::array<std::uint8_t, 32>;
+using Sha256Digest = ninferno::Sha256Digest;
 
 [[nodiscard]] Sha256Digest sha256(std::span<const std::uint8_t> input);
 [[nodiscard]] Sha256Digest sha256(std::span<const std::uint8_t> input,

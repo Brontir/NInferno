@@ -10,6 +10,7 @@
 // layer in a JSON file: a restart takes the same plans, and so the same bytes, without timing.
 
 #include "core/arena.h"
+#include "core/sha256.h"
 #include "core/sys.h"
 #include "core/cache_file.h"
 #include "core/device.h"
@@ -159,6 +160,20 @@ void clear_tuned_plans() {
 }
 
 } // namespace detail::moe
+
+std::map<std::string, std::string> moe_tune_sources() {
+    std::map<std::string, std::string> out;
+    TuneMode mode = TuneMode::Off;
+    try {
+        mode = tune_mode("NINFERNO_MOE_TUNE");
+    } catch (const std::invalid_argument&) {}
+    if (mode != TuneMode::Off) {
+        const auto path      = detail::moe::cache_path();
+        auto user            = path.empty() ? std::nullopt : named_file_sha256(path);
+        out["moe_tune.user"] = user ? std::move(*user) : std::string("absent");
+    }
+    return out;
+}
 
 MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::int32_t max_tokens,
                        cudaStream_t stream) {

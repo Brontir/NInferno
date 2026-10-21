@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace ninferno::product {
@@ -303,6 +304,26 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
         impl_->logger->info("routes | {}", format_pretty_text(line));
     }
     if (!load.drafter.empty()) { impl_->logger->info("drafter | {}", load.drafter); }
+    // The decision fingerprint (docs/maintainer/deterministic-decisions.md): two runs that print
+    // the same one were asked the same thing on the same kind of machine.
+    if (!load.decision_fingerprint.empty()) {
+        impl_->logger->info("fingerprint | {} | manifest {} | ninferno-fingerprint/1",
+                            load.decision_fingerprint, load.decision_manifest);
+        std::string taint;
+        for (const auto& item : load.decision_taint) {
+            taint += (taint.empty() ? "" : ", ") + item;
+        }
+        impl_->logger->debug("fingerprint taint | {}", taint.empty() ? "none" : taint);
+        // The observed sizes (manifest only) after the hashed inputs.
+        const std::string all      = load.decision_canonical + load.decision_observed;
+        std::string_view canonical = all;
+        while (!canonical.empty()) {
+            const std::size_t end = canonical.find('\n');
+            impl_->logger->debug("fingerprint input | {}", canonical.substr(0, end));
+            if (end == std::string_view::npos) { break; }
+            canonical.remove_prefix(end + 1);
+        }
+    }
     impl_->logger->debug(
         "load detail | architecture {} | artifact read {} | H2D {} | staging peak {} | device "
         "objects {} | host objects {}",

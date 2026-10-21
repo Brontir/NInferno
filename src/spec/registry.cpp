@@ -2,6 +2,7 @@
 
 #include "core/ascii.h"
 #include "core/file_io.h"
+#include "core/sha256.h"
 
 #include "spec/embedded_data.h"
 #include "spec/json_fields.h"
@@ -122,10 +123,13 @@ Registry Registry::parse(const std::string& text) {
 
 const Registry& Registry::builtin() {
     static const Registry registry = [] {
-        if (const char* path = std::getenv("NINFERNO_DRAFTER_REGISTRY"); path && *path) {
-            return parse(read_file(path, "$NINFERNO_DRAFTER_REGISTRY"));
-        }
-        return parse(std::string(embedded::kDrafterRegistryJson));
+        const char* path       = std::getenv("NINFERNO_DRAFTER_REGISTRY");
+        const std::string text = path != nullptr && *path
+                                     ? read_file(path, "$NINFERNO_DRAFTER_REGISTRY")
+                                     : std::string(embedded::kDrafterRegistryJson);
+        Registry out           = parse(text);
+        out.source_sha256_     = sha256_hex(text);
+        return out;
     }();
     return registry;
 }

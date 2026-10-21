@@ -58,6 +58,11 @@ struct RouteTableStatus {
     std::size_t route_as_entries = 0; // problems with at least one route_as band
     std::size_t borrowed_entries = 0; // generic problems taken from similar chips' tables
     std::string borrowed_from;        // which chips lent them, nearest first ("gb206 41, gb202 9")
+    // SHA-256 (lowercase hex) of the file's bytes as parsed, and of each lending table's, nearest
+    // first ("gb206 <hex>, gb202 <hex>"; empty when nothing was borrowed): what the decision
+    // fingerprint (runtime/engine/decision_fingerprint.h) names the route data by.
+    std::string content_sha256;
+    std::string lender_sha256;
     std::string message;              // why nothing is loaded, or what was loaded
 };
 
