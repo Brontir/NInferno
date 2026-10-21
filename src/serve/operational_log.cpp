@@ -527,40 +527,6 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         }
     }
 
-    if (memory.moe_offload_mode != ninferno::MoeOffloadMode::Off) {
-        const auto bytes = [](std::uint64_t value) {
-            return product::format_pretty_bytes(static_cast<std::size_t>(value));
-        };
-        if (memory.moe_offload_layers == 0) {
-            logger_->info("moe offload | auto: the model has no routed experts; nothing offloaded");
-        } else {
-            const std::string origin =
-                memory.moe_offload_mode == ninferno::MoeOffloadMode::Layers
-                    ? std::string("--moe-offload ") + std::to_string(memory.moe_offload_offloaded)
-                    : "auto: the fewest that fit " +
-                          product::format_pretty_count(memory.moe_offload_target_context) +
-                          " tokens of context";
-            logger_->info("moe offload | experts of {} of {} MoE layers in pinned Host memory ({}) "
-                          "| {} resident on the GPU ({}) | staging {} | {}",
-                          memory.moe_offload_offloaded, memory.moe_offload_layers,
-                          bytes(memory.moe_offload_pinned_bytes),
-                          memory.moe_offload_layers - memory.moe_offload_offloaded,
-                          bytes(memory.moe_offload_resident_bytes),
-                          bytes(memory.moe_offload_staging_bytes), origin);
-            if (memory.moe_offload_offloaded > 0) {
-                if (memory.moe_offload_compute == ninferno::MoeOffloadCompute::Cpu) {
-                    logger_->info("moe offload | decode experts on the CPU ({} threads, {}) | "
-                                  "prefill streams layers to the GPU | {}",
-                                  memory.moe_offload_cpu_threads, memory.moe_offload_cpu_isa,
-                                  memory.moe_offload_compute_reason);
-                } else {
-                    logger_->info("moe offload | decode experts on the GPU over PCIe | {}",
-                                  memory.moe_offload_compute_reason);
-                }
-            }
-        }
-    }
-
     logger_->info("capacity | KV {} tokens, {}{}, {} | activations {}{} | pages {}/{} | runtime {} | "
                   "free {}",
                   product::format_pretty_count(memory.kv_capacity),

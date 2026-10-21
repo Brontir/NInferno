@@ -26,23 +26,6 @@ using product::parse_kv_dtype;
 using product::parse_nonnegative_int;
 using product::parse_u64;
 
-MoeOffloadOptions parse_moe_offload(const std::string& text) {
-    if (text == "off") { return {}; }
-    if (text == "auto") { return {.mode = MoeOffloadMode::Automatic}; }
-    const int value = parse_nonnegative_int(text.c_str(), "moe-offload");
-    if (value == 0) {
-        throw std::invalid_argument("--moe-offload takes off, auto or a positive layer count");
-    }
-    return {.mode = MoeOffloadMode::Layers, .layers = static_cast<std::uint32_t>(value)};
-}
-
-MoeOffloadCompute parse_moe_offload_compute(const std::string& text) {
-    if (text == "auto") { return MoeOffloadCompute::Automatic; }
-    if (text == "cpu") { return MoeOffloadCompute::Cpu; }
-    if (text == "gpu") { return MoeOffloadCompute::Gpu; }
-    throw std::invalid_argument("--moe-offload-compute takes auto, cpu or gpu");
-}
-
 } // namespace
 
 std::string serve_usage_text(const char* argv0) {
@@ -52,8 +35,6 @@ std::string serve_usage_text(const char* argv0) {
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
-           "[--moe-offload off|auto|N] [--moe-offload-compute auto|cpu|gpu] "
-           "[--moe-offload-threads N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
            "[--prefill-chunk N] [--kv-lease-window N] [--log-stats-interval-ms N] "
            "[--drain-timeout-ms N] "
@@ -146,19 +127,6 @@ std::string serve_usage_text(const char* argv0) {
            "card and pages it out to Host memory when full, a 32nd of it, at most 1 GiB, as far as "
            "the "
            "free memory allows)\n"
-           "       --moe-offload keeps the routed experts of MoE layers in pinned Host memory, "
-           "read over PCIe (attention, router, shared experts and KV stay on the GPU; the "
-           "output is the same): N offloads the first N MoE layers, auto the fewest that let "
-           "the model fit with the automatic context's floor (8192 tokens, or --max-context); "
-           "off (the default) keeps every weight on the GPU\n"
-           "       --moe-offload-compute auto|cpu|gpu: where decode computes the offloaded "
-           "experts. cpu reads them in Host memory on the CPU (fast mode: close to the GPU's "
-           "result, not byte-equal; refused with --activations exact); gpu reads them over PCIe "
-           "(byte-equal to no offload); auto (the default) is cpu under --activations fast when "
-           "the family and format allow it, else gpu, and the startup log says why. Prefill "
-           "always streams whole layers to the GPU\n"
-           "       --moe-offload-threads N: CPU expert threads (default: one per physical core "
-           "of the process affinity)\n"
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default)\n"
            "       --concurrent-prefill admits waiting requests while others prefill; the\n"
            "       prefilling requests take chunks in turn (a later request's first token\n"
@@ -309,20 +277,12 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (options.max_context == 0) {
                 throw std::invalid_argument("--max-context must be positive");
             }
-        } else if (arg == "--moe-offload") {
-            const MoeOffloadOptions parsed = parse_moe_offload(require_value("--moe-offload"));
-            options.moe_offload.mode       = parsed.mode;
-            options.moe_offload.layers     = parsed.layers;
-        } else if (arg == "--moe-offload-compute") {
-            options.moe_offload.compute =
-                parse_moe_offload_compute(require_value("--moe-offload-compute"));
-        } else if (arg == "--moe-offload-threads") {
-            const int value = parse_nonnegative_int(require_value("--moe-offload-threads"),
-                                                    "moe-offload-threads");
-            if (value == 0) {
-                throw std::invalid_argument("--moe-offload-threads must be positive");
-            }
-            options.moe_offload.threads = static_cast<std::uint32_t>(value);
+        } else if (arg.starts_with("--moe-offload")) {
+            // MoE expert offload (--moe-offload, --moe-offload-compute, --moe-offload-threads)
+            // was removed; its options are refused by name rather than as unknown.
+            throw std::invalid_argument(
+                arg.substr(0, arg.find('=')) +
+                " was removed (MoE expert offload is not supported in this version)");
         } else if (arg == "--kv-capacity") {
             options.kv_capacity  = parse_kv_capacity(require_value("--kv-capacity"));
             kv_capacity_explicit = true;
@@ -596,15 +556,6 @@ ServeOptions parse_serve_options(int argc, char** argv) {
          options.speculative.proposal_head != ProposalHead::Full)) {
         throw std::invalid_argument(
             "--spec auto takes its drafter, depths and head from the model's profile");
-    }
-    if (options.moe_offload.mode == MoeOffloadMode::Off &&
-        (options.moe_offload.compute != MoeOffloadCompute::Automatic ||
-         options.moe_offload.threads != 0)) {
-        throw std::invalid_argument(
-            "--moe-offload-compute and --moe-offload-threads need --moe-offload auto or N");
-    }
-    if (options.moe_offload.compute == MoeOffloadCompute::Gpu && options.moe_offload.threads != 0) {
-        throw std::invalid_argument("--moe-offload-threads is for --moe-offload-compute cpu");
     }
     // An explicit --spec without --draft-tokens drafts at the depth the model's profile runs that
     // backend with on this GPU, else at product::default_draft_tokens (resolved at startup).

@@ -251,7 +251,7 @@ images and release archives.
    people actually own, fix what breaks, and keep the published numbers current.
 2. **New models first** *(ongoing)*. Support the new open models that matter soon after their
    release, starting with those that fit in one GPU's memory.
-3. **Bigger models and longer contexts on one GPU** *(started: `--moe-offload`)*. Compute part of a
+3. **Bigger models and longer contexts on one GPU** *(planned)*. Compute part of a
    MoE model's experts outside the GPU, so larger MoE models and contexts fit, while keeping the
    speed of one to four concurrent users.
 4. **Several GPUs** *(planned)*. Pipeline parallelism across two to six cards for models that do not

@@ -1,7 +1,6 @@
 #include "models/qwen3_5/execution/ffn.h"
 
 #include "core/layout.h"
-#include "models/common/expert_offload.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/ops/linear_add.h"
 #include "ninferno/ops/linear_swiglu.h"
@@ -75,7 +74,7 @@ std::size_t ffn_workspace_bytes(const FfnParameters& parameters, std::int32_t fi
 
 void ffn(const Tensor& hidden, const FfnParameters& parameters, Tensor& residual,
          const ops::SparseMoeHints& hints, WorkspaceArena& workspace, DeviceExecutionView execution,
-         const ExpertPlacement& experts, bool mtp) {
+         bool mtp) {
     const auto stream = execution.stream;
     auto scope         = workspace.scope();
     const auto columns = hidden.ne[1];
@@ -83,24 +82,16 @@ void ffn(const Tensor& hidden, const FfnParameters& parameters, Tensor& residual
         const auto storage =
             workspace.alloc_bytes(ffn_workspace_bytes(parameters, columns, columns));
         WorkspaceArena scratch(storage);
-        // Offloaded experts are read where their layer's group is; the Lease holds a staging
-        // slot until the call is enqueued.
-        const auto lease = bind_experts(experts.residency, moe->routed_gate_up, columns,
-                                        experts.top_k, experts.experts, stream);
-        ops::sparse_moe(hidden, bound(*moe, lease), ops::SparseMoeEpilogue::AddResidual, residual,
-                        hints, scratch, execution);
+        ops::sparse_moe(hidden, *moe, ops::SparseMoeEpilogue::AddResidual, residual, hints, scratch,
+                        execution);
         return;
     }
     if (const auto* moe = std::get_if<GenericMoeParameters>(&parameters)) {
         const auto storage =
             workspace.alloc_bytes(ffn_workspace_bytes(parameters, columns, columns));
         WorkspaceArena scratch(storage);
-        // As above: an offloaded or resident group is read through its Lease, never through the
-        // Host addresses the weights were materialized at.
-        const auto lease = bind_experts(experts.residency, moe->weights.gate_up, columns,
-                                        experts.top_k, experts.experts, stream);
-        ops::moe(hidden, bound(moe->weights, lease), moe->config, ops::MoeEpilogue::AddResidual,
-                 residual, scratch, stream);
+        ops::moe(hidden, moe->weights, moe->config, ops::MoeEpilogue::AddResidual, residual,
+                 scratch, stream);
         return;
     }
     const auto& p    = std::get<DenseParameters>(parameters);

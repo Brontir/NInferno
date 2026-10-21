@@ -45,7 +45,7 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
                                         options.activations == ActivationMode::Exact
                                             ? models::gemma4::ActivationProfile::A16Full
                                             : models::gemma4::ActivationProfile::Artifact,
-                                        options.moe_offload, options.enable_vision);
+                                        options.enable_vision);
         if (options.speculative.backend == SpeculativeBackend::Mtp) {
             if (options.speculative.drafter.empty()) {
                 throw std::invalid_argument(
@@ -66,20 +66,6 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
     const std::int32_t vocabulary = attach_hf_text_frontend(
         out, loaded->text, options, static_cast<std::size_t>(config.vocab_size), "Gemma 4",
         model.vision_config().has_value());
-    out.expert_residency     = model.weights().experts;
-    out.device_expert_bytes  = model.device_expert_bytes();
-    out.device_expert_layers = model.device_expert_layers();
-    if (model.config().experts > 0) {
-        models::gemma4::Model* target = loaded->model.get();
-        out.host_experts_readable     = [target](std::string* why) {
-            return target->host_experts_readable(why);
-        };
-        out.host_experts_hidden = model.config().hidden_size;
-        out.host_experts_top_k  = model.config().experts_per_token;
-        out.attach_host_experts = [target](ops::HostExperts* host) {
-            target->attach_host_experts(host);
-        };
-    }
     out.execution = models::gemma4::make_program_execution(model, loaded->drafter.get(), device,
                                                            vocabulary, options.activations);
     frontend.complete();

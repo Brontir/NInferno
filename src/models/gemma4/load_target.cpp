@@ -1,5 +1,4 @@
 #include "models/gemma4/load.h"
-#include "models/common/expert_offload.h"
 
 #include "artifact/reader.h"
 #include "core/arena.h"
@@ -31,42 +30,6 @@ Model::~Model() = default;
 
 std::uint64_t Model::device_bytes() const noexcept {
     return backing_ ? backing_->materialized.stats().device_capacity_bytes : 0;
-}
-
-std::uint64_t Model::device_expert_bytes() const noexcept {
-    return backing_ ? backing_->materialized.stats().expert_device_bytes : 0;
-}
-
-bool Model::host_experts_readable(std::string* why) const {
-    for (std::size_t i = 0; i < weights_.layers.size(); ++i) {
-        // A generic MoE layer (experts not in NVFP4) has no CPU path: the GPU reads its experts.
-        if (const auto& generic = weights_.layers[i].generic_moe;
-            generic && weights_.experts != nullptr &&
-            weights_.experts->in_host(generic->gate_up.payload)) {
-            if (why) {
-                *why = "layer " + std::to_string(i) + ": the CPU computes NVFP4 expert banks only";
-            }
-            return false;
-        }
-        const auto& moe = weights_.layers[i].moe;
-        if (!moe || weights_.experts == nullptr || !weights_.experts->in_host(moe->gate_up.payload)) {
-            continue;
-        }
-        if (!models::host_experts_readable(moe->gate_up, moe->down, why)) {
-            if (why) { *why = "layer " + std::to_string(i) + ": " + *why; }
-            return false;
-        }
-        if (!weights_.experts->in_host(moe->down.payload)) {
-            if (why) { *why = "layer " + std::to_string(i) + ": down is not in the Host group"; }
-            return false;
-        }
-    }
-    return true;
-}
-
-std::uint32_t Model::device_expert_layers() const noexcept {
-    return backing_ ? static_cast<std::uint32_t>(backing_->materialized.stats().expert_device_layers)
-                    : 0;
 }
 
 double Model::upload_seconds() const noexcept {
@@ -176,8 +139,7 @@ VisionWeights prepare_vision(const Prepare& prepare, const VisionIds& ids) {
 } // namespace
 
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device,
-                                   ActivationProfile profile, const MoeOffloadOptions& offload,
-                                   bool vision) {
+                                   ActivationProfile profile, bool vision) {
     artifact::Reader reader(path);
     const auto& text = open_text_component(reader, "gemma4");
     auto model       = std::unique_ptr<Model>(new Model());
@@ -272,7 +234,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
     }
 
-    model->backing_ = demands.materialize(device, offload);
+    model->backing_ = demands.materialize(device);
     auto& backing   = *model->backing_;
     const Prepare prepare(demands, backing, profile);
     if (vision_ids) { model->vision_weights_ = prepare_vision(prepare, *vision_ids); }
@@ -285,7 +247,6 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         w.output_head       = {prepared.weight, prepared.policy};
     }
     w.final_norm = prepare.tensor(final_norm);
-    w.experts    = backing.materialized.expert_residency();
     if (c.ple()) {
         w.ple_table      = native_weight(prepare.view(ple_table));
         w.ple_projection = prepare.projection(ple_projection);

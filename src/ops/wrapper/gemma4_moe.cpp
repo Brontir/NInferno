@@ -5,7 +5,6 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/gemma4_moe/gemma4_moe_internal.h"
-#include "ops/host_experts/host_experts.h"
 #include "ops/linear/nvfp4/nvfp4_format.h"
 
 #include <algorithm>
@@ -273,50 +272,6 @@ void gemma4_moe(const Tensor& router_input, const Tensor& expert_input,
                             : default_route(tokens > 0 ? tokens : 1, activations);
     detail::gemma4::gemma4_moe_with_route(router_input, expert_input, weights, eps, out, workspace,
                                           stream, route, A4Input::PerExpert);
-}
-
-void gemma4_moe_host_experts(const Tensor& router_input, const Tensor& expert_input,
-                             const Gemma4MoeWeights& weights, const Gemma4MoeWeights& host_weights,
-                             float eps, Tensor& out, WorkspaceArena& workspace,
-                             cudaStream_t stream, HostExperts& host) {
-    Validated checked         = validate(router_input, expert_input, weights, eps, out);
-    const std::int32_t tokens = checked.tokens;
-    if (tokens > HostExperts::max_tokens()) {
-        throw std::invalid_argument("gemma4_moe: the CPU expert path takes at most 16 tokens");
-    }
-    WorkspaceLayoutBuilder layout;
-    (void)allocate_host_select_workspace(layout, tokens);
-    const std::size_t required = layout.peak_bytes(1);
-    if (workspace.base() == nullptr || workspace.capacity() < required ||
-        workspace.used() > workspace.capacity() - required) {
-        throw std::invalid_argument("gemma4_moe: insufficient workspace capacity");
-    }
-    checked.ranges.push_back(address_range(workspace.base(), workspace.capacity(), "workspace"));
-    require_disjoint(checked.ranges);
-
-    // The CPU side is checked before the first launch.
-    const auto same_plane = [](const Weight& a, const Weight& b) {
-        return a.qtype == b.qtype && a.layout == b.layout && a.n == b.n && a.k == b.k;
-    };
-    if (!same_plane(weights.gate_up, host_weights.gate_up) ||
-        !same_plane(weights.down, host_weights.down)) {
-        throw std::invalid_argument(
-            "gemma4_moe: host_weights must be the same layer's experts as weights");
-    }
-    host::Gemma4Layer layer;
-    layer.gate_up = host::host_plane(host_weights.gate_up);
-    layer.down    = host::host_plane(host_weights.down);
-
-    auto scope                      = workspace.scope();
-    const HostSelectWorkspace views = allocate_host_select_workspace(workspace, tokens);
-    detail::gemma4::launch_host_select(router_input, weights, eps, views, stream);
-    layer.experts = kExperts;
-    layer.hidden  = kHidden;
-    layer.inter   = kInter;
-    layer.top_k   = kTopK;
-    host.enqueue_gemma4(layer, tokens, expert_input.data,
-                        static_cast<const std::int32_t*>(views.selection.ids.data),
-                        static_cast<const float*>(views.selection.weights.data), out.data, stream);
 }
 
 } // namespace ninferno::ops

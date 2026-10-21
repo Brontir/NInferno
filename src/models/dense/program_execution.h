@@ -42,16 +42,11 @@ public:
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
     [[nodiscard]] std::vector<std::string> tune_routes(cudaStream_t stream) const override {
         if (!model_.config().moe) { return {}; }
-        // Under MoE expert offload the weights hold the Host addresses the groups were loaded at
-        // (a resident group's Host copy is freed): the tuner reads each layer through its Lease.
-        return qwen3_5::detail::tune_moe_layers(
-            stream,
-            [&](const auto& tune) {
-                for (const auto& layer : model_.weights().layers) {
-                    if (layer.moe) { tune(*layer.moe, model_.config().moe->op); }
-                }
-            },
-            model_.weights().experts);
+        return qwen3_5::detail::tune_moe_layers(stream, [&](const auto& tune) {
+            for (const auto& layer : model_.weights().layers) {
+                if (layer.moe) { tune(*layer.moe, model_.config().moe->op); }
+            }
+        });
     }
     [[nodiscard]] models::LoadOptions load_options() const override;
 

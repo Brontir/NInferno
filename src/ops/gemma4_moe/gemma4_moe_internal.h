@@ -275,34 +275,6 @@ PrefillWorkspace allocate_prefill_workspace(Arena& arena, std::int32_t capacity)
     return out;
 }
 
-// The selection alone (MoE expert offload's CPU decode path): the small-T route's router and
-// grouping kernel, which give every column the decode route's ids and route weights.
-struct HostSelectWorkspace {
-    Selection selection;
-    Tensor router_dot;      // FP32 [rows*128]
-    Tensor router_square;   // FP32 [rows]
-    Tensor meta;            // I32 [kMetaWords]
-    Tensor slot_assignment; // I32 [8T]
-    Tensor packed_index;    // I32 [8T]
-};
-
-template <class Arena>
-HostSelectWorkspace allocate_host_select_workspace(Arena& arena, std::int32_t tokens) {
-    HostSelectWorkspace out;
-    const std::int32_t assignments = kTopK * tokens;
-    const std::int32_t rows        = router_partial_rows(router_kind(Route::SmallT), tokens);
-    out.selection                  = allocate_selection(arena, tokens);
-    out.router_dot                 = arena.alloc(DType::FP32, {kExperts * rows}, 256);
-    out.router_square              = arena.alloc(DType::FP32, {rows}, 256);
-    out.meta                       = arena.alloc(DType::I32, {kMetaWords}, 256);
-    out.slot_assignment            = arena.alloc(DType::I32, {assignments}, 256);
-    out.packed_index               = arena.alloc(DType::I32, {assignments}, 256);
-    return out;
-}
-
-void launch_host_select(const Tensor& router_input, const Gemma4MoeWeights& weights, float eps,
-                        const HostSelectWorkspace& workspace, cudaStream_t stream);
-
 // The tensor-core router over `tokens` columns of x, split over K `splits`
 // ways, writing the partials RouterPartials adds up.
 void launch_router_mma(const void* x, std::int32_t tokens, const Gemma4MoeWeights& weights,

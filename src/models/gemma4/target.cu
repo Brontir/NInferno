@@ -2,7 +2,6 @@
 
 #include "core/debug_poison.h"
 #include "core/nvtx.h"
-#include "models/common/expert_offload.h"
 #include "models/common/layer_dump.h"
 #include "ninferno/ops/embedding.h"
 #include "ninferno/ops/gemma4_fused.h"
@@ -460,36 +459,16 @@ void TargetPass::layers(DeviceArena& work_, Tensor& x, Tensor& h, const Tensor& 
                     ops::moe_workspace_bytes(gm, layer.generic_moe_config, t, t)));
                 fork_.record(s);
                 fork_.wait(side_.get());
-                // Offloaded experts are read where their layer's group is (resident, Host or a
-                // staging slot); the GPU computes them (no CPU path for this bank layout).
-                const auto lease = bind_experts(model_.weights().experts, gm.gate_up, t,
-                                                c_.experts_per_token, c_.experts, side_.get());
-                ops::moe(expert_input, bound(gm, lease), layer.generic_moe_config,
-                         ops::MoeEpilogue::Store, experts, *moe_scratch, side_.get(),
-                         &router_input);
+                ops::moe(expert_input, gm, layer.generic_moe_config, ops::MoeEpilogue::Store,
+                         experts, *moe_scratch, side_.get(), &router_input);
                 join_.record(side_.get());
             } else if (layer.moe) {
                 experts = work_.alloc(DType::BF16, {c_.hidden_size, t});
                 moe_scratch.emplace(work_.alloc_bytes(ops::gemma4_moe_workspace_bytes(t, t)));
                 fork_.record(s);
                 fork_.wait(side_.get());
-                if (const auto& mw = model_.weights();
-                    host_experts_call(mw.host_experts, mw.experts, layer.moe->gate_up, t)) {
-                    // A decode call of an offloaded layer: the CPU computes its experts from
-                    // Host memory while the dense MLP runs on the main stream; the router and
-                    // the selection stay on the GPU.
-                    const auto lease = bind_for_host(mw.experts, layer.moe->gate_up, side_.get());
-                    ops::gemma4_moe_host_experts(x, expert_input, bound(*layer.moe, lease),
-                                                 *layer.moe, eps, experts, *moe_scratch,
-                                                 side_.get(), *mw.host_experts);
-                } else {
-                    // Offloaded experts are read where their layer's group is; the Lease holds a
-                    // staging slot until the bank's call is enqueued on the side stream.
-                    const auto lease = bind_experts(model_.weights().experts, layer.moe->gate_up, t,
-                                                    c_.experts_per_token, c_.experts, side_.get());
-                    ops::gemma4_moe(x, expert_input, bound(*layer.moe, lease), eps, experts,
-                                    *moe_scratch, side_.get(), layer.moe_activations);
-                }
+                ops::gemma4_moe(x, expert_input, *layer.moe, eps, experts, *moe_scratch,
+                                side_.get(), layer.moe_activations);
                 join_.record(side_.get());
             }
             Tensor product = work_.alloc(DType::BF16, {c_.intermediate[i], t});

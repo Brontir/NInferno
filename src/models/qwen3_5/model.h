@@ -51,11 +51,6 @@ public:
         return backing_.stats();
     }
 
-    // The routed experts under MoE expert offload (null when off).
-    [[nodiscard]] ExpertResidency* expert_residency() const noexcept {
-        return backing_.expert_residency();
-    }
-
 private:
     friend std::unique_ptr<Model> materialize_model(LoadPlan&&, DeviceContext&,
                                                     const StartupObserver*);

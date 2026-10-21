@@ -46,11 +46,11 @@ FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device) {
         StartupPhaseScope binding(options.startup_observer, StartupPhase::TargetPlan);
         // --activations exact: BF16 activations on every projection, and (below) the invariant
         // route profile on every call.
-        loaded->model = models::dense::Model::load(options.artifact_path, device,
-                                                   options.activations == ActivationMode::Exact
-                                                       ? models::dense::ActivationProfile::A16
-                                                       : models::dense::ActivationProfile::Artifact,
-                                                   options.moe_offload);
+        loaded->model =
+            models::dense::Model::load(options.artifact_path, device,
+                                       options.activations == ActivationMode::Exact
+                                           ? models::dense::ActivationProfile::A16
+                                           : models::dense::ActivationProfile::Artifact);
         if (options.speculative.backend == SpeculativeBackend::DFlash) {
             if (options.speculative.drafter.empty()) {
                 throw std::invalid_argument(
@@ -84,20 +84,6 @@ FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device) {
     FamilyLoad out;
     const std::int32_t vocabulary = attach_hf_text_frontend(
         out, loaded->text, options, static_cast<std::size_t>(config.vocab_size), "dense decoder");
-    out.expert_residency     = model.weights().experts;
-    out.device_expert_bytes  = model.device_expert_bytes();
-    out.device_expert_layers = model.device_expert_layers();
-    if (config.moe) {
-        models::dense::Model* target = loaded->model.get();
-        out.host_experts_readable    = [target](std::string* why) {
-            return target->host_experts_readable(why);
-        };
-        out.host_experts_hidden = config.hidden_size;
-        out.host_experts_top_k  = config.moe->op.top_k;
-        out.attach_host_experts = [target](ops::HostExperts* host) {
-            target->attach_host_experts(host);
-        };
-    }
     out.execution = models::dense::make_program_execution(model, loaded->drafter.get(), device,
                                                           vocabulary, options.activations);
     frontend.complete();

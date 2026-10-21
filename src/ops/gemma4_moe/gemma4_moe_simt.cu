@@ -828,27 +828,6 @@ void launch_decode(const Tensor& router_input, const Tensor& expert_input,
     options.staged_down ? down(decode_down_kernel<true>) : down(decode_down_kernel<false>);
 }
 
-void launch_host_select(const Tensor& router_input, const Gemma4MoeWeights& weights, float eps,
-                        const HostSelectWorkspace& workspace, cudaStream_t stream) {
-    const int tokens = router_input.ne[1];
-    if (tokens < 1 || tokens > kSmallTCapacity) {
-        throw std::invalid_argument("gemma4_moe host select: unsupported token count");
-    }
-    static_assert(router_kind(Route::SmallT) == RouterKind::Simt);
-    auto* router_dot    = static_cast<float*>(workspace.router_dot.data);
-    auto* router_square = static_cast<float*>(workspace.router_square.data);
-    launch_router_simt(static_cast<const __nv_bfloat16*>(router_input.data), tokens, weights,
-                       router_dot, router_square, stream);
-    CUDA_CHECK(pdl::launch_dependent(
-        {dim3(1), dim3(kGroupThreads), 0, stream}, small_t_group_kernel,
-        RouterPartials{router_dot, router_square, 1, tokens}, eps,
-        static_cast<const float*>(weights.expert_scale.data), tokens,
-        static_cast<int*>(workspace.selection.ids.data),
-        static_cast<float*>(workspace.selection.weights.data), static_cast<int*>(workspace.meta.data),
-        static_cast<int*>(workspace.slot_assignment.data),
-        static_cast<int*>(workspace.packed_index.data)));
-}
-
 void launch_small_t(const Tensor& router_input, const Tensor& expert_input,
                     const Gemma4MoeWeights& weights, float eps, Tensor& out,
                     const SmallTWorkspace& workspace, cudaStream_t stream) {

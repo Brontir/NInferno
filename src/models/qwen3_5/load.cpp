@@ -1,6 +1,5 @@
 #include "models/qwen3_5/load.h"
 
-#include "artifact/expert_groups.h"
 #include "artifact/reader.h"
 #include "models/qwen3_5/load/bindings.h"
 
@@ -42,8 +41,7 @@ std::span<const WeightUse> LoadPlan::uses(WeightId id) const {
     return impl_->pending.at(id.index).uses;
 }
 
-LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options,
-                   const MoeOffloadOptions& offload) {
+LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options) {
     auto out     = std::make_unique<LoadPlan::Impl>();
     out->options = options;
     out->config  = parse_config(reader.directory(), options);
@@ -96,7 +94,6 @@ LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options,
     // Every binding of a component this model loads must be bound.
     out->materialization =
         std::move(binder).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
-    artifact::place_expert_groups(out->materialization, reader, offload);
     out->info.name = reader.directory().metadata.value(
         "name", std::string(architecture_name(text.architecture)));
     out->info.provenance_json = reader.directory().provenance.dump();

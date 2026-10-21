@@ -34,15 +34,12 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     explicit LoadPlan(std::unique_ptr<Impl> impl);
-    friend LoadPlan plan_load(const artifact::Reader&, LoadOptions, const MoeOffloadOptions&);
+    friend LoadPlan plan_load(const artifact::Reader&, LoadOptions);
     friend std::unique_ptr<Model> materialize_model(LoadPlan&&, DeviceContext&,
                                                     const StartupObserver*);
 };
 
-// `offload`: the routed experts materialized to Host groups (MoE expert offload,
-// artifact/expert_groups.h).
-[[nodiscard]] LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options = {},
-                                 const MoeOffloadOptions& offload = {});
+[[nodiscard]] LoadPlan plan_load(const artifact::Reader& reader, LoadOptions options = {});
 [[nodiscard]] std::unique_ptr<Model> materialize_model(LoadPlan&& plan, DeviceContext& device,
                                                        const StartupObserver* observer = nullptr);
 [[nodiscard]] std::unique_ptr<Model> load_model(const std::filesystem::path& path,

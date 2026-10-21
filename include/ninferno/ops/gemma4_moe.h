@@ -97,22 +97,4 @@ void gemma4_moe(const Tensor& router_input, const Tensor& expert_input,
                 cudaStream_t stream,
                 Gemma4MoeActivations activations = Gemma4MoeActivations::Recorded);
 
-class HostExperts;
-
-/**
- * gemma4_moe with the routed experts computed on the CPU (MoE expert offload's decode path,
- * src/ops/host_experts/host_experts.h), 1 <= T <= 16.
- *
- * `weights` is the layer as the GPU reads it: the router and the top-8 selection run on the GPU
- * as the decode and small-T routes run them. `host_weights` is the same layer with its gate_up
- * and down planes at host addresses; the CPU evaluates the formula above from them with FP32
- * intermediates and writes out. Close to gemma4_moe, not byte-equal (another summation order);
- * deterministic whatever the CPU's thread count or instruction set. Workspace:
- * gemma4_moe_workspace_bytes suffices.
- */
-void gemma4_moe_host_experts(const Tensor& router_input, const Tensor& expert_input,
-                             const Gemma4MoeWeights& weights, const Gemma4MoeWeights& host_weights,
-                             float eps, Tensor& out, WorkspaceArena& workspace,
-                             cudaStream_t stream, HostExperts& host);
-
 } // namespace ninferno::ops

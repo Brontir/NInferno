@@ -4,7 +4,6 @@
 // execution state lives in Session.
 
 #include "core/device.h"
-#include "core/expert_residency.h"
 #include "core/tensor.h"
 #include "core/weight.h"
 #include "models/dense/config.h"
@@ -61,10 +60,6 @@ struct Weights {
     std::vector<Layer> layers;
     std::vector<Tensor> inv_freq;      // FP32 [rotary_dim/2] per rope group, on the device
     std::vector<Tensor> long_inv_freq; // a LongRoPE group's long mode (else empty), likewise
-    // MoE expert offload: where each MoE call reads its expert bank (null when off), and the
-    // CPU that computes the offloaded layers' experts in decode calls (null: the GPU does).
-    ExpertResidency* experts       = nullptr;
-    ops::HostExperts* host_experts = nullptr;
 };
 
 // Which activation policy the projections run: each Use's recorded one (W4A4 where an NVFP4
@@ -74,23 +69,14 @@ enum class ActivationProfile : std::uint8_t { Artifact, A16 };
 class Model {
 public:
     static std::unique_ptr<Model> load(const std::filesystem::path& path, DeviceContext& device,
-                                       ActivationProfile profile,
-                                       const MoeOffloadOptions& offload = {});
+                                       ActivationProfile profile);
     ~Model();
 
     [[nodiscard]] const Config& config() const noexcept { return config_; }
     [[nodiscard]] const Weights& weights() const noexcept { return weights_; }
     [[nodiscard]] std::uint64_t device_bytes() const noexcept;
     [[nodiscard]] double upload_seconds() const noexcept;
-    // Routed experts left in the device arena (MoE expert offload off, or layers it did not take).
-    [[nodiscard]] std::uint64_t device_expert_bytes() const noexcept;
-    [[nodiscard]] std::uint32_t device_expert_layers() const noexcept;
     [[nodiscard]] std::uint64_t host_to_device_bytes() const noexcept;
-    // MoE expert offload's CPU decode path: whether every offloaded layer's experts are in a
-    // format the CPU computes (else why), and the executor the Engine attaches once the groups
-    // are placed (before anything runs).
-    [[nodiscard]] bool host_experts_readable(std::string* why) const;
-    void attach_host_experts(ops::HostExperts* host) noexcept { weights_.host_experts = host; }
 
 private:
     Model() = default;

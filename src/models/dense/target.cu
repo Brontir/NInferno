@@ -1,7 +1,6 @@
 #include "models/dense/target.h"
 
 #include "core/nvtx.h"
-#include "models/common/expert_offload.h"
 #include "models/common/layer_dump.h"
 #include "ninferno/ops/dense_fused.h"
 #include "ninferno/ops/embedding.h"
@@ -610,24 +609,10 @@ Tensor DensePass::forward(DeviceArena& work_, const Tensor& ids, const Tensor& p
                 auto moe_scope = work_.scope();
                 WorkspaceArena scratch(work_.alloc_bytes(std::max<std::size_t>(
                     ops::moe_workspace_bytes(*layer.moe, c_.moe->op, t, t), 256)));
-                if (host_experts_call(w.host_experts, w.experts, layer.moe->gate_up, t)) {
-                    // A decode call of an offloaded layer: the CPU computes its experts from
-                    // Host memory; the router, selection and combine stay on the GPU.
-                    const auto lease = bind_for_host(w.experts, layer.moe->gate_up, s);
-                    ops::moe_host_experts(mlp_input, bound(*layer.moe, lease), *layer.moe,
-                                          c_.moe->op, ops::MoeEpilogue::Store, branch, scratch, s,
-                                          *w.host_experts);
-                } else {
-                    // Offloaded experts are read where their layer's group is (resident, Host
-                    // or a staging slot); the Lease holds a staging slot until the call is
-                    // enqueued.
-                    const auto lease = bind_experts(w.experts, layer.moe->gate_up, t,
-                                                    c_.moe->op.top_k, c_.moe->experts, s);
-                    added            = fold;
-                    ops::moe(mlp_input, bound(*layer.moe, lease), c_.moe->op,
-                             fold ? ops::MoeEpilogue::AddResidual : ops::MoeEpilogue::Store,
-                             fold ? x : branch, scratch, s);
-                }
+                added = fold;
+                ops::moe(mlp_input, *layer.moe, c_.moe->op,
+                         fold ? ops::MoeEpilogue::AddResidual : ops::MoeEpilogue::Store,
+                         fold ? x : branch, scratch, s);
             } else {
                 added = fold;
                 mlp_released = dense_mlp(work_, layer, mlp_input, fold ? x : branch, t, activations,

@@ -106,30 +106,6 @@ std::string_view purpose_name(EnginePurpose purpose) {
     return "invalid";
 }
 
-std::string_view offload_mode_name(MoeOffloadMode mode) {
-    switch (mode) {
-    case MoeOffloadMode::Off:
-        return "off";
-    case MoeOffloadMode::Automatic:
-        return "auto";
-    case MoeOffloadMode::Layers:
-        return "layers";
-    }
-    return "invalid";
-}
-
-std::string_view offload_compute_name(MoeOffloadCompute compute) {
-    switch (compute) {
-    case MoeOffloadCompute::Automatic:
-        return "auto";
-    case MoeOffloadCompute::Cpu:
-        return "cpu";
-    case MoeOffloadCompute::Gpu:
-        return "gpu";
-    }
-    return "invalid";
-}
-
 std::string_view backend_name(SpeculativeBackend backend) {
     switch (backend) {
     case SpeculativeBackend::None:
@@ -259,7 +235,6 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     features_into(out, "feature.", d.features);
     features_into(out, "build_feature.", build);
     out["host.cpu_cores"]     = number(host.logical_cores);
-    out["host.cpu_isa"]       = host.cpu_isa.empty() ? std::string("unknown") : host.cpu_isa;
     const std::uint64_t gib   = host.ram_bytes >> 30U;
     out["host.ram_gib_class"] = number(gib == 0 ? std::uint64_t{0} : std::bit_floor(gib));
     return out;
@@ -322,10 +297,6 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["rope_yarn_factor"]          = bits(o.rope_yarn_factor);
     out["use_cuda_graph"]            = flag(o.use_cuda_graph);
     out["enable_vision"]             = flag(o.enable_vision);
-    out["moe_offload.mode"]          = std::string(offload_mode_name(o.moe_offload.mode));
-    out["moe_offload.layers"]        = number(o.moe_offload.layers);
-    out["moe_offload.compute"]       = std::string(offload_compute_name(o.moe_offload.compute));
-    out["moe_offload.threads"]       = number(o.moe_offload.threads);
     const ContextCacheOptions& c     = o.context_cache;
     out["context_cache.enabled"]     = flag(c.enabled);
     out["context_cache.device_state_slots"] = optional_number(c.device_state_slots);
@@ -374,13 +345,6 @@ DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memo
     DecisionSection out;
     out["kv_cache"]         = std::string(kv_cache_storage_name(memory.kv_cache));
     out["recurrent_state"]  = std::string(recurrent_state_storage_name(resolved.recurrent_state));
-    out["moe_offload.mode"] = std::string(offload_mode_name(memory.moe_offload_mode));
-    // Under an automatic offload the free memory chose how many layers leave the device, and with
-    // none the experts stay on the GPU: compute and instruction set are then observed.
-    if (memory.moe_offload_mode != MoeOffloadMode::Automatic) {
-        out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
-        out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
-    }
     std::vector<std::string> windows;
     for (const auto& window : memory.speculative_graph_windows) {
         windows.push_back(number(window.draft_tokens));
@@ -401,11 +365,6 @@ DecisionSection observed_of(const MemorySummary& memory) {
     out["cached_device_states"] = number(memory.cached_device_states);
     out["host_state_slots"]     = number(memory.host_state_capacity_slots);
     out["host_kv_bytes"]        = number(static_cast<std::uint64_t>(memory.host_kv_capacity_bytes));
-    out["moe_offload.layers"]   = number(memory.moe_offload_offloaded);
-    if (memory.moe_offload_mode == MoeOffloadMode::Automatic) {
-        out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
-        out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
-    }
     return out;
 }
 

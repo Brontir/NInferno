@@ -31,7 +31,6 @@ src/models/speculation/decoder.cu|5|single-stream decoder (moved from gemma4/spe
 src/models/gemma4/load_target.cpp|1|router_scale D2H at load, after demands.materialize synchronized its transfer stream and before any Engine stream work
 tests/artifact/materialization_cuda_errors.cpp|1|D2H after materialize, which synchronizes its transfer stream
 tests/artifact/test_materialization.cpp|9|D2H after materialize, which synchronizes its transfer stream
-tests/artifact/test_expert_offload.cpp|1|download(): D2H of pinned Host, resident or staged expert bytes after the stream that wrote them is synchronized
 tests/models/qwen3_5/test_dflash_prefill_real.cpp|3|cache and block-table D2H, every prefill synchronizes device.stream first
 tests/models/qwen3_5/test_context_store.cpp|1|block-table D2H, every caller synchronizes device.stream first
 tests/models/qwen3_5/test_loading_real.cpp|1|D2H after materialize_model, which synchronizes its transfer stream

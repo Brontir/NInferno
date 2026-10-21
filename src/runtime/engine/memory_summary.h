@@ -5,7 +5,7 @@
 namespace ninferno::runtime {
 
 // The memory summary of a served instance: the program's own figures plus what startup resolved
-// (KV capacity, Host tier, context, MoE offload, kernel warm-up). The caller holds the lock that
+// (KV capacity, Host tier, context, kernel warm-up). The caller holds the lock that
 // keeps the instance still.
 template <class Instance>
 [[nodiscard]] MemorySummary summarize_memory(const Instance& instance) {
@@ -33,14 +33,6 @@ template <class Instance>
     out.max_context_automatic             = instance.context.automatic;
     out.max_context_native                = instance.context.native;
     out.lower_concurrency_fits            = instance.context.lower_concurrency_fits;
-    const auto& offload                   = instance.moe_offload;
-    out.moe_offload_mode                  = offload.mode;
-    out.moe_offload_layers                = offload.moe_layers;
-    out.moe_offload_offloaded             = offload.offloaded;
-    out.moe_offload_pinned_bytes          = offload.pinned_bytes;
-    out.moe_offload_resident_bytes        = offload.resident_bytes;
-    out.moe_offload_staging_bytes         = offload.staging_bytes;
-    out.moe_offload_target_context        = offload.target_context;
     const auto& warm_up                   = instance.kernel_warm_up;
     out.kernel_warm_up                    = warm_up.ran;
     out.kernel_warm_up_prefill_widths     = warm_up.prefill_widths;
@@ -53,10 +45,6 @@ template <class Instance>
     out.stack_limit_source                = warm_up.stack_limit_source;
     out.host_pin_device_bytes             = warm_up.host_pin_device_bytes;
     out.graph_returned_bytes              = warm_up.graph_returned_bytes;
-    out.moe_offload_compute               = offload.compute;
-    out.moe_offload_cpu_threads           = offload.cpu_threads;
-    out.moe_offload_cpu_isa               = offload.cpu_isa;
-    out.moe_offload_compute_reason        = offload.compute_reason;
     return out;
 }
 

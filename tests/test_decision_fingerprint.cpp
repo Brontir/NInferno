@@ -61,7 +61,7 @@ ninferno::DeviceClass sample_device() {
     return d;
 }
 
-const rt::HostFacts kHost{.logical_cores = 32, .cpu_isa = "avx512", .ram_bytes = 100ULL << 30};
+const rt::HostFacts kHost{.logical_cores = 32, .ram_bytes = 100ULL << 30};
 
 rt::DecisionInputs sample_inputs() {
     rt::DecisionInputs in;
@@ -169,12 +169,6 @@ int options_reach_their_section() {
         {"rope_yarn_factor", [](EngineOptions& o) { o.rope_yarn_factor = 4.0F; }},
         {"use_cuda_graph", [](EngineOptions& o) { o.use_cuda_graph = false; }},
         {"enable_vision", [](EngineOptions& o) { o.enable_vision = true; }},
-        {"moe_offload.mode",
-         [](EngineOptions& o) { o.moe_offload.mode = ninferno::MoeOffloadMode::Automatic; }},
-        {"moe_offload.layers", [](EngineOptions& o) { o.moe_offload.layers = 3; }},
-        {"moe_offload.compute",
-         [](EngineOptions& o) { o.moe_offload.compute = ninferno::MoeOffloadCompute::Cpu; }},
-        {"moe_offload.threads", [](EngineOptions& o) { o.moe_offload.threads = 8; }},
         {"context_cache.enabled", [](EngineOptions& o) { o.context_cache.enabled = false; }},
         {"context_cache.device_state_slots",
          [](EngineOptions& o) { o.context_cache.device_state_slots = 0; }},
@@ -247,11 +241,6 @@ int plan_reaches_its_section() {
     };
     std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> edits{
         {"kv_cache", [](MemorySummary& m) { m.kv_cache = ninferno::KvCacheStorage::Nvfp4Group16; }},
-        {"moe_offload.mode",
-         [](MemorySummary& m) { m.moe_offload_mode = ninferno::MoeOffloadMode::Layers; }},
-        {"moe_offload.compute",
-         [](MemorySummary& m) { m.moe_offload_compute = ninferno::MoeOffloadCompute::Cpu; }},
-        {"moe_offload.cpu_isa", [](MemorySummary& m) { m.moe_offload_cpu_isa = "avx512"; }},
         {"speculative_windows",
          [](MemorySummary& m) { m.speculative_graph_windows = {{.draft_tokens = 3}}; }},
     };
@@ -265,7 +254,6 @@ int plan_reaches_its_section() {
         {"cached_device_states", [](MemorySummary& m) { m.cached_device_states = 3; }},
         {"host_state_slots", [](MemorySummary& m) { m.host_state_capacity_slots = 3; }},
         {"host_kv_bytes", [](MemorySummary& m) { m.host_kv_capacity_bytes = 3; }},
-        {"moe_offload.layers", [](MemorySummary& m) { m.moe_offload_offloaded = 3; }},
     };
     failures += each_field_reaches(
         "observed", MemorySummary{}, [](const MemorySummary& m) { return rt::observed_of(m); },
@@ -276,25 +264,6 @@ int plan_reaches_its_section() {
         failures += check(collect(changed) == collect(MemorySummary{}),
                           std::string("plan: ") + field + " stays out of the plan");
     }
-    // An automatic MoE offload chose its layer count, and so whether the CPU computes any, from
-    // the free memory: compute and instruction set are observed then, planned otherwise.
-    MemorySummary automatic;
-    automatic.moe_offload_mode   = ninferno::MoeOffloadMode::Automatic;
-    MemorySummary on_cpu         = automatic;
-    on_cpu.moe_offload_compute   = ninferno::MoeOffloadCompute::Cpu;
-    on_cpu.moe_offload_cpu_isa   = "avx512";
-    on_cpu.moe_offload_offloaded = 4;
-    failures += check(collect(on_cpu) == collect(automatic),
-                      "plan: an automatic offload's compute stays out of the plan");
-    failures += check(rt::observed_of(on_cpu) != rt::observed_of(automatic) &&
-                          rt::observed_of(on_cpu).at("moe_offload.compute") == "cpu" &&
-                          rt::observed_of(on_cpu).at("moe_offload.cpu_isa") == "avx512",
-                      "observed: an automatic offload's compute and instruction set");
-    MemorySummary layers    = on_cpu;
-    layers.moe_offload_mode = ninferno::MoeOffloadMode::Layers;
-    failures += check(!rt::observed_of(layers).contains("moe_offload.compute") &&
-                          collect(layers).at("moe_offload.compute") == "cpu",
-                      "plan: an explicit layer count's compute is planned");
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
     failures +=
@@ -346,9 +315,6 @@ int facts_reach_their_section() {
     rt::HostFacts host = kHost;
     host.logical_cores = 16;
     failures += check(with_host(host) != collect(sample_device()), "facts: host.cpu_cores");
-    host         = kHost;
-    host.cpu_isa = "avx2";
-    failures += check(with_host(host) != collect(sample_device()), "facts: host.cpu_isa");
     host           = kHost;
     host.ram_bytes = (100ULL << 30) - (300ULL << 20); // a few hundred MiB the kernel keeps
     failures += check(with_host(host) == collect(sample_device()) &&

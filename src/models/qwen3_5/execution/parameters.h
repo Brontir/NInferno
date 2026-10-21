@@ -52,14 +52,6 @@ struct GdnParameters {
     LinearParameters output;
 };
 
-// Where a sparse MoE call reads its routed experts under MoE expert offload
-// (models/common/expert_offload.h): null residency when off.
-struct ExpertPlacement {
-    ExpertResidency* residency = nullptr;
-    std::int64_t experts       = 0;
-    std::int64_t top_k         = 0;
-};
-
 struct BlockParameters {
     Tensor input_norm, post_attention_norm;
     std::variant<AttentionParameters, GdnParameters> mixer;
@@ -169,7 +161,6 @@ public:
     Parameters& operator=(Parameters&&)      = delete;
 
     const Model& model;
-    ExpertPlacement experts;
     TextParameters text;
     std::optional<MtpParameters> mtp;
     std::optional<VisionParameters> vision;

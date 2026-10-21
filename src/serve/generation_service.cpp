@@ -349,7 +349,6 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.rope_yarn_factor         = options_.rope_yarn_factor;
     engine_options.enable_vision            = options_.enable_vision;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
-    engine_options.moe_offload              = options_.moe_offload;
     engine_options.speculative              = options_.speculative;
     // An explicit --spec without --drafter drafts with the drafter that came with the model.
     if (engine_options.speculative.drafter.empty()) {

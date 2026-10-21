@@ -210,14 +210,11 @@ public:
 
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
     [[nodiscard]] std::vector<std::string> tune_routes(cudaStream_t stream) const override {
-        return qwen3_5::detail::tune_moe_layers(
-            stream,
-            [&](const auto& tune) {
-                for (const auto& layer : model_.weights().layers) {
-                    if (layer.generic_moe) { tune(*layer.generic_moe, layer.generic_moe_config); }
-                }
-            },
-            model_.weights().experts);
+        return qwen3_5::detail::tune_moe_layers(stream, [&](const auto& tune) {
+            for (const auto& layer : model_.weights().layers) {
+                if (layer.generic_moe) { tune(*layer.generic_moe, layer.generic_moe_config); }
+            }
+        });
     }
 
     [[nodiscard]] models::LoadOptions load_options() const override {

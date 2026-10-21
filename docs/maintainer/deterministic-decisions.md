@@ -10,8 +10,8 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the dense tuner's user cache, local spec-tune, environment knobs, `calibrate_floor` and budgets in
   milliseconds still steer choices;
 - MMQ prefill bytes depend on where a chunk is cut;
-- free memory sets the context, KV, offload and drafter room directly; the plan levels below do
-  not exist yet;
+- free memory sets the context, KV and drafter room directly; the plan levels below do not exist
+  yet;
 - the cost model reads driver clocks: they are 0 on MIG/WSL, overclocks leak into it, and without
   NVML the chip is guessed from its SM count;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
@@ -26,16 +26,14 @@ This page states the rule and its target. The engine does not meet all of it yet
   `spec_fit_fallback=<steps>`;
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
   `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the host's
-  logical CPU count, CPU instruction set and RAM class, the build (the git commit is read at every
+  logical CPU count and RAM class, the build (the git commit is read at every
   build, not at configure), the requested options, the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, a separate drafter by
   its artifact id, the decision environment variables that are set, the plan startup resolved
-  without the free memory (KV and state storage, MoE offload mode, and its compute unless the
-  offload is automatic, speculative windows, route breakpoints) and the violations of this page
-  present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
+  without the free memory (KV and state storage, speculative windows, route breakpoints) and the
+  violations of this page present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
-  startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier,
-  offloaded MoE layers, and under an automatic offload its compute and CPU instruction set) is
+  startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier) is
   observed and enters only the manifest, so `nf1` is the same across identical starts on one
   machine while `nm1` v1 still varies with the free memory until the plan levels exist. An input
   that cannot be read makes the fingerprint `unreadable` without stopping the start. It does not

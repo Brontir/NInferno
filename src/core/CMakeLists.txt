@@ -10,7 +10,6 @@ add_library(ninferno_core STATIC
   cyclic_kv_cache.cpp
   host_kv_arena.cpp
   host_memory.cpp
-  expert_residency.cpp
   paged_kv_cache.cpp
   linear_attention_state.cpp
   layout.cpp

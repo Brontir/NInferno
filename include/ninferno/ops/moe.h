@@ -181,24 +181,6 @@ void moe(const Tensor& x, const MoeWeights& weights, const MoeConfig& config, Mo
          Tensor& out, WorkspaceArena& workspace, cudaStream_t stream,
          const Tensor* router_input = nullptr);
 
-class HostExperts;
-
-/**
- * Op: moe with the routed experts computed on the CPU (MoE expert offload's decode path,
- * src/ops/host_experts/host_experts.h).
- *
- * `weights` is the layer as the GPU reads it: its router, selection and shared expert run as in
- * moe(), and so does the combine. `host_weights` is the same layer with its routed gate_up/down
- * planes and biases at host addresses (MXFP4 or NVFP4); the CPU computes y for every selected
- * (token, expert) from them, in the stream's order. 1 <= T <= 16. The selection is moe()'s; the
- * expert outputs follow the same formula and BF16 roundings but not moe()'s summation order, so
- * the result is close to moe(), not byte-equal. Deterministic: its bytes depend neither on the
- * CPU's thread count nor on its instruction set. Workspace: moe_workspace_bytes suffices.
- */
-void moe_host_experts(const Tensor& x, const MoeWeights& weights, const MoeWeights& host_weights,
-                      const MoeConfig& config, MoeEpilogue epilogue, Tensor& out,
-                      WorkspaceArena& workspace, cudaStream_t stream, HostExperts& host);
-
 /// What tune_moe did for one layer (summary: one line for the startup log).
 struct MoeTuneReport {
     bool ran      = false; ///< plans are in place for the layer (timed now or read from the cache)

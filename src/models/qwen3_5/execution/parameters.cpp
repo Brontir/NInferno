@@ -309,11 +309,6 @@ private:
 } // namespace
 
 Parameters::Parameters(const Model& source) : model(source) {
-    if (const auto* moe = std::get_if<MoeConfig>(&model.config().text.ffn)) {
-        experts = {.residency = model.expert_residency(),
-                   .experts   = moe->num_experts,
-                   .top_k     = moe->num_experts_per_tok};
-    }
     const Prepare prepare(model);
     const auto& w        = model.weights();
     text.token_embedding = native_weight(model.weight(w.text.token_embedding).view);

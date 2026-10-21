@@ -16,16 +16,14 @@
 //            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
 //   env      every decision environment variable that is set (set to "" counts), by a hash of
 //            its value;
-//   plan     what startup resolved without reading the free memory: KV and state storage, MoE
-//            offload mode (and its compute unless the offload is automatic), speculative graph
-//            windows, route breakpoints and table;
+//   plan     what startup resolved without reading the free memory: KV and state storage,
+//            speculative graph windows, route breakpoints and table;
 //   taint    the pillar violations present (an environment knob, the user's tune cache, floor
 //            calibration, clocks of 0, borrowed or foreign route data, a local spec-tune, a
 //            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
 //   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
-//            cached states, Host tier, offloaded MoE layers, and under an automatic offload its
-//            compute and CPU instruction set). Until the plan levels of
+//            cached states, Host tier). Until the plan levels of
 //            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
 //            two identical starts, so they enter the manifest only.
 //
@@ -80,16 +78,15 @@ struct DecisionFingerprint {
 [[nodiscard]] std::string canonical_text(const DecisionInputs& inputs);
 [[nodiscard]] DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs);
 
-// The host's facts as the Engine reads them: logical CPU count, the widest CPU instruction set the
-// host-expert kernels run (ops/host_experts), and the RAM the process may use (0: unknown).
+// The host's facts as the Engine reads them: logical CPU count and the RAM the process may use
+// (0: unknown).
 struct HostFacts {
-    unsigned logical_cores = 0;
-    std::string cpu_isa;
+    unsigned logical_cores  = 0;
     std::uint64_t ram_bytes = 0;
 };
 
 // The device's facts (no name, no ordinal), `build` (build_features()), the driver version
-// (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores", "host.cpu_isa" and
+// (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores" and
 // "host.ram_gib_class", the largest power of two of GiB at or below the RAM (0 below 1 GiB or
 // unknown), so that a few MiB the kernel keeps do not move it.
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
@@ -111,15 +108,12 @@ struct HostFacts {
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and
 // `route_table` the effective route table's content (its hash and its lenders'; empty: none).
-// The MoE offload's compute and CPU instruction set enter only when the offload is not automatic:
-// an automatic one chose its layer count from the free memory, and so whether the CPU runs any.
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
                                       std::string_view route_table);
 
 // What startup sized from the free memory (the observed section): max_context, prefill_chunk,
-// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes, moe_offload.layers, and under
-// an automatic offload moe_offload.compute and moe_offload.cpu_isa.
+// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes.
 [[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
 // The environment variables that steer a decision (a tuner, a route table, a decode schedule,

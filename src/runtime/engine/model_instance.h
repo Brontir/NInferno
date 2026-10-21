@@ -4,7 +4,6 @@
 #include "models/qwen3_5/program/runtime_types.h"
 #include "models/qwen3_5/program/model_family.h"
 #include "runtime/engine/context_cache/context_cost.h"
-#include "core/expert_residency.h"
 #include "runtime/engine/kv_capacity.h"
 #include "ninferno/types.h"
 
@@ -14,10 +13,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace ninferno::ops {
-class HostExperts;
-} // namespace ninferno::ops
 
 namespace ninferno::runtime {
 
@@ -45,21 +40,6 @@ struct FamilyLoad {
     // (an automatic one depends on the plan over the loaded model).
     std::function<models::qwen3_5::Frontend(std::uint32_t max_context)> make_frontend;
     LoadSummary summary;
-    // The loaded model's routed experts in Host groups (MoE expert offload), which the Engine
-    // places before planning; null when the model has none offloaded.
-    ExpertResidency* expert_residency = nullptr;
-    // Routed experts the load left in the device arena, for the refusal of a plan that does not
-    // fit (MoE expert offload could take them).
-    std::uint64_t device_expert_bytes  = 0;
-    std::uint32_t device_expert_layers = 0;
-    // MoE expert offload's CPU decode path (src/ops/host_experts), when the family has one:
-    // whether every offloaded layer's experts are in a format the CPU computes (else why; asked
-    // after the groups are placed), the widest hidden size and top-k of its MoE layers (the
-    // staging sizes), and the hand-over of the executor to the model before anything runs.
-    std::function<bool(std::string* why)> host_experts_readable;
-    std::int32_t host_experts_hidden = 0;
-    std::int32_t host_experts_top_k  = 0;
-    std::function<void(ops::HostExperts*)> attach_host_experts;
 };
 
 // Loads and materializes one artifact of a family (the phases ArtifactInspect through
@@ -73,23 +53,6 @@ struct HostTierResolution {
     std::uint32_t default_slots    = 0;
     std::size_t default_kv_bytes   = 0;
     std::size_t budget_bytes       = 0;
-};
-
-// MoE expert offload as construction resolved it (EngineOptions::moe_offload).
-struct MoeOffloadResolution {
-    MoeOffloadMode mode          = MoeOffloadMode::Off;
-    std::uint32_t moe_layers     = 0; // layers whose experts the load placed in Host groups
-    std::uint32_t offloaded      = 0; // of those, read from pinned Host memory
-    std::uint64_t pinned_bytes   = 0;
-    std::uint64_t resident_bytes = 0; // the rest, copied to Device memory
-    std::uint64_t staging_bytes  = 0; // the two Device staging slots
-    std::uint32_t target_context = 0; // Automatic: the context the choice fits
-    // Where decode calls compute the offloaded experts; the CPU's threads and instruction set;
-    // why, when MoeOffloadCompute::Automatic chose.
-    MoeOffloadCompute compute    = MoeOffloadCompute::Gpu;
-    std::uint32_t cpu_threads    = 0;
-    std::string cpu_isa;
-    std::string compute_reason;
 };
 
 // max_context as construction resolved it (EngineOptions::max_context_automatic).
@@ -135,14 +98,10 @@ struct ModelInstance {
     using ModelContract = models::qwen3_5::RuntimeTypes;
 
     std::unique_ptr<LoadedModel> model;
-    // The CPU executor of the offloaded experts (null when the GPU computes them). Declared before
-    // the execution and the Program, so it outlives every graph whose host nodes call it.
-    std::unique_ptr<ops::HostExperts> host_experts;
     const std::unique_ptr<const models::qwen3_5::detail::ModelExecution> execution;
     models::qwen3_5::Frontend frontend;
     KvCapacityResolution kv_capacity_resolution;
     HostTierResolution host_tier;
-    MoeOffloadResolution moe_offload;
     ContextResolution context;
     KernelWarmUpResolution kernel_warm_up;
     const std::uint32_t capacity; // the longest admitted prompt: the resolved max_context

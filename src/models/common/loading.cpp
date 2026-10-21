@@ -1,6 +1,5 @@
 #include "models/common/loading.h"
 
-#include "artifact/expert_groups.h"
 #include "artifact/views.h"
 #include "core/weight.h"
 
@@ -49,11 +48,9 @@ artifact::HostValues Demands::values(Id id, QType format) {
     return binder_.values(items_.at(id).reference.binding, format);
 }
 
-std::unique_ptr<ArtifactBacking> Demands::materialize(DeviceContext& device,
-                                                      const MoeOffloadOptions& offload) {
+std::unique_ptr<ArtifactBacking> Demands::materialize(DeviceContext& device) {
     // Every binding of a component this model loads must be bound.
     auto plan = std::move(binder_).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
-    artifact::place_expert_groups(plan, reader_, offload);
     auto backing          = std::make_unique<ArtifactBacking>();
     backing->materialized = artifact::materialize(reader_, std::move(plan), device);
     for (const auto& item : items_) {

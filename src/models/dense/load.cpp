@@ -1,4 +1,3 @@
-#include "models/common/expert_offload.h"
 #include "models/common/loading.h"
 #include "models/dense/model.h"
 
@@ -20,42 +19,6 @@ Model::~Model() = default;
 
 std::uint64_t Model::device_bytes() const noexcept {
     return backing_ ? backing_->materialized.stats().device_capacity_bytes : 0;
-}
-
-std::uint64_t Model::device_expert_bytes() const noexcept {
-    return backing_ ? backing_->materialized.stats().expert_device_bytes : 0;
-}
-
-std::uint32_t Model::device_expert_layers() const noexcept {
-    return backing_ ? static_cast<std::uint32_t>(backing_->materialized.stats().expert_device_layers)
-                    : 0;
-}
-
-bool Model::host_experts_readable(std::string* why) const {
-    for (std::size_t i = 0; i < weights_.layers.size(); ++i) {
-        const auto& moe = weights_.layers[i].moe;
-        if (!moe || weights_.experts == nullptr || !weights_.experts->in_host(moe->gate_up.payload)) {
-            continue;
-        }
-        if (!models::host_experts_readable(moe->gate_up, moe->down, why)) {
-            if (why) { *why = "layer " + std::to_string(i) + ": " + *why; }
-            return false;
-        }
-        for (const Tensor* bias : {&moe->gate_up_bias, &moe->down_bias}) {
-            if (bias->data != nullptr && !weights_.experts->in_host(bias->data)) {
-                if (why) {
-                    *why = "layer " + std::to_string(i) + ": an expert bias is not in the "
-                           "offloaded Host group";
-                }
-                return false;
-            }
-        }
-        if (!weights_.experts->in_host(moe->down.payload)) {
-            if (why) { *why = "layer " + std::to_string(i) + ": down is not in the Host group"; }
-            return false;
-        }
-    }
-    return true;
 }
 
 double Model::upload_seconds() const noexcept {
@@ -88,7 +51,7 @@ struct LayerIds {
 } // namespace
 
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device,
-                                   ActivationProfile profile, const MoeOffloadOptions& offload) {
+                                   ActivationProfile profile) {
     artifact::Reader reader(path);
     auto model     = std::unique_ptr<Model>(new Model());
     model->config_ = parse_config(loading::open_text_component(reader, "dense decoder"));
@@ -183,14 +146,13 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
     }
 
-    model->backing_ = demands.materialize(device, offload);
+    model->backing_ = demands.materialize(device);
     auto& backing   = *model->backing_;
     const loading::Prepare prepare(demands, backing, profile == ActivationProfile::Artifact);
     auto& w           = model->weights_;
     w.token_embedding = native_weight(prepare.view(embedding));
     w.output_head     = prepare.projection(head);
     w.final_norm      = prepare.tensor(final_norm);
-    w.experts         = backing.materialized.expert_residency();
     const auto frequencies = [&](const std::vector<float>& values) {
         if (values.empty()) { return Tensor{}; }
         auto& buffer = backing.derived.emplace_back(values.size() * sizeof(float));

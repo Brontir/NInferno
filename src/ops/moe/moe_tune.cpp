@@ -195,7 +195,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
         return a.type == cudaMemoryTypeDevice || a.type == cudaMemoryTypeManaged;
     };
     if (!on_device(weights.gate_up.qdata) || !on_device(weights.down.qdata)) {
-        report.summary = "moe tune: routed experts not in device memory (offload): default plans";
+        report.summary = "moe tune: routed experts not in device memory: default plans";
         return report;
     }
     (void)select_plan(weights, config, 1, false); // validates the layer (throws as moe() would)
