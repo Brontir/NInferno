@@ -351,6 +351,8 @@ void Program::finalize_context_transaction() noexcept { impl_->finalize_context_
 
 bool Program::has_context_transaction() const noexcept { return impl_->has_context_transaction(); }
 
+DecodePacingFacts Program::decode_pacing() const noexcept { return impl_->decode_pacing; }
+
 bool Program::has_unsettled_state_fork() const noexcept {
     return impl_->has_unsettled_state_fork();
 }

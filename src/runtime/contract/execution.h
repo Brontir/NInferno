@@ -1,6 +1,7 @@
 #pragma once
 
 #include "runtime/contract/request.h"
+#include "runtime/contract/resources.h"
 #include "runtime/contract/timing.h"
 #include <compare>
 #include <span>
@@ -67,6 +68,7 @@ struct PrefillStepResult {
     BeginSummary summary;
     GeneratedRound round;
     std::uint32_t processed_prompt_tokens = 0;
+    PrefillWork work; // the unit's own prefill work (calls, tokens, attention pairs, images)
     bool complete                         = false;
     ExecutionTiming timing;
 };

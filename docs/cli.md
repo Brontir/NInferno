@@ -371,11 +371,12 @@ the next loses the whole stall every time.
 
 Engines with CUDA Graphs pace their decode rounds (rows without constrained decoding):
 
-- **Run-ahead.** A round runs one step unless `NINFERNO_DECODE_STEPS=N` asks for N (up to 32),
-  feeding each step's sampled tokens to the next on the GPU, so the GPU keeps working while the
-  host is stopped. On a host whose CPU quota stalls it, set N so that a round lasts longer than a
-  quota period (about 250 ms of steps). The count is never chosen from timings: it decides which
-  requests share each step's batch, so it is the same on every machine.
+- **Run-ahead.** A round runs one step, or 16 when the process runs under a CPU bandwidth quota
+  (cgroup `cpu.max`, or `cpu.cfs_quota_us` under cgroup v1, read once at startup; none on
+  Windows), feeding each step's sampled tokens to the next on the GPU, so the GPU keeps working
+  while the host is stopped. `NINFERNO_DECODE_STEPS=N` replaces that default. The count is never
+  chosen from timings: it decides which requests share each step's batch. The startup log reports
+  it (`decode | N step(s) per round | CPU quota ...`).
   - Tokens reach the stream in groups of that size. A request that stops mid-round has its
     remaining steps discarded.
   - Applies to Gemma 4 and dense-decoder models. Models with recurrent state (Qwen 3.5/3.6,
@@ -402,7 +403,7 @@ per round admits and retires requests between steps.
 
 | Variable | Values | Default | Meaning |
 |---|---|---|---|
-| `NINFERNO_DECODE_STEPS` | integer `1..32` | `1` | `N` runs N steps in every round that can. An engine that cannot run ahead says so once at startup and runs one step per round. |
+| `NINFERNO_DECODE_STEPS` | integer `1..32` | 16 under a CPU quota, else 1 | `N` runs N steps in every round that can. An engine that cannot run ahead says so once at startup and runs one step per round. `auto` warns and keeps the default. |
 | `NINFERNO_DECODE_WAIT` | `auto`, `spin`, `block` | `auto` | `auto` chooses as above while rounds lag. `spin` never blocks (the CUDA synchronization schedule alone). `block` blocks in every round. |
 
 Other values of either variable fail startup. `ninferno spec-tune` waits as a quiet host does

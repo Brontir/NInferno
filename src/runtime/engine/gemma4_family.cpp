@@ -66,6 +66,10 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
     const std::int32_t vocabulary = attach_hf_text_frontend(
         out, loaded->text, options, static_cast<std::size_t>(config.vocab_size), "Gemma 4",
         model.vision_config().has_value());
+    if (model.config().experts > 0) {
+        out.routed_experts    = static_cast<std::uint32_t>(model.config().experts);
+        out.experts_per_token = static_cast<std::uint32_t>(model.config().experts_per_token);
+    }
     out.execution = models::gemma4::make_program_execution(model, loaded->drafter.get(), device,
                                                            vocabulary, options.activations);
     frontend.complete();

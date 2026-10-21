@@ -263,10 +263,27 @@ int main() {
         failures += check(!off.block(at(0.1)), "NINFERNO_DECODE_WAIT=spin blocks");
         failures += check(refused("", nullptr) && refused("0", nullptr) && refused("33", nullptr) &&
                               refused("4x", nullptr) && refused("-1", nullptr) &&
-                              refused("spin", nullptr) && refused("auto", nullptr) &&
-                              refused(nullptr, "") && refused(nullptr, "sleep") &&
-                              refused(nullptr, "blocking"),
+                              refused("spin", nullptr) && refused(nullptr, "") &&
+                              refused(nullptr, "sleep") && refused(nullptr, "blocking"),
                           "an invalid setting was accepted");
+    }
+
+    {
+        // The CPU quota fact sets the default: kQuotaSteps where the engine can run ahead, else
+        // one step; NINFERNO_DECODE_STEPS=N replaces it, and "auto" warns and keeps it.
+        failures += check(RoundPacing(nullptr, nullptr, 32, 32, true).steps() == 16 &&
+                              RoundPacing(nullptr, nullptr, 32, 4, true).steps() == 4 &&
+                              RoundPacing(nullptr, nullptr, 32, 1, true).steps() == 1 &&
+                              RoundPacing(nullptr, nullptr, 32, 32, false).steps() == 1 &&
+                              RoundPacing("8", nullptr, 32, 32, true).steps() == 8 &&
+                              RoundPacing("1", nullptr, 32, 32, true).steps() == 1,
+                          "the CPU quota default is not the declared step count");
+        const RoundPacing automatic("auto", nullptr, 32, 32, true);
+        const RoundPacing quiet("auto", nullptr, 32, 32, false);
+        failures +=
+            check(automatic.auto_ignored() && automatic.steps() == 16 && !automatic.fixed_steps() &&
+                      quiet.steps() == 1 && !RoundPacing(nullptr, nullptr, 32, 32).auto_ignored(),
+                  "NINFERNO_DECODE_STEPS=auto did not fall back to the default");
     }
 
     std::cout << (failures ? "FAIL" : "OK") << " round_pacing\n";

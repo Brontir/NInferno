@@ -6,14 +6,17 @@
 // The step count is a fixed declared rule, never a timing: it decides which requests share each
 // step's batch (one step per round admits and retires requests between steps, a run-ahead round
 // keeps its batch for all its steps), so it must be the same on every machine for the same
-// requests (docs/maintainer/deterministic-decisions.md). A round runs one step unless
-// NINFERNO_DECODE_STEPS asks for N, and then min(N, allowed_steps): allowed_steps is 1 where rows
-// past a stop could not stay invisible (recurrent state, a full sliding ring, a speculative
-// engine) and the model's uncommitted-row headroom otherwise. One step publishes each token as
-// soon as it exists and runs nothing past a stop. A host whose CPU quota stalls it (a container's
-// CFS bandwidth limit stops every thread of the cgroup for the rest of its 100 ms period) asks for
-// run-ahead explicitly: the later steps feed on the sampled tokens on the device, so the GPU keeps
-// running while the host is stopped.
+// requests (docs/maintainer/deterministic-decisions.md). It reads one machine fact, read once at
+// startup: whether the process runs under a CPU bandwidth quota (host_cpu_quota.h). A container's
+// CFS limit stops every thread of the cgroup for the rest of its 100 ms period once the quota is
+// used; a decode that waits for each step then leaves the GPU idle for the stall (30-40 % of the
+// time on throttled lab containers). Under a quota a round runs kQuotaSteps steps where the engine
+// can run ahead, the later steps feeding on the sampled tokens on the device so the GPU keeps
+// running while the host is stopped; without one it runs one step, which publishes each token as
+// soon as it exists and runs nothing past a stop. NINFERNO_DECODE_STEPS=N replaces that default.
+// A round runs at most allowed_steps: 1 where rows past a stop could not stay invisible (recurrent
+// state, a full sliding ring, a speculative engine), the model's uncommitted-row headroom
+// otherwise.
 //
 // The wait is the only timing-driven choice, and it cannot change a round's output bytes or the
 // next round's batch: the round is fully submitted before the host waits, and the wait only moves
@@ -86,15 +89,30 @@ public:
         Block, // block on every round's end
     };
 
-    // `steps_setting` is NINFERNO_DECODE_STEPS: null runs one step per round; an integer N in
-    // [1, maximum_steps] runs N steps in every round that can.
+    // Steps per round under a CPU quota: a 16-step round of a 5-30 ms step lasts 80-480 ms, about
+    // one CFS period (100 ms) or more, so a stopped host finds the GPU still busy.
+    static constexpr std::uint32_t kQuotaSteps = 16;
+
+    // The default steps per round from the facts alone: kQuotaSteps under a CPU quota, else 1,
+    // within the allowed steps.
+    [[nodiscard]] static constexpr std::uint32_t
+    default_steps(bool cpu_quota, std::uint32_t allowed_steps) noexcept {
+        return cpu_quota ? std::clamp(kQuotaSteps, 1U, std::max(allowed_steps, 1U)) : 1U;
+    }
+
+    // `steps_setting` is NINFERNO_DECODE_STEPS: null (or "auto", which warns: auto_ignored())
+    // runs default_steps(); an integer N in [1, maximum_steps] runs N steps in every round that
+    // can. `cpu_quota`: the process runs under a CPU bandwidth quota.
     // `wait_setting` is NINFERNO_DECODE_WAIT: null or "auto", "spin" or "block". A round runs at
     // most `allowed_steps` steps (1 where rows past a stop could not stay invisible).
-    RoundPacing(const char* steps_setting, const char* wait_setting,
-                        std::uint32_t maximum_steps, std::uint32_t allowed_steps)
-        : allowed_steps_(std::clamp(allowed_steps, 1U, std::max(maximum_steps, 1U))) {
+    RoundPacing(const char* steps_setting, const char* wait_setting, std::uint32_t maximum_steps,
+                std::uint32_t allowed_steps, bool cpu_quota = false)
+        : allowed_steps_(std::clamp(allowed_steps, 1U, std::max(maximum_steps, 1U))),
+          default_steps_(default_steps(cpu_quota, allowed_steps_)) {
         if (maximum_steps == 0) { throw std::invalid_argument("a decode round runs a step"); }
-        if (steps_setting != nullptr) {
+        if (steps_setting != nullptr && std::string_view(steps_setting) == "auto") {
+            auto_ignored_ = true;
+        } else if (steps_setting != nullptr) {
             const auto value = parse_exact<std::uint32_t>(steps_setting);
             if (!value || *value == 0 || *value > maximum_steps) {
                 throw std::invalid_argument("NINFERNO_DECODE_STEPS must be an integer in [1, " +
@@ -117,10 +135,13 @@ public:
     // NINFERNO_DECODE_STEPS as an integer, if it gave one.
     [[nodiscard]] std::optional<std::uint32_t> fixed_steps() const noexcept { return fixed_steps_; }
 
+    // NINFERNO_DECODE_STEPS=auto was given: the former adaptive mode, now the default.
+    [[nodiscard]] bool auto_ignored() const noexcept { return auto_ignored_; }
+
     // The steps every round asks for, a function of the setting and the allowed steps alone;
     // launch_ordinary may run fewer (a row's remaining limit).
     [[nodiscard]] std::uint32_t steps() const noexcept {
-        return fixed_steps_ ? std::min(*fixed_steps_, allowed_steps_) : 1U;
+        return fixed_steps_ ? std::min(*fixed_steps_, allowed_steps_) : default_steps_;
     }
 
     [[nodiscard]] bool stalling(Clock::time_point now) const noexcept {
@@ -244,7 +265,9 @@ private:
     }
 
     std::uint32_t allowed_steps_ = 1;
+    std::uint32_t default_steps_ = 1;
     std::optional<std::uint32_t> fixed_steps_;
+    bool auto_ignored_ = false;
     Wait wait_ = Wait::Auto;
     std::optional<Clock::time_point> last_lag_;
     std::optional<Clock::time_point> hold_until_;

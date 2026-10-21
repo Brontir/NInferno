@@ -1671,6 +1671,11 @@ struct LoadSummary {
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.
     std::string drafter;
+    // Steps an ordinary decode round runs, and the machine fact that default follows: the
+    // process's CPU bandwidth quota (0: none). Both enter the decision fingerprint.
+    std::uint32_t decode_steps_per_round = 1;
+    std::uint64_t cpu_quota_us           = 0;
+    std::uint64_t cpu_quota_period_us    = 0;
     double load_seconds                = 0.0;
     double upload_seconds              = 0.0;
     std::uint64_t artifact_bytes_read  = 0;

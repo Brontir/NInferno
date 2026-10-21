@@ -240,7 +240,8 @@ public:
     }
 
     // decode_owed: under --concurrent-prefill the decoding requests are still owed decode for the
-    // last prefill chunk (fair_decode_credit), so decode goes on before the next chunk.
+    // last prefill unit (fair_decode_credit, interleave_cost.h), so decode goes on before the next
+    // chunk.
     [[nodiscard]] ExecutionAction choose_execution(bool have_decode, bool prefill_runnable,
                                                    bool previous_unit_was_decode,
                                                    bool decode_owed = false) const noexcept {
@@ -257,35 +258,6 @@ public:
     void allow_concurrent_prefill(bool allow) noexcept { concurrent_prefill_ = allow; }
     [[nodiscard]] bool concurrent_prefill() const noexcept { return concurrent_prefill_; }
 
-    // Every active request gets an equal share of the GPU, counted in prompt tokens rather than
-    // measured, so the interleaving of prefill chunks and decode rounds (which decides each
-    // round's batch) is the same on every machine for the same requests. A prefill chunk of
-    // `prefill_tokens` serving one of `prefilling` requests owes the `decoding` ones
-    // prefill_tokens * decoding / prefilling prompt tokens' worth of decode, and a decode round of
-    // `lanes` lanes pays decode_round_prefill_tokens(lanes) of it. One decode round per chunk (the
-    // plain alternation) gave a decoding request a few tokens a second beside a long prompt's
-    // 2048-token chunks.
-    //
-    // A decode round reads the weights once (memory-bound) while a prompt token costs its share of
-    // the matrix FLOPs (compute-bound): with 4-bit weights and the FLOP-to-byte ratios of the
-    // supported cards (about 100-200 from V100 to RTX 5090) a one-lane round costs about as much
-    // as 32 prompt tokens, and each further lane adds about a quarter of that (the round's
-    // per-lane attention and sampling). Both are estimates to refit on lab cards; a wrong ratio
-    // only moves the split of GPU time between prefill and decode, never a request's output at
-    // concurrency 1.
-    static constexpr std::uint64_t kDecodeRoundPrefillTokens = 32;
-    static constexpr std::uint64_t kDecodeLanePrefillTokens  = 8;
-
-    [[nodiscard]] static constexpr std::uint64_t
-    fair_decode_credit(std::uint64_t prefill_tokens, std::uint32_t decoding,
-                       std::uint32_t prefilling) noexcept {
-        return prefilling == 0 ? 0 : prefill_tokens * decoding / prefilling;
-    }
-
-    [[nodiscard]] static constexpr std::uint64_t
-    decode_round_prefill_tokens(std::uint32_t lanes) noexcept {
-        return kDecodeRoundPrefillTokens + kDecodeLanePrefillTokens * (lanes > 0 ? lanes - 1U : 0U);
-    }
 
     [[nodiscard]] bool owns_prefill_lane(std::uint32_t lane) const noexcept {
         return lane < kMaximumConcurrency && ((prefill_lanes_ >> lane) & 1U) != 0;

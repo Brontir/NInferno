@@ -13,6 +13,7 @@
 #include "runtime/engine/request_record.h"
 #include "structured/output_constraint.h"
 #include "runtime/engine/context_cache/resource_manager.h"
+#include "runtime/engine/interleave_cost.h"
 #include "runtime/engine/scheduler.h"
 #include "runtime/engine/generation_budget.h"
 #include "runtime/engine/memory_summary.h"
@@ -1469,8 +1470,8 @@ private:
         progress.pending.reset();
     }
 
-    // Returns the prompt tokens the step processed.
-    std::uint32_t
+    // Returns the prefill work the step ran.
+    PrefillWork
     run_prefill_step(const std::array<bool, kMaximumConcurrency>& cancelled_at_unit_start) {
         nvtx::ScopedRange prefill_range(nvtx::Name::Prefill, nvtx::Category::Prefill);
         EnginePhaseScope setup(*this, EngineHostPhase::CommitOutput);
@@ -1503,7 +1504,7 @@ private:
         program_call.finish(progress.timing);
         vision_handoff_lane_ =
             progress.holds_vision_handoff ? std::optional<std::uint32_t>(lane) : std::nullopt;
-        const std::uint32_t processed = progress.processed_prompt_tokens;
+        const PrefillWork processed = progress.work;
         resolve_prefill_progress(request, std::move(progress), cancelled_at_unit_start);
         // Each chunk boundary admits the next waiting request under --concurrent-prefill.
         if (scheduler_.concurrent_prefill() && scheduler_.owns_prefill_lane(lane)) {
@@ -2401,7 +2402,7 @@ private:
     void worker_loop() noexcept {
         std::optional<std::chrono::steady_clock::time_point> last_transient_error;
         bool previous_unit_was_decode = false;
-        std::uint64_t decode_credit   = 0; // prompt tokens' worth of decode owed (scheduler.h)
+        std::uint64_t decode_credit   = 0; // predicted ns of decode owed (scheduler.h)
         for (;;) {
             {
                 std::unique_lock lock(queue_mutex_);
@@ -2487,14 +2488,14 @@ private:
                 if (action == ExecutionAction::Prefill) {
                     set_host_work_class(HostWorkClass::Prefill);
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
-                    const std::uint32_t processed = run_prefill_step(cancelled_at_unit_start);
+                    const PrefillWork processed = run_prefill_step(cancelled_at_unit_start);
                     if (scheduler_.concurrent_prefill()) {
                         std::uint32_t prefilling = 0;
                         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
                             prefilling += scheduler_.owns_prefill_lane(lane) ? 1U : 0U;
                         }
-                        decode_credit = scheduler_.fair_decode_credit(
-                            processed,
+                        decode_credit = fair_decode_credit(
+                            prefill_unit_ns(resources_.cost_model(), processed),
                             static_cast<std::uint32_t>(
                                 scheduler_.build_round_membership(slots_, max_concurrency_)
                                     .lane_span()
@@ -2507,11 +2508,24 @@ private:
                 if (action == ExecutionAction::Decode) {
                     set_host_work_class(HostWorkClass::Decode, membership.lane_span());
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
-                    const auto round_lanes =
-                        static_cast<std::uint32_t>(membership.lane_span().size());
+                    // The round's predicted cost from its lanes' contexts as it starts.
+                    std::array<std::uint64_t, kMaximumConcurrency> contexts{};
+                    std::size_t lanes = 0;
+                    for (const std::uint32_t lane : membership.lane_span()) {
+                        const auto& request = slots_[lane];
+                        contexts[lanes++] =
+                            request == nullptr
+                                ? 0
+                                : (request->admitted_begin ? request->admitted_begin->prompt_tokens
+                                                           : 0U) +
+                                      static_cast<std::uint64_t>(request->generated.size());
+                    }
+                    const std::uint64_t round_ns = std::max<std::uint64_t>(
+                        1, decode_round_ns(resources_.cost_model().prefill,
+                                           instance_.decode_round_shape,
+                                           std::span<const std::uint64_t>(contexts.data(), lanes)));
                     run_decode_round(membership, cancelled_at_unit_start);
-                    decode_credit -= std::min(decode_credit,
-                                              scheduler_.decode_round_prefill_tokens(round_lanes));
+                    decode_credit -= std::min(decode_credit, round_ns);
                     previous_unit_was_decode = true;
                     continue;
                 }

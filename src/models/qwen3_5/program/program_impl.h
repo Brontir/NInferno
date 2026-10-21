@@ -768,6 +768,7 @@ public:
     bool round_after_other_work = true;
     std::optional<RoundPacing> round_pacing;
     std::optional<CudaEventTimer> round_timer;
+    DecodePacingFacts decode_pacing;
     // A round of several ordinary steps publishes its tokens here, row-major at its step count.
     std::array<TokenId, kMaximumConcurrency * qwen3_5::kMaximumOrdinaryDecodeSteps>
         ordinary_run_tokens{};

@@ -1065,6 +1065,27 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                                         .prefix_reuse_path    = staged.reuse};
     std::uint32_t processed_prompt_tokens = 0;
     const auto started                    = Clock::now();
+    // The unit's own prefill work, priced by the Engine against decode: its model calls, tokens,
+    // attention pairs from its start position, and the images whose first span it reached.
+    const std::uint32_t unit_begin = staged.cursor;
+    std::uint64_t unit_calls       = 0;
+    const auto unit_work           = [&]() {
+        runtime::PrefillWork work =
+            runtime::make_prefill_work(unit_begin, processed_prompt_tokens, 0, 0, prefill_chunk);
+        work.chunks = unit_calls;
+        for (const qwen3_5::VisionItem& item : staged.prompt.vision_items) {
+            if (item.token_spans.empty()) { continue; }
+            std::size_t first = item.token_spans.front().begin;
+            for (const qwen3_5::TokenSpan& span : item.token_spans) {
+                first = std::min(first, span.begin);
+            }
+            if (first >= unit_begin && first < staged.cursor) {
+                ++work.vision_items;
+                work.vision_patches += static_cast<std::uint64_t>(item.patch_count);
+            }
+        }
+        return work;
+    };
     // The first generated token is sampled by the prefill that reaches the prompt frontier. Its
     // mask depends only on the constraint's initial state, so it is computed and released before
     // any kernel of this unit is enqueued and installed in the lane's sampling configuration.
@@ -1220,6 +1241,7 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                 }
                 timing.include(result.timing);
                 timing.resume_post();
+                ++unit_calls;
                 if (result.processed_tokens == 0 || result.processed_tokens > remaining) {
                     throw std::logic_error("ordinary prefill chunk made invalid progress");
                 }
@@ -1259,6 +1281,7 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                         return runtime::PrefillStepResult{
                             .summary                 = summary,
                             .processed_prompt_tokens = processed_prompt_tokens,
+                            .work                    = unit_work(),
                             .timing                  = timing.finish(),
                         };
                     }
@@ -1277,6 +1300,7 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                 return runtime::PrefillStepResult{
                     .summary                 = summary,
                     .processed_prompt_tokens = processed_prompt_tokens,
+                    .work                    = unit_work(),
                     .timing                  = timing.finish(),
                 };
             }
@@ -1386,6 +1410,7 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                                                                      &prefill_fault, 1)
                                                                  : std::span<const std::uint8_t>{}},
             .processed_prompt_tokens = processed_prompt_tokens,
+            .work                    = unit_work(),
             .complete                = true,
             .timing                  = timing.finish(),
         };

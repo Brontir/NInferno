@@ -361,10 +361,14 @@ This proof does not use a "borrower is expected to finish first" timing assumpti
 The Scheduler guarantees:
 
 - at most one staged-prefill request at a time;
-- existing decode work is not starved by consecutive prefills; under `--concurrent-prefill` a prefill chunk of P prompt
-  tokens serving one of `prefilling` requests owes the D decoding lanes P·D/`prefilling` tokens' worth of decode, and each
-  decode round of L lanes pays 32 + 8·(L−1) of it (`Scheduler::fair_decode_credit`). The interleaving, and so each
-  round's batch, is counted, never timed;
+- existing decode work is not starved by consecutive prefills; under `--concurrent-prefill` every active request gets an
+  equal share of predicted GPU time (`interleave_cost.h`): a prefill unit, priced by the context machine cost model from
+  its own work (calls, tokens, attention pairs from its start position, the images it encoded), owes the D decoding lanes
+  D/`prefilling` of its price, and each decode round pays its own price from its shape: one call, one read of the weights
+  its tokens touch (32 prompt tokens' worth for the active weights; a MoE round of L lanes touches an expected
+  1 − (1 − k/E)^L of each layer's routed experts), one prompt token of compute a lane, and 16 prefill attention pairs per
+  context token of every lane. The interleaving, and so each round's batch, is priced, never timed. At concurrency 8 a
+  long prompt's predicted time to first token is about eight times its prefill time, as under the former timed share;
 - a decode round contains all and only the currently decode-ready requests;
 - the batch uses the exact `B` and is not padded with inactive lanes up to `max_concurrency`.
 
@@ -528,9 +532,10 @@ The following constraints belong to the Engine architecture, while the concrete 
 - State/KV mapping stays stable within one GPU execution unit;
 - CUDA Graphs are built per legal exact-`B` topology; request identity and page IDs are stable input data, not graph keys;
 - ordinary decode runs no catalog scan, pressure search, or background replica scan;
-- ordinary decode runs one step per execution unit unless `NINFERNO_DECODE_STEPS=N` asks for N (for example on a host whose container CPU quota stalls the whole
-  process until the next quota period); the count never follows a timing, since it decides which requests share each step's batch (`round_pacing.h`). It then
-  runs several steps back to back within one execution unit:
+- ordinary decode runs one step per execution unit, or 16 when the process runs under a CPU bandwidth quota (a machine fact read once at startup from
+  cgroup `cpu.max` or `cpu.cfs_quota_us`; a container's quota stalls the whole process until the next quota period); `NINFERNO_DECODE_STEPS=N` replaces
+  that default. The count never follows a timing, since it decides which requests share each step's batch (`round_pacing.h`); the startup log and the
+  load summary report it. Several steps run back to back within one execution unit:
   later steps take the previous step's sampled result as input on the device. This applies only to models in which rows that were executed but not committed are invisible to later rows
   (`ModelExecution::uncommitted_row_limit`: no recurrent state, and the sliding ring has headroom); non-terminal
   rows commit all steps, and terminal rows commit only the accepted prefix;

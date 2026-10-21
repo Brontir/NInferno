@@ -271,6 +271,10 @@ public:
         }
     }
 
+    // The machine cost model planning prices with (context_cost.h); the Engine prices prefill and
+    // decode against each other with it too (interleave_cost.h).
+    [[nodiscard]] const ContextMachineCostModel& cost_model() const noexcept { return cost_model_; }
+
     [[nodiscard]] Inspection inspect(Program& program, const PreparedPrompt& prompt,
                                      const RequestBasePlan& base, std::uint64_t publication_order,
                                      PlanningAllowance allowance = {}) {

@@ -204,32 +204,11 @@ int main() {
                           lane_a == 1U && lane_b == 3U && lane_c == 1U && skip == 3U &&
                           scheduler.owns_prefill_lane(3) && !scheduler.owns_prefill_lane(2),
                       "concurrent prefill must keep admission open and serve lanes in turn");
-    // Equal GPU share per request, counted in prompt tokens: decode owed after a chunk goes on
-    // before the next chunk.
+    // Decode owed after a chunk goes on before the next chunk (interleave_cost.h prices it).
     failures +=
         check(scheduler.choose_execution(true, true, true, true) == ExecutionAction::Decode &&
-                  scheduler.choose_execution(true, true, true, false) == ExecutionAction::Prefill &&
-                  scheduler.fair_decode_credit(2048, 3, 2) == 3072 &&
-                  scheduler.fair_decode_credit(2048, 2, 0) == 0 &&
-                  scheduler.decode_round_prefill_tokens(1) == 32 &&
-                  scheduler.decode_round_prefill_tokens(8) == 32 + 7 * 8,
-              "fair decode credit beside prefill changed");
-    {
-        // The interleaving is a pure function of the counts: a 2048-token chunk of one prefilling
-        // request owes one decoding lane 64 rounds, eight lanes 187 (the last one partial).
-        const auto rounds_owed = [&](std::uint64_t chunk, std::uint32_t lanes) {
-            std::uint64_t credit = scheduler.fair_decode_credit(chunk, lanes, 1);
-            std::uint32_t rounds = 0;
-            while (credit > 0) {
-                credit -= std::min(credit, scheduler.decode_round_prefill_tokens(lanes));
-                ++rounds;
-            }
-            return rounds;
-        };
-        failures += check(rounds_owed(2048, 1) == 64 && rounds_owed(2048, 8) == 187 &&
-                              rounds_owed(0, 4) == 0,
-                          "decode rounds owed per prefill chunk are not the declared count");
-    }
+                  scheduler.choose_execution(true, true, true, false) == ExecutionAction::Prefill,
+              "owed decode beside prefill changed");
     scheduler.clear_prefill_lane(1);
     scheduler.clear_prefill_lane(3);
     scheduler.allow_concurrent_prefill(false);

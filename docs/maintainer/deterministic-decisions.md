@@ -126,6 +126,7 @@ Rules apply in this order:
 |---|---|---|
 | Discrete | driver | generation and instruction set, SM count, L2, shared memory per block and SM, registers, compiled-kernel occupancy, VRAM class, driver model, MIG, display attached |
 | Discrete | PCI ID | segment (GeForce / pro / datacenter), exceptions (TU116/117: no fast tensor MMA; L40: half rate) |
+| Discrete | OS, once at startup | whether the process runs under a CPU bandwidth quota (cgroup `cpu.max`, v1 `cpu.cfs_quota_us`) |
 | Continuous | PCI-ID reference table only | reference clock, bus width x memory clock, TDP, nominal VRAM, source |
 
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
