@@ -767,9 +767,72 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
             std::cout << "DIFFERS " << name << mode << " one call per token: first column " << first
                       << (state_same ? "" : ", state differs") << '\n';
         }
+
+        // The decode kernel itself: the same tokens through gated_delta_net_batch_update (B = 1),
+        // one in-place pool slot.
+        DeviceBuffer pool(s0.bytes), decoded(static_cast<std::size_t>(kD) * v_heads * kSteps * 2);
+        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        const auto slot = upload(std::vector<std::int32_t>{0});
+        Tensor pool_tensor(pool.p, DType::FP32, {kD, kD, v_heads, 1});
+        const Tensor slot_tensor(slot.p, DType::I32, {1});
+        for (std::int32_t t = 0; t < kSteps; ++t) {
+            const auto token = [&](const DeviceBuffer& b, std::int32_t heads) {
+                return static_cast<std::uint8_t*>(b.p) +
+                       static_cast<std::size_t>(kD) * heads * 2 * t;
+            };
+            const Tensor tq(token(q, qk_heads), DType::BF16, {kD, qk_heads, 1, 1});
+            const Tensor tk(token(k, qk_heads), DType::BF16, {kD, qk_heads, 1, 1});
+            const Tensor tv(token(v, v_heads), DType::BF16, {kD, v_heads, 1, 1});
+            Tensor to(token(decoded, v_heads), DType::BF16, {kD, v_heads, 1, 1});
+            const Tensor tg(static_cast<std::uint8_t*>(g.p) +
+                                static_cast<std::size_t>(v_heads) * 4 * t,
+                            DType::FP32, {v_heads, 1, 1});
+            const Tensor tb(static_cast<std::uint8_t*>(beta.p) +
+                                static_cast<std::size_t>(v_heads) * 4 * t,
+                            DType::FP32, {v_heads, 1, 1});
+            ops::gated_delta_net_batch_update(tq, tk, tv, tg, tb, scale, true, pool_tensor,
+                                              slot_tensor, slot_tensor, to, stream());
+        }
+        cuda_synchronize();
+        const std::int32_t first_decoded =
+            first_difference(download(decoded.p, decoded.bytes), wide, kSteps);
+        const bool decoded_state_same = download(pool.p, pool.bytes) == wide_state;
+        if (first_decoded >= 0 || !decoded_state_same) {
+            ++failures;
+            std::cout << "DIFFERS " << name << mode << " batch_update decode: first column "
+                      << first_decoded << (decoded_state_same ? "" : ", state differs") << '\n';
+        }
+
+        // The verify kernel: one 16-column window through gated_delta_net_replay_record (B = 1)
+        // from the initial state, which it leaves unchanged.
+        constexpr std::int32_t kWindow = 16;
+        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        DeviceBuffer key_record(static_cast<std::size_t>(kD) * qk_heads * kWindow * 2);
+        DeviceBuffer value_record(static_cast<std::size_t>(kD) * v_heads * kWindow * 2);
+        DeviceBuffer gate_record(static_cast<std::size_t>(2) * v_heads * kWindow * 4);
+        DeviceBuffer verified(static_cast<std::size_t>(kD) * v_heads * kWindow * 2);
+        Tensor key_tensor(key_record.p, DType::BF16, {kD, qk_heads, kWindow, 1});
+        Tensor value_tensor(value_record.p, DType::BF16, {kD, v_heads, kWindow, 1});
+        Tensor gate_tensor(gate_record.p, DType::FP32, {2, v_heads, kWindow, 1});
+        Tensor verified_tensor(verified.p, DType::BF16, {kD, v_heads, kWindow, 1});
+        ops::gated_delta_net_replay_record(Tensor(q.p, DType::BF16, {kD, qk_heads, kWindow, 1}),
+                                           Tensor(k.p, DType::BF16, {kD, qk_heads, kWindow, 1}),
+                                           Tensor(v.p, DType::BF16, {kD, v_heads, kWindow, 1}),
+                                           Tensor(g.p, DType::FP32, {v_heads, kWindow, 1}),
+                                           Tensor(beta.p, DType::FP32, {v_heads, kWindow, 1}),
+                                           scale, pool_tensor, Tensor{}, slot_tensor, key_tensor,
+                                           value_tensor, gate_tensor, verified_tensor, stream());
+        cuda_synchronize();
+        const std::int32_t first_verified =
+            first_difference(download(verified.p, verified.bytes), wide, kWindow);
+        if (first_verified >= 0) {
+            ++failures;
+            std::cout << "DIFFERS " << name << mode << " replay_record verify: first column "
+                      << first_verified << '\n';
+        }
     }
     std::cout << (failures != 0 ? "VARIANT "
-                  : exact       ? "invariant at every cut and per token "
+                  : exact       ? "invariant at every cut, per token, in decode and verify "
                                 : "invariant on the 16-token chunk grid ")
               << name << mode << '\n';
     return failures;
