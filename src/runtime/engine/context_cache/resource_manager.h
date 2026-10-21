@@ -503,11 +503,18 @@ public:
         program.finalize_context_transaction();
     }
 
+    // Targets the last capture decision assessed over all its scenarios and the private fallback
+    // (at most CapturePlanner::kDecisionTargets).
+    [[nodiscard]] std::uint32_t last_capture_targets() const noexcept {
+        return last_capture_targets_;
+    }
+
     [[nodiscard]] ActiveCaptureReserveResult
     reserve_active_capture(Program& program, LaneId lane, CaptureOffer&& offer,
                            std::uint32_t blocked_runnable_requests,
                            std::uint32_t waiting_admissions, CancellationFlagView cancellation) {
         require_lane(lane, LogicalLaneState::Active);
+        last_capture_targets_          = 0;
         const bool manager_transaction = !std::holds_alternative<std::monostate>(transaction_);
         const bool program_transaction = program.has_context_transaction();
         if (manager_transaction != program_transaction) {
@@ -757,7 +764,9 @@ public:
                 .search_grant_targets =
                     CapturePlanner::economic_grant_targets(rebuild_ns, blocked_runnable_requests),
             };
-            return capture_planner_.plan(program, cost_model_, input);
+            auto planned = capture_planner_.plan(program, cost_model_, input);
+            last_capture_targets_ += capture_planner_.last_targets_evaluated();
+            return planned;
         };
 
         // The private part of a capture is the baseline every scenario is compared with: when it
@@ -779,7 +788,9 @@ public:
         bool portfolio_built = false;
         // Every scenario and the private fallback share one count of targets
         // (CapturePlanner::kDecisionTargets), so a capture decision holds the lanes for a bounded
-        // worst time; the fallback keeps half when it may run.
+        // worst time; the fallback keeps half when it may run. Each scenario gets an equal part
+        // (at least one target) in stable slot order, so when scenarios outnumber the shared
+        // targets the late ones get none: deterministic, but biased to the low slots.
         const bool private_fallback =
             private_baseline.publishes_private && !private_baseline.physically_feasible;
         std::uint32_t decision_targets_left = CapturePlanner::kDecisionTargets;
@@ -3567,6 +3578,8 @@ private:
     ContextMachineCostModel cost_model_;
     Planner planner_;
     CapturePlanner capture_planner_;
+    // Targets the last reserve_active_capture() assessed over all its scenarios (telemetry).
+    std::uint32_t last_capture_targets_ = 0;
     RuntimeStats context_stats_;
     std::uint64_t next_continuation_id_  = 1;
     std::uint64_t next_shared_prefix_id_ = 1;

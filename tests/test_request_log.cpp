@@ -689,6 +689,11 @@ int main() {
     throughput.current.pressure_private_owners_degraded = 1;
     throughput.current.pressure_checkpoints_dropped     = 1;
     throughput.current.pressure_searches                = 1;
+    throughput.previous.capture_targets_assessed        = 10;
+    throughput.current.capture_searches                 = 2;
+    throughput.current.capture_targets_assessed         = 40;
+    throughput.current.capture_search_ns                = 600000;
+    throughput.current.capture_search_max_ns            = 450000;
     throughput.current.host_work                        = {
                                .engine_boundary_ns            = 1000000,
                                .program_submit_ns             = 2000000,
@@ -737,6 +742,11 @@ int main() {
     const Json throughput_json =
         Json::parse(format_throughput_json("serve-test", 5000, throughput));
     failures += check(throughput_json.at("event") == "throughput", "throughput event mismatch");
+    const Json& capture_search = throughput_json.at("context_cache").at("capture_search");
+    failures += check(capture_search.at("decisions") == 2 && capture_search.at("targets") == 30 &&
+                          capture_search.at("elapsed_ns") == 600000 &&
+                          capture_search.at("max_decision_ns_since_start") == 450000,
+                      "capture search calibration counters missing");
     failures += check(throughput_json.at("tokens").at("computed_prefill") == 100 &&
                           throughput_json.at("tokens").at("committed_decode") == 40,
                       "throughput token deltas mismatch");

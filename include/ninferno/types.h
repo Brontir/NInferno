@@ -1540,6 +1540,12 @@ struct RuntimeStats {
     std::uint32_t terminal_pending_requests = 0;
     std::uint64_t active_captures_completed = 0;
     std::uint64_t active_captures_aborted   = 0;
+    // Capture decisions that assessed a target, the targets they assessed, their host time and
+    // the longest one (since start): what kWorstTargetUs and kNominalTargetNs calibrate against.
+    std::uint64_t capture_searches         = 0;
+    std::uint64_t capture_targets_assessed = 0;
+    std::uint64_t capture_search_ns        = 0;
+    std::uint64_t capture_search_max_ns    = 0;
 
     std::uint64_t root_selections                    = 0;
     std::uint64_t private_endpoint_selections        = 0;

@@ -1405,9 +1405,23 @@ private:
         };
         // Requests not yet admitted: the Program keeps a free Device StateImage for each of them
         // (up to the idle lanes) instead of placing this checkpoint on Device.
-        const auto reserved = resources_.reserve_active_capture(
+        // The decision's host time is telemetry for the capture search's declared costs
+        // (CapturePlanner::kWorstTargetUs); it decides nothing.
+        const auto decision_started = std::chrono::steady_clock::now();
+        const auto reserved         = resources_.reserve_active_capture(
             *instance_.program, *request->lane, std::move(offer), saturate(blocked),
             saturate(waiting), CancellationFlagView{&request->cancelled});
+        if (const std::uint32_t targets = resources_.last_capture_targets(); targets != 0) {
+            const auto elapsed =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - decision_started)
+                                               .count());
+            ++cumulative_stats_.capture_searches;
+            cumulative_stats_.capture_targets_assessed += targets;
+            cumulative_stats_.capture_search_ns += elapsed;
+            cumulative_stats_.capture_search_max_ns =
+                std::max(cumulative_stats_.capture_search_max_ns, elapsed);
+        }
         if (reserved == ResourceManagement::ActiveCaptureReserveResult::Skipped) { return; }
         request->capture_pending    = true;
         request->post_capture_state = post_capture_state;

@@ -808,8 +808,12 @@ can be interrupted at an arbitrary moment.
 
 Shared capture keeps an independent fixed target budget and a Skip incumbent. Its search may assess, once a target is
 selectable, a twentieth of the capture's predicted rebuild saving shared by the waiting requests at a nominal 10 µs a target,
-between 20 and 500 targets (four times that while no target is selectable). Uncapped it walked up to 4096 targets in 39-43 ms
-(Qwen3.6-35B, concurrency 8, RTX 5090), about 10 µs a target, so the bounds equal the former 0.2-5 ms wall grant.
+between 20 and 50 targets. A whole capture decision (every scenario and the private fallback) assesses at most 50 targets,
+10 ms at a worst 200 µs a target; while no target is selectable that count alone bounds the search. Uncapped it walked up to
+4096 targets in 39-43 ms (Qwen3.6-35B, concurrency 8, RTX 5090), about 10 µs a target. The request log's interval record
+reports `context_cache.capture_search` (decisions, targets, elapsed_ns, and the longest decision since start) to calibrate
+both costs. When the scenarios outnumber the shared targets, each still gets one target in slot order, so the late ones get
+none: the outcome is deterministic but biased to the low slots.
 
 ### 8.8 Objective Function and Determinism
 

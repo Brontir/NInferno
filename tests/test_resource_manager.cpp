@@ -1000,6 +1000,7 @@ public:
                                                         bool permit_shared_publication,
                                                         std::uint32_t waiting_admissions) const {
         inspected_capture_waiting = waiting_admissions;
+        ++capture_inspections;
         FakeCaptureAssessment assessment = capture_assessment;
         if (!permit_shared_publication) { assessment.publishes_shared = false; }
         return assessment;
@@ -1189,6 +1190,7 @@ public:
     std::uint64_t abort_calls                 = 0;
     std::uint64_t skipped_captures            = 0;
     mutable std::uint32_t inspected_capture_waiting = 0;
+    mutable std::uint32_t capture_inspections       = 0;
     std::uint32_t reserved_capture_waiting          = 0;
     std::uint32_t pressured_capture_waiting         = 0;
     std::size_t pressure_target_count_peak    = 0;
@@ -2111,11 +2113,12 @@ void test_shared_capture_budget_bounds_committed_canonical_targets() {
 void test_capture_search_grant_counts_targets() {
     using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
     require(Planner::economic_grant_targets(0, 0) == 20, "capture grant floor");
-    require(Planner::economic_grant_targets(20'000'000, 0) == 100,
+    require(Planner::economic_grant_targets(6'000'000, 0) == 30,
             "capture grant is a twentieth of the saving at the nominal target cost");
     require(Planner::economic_grant_targets(20'000'000, 3) == 25,
             "capture grant is shared by the waiting requests");
-    require(Planner::economic_grant_targets(1'000'000'000, 0) == 500, "capture grant ceiling");
+    require(Planner::economic_grant_targets(1'000'000'000, 0) == Planner::kDecisionTargets,
+            "capture grant ceiling is the decision's target count");
     // Whatever the grant, a capture decision assesses at most kDecisionTargets over all its
     // scenarios: 10 ms at a worst 200 us a target.
     require(Planner::kDecisionTargets == 50 &&
@@ -2167,13 +2170,14 @@ void test_capture_search_grant_counts_targets() {
         require(!result, "infeasible capture search unexpectedly found a plan");
         return program.pressure_target_assessments;
     };
-    // With no selectable target the search may assess four times its grant, whatever the
-    // machine's speed; without a grant the target budget alone bounds the walk.
+    // With no selectable target the grant does not stop the search: the target budget (the
+    // decision's share of kDecisionTargets in the engine) alone bounds the walk, whatever the
+    // machine's speed.
     const std::uint64_t unbounded = search(0);
     require(unbounded > 8 && unbounded <= target_budget,
             "the unbounded capture search did not walk its target budget");
-    require(search(1) == 4 && search(2) == 8 && search(2) == search(2),
-            "the capture grant is not a count of assessed targets");
+    require(search(1) == unbounded && search(2) == unbounded,
+            "a grant stopped a search with no selectable target");
 }
 
 void test_equal_lower_bound_does_not_short_circuit_tie_break() {
@@ -3136,6 +3140,72 @@ void test_repeated_private_reuse_selects_zero_prefill_shared_promotion() {
     (void)finish_active(manager, program, second, 16);
 }
 
+// A capture decision with three replacement scenarios and a private fallback, none of which can
+// find a feasible target, assesses at most kDecisionTargets targets over all of them: the bound
+// that keeps a capture decision within 10 ms at a worst 200 us a target.
+void test_capture_decision_targets_are_bounded_over_scenarios() {
+    using Planner       = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
+    FakeManager manager = make_manager(1, 4, 3);
+    FakeProgram program;
+    for (std::uint32_t source = 0; source < 3; ++source) {
+        const std::uint32_t key  = 111 + source;
+        FakeRequestBasePlan base = make_base(key);
+        base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+            .frontier = 16, // the fake's finish frontier: the owners' checkpoint
+        });
+        const ActiveRequest seed   = start_active(manager, program, key, base, 1U + source);
+        program.capture_assessment = FakeCaptureAssessment{
+            .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = 16},
+            .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+            .protected_rebuild_work = PrefillWork{.tokens = 64},
+            .publishes_shared       = true,
+            .physically_feasible    = true,
+        };
+        require(manager.reserve_active_capture(program, seed.lane,
+                                               FakeCaptureOffer{.id = 200U + source}, 0, 0, {}) ==
+                    FakeManager::ActiveCaptureReserveResult::Reserved,
+                "bounded-decision fixture could not publish a shared source");
+        auto progress = manager.progress_context_transaction(program, {});
+        require(std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress)).status ==
+                    ContextTransactionStatus::Published,
+                "bounded-decision fixture did not publish a shared source");
+        (void)finish_active(manager, program, seed);
+    }
+
+    FakeRequestBasePlan base = make_base(120);
+    base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+        .frontier = 64,
+    });
+    const ActiveRequest active                = start_active(manager, program, 120, base, 10);
+    program.required_pressure_actions         = 1000; // no target is ever selectable
+    program.pressure_optional_target_capacity = Planner::kTargetBudget;
+    program.capture_assessment                = FakeCaptureAssessment{
+                       .shortlist_key          = FakeShortlistKey{.digest = 120, .frontier = 64},
+                       .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+                       .protected_rebuild_work = PrefillWork{.tokens = 64},
+                       .publishes_private      = true,
+                       .publishes_shared       = true,
+                       .physically_feasible    = false,
+    };
+    const std::uint64_t assessed_before = program.pressure_target_assessments;
+    program.capture_inspections         = 0;
+    (void)manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 220}, 0, 0,
+                                         {});
+    const std::uint64_t assessed = program.pressure_target_assessments - assessed_before;
+    require(program.capture_inspections >= 3,
+            "the bounded-decision fixture did not offer three replacement scenarios");
+    require(assessed > 0 && assessed <= Planner::kDecisionTargets,
+            "a capture decision assessed more than kDecisionTargets targets over its scenarios");
+    require(manager.last_capture_targets() == assessed,
+            "the capture decision's target count is not what it assessed");
+    program.required_pressure_actions = 0;
+    (void)finish_active(manager, program, active);
+}
+
 void test_shared_fanout_keeps_owner_edges_live_across_summary_refresh() {
     FakeManager manager = make_manager(2, 3, 1);
     FakeProgram program;
@@ -3789,6 +3859,8 @@ int main() {
     run_test("shared capture committed target budget",
              test_shared_capture_budget_bounds_committed_canonical_targets);
     run_test("capture search grant counts targets", test_capture_search_grant_counts_targets);
+    run_test("capture decision targets bounded over scenarios",
+             test_capture_decision_targets_are_bounded_over_scenarios);
     run_test("equal lower-bound tie-break",
              test_equal_lower_bound_does_not_short_circuit_tie_break);
     run_test("machine cost is selection-only",

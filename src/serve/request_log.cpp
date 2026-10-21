@@ -707,6 +707,13 @@ std::string format_throughput_json(const std::string& server_instance_id, std::u
                                                         current.active_captures_completed)},
                           {"aborted", monotonic_delta(previous.active_captures_aborted,
                                                       current.active_captures_aborted)}}},
+        {"capture_search",
+         Json{
+             {"decisions", monotonic_delta(previous.capture_searches, current.capture_searches)},
+             {"targets",
+              monotonic_delta(previous.capture_targets_assessed, current.capture_targets_assessed)},
+             {"elapsed_ns", monotonic_delta(previous.capture_search_ns, current.capture_search_ns)},
+             {"max_decision_ns_since_start", current.capture_search_max_ns}}},
         {"selections",
          Json{{"root", monotonic_delta(previous.root_selections, current.root_selections)},
               {"private_endpoint", monotonic_delta(previous.private_endpoint_selections,
