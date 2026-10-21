@@ -10,7 +10,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the dense tuner's user cache, local spec-tune, environment knobs, `calibrate_floor` and budgets in
   milliseconds still steer choices;
 - MMQ prefill bytes depend on where a chunk is cut;
-- the fingerprint below does not exist yet.
+- free memory sets the context, KV, offload and drafter room directly; the plan levels below do
+  not exist yet;
+- the TU116/117 exception, the PCI-ID reference table, the speed labels, the kernel hash on
+  constants and the fingerprint below do not exist yet.
 
 Each gap is closed in its own change, which updates this list.
 
@@ -66,8 +69,8 @@ Rules apply in this order:
 | Discrete | PCI ID | segment (GeForce / pro / datacenter), exceptions (TU116/117: no fast tensor MMA; L40: half rate) |
 | Continuous | PCI-ID reference table only | reference clock, bus width x memory clock, TDP, nominal VRAM, source |
 
-- An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid and is labelled
-  *extrapolated*.
+- An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
+  labelled *extrapolated*. Its speed estimate is *no estimate*.
 - PCIe is the highest generation the link supports, never the current one.
 - Free memory must be the only observation made while running. It selects one of at most four
   declared plan levels, and the chosen level goes into the fingerprint.
