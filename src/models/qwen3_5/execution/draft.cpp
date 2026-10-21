@@ -105,7 +105,7 @@ DFlashFeatureSink batch_feature_sink_impl(DFlashBatchContext& state, const Tenso
 // GGUF's Q4_0, a BF16 or --drafter-quant q4 / nvfp4 artifact) takes the generic projections with
 // the same state effects.
 bool fused_q8(const Weight& weight) {
-    return weight.qtype == QType::Q8_G32_FP16 && weight.layout == QuantLayout::RowSplit;
+    return ::ninferno::models::qwen3_5::execution::fused_q8_weight(weight);
 }
 
 bool fused_context(const DraftParameters& draft) {

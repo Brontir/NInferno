@@ -37,11 +37,11 @@ inline constexpr int kCacheRevision = 5;
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
 
-// Whether a cached artifact of `recipe` is served as it is: revision kCacheRevision, or revision 3
-// or 4 without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8):
-// a conversion of many minutes is not repeated for a change that did not touch it. `recipe` is
-// kept for the callers; the defect is read from the report whatever the recipe.
-[[nodiscard]] bool cache_current(const std::filesystem::path& artifact, const std::string& recipe);
+// Whether a cached artifact is served as it is: revision kCacheRevision, or revision 3 or 4
+// without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8): a
+// conversion of many minutes is not repeated for a change that did not touch it. Such an older
+// artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
+[[nodiscard]] bool cache_current(const std::filesystem::path& artifact);
 
 // The revision recorded beside `artifact` (<artifact>.revision); 1 where none is: converted before
 // revisions were kept.

@@ -2117,10 +2117,34 @@ def binding_parts(value: dict, parameter: str) -> list[tuple[str, int, int]]:
     return [(p["object"], *(p["range"] or (None, None))) for p in parts]
 
 
+def companion_q8_check(name, parameter, values, reference, objects, data, offset) -> list[str]:
+    """`values` [rows, K] (the kept blocks decoded) against a q8_g32_fp16 reference: every value
+    within one Q8 step of its group (absmax / 127; the maintainer quantizes the BF16-rounded
+    decode) plus the FP16 scale's rounding."""
+    from tools.artifact.codecs.row_split import dequantize_row_split
+    want = []
+    for oid, begin, end in reference:
+        o = objects[oid]
+        words = data[offset + o["offset"]:offset + o["offset"] + o["bytes"]]
+        full = dequantize_row_split(words, o["format"], o["shape"]).float().numpy().reshape(-1)
+        begin, end = (0, full.size) if begin is None else (begin, end)
+        want.append(full[begin:end])
+    want = np.concatenate(want).reshape(values.shape)
+    k = values.shape[1]
+    groups = np.abs(values.reshape(values.shape[0], k // 32, 32)).max(axis=2, keepdims=True)
+    bound = (groups * (1.0 / 127 + 2.0 ** -8)).repeat(32, axis=2).reshape(values.shape)
+    gap = np.abs(values.astype(np.float64) - want.astype(np.float64))
+    if (gap > bound + 1e-12).any():
+        return [f"{name}: {parameter} Q8 reference off by {gap.max()} (bound {bound.max()})"]
+    return []
+
+
 def kept_kquant_check(name, work, gguf_file, formats, convert, minimum) -> list[str]:
     """Convert a GGUF with the chosen recipe (K-quants kept) and with --maintainer-quantize (BF16
     words): every kept parameter's rows, decoded by gguf-py and rounded to BF16, equal the BF16
-    words, and every GGUF encoding is noted as kept losslessly."""
+    words, and every GGUF encoding is noted as kept losslessly. A DFlash / DFlash2 companion's
+    projection is Q8 in the maintainer artifact (the recipe's table gives the drafter Q8): its
+    rows equal the Q8 dequantization within Q8's rounding of each 32-value group."""
     errors = []
     kept, decoded = work / "kept.ninferno", work / "bf16.ninferno"
     first = convert(gguf_file, kept)
@@ -2148,8 +2172,17 @@ def kept_kquant_check(name, work, gguf_file, formats, convert, minimum) -> list[
             begin, end = (0, o["shape"][0] * k) if begin is None else (begin, end)
             payload = kdata[koff + o["offset"]:koff + o["offset"] + o["bytes"]]
             got.append(kquant_rows(o, payload, slice(begin // k, end // k)))
+        reference = binding_parts(dv, parameter)
+        if any(dobj[oid]["format"] == "q8_g32_fp16" for oid, *_ in reference):
+            if not parameter.startswith(("dflash/", "dflash2/")):
+                errors.append(f"{name}: {parameter} is Q8 in the maintainer artifact")
+            else:
+                errors += companion_q8_check(name, parameter, np.concatenate(got), reference,
+                                             dobj, ddata, doff)
+            checked += 1
+            continue
         want_words = b""
-        for oid, begin, end in binding_parts(dv, parameter):
+        for oid, begin, end in reference:
             o = dobj[oid]
             begin, end = (0, o["shape"][0] * o["shape"][1]) if begin is None else (begin, end)
             want_words += ddata[doff + o["offset"] + 2 * begin:doff + o["offset"] + 2 * end]

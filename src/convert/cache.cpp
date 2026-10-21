@@ -4,6 +4,7 @@
 #include "convert/convert.h"
 #include "convert/safetensors.h"
 
+#include "core/cache_file.h"
 #include "core/sys.h"
 
 #include <fstream>
@@ -59,16 +60,21 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
-bool cache_current(const std::filesystem::path& artifact, const std::string& recipe) {
+bool cache_current(const std::filesystem::path& artifact) {
     const int revision = cached_revision(artifact);
     if (revision >= kCacheRevision) { return true; }
-    (void)recipe;
-    return revision >= 3 && !unquantized_drafter_attention(artifact);
+    if (revision < 3 || unquantized_drafter_attention(artifact)) { return false; }
+    // Nothing a later revision changed is in it: stamped current, so its report is not read
+    // again. The stamp is the small sidecar beside the artifact, replaced atomically; a read-only
+    // cache keeps the old stamp (and reads the report next time).
+    try {
+        stamp_revision(artifact);
+    } catch (const std::exception&) {}
+    return true;
 }
 
 void stamp_revision(const std::filesystem::path& artifact) {
-    std::ofstream out(artifact.string() + ".revision", std::ios::trunc);
-    out << kCacheRevision << "\n";
+    write_file_atomic(artifact.string() + ".revision", std::to_string(kCacheRevision) + "\n");
 }
 
 bool checkpoint_has_vision(const std::filesystem::path& checkpoint) {
@@ -106,10 +112,9 @@ bool source_present(const std::filesystem::path& path) {
 }
 
 // A cached artifact to serve as it is: current, or older with nothing left to convert from.
-bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source,
-                  const std::string& recipe) {
+bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source) {
     return std::filesystem::exists(artifact) &&
-           (cache_current(artifact, recipe) || !source_present(source));
+           (cache_current(artifact) || !source_present(source));
 }
 
 } // namespace
@@ -150,7 +155,7 @@ cached_artifact(const std::filesystem::path& path,
     }
     out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
                         (vision ? "vision." : "") + out.recipe + ".ninferno");
-    if (serve_cached(out.path, path, out.recipe)) { return out; }
+    if (serve_cached(out.path, path)) { return out; }
     fs::create_directories(cache);
     const auto lock_path = cache / ".convert.lock";
     const int lock       = sys::open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
@@ -165,7 +170,7 @@ cached_artifact(const std::filesystem::path& path,
     if (sys::lock(lock, true) != 0) {
         throw std::runtime_error("cannot lock " + lock_path.string());
     }
-    if (serve_cached(out.path, path, out.recipe)) { return out; }
+    if (serve_cached(out.path, path)) { return out; }
     if (fs::exists(out.path)) {
         if (log) {
             log("converting " + path.string() + " again: its cached artifact is conversion revision " +

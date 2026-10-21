@@ -391,9 +391,16 @@ def main() -> int:
         # drafter's fused Q/K/V refused at load (attn_input_proj: invalid query/key/value
         # weight). Its projections take Q8, as every other recipe gives them; the text stays
         # BF16.
-        for tag, extra, want, quant in (("bf16-default", [], "q8_g32_fp16", None),):
+        # An explicit --drafter-quant replaces that Q8 (q4 / nvfp4 then load through the generic
+        # Q/K/V of the DFlash draft path), and the provenance records it.
+        for tag, extra, want, quant in (("bf16-default", [], "q8_g32_fp16", None),
+                                        ("bf16-q4", ["--drafter-quant=q4"], "q4_g64_fp16", "q4"),
+                                        # optional_components' Q8 (a maintainer recipe)
+                                        ("q8-recipe-q4", ["--drafter-quant=q4", "--maintainer-quantize"],
+                                         "q4_g64_fp16", "q4")):
             out = work / "native" / f"companion-{tag}.ninferno"
-            args = [f"--model={dense}", "--recipe=qwen3_5_bf16", "--components=text,dflash",
+            recipe_name = "qwen3_8_27b" if tag.startswith("q8-recipe") else "qwen3_5_bf16"
+            args = [f"--model={dense}", f"--recipe={recipe_name}", "--components=text,dflash",
                     f"--source=dflash={work / 'dflash'}", *extra]
             result = subprocess.run([str(native), *args, "--quiet", f"--out={out}"],
                                     cwd=repository, capture_output=True, text=True)
@@ -406,8 +413,9 @@ def main() -> int:
                        and p.rsplit("/", 1)[-1] in ("query", "key", "value", "output", "gate_up",
                                                     "gate", "up", "down")}
             attention = [f"dflash/layers/0/attention/{r}" for r in ("query", "key", "value")]
-            text_bf16 = all(f == "bf16" for p, f in formats.items()
-                            if p.startswith("text/layers/") and p.endswith("/attention/query"))
+            text_bf16 = recipe_name != "qwen3_5_bf16" or all(
+                f == "bf16" for p, f in formats.items()
+                if p.startswith("text/layers/") and p.endswith("/attention/query"))
             ok = (all(formats.get(p) == want for p in attention) and drafted
                   and all(f == want for f in drafted.values()) and text_bf16
                   and report["provenance"].get("drafter_quantization") == quant)

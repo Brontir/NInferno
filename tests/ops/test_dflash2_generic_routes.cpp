@@ -2,14 +2,20 @@
 // dflash GGUF's Q4_0 matrices, a K-quant or NVFP4 target head):
 //  - linear_topk over a head no fused kernel owns: the stable top sixteen of Linear's BF16 logits;
 //  - rmsnorm_dynamic_grouped_conv_prepare / linear_dynamic_grouped_conv_add with Q4_0
-//    projections, against the fused BF16 / Q8 kernels given the same represented weights.
+//    projections, against the fused BF16 / Q8 kernels given the same represented weights;
+//  - the DFlash (v1) draft's Q/K/V of a drafter outside the fused Q8 profile (a BF16 artifact,
+//    a published GGUF's Q4_0): segmented_projection over its bank, against the fused Q8
+//    attn_input_proj given the same represented weights (draft.cpp, fused_q8).
+#include "ninferno/ops/attn_input_proj.h"
 #include "ninferno/ops/dynamic_grouped_conv.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/ops/linear_topk.h"
+#include "ninferno/ops/segmented_projection.h"
 
 #include "ops/op_tester.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -283,6 +289,54 @@ int test_conv_add(std::int32_t input_rows, std::int32_t width, std::int32_t batc
     return check(gap < 2e-2, "conv add generic C=" + std::to_string(input_rows));
 }
 
+// Q/K/V of a 5120-wide DFlash layer (32 x 128 query, 8 x 128 key and value rows): the fused Q8
+// kernel and the segmented bank over one BF16 or one Q4_0 parent, rows sliced as the drafter's
+// bank slices them, on the same represented values.
+int test_qkv_bank(std::int32_t columns) {
+    constexpr std::int32_t kH = 5120, kQ = 4096, kKv = 1024, kRows = kQ + 2 * kKv;
+    const Matrix m        = make_matrix(kRows, kH, 41U);
+    std::size_t q4_scales = 0, q8_scales = 0;
+    DeviceBuffer q4   = q4_0_payload(m, q4_scales);
+    DeviceBuffer q8   = q8_payload(m, q8_scales);
+    DeviceBuffer bf16 = bf16_payload(m);
+    DeviceBuffer x =
+        to_device(random_bf16(static_cast<std::size_t>(kH) * columns, 9U, -1.0F, 1.0F));
+    Tensor tx(x.p, DType::BF16, {kH, columns});
+    std::vector<std::vector<double>> result(3);
+    for (int route = 0; route < 3; ++route) {
+        DeviceBuffer qd(static_cast<std::size_t>(kQ) * columns * 2);
+        DeviceBuffer kd(static_cast<std::size_t>(kKv) * columns * 2);
+        DeviceBuffer vd(static_cast<std::size_t>(kKv) * columns * 2);
+        Tensor q(qd.p, DType::BF16, {kQ, columns});
+        Tensor k(kd.p, DType::BF16, {kKv, columns});
+        Tensor v(vd.p, DType::BF16, {kKv, columns});
+        if (route == 0) {
+            ops::attn_input_proj(tx, q8_weight(m, q8, q8_scales), q, k, v, nullptr);
+        } else {
+            const Weight parent = route == 1 ? bf16_weight(m, bf16) : q4_0_weight(m, q4, q4_scales);
+            ops::SegmentedProjectionWeights bank;
+            bank.slices = {{parent, 0, kQ}, {parent, kQ, kKv}, {parent, kQ + kKv, kKv}};
+            const std::array<ops::ProjectionOutput, 3> outputs{
+                {{&q, 0, kQ}, {&k, 0, kKv}, {&v, 0, kKv}}};
+            const auto bytes =
+                ops::segmented_projection_workspace_capacity_bytes(bank, columns, columns);
+            DeviceBuffer scratch(std::max<std::size_t>(bytes, 1));
+            WorkspaceArena workspace(DeviceSpan{scratch.p, scratch.bytes});
+            ops::segmented_projection(tx, bank, outputs, workspace, nullptr);
+        }
+        cuda_synchronize();
+        for (DeviceBuffer* part : {&qd, &kd, &vd}) {
+            const auto values = from_device_bf16(*part, part->bytes / 2);
+            result[route].insert(result[route].end(), values.begin(), values.end());
+        }
+    }
+    const double bf16_gap = relative_gap(result[1], result[0]);
+    const double q4_gap   = relative_gap(result[2], result[0]);
+    std::cout << "dflash qkv bank T=" << columns << " vs fused Q8: BF16 " << bf16_gap << ", Q4_0 "
+              << q4_gap << '\n';
+    return check(bf16_gap < 2e-2 && q4_gap < 2e-2, "dflash qkv bank T=" + std::to_string(columns));
+}
+
 } // namespace
 
 int main() {
@@ -299,7 +353,9 @@ int main() {
         failures += test_conv_prepare(9, 3);
         failures += test_conv_add(4096, 9, 2);
         failures += test_conv_add(17408, 9, 1);
-        std::cout << (failures == 0 ? "OK" : "FAIL") << " dflash2 generic routes\n";
+        failures += test_qkv_bank(8);  // one lane, depth 7
+        failures += test_qkv_bank(32); // four lanes
+        std::cout << (failures == 0 ? "OK" : "FAIL") << " dflash / dflash2 generic routes\n";
         return failures == 0 ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "dflash2 generic routes test: " << error.what() << '\n';

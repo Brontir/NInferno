@@ -1347,7 +1347,8 @@ bool companion_parameter(const std::string& name) {
 }
 
 // --drafter-quant: every projection of a drafter that the recipe left in its direct BF16 form
-// (of a target, only its companion drafters' projections),
+// (of a target, only its companion drafters' projections, and also those the recipe gave its
+// companion Q8: companion_drafter_q8 / optional_components, a default --drafter-quant replaces),
 // read from plain values (a published encoding is never quantized again), in NInferno's own
 // quantization: q8 (q8_g32_fp16), q4 (q4_g64_fp16), or nvfp4 (round-to-nearest NVFP4, weight
 // only: the drafter keeps BF16 activations). A packing group (gate/up) takes one format, and for
@@ -1372,8 +1373,14 @@ std::map<std::string, std::size_t> quantize_drafter(const Model& model, Recipe& 
         const auto& p         = model.parameters[i];
         const auto& selection = recipe.selections[i];
         if (!drafter && !companion_parameter(p.name)) { return false; } // the target as published
+        // A companion's Q8 from the recipe is its default, which an explicit mode replaces.
+        const bool recipe_q8 = companion_parameter(p.name) &&
+                               selection.method == Method::GroupedAbsmax &&
+                               selection.format == QType::Q8_G32_FP16;
+        const bool cast_bf16 =
+            selection.method == Method::CastDirect && selection.format == QType::BF16;
         if (!p.projection() || p.shape.size() != 2 || recipe.alias[i] ||
-            selection.method != Method::CastDirect || selection.format != QType::BF16) {
+            !(cast_bf16 || recipe_q8)) {
             return false;
         }
         const auto& source = selection.source ? selection.source : p.source;
@@ -1641,13 +1648,21 @@ ConvertResult convert(const ConvertOptions& options) {
         log("vocabulary " + vocabulary +
             (options.vocab.empty() ? " (the recipe's default)" : " (--vocab)"));
     }
+    // What --drafter-quant wrote; the provenance records it only when it quantized something.
+    std::string drafter_quant;
     if (!options.drafter_quant.empty()) {
         std::string counted;
         for (const auto& [format, count] : quantize_drafter(model, recipe, options.drafter_quant)) {
             counted += (counted.empty() ? "" : ", ") + std::to_string(count) + " " + format;
         }
-        log("drafter quantization " + options.drafter_quant + ": " +
-            (counted.empty() ? std::string("no plain projection left to quantize") : counted));
+        if (counted.empty()) {
+            log("warning: --drafter-quant " + options.drafter_quant +
+                " changed nothing: no drafter projection is read from plain values (a published "
+                "encoding is kept as it is)");
+        } else {
+            log("drafter quantization " + options.drafter_quant + ": " + counted);
+            drafter_quant = options.drafter_quant;
+        }
     }
     if (share_tied_head(model, recipe)) {
         log("tied output head: bound to the token embedding's objects (one copy)");
@@ -1669,9 +1684,7 @@ ConvertResult convert(const ConvertOptions& options) {
     OJson provenance        = OJson::object();
     provenance["converter"] = "ninferno-v3";
     provenance["recipe"]    = options.recipe;
-    if (!options.drafter_quant.empty()) {
-        provenance["drafter_quantization"] = options.drafter_quant;
-    }
+    if (!drafter_quant.empty()) { provenance["drafter_quantization"] = drafter_quant; }
     if (!vocabulary.empty()) { provenance["vocabulary"] = vocabulary; }
     provenance["sources"]   = sources.provenance();
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
