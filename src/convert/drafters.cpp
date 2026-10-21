@@ -886,6 +886,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             convert_options.drafter_quant       = options.conversion.drafter_quant.empty()
                                                       ? d.decl.quant
                                                       : options.conversion.drafter_quant;
+            convert_options.drafter_quant_declared = options.conversion.drafter_quant.empty();
             convert_options.threads             = options.conversion.threads;
             convert_options.max_file_bytes      = options.conversion.max_file_bytes;
             convert_options.round_tiny_scales   = options.conversion.round_tiny_scales;

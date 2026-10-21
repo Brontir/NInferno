@@ -94,7 +94,7 @@ select kernels. Recipes are Python functions in
 | Qwen3.6-35B-A3B NVFP4 | `qwen3_6_35b_a3b_nvfp4` | Imported NVFP4 routed and shared experts, Q8 projections, Q8/Q6 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.6-27B NVFP4 | `qwen3_6_27b_nvfp4` | Imported NVFP4, selected BF16 projections, Q8 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8, FP8 embedding generated from BF16; needs `--source quantized=PATH` | MTP, DFlash2 |
-| Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 | MTP |
+| Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 (a DFlash drafter Q8 in both) | MTP, DFlash |
 | Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
 | Gemma 4 26B-A4B / 31B | `gemma4_26b_a4b_nvfp4`, `gemma4_31b_nvfp4` | Sites the checkpoint encodes are kept; the rest Q8 | Gemma 4 assistant |

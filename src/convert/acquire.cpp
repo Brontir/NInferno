@@ -268,7 +268,8 @@ DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
     for (const auto& d : plan.drafters) {
         if (convert_options.drafter_quant.empty() && d.status == "fetched" &&
             !d.decl.component.empty() && !d.decl.quant.empty()) {
-            convert_options.drafter_quant = d.decl.quant;
+            convert_options.drafter_quant          = d.decl.quant;
+            convert_options.drafter_quant_declared = true;
         }
     }
     convert_options.components = components;
@@ -356,12 +357,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 say(options, "artifact " + kept->string() +
                                  " (converted earlier; its download was removed, so the hub is "
                                  "not asked for a newer commit)");
-                if (out.recipe == "qwen3_5_published" && cached_revision(*kept) < kCacheRevision &&
-                    unquantized_drafter_attention(*kept)) {
+                // cache_current stamps a current one, so only a defective artifact's report
+                // is read on every start.
+                if (!cache_current(*kept) && unquantized_drafter_attention(*kept)) {
                     say(options, "warning: this cached artifact predates conversion revision " +
                                      std::to_string(kCacheRevision) +
-                                     " (its DFlash drafter is BF16, which the drafter cannot "
-                                     "load), and its download is gone: delete " +
+                                     " (its DFlash drafter is BF16: it runs the generic "
+                                     "projections, slower than Q8), and its download is gone: "
+                                     "delete " +
                                      kept->string() + " or fetch the model again");
                 }
                 return out;
@@ -511,7 +514,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         for (const auto& [component, snapshot] : companions) {
             with.sources.emplace_back(component, snapshot);
         }
-        with.drafter_quant = quant.empty() ? declared_quant : quant;
+        with.drafter_quant          = quant.empty() ? declared_quant : quant;
+        with.drafter_quant_declared = quant.empty();
         say(options, "converting " + fetched.repo + " again with its companion drafters");
         remove_artifact(out.artifact);
         try {
@@ -532,7 +536,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         remove_artifact(out.artifact);
     }
     if (options.reuse) {
-        if (complete(out.artifact, false) && !cache_current(out.artifact, out.recipe)) {
+        if (complete(out.artifact, false) && !cache_current(out.artifact)) {
             say(options, "converting " + fetched.repo + " again: its cached artifact is conversion " +
                              "revision " + std::to_string(cached_revision(out.artifact)) +
                              ", this NInferno makes revision " + std::to_string(kCacheRevision));

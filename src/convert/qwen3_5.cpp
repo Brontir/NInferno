@@ -899,6 +899,24 @@ void share_draft_context(const Model& model, Recipe& recipe) {
     }
 }
 
+// A DFlash / DFlash2 companion drafter is NInferno's own, not the published model: its projections
+// take Q8 in every recipe, also those that quantize nothing of the target (qwen3_5_bf16, the dense
+// Qwen3.5 GGUF default; qwen3_5_published): the drafter's fused Q/K/V and context kernels read Q8,
+// and BF16 doubles the bytes each proposal reads. The dynamic-convolution kernel projections and
+// the candidate selector keep their BF16 form, as optional_components leaves them.
+void companion_drafter_q8(const Model& model, Recipe& recipe) {
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const auto& name = model.parameters[i].name;
+        if (model.parameters[i].projection() &&
+            (name.starts_with("dflash/") || name.starts_with("dflash2/")) &&
+            !ends_with_any(name,
+                           {"/attention_conv/kernel_projection", "/mlp_conv/kernel_projection",
+                            "/candidate_selector/hidden_projection"})) {
+            recipe.assign(i, kQ8, Method::GroupedAbsmax);
+        }
+    }
+}
+
 void optional_components(const Model& model, Recipe& recipe) {
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
@@ -978,10 +996,12 @@ void dense_q8(Model& model, Recipe& recipe) {
     }
 }
 
-// Any Qwen3.5 Dense size with every tensor in its direct BF16 form: the unquantized artifact, a
-// reference for the engine's arithmetic against the source checkpoint.
+// Any Qwen3.5 Dense size with every tensor of the model in its direct BF16 form: the unquantized
+// artifact, a reference for the engine's arithmetic against the source checkpoint (and, for a GGUF,
+// its published blocks kept as they are: keep_published). A DFlash companion drafter takes Q8.
 void dense_bf16(Model& model, Recipe& recipe) {
     require_dense(model);
+    companion_drafter_q8(model, recipe);
     share_draft_context(model, recipe);
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& name = model.parameters[i].name;
@@ -1007,17 +1027,7 @@ void dense_bf16(Model& model, Recipe& recipe) {
 // address them (NVFP4 matrices of such a parent keep a divisor each).
 // (breadth's qwen3_5_published, with every kept encoding rather than NVFP4 and FP8 only.)
 void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
-    // A DFlash drafter is NInferno's companion, not the published model: it takes the Q8 every
-    // recipe gives it (the drafter's fused QKV kernels read Q8).
-    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
-        const auto& name = model.parameters[i].name;
-        if (model.parameters[i].projection() &&
-            (name.starts_with("dflash/") || name.starts_with("dflash2/")) &&
-            !ends_with_any(name, {"/attention_conv/kernel_projection", "/mlp_conv/kernel_projection",
-                                  "/candidate_selector/hidden_projection"})) {
-            recipe.assign(i, kQ8, Method::GroupedAbsmax);
-        }
-    }
+    companion_drafter_q8(model, recipe);
     share_draft_context(model, recipe);
     std::size_t kept = 0, published = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {

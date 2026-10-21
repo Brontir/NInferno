@@ -119,6 +119,13 @@ struct DynamicConvParameters {
     LinearParameters kernel_projection;
 };
 
+// Whether a drafter matrix is the profile its fused kernels read (attn_input_proj's Q/K/V,
+// context_kv_materialize): one RowSplit Q8_G32_FP16 parent. Anything else (BF16, Q4, NVFP4, a
+// published GGUF's blocks) runs the generic projections (draft.cpp; startup sizes them).
+[[nodiscard]] inline bool fused_q8_weight(const Weight& weight) {
+    return weight.qtype == QType::Q8_G32_FP16 && weight.layout == QuantLayout::RowSplit;
+}
+
 struct DraftBlockParameters {
     Tensor input_norm, post_attention_norm;
     LinearParameters query_key_value, context_key, context_value;

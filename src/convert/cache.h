@@ -29,16 +29,19 @@ namespace ninferno::convert {
 // 3: a gpt-oss (or other dense-converter) checkpoint plans its drafters for the dense engine.
 // 4: qwen3_5_published gives a DFlash drafter's projections Q8 (its fused QKV load refused the
 //    BF16 ones); only artifacts with such a drafter are converted again (cache_current).
-inline constexpr int kCacheRevision = 4;
+// 5: every recipe does (qwen3_5_bf16, the dense Qwen3.5 GGUF default, left the companion BF16);
+//    again only artifacts with such a drafter are converted again.
+inline constexpr int kCacheRevision = 5;
 
-// Whether a qwen3_5_published artifact carries the defect revision 4 fixed: its report binds a
-// DFlash / DFlash2 drafter's attention query unquantized (bf16, fp16, fp32).
+// Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
+// DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
 
-// Whether a cached artifact of `recipe` is served as it is: revision kCacheRevision, or revision 3
-// without the defect revision 4 fixed (a text-only artifact, a drafter already in Q8): a
-// conversion of many minutes is not repeated for a change that did not touch it.
-[[nodiscard]] bool cache_current(const std::filesystem::path& artifact, const std::string& recipe);
+// Whether a cached artifact is served as it is: revision kCacheRevision, or revision 3 or 4
+// without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8): a
+// conversion of many minutes is not repeated for a change that did not touch it. Such an older
+// artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
+[[nodiscard]] bool cache_current(const std::filesystem::path& artifact);
 
 // The revision recorded beside `artifact` (<artifact>.revision); 1 where none is: converted before
 // revisions were kept.
