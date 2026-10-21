@@ -481,8 +481,8 @@ struct PublishedMatrix {
             quantized_weight::PatternedWeightOptions options;
             options.weight_scale_divisor = 16.0F; // |w| <= 6 * 0.1 / 16
             options.input_scale_divisor  = 1.0F;  // unused: the use carries the divisor
-            host = quantized_weight::make_patterned_weight(QType::NVFP4, heads, hidden, seed,
-                                                           options);
+            host =
+                quantized_weight::make_patterned_weight(QType::NVFP4, heads, hidden, seed, options);
         } else {
             host = quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16, heads,
                                                            hidden, seed);
@@ -497,8 +497,8 @@ struct PublishedMatrix {
         values.resize(static_cast<std::size_t>(heads) * hidden);
         for (std::int32_t row = 0; row < heads; ++row) {
             for (std::int32_t column = 0; column < hidden; ++column) {
-                values[static_cast<std::size_t>(row) * hidden + column] = static_cast<float>(
-                    quantized_weight::logical_weight_fp64(host, row, column));
+                values[static_cast<std::size_t>(row) * hidden + column] =
+                    static_cast<float>(quantized_weight::logical_weight_fp64(host, row, column));
             }
         }
         device = to_device(host.payload);
@@ -512,6 +512,7 @@ struct PublishedMatrix {
         }
         view = WeightView{{shape[0], shape[1]}, {{&parent, 0, shape[0] * shape[1]}}};
     }
+
     PublishedMatrix(const PublishedMatrix&)            = delete;
     PublishedMatrix& operator=(const PublishedMatrix&) = delete;
 
@@ -527,12 +528,12 @@ struct PublishedMatrix {
 // generic path at every geometry, and g/beta must match the decoded weights' oracle.
 int run_published_control_case(const Geometry& geometry, PublishedFormat format,
                                std::int32_t tokens, std::uint32_t seed, cudaStream_t stream) {
-    constexpr float kEps         = 1.0e-6F;
-    const bool nvfp4             = format == PublishedFormat::Nvfp4A4;
-    const std::string label      = std::string("published ") + (nvfp4 ? "nvfp4 a4 " : "fp8 row ") +
+    constexpr float kEps    = 1.0e-6F;
+    const bool nvfp4        = format == PublishedFormat::Nvfp4A4;
+    const std::string label = std::string("published ") + (nvfp4 ? "nvfp4 a4 " : "fp8 row ") +
                               geometry.label + " [" + std::to_string(geometry.heads) + ", " +
                               std::to_string(geometry.hidden) + "] T=" + std::to_string(tokens);
-    const std::size_t h_elements = std::size_t(geometry.hidden) * tokens;
+    const std::size_t h_elements       = std::size_t(geometry.hidden) * tokens;
     const std::size_t control_elements = std::size_t(geometry.heads) * tokens;
     std::vector<float> x(h_elements), norm_weight(geometry.hidden);
     std::vector<float> a_log(geometry.heads), dt_bias(geometry.heads);
@@ -542,10 +543,10 @@ int run_published_control_case(const Geometry& geometry, PublishedFormat format,
     fill_uniform(dt_bias, seed + 3u, -1.0F, 1.0F);
     round_to_bf16(x);
     round_to_bf16(norm_weight);
-    const auto a = std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden,
-                                                     seed + 4u);
-    const auto b = std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden,
-                                                     seed + 5u);
+    const auto a =
+        std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden, seed + 4u);
+    const auto b =
+        std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden, seed + 5u);
 
     std::vector<double> rh, rg, rb;
     norm_projection_oracle(geometry, x, norm_weight, a->values, b->values, a_log, dt_bias, tokens,
@@ -563,9 +564,9 @@ int run_published_control_case(const Geometry& geometry, PublishedFormat format,
         nvfp4 ? ops::WeightInput{b->view, ops::LinearPolicy::AllowA4, b_divisor}
               : ops::WeightInput{b->view, ops::LinearPolicy::AllowA8, std::nullopt};
 
-    int failures = 0;
+    int failures                          = 0;
     const ops::ProjectionWeights prepared = ops::prepare_gdn_gating_proj_weights(a_input, b_input);
-    const auto* segmented = std::get_if<ops::SegmentedProjectionWeights>(&prepared);
+    const auto* segmented                 = std::get_if<ops::SegmentedProjectionWeights>(&prepared);
     if (segmented == nullptr) {
         std::cerr << label << ": prepare_gdn_gating_proj_weights did not take the segmented path\n";
         return 1;
@@ -614,8 +615,8 @@ int run_published_control_case(const Geometry& geometry, PublishedFormat format,
     cuda_synchronize(stream);
 
     const ReductionCriterion& control = nvfp4 ? kPublishedA4Control : kPublishedA8Control;
-    const std::vector<double> g    = read_fp32(device_g.data(), control_elements);
-    const std::vector<double> beta = read_fp32(device_beta.data(), control_elements);
+    const std::vector<double> g       = read_fp32(device_g.data(), control_elements);
+    const std::vector<double> beta    = read_fp32(device_beta.data(), control_elements);
     failures += require_all_finite(label + " g", g);
     failures += require_all_finite(label + " beta", beta);
     failures += verify_normwise(label + " h", from_device_bf16(device_h.data(), h_elements), rh,
@@ -739,9 +740,8 @@ int main() {
     for (const Geometry* geometry : {&kQwen27Published, &kQwen35Published, &kQwen9Published})
         for (const PublishedFormat format : {PublishedFormat::Nvfp4A4, PublishedFormat::Fp8Row})
             for (const std::int32_t tokens : {1, 64})
-                failures += run_published_control_case(*geometry, format, tokens,
-                                                       published_seed += 0x10u,
-                                                       norm_execution.stream);
+                failures += run_published_control_case(
+                    *geometry, format, tokens, published_seed += 0x10u, norm_execution.stream);
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_gating_proj correctness\n";
     return failures == 0 ? 0 : 1;
