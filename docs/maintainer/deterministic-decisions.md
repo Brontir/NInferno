@@ -24,6 +24,7 @@ This page states the rule and its target. The engine does not meet all of it yet
   the device query, `synthetic_device_class` and the similar-chip filter: two sources of one fact
   rather than the table alone;
 - the speed labels and the kernel hash on constants do not exist yet;
+- model constants (speculative acceptance) do not record their keys, corpus hash and tolerance yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
   memory picks the speculation; the fingerprint only records it, as the taint
@@ -78,9 +79,24 @@ What the design guarantees once complete:
    - **S, byte-neutral choices.** These may read any canonical fact.
 3. **No timings, clocks or hidden state in decisions.** That rules out a cache left by an earlier
    run, an environment variable that changes a choice, and a budget in milliseconds.
-4. **Constants are fitted on at least two lab cards of a generation.** Each constant records the
-   hash of the kernels it was fitted on. When those kernels change and nobody refits, the
+4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
+   kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
+   the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
    generation's speed estimates become "no estimate".
+   A constant about a model, such as a drafter's acceptance per context class, records instead
+   what it depends on:
+   - the target and drafter artifact ids;
+   - the whole B1 byte class it was measured under (activation precision, summation class, KV
+     codec, decode/verify parity, placement and plan level);
+   - the sampling settings and the draft depth;
+   - the corpus, by hash;
+   - under `fast`, the lane count, because the bytes at T ≤ 16 depend on the batch.
+
+   Every card runs the same request schedule. The cards must come from two generations, or
+   take different routes, so that their agreement means something. The constant records the
+   relative tolerance its cards must agree within. When they disagree, the constant depends on
+   the hardware: it is fitted per generation like a cost, and until then the forecasts that use
+   it are "no estimate".
 5. **Capabilities decide what is admissible; speeds decide what pays.**
 6. **Decisions compare ratios, not absolute times.**
 7. **The unknown is conservative and labelled.** This covers an unknown PCI ID, MIG, laptops, JIT
@@ -143,7 +159,8 @@ option change moves the fingerprint only, a plan change both, an observed size t
   - *verified*: a lab card;
   - *covered*: within the lab's bounds for the generation;
   - *extrapolated*: laptops, MIG, the smallest chips;
-  - *no estimate*: no lab card for the generation, an unknown ID, or JIT.
+  - *no estimate*: no lab card for the generation, an unknown ID, JIT, or a model constant whose
+    lab cards disagree.
 
 ## Not allowed
 
@@ -175,7 +192,7 @@ When a change adds or alters a decision, its PR states:
    - free memory, outside the plan level;
    - an environment variable;
    - a file written by an earlier run.
-4. The lab cards that set its constants.
+4. The lab cards that set its constants, and for a model constant its keys and tolerance.
 5. A property test showing invariance where the tier requires it.
 
 Route tables (`routes/*.json`, `routes/tuner/dense_tune.json`) and speculation profiles keyed by GPU
