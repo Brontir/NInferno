@@ -2488,10 +2488,9 @@ void test_planner_reports_search_points_in_order() {
     Recorder recorder;
     const DeepReusePlan result = plan_deep_reuse(0, &recorder);
     require(result.candidate.has_value(), "deep-reuse problem found no plan");
-    // The search starts (once more after the root-maximal incumbent is assessed), improves on
-    // that incumbent once, and ends once, last.
-    require(recorder.calls == "ssie" || recorder.calls == "sie",
-            "the planner reported its search points out of order");
+    // Neither identity is feasible: the search starts, starts again once the root-maximal
+    // incumbent is assessed, improves on that incumbent once (the reuse candidate), and ends.
+    require(recorder.calls == "ssie", "the planner reported its search points out of order");
 }
 
 // The stopwatch turns the reported points into the three wall-time fields, here on a clock that
@@ -2527,6 +2526,36 @@ void test_planning_stopwatch_fills_wall_time_fields() {
     require(identity.planning_elapsed_ns == 1'000 && identity.search_elapsed_ns == 0 &&
                 !identity.first_improvement_ns,
             "a plan without a search reported search time");
+}
+
+// The ResourceManager stamps every plan it adopts with its planning wall time, read on its
+// PlanningClock (here the tick clock, so the stamp is non-zero whatever the host's speed).
+void test_resource_manager_stamps_planning_time() {
+    using TickManager = ninferno::runtime::ResourceManager<FakeModelContract, TickClock>;
+    TickManager manager(1, 4, 0, true, 2, test_cost_model());
+    FakeProgram program;
+    TickClock::ticks = 0;
+    auto inspection  = manager.inspect(program, FakePreparedPrompt{7}, make_base(7), 1);
+    require(inspection.choice.has_value(), "request did not produce an admission choice");
+    require(manager.reserve_materialization(program, std::move(*inspection.choice),
+                                            FakePreparedPrompt{7}, {}) ==
+                TickManager::MaterializationReserveResult::Reserved,
+            "request materialization was not reserved");
+    const auto outcome = [&]() -> TickManager::MaterializationOutcome {
+        auto progress = manager.progress_context_transaction(program, {});
+        if (!std::holds_alternative<ContextTransactionInProgress>(progress)) {
+            return std::get<TickManager::MaterializationOutcome>(std::move(progress));
+        }
+        auto completed = manager.progress_context_transaction(program, {});
+        return std::get<TickManager::MaterializationOutcome>(std::move(completed));
+    }();
+    require(outcome.status == ContextTransactionStatus::Published,
+            "request materialization did not publish");
+    // The stopwatch starts at tick 1 and stamps once the plan returns; nothing searched.
+    require(outcome.diagnostics.planning_elapsed_ns >= 1'000 &&
+                outcome.diagnostics.planning_elapsed_ns % 1'000 == 0 &&
+                outcome.diagnostics.search_elapsed_ns == 0,
+            "the adopted plan carries no planning wall time");
 }
 
 void test_feasible_identity_expands_when_pressure_can_remove_copy() {
@@ -4004,6 +4033,7 @@ int main() {
     run_test("planner reports search points in order", test_planner_reports_search_points_in_order);
     run_test("planning stopwatch fills wall-time fields",
              test_planning_stopwatch_fills_wall_time_fields);
+    run_test("resource manager stamps planning time", test_resource_manager_stamps_planning_time);
     run_test("combined target exact repricing",
              test_combined_target_reprices_cancelled_pressure_copy);
     run_test("in-progress and capture", test_in_progress_adoption_and_private_capture);

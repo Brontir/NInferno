@@ -59,7 +59,9 @@ struct CheckpointObservation {
 
 // ResourceManager owns logical policy only.  Every physical feasibility decision and mutation is
 // represented by an opaque ModelContract::ResourcePlan sealed against Program::resource_revision().
-template <class ModelContract>
+// PlanningClock times plans for their diagnostics only (planning_stopwatch.h); no decision reads
+// it.
+template <class ModelContract, class PlanningClock = DefaultPlanningClock>
 class ResourceManager {
 public:
     using Program                 = typename ModelContract::Program;
@@ -298,7 +300,7 @@ public:
         if (!destination) { return {.readiness = Readiness::TemporarilyBlocked}; }
 
         // Wall time for the plan's diagnostics only: the planner itself reads no clock.
-        PlanningStopwatch stopwatch;
+        BasicPlanningStopwatch<PlanningClock> stopwatch;
         rebuild_prefix_index();
         PrefixDemandRecord provisional_demand;
         provisional_demand.domain =
@@ -2009,8 +2011,8 @@ private:
     plan_materialization(Program& program, const PreparedPrompt& prompt,
                          const RequestBasePlan& base, LaneId destination,
                          std::vector<Candidate>& candidates, std::uint64_t publication_order,
-                         PlanningStopwatch& stopwatch, PrefixDemandRecord& provisional_demand,
-                         PlanningAllowance allowance) {
+                         BasicPlanningStopwatch<PlanningClock>& stopwatch,
+                         PrefixDemandRecord& provisional_demand, PlanningAllowance allowance) {
         std::vector<typename Planner::CandidateInput> candidate_inputs;
         std::vector<const ContinuationHandle*> private_owners;
         std::vector<PlanningOwnerId> private_owner_ids;

@@ -12,7 +12,10 @@ namespace ninferno::runtime {
 // The monitor side of PlanningTelemetry: times the points a planning call reports and the whole
 // call (from construction) for MaterializationDiagnostics. It is write-only for the planner, which
 // reports into it and reads nothing back; only the request log reads the fields it fills.
-template <class Clock = std::chrono::steady_clock>
+// The clock the request log's planning times are read on; a test passes a fake one.
+using DefaultPlanningClock = std::chrono::steady_clock;
+
+template <class Clock = DefaultPlanningClock>
 class BasicPlanningStopwatch final : public PlanningTelemetry {
 public:
     BasicPlanningStopwatch() : planning_started_(Clock::now()) {}
