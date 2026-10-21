@@ -89,6 +89,15 @@ struct ResolvedSpeculation {
                                                       const GpuKey& gpu,
                                                       const std::filesystem::path& local_profile = {});
 
+// Why the tune at `tune` would not serve the artifact `artifact_id` on GPU class `gpu_class` (the
+// device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a
+// caller without a device such as the UI): unreadable, tuned for another artifact, GPU or
+// drafters, or a drafter replaced since. Empty when it would serve. For a tune found rather than
+// named (the UI's, spec-tune --load's own beside the artifact): passed over with a note.
+[[nodiscard]] std::string tune_refusal(const std::filesystem::path& tune,
+                                       const std::string& artifact_id,
+                                       const std::string& gpu_class = {});
+
 // A tune the user named (--spec-profile, spec-tune --load --profile) serves, or the entry point
 // refuses to start: throws std::runtime_error naming the tune and why it does not serve
 // (resolved.named_tune_refused). Nothing when it serves or none was named.

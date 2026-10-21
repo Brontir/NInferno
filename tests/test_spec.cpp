@@ -1393,6 +1393,17 @@ int test_resolve() {
         } catch (const std::exception&) { refused = true; }
         failures += check(!refused && r.named_tune_refused.empty(), "a named tune that serves");
     }
+    // The same check for a tune found rather than named (the UI's, spec-tune --load's own).
+    failures += check(tune_refusal(named, "aaaa", "gb202:170sm").empty() &&
+                          tune_refusal(named, "aaaa").empty(),
+                      "a tune found beside the artifact that would serve");
+    failures += check(tune_refusal(named, "aaaa", "gb202:188sm").find("was tuned for another") !=
+                              std::string::npos &&
+                          tune_refusal(named, "bbbb").find("was tuned for another") !=
+                              std::string::npos &&
+                          tune_refusal(artifact.parent_path() / "absent.json", "aaaa")
+                                  .find("absent.json") != std::string::npos,
+                      "a stale or unreadable tune found beside the artifact says why");
     r = resolve_speculation(artifact, "aaaa", rtx5090, artifact.parent_path() / "absent.json");
     failures += check(r.found() && !r.source.starts_with("local tune") &&
                           std::any_of(r.notes.begin(), r.notes.end(),

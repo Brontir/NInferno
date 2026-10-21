@@ -483,6 +483,18 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
     if (!local_profile.empty()) { (void)resolve(artifact, device, local_profile); }
 }
 
+std::string tune_refusal(const std::filesystem::path& artifact, int device,
+                         const std::filesystem::path& tune) {
+    std::string id;
+    try {
+        id = spec::artifact_id_hex(artifact);
+    } catch (const std::exception& e) {
+        return tune.string() + ": the artifact's id is unreadable (" + e.what() + ")";
+    }
+    const auto gpu = spec::gpu_identity(device).key;
+    return spec::tune_refusal(tune, id, gpu.chain.empty() ? std::string("*") : gpu.chain.front());
+}
+
 std::vector<std::string> speculation_notes(const std::filesystem::path& artifact, int device,
                                            const std::filesystem::path& local_profile) {
     const auto resolved = resolve(artifact, device, local_profile);

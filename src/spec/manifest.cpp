@@ -288,6 +288,48 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
     }
 }
 
+namespace {
+
+// Why `tuned` (read from `path`) does not serve `artifact_id` on `gpu_class`: a drafter replaced
+// since the tune (or unreadable), then a key for another artifact, GPU or drafters. Empty: it serves.
+std::vector<std::string> tune_refusals(const Profile& tuned, const std::filesystem::path& path,
+                                       const std::string& artifact_id,
+                                       const std::string& gpu_class) {
+    std::vector<std::string> out;
+    ProfileKey expected;
+    expected.artifact_id = artifact_id;
+    expected.gpu         = gpu_class;
+    std::vector<std::string> ids;
+    for (const auto& d : tuned.drafters) {
+        if (d.artifact_id.empty()) { continue; } // built in, a component, or model-free
+        ids.push_back(d.artifact_id);
+        try {
+            if (artifact_id_hex(d.artifact) != d.artifact_id) {
+                out.push_back(path.string() + ": drafter " + d.artifact +
+                              " was replaced since the tune");
+            }
+        } catch (const std::exception& e) {
+            out.push_back(path.string() + ": drafter " + d.artifact + ": " + e.what());
+        }
+    }
+    expected.drafters   = drafter_key(ids);
+    const auto mismatch = key_mismatch(tuned.key, expected);
+    if (!mismatch.empty()) { out.push_back(path.string() + " was tuned for another " + mismatch); }
+    return out;
+}
+
+} // namespace
+
+std::string tune_refusal(const std::filesystem::path& tune, const std::string& artifact_id,
+                         const std::string& gpu_class) {
+    std::string why;
+    const auto tuned = read_profile(tune, &why);
+    if (!tuned) { return tune.string() + ": " + why; }
+    const auto refusals =
+        tune_refusals(*tuned, tune, artifact_id, gpu_class.empty() ? tuned->key.gpu : gpu_class);
+    return refusals.empty() ? std::string() : refusals.front();
+}
+
 void require_named_tune(const ResolvedSpeculation& resolved) {
     if (resolved.named_tune_refused.empty()) { return; }
     throw std::runtime_error("refusing the named speculation tune: " + resolved.named_tune_refused +
@@ -339,32 +381,9 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     };
     std::string why;
     if (auto tuned = tuned_path.empty() ? std::nullopt : read_profile(tuned_path, &why)) {
-        ProfileKey expected;
-        expected.artifact_id = artifact_id;
-        expected.gpu         = gpu_class;
-        std::vector<std::string> ids;
-        std::map<std::string, std::string> paths;
-        bool drafters_ok = true;
-        for (const auto& d : tuned->drafters) {
-            if (d.artifact_id.empty()) { continue; } // built in, a component, or model-free
-            ids.push_back(d.artifact_id);
-            try {
-                if (artifact_id_hex(d.artifact) != d.artifact_id) {
-                    drafters_ok = false;
-                    refuse(tuned_path.string() + ": drafter " + d.artifact +
-                           " was replaced since the tune");
-                }
-            } catch (const std::exception& e) {
-                drafters_ok = false;
-                refuse(tuned_path.string() + ": drafter " + d.artifact + ": " + e.what());
-            }
-            paths[d.name.empty() ? d.kind : d.name] = d.artifact;
-        }
-        expected.drafters   = drafter_key(ids);
-        const auto mismatch = key_mismatch(tuned->key, expected);
-        if (!mismatch.empty()) {
-            refuse(tuned_path.string() + " was tuned for another " + mismatch);
-        } else if (drafters_ok) {
+        const auto refusals = tune_refusals(*tuned, tuned_path, artifact_id, gpu_class);
+        for (const auto& reason : refusals) { refuse(reason); }
+        if (refusals.empty()) {
             out.source  = "local tune " + tuned_path.string();
             out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);

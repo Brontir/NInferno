@@ -3,6 +3,8 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "core/ascii.h"
+#include "spec/fingerprint.h"
+#include "spec/manifest.h"
 #include "spec/profile.h"
 #include "spec/registry.h"
 #include "convert/fetch.h"
@@ -440,12 +442,25 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
         // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
-        // by its artifact path: named, since the server reads none by itself.
+        // by its artifact path: named, since the server reads none by itself, and only when it
+        // would serve (a named tune that does not refuses to start): a stale one is passed over
+        // with a note in the log. The GPU class is the server's to check (no device here).
         std::error_code ec;
         const fs::path tune = spec::default_profile_path(model);
         if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
-            spec.argv.push_back("--spec-profile");
-            spec.argv.push_back(tune.string());
+            std::string why;
+            try {
+                why = spec::tune_refusal(tune, spec::artifact_id_hex(model));
+            } catch (const std::exception& e) {
+                why = std::string("the model's id is unreadable: ") + e.what();
+            }
+            if (why.empty()) {
+                spec.argv.push_back("--spec-profile");
+                spec.argv.push_back(tune.string());
+            } else {
+                spec.notes.push_back("the tune beside the model is stale (" + why +
+                                     "); the published profile runs: calibrate again");
+            }
         }
     }
     if (request.gpu >= 0) {

@@ -214,13 +214,22 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
     const auto started = std::chrono::steady_clock::now();
 
     // As ninferno-serve builds it by default (--spec-select fixed): every request at the default.
-    // The lab flow: the tune named by --profile, else the one spec-tune wrote beside the artifact
-    // when there is one (else the published profile). A named tune that does not serve refuses.
+    // The lab flow: the tune named by --profile (one that does not serve refuses), else the one
+    // spec-tune wrote beside the artifact when it would serve (a stale one is passed over with a
+    // note), else the published profile.
     std::filesystem::path tuned;
     if (flags.contains("profile")) {
         tuned = flags.at("profile");
-    } else if (std::filesystem::exists(spec::default_profile_path(artifact))) {
-        tuned = spec::default_profile_path(artifact);
+    } else if (const auto beside = spec::default_profile_path(artifact);
+               std::filesystem::exists(beside)) {
+        if (const auto why = product::tune_refusal(artifact, device, beside); why.empty()) {
+            tuned = beside;
+        } else {
+            std::fprintf(stderr,
+                         "spec-tune --load: the tune beside the model is stale (%s); the "
+                         "published profile runs\n",
+                         why.c_str());
+        }
     }
     auto served = product::served_speculation(artifact, device, true, false, tuned);
     if (!served || served->menu.mode == spec::Mode::None) {

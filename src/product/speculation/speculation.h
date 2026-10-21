@@ -125,6 +125,11 @@ shallower_profile(const spec::Profile& profile, const spec::SpecConfig& config, 
 void require_named_tune(const std::filesystem::path& artifact, int device,
                         const std::filesystem::path& local_profile);
 
+// Why the tune at `tune` would not serve `artifact` on `device` (spec::tune_refusal with the
+// device's class); empty when it would. For a tune found beside the artifact rather than named.
+[[nodiscard]] std::string tune_refusal(const std::filesystem::path& artifact, int device,
+                                       const std::filesystem::path& tune);
+
 // Why the artifact came with no speculation profile for this GPU (each source passed over, such
 // as no manifest beside it); empty when served_speculation finds one.
 [[nodiscard]] std::vector<std::string> speculation_notes(const std::filesystem::path& artifact,

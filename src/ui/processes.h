@@ -28,6 +28,9 @@ struct LaunchSpec {
     int port = 0;                           // serve: the port it listens on
     std::vector<std::string> argv;          // argv[0] is the executable
     std::map<std::string, std::string> env; // added to the UI's environment
+    // Lines the UI writes to the process log before its output ("ninferno-ui | ..."), such as
+    // why a tune beside the model is not named.
+    std::vector<std::string> notes;
 };
 
 struct ProcessInfo {

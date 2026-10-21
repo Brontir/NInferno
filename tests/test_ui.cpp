@@ -249,6 +249,26 @@ void test_launch() {
               "a launch without a named speculation runs --spec auto");
     }
 
+    // A stale tune beside a model started by its artifact path is not named (the server would
+    // refuse it): a note in the log says why.
+    {
+        namespace fs     = std::filesystem;
+        const auto dir   = fs::temp_directory_path() / "ninferno_ui_stale_tune";
+        fs::create_directories(dir);
+        const auto model = dir / "m.ninferno";
+        std::ofstream(model) << "not an artifact";
+        std::ofstream(model.string() + ".spec_profile.json") << "{}";
+        LaunchRequest local = request;
+        local.model         = model.string();
+        local.prepare_only  = false;
+        const auto stale    = make_launch(options, local);
+        check(std::find(stale.argv.begin(), stale.argv.end(), "--spec-profile") ==
+                      stale.argv.end() &&
+                  stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
+              "a stale tune beside the model is a note, not --spec-profile");
+        fs::remove_all(dir);
+    }
+
     request.prepare_only = true;
     const auto prepare   = make_launch(options, request);
     check(prepare.argv.back() == "--prepare-only" && prepare.port == 0, "prepare-only");
