@@ -47,6 +47,11 @@ ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)
 
+# Which cached artifacts conversion revision 4 converts again (convert/cache.h cache_current).
+ninferno_add_test(ninferno_convert_cache_revision_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_cache_revision.cpp"
+  LIBRARIES ninferno_convert)
+
 # Gemma 4 model properties (attention scale, GELU-tanh, plain-w RMSNorm, k_eq_v, KV sharing,
 # the BF16 embedding normalizer, final softcap), each against transformers and the converter.
 add_test(NAME ninferno_convert_gemma4_properties_test

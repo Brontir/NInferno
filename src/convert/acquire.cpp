@@ -356,6 +356,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 say(options, "artifact " + kept->string() +
                                  " (converted earlier; its download was removed, so the hub is "
                                  "not asked for a newer commit)");
+                if (out.recipe == "qwen3_5_published" && cached_revision(*kept) < kCacheRevision &&
+                    unquantized_drafter_attention(*kept)) {
+                    say(options, "warning: this cached artifact predates conversion revision " +
+                                     std::to_string(kCacheRevision) +
+                                     " (its DFlash drafter is BF16, which the drafter cannot "
+                                     "load), and its download is gone: delete " +
+                                     kept->string() + " or fetch the model again");
+                }
                 return out;
             }
         }
@@ -524,8 +532,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         remove_artifact(out.artifact);
     }
     if (options.reuse) {
-        if (complete(out.artifact, false) &&
-            cached_revision(out.artifact) < cache_revision_needed(out.recipe)) {
+        if (complete(out.artifact, false) && !cache_current(out.artifact, out.recipe)) {
             say(options, "converting " + fetched.repo + " again: its cached artifact is conversion " +
                              "revision " + std::to_string(cached_revision(out.artifact)) +
                              ", this NInferno makes revision " + std::to_string(kCacheRevision));
