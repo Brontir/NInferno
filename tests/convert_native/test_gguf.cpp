@@ -5,6 +5,7 @@
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "gguf_writer.h"
+#include "support/temp_dir.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -233,9 +234,7 @@ void test_v2() {
 // another model's tokenizer.json beside the file is not read.
 void test_resources_beside() {
     namespace fs  = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "ninferno_test_gguf_beside";
-    fs::remove_all(dir);
-    fs::create_directories(dir);
+    const auto dir   = unique_temp_dir("ninferno_test_gguf_beside");
     const auto write = [&](const char* name, const std::string& text) {
         std::ofstream(dir / name, std::ios::binary) << text;
     };

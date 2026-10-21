@@ -304,7 +304,7 @@ void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
 }
 
 std::shared_ptr<Table> parse_table(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
     if (!in) throw std::runtime_error("route table: cannot open " + path);
     // The bytes are hashed as read, so the status names exactly what was parsed.
     const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -415,7 +415,7 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
     for (const auto& file : files) {
         std::shared_ptr<Table> table;
         try {
-            table = parse_table(file.string());
+            table = parse_table(utf8_path(file));
         } catch (const std::exception&) {
             for (const auto& key : own) {
                 if (route_table_file_name(key) == file.filename().string()) throw;

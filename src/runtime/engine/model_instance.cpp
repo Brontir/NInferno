@@ -230,11 +230,15 @@ void validate_engine_options(const EngineOptions& options) {
     }
 }
 
-EngineOptions normalize_engine_options(EngineOptions options) {
+EngineOptions admit_engine_options(EngineOptions options) {
     // A --route-dir or --route-table that cannot be read (or a malformed table) is refused before
     // the device is touched (ops/route_options.h): read as no table, it would run the heuristic.
     // The table's GPU class is checked when it loads on the device (engine.cpp).
     ops::check_route_options(options.maintainer.route_table, options.maintainer.route_dir);
+    return normalize_engine_options(std::move(options));
+}
+
+EngineOptions normalize_engine_options(EngineOptions options) {
     if (options.recurrent_state_automatic) {
         options.recurrent_state =
             options.activations == ActivationMode::Exact

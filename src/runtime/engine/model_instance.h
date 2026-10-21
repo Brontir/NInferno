@@ -25,6 +25,11 @@ void validate_engine_options(const EngineOptions& options);
 
 [[nodiscard]] EngineOptions normalize_engine_options(EngineOptions options);
 
+// The Engine's own entry, CPU-only and before the device: the route options checked
+// (ops::check_route_options: one that cannot be read is refused), then normalize_engine_options.
+// The planning probes renormalize options already admitted and skip the check.
+[[nodiscard]] EngineOptions admit_engine_options(EngineOptions options);
+
 // A family's loaded model as the Engine keeps it: opaque here, alive while its execution runs.
 class LoadedModel {
 public:

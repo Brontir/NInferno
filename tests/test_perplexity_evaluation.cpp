@@ -1,5 +1,6 @@
 #include "evaluation.h"
 #include "kld.h"
+#include "support/temp_dir.h"
 
 #include <algorithm>
 #include <array>
@@ -91,7 +92,7 @@ int check_kld() {
                                {9, 1, 2, -1},
                                {-0.5F, -1.5F, -0.1F, none},
                                {-0.5F, -0.1F}});
-    const auto path = std::filesystem::temp_directory_path() / "ninferno_kld_reference_test.bin";
+    const auto path = unique_temp_dir("ninferno_kld_reference_test") / "reference.bin";
     pp::write_kld_reference(path, written);
     const pp::KldReference read = pp::read_kld_reference(path);
     std::filesystem::remove(path);
@@ -121,6 +122,7 @@ int check_kld() {
         std::filesystem::remove(path);
         failures += require(rejected, "KLD reference with an invalid slot is rejected");
     }
+    std::filesystem::remove_all(path.parent_path());
     return failures;
 }
 

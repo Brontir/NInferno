@@ -58,7 +58,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
         ops::set_route_table_dir(m.route_dir);
     }
     if (!m.route_table.empty() &&
-        (first || ops::route_table_status().path != m.route_table.string())) {
+        (first || ops::route_table_status().path != utf8_path(m.route_table))) {
         (void)ops::load_route_table_option(m.route_table);
     }
     if (!first) { return; }
@@ -287,7 +287,7 @@ GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView
 class Engine::Impl {
 public:
     explicit Impl(EngineOptions engine_options)
-        : Impl(engine_options, runtime::normalize_engine_options(engine_options)) {}
+        : Impl(engine_options, runtime::admit_engine_options(engine_options)) {}
 
     // `requested`: the options as the caller passed them, which the decision fingerprint records.
     Impl(const EngineOptions& requested, EngineOptions normalized)

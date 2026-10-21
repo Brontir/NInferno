@@ -33,6 +33,9 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 // A whole path as UTF-8, for messages (the same: path::string() throws on Windows for a character
 // outside the ANSI code page).
 [[nodiscard]] std::string utf8_path(const std::filesystem::path& path);
+// The path a UTF-8 text names (utf8_path's inverse; a narrow path on Windows is read in the ANSI
+// code page instead).
+[[nodiscard]] std::filesystem::path path_from_utf8(std::string_view text);
 // How the decision fingerprint names a source file: "<file name> sha256:<hex of its bytes>";
 // nullopt when it cannot be read. Never throws.
 [[nodiscard]] std::optional<std::string> named_file_sha256(const std::filesystem::path& path);

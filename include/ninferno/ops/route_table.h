@@ -88,8 +88,9 @@ void set_route_table_dir(const std::filesystem::path& dir);
 // neither does.
 [[nodiscard]] std::string route_dir_beside(const std::string& exe);
 
-// Replaces the active table. Throws std::runtime_error on a malformed file; a GPU-class mismatch
-// is returned as an unloaded status and the active table stays.
+// Replaces the active table. `path` is UTF-8 (the status reports it so). Throws std::runtime_error
+// on a malformed file; a GPU-class mismatch is returned as an unloaded status and the active table
+// stays.
 RouteTableStatus load_route_table(const std::string& path);
 
 // Every token count at or above `from` where the loaded route table's width-dependent choices
@@ -102,7 +103,8 @@ RouteTableStatus load_route_table(const std::string& path);
 // without bands changes nothing at any width.
 [[nodiscard]] std::vector<std::int32_t> route_table_breakpoints(std::int32_t from);
 
-// Parses and validates a table file without applying it (same refusals as load_route_table).
+// Parses and validates a table file (`path` in UTF-8) without applying it (same refusals as
+// load_route_table).
 [[nodiscard]] RouteTableStatus inspect_route_table(const std::string& path);
 
 // Drops the active table and skips the default lookup: every consumer answers as untuned.

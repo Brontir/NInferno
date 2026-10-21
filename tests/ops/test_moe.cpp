@@ -22,6 +22,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/quantized_weight.h"
+#include "support/temp_dir.h"
 
 #include <cuda_runtime.h>
 
@@ -880,7 +881,7 @@ int check_r8_table() {
     const std::string tuned_down = "rmma.m1.n1.w1x4";
     const std::string tuned      = "rmma.m1.n1.w4x1|" + tuned_down;
     const std::string path =
-        (std::filesystem::temp_directory_path() / "ninferno_test_moe_r8_routes.json").string();
+        (unique_temp_dir("ninferno_test_moe_r8_routes") / "routes.json").string();
     {
         std::ofstream f(path);
         const auto entry = [](const char* format, const std::string& plan, int t_max = 16) {
@@ -894,7 +895,7 @@ int check_r8_table() {
           << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::kR8Tokens) << "]}";
     }
     const auto status = ops::load_route_table(path);
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(std::filesystem::path(path).parent_path());
     if (!status.loaded) {
         std::cerr << "A8 route table: the test table did not load: " << status.message << '\n';
         return 1;
@@ -1151,8 +1152,7 @@ Case qwen36_a3b_u4(QType format, QType shared) {
 }
 
 int check_table_plans() {
-    const std::string path =
-        (std::filesystem::temp_directory_path() / "ninferno_test_moe_routes.json").string();
+    const std::string path = (unique_temp_dir("ninferno_test_moe_routes") / "routes.json").string();
     {
         std::ofstream f(path);
         f << R"({"schema": "ninferno-route-table/1", "gpu": {"class": ")" << ops::route_gpu_class()
@@ -1164,7 +1164,7 @@ int check_table_plans() {
    "prefill": "rmma.m1.n8.w4x1|rmma.m1.n4.w4x1"}]})";
     }
     const auto status = ops::load_route_table(path);
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(std::filesystem::path(path).parent_path());
     int failures = 0;
     if (!status.loaded) {
         std::cerr << "route-table plans: the test table did not load: " << status.message << '\n';
@@ -1271,10 +1271,8 @@ const char* qname(QType q) {
 int check_tuner() {
     namespace mo = ops::detail::moe;
     int failures   = 0;
-    const auto dir  = std::filesystem::temp_directory_path() / "ninferno_test_moe_tune";
+    const auto dir  = unique_temp_dir("ninferno_test_moe_tune");
     const auto path = dir / "moe_tune.json";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir);
     ops::set_moe_tune(TuneMode::On, dir);
     Case c;
     c.label   = "tuner q4_k E32 k4";
