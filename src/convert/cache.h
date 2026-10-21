@@ -27,7 +27,15 @@ namespace ninferno::convert {
 // kept where it is not (a download removed, a checkpoint consumed by --consume-source).
 // 2: a GGUF hub model keeps its MTP layers and takes its companion drafters.
 // 3: a gpt-oss (or other dense-converter) checkpoint plans its drafters for the dense engine.
-inline constexpr int kCacheRevision = 3;
+// 4: qwen3_5_published gives a DFlash drafter's projections Q8 (its fused QKV load refused the
+//    BF16 ones); only that recipe's artifacts are converted again (cache_revision_needed).
+inline constexpr int kCacheRevision = 4;
+
+// The revision a cached artifact of `recipe` needs to be served as it is: kCacheRevision for the
+// recipes the latest raise changed, the one before for the others (their artifacts are current).
+[[nodiscard]] inline int cache_revision_needed(const std::string& recipe) {
+    return recipe == "qwen3_5_published" ? 4 : 3;
+}
 
 // The revision recorded beside `artifact` (<artifact>.revision); 1 where none is: converted before
 // revisions were kept.

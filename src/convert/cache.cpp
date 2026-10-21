@@ -76,9 +76,10 @@ bool source_present(const std::filesystem::path& path) {
 }
 
 // A cached artifact to serve as it is: current, or older with nothing left to convert from.
-bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source) {
+bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source,
+                  const std::string& recipe) {
     return std::filesystem::exists(artifact) &&
-           (cached_revision(artifact) >= kCacheRevision || !source_present(source));
+           (cached_revision(artifact) >= cache_revision_needed(recipe) || !source_present(source));
 }
 
 } // namespace
@@ -94,7 +95,8 @@ cached_artifact(const std::filesystem::path& path,
         out.path = path;
         return out;
     }
-    const auto choice = choose_recipe(path);
+    // Converted as text (and vision) below: the MTP layers are not planned.
+    const auto choice = choose_recipe(path, GgufRequest::Model, false);
     out.recipe        = choice.recipe;
     // A GGUF file caches beside itself, named after it (a directory may hold several models'
     // files); a directory caches inside.
@@ -118,7 +120,7 @@ cached_artifact(const std::filesystem::path& path,
     }
     out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
                         (vision ? "vision." : "") + out.recipe + ".ninferno");
-    if (serve_cached(out.path, path)) { return out; }
+    if (serve_cached(out.path, path, out.recipe)) { return out; }
     fs::create_directories(cache);
     const auto lock_path = cache / ".convert.lock";
     const int lock       = sys::open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
@@ -133,7 +135,7 @@ cached_artifact(const std::filesystem::path& path,
     if (sys::lock(lock, true) != 0) {
         throw std::runtime_error("cannot lock " + lock_path.string());
     }
-    if (serve_cached(out.path, path)) { return out; }
+    if (serve_cached(out.path, path, out.recipe)) { return out; }
     if (fs::exists(out.path)) {
         if (log) {
             log("converting " + path.string() + " again: its cached artifact is conversion revision " +

@@ -565,7 +565,8 @@ int main(int argc, char** argv) {
         arguments_read = true;
         if (options.recipe.empty()) {
             auto choice = ninferno::convert::choose_recipe(
-                options.model, ninferno::convert::gguf_request_for(options.components));
+                options.model, ninferno::convert::gguf_request_for(options.components),
+                ninferno::convert::converts_mtp(options));
             options.recipe = choice.recipe;
             for (auto& [name, path] : choice.sources) {
                 bool given = false;

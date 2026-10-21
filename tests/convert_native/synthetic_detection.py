@@ -19,11 +19,12 @@ Every conversion runs without --recipe, as a user would:
   qwen-bf16-shared       NVFP4 routed experts with a BF16 shared expert: qwen3_6_35b_a3b_nvfp4 has
                          no NVFP4 source for the shared expert, so qwen3_5_published runs it as
                          published (routed NVFP4, shared BF16: the generic MoE op), with a note;
-  qwen-cached-text       NVFP4 experts with FP8 MTP attention, and a cached
-                         qwen3_6_35b_a3b_nvfp4 artifact converted without MTP (--no-drafters):
-                         the cache proves nothing about the MTP layers, so the planner runs and
-                         chooses qwen3_5_published; with MTP recorded in the cached artifact's
-                         report, its recipe answers without planning;
+  qwen-cached-text       NVFP4 experts with FP8 MTP attention: --components=text plans the text
+                         alone and keeps qwen3_6_35b_a3b_nvfp4 (converted into the checkpoint's
+                         cache); a default conversion keeps the MTP layers, which that text-only
+                         artifact proves nothing about, so the planner runs and chooses
+                         qwen3_5_published; with mtp recorded in the cached artifact's report,
+                         its recipe answers without planning;
   gemma-bf16-layer       a Gemma 4 MoE checkpoint whose layer 1 is BF16 throughout (its experts
                          too) while layer 0 is NVFP4 and quantization_config ignores nothing: layer
                          0 imported as NVFP4, layer 1 quantized from BF16, per site;
@@ -363,19 +364,28 @@ def main() -> int:
         fp8_mtp_attention(root)
         cached = root / ".ninferno-cache" / "qwen3_6_35b_a3b_nvfp4.ninferno"
         cached.parent.mkdir()
-        cached.write_bytes(b"x")
         errors = []
-        for components, want in ((["text"], "qwen3_5_published"),
-                                 (["text", "mtp"], "qwen3_6_35b_a3b_nvfp4")):
-            Path(str(cached) + ".conversion.json").write_text(json.dumps({"components": components}),
-                                                              encoding="utf-8")
-            run = convert(native, repository, root, work / "qwen-cached-text.ninferno")
+
+        def chose(run, want, label, converts=True):
             log = run.stdout + run.stderr
             if f"recipe {want} (chosen" not in log:
-                errors.append(f"cached {components}: expected {want}: "
-                              f"{[l for l in log.splitlines() if 'recipe' in l]}")
-            elif want == "qwen3_5_published" and run.returncode:
-                errors.append(f"cached {components}: conversion failed: {log.strip().splitlines()[-1][:300]}")
+                errors.append(f"{label}: expected {want}: {[l for l in log.splitlines() if 'recipe' in l]}")
+            elif converts and run.returncode:
+                errors.append(f"{label}: conversion failed: {log.strip().splitlines()[-1][:300]}")
+
+        chose(convert(native, repository, root, cached, "--components=text"),
+              "qwen3_6_35b_a3b_nvfp4", "--components=text")
+        report_path = Path(str(cached) + ".conversion.json")
+        if report_path.exists():
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if sorted(report["components"]) != ["text"]:
+                errors.append(f"text-only report components: {sorted(report['components'])}")
+            chose(convert(native, repository, root, work / "qwen-cached-text.ninferno"),
+                  "qwen3_5_published", "default after a text-only cache")
+            report["components"]["mtp"] = {}
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            chose(convert(native, repository, root, work / "qwen-cached-mtp.ninferno"),
+                  "qwen3_6_35b_a3b_nvfp4", "default with mtp cached", converts=False)
         case("qwen-cached-text", errors)
 
         root = work / "gemma-bf16-layer"
