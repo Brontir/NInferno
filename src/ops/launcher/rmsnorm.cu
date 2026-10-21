@@ -16,12 +16,10 @@ namespace {
 // prefetch is the only source of overlap and those kernels run at 0.83x to 0.96x; above it a
 // second resident block already supplies that overlap and only the register cost is left (35 -> 50
 // on the warp kernel), which measures 1.02x to 1.14x. Swept over grid size on both gated shapes
-// the crossing sits between 176 and 192 blocks, just above this part's 170 SMs, the bound taken.
-// NINFERNO-SPECIAL(chip:gb202:170sm): the crossing does not follow the SM count. On an RTX 5080 (84
-// SMs) the prefetch stays 1.5-4.8 % faster from 88 through 168 blocks (graphs of 64 calls), so
-// a one-block-per-SM bound (84) loses there and the 170-block literal is the better bound on both
-// measured parts.
-// A per-GPU-class table entry, not a device query, is the way to generalise it.
+// the crossing sits between 176 and 192 blocks on the RTX 5090 (170 SMs). The crossing does not
+// follow the SM count: on an RTX 5080 (84 SMs) the prefetch stays 1.5-4.8 % faster from 88
+// through 168 blocks (graphs of 64 calls), so a one-block-per-SM bound (84) loses there. The
+// bound is a block count fitted on both boards, the same on every board, not an SM count.
 constexpr std::int64_t kRmsPrefetchBlocks = 170;
 
 template <RmsEpilogue Epilogue>

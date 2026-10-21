@@ -151,7 +151,8 @@ inline constexpr int kGeoDecodeBc =
 // it came from the Gemma 4 DFlash drafters at T=16 (16 splits 10-17% faster than the full wave
 // at 2k-8k keys on the 32-head one), which ninferno-serve does not run: it speculates Gemma 4 with
 // the MTP assistant only. A drafter served here would want its own row-group bound.
-// NINFERNO-SPECIAL(chip:gb202:170sm): the 64-key floor was measured at the RTX 5090's bandwidth.
+// Both are counts, the same on every board: the 64 splits a row group measured on three boards
+// (RTX 5090, 4090, 5080), the 64-key floor on the RTX 5090.
 constexpr int kDecodeMinSplitKeysD128   = 64;
 constexpr int kDecodeSplitsPerGroupD128 = 64;
 

@@ -34,9 +34,10 @@ using RouteSpec = ColumnRoute<Bf16GdnGatingScheduleId>;
 constexpr std::array<RouteSpec, 6> k27Routes{{
     {1, 1, Bf16GdnGatingScheduleId::GemvPairedRows},
     {2, 8, Bf16GdnGatingScheduleId::SmallTSplit10},
-    // NINFERNO-SPECIAL(chip:gb202:170sm): as token tiles double, halve SplitK to keep the preferred
-    // full grid near 192 CTAs on 170 SMs. The launcher enforces the device's residency, so the
-    // table is correct on any card; the band edges belong in a per-GPU-class route table.
+    // As token tiles double, halve SplitK: the band edges are token counts, the same on every
+    // board (fitted on the RTX 5090, where they hold the grid near 192 CTAs). Splits 8, 4 and 2
+    // sum K as the canonical segments, so an edge moves no byte; the launcher enforces the
+    // device's residency (cooperative_from).
     {9, 1024, Bf16GdnGatingScheduleId::MmaCooperativeSplit8},
     {1025, 2048, Bf16GdnGatingScheduleId::MmaCooperativeSplit4},
     {2049, 4096, Bf16GdnGatingScheduleId::MmaCooperativeSplit2},
@@ -47,9 +48,8 @@ constexpr std::array<RouteSpec, 6> k27Routes{{
 // route profile it is kept to the decode/verify widths (T <= 16) and every prefill-sized call
 // takes a canonical route; otherwise it serves through T=127 (k35SpeedRoutes).
 constexpr std::array<RouteSpec, 5> k35Routes{{
-    // NINFERNO-SPECIAL(chip:gb202:170sm): this progression keeps the preferred full grid near 256
-    // CTAs on 170 SMs. The launcher enforces the device's residency; the band edges belong in a
-    // per-GPU-class route table.
+    // The same token-count edges (fitted on the RTX 5090, where they hold the grid near 256 CTAs);
+    // the launcher enforces the device's residency.
     {1, 16, Bf16GdnGatingScheduleId::MmaCooperativeSplit16},
     {17, 1024, Bf16GdnGatingScheduleId::MmaCooperativeSplit8},
     {1025, 2048, Bf16GdnGatingScheduleId::MmaCooperativeSplit4},

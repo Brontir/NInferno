@@ -472,14 +472,12 @@ __global__ __launch_bounds__(kExpertThreads, 1) void sparse_moe_prefill_small_ro
     }
 }
 
-// NINFERNO-SPECIAL(chip:gb202:170sm): an upper bound, not an occupancy fact. Capping it at 32
-// blocks per SM of an RTX 5080 (2688) measured 1.2-1.5 % slower on the Q4/Q5 routed prefill at
-// T=1024-4096 and equal on NVFP4, so the literal stays; retune per GPU class.
-constexpr int kRtx5090SmCount = 170;
 // Upper bound on the persistent grid. The routed GEMMs stride their work list by gridDim.x,
-// so any positive grid is correct. This is a queued CTA budget, not simultaneous residency.
-constexpr int kPrefillQueuedCtasPerSm = 32;
-constexpr int kPrefillMaxBlocks       = kPrefillQueuedCtasPerSm * kRtx5090SmCount;
+// so any positive grid is correct. This is a queued CTA budget, not simultaneous residency, and
+// not an SM count: a CTA count fitted on two boards, the same on every board. It began as 32 CTAs
+// an SM of the RTX 5090 (5440); 32 an SM of an RTX 5080 (2688) measured 1.2-1.5 % slower on the
+// Q4/Q5 routed prefill at T=1024-4096 and equal on NVFP4, so the 5080 keeps 5440 too.
+constexpr int kPrefillMaxBlocks = 5440;
 
 // The narrow routed gate/up ships in both depths and the route picks one. A job is one nonempty
 // column tile of one expert, so more than one job per touched expert means an expert's rows
@@ -1406,10 +1404,10 @@ struct Nvfp4ScheduleTag {
     using type = Schedule;
 };
 
-// NINFERNO-SPECIAL(chip:gb202:170sm): the small-T shared-expert tiles below were sized for 170 SMs.
-// The shared expert is dense, so its grid is the output rows over the tile width: at one token the
-// schedules above leave 8 CTAs for gate/up and 16 for down on a 170-SM card, and the pair measures
-// 162 GB/s where the routed pair reaches 597. A narrower tile multiplies the CTA count without
+// The small-T shared-expert tiles below. The shared expert is dense, so its grid is the output rows
+// over the tile width: at one token the schedules above leave 8 CTAs for gate/up and 16 for down,
+// fewer than the SMs of any sm_120 board of the PCI-ID table (30 the fewest), and on the RTX 5090
+// the pair measures 162 GB/s where the routed pair reaches 597. A narrower tile multiplies the CTA count without
 // changing the bytes a CTA reads, and BlockM 16 stops staging 64 token rows when one exists.
 // gate/up reaches 32 because `Nvfp4SharedGateUpRows` is not contiguous and stages scales per
 // (row, k64); down stays at 64, the narrowest the contiguous scale path allows.

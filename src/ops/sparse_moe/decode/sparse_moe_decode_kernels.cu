@@ -378,10 +378,9 @@ __global__ void sparse_moe_d3_path_tiled_kernel(const __nv_bfloat16* __restrict_
                                                 SparseMoePlanes routed, SparseMoePlanes shared,
                                                 float* __restrict__ token_activations, int tokens,
                                                 const int* __restrict__ adaptive_route_jobs) {
-    // Three path CTAs per token/output row expose enough blocks for the 170-SM target and keep the
-    // heavier shared Q8 path from holding eight completed routed warps resident.
-    // NINFERNO-SPECIAL(chip:gb202:170sm): PathsPerBlock was chosen for 170 SMs; correct on any
-    // card.
+    // Three path CTAs per token/output row keep the heavier shared Q8 path from holding eight
+    // completed routed warps resident. The grid (kIntermediate x 3 per token, 1536 CTAs at T = 1)
+    // covers every board's SMs several times over, so the choice reads no SM count.
     static_assert(PathsPerBlock > 0 && (kTopK + 1) % PathsPerBlock == 0);
     constexpr int kPathBlocks = (kTopK + 1) / PathsPerBlock;
     __shared__ __align__(16) __nv_bfloat16 x_shared[kHidden];

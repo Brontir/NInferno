@@ -21,6 +21,17 @@ This page states the rule and its target. The engine does not meet all of it yet
   restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
   prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
   the run it replaces; `exact` runs the scan token by token and is free of this;
+- launch counts stand as constants, the same on every board but not yet fitted on two lab cards
+  or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
+  decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
+  tokens), the RMSNorm prefetch bound (170 blocks) and the sparse-MoE prefill grid bound (5440
+  CTAs) on the RTX 5090 and 5080, where an SM-count rule lost on the 5080. The literals that were
+  the RTX 5090's 170 SMs and decided a grid (the FP8 TMA split wave, the Gemma 4 Q8 5376x16384
+  256-token tile, the NVFP4 2048x5376 TMA route) are rules over the device's SM count
+  (`src/ops/common/sm_wave_rules.h`);
+- choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
+  `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
+  and spread gates): the nearest measured board, not a rule over facts;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
