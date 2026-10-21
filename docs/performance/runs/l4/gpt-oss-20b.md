@@ -20,10 +20,10 @@ ninferno-serve openai/gpt-oss-20b --spec none --max-concurrency 8
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `openai/gpt-oss-20b` | dflash ×7 | auto | 3,698 | 51.1 | 70.8 | 162 | – | 2026-10-20 |
-| `openai/gpt-oss-20b` | off | auto | 3,735 | 56.0 | 58.8 | 130 | 174 | 2026-10-20 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `openai/gpt-oss-20b` | dflash ×7 | auto | fast | 3,698 | 51.1 | 70.8 | 162 | – | 2026-10-20 |
+| `openai/gpt-oss-20b` | off | auto | fast | 3,735 | 56.0 | 58.8 | 130 | 174 | 2026-10-20 |
 
 ## Measurement
 

@@ -20,9 +20,9 @@ ninferno-serve Qwen/Qwen3-8B-GGUF --quant Q4_K_M --spec none --max-concurrency 8
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `Qwen/Qwen3-8B-GGUF` Q4_K_M | off | auto | 3,751 | 69.7 | 93.2 | 334 | 500 | 2026-10-19 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `Qwen/Qwen3-8B-GGUF` Q4_K_M | off | auto | fast | 3,751 | 69.7 | 93.2 | 334 | 500 | 2026-10-19 |
 
 ## Measurement
 

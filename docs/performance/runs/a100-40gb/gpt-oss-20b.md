@@ -20,10 +20,10 @@ ninferno-serve openai/gpt-oss-20b --with-drafters --spec dflash --draft-tokens 7
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `openai/gpt-oss-20b` | dflash ×7 | auto | 7,005 | 172 | 225 | 456 | 627 | 2026-10-20 |
-| `openai/gpt-oss-20b` | off | auto | 7,081 | 186 | 195 | 389 | 474 | 2026-10-20 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `openai/gpt-oss-20b` | dflash ×7 | auto | fast | 7,005 | 172 | 225 | 456 | 627 | 2026-10-20 |
+| `openai/gpt-oss-20b` | off | auto | fast | 7,081 | 186 | 195 | 389 | 474 | 2026-10-20 |
 
 ## Measurement
 

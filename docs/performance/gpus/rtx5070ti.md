@@ -14,4 +14,4 @@ Each model on this GPU, tokens per second, each column at its best setting: one 
 
 Weights from [`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF), [`unsloth/Qwen3.6-35B-A3B-GGUF`](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF), [`unsloth/gemma-4-26B-A4B-it-GGUF`](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF), [`openai/gpt-oss-20b`](https://huggingface.co/openai/gpt-oss-20b), [`unsloth/Muse-Glimmer-30B-GGUF`](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF).
 
-<sub>Measured 2026-10-19 to 2026-10-20 · NInferno 0.1.0 · NVIDIA GeForce RTX 5070 Ti, driver 615.71.09, 300 W · [methodology](../methodology.md)</sub>
+<sub>Measured 2026-10-19 to 2026-10-21 · NInferno 0.1.0 · NVIDIA GeForce RTX 5070 Ti, driver 615.71.09, 300 W · [methodology](../methodology.md)</sub>

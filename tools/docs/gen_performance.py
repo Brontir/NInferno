@@ -13,7 +13,7 @@ Three levels, each one deeper than the last:
 Inputs (docs/performance/data/):
   bench.jsonl   one measurement per line: machine {gpu_name, sm, vram_gb, power_limit_w, driver,
                 cuda}, model (Hugging Face id or name), recipe ("org/repo --quant LABEL"), spec,
-                draft_tokens, kv, metric, prompt_len, prompt_set, concurrency, context, repeats,
+                draft_tokens, kv, activations (--activations, default "fast"), metric, prompt_len, prompt_set, concurrency, context, repeats,
                 value, spread, unit, date, version, flags, engine (default "ninferno")
                 metric: prefill | decode (one stream after a long prompt) | decode_aggregate
                 (short chats, all streams together) | perplexity | acceptance | greedy_match
@@ -85,6 +85,7 @@ def load():
             r.setdefault("engine", OURS)
             r.setdefault("spec", "none")
             r.setdefault("kv", "auto")
+            r.setdefault("activations", "fast")
             r.setdefault("concurrency", 1)
             rows.append(r)
     return gpus, models, rows, problems
@@ -176,6 +177,8 @@ def command(r, concurrency):
         parts.append(f"--spec {r['spec']} --draft-tokens {r['draft_tokens']}")
     if r.get("kv") not in ("auto", None):
         parts.append(f"--kv-dtype {r['kv']}")
+    if r.get("activations", "fast") != "fast":
+        parts.append(f"--activations {r['activations']}")
     if concurrency > 1:
         parts.append(f"--max-concurrency {concurrency}")
     return " ".join(parts)
@@ -184,7 +187,7 @@ def command(r, concurrency):
 # --- collecting ---------------------------------------------------------------------------------
 
 def setting(r):
-    return (r["recipe"], spec_label(r), r["kv"])
+    return (r["recipe"], spec_label(r), r["kv"], r["activations"])
 
 
 def collect(rows):
@@ -273,7 +276,8 @@ def cell(settings, url):
             continue
         users = f" at {rec['concurrency']} streams" if name == "all streams" else ""
         spec = "no speculation" if s[1] == "off" else s[1]
-        title = f"{name}: {fmt(rec['value'])} tok/s{users}, {quant(s[0])}, {spec}, measured {day(rec)}"
+        mode = "" if s[3] == "fast" else f", --activations {s[3]}"
+        title = f"{name}: {fmt(rec['value'])} tok/s{users}, {quant(s[0])}, {spec}{mode}, measured {day(rec)}"
         number = fmt(rec["value"]) + (f"<sup>{rec['concurrency']}</sup>" if name == "all streams" else "")
         parts.append(f"[{number}]({url}{hint(title)})")
     return " / ".join(parts)
@@ -450,11 +454,12 @@ def page_run(g, m, gpus, models, speed, refs, quality):
     lines += ["## Every setting measured", "",
               "Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* "
               "concurrent short chats, all streams together.", "",
-              "| Weights | Speculation | KV | " + " | ".join(head[c[0]].format(c[1]) for c in cells) + " | Measured |",
-              "|---|---|---|" + "---:|" * len(cells) + "---|"]
+              "| Weights | Speculation | KV | Activations | " + " | ".join(head[c[0]].format(c[1]) for c in cells)
+              + " | Measured |",
+              "|---|---|---|---|" + "---:|" * len(cells) + "---|"]
     for s in sorted(settings):
         recs = settings[s].values()
-        lines.append("| " + " | ".join([weights(s[0], link=False), s[1], s[2]]
+        lines.append("| " + " | ".join([weights(s[0], link=False), s[1], s[2], s[3]]
                                         + [fmt(settings[s][c]["value"]) if c in settings[s] else "–" for c in cells]
                                         + [max(day(r) for r in recs)]) + " |")
     ref = refs.get((g, m), [])
@@ -480,22 +485,41 @@ def page_run(g, m, gpus, models, speed, refs, quality):
             refs_of = sorted({r.get("reference", "exact") for r in ppl if r["metric"] == "kld"})
             ref_name = refs_of[0] if refs_of else "exact"
             corpus = sorted({r.get("corpus") for r in ppl if r.get("corpus")})
-            lines += [f"Perplexity (lower is better) on {', '.join(f'`{c}`' for c in corpus) or 'the fixed corpus'}, "
-                      f"and how far each `--activations` mode moves the next-token distribution from "
-                      f"`{ref_name}`: mean KL divergence and the share of positions with the same top token.", "",
-                      "| Weights | Mode | Perplexity | KL from " + ref_name + " | Same top token |"
-                      + (" llama.cpp |" if with_ref else "") + " Measured |",
-                      "|---|---|---:|---:|---:|" + ("---:|" if with_ref else "") + "---|"]
+            def speed_of(w, mode, cell):  # the fastest measured setting of these weights in this mode
+                vals = [c[cell]["value"] for s, c in settings.items() if quant(s[0]) == w and s[3] == mode and cell in c]
+                return fmt(max(vals)) if vals else "–"
+
+            lines += [f"What each `--activations` mode gives: its speed (the fastest setting measured in it), "
+                      f"perplexity (lower is better) on {', '.join(f'`{c}`' for c in corpus) or 'the fixed corpus'}, "
+                      f"and how far it moves the next-token distribution from `{ref_name}`: mean KL divergence and "
+                      f"the share of positions with the same top token.", "",
+                      "| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from " + ref_name
+                      + " | Same top token |" + (" llama.cpp |" if with_ref else "") + " Measured |",
+                      "|---|---|---:|---:|---:|---:|---:|" + ("---:|" if with_ref else "") + "---|"]
             order = {"exact": 0, "fast": 1, "int8": 2}
+
+            def same(a, b):  # two modes that ran the same kernels: every quality number identical
+                return all(a.get(x, {}).get("value") == b.get(x, {}).get("value") for x in ("perplexity", "kld"))
+
+            names = {}
+            for (w, mode) in list(by):  # int8 differs from fast only on weights fast keeps in 16 bits
+                if mode == "int8" and (w, "fast") in by and same(by[(w, "int8")], by[(w, "fast")]):
+                    del by[(w, "int8")]
+                    names[(w, "fast")] = "fast = int8"
             for (w, mode), d in sorted(by.items(), key=lambda x: (x[0][0], order.get(x[0][1], 9))):
                 p, k, o = d.get("perplexity"), d.get("kld"), d.get("llama.cpp")
-                row = [w, mode, f"{p['value']:.4f}" if p else "–",
+                pk = max((k for k in {c for s in settings.values() for c in s} if k[0] == "prefill"), default=None)
+                row = [w, names.get((w, mode), mode), speed_of(w, mode, ("chat", 1)), speed_of(w, mode, pk) if pk else "–",
+                       f"{p['value']:.4f}" if p else "–",
                        "reference" if mode == ref_name else (f"{k['value']:.5f}" if k else "–"),
                        "" if mode == ref_name else (f"{k['top1_agreement'] * 100:.2f} %" if k else "–")]
                 if with_ref:
                     row.append(f"{o['value']:.4f}" if o else "–")
                 row.append(max(day(r) for r in d.values()))
                 lines.append("| " + " | ".join(row) + " |")
+            if names:
+                lines += ["", "**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` "
+                          "takes the same kernels and gives the same numbers."]
             lines.append("")
         spec = [r for r in q if r["metric"] in ("acceptance", "greedy_match")]
         if spec:
