@@ -54,9 +54,10 @@ struct StagedShared {
 // The schedule's pipeline depth, lowered until the stages fit one block of this build.
 template <class S, int Stages = S::kStages>
 struct StagedStages {
-    static constexpr int value = sizeof(StagedShared<S, Stages>) <= kMaxSharedBytesPerBlock || Stages == 2
-                                     ? Stages
-                                     : StagedStages<S, Stages - 1>::value;
+    static constexpr int value =
+        sizeof(StagedShared<S, Stages>) <= kMaxSharedBytesPerBlock || Stages == 2
+            ? Stages
+            : StagedStages<S, Stages - 1>::value;
 };
 template <class S>
 struct StagedStages<S, 1> {
