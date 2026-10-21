@@ -438,6 +438,14 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         // alone decodes plainly without --spec).
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
+        // The tune the user ran from this UI (/api/tune) for this artifact: named, since the
+        // server reads none by itself.
+        std::error_code ec;
+        const fs::path tune = model + ".spec_profile.json";
+        if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
+            spec.argv.push_back("--spec-profile");
+            spec.argv.push_back(tune.string());
+        }
     }
     if (request.gpu >= 0) {
         spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
@@ -1612,9 +1620,9 @@ void App::install(httplib::Server& server) {
                         reply_error(res, 400, std::string("bad request body: ") + error.what());
                     } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
                 });
-    // Speculation calibration on this GPU: spec-tune's quick pass writes
-    // <artifact>.spec_profile.json, which the engines read at their next start in place of a
-    // profile borrowed from a similar chip.
+    // Speculation tuned on this GPU at the user's request: spec-tune's quick pass writes
+    // <artifact>.spec_profile.json, which this UI names (--spec-profile) when it starts the model
+    // again, in place of a profile borrowed from a similar chip.
     server.Post("/api/tune", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             const Json body = Json::parse(req.body);

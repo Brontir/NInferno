@@ -45,6 +45,7 @@ std::string usage_text(const char* argv0) {
            "--draft-tokens N]\n"
            "       [--ngram-draft-tokens N [--ngram-min-match M]]  copy rounds beside MTP\n"
            "       [--lm-head-draft] [--acceptance-floor TOKENS_PER_ROUND]\n"
+           "       [--spec-profile TUNE.json]  a maintainer's own tune, read only when named\n"
            "       [--temperature F] [--top-p F] [--top-k N] [--min-p F]\n"
            "       [--presence-penalty F] [--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--stop-token-id N]... [--stop <text>]... [--reasoning-stop <text>]...\n"
@@ -59,8 +60,7 @@ std::string usage_text(const char* argv0) {
            "media sources may be local paths, HTTP(S) URLs, or base64 data URIs.\n"
            "--vision enables image/video input and loads the fixed Vision GPU allocations.\n"
            "Without --spec, speculation follows the profile the model came with\n"
-           "(<model>.ninferno.speculation.json, or a maintainer's "
-           "<model>.ninferno.spec_profile.json)\n"
+           "(<model>.ninferno.speculation.json; a maintainer's tune only with --spec-profile)\n"
            "for this GPU: its default for the thinking flag. --spec none decodes plainly. `" +
            std::string(argv0) +
            " spec-tune <model.ninferno>` measures a profile, `spec-reselect <profile.json>` "

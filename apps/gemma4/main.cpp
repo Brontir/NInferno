@@ -16,7 +16,7 @@
 //                 [--publish FILE --applies-to REPO,... --measured-on TEXT --gpu-class C]
 //
 // generate and batch speculate by default when the model came with speculation (spec/
-// manifest.h): a maintainer's <artifact>.spec_profile.json for this artifact and GPU, else the
+// manifest.h): a maintainer's tune named by --spec-profile for this artifact and GPU, else the
 // profile the model's <artifact>.speculation.json publishes for this GPU (its chip variant, chip,
 // architecture, then "*"; spec-tune publishes for the chip unless --gpu-class says), else prompt
 // lookup when that manifest says no drafter came with the model; an artifact without either decodes
@@ -988,7 +988,7 @@ int main(int argc, char** argv) {
             !args.flag("dflash")) {
             std::optional<std::string> fingerprint;
             if (std::filesystem::exists(spec::manifest_path(artifact)) ||
-                std::filesystem::exists(spec::default_profile_path(artifact))) {
+                args.flag("spec-profile")) {
                 // The artifact tokenizer's fingerprint: the thinking marker's id.
                 if (const auto tokenizer = spec::artifact_tokenizer_json(artifact)) {
                     fingerprint = spec::vocab_fingerprint(*tokenizer).value;

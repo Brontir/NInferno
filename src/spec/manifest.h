@@ -66,8 +66,11 @@ struct ResolvedSpeculation {
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
-    // default measured nowhere: its floors are raised to the registry's (raise_foreign_floors).
+    // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
+    // The model's published profiles (a JSON array: every GPU class it was measured on) whose
+    // floors bound a foreign profile's; null for a built-in default (the registry median then).
+    nlohmann::json floor_sources;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
@@ -81,13 +84,25 @@ struct ResolvedSpeculation {
                                                       const GpuKey& gpu,
                                                       const std::filesystem::path& local_profile = {});
 
-// The largest break-even (floor_tokens_per_round) any registry profile measured for this mode and
-// depth, on any GPU class: a lab constant. 0 when the registry measured none.
-[[nodiscard]] double registry_floor_ceiling(const SpecConfig& config);
+// The largest break-even (floor_tokens_per_round) `profiles` (one model's published profiles,
+// every GPU class) measured for exactly this configuration (mode, depth, proposal head; adaptive
+// choices are not counted): lab constants of the same model on other GPUs. 0 when none.
+[[nodiscard]] double floor_ceiling(const nlohmann::json& profiles, const SpecConfig& config);
+
+// The median break-even of this configuration over every model and GPU class of the registry: the
+// floor of a model measured nowhere (a built-in default). 0 when the registry measured none.
+[[nodiscard]] double registry_floor_median(const SpecConfig& config);
+
+// The floor a profile measured elsewhere runs `config` at: its own, raised to the same model's
+// largest on any GPU (floor_ceiling over resolved.floor_sources) or, for a model measured nowhere,
+// to the registry median. `own` itself for a profile measured on this GPU.
+[[nodiscard]] double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config,
+                                   double own);
 
 // A profile measured on another GPU, or measured nowhere, carries no break-even of this one: each
-// choice's floor is raised to registry_floor_ceiling (the conservative side: its watchdog trips
-// sooner). A note names each raised choice.
-void raise_foreign_floors(Profile& profile, std::vector<std::string>& notes);
+// choice's floor is raised to foreign_floor (the conservative side: its watchdog trips sooner).
+// A note names each raised choice.
+void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
+                          std::vector<std::string>& notes);
 
 } // namespace ninferno::spec

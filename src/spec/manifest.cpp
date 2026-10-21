@@ -67,7 +67,8 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
         return false;
     }
     if (out.foreign_floors) {
-        raise_foreign_floors(p, out.notes);
+        out.floor_sources = profiles;
+        raise_foreign_floors(p, out, out.notes);
         const auto capped = stand_in_load(p.load, gpu.sms);
         if (capped != p.load) {
             out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
@@ -201,59 +202,85 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
 
 namespace {
 
-// Every choice object under `j` (a "config" label beside a "floor_tokens_per_round").
-void collect_floors(const Json& j, const SpecConfig& config, double& ceiling) {
+// Every choice object under `j` (a "config" label beside a "floor_tokens_per_round") of exactly
+// `config` (mode, depth, proposal head; an adaptive choice is another configuration).
+void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>& floors) {
     if (j.is_object()) {
         const auto label = j.find("config");
         const auto floor = j.find("floor_tokens_per_round");
         if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
             try {
                 const auto c = SpecConfig::parse(label->get<std::string>());
-                if (c.mode == config.mode && c.k == config.k) {
-                    ceiling = std::max(ceiling, floor->get<double>());
+                if (c.mode == config.mode && c.k == config.k && !c.adaptive() &&
+                    c.proposal_head == config.proposal_head && floor->get<double>() > 1.0) {
+                    floors.push_back(floor->get<double>());
                 }
             } catch (const std::exception&) {
             }
         }
-        for (const auto& [key, value] : j.items()) { collect_floors(value, config, ceiling); }
+        for (const auto& [key, value] : j.items()) { collect_floors(value, config, floors); }
     } else if (j.is_array()) {
-        for (const auto& value : j) { collect_floors(value, config, ceiling); }
+        for (const auto& value : j) { collect_floors(value, config, floors); }
     }
 }
 
-void raise_choice(Choice& choice, const char* name, std::vector<std::string>& notes) {
+void raise_choice(Choice& choice, const char* name, const ResolvedSpeculation& resolved,
+                  std::vector<std::string>& notes) {
     if (!choice.config.enabled()) { return; }
-    const double ceiling = registry_floor_ceiling(choice.config);
-    if (ceiling <= choice.floor_tokens_per_round) { return; }
+    const double raised = foreign_floor(resolved, choice.config, choice.floor_tokens_per_round);
+    if (raised <= choice.floor_tokens_per_round) { return; }
     notes.push_back(std::string(name) + " " + choice.config.label() + ": watchdog floor " +
                     std::to_string(choice.floor_tokens_per_round) + " -> " +
-                    std::to_string(ceiling) +
-                    " tokens a round, the largest the registry measured for it (the profile was "
-                    "not measured on this GPU)");
-    choice.floor_tokens_per_round = ceiling;
+                    std::to_string(raised) + " tokens a round (" +
+                    (resolved.floor_sources.is_array()
+                         ? "the largest this model measured on any GPU"
+                         : "the registry's median for it: the model was measured nowhere") +
+                    "; the profile was not measured on this GPU)");
+    choice.floor_tokens_per_round = raised;
 }
 
 } // namespace
 
-double registry_floor_ceiling(const SpecConfig& config) {
+double floor_ceiling(const Json& profiles, const SpecConfig& config) {
     if (!config.enabled()) { return 0.0; }
-    double ceiling = 0.0;
-    for (const auto& model : Registry::builtin().models()) {
-        collect_floors(model.profiles, config, ceiling);
-    }
-    return ceiling;
+    std::vector<double> floors;
+    collect_floors(profiles, config, floors);
+    return floors.empty() ? 0.0 : *std::max_element(floors.begin(), floors.end());
 }
 
-void raise_foreign_floors(Profile& profile, std::vector<std::string>& notes) {
-    raise_choice(profile.overall, "default", notes);
-    raise_choice(profile.thinking, "thinking", notes);
-    raise_choice(profile.non_thinking, "non-thinking", notes);
-    if (profile.fit_fallback) { raise_choice(*profile.fit_fallback, "fit fallback", notes); }
+double registry_floor_median(const SpecConfig& config) {
+    if (!config.enabled()) { return 0.0; }
+    std::vector<double> floors;
+    for (const auto& model : Registry::builtin().models()) {
+        collect_floors(model.profiles, config, floors);
+    }
+    if (floors.empty()) { return 0.0; }
+    std::sort(floors.begin(), floors.end());
+    const auto n = floors.size();
+    return n % 2 == 1 ? floors[n / 2] : 0.5 * (floors[n / 2 - 1] + floors[n / 2]);
+}
+
+double foreign_floor(const ResolvedSpeculation& resolved, const SpecConfig& config, double own) {
+    if (!resolved.foreign_floors || !config.enabled()) { return own; }
+    const double bound = resolved.floor_sources.is_array()
+                             ? floor_ceiling(resolved.floor_sources, config)
+                             : registry_floor_median(config);
+    return std::max(own, bound);
+}
+
+void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
+                          std::vector<std::string>& notes) {
+    raise_choice(profile.overall, "default", resolved, notes);
+    raise_choice(profile.thinking, "thinking", resolved, notes);
+    raise_choice(profile.non_thinking, "non-thinking", resolved, notes);
+    if (profile.fit_fallback) {
+        raise_choice(*profile.fit_fallback, "fit fallback", resolved, notes);
+    }
     for (auto* served : {&profile.served, &profile.portable}) {
         if (!served->has_value()) { continue; }
-        raise_choice((*served)->overall, "served default", notes);
-        raise_choice((*served)->thinking, "served thinking", notes);
-        raise_choice((*served)->non_thinking, "served non-thinking", notes);
+        raise_choice((*served)->overall, "served default", resolved, notes);
+        raise_choice((*served)->thinking, "served thinking", resolved, notes);
+        raise_choice((*served)->non_thinking, "served non-thinking", resolved, notes);
     }
 }
 

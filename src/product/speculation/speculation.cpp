@@ -137,7 +137,7 @@ void default_for_builtin_drafter(const std::filesystem::path& artifact,
     resolved.foreign_floors           = true;
     resolved.source                   = "the built-in " + choice.drafter + " drafter's default (" +
                       choice.config.label() + ", untuned on this GPU: spec-tune measures one)";
-    spec::raise_foreign_floors(resolved.profile, resolved.notes);
+    spec::raise_foreign_floors(resolved.profile, resolved, resolved.notes);
 }
 
 std::optional<spec::ResolvedSpeculation> resolve(const std::filesystem::path& artifact,
@@ -204,10 +204,10 @@ std::optional<SpeculativeOptions> speculation_of(const spec::Choice& choice,
                          ": the artifact has no proposal head; drafting with the full head");
     }
     // A profile measured on another GPU (a similar chip's, or the "*" one) brings that GPU's
-    // break-evens: resolve_speculation raised them to the registry's largest for the configuration
-    // (spec::raise_foreign_floors; the "*" profile's mtp:10 at 2.0 tokens a round ran 13.6 tok/s
-    // against 23.1 plain on a V100). Nothing is timed here.
-    out.acceptance_floor = watchdog_floor(choice.floor_tokens_per_round);
+    // break-evens: resolve_speculation raised them to the same model's largest on any GPU, or the
+    // registry median for a model measured nowhere (spec::raise_foreign_floors). Nothing is timed.
+    out.acceptance_floor = watchdog_floor(
+        spec::foreign_floor(resolved, choice.config, choice.floor_tokens_per_round));
     out.context_limit = resolved.profile.context_limit; // as the served engine's
     out.decision_sources = decision_sources_of(resolved);
     return out;
@@ -294,14 +294,17 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
+    // A profile measured elsewhere: every depth's floor at least foreign_floor's there (a
+    // shallower-to-fit choice interpolates between raised floors, which can fall below its own).
+    out.menu.primary.floor =
+        spec::foreign_floor(resolved, out.menu.primary.config, out.menu.primary.floor);
     out.engine.acceptance_floor = watchdog_floor(out.menu.primary.floor);
     out.engine.step_down        = request_speculation(out.menu, out.menu.primary).step_down;
-    // A step's floor on a profile measured elsewhere: at least the registry's largest at its depth.
     if (resolved.foreign_floors) {
         for (auto& step : out.engine.step_down) {
-            const double ceiling = spec::registry_floor_ceiling(
-                {.mode = out.menu.mode, .k = static_cast<std::int32_t>(step.draft_tokens)});
-            step.acceptance_floor = std::max<double>(step.acceptance_floor, ceiling);
+            spec::SpecConfig at       = out.menu.primary.config;
+            at.k                      = static_cast<std::int32_t>(step.draft_tokens);
+            step.acceptance_floor     = spec::foreign_floor(resolved, at, step.acceptance_floor);
         }
     }
     if (per_request) {

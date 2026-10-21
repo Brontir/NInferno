@@ -282,8 +282,9 @@ The profile therefore bounds speculation under load, in its `load` table.
   tune measured none").
 - **Floors of a profile from another GPU.** A profile measured on a similar chip, the `"*"` one or
   a built-in default carries no break-even of this GPU. Each of its watchdog floors is raised to
-  the largest the registry measured for that configuration on any GPU, a startup note names each
-  one, and nothing is timed at startup.
+  the largest the same model measured for exactly that configuration on any GPU (for a model
+  measured nowhere, the registry's median for it); a startup note names each one, and nothing is
+  timed at startup.
 - **Rule.** A decode step of at least `lanes` rows verifies at most `depth` drafts per row. At depth
   0 its rows finish their requests with plain decode. A row cannot resume speculating: its drafter
   state stops with its last round, so a later request reuses its checkpoints from before the

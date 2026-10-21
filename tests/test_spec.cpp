@@ -1354,12 +1354,12 @@ int test_resolve() {
     r = resolve_speculation(artifact, "bbbb", rtx5090);
     failures += check(!r.found() && !r.notes.empty(), "a manifest of another artifact is ignored");
     r = resolve_speculation(artifact, "aaaa", rtx5090);
-    // The "*" profile was measured on no GPU in particular: its floor is at least the registry's
-    // largest for its configuration.
+    // The "*" profile was measured on no GPU in particular: its floor is at least the largest the
+    // model's own profiles measured for the configuration (here its own, 1.6).
     failures += check(r.found() && r.profile.overall.config.label() == "mtp:5+head" &&
                           r.drafters.at("mtp") == "component:mtp" && r.foreign_floors &&
-                          r.profile.overall.floor_tokens_per_round ==
-                              std::max(1.6, registry_floor_ceiling(SpecConfig::parse("mtp:5+head"))),
+                          r.floor_sources.is_array() &&
+                          r.profile.overall.floor_tokens_per_round == 1.6,
                       "the manifest's profile for the attached drafters");
     // A maintainer's tune for this artifact and GPU wins.
     Profile tuned;
@@ -1412,24 +1412,44 @@ int test_resolve() {
     r = resolve_speculation(artifact, "aaaa", pro6000, named);
     failures += check(r.found() && r.source.starts_with("manifest"),
                       "a tune for another GPU class falls back to the manifest");
-    // The registry's ceiling: the largest floor its profiles measured for a configuration (a lab
-    // constant), 0 for one it never measured; raise_foreign_floors lifts a choice to it, never
-    // lowers one.
+    // A foreign profile's floors: the largest the same model measured for exactly that
+    // configuration on any GPU (another depth, head or an adaptive choice does not count), or the
+    // registry median for a model measured nowhere; raised, never lowered.
     {
-        const double mtp8 = registry_floor_ceiling(SpecConfig::parse("mtp:8"));
+        const Json sources = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "dflash:7", "floor_tokens_per_round": 1.8}},
+            {"gpu_class": "gv100", "default": {"config": "dflash:7", "floor_tokens_per_round": 2.6},
+             "thinking": {"config": "dflash:5", "floor_tokens_per_round": 9.0}},
+            {"gpu_class": "ad102", "default": {"config": "dflash:7:3", "floor_tokens_per_round": 9.0},
+             "thinking": {"config": "mtp:7+head", "floor_tokens_per_round": 9.0}}])");
+        failures += check(floor_ceiling(sources, SpecConfig::parse("dflash:7")) == 2.6 &&
+                              floor_ceiling(sources, SpecConfig::parse("dflash:6")) == 0.0 &&
+                              floor_ceiling(sources, SpecConfig{}) == 0.0,
+                          "a configuration's floor ceiling: exactly that one, over the model's GPUs");
+        ResolvedSpeculation from;
+        from.foreign_floors = true;
+        from.floor_sources  = sources;
         Profile foreign;
-        foreign.overall.config                  = SpecConfig::parse("mtp:8");
+        foreign.overall.config                  = SpecConfig::parse("dflash:7");
         foreign.overall.floor_tokens_per_round  = 1.1;
-        foreign.thinking.config                 = SpecConfig::parse("mtp:8");
-        foreign.thinking.floor_tokens_per_round = 99.0;
+        foreign.thinking.config                 = SpecConfig::parse("dflash:7");
+        foreign.thinking.floor_tokens_per_round = 3.0;
         std::vector<std::string> raised;
-        raise_foreign_floors(foreign, raised);
-        failures += check(mtp8 > 1.1 && registry_floor_ceiling(SpecConfig::parse("mtp:15")) >= 0.0 &&
-                              registry_floor_ceiling(SpecConfig{}) == 0.0 &&
-                              foreign.overall.floor_tokens_per_round == mtp8 &&
-                              foreign.thinking.floor_tokens_per_round == 99.0 &&
-                              raised.size() == 1,
-                          "a foreign profile's floors rise to the registry's ceiling, never fall");
+        raise_foreign_floors(foreign, from, raised);
+        ResolvedSpeculation own;
+        failures += check(foreign.overall.floor_tokens_per_round == 2.6 &&
+                              foreign.thinking.floor_tokens_per_round == 3.0 &&
+                              raised.size() == 1 &&
+                              foreign_floor(own, SpecConfig::parse("dflash:7"), 1.1) == 1.1,
+                          "a foreign profile's floors rise to its model's ceiling, never fall; a "
+                          "profile of this GPU keeps its own");
+        ResolvedSpeculation nowhere;
+        nowhere.foreign_floors = true;
+        const double median    = registry_floor_median(SpecConfig::parse("mtp:5"));
+        failures += check(median > 1.0 &&
+                              foreign_floor(nowhere, SpecConfig::parse("mtp:5"), 0.0) == median &&
+                              registry_floor_median(SpecConfig{}) == 0.0,
+                          "a model measured nowhere: the registry median");
     }
     // A manifest the registry wrote, naming its entry: the profiles of the registry this binary
     // carries replace the (stale, here memory-keyed) copy taken at conversion.
