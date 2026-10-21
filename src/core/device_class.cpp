@@ -384,6 +384,18 @@ double board_memory_distance(const Board& a, const Board& b) noexcept {
     return board_distance_of(a, b, false);
 }
 
+std::string gpu_chip_arch(std::string_view gpu_class) {
+    const auto chip = gpu_class.substr(0, gpu_class.find(':'));
+    if (chip.size() > 2 && chip.starts_with("sm") &&
+        chip.find_first_not_of("0123456789", 2) == std::string_view::npos) {
+        return std::string(chip);
+    }
+    for (const auto& full : kFullChips) {
+        if (chip == full.chip) { return gpu_arch_id(full.major, full.minor); }
+    }
+    return {};
+}
+
 std::string gpu_class_id(std::string_view chip, int sms) {
     return std::string(chip) + ":" + std::to_string(sms) + "sm";
 }

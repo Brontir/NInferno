@@ -120,11 +120,18 @@ Registry Registry::parse(const std::string& text) {
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
     if (const auto it = doc.find("context_classes"); it != doc.end()) {
         out.context_classes_ = parse_context_factors(*it);
-        for (const auto& [kind, row] : out.context_classes_.factors) {
-            const bool declared = std::any_of(out.kinds_.begin(), out.kinds_.end(),
-                                              [&](const KindInfo& k) { return k.name == kind; });
+        for (const auto& entry : out.context_classes_.entries) {
+            const auto* model = out.by_id(entry.key.model);
+            if (model == nullptr) {
+                throw std::invalid_argument("context_classes: unregistered model " +
+                                            entry.key.model);
+            }
+            const bool declared =
+                std::any_of(model->drafters.begin(), model->drafters.end(),
+                            [&](const DrafterDecl& d) { return d.kind == entry.key.drafter; });
             if (!declared) {
-                throw std::invalid_argument("context_classes: factors for undeclared kind " + kind);
+                throw std::invalid_argument("context_classes: " + entry.key.model +
+                                            " declares no drafter of kind " + entry.key.drafter);
             }
         }
     }

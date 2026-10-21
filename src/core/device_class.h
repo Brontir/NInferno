@@ -184,6 +184,11 @@ template <class Measured, std::size_t Extent>
 // a fully known GPU. Logged at startup, so a degraded fact is never silent.
 [[nodiscard]] std::vector<std::string> device_fact_notes(const DeviceClass& d);
 
+// The architecture ("sm86") of a chip ("ga102") or GPU class key ("ga102:84sm") by the
+// full-chip table; an architecture key ("sm86") is its own. Empty for a chip the table does
+// not know (lower-case keys only).
+[[nodiscard]] std::string gpu_chip_arch(std::string_view gpu_class);
+
 // "<chip>:<sms>sm".
 [[nodiscard]] std::string gpu_class_id(std::string_view chip, int sms);
 
