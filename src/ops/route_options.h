@@ -4,6 +4,7 @@
 // the family tools take them: a directory or table that cannot be read is refused, never read as
 // "no table" (which would run the heuristic and look like a measurement of DIR).
 
+#include "core/sha256.h"
 #include "ninferno/ops/route_table.h"
 
 #include <algorithm>
@@ -27,12 +28,13 @@ struct RouteDirFile {
 // DIR/*.json that is a regular file once symlinks are followed (the per-GPU-class tables,
 // ops/route_table.cpp) and DIR/tuner/dense_tune.json (the release's dense-tuner measurements,
 // ops/generic/generic_tune.cpp). Nothing else under DIR is read. Throws std::invalid_argument when
-// DIR is not a directory that can be listed, or one of those names is a dangling symlink or cannot
-// be opened.
+// DIR is not a directory that can be listed, or one of those names cannot be resolved (the file
+// system's reason: permission denied, a loop of links...), is a dangling symlink or cannot be
+// opened.
 [[nodiscard]] inline std::vector<RouteDirFile> route_dir_files(const std::filesystem::path& dir) {
     namespace fs      = std::filesystem;
     const auto refuse = [&](const std::string& why) {
-        throw std::invalid_argument("--route-dir " + dir.string() + ": " + why);
+        throw std::invalid_argument("--route-dir " + utf8_path(dir) + ": " + why);
     };
     std::error_code error;
     if (!fs::is_directory(dir, error)) {
@@ -42,15 +44,18 @@ struct RouteDirFile {
     const auto take = [&](const fs::path& path, std::string relative) {
         std::error_code ec;
         const fs::file_status target = fs::status(path, ec);
+        // Not found is the only error a dangling link gives; any other is the file system's
+        // reason (permission denied on a directory the link goes through, a loop of links).
+        if (ec && target.type() != fs::file_type::not_found) {
+            refuse(relative + ": " + ec.message());
+        }
         if (!fs::exists(target)) { refuse(relative + " is a dangling symlink"); }
         if (!fs::is_regular_file(target)) { return; } // the engine skips it too
         if (!std::ifstream(path, std::ios::binary)) { refuse(relative + " cannot be read"); }
         out.push_back({std::move(relative), path});
     };
     for (fs::directory_iterator it(dir, error), end; !error && it != end; it.increment(error)) {
-        if (it->path().extension() == ".json") {
-            take(it->path(), it->path().filename().generic_string());
-        }
+        if (it->path().extension() == ".json") { take(it->path(), utf8_file_name(it->path())); }
     }
     if (error) { refuse(error.message()); }
     const fs::path tuner = dir / "tuner" / "dense_tune.json";
@@ -69,7 +74,7 @@ inline void check_route_options(const std::filesystem::path& table,
     try {
         (void)inspect_route_table(table.string());
     } catch (const std::exception& error) {
-        throw std::invalid_argument("--route-table " + table.string() + ": " + error.what());
+        throw std::invalid_argument("--route-table " + utf8_path(table) + ": " + error.what());
     }
 }
 
@@ -80,7 +85,7 @@ inline RouteTableStatus load_route_table_option(const std::filesystem::path& tab
     try {
         status = load_route_table(table.string());
     } catch (const std::exception& error) {
-        throw std::invalid_argument("--route-table " + table.string() + ": " + error.what());
+        throw std::invalid_argument("--route-table " + utf8_path(table) + ": " + error.what());
     }
     if (!status.loaded) { throw std::invalid_argument("--route-table: " + status.message); }
     return status;

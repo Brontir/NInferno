@@ -139,6 +139,23 @@ int main() {
         check(refuses([&] { return ninferno::ops::route_dir_files(root / "c"); },
                       "gb203.json is a dangling symlink"),
               "a dangling table symlink was accepted as --route-dir");
+        // A link the file system cannot resolve for another reason (a directory on its way that
+        // may not be searched) is refused with that reason, not called dangling.
+        std::filesystem::create_directories(root / "locked");
+        write_file(root / "locked" / "gb202.json", kTable);
+        std::filesystem::create_directories(root / "d");
+        std::filesystem::create_symlink(root / "locked" / "gb202.json", root / "d" / "gb202.json");
+        std::filesystem::permissions(root / "locked", std::filesystem::perms::none);
+        std::error_code probe;
+        (void)std::filesystem::status(root / "d" / "gb202.json", probe);
+        if (probe && probe != std::errc::no_such_file_or_directory) {
+            check(refuses([&] { return ninferno::ops::route_dir_files(root / "d"); },
+                          "gb202.json: " + probe.message()),
+                  "an unresolvable table symlink was not refused with its reason");
+        } else {
+            std::cout << "a directory without permissions is searchable here: not checked\n";
+        }
+        std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
     } else {
         std::cout << "symlinks unavailable here (" << link_error.message() << "): not checked\n";
     }

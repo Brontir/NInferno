@@ -53,9 +53,6 @@ using runtime::ProcessOptionsLease;
 // behaviour: the shipped route tables, no timing, no debug aid.
 void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     if (first) {
-        // A --route-dir that cannot be listed, or one of the files read from it that cannot be,
-        // is refused (ops/route_options.h): read as no table, it would run the heuristic.
-        if (!m.route_dir.empty()) { (void)ops::route_dir_files(m.route_dir); }
         // Every device back to the default lookup in --route-dir (an earlier engine's explicit
         // table dropped), before this engine's own table, if any, loads.
         ops::set_route_table_dir(m.route_dir);

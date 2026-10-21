@@ -145,6 +145,11 @@ std::string utf8_file_name(const std::filesystem::path& path) {
     return std::string(name.begin(), name.end());
 }
 
+std::string utf8_path(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
 std::optional<std::string> named_file_sha256(const std::filesystem::path& path) {
     try {
         const auto digest = file_sha256_hex(path);

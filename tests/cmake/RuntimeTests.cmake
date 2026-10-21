@@ -21,6 +21,11 @@ ninferno_add_test(ninferno_context_cache_defaults_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_context_cache_defaults.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
+# The Engine refuses unreadable route options before the device (normalize_engine_options).
+ninferno_add_test(ninferno_engine_route_options_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_engine_route_options.cpp"
+  LIBRARIES ninferno_engine ninferno_core ninferno::json)
+
 ninferno_add_test(ninferno_sampling_defaults_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_sampling_defaults.cpp"
   LIBRARIES ninferno_engine ninferno_core)
