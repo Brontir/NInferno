@@ -1989,6 +1989,55 @@ int main(int argc, char** argv) {
                         std::cerr << c.label << " A4: a W4A8 plan ran\n";
                         ++failures;
                     }
+                    // A pair with one A4 projection is A4 (moe_policy): the A4-recorded bank or
+                    // shared projection keeps its A16 route, the other one with it.
+                    if (ops::moe_policy(ops::LinearPolicy::AllowA4, ops::LinearPolicy::AllowA8) !=
+                            ops::LinearPolicy::AllowA4 ||
+                        ops::moe_policy(ops::LinearPolicy::AllowA8, ops::LinearPolicy::AllowA8) !=
+                            ops::LinearPolicy::AllowA8 ||
+                        ops::moe_policy(ops::LinearPolicy::AllowA4, ops::LinearPolicy::A16Only) !=
+                            ops::LinearPolicy::A16Only ||
+                        ops::shared_moe_policy(ops::LinearPolicy::AllowA4,
+                                               ops::LinearPolicy::AllowA4) !=
+                            ops::LinearPolicy::AllowA4) {
+                        std::cerr << "moe_policy: wrong pair policy\n";
+                        ++failures;
+                    }
+                    // Under AllowA8 the NVFP4 banks take the grouped W4A8 in a prefill only; a
+                    // wide call outside one (a verify) keeps its A16 plan.
+                    Case a8          = qwen3_like();
+                    a8.expert_policy = ops::LinearPolicy::AllowA8;
+                    const Layer l8   = make_layer(a8, 120U);
+                    if (!moe::select_plan(l8.weights, a8.config, 96, true).w4a8 ||
+                        moe::select_plan(l8.weights, a8.config, 96, false).w4a8) {
+                        std::cerr << a8.label << " A8: grouped W4A8 outside the prefill profile\n";
+                        ++failures;
+                    }
+                    // An NVFP4 shared expert recorded for A4 runs A16 as before (the same bytes as
+                    // under A16Only), not W4A4 or W4A8; under AllowA8 it takes the W4A8.
+                    Case s          = qwen3_like();
+                    s.label         = "qwen3-moe-like nvfp4 shared expert";
+                    s.shared_inter  = 128;
+                    s.shared_format = QType::NVFP4;
+                    s.expert_policy = ops::LinearPolicy::A16Only;
+                    Layer ls        = make_layer(s, 121U);
+                    const auto sx =
+                        random_bf16(static_cast<std::size_t>(40) * s.hidden, 122U, -1.0, 1.0);
+                    const auto sres = random_bf16(sx.size(), 123U, -2.0, 2.0);
+                    const ops::ScopedPrefillRoutes profile(true);
+                    const auto run_shared = [&](ops::LinearPolicy policy) {
+                        ls.weights.shared_policy = policy;
+                        return run_op(s, ls, sx, 0, 40, sres).out;
+                    };
+                    const auto a16_out = run_shared(ops::LinearPolicy::A16Only);
+                    const auto a4_out  = run_shared(ops::LinearPolicy::AllowA4);
+                    const auto a8_out  = run_shared(ops::LinearPolicy::AllowA8);
+                    if (a4_out != a16_out || a8_out == a16_out) {
+                        std::cerr << s.label << ": A4 shared expert "
+                                  << (a4_out != a16_out ? "left the A16 route" : "")
+                                  << (a8_out == a16_out ? "; A8 did not take W4A8" : "") << "\n";
+                        ++failures;
+                    }
                 }
             }
             // 3. Route-table plans (routes/<class>.json "moe"): a table that steers both layers to

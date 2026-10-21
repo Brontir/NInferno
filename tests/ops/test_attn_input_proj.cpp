@@ -1,5 +1,6 @@
 #include "core/weight.h"
 #include "ninferno/ops/attn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/weight_input.h"
 
 #include "core/device.h"
@@ -349,7 +350,10 @@ int run_bf16_target() {
 
 int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
                           ops::LinearPolicy policy = ops::LinearPolicy::A16Only,
-                          bool omit_divisors       = false) {
+                          bool omit_divisors = false, bool prefill = true) {
+    // AllowA8 takes the generic W4A8 from 17 tokens inside a prefill only; a wider verify keeps
+    // the A16 route.
+    const ops::ScopedPrefillRoutes profile(prefill && policy == ops::LinearPolicy::AllowA8);
     constexpr std::int32_t kHidden = 5120;
     constexpr std::int32_t kQRows  = 6144;
     constexpr std::int32_t kKvRows = 1024;
@@ -401,7 +405,7 @@ int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
     int failures                       = 0;
     const bool a4                      = policy == ops::LinearPolicy::AllowA4;
     // AllowA8 from 17 tokens: the generic W4A8 (int8 x per 32 values) writes the four parts.
-    const bool a8                       = policy == ops::LinearPolicy::AllowA8 && tokens >= 17;
+    const bool a8 = policy == ops::LinearPolicy::AllowA8 && tokens >= 17 && prefill;
     const ReductionCriterion& criterion = a4   ? kAttnInputProjA4Tolerance
                                           : a8 ? kAttnInputProjA8Tolerance
                                                : kAttnInputProjA16Tolerance;
@@ -411,8 +415,9 @@ int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
                                 : a8 ? "A8"
                                      : "A16") +
                                " T=" + std::to_string(tokens);
-    if (a8 && workspace.peak_used() == 0) {
-        std::cerr << "attn" << suffix << ": no W4A8 planes in the workspace\n";
+    if (a8 != (workspace.peak_used() != 0) && policy == ops::LinearPolicy::AllowA8) {
+        std::cerr << "attn" << suffix << (prefill ? " prefill" : " speed") << ": workspace use "
+                  << workspace.peak_used() << (a8 ? ", W4A8 expected" : ", A16 expected") << "\n";
         return 1;
     }
     failures += verify_output("attn q" + suffix, query, parent.host, 0, kQRows, activation, kHidden,
@@ -447,6 +452,7 @@ int run_nvfp4_target() {
     failures += run_nvfp4_target_case(parent, 16, ops::LinearPolicy::AllowA8);
     failures += run_nvfp4_target_case(parent, 17, ops::LinearPolicy::AllowA8);
     failures += run_nvfp4_target_case(parent, 33, ops::LinearPolicy::AllowA8, true);
+    failures += run_nvfp4_target_case(parent, 33, ops::LinearPolicy::AllowA8, false, false);
     failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_target_case(parent, 17, ops::LinearPolicy::AllowA4);
     // 1023, 1024 and 1025 straddle this route's floor. 1024 was the narrowest width it

@@ -179,7 +179,7 @@ bool dispatch_linear(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy
     // and so does an owned shape whose route-table entry claims this call (RouteEntry::claim: the
     // generic route measured faster than the shape's own kernels at these widths), and, on a GPU
     // without tensor mma.sync, a call the tiled tensor-core route takes (volta_tiled_route). An
-    // NVFP4 prefill call whose policy allows A8 but not this weight's W4A4 takes the generic W4A8
+    // NVFP4 prefill call (T >= 17) whose policy allows A8 but not A4 takes the generic W4A8
     // (owned_prefill_w4a8): the native NVFP4 shapes compute A16 and A4 only.
     const bool generic_claims = [&] {
         if (invariant_routes_active() || !detail::linear_shape_registered(w.qtype, w.n, w.k) ||

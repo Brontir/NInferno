@@ -1010,6 +1010,8 @@ int run_q8() {
 
 int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearPolicy policy,
                    std::int32_t initial_slot) {
+    // AllowA8 takes the generic W4A8 projection from 17 tokens inside a prefill only.
+    const ops::ScopedPrefillRoutes profile(policy == ops::LinearPolicy::AllowA8);
     constexpr std::int32_t kHidden           = 5120;
     constexpr std::int32_t kValueRows        = 6144;
     constexpr std::int32_t kZRows            = 6144;

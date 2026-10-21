@@ -22,7 +22,9 @@ enum class Nvfp4AttnInputRoute : std::uint8_t {
 
 // A16Only is the exact contract (ActivationMode::Exact): one token-invariant A16 route at every
 // width. AllowA8 has no 8-bit form among these kernels: it keeps the tuned A16 routes below 17
-// tokens (decode and verify) and from 17 takes the generic W4A8, the four parts in one call.
+// tokens and outside a prefill (decode, any verify), and a prefill call from 17 takes the generic
+// W4A8, the four parts in one call (the dispatch asks generic::owned_prefill_w4a8; the workspace
+// query, which cannot know the profile, reserves its planes).
 Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 attn_input_proj: T must be positive"); }
     if (policy == LinearPolicy::A16Only) { return Nvfp4AttnInputRoute::A16Exact; }
@@ -61,7 +63,8 @@ void nvfp4_attn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& q,
                                Tensor& k, Tensor& v, LinearPolicy policy, WorkspaceArena* workspace,
                                cudaStream_t stream) {
     Nvfp4AttnInputRoute route = resolve_route(policy, x.ne[1]);
-    // A weight the W4A8 tiles cannot read (generic::owned_prefill_w4a8) keeps the A16 route.
+    // A call outside a prefill, or of a weight the W4A8 tiles cannot read
+    // (generic::owned_prefill_w4a8), keeps the A16 route.
     if (route == Nvfp4AttnInputRoute::W4A8 &&
         (workspace == nullptr || !generic::owned_prefill_w4a8(weight, policy, x.ne[1]))) {
         route = Nvfp4AttnInputRoute::A16;

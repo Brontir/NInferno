@@ -1222,10 +1222,12 @@ int check_mmq_outlier_block(const Format& f) {
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
 // the generic W4A8 from 17 tokens on every build, decode and verify widths unchanged; the same
 // weight under AllowA4 (it carries its activation divisor) keeps W4A4 where the build has it and
-// is never W4A8's there. Through the public entry points the shapes the native NVFP4 plans own
-// (sm_120a: linear 1024x2816, linear_add 5120x6144, linear_swiglu 34816x5120) leave their plans
-// for it: the call quantizes x into the W4A8 planes of the workspace the capacity query sized, and
-// answers against the oracle of the int8 x.
+// is never W4A8's there, nor is it without a divisor (A16 then, as before). Through the public
+// entry points the shapes the native NVFP4 plans own (sm_120a: linear 1024x2816, linear_add
+// 5120x6144, linear_swiglu 34816x5120) leave their plans for it inside a prefill only: the call
+// quantizes x into the W4A8 planes of the workspace the capacity query sized, and answers against
+// the oracle of the int8 x; outside one (a verify of 17 columns or more) the plan runs and reads no
+// planes.
 int check_nvfp4_a8_routes() {
     int failures          = 0;
     const Format& nvfp4   = format_of(QType::NVFP4);
@@ -1233,12 +1235,16 @@ int check_nvfp4_a8_routes() {
     const auto a4         = ops::LinearPolicy::AllowA4;
     const HostWeight host = make_weight(QType::NVFP4, 384, 1024, 43U);
     const DeviceWeight dw = upload_weight(host);
+    Weight no_divisor              = dw.weight;
+    no_divisor.input_scale_divisor = 0.0F;
     const generic::Problem p8{QType::NVFP4, a8, 384, 1024, generic::Epilogue::Store};
     const generic::Problem p4{QType::NVFP4, a4, 384, 1024, generic::Epilogue::Store};
     for (const std::int32_t t : {1, 4, 16, 17, 64, 200}) {
         const generic::Route r8 = generic::select_route(p8, dw.weight, t, false);
         const generic::Route r4 = generic::select_route(p4, dw.weight, t, false);
+        const generic::Route r0 = generic::select_route(p4, no_divisor, t, false);
         const bool wide         = t >= 17;
+        const ops::ScopedPrefillRoutes prefill(true);
         if ((r8.family == generic::Family::W4a8Mma) != wide ||
             generic::owned_prefill_w4a8(dw.weight, a8, t) != wide) {
             std::cerr << "nvfp4 A8 T=" << t << ": " << generic::route_name(r8) << "\n";
@@ -1250,10 +1256,24 @@ int check_nvfp4_a8_routes() {
             std::cerr << "nvfp4 A4 T=" << t << ": " << generic::route_name(r4) << "\n";
             ++failures;
         }
+        if (kNativeNvfp4 &&
+            (r0.family == generic::Family::W4a8Mma || r0.family == generic::Family::W4a4Mma ||
+             generic::owned_prefill_w4a8(no_divisor, a4, t))) {
+            std::cerr << "nvfp4 A4 without divisor T=" << t << ": " << generic::route_name(r0)
+                      << "\n";
+            ++failures;
+        }
+    }
+    {
+        const ops::ScopedPrefillRoutes speed(false);
+        if (generic::owned_prefill_w4a8(dw.weight, a8, 64)) {
+            std::cerr << "nvfp4 A8: owned_prefill_w4a8 outside a prefill\n";
+            ++failures;
+        }
     }
     for (int i = 0; kNativeNvfp4 && i < generic::w4a8_schedule_count(); ++i) {
         const generic::Route r{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-        if (generic::route_admits(r, dw.weight, a4)) {
+        if (generic::route_admits(r, dw.weight, a4) || generic::route_admits(r, no_divisor, a4)) {
             std::cerr << "nvfp4 A4: admitted to " << generic::route_name(r) << "\n";
             ++failures;
         }
@@ -1268,8 +1288,12 @@ int check_nvfp4_a8_routes() {
     for (const Owned o : {Owned{Op::Linear, 1024, 2816}, Owned{Op::Add, 5120, 6144},
                           Owned{Op::SwiGlu, 17408, 5120}}) {
         const std::int32_t rows = gated(o.op) ? 2 * o.n : o.n;
-        for (const std::int32_t t : {16, 17, 64}) {
-            if (t >= 17) {
+        for (const auto& [t, in_prefill] :
+             {std::pair{16, true}, std::pair{17, true}, std::pair{64, true}, std::pair{17, false},
+              std::pair{33, false}}) {
+            const ops::ScopedPrefillRoutes profile(in_prefill);
+            const bool expect_w4a8 = t >= 17 && in_prefill;
+            if (expect_w4a8) {
                 failures +=
                     check_case(nvfp4, o.op, o.n, o.k, t, a8, 47U, nullptr, ActivationCompute::A8);
             }
@@ -1299,18 +1323,21 @@ int check_nvfp4_a8_routes() {
             cuda_check(cudaDeviceSynchronize(), "nvfp4 A8 owned shape");
             const std::size_t planes =
                 generic::route_workspace_bytes(generic::Route{generic::Family::W4a8Mma, 0}, o.k, t);
-            const bool took_w4a8 = workspace.peak_used() >= planes;
-            if (took_w4a8 != (t >= 17)) {
+            // The W4A8 call takes exactly its planes; the plan none (linear, linear_add) or its
+            // projected gate/up plane (linear_swiglu past 16 columns).
+            const bool took_w4a8 = workspace.peak_used() == planes;
+            if (took_w4a8 != expect_w4a8) {
                 std::cerr << "nvfp4 A8 " << op_name(o.op) << " [" << rows << "," << o.k
-                          << "] T=" << t << ": workspace use " << workspace.peak_used()
+                          << "] T=" << t << (in_prefill ? " prefill" : " speed")
+                          << ": workspace use " << workspace.peak_used()
                           << " against the W4A8 planes' " << planes << "\n";
                 ++failures;
             }
         }
     }
     if (failures == 0) {
-        std::cout << "nvfp4 A8 (no A4): W4A8 from 17 tokens, the native plans below; A4 keeps "
-                     "W4A4\n";
+        std::cout << "nvfp4 A8 (no A4): W4A8 from 17 tokens in a prefill, the native plans "
+                     "elsewhere; A4 keeps W4A4 (A16 without a divisor)\n";
     }
     return failures;
 }

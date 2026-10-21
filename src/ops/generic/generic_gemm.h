@@ -354,17 +354,18 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 // table.
 [[nodiscard]] bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens);
 
-// A prefill-width call (T >= 17) of an NVFP4 weight that the generic W4A8 takes: its policy allows
-// A8 and W4A4 does not take it (no A4, no activation divisor, or a build without the W4A4
-// kernels). The native NVFP4 plans of sm_120a compute A16 and A4 only, so the wrappers hand such
-// a call of a registered shape to the generic path as they hand it owned_decode_r8's: a W4A16
-// checkpoint under --activations int8 prefills on int8 activations on every card. Decode and
-// verify widths keep the plans' routes.
+// A call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill (prefill_routes_active)
+// of an NVFP4 weight that the generic W4A8 takes: its policy allows A8 and, where the build has
+// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy). The native NVFP4 plans of sm_120a compute A16
+// and A4 only, so the wrappers hand such a call of a registered shape to the generic path, as
+// q8_prefill_a8 hands a Q8 one: a W4A16 checkpoint under --activations int8 prefills on int8
+// activations on every card. Outside a prefill (decode, speculative verify of any width, the
+// drafters' rounds, Gemma 4's speed-profile prefill) the plans' routes stay.
 [[nodiscard]] bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy,
                                       std::int32_t tokens);
-// The same without the weight (workspace queries): an NVFP4 problem whose policy allows A8 and,
-// where this build has the W4A4 kernels, not A4. AllowA4 counts as W4A4's: the converter records
-// it only with the activation divisor W4A4 needs.
+// The policy half of it, without the weight (workspace queries, and allows_w4a8 for NVFP4): an
+// NVFP4 problem whose policy allows A8 and, where this build has the W4A4 kernels, not A4. An
+// AllowA4 weight stays off W4A8 whatever its divisor (A16 where W4A4 cannot run, as before).
 [[nodiscard]] bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy);
 
 // A Q8_G32_FP16 call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill
@@ -435,7 +436,7 @@ struct Problem {
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
 // same widths run the plan outside a prefill. NVFP4 under nvfp4_prefill_a8_policy: the W4A8 planes
-// of its calls from 17 tokens (owned_prefill_w4a8), inside a prefill or not.
+// of its calls from 17 tokens (owned_prefill_w4a8; the query cannot know whether a prefill runs).
 [[nodiscard]] std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,
                                                      std::int32_t max_tokens);
 

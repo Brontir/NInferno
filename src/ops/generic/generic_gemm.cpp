@@ -261,13 +261,15 @@ bool allows_w4a4(const Weight& w, LinearPolicy policy) {
 }
 
 // W4A8: a format with a W4A8 codec, a K of whole tiles (w4a8_k_admits), 16-byte code rows, A8
-// allowed. An NVFP4 weight that W4A4 takes where this build has its kernels is not W4A8's: four-bit
-// activations stay the route of the weights recorded for them, W4A8 the one of those whose policy
-// allows eight bits only (a W4A16 checkpoint under --activations int8) or that carry no activation
-// divisor.
+// allowed. Where this build has the W4A4 kernels an NVFP4 weight under a policy that allows A4 is
+// not W4A8's, whatever its divisor: four-bit activations stay the route of the weights recorded
+// for them (A16 where no divisor lets W4A4 run, as before), W4A8 the one of those whose policy
+// allows eight bits only (a W4A16 checkpoint under --activations int8). The weight-less
+// nvfp4_prefill_a8_policy and the workspace query decide the same.
 bool allows_w4a8(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
-           aligned_to(w.qdata, 16) && !(w4a4_schedule_count() > 0 && allows_w4a4(w, policy));
+           aligned_to(w.qdata, 16) &&
+           (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
 }
 
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
@@ -1693,8 +1695,8 @@ bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tok
 }
 
 bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 17 && weight.qtype == QType::NVFP4 && supports(weight) &&
-           allows_w4a8(weight, policy);
+    return tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
+           weight.qtype == QType::NVFP4 && supports(weight) && allows_w4a8(weight, policy);
 }
 
 bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy) {

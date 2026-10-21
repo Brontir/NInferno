@@ -125,15 +125,11 @@ private:
 };
 
 // The policy of a MoE's routed experts: A8 (the R8 route of codebook banks at decode) only where
-// both banks allow it, A4 where both allow that (an NVFP4 bank's grouped W4A8 asks), as
-// ops::prepare_moe_weights decides. MoeWeights defaults to A16Only, so a loader that builds its
-// MoeWeights by hand sets it from here.
+// both banks allow it, A4 where one allows that (an NVFP4 bank's grouped W4A8 asks), as
+// ops::prepare_moe_weights decides (ops::moe_policy). MoeWeights defaults to A16Only, so a loader
+// that builds its MoeWeights by hand sets it from here.
 inline ops::LinearPolicy expert_policy(const Projection& gate_up, const Projection& down) {
-    if (ops::allows_a4(gate_up.policy) && ops::allows_a4(down.policy)) {
-        return ops::LinearPolicy::AllowA4;
-    }
-    return ops::allows_a8(gate_up.policy) && ops::allows_a8(down.policy) ? ops::LinearPolicy::AllowA8
-                                                                         : ops::LinearPolicy::A16Only;
+    return ops::moe_policy(gate_up.policy, down.policy);
 }
 
 } // namespace loading

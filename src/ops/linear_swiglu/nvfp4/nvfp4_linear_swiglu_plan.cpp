@@ -41,9 +41,9 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
         throw std::invalid_argument("nvfp4 linear_swiglu: invalid compute policy");
     }
     // A16Only is the exact contract (ActivationMode::Exact): one token-invariant route at every
-    // width. AllowA8 has no 8-bit form here and keeps the tuned A16 routes (from 17 tokens the
-    // wrapper hands it to the generic W4A8, generic::owned_prefill_w4a8); so does a route probe
-    // that forces A16.
+    // width. AllowA8 has no 8-bit form here and keeps the tuned A16 routes (a prefill call of 17
+    // tokens or more the wrapper hands to the generic W4A8, generic::owned_prefill_w4a8; a wider
+    // verify stays here); so does a route probe that forces A16.
     if (policy == LinearPolicy::A16Only || nvfp4_verify_exact(tokens)) {
         return Nvfp4LinearSwiGluRoute::ExactA16;
     }
@@ -141,9 +141,10 @@ void nvfp4_linear_swiglu_dispatch(const Tensor& x, const Weight& weight, Tensor&
     case Nvfp4LinearSwiGluRoute::LinearA16Post: {
         auto scope              = workspace.scope();
         const Tensor projected  = allocate_projected(workspace, x.ne[1]);
-        WorkspaceArena no_linear_scratch(DeviceSpan{});
         Tensor destination      = projected;
-        linear(x, weight, destination, LinearPolicy::A16Only, no_linear_scratch, stream);
+        // The A16 projection takes no scratch; it gets the rest of this workspace (an empty
+        // borrowed arena throws, which every AllowA8 call wider than 16 columns hit).
+        linear(x, weight, destination, LinearPolicy::A16Only, workspace, stream);
         constexpr std::int32_t kIntermediate = Nvfp4N34816K5120::kOutputRows / 2;
         silu_mul(projected.slice(0, 0, kIntermediate),
                  projected.slice(0, kIntermediate, kIntermediate), out, stream);

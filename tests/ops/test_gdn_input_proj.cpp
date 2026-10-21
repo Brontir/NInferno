@@ -2,6 +2,7 @@
 #include "core/device.h"
 #include "core/decode_graph.h"
 #include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include "ops/input_projection_test_common.h"
 
@@ -273,6 +274,9 @@ int verify_output_range_sampled(std::string_view label, const GuardedBf16Tensor&
 }
 
 int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearPolicy policy) {
+    // AllowA8 takes the generic W4A8 from 17 tokens inside a prefill only (the workspace query
+    // reserves its planes either way, and this case checks the query against the high-water).
+    const ops::ScopedPrefillRoutes profile(policy == ops::LinearPolicy::AllowA8);
     constexpr std::int32_t kHidden      = 5120;
     constexpr std::int32_t kQkvRows     = 10240;
     constexpr std::int32_t kZRows       = 6144;
