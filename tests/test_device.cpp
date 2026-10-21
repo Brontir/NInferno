@@ -205,6 +205,11 @@ int check_feature_table() {
         const auto none  = ninferno::device_fact_notes(known);
         const auto chip  = ninferno::device_fact_notes(guessed);
         const auto clock = ninferno::device_fact_notes(mig);
+        const auto h100 = ninferno::device_fact_notes(
+            ninferno::synthetic_device_class(0x2330, 9, 0, 132, 50u << 20, 80ull << 30));
+        failures += expect(!h100.empty() && h100[0].find("chip unknown") != std::string::npos &&
+                               h100[0].find("sm90") != std::string::npos,
+                           "a chip the table lacks: keyed by the architecture, not 'guessed'");
         failures += expect(known.chip_from_pci && none.empty() && !guessed.chip_from_pci &&
                                guessed.chip == "gb202" && chip.size() == 1 &&
                                chip[0].find("from the SM count") != std::string::npos &&

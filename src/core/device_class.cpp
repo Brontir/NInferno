@@ -316,11 +316,15 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
     if (!d.chip_from_pci) {
         char id[16];
         std::snprintf(id, sizeof(id), "0x%04X", static_cast<unsigned>(d.pci_device_id));
-        notes.push_back("chip " + d.chip + " from the SM count (" +
-                        (d.pci_device_id == 0 ? std::string("PCI id unreadable")
-                                              : std::string("PCI id ") + id + " in no chip block") +
-                        "): the smallest chip of " + gpu_arch_id(d.major, d.minor) +
-                        " holding " + std::to_string(d.sms) + " SMs");
+        const std::string why = d.pci_device_id == 0 ? std::string("PCI id unreadable")
+                                                     : std::string("PCI id ") + id + " in no chip block";
+        const std::string arch = gpu_arch_id(d.major, d.minor);
+        notes.push_back(d.chip == arch
+                            ? "chip unknown (" + why + "; no chip of " + arch +
+                                  " in the table): per-chip data is keyed by the architecture " + arch
+                            : "chip " + d.chip + " from the SM count (" + why +
+                                  "): the smallest chip of " + arch + " holding " +
+                                  std::to_string(d.sms) + " SMs");
     }
     std::string missing;
     const auto add = [&](bool absent, const char* what) {
@@ -331,8 +335,9 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
     add(d.memory_bus_bits <= 0, "memory bus width");
     if (!missing.empty()) {
         notes.push_back(missing +
-                        " unreported (a virtualized or MIG GPU): no roofline, so the int8 "
-                        "cost-model routes are off and the 16-bit routes stand alone");
+                        " unreported (a virtualized or MIG GPU, for example): the route cost model "
+                        "and the speculative load model are off, routes come from the fixed rules, "
+                        "and measured tables are matched to this board without its bandwidth");
     }
     return notes;
 }

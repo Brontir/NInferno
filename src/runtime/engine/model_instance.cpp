@@ -1220,7 +1220,7 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         summary.moe_tune.push_back(std::move(line));
     }
     summary.gpu_class    = ops::route_gpu_class();
-    summary.device_facts = device_fact_notes(device_class());
+    summary.device_facts = device_fact_notes(device_class(options.device));
     summary.route_table  = ops::route_table_status().message;
     summary.load_seconds = std::chrono::duration<double>(Clock::now() - start).count();
     summary.context_cost = std::move(context_cost.summary);
