@@ -1386,13 +1386,30 @@ int test_resolve() {
     failures += check(r.found() && r.source.starts_with("local tune") &&
                           r.profile.overall.config.label() == "mtp:3+head",
                       "a named local tune wins");
+    {
+        bool refused = false;
+        try {
+            require_named_tune(r);
+        } catch (const std::exception&) { refused = true; }
+        failures += check(!refused && r.named_tune_refused.empty(), "a named tune that serves");
+    }
     r = resolve_speculation(artifact, "aaaa", rtx5090, artifact.parent_path() / "absent.json");
     failures += check(r.found() && !r.source.starts_with("local tune") &&
                           std::any_of(r.notes.begin(), r.notes.end(),
                                       [](const std::string& n) {
                                           return n.rfind("the named tune ", 0) == 0;
                                       }),
-                      "an unreadable named tune is a note, and the published profile runs");
+                      "an unreadable named tune is a note, and the published profile resolves");
+    {
+        bool refused = false;
+        try {
+            require_named_tune(r);
+        } catch (const std::runtime_error& e) {
+            refused = std::string(e.what()).find("absent.json") != std::string::npos;
+        }
+        failures += check(refused && !r.named_tune_refused.empty(),
+                          "an unreadable named tune refuses to start, naming its path");
+    }
     // The tune measured no load bounds: the published ones of its drafter kind apply.
     failures += check(r.profile.load.empty(), "no load bounds without a published table");
     manifest["profiles"][1]["load"] =
@@ -1414,6 +1431,8 @@ int test_resolve() {
     r = resolve_speculation(artifact, "aaaa", pro6000, named);
     failures += check(r.found() && r.source.starts_with("manifest"),
                       "a tune for another GPU class falls back to the manifest");
+    failures += check(r.named_tune_refused.find("was tuned for another") != std::string::npos,
+                      "a named tune for another GPU class is refused");
     // A foreign profile's floors: the largest the same model measured for exactly that
     // configuration on any GPU (another depth, head or an adaptive choice does not count), or the
     // registry median for a model measured nowhere; raised, never lowered.

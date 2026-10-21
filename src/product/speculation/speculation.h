@@ -118,6 +118,13 @@ shallower_profile(const spec::Profile& profile, const spec::SpecConfig& config, 
 // as its default.
 [[nodiscard]] double shallower_floor(const std::vector<std::pair<int, double>>& floors, int depth);
 
+// A tune named by --spec-profile (`local_profile`) that does not serve this artifact on this GPU
+// (unreadable, tuned for another artifact, GPU or drafters, or a drafter replaced since) refuses to
+// start: throws std::runtime_error naming it and why (spec::require_named_tune), whatever --spec
+// says. Every function here that takes `local_profile` throws the same. Nothing when none is named.
+void require_named_tune(const std::filesystem::path& artifact, int device,
+                        const std::filesystem::path& local_profile);
+
 // Why the artifact came with no speculation profile for this GPU (each source passed over, such
 // as no manifest beside it); empty when served_speculation finds one.
 [[nodiscard]] std::vector<std::string> speculation_notes(const std::filesystem::path& artifact,

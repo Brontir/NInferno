@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 namespace ninferno::spec {
@@ -287,6 +288,12 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
     }
 }
 
+void require_named_tune(const ResolvedSpeculation& resolved) {
+    if (resolved.named_tune_refused.empty()) { return; }
+    throw std::runtime_error("refusing the named speculation tune: " + resolved.named_tune_refused +
+                             " (name none to run the model's published profile)");
+}
+
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,
                                         const GpuKey& gpu,
@@ -324,6 +331,12 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                             "(--spec-profile " +
                             default_profile_path(artifact).string() + ")");
     }
+    // A named tune that does not serve: a note, and the first reason the entry point refuses it
+    // with (require_named_tune), since it was named.
+    const auto refuse = [&](std::string reason) {
+        if (out.named_tune_refused.empty()) { out.named_tune_refused = reason; }
+        out.notes.push_back(std::move(reason));
+    };
     std::string why;
     if (auto tuned = tuned_path.empty() ? std::nullopt : read_profile(tuned_path, &why)) {
         ProfileKey expected;
@@ -338,20 +351,19 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             try {
                 if (artifact_id_hex(d.artifact) != d.artifact_id) {
                     drafters_ok = false;
-                    out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact +
-                                        " was replaced since the tune");
+                    refuse(tuned_path.string() + ": drafter " + d.artifact +
+                           " was replaced since the tune");
                 }
             } catch (const std::exception& e) {
                 drafters_ok = false;
-                out.notes.push_back(tuned_path.string() + ": drafter " + d.artifact + ": " +
-                                    e.what());
+                refuse(tuned_path.string() + ": drafter " + d.artifact + ": " + e.what());
             }
             paths[d.name.empty() ? d.kind : d.name] = d.artifact;
         }
         expected.drafters   = drafter_key(ids);
         const auto mismatch = key_mismatch(tuned->key, expected);
         if (!mismatch.empty()) {
-            out.notes.push_back(tuned_path.string() + " was tuned for another " + mismatch);
+            refuse(tuned_path.string() + " was tuned for another " + mismatch);
         } else if (drafters_ok) {
             out.source  = "local tune " + tuned_path.string();
             out.sha256  = file_sha256_hex(tuned_path).value_or("");
@@ -388,7 +400,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             return out;
         }
     } else if (!tuned_path.empty()) {
-        out.notes.push_back("the named tune " + tuned_path.string() + ": " + why);
+        refuse("the named tune " + tuned_path.string() + ": " + why);
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 

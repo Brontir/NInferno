@@ -214,10 +214,14 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
     const auto started = std::chrono::steady_clock::now();
 
     // As ninferno-serve builds it by default (--spec-select fixed): every request at the default.
-    // The lab flow: the tune spec-tune wrote beside the artifact (or --profile), named explicitly.
-    const std::filesystem::path tuned = flags.contains("profile")
-                                            ? std::filesystem::path(flags.at("profile"))
-                                            : spec::default_profile_path(artifact);
+    // The lab flow: the tune named by --profile, else the one spec-tune wrote beside the artifact
+    // when there is one (else the published profile). A named tune that does not serve refuses.
+    std::filesystem::path tuned;
+    if (flags.contains("profile")) {
+        tuned = flags.at("profile");
+    } else if (std::filesystem::exists(spec::default_profile_path(artifact))) {
+        tuned = spec::default_profile_path(artifact);
+    }
     auto served = product::served_speculation(artifact, device, true, false, tuned);
     if (!served || served->menu.mode == spec::Mode::None) {
         throw std::runtime_error("spec-tune --load: the model has no speculation that runs on this "

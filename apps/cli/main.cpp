@@ -295,6 +295,8 @@ int main(int argc, char** argv) {
         engine_options.activations        = cli.activations;
         engine_options.rope_yarn_factor   = cli.rope_yarn_factor;
         engine_options.speculative        = cli.speculative;
+        // A tune named by --spec-profile serves or the run does not start (whatever --spec says).
+        ninferno::product::require_named_tune(cli.artifact_path, cli.device, cli.spec_profile);
         if (!cli.spec_explicit) {
             // The speculation the model came with, for this GPU: the profile's default for the
             // thinking flag (on by default, as the profile's).

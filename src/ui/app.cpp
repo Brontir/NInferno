@@ -3,6 +3,7 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "core/ascii.h"
+#include "spec/profile.h"
 #include "spec/registry.h"
 #include "convert/fetch.h"
 #include "convert/acquire.h"
@@ -441,7 +442,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
         // by its artifact path: named, since the server reads none by itself.
         std::error_code ec;
-        const fs::path tune = model + ".spec_profile.json";
+        const fs::path tune = spec::default_profile_path(model);
         if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
             spec.argv.push_back("--spec-profile");
             spec.argv.push_back(tune.string());
@@ -1120,7 +1121,7 @@ Json App::local_json() {
                        {"original_gib", gib2(original)},
                        {"running", running.contains(path.string())},
                        // Calibrated on this machine (spec-tune wrote it), else a registry profile.
-                       {"own_profile", fs::exists(path.string() + ".spec_profile.json", ec)}});
+                       {"own_profile", fs::exists(spec::default_profile_path(path), ec)}});
     };
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
     if (fs::is_directory(root, ec)) {

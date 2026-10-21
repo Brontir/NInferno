@@ -751,6 +751,7 @@ StartPlan start_plan(const Arguments& args, const std::string& artifact,
             artifact, spec::artifact_id_hex(artifact), gpu.key,
             args.flag("spec-profile") ? std::filesystem::path(args.text("spec-profile"))
                                       : std::filesystem::path());
+        spec::require_named_tune(resolved);
         plan.notes = resolved.notes;
         if (resolved.found()) {
             const auto& choice = spec::pick(resolved.profile, thinking);

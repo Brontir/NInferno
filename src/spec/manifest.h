@@ -71,6 +71,11 @@ struct ResolvedSpeculation {
     // The model's published profiles (a JSON array: every GPU class it was measured on) whose
     // floors bound a foreign profile's; null for a built-in default (the registry median then).
     nlohmann::json floor_sources;
+    // Why the tune named by `local_profile` does not serve (its path and the reason: unreadable,
+    // tuned for another artifact, GPU or drafters, or a drafter replaced since); empty when it
+    // serves or none was named. What resolves is then the published profile, which an entry point
+    // must not run in its place (require_named_tune).
+    std::string named_tune_refused;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
@@ -83,6 +88,11 @@ struct ResolvedSpeculation {
                                                       const std::string& artifact_id,
                                                       const GpuKey& gpu,
                                                       const std::filesystem::path& local_profile = {});
+
+// A tune the user named (--spec-profile, spec-tune --load --profile) serves, or the entry point
+// refuses to start: throws std::runtime_error naming the tune and why it does not serve
+// (resolved.named_tune_refused). Nothing when it serves or none was named.
+void require_named_tune(const ResolvedSpeculation& resolved);
 
 // The largest break-even (floor_tokens_per_round) `profiles` (one model's published profiles,
 // every GPU class) measured for exactly this configuration (mode, depth, proposal head; adaptive
