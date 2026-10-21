@@ -2,14 +2,21 @@
 // dflash GGUF's Q4_0 matrices, a K-quant or NVFP4 target head):
 //  - linear_topk over a head no fused kernel owns: the stable top sixteen of Linear's BF16 logits;
 //  - rmsnorm_dynamic_grouped_conv_prepare / linear_dynamic_grouped_conv_add with Q4_0
-//    projections, against the fused BF16 / Q8 kernels given the same represented weights.
+//    projections, against the fused BF16 / Q8 kernels given the same represented weights;
+//  - the DFlash (v1) draft's Q/K/V of a drafter outside the fused Q8 profile (a BF16 artifact,
+//    a published GGUF's Q4_0): segmented_projection over its bank, against the fused Q8
+//    attn_input_proj given the same represented weights (draft.cpp, fused_q8).
+#include "ninferno/ops/attn_input_proj.h"
 #include "ninferno/ops/dynamic_grouped_conv.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/ops/linear_topk.h"
+#include "ninferno/ops/segmented_projection.h"
 
 #include "ops/op_tester.h"
 
 #include <algorithm>
+#include <utility>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -283,6 +290,173 @@ int test_conv_add(std::int32_t input_rows, std::int32_t width, std::int32_t batc
     return check(gap < 2e-2, "conv add generic C=" + std::to_string(input_rows));
 }
 
+// The host decode of each payload the packers above write, independent of the kernels: ggml Q4_0
+// (low nibble = value j, high = j + 16, binary16 d per block), Q8_G32_FP16 RowSplit (int8 codes,
+// then binary16 scales per 32 values), BF16 contiguous. Row-major [n, k] floats.
+float f16_to_f32(std::uint16_t h) {
+    const std::uint32_t sign = (h & 0x8000U) << 16, exponent = (h >> 10) & 0x1FU,
+                        mantissa = h & 0x3FFU;
+    float value;
+    if (exponent == 0) {
+        value = std::ldexp(static_cast<float>(mantissa), -24);
+    } else if (exponent == 31) {
+        value = mantissa ? std::nanf("") : INFINITY;
+    } else {
+        value = std::ldexp(static_cast<float>(mantissa | 0x400U), static_cast<int>(exponent) - 25);
+    }
+    return sign ? -value : value;
+}
+
+std::vector<float> decode_q4_0(const DeviceBuffer& payload, std::size_t scale_offset,
+                               std::int32_t n, std::int32_t k) {
+    const auto bytes = from_device<std::uint8_t>(payload, payload.bytes);
+    std::vector<float> out(static_cast<std::size_t>(n) * k);
+    for (std::size_t block = 0; block < out.size() / 32; ++block) {
+        const float d = f16_to_f32(static_cast<std::uint16_t>(
+            bytes[scale_offset + 2 * block] | (bytes[scale_offset + 2 * block + 1] << 8)));
+        for (int j = 0; j < 32; ++j) {
+            const std::uint8_t byte = bytes[block * 16 + (j & 15)];
+            const int q             = j < 16 ? (byte & 15) : (byte >> 4);
+            out[block * 32 + j]     = static_cast<float>(q - 8) * d;
+        }
+    }
+    return out;
+}
+
+std::vector<float> decode_q8(const DeviceBuffer& payload, std::size_t scale_offset, std::int32_t n,
+                             std::int32_t k) {
+    const auto bytes = from_device<std::uint8_t>(payload, payload.bytes);
+    std::vector<float> out(static_cast<std::size_t>(n) * k);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        const std::size_t group = i / 32;
+        const float scale       = f16_to_f32(static_cast<std::uint16_t>(
+            bytes[scale_offset + 2 * group] | (bytes[scale_offset + 2 * group + 1] << 8)));
+        out[i]                  = static_cast<float>(static_cast<std::int8_t>(bytes[i])) * scale;
+    }
+    return out;
+}
+
+std::vector<float> decode_bf16(const DeviceBuffer& payload, std::int32_t n, std::int32_t k) {
+    const auto bits = from_device<std::uint16_t>(payload, static_cast<std::size_t>(n) * k);
+    std::vector<float> out(bits.size());
+    for (std::size_t i = 0; i < bits.size(); ++i) out[i] = bf16_to_f32(bits[i]);
+    return out;
+}
+
+// Q/K/V of a 5120-wide DFlash layer (32 x 128 query, 8 x 128 key and value rows): the fused Q8
+// kernel and the segmented bank over one BF16 or one Q4_0 parent, rows sliced as the drafter's
+// bank slices them, on the same represented values. Each route is checked against an FP64 product
+// of the host-decoded weights and the BF16 input (the oracle: no kernel, no shared layout code),
+// then against the fused route.
+int test_qkv_bank(std::int32_t columns) {
+    constexpr std::int32_t kH = 5120, kQ = 4096, kKv = 1024, kRows = kQ + 2 * kKv;
+    const Matrix m        = make_matrix(kRows, kH, 41U);
+    std::size_t q4_scales = 0, q8_scales = 0;
+    DeviceBuffer q4   = q4_0_payload(m, q4_scales);
+    DeviceBuffer q8   = q8_payload(m, q8_scales);
+    DeviceBuffer bf16 = bf16_payload(m);
+    DeviceBuffer x =
+        to_device(random_bf16(static_cast<std::size_t>(kH) * columns, 9U, -1.0F, 1.0F));
+    Tensor tx(x.p, DType::BF16, {kH, columns});
+    int failures = 0;
+
+    // The payloads decode to the represented matrix, exactly, in every format.
+    const auto w_q8             = decode_q8(q8, q8_scales, kRows, kH);
+    const auto w_q4             = decode_q4_0(q4, q4_scales, kRows, kH);
+    const auto w_bf16           = decode_bf16(bf16, kRows, kH);
+    std::size_t decode_mismatch = 0;
+    for (std::int32_t r = 0; r < kRows; ++r) {
+        for (std::int32_t c = 0; c < kH; ++c) {
+            const std::size_t i = static_cast<std::size_t>(r) * kH + c;
+            const float want    = m.value(r, c);
+            decode_mismatch += (w_q8[i] != want) + (w_q4[i] != want) + (w_bf16[i] != want);
+        }
+    }
+    failures += check(decode_mismatch == 0, "qkv bank payload decode (" +
+                                                std::to_string(decode_mismatch) + " mismatches)");
+
+    // The oracle in FP64, laid out as the routes' outputs: q [4096, T], k [1024, T], v [1024, T]
+    // (rows fastest), concatenated.
+    const auto x_bits = from_device<std::uint16_t>(x, static_cast<std::size_t>(kH) * columns);
+    std::vector<double> xd(x_bits.size());
+    for (std::size_t i = 0; i < x_bits.size(); ++i) xd[i] = bf16_to_f32(x_bits[i]);
+    std::vector<double> oracle;
+    oracle.reserve(static_cast<std::size_t>(kRows) * columns);
+    for (const auto [begin, rows] :
+         {std::pair{0, kQ}, std::pair{kQ, kKv}, std::pair{kQ + kKv, kKv}}) {
+        for (std::int32_t t = 0; t < columns; ++t) {
+            for (std::int32_t r = begin; r < begin + rows; ++r) {
+                double sum         = 0.0;
+                const float* row   = w_bf16.data() + static_cast<std::size_t>(r) * kH;
+                const double* xcol = xd.data() + static_cast<std::size_t>(t) * kH;
+                for (std::int32_t c = 0; c < kH; ++c) sum += static_cast<double>(row[c]) * xcol[c];
+                oracle.push_back(sum);
+            }
+        }
+    }
+    double scale = 0.0;
+    for (const double value : oracle) scale = std::max(scale, std::abs(value));
+
+    std::vector<std::vector<double>> result(3);
+    for (int route = 0; route < 3; ++route) {
+        DeviceBuffer qd(static_cast<std::size_t>(kQ) * columns * 2);
+        DeviceBuffer kd(static_cast<std::size_t>(kKv) * columns * 2);
+        DeviceBuffer vd(static_cast<std::size_t>(kKv) * columns * 2);
+        Tensor q(qd.p, DType::BF16, {kQ, columns});
+        Tensor k(kd.p, DType::BF16, {kKv, columns});
+        Tensor v(vd.p, DType::BF16, {kKv, columns});
+        if (route == 0) {
+            ops::attn_input_proj(tx, q8_weight(m, q8, q8_scales), q, k, v, nullptr);
+        } else {
+            const Weight parent = route == 1 ? bf16_weight(m, bf16) : q4_0_weight(m, q4, q4_scales);
+            ops::SegmentedProjectionWeights bank;
+            bank.slices = {{parent, 0, kQ}, {parent, kQ, kKv}, {parent, kQ + kKv, kKv}};
+            const std::array<ops::ProjectionOutput, 3> outputs{
+                {{&q, 0, kQ}, {&k, 0, kKv}, {&v, 0, kKv}}};
+            const auto bytes =
+                ops::segmented_projection_workspace_capacity_bytes(bank, columns, columns);
+            DeviceBuffer scratch(std::max<std::size_t>(bytes, 1));
+            WorkspaceArena workspace(DeviceSpan{scratch.p, scratch.bytes});
+            ops::segmented_projection(tx, bank, outputs, workspace, nullptr);
+        }
+        cuda_synchronize();
+        for (DeviceBuffer* part : {&qd, &kd, &vd}) {
+            const auto values = from_device_bf16(*part, part->bytes / 2);
+            result[route].insert(result[route].end(), values.begin(), values.end());
+        }
+    }
+    // Against the oracle, element by element: the BF16 output's rounding (half an ulp: at most
+    // 2^-8 of the value, just above a power of two) plus an accumulation allowance relative to the
+    // largest output: 1e-3 for the A16 routes (FP32 accumulation of exact products: fused Q8,
+    // segmented BF16), 1e-2 for Q4_0, whose generic kernel may take the activations to 8-bit blocks
+    // (ggml's q8_1 vector path).
+    const char* names[]    = {"fused Q8", "segmented BF16", "segmented Q4_0"};
+    const double allowed[] = {1e-3, 1e-3, 1e-2};
+    for (int route = 0; route < 3; ++route) {
+        double worst        = 0.0; // max |got - oracle| / scale
+        double used         = 0.0; // max |got - oracle| / its tolerance
+        std::size_t outside = 0;
+        for (std::size_t i = 0; i < oracle.size(); ++i) {
+            const double gap = std::abs(result[route][i] - oracle[i]);
+            worst            = std::max(worst, gap / scale);
+            used = std::max(used, gap / (std::abs(oracle[i]) * 0x1p-8 + allowed[route] * scale));
+            outside += gap > std::abs(oracle[i]) * 0x1p-8 + allowed[route] * scale;
+        }
+        std::cout << "dflash qkv bank T=" << columns << " " << names[route]
+                  << " vs FP64 oracle: max error " << worst << " of the largest output (" << scale
+                  << "), " << used << " of its tolerance at most, " << outside << " outside\n";
+        failures += check(outside == 0, "dflash qkv bank T=" + std::to_string(columns) + " " +
+                                            names[route] + " vs oracle");
+    }
+    const double bf16_gap = relative_gap(result[1], result[0]);
+    const double q4_gap   = relative_gap(result[2], result[0]);
+    std::cout << "dflash qkv bank T=" << columns << " vs fused Q8: BF16 " << bf16_gap << ", Q4_0 "
+              << q4_gap << '\n';
+    failures +=
+        check(bf16_gap < 2e-2 && q4_gap < 2e-2, "dflash qkv bank T=" + std::to_string(columns));
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -299,7 +473,9 @@ int main() {
         failures += test_conv_prepare(9, 3);
         failures += test_conv_add(4096, 9, 2);
         failures += test_conv_add(17408, 9, 1);
-        std::cout << (failures == 0 ? "OK" : "FAIL") << " dflash2 generic routes\n";
+        failures += test_qkv_bank(8);  // one lane, depth 7
+        failures += test_qkv_bank(32); // four lanes
+        std::cout << (failures == 0 ? "OK" : "FAIL") << " dflash / dflash2 generic routes\n";
         return failures == 0 ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "dflash2 generic routes test: " << error.what() << '\n';

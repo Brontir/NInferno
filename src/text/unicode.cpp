@@ -114,7 +114,8 @@ bool is_number(std::int32_t codepoint) noexcept {
 }
 
 bool is_whitespace(std::int32_t codepoint) noexcept {
-    if (is_ascii_whitespace(codepoint)) { return true; }
+    // U+0085 NEXT LINE is White_Space (the regex \s of tokenizer.json) in category Cc.
+    if (is_ascii_whitespace(codepoint) || codepoint == 0x85) { return true; }
     switch (utf8proc_category(codepoint)) {
     case UTF8PROC_CATEGORY_ZS:
     case UTF8PROC_CATEGORY_ZL:

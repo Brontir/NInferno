@@ -80,12 +80,38 @@ struct Matrix {
     std::vector<std::uint16_t> bf16;
     DeviceBuffer device;
     Weight weight{};
+    // NVFP4 quantized against a divisor per `divisor_rows` rows (split_divisors), not the 16 of
+    // the whole plane.
+    std::vector<float> divisors;
+    std::int32_t divisor_rows = 0;
 
     double at(std::int32_t r, std::int32_t c) const {
         if (qtype == QType::BF16) return from_bf16(bf16[static_cast<std::size_t>(r) * k + c]);
-        return qw::logical_weight_fp64(packed, r, c);
+        const double v = qw::logical_weight_fp64(packed, r, c);
+        return divisors.empty() ? v : v * 16.0 / divisors[static_cast<std::size_t>(r / divisor_rows)];
     }
 };
+
+// An NVFP4 plane stacked from separately quantized matrices of `rows` rows each (one per expert,
+// as a published checkpoint's weight_scale_2): a divisor word per matrix after the scale plane,
+// `rows` any multiple of 8 (Nemotron 3.5's 1856-row experts end inside a 128-row scale tile).
+void split_divisors(Matrix& m, std::int32_t rows, std::uint32_t seed) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> u(8.0F, 32.0F);
+    m.divisor_rows = rows;
+    m.divisors.resize(static_cast<std::size_t>(m.n / rows));
+    for (auto& d : m.divisors) d = u(rng);
+    auto bytes        = m.packed.payload;
+    const auto offset = (bytes.size() + 3) / 4 * 4;
+    bytes.resize(offset + m.divisors.size() * sizeof(float));
+    std::memcpy(bytes.data() + offset, m.divisors.data(), m.divisors.size() * sizeof(float));
+    m.device = DeviceBuffer(bytes.size());
+    m.device.copy_from_host(bytes.data(), bytes.size());
+    m.weight                     = m.packed.device_weight(m.device.p);
+    m.weight.payload_bytes       = bytes.size();
+    m.weight.weight_divisors     = static_cast<const std::uint8_t*>(m.device.p) + offset;
+    m.weight.weight_divisor_rows = rows;
+}
 
 Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed, double sd = 0.05) {
     Matrix m;
@@ -170,6 +196,8 @@ struct Case {
     ops::LinearPolicy expert_policy = ops::LinearPolicy::A16Only;
     bool router_bias, selection_bias, expert_scale, expert_bias, shared_gate;
     ops::MoeEpilogue epilogue;
+    // NVFP4 banks of a divisor per expert matrix (split_divisors).
+    bool split_divisors = false;
     // Columns of the gate/up bank past H: a bank zero-padded to a block multiple (moe.h). The
     // test's padded columns hold random codes, so only a zero-widened input leaves them inert.
     std::int32_t input_pad = 0;
@@ -192,6 +220,10 @@ Layer make_layer(const Case& c, std::uint32_t seed) {
     l.router  = make_matrix(QType::BF16, E, H, seed + 1, 0.08);
     l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
     l.down    = make_matrix(c.down, E * H, F, seed + 3);
+    if (c.split_divisors) {
+        split_divisors(l.gate_up, F, seed + 12); // gate and up quantized apart
+        split_divisors(l.down, H, seed + 13);
+    }
     l.weights.router  = l.router.weight;
     l.weights.gate_up = l.gate_up.weight;
     l.weights.down    = l.down.weight;
@@ -1794,6 +1826,37 @@ int main(int argc, char** argv) {
                 c.epilogue            = ops::MoeEpilogue::Store;
                 failures += check_case(c, 95U, {1, 2, 4, 17, 40});
                 failures += check_invariance(c, 96U);
+            }
+            // 2a'. Published NVFP4 experts of a divisor each whose rows end inside a 128-row scale
+            //      tile (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4: 1856-row up matrices
+            //      of 80 distinct divisors): relu^2 up and SwiGLU gate, up: 192 rows each, down
+            //      320 per expert; a tile spans two experts, each row divided by its own word.
+            for (const auto activation : {ops::MoeActivation::Relu2, ops::MoeActivation::SwiGlu}) {
+                for (const auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8}) {
+                    Case c;
+                    const bool relu = activation == ops::MoeActivation::Relu2;
+                    c.label = std::string("split divisors nvfp4 ") + (relu ? "relu2" : "swiglu") +
+                              (policy == ops::LinearPolicy::AllowA8 ? " A8" : " A16");
+                    c.experts      = 8;
+                    c.top_k        = 4;
+                    c.hidden       = 320;
+                    c.inter        = 192;
+                    c.shared_inter = 0;
+                    c.gate_up = c.down    = QType::NVFP4;
+                    c.split_divisors      = true;
+                    c.expert_policy       = policy;
+                    c.config.top_k        = c.top_k;
+                    c.config.scoring      = relu ? ops::MoeScoring::Sigmoid : ops::MoeScoring::Softmax;
+                    c.config.routed_scale = relu ? 2.5F : 1.0F;
+                    c.config.activation   = activation;
+                    c.router_bias         = false;
+                    c.selection_bias      = relu;
+                    c.expert_scale        = false;
+                    c.expert_bias         = false;
+                    c.shared_gate         = false;
+                    c.epilogue            = ops::MoeEpilogue::Store;
+                    failures += check_case(c, 97U, {1, 2, 4, 17, 40, 130});
+                }
             }
             // 2b. The int4 layer of a published Qwen3.6-35B-A3B quantization (decode, streaming and
             //     prefill widths; the prefill profile's chunk invariance; the invariant profile).

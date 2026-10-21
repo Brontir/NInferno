@@ -31,6 +31,9 @@ struct ConvertOptions {
     // (drafters only: the target verifies every drafted token, so the output is unchanged);
     // empty: as the recipe leaves them.
     std::string drafter_quant;
+    // drafter_quant is a default (a registry drafter's "quant"), not --drafter-quant: one that
+    // changes nothing (the drafter is published quantized, and kept) is expected and not warned of.
+    bool drafter_quant_declared = false;
     std::filesystem::path out;       // --out
     std::optional<std::string> name; // --name
     std::vector<std::pair<std::string, std::filesystem::path>> resources; // --resource ROLE=PATH

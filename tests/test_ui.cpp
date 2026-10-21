@@ -877,6 +877,17 @@ void test_http() {
     res = client.Post("/chat/99/v1/chat/completions", "{}", "application/json");
     check(res && res->status == 409, "chat to nothing");
 
+    // A keyless UI reached by another name: through a proxy the missing key is named, else the
+    // Host is.
+    res = client.Get("/api/state",
+                     httplib::Headers{{"Host", "ui.example.com"}, {"X-Forwarded-For", "10.0.0.2"}});
+    check(res && res->status == 403 && res->body.find("NINFERNO_UI_KEY") != std::string::npos,
+          "keyless UI behind a proxy: 403 naming NINFERNO_UI_KEY");
+    res = client.Get("/api/state", httplib::Headers{{"Host", "ui.example.com"}});
+    check(res && res->status == 403 && res->body.find("Host not allowed") != std::string::npos &&
+              res->body.find("NINFERNO_UI_KEY") == std::string::npos,
+          "keyless UI, another Host without a proxy: 403 Host not allowed");
+
     server.stop();
     thread.join();
 
@@ -912,6 +923,53 @@ void test_http() {
         res = keyed_client.Get("//evil.example/?key=" + keyed_options.access.key, far);
         check(res && res->status == 303 && res->get_header_value("Location") == "/",
               "key: no redirect off the site");
+        // The 303 that drops ?key= stays on this site whatever the target: the targets go out
+        // as written (no client-side encoding), absolute-form included.
+        {
+            httplib::Client raw("127.0.0.1", keyed_port);
+            raw.set_path_encode(false);
+            const std::string key  = "key=" + keyed_options.access.key;
+            const auto same_origin = [](const std::string& location) {
+                if (location.empty() || location[0] != '/') { return false; }
+                if (location.size() > 1 && (location[1] == '/' || location[1] == '\\')) {
+                    return false;
+                }
+                return std::all_of(location.begin(), location.end(), [](unsigned char c) {
+                    return c > 0x20 && c < 0x7f && c != '\\';
+                });
+            };
+            // target -> the Location it must get
+            const std::pair<std::string, std::string> targets[] = {
+                {"/\\evil?", "/"},
+                {"/%09/evil.example/?", "/%09/evil.example/"},
+                {"/%2F%2Fevil.example/?", "/%2F%2Fevil.example/"},
+                {"/%5Cevil?", "/%5Cevil"},
+                {"//evil.example/?", "/"},
+                {"/\\/evil.example/?", "/"},
+                {"http://evil.example/x?", "/"},
+            };
+            for (const auto& [target, want] : targets) {
+                res                        = raw.Get(target + key, far);
+                const std::string location = res ? res->get_header_value("Location") : "";
+                check(res && res->status == 303 && same_origin(location) && location == want,
+                      "key: the redirect of " + target + key.substr(0, 4) +
+                          "... stays on the site (Location " + location + ")");
+            }
+            // The other parameters stay, re-encoded and in the order sent; every key goes, a
+            // repeated one too. A name without a value comes back as name= (httplib's parse).
+            // The second key is spelled k%65y: an identical raw pair would be merged by httplib's
+            // query parse before the handler sees it.
+            res = raw.Get("/api/x?a=1&" + key + "&b=two%20words&k%65y=" + keyed_options.access.key +
+                              "&flag",
+                          far);
+            const std::string kept = res ? res->get_header_value("Location") : "";
+            check(res && res->status == 303 && kept == "/api/x?a=1&b=two%20words&flag=",
+                  "key: other parameters kept, every key dropped (Location " + kept + ")");
+            res                       = raw.Get("/api/x?z=1&" + key + "&a=%2Fx%26y%3D&a=2", far);
+            const std::string ordered = res ? res->get_header_value("Location") : "";
+            check(res && res->status == 303 && ordered == "/api/x?z=1&a=%2Fx%26y%3D&a=2",
+                  "key: reserved bytes re-encoded, the order sent kept (Location " + ordered + ")");
+        }
         auto bearer_headers = far;
         bearer_headers.emplace("Authorization", "Bearer " + keyed_options.access.key);
         res = keyed_client.Get("/api/state", bearer_headers);

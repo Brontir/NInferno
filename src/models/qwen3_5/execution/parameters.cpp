@@ -273,8 +273,7 @@ public:
                     if (ops::consecutive_rows_of_one_parent(qkv)) {
                         const auto joined = ops::prepare_linear_weight(
                             std::span<const ops::WeightInput>(qkv));
-                        if (joined.weight.qtype == QType::Q8_G32_FP16 &&
-                            joined.weight.layout == QuantLayout::RowSplit) {
+                        if (fused_q8_weight(joined.weight)) {
                             result.query_key_value =
                                 ops::prepare_attn_input_proj_weights(qkv[0], qkv[1], qkv[2]);
                         }

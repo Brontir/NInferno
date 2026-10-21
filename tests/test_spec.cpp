@@ -986,38 +986,45 @@ int test_registry_and_corpus() {
         failures += check(published != nullptr && profile_from_published(*published).load ==
                                                       std::vector<LoadBound>{{3, 1}},
                           "Muse Glimmer on the RTX 5080 is not one draft deep from three lanes");
-        // Measured for the unsloth quantizations: another repository of the lineage, and a GPU
-        // nobody measured (an RTX 3090; the RTX 4090 has its own profile since data/muse-ad102),
-        // get no profile.
+        // The RTX 5080 profile is the unsloth quantizations': another repository of the lineage
+        // gets none there (no gb203 profile for any repository, no "*" profile).
         failures += check(
             select_published(muse->profiles, rtx5080, "meta-models/Muse-Glimmer-30B-GGUF",
-                             nullptr) == nullptr &&
-                select_published(muse->profiles,
-                                 GpuKey{{"ga102:82sm", "ga102", "sm86", "*"}, 24ULL << 30},
-                                 "unsloth/Muse-Glimmer-30B-GGUF", nullptr) == nullptr,
-            "no Muse Glimmer profile for another repository or an unmeasured GPU");
-        // Along the similarity chain the RTX 3090 takes the most similar measured card's choices:
-        // no Ampere chip and no "*" profile, so the RTX 4090's (the nearest compute capability),
-        // and the note says whose.
+                             nullptr) == nullptr,
+            "no Muse Glimmer profile for another repository on the RTX 5080");
+        // The RTX 3090 has a profile of its own (spec-tune: dflash:7,
+        // x2.69 over plain; under load three deep at two lanes, seven from three, three from five).
+        const auto* on3090 = select_published(
+            muse->profiles, GpuKey{{"ga102:82sm", "ga102", "sm86", "*"}, 24ULL << 30},
+            "unsloth/Muse-Glimmer-30B-GGUF", nullptr);
+        failures += check(on3090 != nullptr && on3090->value("gpu_class", "") == "ga102" &&
+                              profile_from_published(*on3090).overall.config.label() == "dflash:7" &&
+                              profile_from_published(*on3090).load ==
+                                  std::vector<LoadBound>{{2, 3}, {3, 7}, {5, 3}},
+                          "Muse Glimmer on the RTX 3090 drafts dflash:7");
+        // Along the similarity chain an RTX 3070 (ga104, nobody measured it) takes the most similar
+        // measured card's choices: no profile for ga104, ga103 or ga106, so the RTX 3090's, and
+        // the note says whose.
         // The spec library needs no CUDA, so the chain is written out as
-        // ninferno::gpu_similarity_chain("ga102", 82, 8, 6) builds it (tests/test_device.cpp).
-        const GpuKey rtx3090{{"ga102:82sm", "ga102", "sm86", "ga103", "ga104", "ga106", "ga107",
-                              "*", "ad103", "ad104", "ad102", "ad106", "ad107", "tu102"},
-                             24ULL << 30,
+        // ninferno::gpu_similarity_chain("ga104", 46, 8, 6) builds it (tests/test_device.cpp).
+        const GpuKey rtx3070{{"ga104:46sm", "ga104", "sm86", "ga103", "ga106", "ga102", "ga107",
+                              "ga100", "*", "ad106", "ad104", "ad103", "ad107", "ad102", "tu104",
+                              "tu106", "tu102"},
+                             8ULL << 30,
                              false,
                              3};
         const auto* stand_in =
-            select_published(muse->profiles, rtx3090, "unsloth/Muse-Glimmer-30B-GGUF", nullptr);
-        failures += check(stand_in != nullptr && stand_in->value("gpu_class", "") == "ad102" &&
-                              similarity_note(rtx3090, *stand_in).find("ad102 profile stands in") !=
+            select_published(muse->profiles, rtx3070, "unsloth/Muse-Glimmer-30B-GGUF", nullptr);
+        failures += check(stand_in != nullptr && stand_in->value("gpu_class", "") == "ga102" &&
+                              similarity_note(rtx3070, *stand_in).find("ga102 profile stands in") !=
                                   std::string::npos &&
                               similarity_note(rtx5080, *published).empty(),
                           "an unmeasured GPU takes the most similar measured GPU's profile");
         // A stand-in's floors are another GPU's: the engine calibrates them (calibrate_floor);
         // the card's own profile, and a key list without own keys, keep theirs.
-        failures += check(measured_elsewhere(rtx3090, *stand_in) &&
-                              measured_elsewhere(rtx3090, nlohmann::json{{"gpu_class", "*"}}) &&
-                              !measured_elsewhere(rtx3090, nlohmann::json{{"gpu_class", "sm86"}}) &&
+        failures += check(measured_elsewhere(rtx3070, *stand_in) &&
+                              measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "*"}}) &&
+                              !measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "sm86"}}) &&
                               !measured_elsewhere(rtx5080, *published),
                           "a profile measured on another GPU is told apart from the card's own");
         failures += check(muse->vocab_fingerprint == "v1:49d8b46011586387" &&
@@ -1052,9 +1059,10 @@ int test_registry_and_corpus() {
                               on4090.overall.config.label() == "mtp:3",
                           "Nemotron 3.5 Lightning drafts mtp:3 on the RTX 5090 and RTX 4090");
         // Under load the RTX 5090 drafts two deep at two lanes (x1.31 over plain) and three from
-        // three, the RTX 4090 two deep from two lanes (x1.43 at C=2, x1.29 at C=4).
+        // three, the RTX 4090 the same (spec-tune --load 2026-10-20, C 2,4,8; before it two deep
+        // from two lanes only).
         failures += check(on5090.load == std::vector<LoadBound>{{2, 2}, {3, 3}} &&
-                              on4090.load == std::vector<LoadBound>{{2, 2}},
+                              on4090.load == std::vector<LoadBound>{{2, 2}, {3, 3}},
                           "Nemotron 3.5 Lightning's load tables");
         // The RTX 4090's table is its own measurement: it is published, so no fallback table
         // replaces it.
@@ -1069,11 +1077,32 @@ int test_registry_and_corpus() {
         failures += check(on5080.overall.config.label() == "mtp:2" &&
                               on5080.load == std::vector<LoadBound>{{3, 1}},
                           "Nemotron 3.5 Lightning drafts mtp:2 on the RTX 5080");
+        // The RTX 3090 (ga102) is measured too: three deep (x1.46 over plain), three deep at two
+        // lanes.
         const GpuKey rtx3090{{"ga102:82sm", "ga102", "sm86", "*"}, 24ULL << 30};
-        failures += check(select_published(nemo->profiles, rtx3090,
-                                           "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
-                                           nullptr) == nullptr,
-                          "no Nemotron 3.5 Lightning profile for an unmeasured GPU");
+        const auto on3090 = choice(rtx3090, "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF");
+        failures += check(on3090.overall.config.label() == "mtp:3" &&
+                              on3090.load == std::vector<LoadBound>{{2, 3}},
+                          "Nemotron 3.5 Lightning drafts mtp:3 on the RTX 3090");
+        // A GPU nobody measured, an RTX 3070 (its chain as ninferno::gpu_similarity_chain("ga104",
+        // 46, 8, 6) builds it), takes the RTX 3090's profile: no ga104, ga103 or ga106 profile and
+        // no "*" one. Its bounds are another card's, so they are capped to its 46 SMs: plain from
+        // five rows.
+        const GpuKey rtx3070{{"ga104:46sm", "ga104", "sm86", "ga103", "ga106", "ga102", "ga107",
+                              "ga100", "*", "ad106", "ad104", "ad103", "ad107", "ad102", "tu104",
+                              "tu106", "tu102"},
+                             8ULL << 30,
+                             false,
+                             3,
+                             46};
+        const auto* nemo3070 = select_published(
+            nemo->profiles, rtx3070, "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF", nullptr);
+        failures += check(nemo3070 != nullptr && nemo3070->value("gpu_class", "") == "ga102" &&
+                              profile_from_published(*nemo3070).overall.config.label() == "mtp:3" &&
+                              measured_elsewhere(rtx3070, *nemo3070) &&
+                              stand_in_load(profile_from_published(*nemo3070).load, rtx3070.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {5, 0}},
+                          "an RTX 3070 takes the RTX 3090's Nemotron 3.5 Lightning profile, capped");
         failures += check(nemo->vocab_fingerprint == "v1:9e123547b12f55ce" &&
                               nemo->geometry.hidden_size == 2688 &&
                               nemo->geometry.num_hidden_layers == 52 &&
@@ -1085,6 +1114,120 @@ int test_registry_and_corpus() {
     }
     failures += check(registry.by_lineage("google/gemma-4-26B-A4B-it") != nullptr,
                       "lineage lookup");
+    // gb203 boards tune apart. The RTX 5070 Ti (70 SMs) has a profile of its SM variant
+    // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS: mtp:2, two
+    // deep from two lanes); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
+    // RTX 5080 measured for them (mtp:8:2, two lanes three deep), and a 5080 running a GGUF takes
+    // neither the 5070 Ti's nor a gb203 one: the RTX 5060 Ti's (gb206) stands in, capped to its
+    // 84 SMs. Chains as ninferno::gpu_similarity_chain builds them.
+    if (const auto* g26 = registry.by_repo("google/gemma-4-26B-A4B-it")) {
+        const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
+                              "*"},
+                             15ULL << 30, true, 3, 84};
+        const GpuKey rtx5070ti{{"gb203:70sm", "gb203", "sm120", "gb205", "gb206", "gb202",
+                                "gb207", "*"},
+                               15ULL << 30, true, 3, 70};
+        const auto pick = [&](const GpuKey& gpu, const char* repo) {
+            return select_published(g26->profiles, gpu, repo, nullptr);
+        };
+        const auto label = [](const nlohmann::json* p) {
+            return profile_from_published(*p).overall.config.label();
+        };
+        const auto load = [](const nlohmann::json* p) { return profile_from_published(*p).load; };
+        const auto* google5080   = pick(rtx5080, "google/gemma-4-26B-A4B-it");
+        const auto* google5070ti = pick(rtx5070ti, "google/gemma-4-26B-A4B-it");
+        const auto* redhat5070ti = pick(rtx5070ti, "RedHatAI/gemma-4-26B-A4B-it-NVFP4");
+        const auto* gguf5070ti   = pick(rtx5070ti, "unsloth/gemma-4-26B-A4B-it-GGUF");
+        const auto* gguf5080     = pick(rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF");
+        failures += check(google5080 != nullptr && google5080->value("gpu_class", "") == "gb203" &&
+                              label(google5080) == "mtp:8:2" &&
+                              load(google5080) == std::vector<LoadBound>{{2, 3}},
+                          "Gemma 4 26B (google) on the RTX 5080: its gb203 profile, 2:3");
+        failures += check(google5070ti == google5080,
+                          "Gemma 4 26B (google) on the RTX 5070 Ti: the same gb203 profile");
+        const auto* lender =
+            redhat5070ti != nullptr ? select_load_fallback(g26->profiles, *redhat5070ti) : nullptr;
+        failures += check(redhat5070ti != nullptr &&
+                              redhat5070ti->value("gpu_class", "") == "gb203" &&
+                              label(redhat5070ti) == "mtp:8:2" && lender == google5080,
+                          "Gemma 4 26B (RedHatAI NVFP4) on the RTX 5070 Ti: its gb203 profile, "
+                          "the google gb203 load table");
+        failures += check(gguf5070ti != nullptr &&
+                              gguf5070ti->value("gpu_class", "") == "gb203:70sm" &&
+                              label(gguf5070ti) == "mtp:2" &&
+                              load(gguf5070ti) == std::vector<LoadBound>{{2, 2}} &&
+                              !measured_elsewhere(rtx5070ti, *gguf5070ti),
+                          "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:2, 2:2");
+        failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") == "gb206" &&
+                              label(gguf5080) == "mtp:8:2" &&
+                              load(gguf5080) == std::vector<LoadBound>{{2, 3}} &&
+                              measured_elsewhere(rtx5080, *gguf5080) &&
+                              stand_in_load(load(gguf5080), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "Gemma 4 26B (unsloth GGUF) on the RTX 5080: the gb206 stand-in, "
+                          "mtp:8:2, 2:3 capped at 9 rows");
+    } else {
+        failures += check(false, "registry has google/gemma-4-26B-A4B-it");
+    }
+    // Qwen3.8 27B on the RTX 4070 Ti (ad104, 60 SMs): the GGUF it was measured on drafts dflash2:7,
+    // three deep from three lanes; the safetensors checkpoint keeps the RTX 4070 Ti SUPER's
+    // profile measured for it (ad103).
+    if (const auto* q38 = registry.by_repo("Qwen/Qwen3.8-27B")) {
+        const GpuKey rtx4070ti{{"ad104:60sm", "ad104", "sm89", "ad103", "ad106", "ad102", "ad107",
+                                "*"},
+                               12ULL << 30, false, 3, 60};
+        const auto* gguf = select_published(q38->profiles, rtx4070ti, "unsloth/Qwen3.8-27B-GGUF",
+                                            nullptr);
+        const auto* base =
+            select_published(q38->profiles, rtx4070ti, "Qwen/Qwen3.8-27B", nullptr);
+        failures += check(gguf != nullptr && gguf->value("gpu_class", "") == "ad104" &&
+                              profile_from_published(*gguf).overall.config.label() == "dflash2:7" &&
+                              profile_from_published(*gguf).load == std::vector<LoadBound>{{3, 3}},
+                          "Qwen3.8 27B (unsloth GGUF) on the RTX 4070 Ti: ad104, dflash2:7, 3:3");
+        failures += check(base != nullptr && base->value("gpu_class", "") == "ad103",
+                          "Qwen3.8 27B (Qwen) on the RTX 4070 Ti: the ad103 profile stands in");
+    } else {
+        failures += check(false, "registry has Qwen/Qwen3.8-27B");
+    }
+    // gpt-oss-20b was tuned on an RTX 5070 Ti, published for its SM variant "gb203:70sm": the 5070 Ti
+    // runs it as its own (dflash:7, two lanes three deep), an RTX 5080 (no gb203 profile) takes the
+    // RTX 5090's as a stand-in (dflash:7 for the openai checkpoint, dflash:5 for the GGUFs), 2:3
+    // capped at 9 rows for its 84 SMs.
+    if (const auto* oss = registry.by_repo("openai/gpt-oss-20b")) {
+        const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
+                              "*"},
+                             15ULL << 30, true, 3, 84};
+        const GpuKey rtx5070ti{{"gb203:70sm", "gb203", "sm120", "gb205", "gb206", "gb202",
+                                "gb207", "*"},
+                               15ULL << 30, true, 3, 70};
+        const auto label = [](const nlohmann::json* p) {
+            return profile_from_published(*p).overall.config.label();
+        };
+        const auto load = [](const nlohmann::json* p) { return profile_from_published(*p).load; };
+        const auto* own = select_published(oss->profiles, rtx5070ti, "openai/gpt-oss-20b", nullptr);
+        failures += check(own != nullptr && own->value("gpu_class", "") == "gb203:70sm" &&
+                              label(own) == "dflash:7" &&
+                              load(own) == std::vector<LoadBound>{{2, 3}} &&
+                              !measured_elsewhere(rtx5070ti, *own),
+                          "gpt-oss-20b on the RTX 5070 Ti: its gb203:70sm profile, dflash:7, 2:3");
+        const auto* base = select_published(oss->profiles, rtx5080, "openai/gpt-oss-20b", nullptr);
+        const auto* gguf =
+            select_published(oss->profiles, rtx5080, "unsloth/gpt-oss-20b-GGUF", nullptr);
+        failures += check(base != nullptr && base->value("gpu_class", "") == "gb202" &&
+                              label(base) == "dflash:7" && measured_elsewhere(rtx5080, *base) &&
+                              stand_in_load(load(base), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "gpt-oss-20b on the RTX 5080: the RTX 5090's profile stands in, "
+                          "dflash:7, 2:3 capped at 9 rows");
+        failures += check(gguf != nullptr && gguf->value("gpu_class", "") == "gb202" &&
+                              label(gguf) == "dflash:5" &&
+                              stand_in_load(load(gguf), rtx5080.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                          "gpt-oss-20b (unsloth GGUF) on the RTX 5080: the RTX 5090's GGUF "
+                          "profile, dflash:5");
+    } else {
+        failures += check(false, "registry has openai/gpt-oss-20b");
+    }
     failures += check(registry.kind_for_architecture("DFlashDraftModel") == "dflash" &&
                           registry.supported("dflash2", "qwen3_5") &&
                           !registry.supported("eagle3", "gemma4"),

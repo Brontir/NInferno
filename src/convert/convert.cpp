@@ -201,24 +201,11 @@ std::vector<Task> make_tasks(const Plan& plan, const std::vector<std::uint32_t>&
         case Method::ImportEncoded: {
             const auto k    = job.shape[1];
             const auto step = std::max<std::uint64_t>(128, kTaskBytes / (k / 2) / 128 * 128);
-            // A stacked plane restarts its row blocks at every source boundary: one block, one
-            // divisor.
-            std::vector<std::uint64_t> bounds;
-            if (job.divisors > 1) {
-                std::uint64_t edge = 0;
-                for (const auto& source : job.sources) {
-                    edge += source->shape()[0];
-                    bounds.push_back(edge);
-                }
-            } else {
-                bounds.push_back(job.shape[0]);
-            }
-            std::uint64_t cursor = 0;
-            for (const auto edge : bounds) {
-                for (std::uint64_t r = cursor; r < edge; r += step) {
-                    tasks.push_back({j, position, r, std::min(edge, r + step)});
-                }
-                cursor = edge;
+            // Blocks of whole 128-row scale tiles (each task swizzles its own tiles); a block may
+            // span sources of different divisors, each row keeping its source's.
+            const auto rows = job.shape[0];
+            for (std::uint64_t r = 0; r < rows; r += step) {
+                tasks.push_back({j, position, r, std::min(rows, r + step)});
             }
             break;
         }
@@ -713,25 +700,18 @@ private:
         const auto k    = job.shape[1];
         s.encoded.codes.clear();
         s.encoded.scales.clear();
-        std::optional<std::uint32_t> divisor;
-        for_rows(job, task.begin, task.end,
-                 [&](const Source& source, std::uint64_t low, std::uint64_t high, std::uint64_t) {
-                     source.encoded_rows(low, high, s.encoded, &s.log); // appends
-                     if (divisor && *divisor != s.encoded.divisor) {
-                         throw std::runtime_error(
-                             "encoded inputs cannot share one parent format/divisor");
-                     }
-                     divisor = s.encoded.divisor;
-                 });
+        // Each source's rows keep its divisor: the plane's word for the rows it covers.
         const auto rows_per_divisor = job.shape[0] / job.divisors;
-        const auto index            = task.begin / rows_per_divisor;
-        if (task.end - index * rows_per_divisor > rows_per_divisor) {
-            throw std::runtime_error(job.id +
-                                     ": a row block may not span two separately quantised sources");
-        }
-        if (!divisor || *divisor != job.divisor_words[index]) {
-            throw std::runtime_error(job.id + ": weight divisor changed between row blocks");
-        }
+        for_rows(job, task.begin, task.end,
+                 [&](const Source& source, std::uint64_t low, std::uint64_t high,
+                     std::uint64_t at) {
+                     source.encoded_rows(low, high, s.encoded, &s.log); // appends
+                     const auto index = (task.begin + at) / rows_per_divisor;
+                     if (s.encoded.divisor != job.divisor_words[index]) {
+                         throw std::runtime_error(job.id +
+                                                  ": weight divisor changed between row blocks");
+                     }
+                 });
         // Tasks start on 128-row tiles; the last one of a plane whose rows end inside a tile
         // writes that whole tile (its rows past the plane zero), which the geometry holds.
         s.swizzled.resize((rows + 127) / 128 * 128 * (k / 16));
@@ -1347,7 +1327,8 @@ bool companion_parameter(const std::string& name) {
 }
 
 // --drafter-quant: every projection of a drafter that the recipe left in its direct BF16 form
-// (of a target, only its companion drafters' projections),
+// (of a target, only its companion drafters' projections, and also those the recipe gave its
+// companion Q8: companion_drafter_q8 / optional_components, a default --drafter-quant replaces),
 // read from plain values (a published encoding is never quantized again), in NInferno's own
 // quantization: q8 (q8_g32_fp16), q4 (q4_g64_fp16), or nvfp4 (round-to-nearest NVFP4, weight
 // only: the drafter keeps BF16 activations). A packing group (gate/up) takes one format, and for
@@ -1372,8 +1353,14 @@ std::map<std::string, std::size_t> quantize_drafter(const Model& model, Recipe& 
         const auto& p         = model.parameters[i];
         const auto& selection = recipe.selections[i];
         if (!drafter && !companion_parameter(p.name)) { return false; } // the target as published
+        // A companion's Q8 from the recipe is its default, which an explicit mode replaces.
+        const bool recipe_q8 = companion_parameter(p.name) &&
+                               selection.method == Method::GroupedAbsmax &&
+                               selection.format == QType::Q8_G32_FP16;
+        const bool cast_bf16 =
+            selection.method == Method::CastDirect && selection.format == QType::BF16;
         if (!p.projection() || p.shape.size() != 2 || recipe.alias[i] ||
-            selection.method != Method::CastDirect || selection.format != QType::BF16) {
+            !(cast_bf16 || recipe_q8)) {
             return false;
         }
         const auto& source = selection.source ? selection.source : p.source;
@@ -1641,13 +1628,23 @@ ConvertResult convert(const ConvertOptions& options) {
         log("vocabulary " + vocabulary +
             (options.vocab.empty() ? " (the recipe's default)" : " (--vocab)"));
     }
+    // What --drafter-quant wrote; the provenance records it only when it quantized something.
+    std::string drafter_quant;
     if (!options.drafter_quant.empty()) {
         std::string counted;
         for (const auto& [format, count] : quantize_drafter(model, recipe, options.drafter_quant)) {
             counted += (counted.empty() ? "" : ", ") + std::to_string(count) + " " + format;
         }
-        log("drafter quantization " + options.drafter_quant + ": " +
-            (counted.empty() ? std::string("no plain projection left to quantize") : counted));
+        if (counted.empty()) {
+            if (!options.drafter_quant_declared) {
+                log("warning: --drafter-quant " + options.drafter_quant +
+                    " changed nothing: no drafter projection is read from plain values (a "
+                    "published encoding is kept as it is)");
+            }
+        } else {
+            log("drafter quantization " + options.drafter_quant + ": " + counted);
+            drafter_quant = options.drafter_quant;
+        }
     }
     if (share_tied_head(model, recipe)) {
         log("tied output head: bound to the token embedding's objects (one copy)");
@@ -1669,9 +1666,7 @@ ConvertResult convert(const ConvertOptions& options) {
     OJson provenance        = OJson::object();
     provenance["converter"] = "ninferno-v3";
     provenance["recipe"]    = options.recipe;
-    if (!options.drafter_quant.empty()) {
-        provenance["drafter_quantization"] = options.drafter_quant;
-    }
+    if (!drafter_quant.empty()) { provenance["drafter_quantization"] = drafter_quant; }
     if (!vocabulary.empty()) { provenance["vocabulary"] = vocabulary; }
     provenance["sources"]   = sources.provenance();
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }

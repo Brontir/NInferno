@@ -94,7 +94,7 @@ select kernels. Recipes are Python functions in
 | Qwen3.6-35B-A3B NVFP4 | `qwen3_6_35b_a3b_nvfp4` | Imported NVFP4 routed and shared experts, Q8 projections, Q8/Q6 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.6-27B NVFP4 | `qwen3_6_27b_nvfp4` | Imported NVFP4, selected BF16 projections, Q8 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8, FP8 embedding generated from BF16; needs `--source quantized=PATH` | MTP, DFlash2 |
-| Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 | MTP |
+| Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 (a DFlash drafter Q8 in both) | MTP, DFlash |
 | Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
 | Gemma 4 26B-A4B / 31B | `gemma4_26b_a4b_nvfp4`, `gemma4_31b_nvfp4` | Sites the checkpoint encodes are kept; the rest Q8 | Gemma 4 assistant |
@@ -500,9 +500,8 @@ Explicit organization:
 - Explicit groups must be disjoint and use unsplit selections with matching format, layout, method
   and method parameters.
 - NVFP4 parents also need a common weight divisor. The exception is an explicit group of
-  equal-shaped members, which keeps one divisor per member when each member is whole 128-row scale
-  tiles. The native converter refuses a published expert bank whose NVFP4 experts end inside a
-  scale tile and differ in divisor, and names the bank.
+  equal-shaped members, which keeps one divisor per member (an expert bank of
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4: 1856 rows each, 80 divisors).
 - Automatic grouping is limited to built-in methods; custom methods can request explicit groups.
 
 Grouping chooses storage. Model execution code chooses the supported fused implementation. The

@@ -100,11 +100,12 @@ DFlashFeatureSink batch_feature_sink_impl(DFlashBatchContext& state, const Tenso
     }
 }
 
-// The fused DFlash2 kernels (context_kv_materialize, the Q8 Q/K/V projection) are registered for
-// RowSplit Q8_G32_FP16 matrices; a drafter stored in other formats (a published GGUF's Q4_0)
-// takes the generic projections with the same state effects.
+// The fused DFlash / DFlash2 kernels (context_kv_materialize, the Q8 Q/K/V projection) are
+// registered for RowSplit Q8_G32_FP16 matrices; a drafter stored in other formats (a published
+// GGUF's Q4_0, a BF16 or --drafter-quant q4 / nvfp4 artifact) takes the generic projections with
+// the same state effects.
 bool fused_q8(const Weight& weight) {
-    return weight.qtype == QType::Q8_G32_FP16 && weight.layout == QuantLayout::RowSplit;
+    return ::ninferno::models::qwen3_5::execution::fused_q8_weight(weight);
 }
 
 bool fused_context(const DraftParameters& draft) {
@@ -535,8 +536,18 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
                     query_raw.view({dimension(config.attention.query_width()), columns});
                 Tensor key_flat = key_raw.view({dimension(config.attention.key_width()), columns});
                 Tensor value_flat = value.view({dimension(config.attention.key_width()), columns});
-                ops::attn_input_proj(roots.hidden, weight.query_key_value.weight, query_flat,
-                                     key_flat, value_flat, state.execution.device.stream);
+                if (fused_q8(weight.query_key_value.weight)) {
+                    ops::attn_input_proj(roots.hidden, weight.query_key_value.weight, query_flat,
+                                         key_flat, value_flat, state.execution.device.stream);
+                } else {
+                    const std::array<ops::ProjectionOutput, 3> outputs{{
+                        {&query_flat, 0, dimension(config.attention.query_width())},
+                        {&key_flat, 0, dimension(config.attention.key_width())},
+                        {&value_flat, 0, dimension(config.attention.key_width())},
+                    }};
+                    ops::segmented_projection(roots.hidden, weight.query_key_value_bank, outputs,
+                                              state.execution.work, state.execution.device.stream);
+                }
                 Tensor query =
                     roots.query.view({dimension(config.attention.head_dim),
                                       dimension(config.attention.num_attention_heads), columns});

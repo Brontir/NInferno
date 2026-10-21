@@ -1125,37 +1125,6 @@ ActivationPolicy head_policy(const KeptEncoding& site) noexcept {
                : kept_policy(site);
 }
 
-void refuse_split_nvfp4_tiles(const Model& model, const Recipe& recipe,
-                              const std::vector<std::size_t>& group) {
-    const auto& first = recipe.selections[group.front()];
-    const auto rows   = model.parameters[group.front()].shape[0];
-    const bool ragged = std::any_of(group.begin(), group.end(), [&](std::size_t i) {
-        return model.parameters[i].shape[0] % 128 != 0;
-    });
-    if (first.format != QType::NVFP4 || first.method != Method::ImportEncoded || !ragged) {
-        return;
-    }
-    std::set<std::uint32_t> divisors;
-    for (const auto i : group) {
-        const auto& selection = recipe.selections[i];
-        if (selection.format != QType::NVFP4 || !selection.source ||
-            !selection.source->provides_divisors()) {
-            return;
-        }
-        divisors.insert(selection.source->weight_divisor());
-    }
-    if (divisors.size() < 2) { return; }
-    throw std::runtime_error(
-        model.parameters[group.front()].name + " .. " + model.parameters[group.back()].name +
-        ": NVFP4 matrices of " + std::to_string(rows) +
-        " rows (not whole 128-row scale tiles) quantized against " +
-        std::to_string(divisors.size()) +
-        " different weight divisors cannot share one stacked plane, whose scale tiles would span "
-        "two divisors. NInferno keeps them only as published and has no other lossless form of "
-        "them: use a checkpoint whose stacked matrices (each expert bank) share one weight "
-        "divisor, or the model's BF16 original.");
-}
-
 std::unique_ptr<QuantizedMatrix> probe_quantized(const Checkpoint& checkpoint,
                                                  const std::string& prefix, std::uint64_t n,
                                                  std::uint64_t k) {

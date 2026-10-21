@@ -20,10 +20,10 @@ ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --spec none --max-con
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×5 | auto | 673 | 15.2 | 15.8 | 81.2 | 38.9 | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | 856 | 33.2 | 33.0 | 82.9 | 38.9 | 2026-10-19 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×5 | auto | fast | 673 | 15.2 | 15.8 | 81.2 | 38.9 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | fast | 856 | 33.2 | 33.0 | 82.9 | 38.9 | 2026-10-19 |
 
 ## Measurement
 

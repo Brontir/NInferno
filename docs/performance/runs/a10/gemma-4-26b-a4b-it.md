@@ -20,10 +20,10 @@ ninferno-serve unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafter
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | mtp ×6 | auto | 3,443 | 137 | 146 | 316 | 288 | 2026-10-19 |
-| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | off | auto | 3,390 | 94.9 | 106 | 225 | 286 | 2026-10-19 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | mtp ×6 | auto | fast | 3,443 | 137 | 146 | 316 | 288 | 2026-10-19 |
+| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 3,390 | 94.9 | 106 | 225 | 286 | 2026-10-19 |
 
 ## Measurement
 

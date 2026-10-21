@@ -1,8 +1,10 @@
 #include "core/weight.h"
 #include "ninferno/ops/gdn_gating_proj.h"
+#include "ninferno/ops/segmented_projection.h"
 #include "ninferno/ops/weight_input.h"
 
 #include "ops/op_tester.h"
+#include "ops/quantized_weight.h"
 #include "core/decode_graph.h"
 
 #include <algorithm>
@@ -12,6 +14,9 @@
 #include <iomanip>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <variant>
 #include <string>
 #include <vector>
 
@@ -30,6 +35,11 @@ struct Geometry {
 constexpr Geometry kQwen27{"qwen3_6_27b", 5120, 48, false};
 constexpr Geometry kQwen38Parent{"qwen3_8_27b_parent", 5120, 48, true};
 constexpr Geometry kQwen35{"qwen3_6_35b_a3b", 2048, 32, true};
+// Published quantized a/b (qwen3_5_published): separate parents of their own. The 9B's geometry
+// has no fused registration; the 27B's and 35B's do, but only for BF16.
+constexpr Geometry kQwen27Published{"qwen3_6_27b", 5120, 48, false};
+constexpr Geometry kQwen35Published{"qwen3_6_35b_a3b", 2048, 32, false};
+constexpr Geometry kQwen9Published{"qwen3_5_9b", 4096, 32, false};
 
 constexpr ReductionCriterion kGdnProjectionFp32{/*relative_l2=*/1.4e-6,
                                                 /*gross_absolute=*/5.0e-7,
@@ -42,6 +52,15 @@ constexpr ReductionCriterion kGdnNormOutputBf16{/*relative_l2=*/1.75e-3,
 constexpr ReductionCriterion kGdnNormControlFp32{/*relative_l2=*/8.0e-4,
                                                  /*gross_absolute=*/1.5e-4,
                                                  /*gross_relative_to_max_reference=*/2.0e-3};
+
+// The generic path quantizes h for the kept matrices' activation widths: the linear tests'
+// allowances for A4 (NVFP4 W4A4) and A8 (FP8 rows), against an FP64 oracle over the decoded words.
+constexpr ReductionCriterion kPublishedA4Control{/*relative_l2=*/0.16,
+                                                 /*gross_absolute=*/1.0 / 256.0,
+                                                 /*gross_relative_to_max_reference=*/0.16};
+constexpr ReductionCriterion kPublishedA8Control{/*relative_l2=*/0.04,
+                                                 /*gross_absolute=*/1.0 / 256.0,
+                                                 /*gross_relative_to_max_reference=*/0.06};
 
 double softplus(double value) {
     return std::max(value, 0.0) + std::log1p(std::exp(-std::abs(value)));
@@ -451,6 +470,184 @@ int run_norm_projection_case(const Geometry& geometry, std::int32_t tokens, std:
     return failures;
 }
 
+enum class PublishedFormat { Nvfp4A4, Fp8Row };
+
+// One published a or b matrix: the fixture's packed words on the device, the parent the artifact
+// reader would bind and its decoded values. Not movable: the view points at the parent.
+struct PublishedMatrix {
+    PublishedMatrix(PublishedFormat format, std::int32_t heads, std::int32_t hidden,
+                    std::uint32_t seed) {
+        if (format == PublishedFormat::Nvfp4A4) {
+            quantized_weight::PatternedWeightOptions options;
+            options.weight_scale_divisor = 16.0F; // |w| <= 6 * 0.1 / 16
+            options.input_scale_divisor  = 1.0F;  // unused: the use carries the divisor
+            host =
+                quantized_weight::make_patterned_weight(QType::NVFP4, heads, hidden, seed, options);
+        } else {
+            host = quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16, heads,
+                                                           hidden, seed);
+            // Row scales near 2^-15 (|w| <= 448 * 2^-15 * 1.75), the BF16 test's magnitude.
+            for (std::int32_t row = 0; row < heads; ++row) {
+                const float scale = std::ldexp(1.0F + 0.25F * static_cast<float>(row % 4), -15);
+                quantized_weight::detail::store_u16_le(
+                    host.payload, host.scale_plane_offset + static_cast<std::size_t>(row) * 2,
+                    f32_to_bf16(scale));
+            }
+        }
+        values.resize(static_cast<std::size_t>(heads) * hidden);
+        for (std::int32_t row = 0; row < heads; ++row) {
+            for (std::int32_t column = 0; column < hidden; ++column) {
+                values[static_cast<std::size_t>(row) * hidden + column] =
+                    static_cast<float>(quantized_weight::logical_weight_fp64(host, row, column));
+            }
+        }
+        device = to_device(host.payload);
+        const std::array shape{static_cast<std::uint64_t>(heads),
+                               static_cast<std::uint64_t>(hidden)};
+        parent = WeightParent{weight_geometry(host.weight.qtype, host.weight.layout, shape),
+                              static_cast<const std::byte*>(device.p),
+                              format == PublishedFormat::Nvfp4A4 ? 16.0F : 0.0F};
+        if (parent.geometry.bytes != host.payload.size()) {
+            throw std::logic_error("published a/b fixture: payload differs from its geometry");
+        }
+        view = WeightView{{shape[0], shape[1]}, {{&parent, 0, shape[0] * shape[1]}}};
+    }
+
+    PublishedMatrix(const PublishedMatrix&)            = delete;
+    PublishedMatrix& operator=(const PublishedMatrix&) = delete;
+
+    quantized_weight::PackedWeight host;
+    DeviceBuffer device;
+    WeightParent parent;
+    WeightView view;
+    std::vector<float> values;
+};
+
+// a/b kept as published (separate NVFP4 parents with calibrated activation divisors, or FP8
+// rows): prepare_gdn_gating_proj_weights must leave the fused BF16 kernel for the segmented
+// generic path at every geometry, and g/beta must match the decoded weights' oracle.
+int run_published_control_case(const Geometry& geometry, PublishedFormat format,
+                               std::int32_t tokens, std::uint32_t seed, cudaStream_t stream) {
+    constexpr float kEps    = 1.0e-6F;
+    const bool nvfp4        = format == PublishedFormat::Nvfp4A4;
+    const std::string label = std::string("published ") + (nvfp4 ? "nvfp4 a4 " : "fp8 row ") +
+                              geometry.label + " [" + std::to_string(geometry.heads) + ", " +
+                              std::to_string(geometry.hidden) + "] T=" + std::to_string(tokens);
+    const std::size_t h_elements       = std::size_t(geometry.hidden) * tokens;
+    const std::size_t control_elements = std::size_t(geometry.heads) * tokens;
+    std::vector<float> x(h_elements), norm_weight(geometry.hidden);
+    std::vector<float> a_log(geometry.heads), dt_bias(geometry.heads);
+    fill_uniform(x, seed, -1.0F, 1.0F);
+    fill_uniform(norm_weight, seed + 1u, -0.2F, 0.2F);
+    fill_uniform(a_log, seed + 2u, -2.0F, 1.0F);
+    fill_uniform(dt_bias, seed + 3u, -1.0F, 1.0F);
+    round_to_bf16(x);
+    round_to_bf16(norm_weight);
+    const auto a =
+        std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden, seed + 4u);
+    const auto b =
+        std::make_unique<PublishedMatrix>(format, geometry.heads, geometry.hidden, seed + 5u);
+
+    std::vector<double> rh, rg, rb;
+    norm_projection_oracle(geometry, x, norm_weight, a->values, b->values, a_log, dt_bias, tokens,
+                           kEps, rh, rg, rb);
+    // ModelOpt's calibration: input_scale = amax / (6 * 448), the divisor its reciprocal; b's is
+    // another, so the two slices cannot share one activation quantization.
+    double amax = 0.0;
+    for (const double value : rh) amax = std::max(amax, std::abs(value));
+    const float a_divisor = static_cast<float>(6.0 * 448.0 / amax);
+    const float b_divisor = 0.75F * a_divisor;
+    const ops::WeightInput a_input =
+        nvfp4 ? ops::WeightInput{a->view, ops::LinearPolicy::AllowA4, a_divisor}
+              : ops::WeightInput{a->view, ops::LinearPolicy::AllowA8, std::nullopt};
+    const ops::WeightInput b_input =
+        nvfp4 ? ops::WeightInput{b->view, ops::LinearPolicy::AllowA4, b_divisor}
+              : ops::WeightInput{b->view, ops::LinearPolicy::AllowA8, std::nullopt};
+
+    int failures                          = 0;
+    const ops::ProjectionWeights prepared = ops::prepare_gdn_gating_proj_weights(a_input, b_input);
+    const auto* segmented                 = std::get_if<ops::SegmentedProjectionWeights>(&prepared);
+    if (segmented == nullptr) {
+        std::cerr << label << ": prepare_gdn_gating_proj_weights did not take the segmented path\n";
+        return 1;
+    }
+    const auto want_policy = nvfp4 ? ops::LinearPolicy::AllowA4 : ops::LinearPolicy::AllowA8;
+    if (segmented->slices.size() != 2 || segmented->rows() != 2 * geometry.heads ||
+        segmented->columns() != geometry.hidden) {
+        std::cerr << label << ": segmented a/b bank has " << segmented->slices.size()
+                  << " slices of " << segmented->rows() << " rows\n";
+        return 1;
+    }
+    for (const auto& slice : segmented->slices) {
+        if (slice.parent.qtype == QType::BF16 || slice.policy != want_policy ||
+            slice.rows != geometry.heads || slice.row_begin != 0) {
+            std::cerr << label << ": segmented slice is not the published parent at its policy\n";
+            ++failures;
+        }
+    }
+    if (nvfp4 && (segmented->slices[0].parent.input_scale_divisor != a_divisor ||
+                  segmented->slices[1].parent.input_scale_divisor != b_divisor)) {
+        std::cerr << label << ": a/b slices lost their own activation divisors\n";
+        ++failures;
+    }
+
+    const auto x_bits = bf16_bits(x), norm_bits = bf16_bits(norm_weight);
+    DeviceBuffer device_x = to_device(x_bits), device_norm = to_device(norm_bits);
+    DeviceBuffer device_a_log = to_device(a_log), device_dt_bias = to_device(dt_bias);
+    GuardedDeviceBuffer device_h(h_elements * 2), device_g(control_elements * 4),
+        device_beta(control_elements * 4);
+    device_h.fill(0xff);
+    device_g.fill(0xff);
+    device_beta.fill(0xff);
+    Tensor tx(device_x.p, DType::BF16, {geometry.hidden, tokens}),
+        tn(device_norm.p, DType::BF16, {geometry.hidden});
+    Tensor th(device_h.data(), DType::BF16, {geometry.hidden, tokens}),
+        tg(device_g.data(), DType::FP32, {geometry.heads, tokens}),
+        tb(device_beta.data(), DType::FP32, {geometry.heads, tokens});
+    Tensor ta(device_a_log.p, DType::FP32, {geometry.heads}),
+        td(device_dt_bias.p, DType::FP32, {geometry.heads});
+    const std::size_t capacity = std::max<std::size_t>(
+        256, ops::segmented_gdn_norm_gating_workspace_capacity_bytes(*segmented, tokens, tokens));
+    GuardedDeviceBuffer scratch(capacity);
+    WorkspaceArena workspace(DeviceSpan{scratch.data(), capacity});
+    ops::segmented_gdn_norm_gating_proj(tx, tn, kEps, *segmented, ta, td, workspace, th, tg, tb,
+                                        stream);
+    cuda_synchronize(stream);
+
+    const ReductionCriterion& control = nvfp4 ? kPublishedA4Control : kPublishedA8Control;
+    const std::vector<double> g       = read_fp32(device_g.data(), control_elements);
+    const std::vector<double> beta    = read_fp32(device_beta.data(), control_elements);
+    failures += require_all_finite(label + " g", g);
+    failures += require_all_finite(label + " beta", beta);
+    failures += verify_normwise(label + " h", from_device_bf16(device_h.data(), h_elements), rh,
+                                kGdnNormOutputBf16);
+    failures += verify_normwise(label + " g", g, rg, control);
+    failures += verify_normwise(label + " beta", beta, rb, control);
+    failures += device_h.verify_guards((label + " h").c_str());
+    failures += device_g.verify_guards((label + " g").c_str());
+    failures += device_beta.verify_guards((label + " beta").c_str());
+    failures += scratch.verify_guards((label + " scratch").c_str());
+    for (const auto* matrix : {a.get(), b.get()}) {
+        if (from_device<std::uint8_t>(matrix->device, matrix->host.payload.size()) !=
+            matrix->host.payload) {
+            std::cerr << label << ": a published weight was modified\n";
+            ++failures;
+        }
+    }
+    // The error the A4/A8 activations leave against the decoded weights, for the record.
+    const auto relative_l2 = [](const std::vector<double>& got, const std::vector<double>& ref) {
+        double error = 0.0, norm = 0.0;
+        for (std::size_t i = 0; i < got.size(); ++i) {
+            error += (got[i] - ref[i]) * (got[i] - ref[i]);
+            norm += ref[i] * ref[i];
+        }
+        return std::sqrt(error / std::max(norm, 1e-300));
+    };
+    std::cout << label << ": segmented, g rel_l2 " << relative_l2(g, rg) << ", beta rel_l2 "
+              << relative_l2(beta, rb) << (failures == 0 ? " ok" : " FAILED") << '\n';
+    return failures;
+}
+
 int verify_workspace_capacity_contract(const Geometry& geometry,
                                        std::initializer_list<std::int32_t> route_endpoints) {
     const std::int32_t last = *std::max_element(route_endpoints.begin(), route_endpoints.end());
@@ -536,6 +733,15 @@ int main() {
     for (int tokens : {2, 8, 15, 127, 128, 1024, 1025, 2048, 2049, 4097})
         failures += run_norm_projection_case(kQwen35, tokens, 0x7800u + tokens, norm_execution,
                                              tokens == 15);
+
+    // Published quantized a/b (qwen3_5_published): NVFP4 W4A4 and FP8 rows, at the registered
+    // fused geometries (which run only BF16) and the 9B's unregistered one, decode and prefill.
+    std::uint32_t published_seed = 0x9000u;
+    for (const Geometry* geometry : {&kQwen27Published, &kQwen35Published, &kQwen9Published})
+        for (const PublishedFormat format : {PublishedFormat::Nvfp4A4, PublishedFormat::Fp8Row})
+            for (const std::int32_t tokens : {1, 64})
+                failures += run_published_control_case(
+                    *geometry, format, tokens, published_seed += 0x10u, norm_execution.stream);
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_gating_proj correctness\n";
     return failures == 0 ? 0 : 1;

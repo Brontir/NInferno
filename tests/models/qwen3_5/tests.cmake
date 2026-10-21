@@ -31,6 +31,13 @@ set_tests_properties(
   ninferno_qwen3_5_tokenizer_parity_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
+# Both Split regexes a Qwen3.5+ tokenizer.json declares (Qwen3.5's, and Qwen2's that transformers 5
+# re-saves write) against the `tokenizers` ids of the real files, embedded by
+# hf_tokenizer_split_variants.py in tokenizer_split_variants_fixture.h.
+ninferno_add_test(ninferno_qwen3_5_tokenizer_split_variants_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_tokenizer_split_variants.cpp"
+  LIBRARIES ninferno_model_loading ninferno::json)
+
 # Prompts rendered through the serve request path and the Qwen frontend equal
 # transformers' apply_chat_template on a checkpoint's own files (hf_chat_template_parity.py
 # writes them and the reference; NINFERNO_CHAT_TEMPLATE_PARITY_DIR names them). Skipped without them.

@@ -20,10 +20,10 @@ ninferno-serve unsloth/Muse-Glimmer-30B-GGUF --quant UD-Q4_K_XL --spec none --ma
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Muse-Glimmer-30B-GGUF` UD-Q4_K_XL | dflash ×7 | auto | 551 | 29.0 | 35.8 | 54.7 | 112 | 2026-10-20 |
-| `unsloth/Muse-Glimmer-30B-GGUF` UD-Q4_K_XL | off | auto | 552 | 29.9 | 38.9 | 97.1 | 115 | 2026-10-20 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/Muse-Glimmer-30B-GGUF` UD-Q4_K_XL | dflash ×7 | auto | fast | 551 | 29.0 | 35.8 | 54.7 | 112 | 2026-10-20 |
+| `unsloth/Muse-Glimmer-30B-GGUF` UD-Q4_K_XL | off | auto | fast | 552 | 29.9 | 38.9 | 97.1 | 115 | 2026-10-20 |
 
 ## Measurement
 

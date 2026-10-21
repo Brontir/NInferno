@@ -135,15 +135,6 @@ void set_round_tiny_scales(bool on) noexcept;
 // site calibrated, so its logits take one route at every token count; any other head kept_policy.
 [[nodiscard]] ActivationPolicy head_policy(const KeptEncoding& site) noexcept;
 
-// block_scale_k16_m128x4_v1 stores one weight divisor per source of a stacked NVFP4 plane only
-// when each source is whole 128-row scale tiles: a tile may not span two divisors. A plane the
-// recipe stacks explicitly (`group`: an expert bank, a shared gate/up pair) whose kept NVFP4
-// sources end inside a tile is one plane only when they share one divisor. Anything else has no
-// lossless form in the artifact (one divisor re-rounds the block scales, widening is a decode),
-// so the conversion is refused naming the group and the way out.
-void refuse_split_nvfp4_tiles(const Model& model, const Recipe& recipe,
-                              const std::vector<std::size_t>& group);
-
 // The E4M3 word of 2^power for power in [-9, 8] (0 when the power is below the range).
 [[nodiscard]] std::uint8_t e4m3_power_of_two(int power) noexcept;
 

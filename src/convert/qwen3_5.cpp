@@ -899,6 +899,24 @@ void share_draft_context(const Model& model, Recipe& recipe) {
     }
 }
 
+// A DFlash / DFlash2 companion drafter is NInferno's own, not the published model: its projections
+// take Q8 in every recipe, also those that quantize nothing of the target (qwen3_5_bf16, the dense
+// Qwen3.5 GGUF default; qwen3_5_published): the drafter's fused Q/K/V and context kernels read Q8,
+// and BF16 doubles the bytes each proposal reads. The dynamic-convolution kernel projections and
+// the candidate selector keep their BF16 form, as optional_components leaves them.
+void companion_drafter_q8(const Model& model, Recipe& recipe) {
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const auto& name = model.parameters[i].name;
+        if (model.parameters[i].projection() &&
+            (name.starts_with("dflash/") || name.starts_with("dflash2/")) &&
+            !ends_with_any(name,
+                           {"/attention_conv/kernel_projection", "/mlp_conv/kernel_projection",
+                            "/candidate_selector/hidden_projection"})) {
+            recipe.assign(i, kQ8, Method::GroupedAbsmax);
+        }
+    }
+}
+
 void optional_components(const Model& model, Recipe& recipe) {
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
@@ -978,10 +996,12 @@ void dense_q8(Model& model, Recipe& recipe) {
     }
 }
 
-// Any Qwen3.5 Dense size with every tensor in its direct BF16 form: the unquantized artifact, a
-// reference for the engine's arithmetic against the source checkpoint.
+// Any Qwen3.5 Dense size with every tensor of the model in its direct BF16 form: the unquantized
+// artifact, a reference for the engine's arithmetic against the source checkpoint (and, for a GGUF,
+// its published blocks kept as they are: keep_published). A DFlash companion drafter takes Q8.
 void dense_bf16(Model& model, Recipe& recipe) {
     require_dense(model);
+    companion_drafter_q8(model, recipe);
     share_draft_context(model, recipe);
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& name = model.parameters[i].name;
@@ -996,33 +1016,26 @@ void dense_bf16(Model& model, Recipe& recipe) {
 // calibrated activation divisor when it has one, row/tensor-scaled FP8, int4 GPTQ/AWQ/compressed-
 // tensors as u4 with zero points, int8 as q8_g32_fp16: formats.h kept_encoding) is imported as it
 // is; every other tensor keeps its direct BF16 form (the token embedding, and a head published in
-// BF16), but a DFlash drafter's projections, NInferno's own companion, take Q8. An NVFP4 matrix of any row count keeps its words: the layout completes a last 128-row
-// scale tile its rows do not fill. The GDN control projections stay separate, as in every recipe.
+// BF16), but a DFlash drafter's projections, NInferno's own companion, take Q8. An NVFP4 matrix
+// of any row count keeps its words: the layout completes a last 128-row scale tile its rows do not
+// fill. The GDN control projections (a/b, num_v_heads rows) stay separate parents, as in every
+// recipe, and follow the same rule: a checkpoint that quantizes them (ModelOpt NVFP4 with no
+// linear_attn exclusion, e.g. AxionML's Qwen3.5 NVFP4) keeps their words, run by the segmented
+// generic path (prepare_gdn_gating_proj_weights); one that leaves them BF16 keeps BF16.
 // A MoE model's experts follow the same rule (an expert bank the checkpoint publishes in int4 stays
 // int4); every routed expert bank and shared gate/up pair becomes one parent, as the MoE ops
-// address them (NVFP4 matrices of such a parent that end inside a scale tile share one divisor or
-// are refused: refuse_split_nvfp4_tiles).
+// address them (NVFP4 matrices of such a parent keep a divisor each).
 // (breadth's qwen3_5_published, with every kept encoding rather than NVFP4 and FP8 only.)
 void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
-    // A DFlash drafter is NInferno's companion, not the published model: it takes the Q8 every
-    // recipe gives it (the drafter's fused QKV kernels read Q8).
-    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
-        const auto& name = model.parameters[i].name;
-        if (model.parameters[i].projection() &&
-            (name.starts_with("dflash/") || name.starts_with("dflash2/")) &&
-            !ends_with_any(name, {"/attention_conv/kernel_projection", "/mlp_conv/kernel_projection",
-                                  "/candidate_selector/hidden_projection"})) {
-            recipe.assign(i, kQ8, Method::GroupedAbsmax);
-        }
-    }
+    companion_drafter_q8(model, recipe);
     share_draft_context(model, recipe);
     std::size_t kept = 0, published = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
+        // Separate, never packed with each other; kept as published below like any projection.
         if (ends_with_any(name, {"/gdn/a_projection", "/gdn/b_projection"})) {
             recipe.separate_parameter(i);
-            continue;
         }
         const bool layer = name.starts_with("text/layers/") || name.starts_with("mtp/layers/");
         // A tied head reads the token embedding, which keeps its BF16 form.
@@ -1072,7 +1085,6 @@ void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
                 const auto& name = model.parameters[i].name;
                 return has_part(name, "/moe/experts/") || has_part(name, "/moe/shared/");
             })) {
-            refuse_split_nvfp4_tiles(model, recipe, names);
             recipe.explicit_groups.push_back(names);
         }
     }
