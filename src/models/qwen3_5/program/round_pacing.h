@@ -274,7 +274,7 @@ private:
     std::uint32_t default_steps_ = 1;
     std::optional<std::uint32_t> fixed_steps_;
     bool auto_ignored_ = false;
-    Wait wait_ = Wait::Auto;
+    Wait wait_         = Wait::Auto;
     std::optional<Clock::time_point> last_lag_;
     std::optional<Clock::time_point> hold_until_;
     // The wait probe while the host stalls: steps, finish-to-finish wall seconds and rounds of

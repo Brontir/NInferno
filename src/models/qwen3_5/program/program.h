@@ -735,8 +735,8 @@ struct DecodePacingFacts {
     // Tokens a speculative round verifies per lane at most: the largest draft window plus the
     // bonus token (1: not speculative).
     std::uint32_t verify_tokens_per_lane = 1;
-    std::uint64_t cpu_quota_us    = 0; // 0: no CPU bandwidth quota
-    std::uint64_t cpu_period_us   = 0;
+    std::uint64_t cpu_quota_us           = 0; // 0: no CPU bandwidth quota
+    std::uint64_t cpu_period_us          = 0;
 };
 
 struct PrefillProgress {

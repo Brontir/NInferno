@@ -1088,10 +1088,10 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     device.synchronize();
     program.complete();
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();
-    const models::qwen3_5::DecodePacingFacts pacing = instance->program->decode_pacing();
-    summary.decode_steps_per_round                  = pacing.steps_per_round;
-    summary.cpu_quota_us                            = pacing.cpu_quota_us;
-    summary.cpu_quota_period_us                     = pacing.cpu_period_us;
+    const models::qwen3_5::DecodePacingFacts pacing     = instance->program->decode_pacing();
+    summary.decode_steps_per_round                      = pacing.steps_per_round;
+    summary.cpu_quota_us                                = pacing.cpu_quota_us;
+    summary.cpu_quota_period_us                         = pacing.cpu_period_us;
     instance->decode_round_shape.steps_per_round        = pacing.steps_per_round;
     instance->decode_round_shape.verify_tokens_per_lane = pacing.verify_tokens_per_lane;
     for (auto& line : ops::detail::generic::dense_tune_report()) {
@@ -1102,9 +1102,9 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     summary.route_table  = ops::route_table_status().message;
     summary.load_seconds = std::chrono::duration<double>(Clock::now() - start).count();
     summary.context_cost = std::move(context_cost.summary);
-    summary.metadata = model_metadata(options.artifact_path, summary, instance->execution->traits(),
-                                      summary.artifact_id,
-                                      instance->decode_round_shape.routed_expert_bytes);
+    summary.metadata =
+        model_metadata(options.artifact_path, summary, instance->execution->traits(),
+                       summary.artifact_id, instance->decode_round_shape.routed_expert_bytes);
     instance->decode_round_shape.weight_bytes = summary.metadata.weight_bytes;
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};

@@ -71,8 +71,9 @@ int main() {
           "v1: the parent's tighter quota was not taken");
     // A hybrid host lists the unified hierarchy too; the cpu controller is on v1.
     check(ninferno::read_cgroup_cpu_quota("4:cpu,cpuacct:/docker/x
-0::/docker/x
-",
+                                          0 :: /
+                                          docker /
+                                          x ",
                                           reader(v1_files))
                   .quota_us == 25'000,
           "hybrid: the v1 cpu controller was not read");
