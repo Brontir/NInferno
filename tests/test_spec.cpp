@@ -27,6 +27,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
+#include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <string>
@@ -566,10 +569,31 @@ int test_load_model() {
 
     const std::int32_t dflash[] = {3, 5, 7};
     const std::int32_t mtp[]    = {1, 2, 3, 5};
-    const RoundCost ada_dflash{.alpha = 0.0233, .beta = 0.0069, .knee = 8, .delta = 0.056, .pass_per_draft = false};
-    const RoundCost ada_mtp{.alpha = 0.0233, .beta = 0.0069, .knee = 8, .delta = 0.080, .pass_per_draft = true};
-    const RoundCost bw_dflash{.alpha = 0.0285, .beta = 0.0122, .knee = 12, .delta = 0.066, .pass_per_draft = false};
-    const RoundCost bw_mtp{.alpha = 0.0285, .beta = 0.0122, .knee = 12, .delta = 0.066, .pass_per_draft = true};
+    // The measured grids (27B, C1..C8): costs fitted at eight rows.
+    const RoundCost ada_dflash{.alpha          = 0.0233,
+                               .beta           = 0.0069,
+                               .knee           = 8,
+                               .delta          = 0.056,
+                               .pass_per_draft = false,
+                               .fitted_rows    = 8};
+    const RoundCost ada_mtp{.alpha          = 0.0233,
+                            .beta           = 0.0069,
+                            .knee           = 8,
+                            .delta          = 0.080,
+                            .pass_per_draft = true,
+                            .fitted_rows    = 8};
+    const RoundCost bw_dflash{.alpha          = 0.0285,
+                              .beta           = 0.0122,
+                              .knee           = 12,
+                              .delta          = 0.066,
+                              .pass_per_draft = false,
+                              .fitted_rows    = 8};
+    const RoundCost bw_mtp{.alpha          = 0.0285,
+                           .beta           = 0.0122,
+                           .knee           = 12,
+                           .delta          = 0.066,
+                           .pass_per_draft = true,
+                           .fitted_rows    = 8};
     const auto expect = [&](const RoundCost& cost, double fa, double d, std::span<const std::int32_t> depths,
                             const char* want, const char* what) {
         const std::string got = load_label(modeled_load(cost, fa, d, depths, 8));
@@ -579,21 +603,577 @@ int test_load_model() {
     failures += expect(ada_mtp, 0.77, 0.91, mtp, "1:3,5:2", "RTX 4090 MTP");
     failures += expect(bw_dflash, 0.75, 0.97, dflash, "2:5,3:3", "RTX 5090 DFlash2");
     failures += expect(bw_mtp, 0.77, 0.91, mtp, "1:3,4:2", "RTX 5090 MTP");
-    // The card rates give the grids' alpha (RTX 4090: 128 SMs, 2.52 GHz, 1008 GB/s; RTX 5090: 170, 2.407, 1792).
-    GpuKey ada{.chain = {"ad102"}, .sms = 128, .compute_capability = 89, .sm_clock_khz = 2520000, .dram_gbps = 1008};
-    GpuKey bw{.chain = {"gb202"}, .sms = 170, .compute_capability = 120, .sm_clock_khz = 2407000, .dram_gbps = 1792};
-    const auto ada_cost = round_cost_of(ada, 0.53, false);
-    const auto bw_cost  = round_cost_of(bw, 0.53, false);
-    failures += check(ada_cost && std::abs(ada_cost->alpha - 0.0233) < 0.001, "RTX 4090 alpha from its rates");
-    failures += check(bw_cost && std::abs(bw_cost->alpha - 0.0285) < 0.001, "RTX 5090 alpha from its rates");
-    if (ada_cost) { failures += expect(*ada_cost, 0.75, 0.97, dflash, "2:5,4:3", "RTX 4090 DFlash2 from its rates"); }
-    if (bw_cost) { failures += expect(*bw_cost, 0.75, 0.97, dflash, "2:5,3:3", "RTX 5090 DFlash2 from its rates"); }
-    GpuKey volta = ada; volta.compute_capability = 70;
-    failures += check(!round_cost_of(volta, 0.53, false), "no grid for Volta: no model");
+    // The round cost from the card's and the model's facts: test_cost_model.
     // A free round keeps the deepest at every load: no bound.
-    failures += expect(RoundCost{}, 0.75, 0.97, dflash, "none", "free rounds");
+    failures += expect(RoundCost{.fitted_rows = 8}, 0.75, 0.97, dflash, "none", "free rounds");
+    // A one-row fit (round_cost_of's): the model at one row, plain from two rows on.
+    failures += expect(RoundCost{}, 0.75, 0.97, dflash, "2:0", "one-row fit: plain past one row");
+    RoundCost one_row   = ada_dflash;
+    one_row.fitted_rows = 1;
+    failures +=
+        expect(one_row, 0.75, 0.97, dflash, "2:0", "a grid cost fitted at one row: plain from 2");
     // Drafts that are never accepted never pay: plain from one row.
     failures += expect(ada_dflash, 0.0, 0.97, dflash, "1:0", "no acceptance");
+    return failures;
+}
+
+// The facts-only round cost (round_cost_of) against the registry's floors: a floor is spec-tune's
+// seconds per round over seconds per plain token, round_time(cost, 1, k). The facts here are what
+// a device and an artifact report (audit1018/x3/x3_fit.py's tables): each card's facts from the
+// PCI-ID reference table (core/data/gpu_facts.json, as DeviceClass::facts gives them), each
+// model's parameters and experts, each artifact's quantization read from its measured_on.
+struct CardFacts {
+    std::string_view name, gpu_class; // the registry's gpu and gpu_class
+    std::string_view table_name;      // the reference table's row
+};
+
+constexpr CardFacts kCards[] = {
+    {"NVIDIA GeForce RTX 5090", "gb202", "GeForce RTX 5090"},
+    {"NVIDIA GeForce RTX 5080", "gb203", "GeForce RTX 5080"},
+    {"NVIDIA GeForce RTX 5070 Ti", "gb203:70sm", "GeForce RTX 5070 Ti"},
+    {"NVIDIA GeForce RTX 5060 Ti", "gb206", "GeForce RTX 5060 Ti"},
+    {"NVIDIA GeForce RTX 4090", "ad102", "GeForce RTX 4090"},
+    {"NVIDIA GeForce RTX 4070 Ti SUPER", "ad103", "GeForce RTX 4070 Ti SUPER"},
+    {"NVIDIA GeForce RTX 4070 Ti", "", "GeForce RTX 4070 Ti"},
+    {"NVIDIA GeForce RTX 4060 Ti", "ad106", "GeForce RTX 4060 Ti"},
+    {"NVIDIA L4", "", "L4"},
+    {"NVIDIA GeForce RTX 3090", "ga102", "GeForce RTX 3090"},
+    {"NVIDIA A100-SXM4-40GB", "ga100", "A100 SXM4 40GB"},
+    {"Tesla V100-SXM2-32GB", "gv100", "Tesla V100 SXM2 32GB"},
+    {"NVIDIA GeForce RTX 2080 Ti", "tu102", "GeForce RTX 2080 Ti"},
+};
+
+// The GpuKey a device of this table row gets (spec/gpu_identity.h): its reference clock and
+// bandwidth from machine_facts. An empty key (no model) when the table lacks the row.
+GpuKey card_key(const CardFacts& c) {
+    for (const ninferno::GpuFactsRow& row : ninferno::gpu_facts_table()) {
+        if (row.name != c.table_name) { continue; }
+        const ninferno::MachineFacts facts =
+            ninferno::machine_facts(ninferno::DriverReport{.pci_device_id = row.pci_device_id,
+                                                           .major         = row.major,
+                                                           .minor         = row.minor,
+                                                           .sms           = row.sms});
+        return GpuKey{.chain              = {std::string(c.gpu_class)},
+                      .sms                = row.sms,
+                      .compute_capability = row.major * 10 + row.minor,
+                      .sm_clock_khz       = facts.reference_clock_khz,
+                      .dram_gbps          = facts.dram_gbps()};
+    }
+    return GpuKey{};
+}
+
+struct ParamFacts {
+    std::string_view id;
+    double total_b, active_b; // billions
+    int experts, per_token;   // 0: dense
+};
+constexpr ParamFacts kParams[] = {
+    {"gemma-4-26b-a4b-it", 25.2, 3.8, 128, 8}, {"qwen3.6-35b-a3b", 35.0, 3.0, 256, 8},
+    {"gpt-oss-20b", 20.9, 3.6, 32, 4}, {"nemotron-3.5-lightning-30b-a3b", 31.6, 3.2, 128, 6},
+    {"gemma-4-31b-it", 30.7, 30.7, 0, 0}, {"gemma-4-12b-it", 12.0, 12.0, 0, 0},
+    {"qwen3.8-27b", 27.0, 27.0, 0, 0}, {"qwen3.6-27b", 27.0, 27.0, 0, 0},
+    {"qwen3.5-0.8b", 0.8, 0.8, 0, 0}, {"qwen3.5-2b", 2.0, 2.0, 0, 0},
+    {"qwen3.5-4b", 4.0, 4.0, 0, 0}, {"qwen3.5-9b", 9.0, 9.0, 0, 0},
+    {"muse-glimmer-30b", 30.0, 30.0, 0, 0},
+};
+
+// The target's weights in bytes each and whether they are a GGUF k/IQ quant, from the artifact a
+// profile names (the first pattern found in the head of measured_on).
+struct QuantFacts {
+    const char* pattern;
+    double bytes_per_weight;
+    bool kquant;
+    const char* format; // its quantized format, as artifact::format_name spells it ("": unknown)
+};
+
+const QuantFacts kQuants[] = {
+    {"pirola-IQ3_XXS", 15.4 / 31.6, true, "ggml_iq3_xxs"},
+    {"IQ2_XXS|iq2xxs", 2.06 / 8, true, "ggml_iq2_xxs"},
+    {"IQ3_XXS", 3.06 / 8, true, "ggml_iq3_xxs"},
+    {"IQ4_XS", 4.25 / 8, true, "ggml_iq4_xs"},
+    {"IQ3", 3.44 / 8, true, "ggml_iq3_s"},
+    {"Q4_K_XL", 4.9 / 8, true, "ggml_q4_k"},
+    {"Q4_K_M", 4.85 / 8, true, "ggml_q4_k"},
+    {"Q4_0|q40", 4.5 / 8, false, "ggml_q4_0"},
+    {"nvfp4|NVFP4", 4.5 / 8, false, "nvfp4"},
+    {"MXFP4|gpt-oss-20b-gguf|openai/gpt-oss-20b", 4.25 / 8, false, "mxfp4"},
+    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false, "q8_g32_fp16"},
+    {"BF16|bf16", 2.0, false, "bf16"},
+    {"Q4", 0.53, false, "q4_g64_fp16"},
+    {".", 0.53, false, ""},
+};
+
+TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on) {
+    TargetFacts t;
+    for (const ParamFacts& p : kParams) {
+        if (p.id != model.id) { continue; }
+        t.active_params = p.active_b * 1e9;
+        if (p.experts > 0) {
+            t.experts = p.experts;
+            t.experts_per_token = p.per_token;
+            // shared + all routed = total, shared + routed * r/E = active
+            t.routed_expert_params =
+                (p.total_b - p.active_b) * 1e9 / (1.0 - static_cast<double>(p.per_token) / p.experts);
+        }
+    }
+    std::string head = measured_on.substr(0, measured_on.find(" + "));
+    head = head.substr(0, head.find(','));
+    for (const QuantFacts& q : kQuants) {
+        if (std::regex_search(head, std::regex(q.pattern))) {
+            t.bytes_per_weight = q.bytes_per_weight;
+            t.kquant = q.kquant;
+            // The quantized format beside the unquantized norms and embeddings, as a load collects.
+            if (*q.format != '\0') { t.weight_formats = {"bf16", q.format}; }
+            break;
+        }
+    }
+    t.hidden_size = model.geometry.hidden_size;
+    t.num_hidden_layers = model.geometry.num_hidden_layers;
+    t.vocab_size = model.geometry.vocab_size;
+    t.family = model.engine;
+    return t;
+}
+
+int test_cost_model() {
+    using namespace ninferno::spec;
+    int failures = 0;
+    const auto card = [](std::string_view name) {
+        for (const CardFacts& c : kCards) {
+            if (c.name == name || (!c.gpu_class.empty() && c.gpu_class == name)) { return &c; }
+        }
+        return static_cast<const CardFacts*>(nullptr);
+    };
+    for (const CardFacts& c : kCards) {
+        const GpuKey key = card_key(c);
+        failures += check(key.sms > 0 && key.sm_clock_khz > 0 && key.dram_gbps > 0,
+                          "the reference table has " + std::string(c.table_name));
+    }
+    const auto& registry = Registry::builtin();
+    const auto floor_of  = [&](std::string_view model_id, std::string_view gpu,
+                              const std::string& measured_on, const std::string& kind,
+                              const std::string& label) -> std::optional<RoundCost> {
+        const auto* model = registry.by_id(model_id);
+        const auto* c = card(gpu);
+        if (model == nullptr || c == nullptr) { return std::nullopt; }
+        const auto config = SpecConfig::parse(label);
+        return round_cost_of(card_key(*c), target_facts(*model, measured_on),
+                             DrafterFacts{.kind = kind, .proposal_head = config.proposal_head});
+    };
+    // Anchors: the MoE expert term (Qwen3.6-35B-A3B, 256 experts, 8 a token: 2.04 measured) and
+    // gpt-oss-20b's DFlash (2.65-2.79 measured over two artifacts).
+    const auto q35 = floor_of("qwen3.6-35b-a3b", "gb202", "qwen3_6_35b_nvfp4.ninferno", "dflash", "dflash:5+head");
+    const double q35_floor = q35 ? round_time(*q35, 1, 5) : 0.0;
+    failures += check(std::abs(q35_floor - 2.03) < 0.08 * 2.03,
+                      "Qwen3.6-35B dflash:5 on the RTX 5090: floor " + std::to_string(q35_floor) + " (2.03)");
+    // Priced, yet labelled: Qwen3.5-family floors on sm120 miss by 32 % with the RTX 5090 held out.
+    failures += check(q35 && q35->moe_bytes > 0 && !q35->fit.reliable,
+                      "Qwen3.6-35B on sm120: MoE priced, the pair labelled unsure");
+    const auto oss = floor_of("gpt-oss-20b", "ad102", "openai/gpt-oss-20b MXFP4", "dflash", "dflash:7");
+    const double oss_floor = oss ? round_time(*oss, 1, 7) : 0.0;
+    failures += check(std::abs(oss_floor - 2.64) < 0.08 * 2.64,
+                      "gpt-oss dflash:7 on the RTX 4090: floor " + std::to_string(oss_floor) + " (2.64)");
+    // sm89 dense errs by 11.0 % with a card held out: past kClassMargin, so labelled unsure; sm120
+    // dense (7.1 % card-out, 6.8 % model-out) is the one pair the fit stands behind.
+    failures +=
+        check(oss && !oss->fit.reliable, "gpt-oss on sm89: held out past the margin, unsure");
+    const auto oss_bw =
+        floor_of("gpt-oss-20b", "gb202", "openai/gpt-oss-20b MXFP4", "dflash", "dflash:7");
+    failures += check(oss_bw && oss_bw->fit.reliable, "gpt-oss on sm120: a tested pair");
+    // The sm120 dense points are gpt-oss MXFP4 DFlash only: another drafter kind, a GGUF k-quant or
+    // a dense (non-MoE) target of the same family stays unsure.
+    const auto oss_mtp =
+        floor_of("gpt-oss-20b", "gb202", "openai/gpt-oss-20b MXFP4", "mtp", "mtp:3");
+    failures +=
+        check(oss_mtp && !oss_mtp->fit.reliable, "gpt-oss MTP on sm120: not covered, unsure");
+    const auto oss_k = floor_of("gpt-oss-20b", "gb202", "gpt-oss-20b Q4_K_M", "dflash", "dflash:7");
+    failures +=
+        check(oss_k && !oss_k->fit.reliable, "gpt-oss GGUF k-quant on sm120: not covered, unsure");
+    // Only MXFP4 is covered: the same MoE in BF16, NVFP4, Q8 or Q4_0 on sm120 stays unsure.
+    for (const char* other :
+         {"gpt-oss-20b BF16", "gpt-oss-20b nvfp4", "gpt_oss_20b_q8.ninferno", "gpt-oss-20b Q4_0"}) {
+        const auto c = floor_of("gpt-oss-20b", "gb202", other, "dflash", "dflash:7");
+        failures += check(c && !c->fit.reliable,
+                          std::string("gpt-oss on sm120, ") + other + ": not covered, unsure");
+    }
+    // An unknown format set, or a second quantized format beside mxfp4: unsure.
+    const auto oss_unknown =
+        floor_of("gpt-oss-20b", "gb202", "an artifact of no known format", "dflash", "dflash:7");
+    failures += check(oss_unknown && !oss_unknown->fit.reliable &&
+                          oss_unknown->fit.reason.find("unknown format") != std::string::npos,
+                      "gpt-oss on sm120, unknown format: unsure (" +
+                          (oss_unknown ? oss_unknown->fit.reason : "") + ")");
+    if (const auto* oss_model = registry.by_id("gpt-oss-20b")) {
+        TargetFacts mixed = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        const auto both = round_cost_of(card_key(kCards[0]), mixed, DrafterFacts{.kind = "dflash"});
+        failures += check(both && both->fit.reliable, "gpt-oss on sm120, {bf16, mxfp4}: covered");
+        mixed.weight_formats.push_back("ggml_q4_k");
+        const auto two = round_cost_of(card_key(kCards[0]), mixed, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(two && !two->fit.reliable, "gpt-oss on sm120, mxfp4 beside ggml_q4_k: unsure");
+        // Another MoE of the same family, format and drafter: a shape the points never covered.
+        TargetFacts other = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        other.experts     = 128;
+        const auto wide = round_cost_of(card_key(kCards[0]), other, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(wide && !wide->fit.reliable, "an MXFP4 MoE of 128 experts on sm120: unsure");
+        other             = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        other.hidden_size = 4096;
+        const auto big = round_cost_of(card_key(kCards[0]), other, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(big && !big->fit.reliable, "an MXFP4 MoE of hidden 4096 on sm120: unsure");
+    }
+    const auto muse =
+        floor_of("muse-glimmer-30b", "gb202", "muse_glimmer_30b.ninferno", "dflash", "dflash:7");
+    failures +=
+        check(muse && !muse->fit.reliable, "a dense non-MoE target on sm120: not covered, unsure");
+    // Where the fit is unsure it says so: a pair past the margin held out (sm89 gemma4); a
+    // generation measured on one lab card (V100, RTX 2080 Ti, A100, RTX 3090) or none is unpriced.
+    for (const auto& [gpu, cc_name] :
+         {std::pair{"gv100", "V100"}, std::pair{"tu102", "RTX 2080 Ti"}, std::pair{"ga100", "A100"},
+          std::pair{"ga102", "RTX 3090"}}) {
+        const auto one = floor_of("qwen3.8-27b", gpu, "qwen3_8_27b.ninferno", "mtp", "mtp:3");
+        failures +=
+            check(one && !one->priced && !one->fit.reliable && one->fit.reason == "one lab card",
+                  std::string(cc_name) + ": one lab card, unpriced");
+    }
+    const auto g12 = floor_of("gemma-4-12b-it", "ad102", "gemma4_12b.ninferno", "gemma4_assistant", "mtp:5");
+    failures += check(g12 && g12->priced && !g12->fit.reliable,
+                      "sm89 gemma4: held out past the margin, unsure");
+    const auto* model = registry.by_id("qwen3.8-27b");
+    if (model != nullptr) {
+        GpuKey future = card_key(kCards[4]);
+        future.compute_capability = 100;
+        const TargetFacts facts = target_facts(*model, "qwen3_8_27b.ninferno");
+        const auto unknown = round_cost_of(future, facts, DrafterFacts{.kind = "dflash2"});
+        failures += check(unknown && !unknown->priced && unknown->fit.reason == "no lab card",
+                          "an unknown generation: unpriced, no lab card");
+        // The fit's record for the RTX 2080 Ti (one lab card, so unpriced): a GGUF k-quant's 1/eta
+        // plus the k-quant term is (0.3337 + 0.46) at the FP16 tensor rate 512, 2.38 in the
+        // generation row's unit (1536).
+        TargetFacts gguf      = facts;
+        gguf.kquant           = true;
+        gguf.bytes_per_weight = 4.85 / 8;
+        const auto turing = round_cost_of(card_key(kCards[12]), gguf, DrafterFacts{.kind = "mtp"});
+        failures += check(turing && !turing->priced && turing->fit.reason == "one lab card",
+                          "RTX 2080 Ti GGUF: one lab card, unpriced");
+        // An unsupported drafter kind: no model on any GPU, an mma_slow one included.
+        GpuKey slow_key   = card_key(kCards[4]);
+        slow_key.mma_slow = true;
+        failures += check(!round_cost_of(slow_key, facts, DrafterFacts{.kind = "ngram"}),
+                          "mma_slow, ngram: no model");
+        // An MTP target without a vocabulary (and no fixed proposal head): no model on any GPU,
+        // whatever its generation, mma_slow or provenance.
+        TargetFacts no_vocab      = facts;
+        no_vocab.vocab_size       = 0;
+        GpuKey ex_key             = card_key(kCards[0]);
+        ex_key.facts_extrapolated = true;
+        for (const GpuKey& key : {card_key(kCards[0]), card_key(kCards[4]), card_key(kCards[11]),
+                                  card_key(kCards[12]), future, slow_key, ex_key}) {
+            for (const char* kind : {"mtp", "nemotron_h_mtp"}) {
+                failures += check(!round_cost_of(key, no_vocab, DrafterFacts{.kind = kind}),
+                                  std::string("no vocabulary, ") + kind + ": no model on sm" +
+                                      std::to_string(key.compute_capability));
+            }
+        }
+        // Malformed facts: nullopt on every GPU, never read as "absent" (an MoE priced as dense).
+        TargetFacts moe = target_facts(*registry.by_id("gpt-oss-20b"), "openai/gpt-oss-20b MXFP4");
+        const auto malformed = [&](const char* what, auto change) {
+            TargetFacts t = moe;
+            change(t);
+            for (const GpuKey& key :
+                 {card_key(kCards[0]), card_key(kCards[12]), slow_key, ex_key}) {
+                failures += check(!round_cost_of(key, t, DrafterFacts{.kind = "dflash"}),
+                                  std::string(what) + ": no model on sm" +
+                                      std::to_string(key.compute_capability));
+            }
+        };
+        malformed("experts without experts per token",
+                  [](TargetFacts& t) { t.experts_per_token = 0; });
+        malformed("experts without routed parameters",
+                  [](TargetFacts& t) { t.routed_expert_params = 0; });
+        malformed("more experts per token than experts",
+                  [](TargetFacts& t) { t.experts_per_token = 33; });
+        malformed("experts per token on a dense target", [](TargetFacts& t) { t.experts = 0; });
+        malformed("routed parameters on a dense target", [](TargetFacts& t) {
+            t.experts           = 0;
+            t.experts_per_token = 0;
+        });
+        malformed("negative experts", [](TargetFacts& t) { t.experts = -1; });
+        malformed("NaN bytes per weight",
+                  [](TargetFacts& t) { t.bytes_per_weight = std::nan(""); });
+        malformed("infinite active parameters", [](TargetFacts& t) {
+            t.active_params = std::numeric_limits<double>::infinity();
+        });
+        GpuKey no_cc             = card_key(kCards[0]);
+        no_cc.compute_capability = 0;
+        failures += check(!round_cost_of(no_cc, moe, DrafterFacts{.kind = "dflash"}),
+                          "no compute capability: no model");
+        // DFlash's head variant: the fit never saw gpt-oss (or Gemma) with the proposal head, so
+        // that variant is unsure even where the plain head is covered; Qwen holds both.
+        const auto oss_head = round_cost_of(card_key(kCards[0]), moe,
+                                            DrafterFacts{.kind = "dflash", .proposal_head = true});
+        failures += check(oss_head && !oss_head->fit.reliable &&
+                              oss_head->fit.reason == "head variant not in the fit",
+                          "gpt-oss DFlash with the proposal head: head variant not in the fit");
+        {
+            RoundCost h = *oss_head;
+            const std::vector<std::int32_t> menu{3, 5, 7};
+            const std::array<ClassFactor, kContextClasses> ones{
+                ClassFactor{1.0, ""}, ClassFactor{1.0, ""}, ClassFactor{1.0, ""},
+                ClassFactor{1.0, ""}};
+            const auto rule = class_depths(h, 0.75, 0.97, menu, ones, 7);
+            failures += check(
+                rule[0].reason.starts_with("estimate: none (head variant not in the fit)"),
+                "head variant not in the fit: the conservative rule (" + rule[0].reason + ")");
+        }
+        const auto* q36             = registry.by_id("qwen3.6-35b-a3b");
+        const TargetFacts q36_facts = target_facts(*q36, "qwen3_6_35b_nvfp4.ninferno");
+        for (const bool head : {false, true}) {
+            const auto q = round_cost_of(card_key(kCards[0]), q36_facts,
+                                         DrafterFacts{.kind = "dflash", .proposal_head = head});
+            failures += check(q && q->fit.reason != "head variant not in the fit",
+                              std::string("Qwen3.6-35B DFlash, head ") + (head ? "on" : "off") +
+                                  ": a variant the fit holds");
+        }
+        const auto g_head =
+            round_cost_of(card_key(kCards[0]),
+                          target_facts(*registry.by_id("gemma-4-26b-a4b-it"), "gemma.ninferno"),
+                          DrafterFacts{.kind = "dflash2", .proposal_head = false});
+        failures += check(g_head && g_head->fit.reason == "head variant not in the fit",
+                          "Gemma with DFlash2: a variant the fit never saw");
+        // The gate's tested shape includes the experts per token: gpt-oss-20b is 32 experts, top-4.
+        TargetFacts top8       = moe;
+        top8.experts_per_token = 8;
+        const auto t8 = round_cost_of(card_key(kCards[0]), top8, DrafterFacts{.kind = "dflash"});
+        failures += check(t8 && !t8->fit.reliable, "32 experts top-8 on sm120: unsure");
+        const auto t4 = round_cost_of(card_key(kCards[0]), moe, DrafterFacts{.kind = "dflash"});
+        failures += check(t4 && t4->fit.reliable && t4->moe_bytes > 0,
+                          "32 experts top-4 on sm120: covered, MoE priced");
+        failures += check(round_cost_of(card_key(kCards[0]), no_vocab,
+                                        DrafterFacts{.kind = "mtp", .proposal_head = true})
+                              .has_value(),
+                          "no vocabulary but the fixed proposal head: priced");
+        // An unlisted board's extrapolated rates: the covered gpt-oss pair turns unsure, labelled,
+        // and class_depths takes the conservative rule.
+        if (const auto* oss_m = registry.by_id("gpt-oss-20b")) {
+            GpuKey unlisted             = card_key(kCards[0]);
+            unlisted.facts_extrapolated = true;
+            const auto ex =
+                round_cost_of(unlisted, target_facts(*oss_m, "openai/gpt-oss-20b MXFP4"),
+                              DrafterFacts{.kind = "dflash"});
+            failures += check(ex && ex->priced && !ex->fit.reliable &&
+                                  ex->fit.reason == "extrapolated device facts",
+                              "extrapolated device facts: unsure");
+            if (ex) {
+                const std::vector<std::int32_t> menu{3, 5, 7};
+                const std::array<ClassFactor, kContextClasses> ones{
+                    ClassFactor{1.0, ""}, ClassFactor{1.0, ""}, ClassFactor{1.0, ""},
+                    ClassFactor{1.0, ""}};
+                const auto rule = class_depths(ex, 0.75, 0.97, menu, ones, 7);
+                failures += check(
+                    rule[0].depth == 3 && rule[2].depth == 0 &&
+                        rule[0].reason.starts_with("estimate: none (extrapolated device facts)"),
+                    "extrapolated device facts: the conservative rule (" + rule[0].reason + ")");
+            }
+        }
+        failures += check(!round_cost_of(card_key(kCards[4]), facts, DrafterFacts{.kind = "ngram"}),
+                          "a drafter kind without a fitted cost: no model");
+        failures += check(!round_cost_of(GpuKey{}, facts, DrafterFacts{.kind = "dflash2"}),
+                          "unknown rates: no model");
+    } else {
+        failures += check(false, "registry has qwen3.8-27b");
+    }
+
+    // Every non-adaptive spec-tune floor of the registry (the fit's 116) on a priced generation
+    // (87, Ada and Blackwell; the 29 on one-lab-card generations are unpriced): rms error under 15
+    // %. IN SAMPLE: these are the floors the constants were fitted on (9.23 % here, 9.8 % over all
+    // 116 in x3_fit.py). Held out (x3_fit.py, not re-run here) the error is 21 % rms with a card
+    // left out and 18 % with a model left out; reliability (ModelFit) is judged on those, not on
+    // this.
+    struct Floors {
+        std::vector<double> measured; // one per role that chose the configuration
+        std::string kind;
+    };
+    std::map<std::tuple<std::string, std::string, std::string, std::string>, Floors> floors;
+    for (const ModelEntry& m : registry.models()) {
+        for (const Json& p : m.profiles) {
+            const std::string gc   = p.value("gpu_class", std::string());
+            const std::string text = p.value("measured_on", std::string());
+            if (gc == "*" || text.starts_with("choices: the *") ||
+                text.find("fallback for unmeasured") != std::string::npos ||
+                text.find("ninferno-serve") != std::string::npos || text.find("spec-bench") != std::string::npos) {
+                continue; // fallbacks, and floors serve or spec-bench runs copied or estimated
+            }
+            const std::string gpu = p.value("gpu", gc);
+            for (const char* role : {"default", "non_thinking", "thinking", "fit_fallback"}) {
+                if (!p.contains(role)) { continue; }
+                const Json& c = p.at(role);
+                const std::string label = c.value("config", std::string("plain"));
+                const double floor      = c.value("floor_tokens_per_round", 0.0);
+                if (label == "plain" || floor <= 1.0 || SpecConfig::parse(label).adaptive()) { continue; }
+                Floors& f = floors[std::make_tuple(m.id, gpu, text, label)];
+                f.measured.push_back(floor);
+                const std::string drafter = split_variant(c.value("drafter", std::string())).first;
+                for (const DrafterDecl& d : m.drafters) {
+                    if (d.name == drafter) { f.kind = d.kind; }
+                }
+            }
+        }
+    }
+    double sum_sq = 0;
+    int n = 0, unpriced = 0;
+    for (const auto& [key, f] : floors) {
+        const auto& [id, gpu, text, label] = key;
+        double measured = 0;
+        for (const double v : f.measured) { measured += v / static_cast<double>(f.measured.size()); }
+        const auto cost = floor_of(id, gpu, text, f.kind, label);
+        if (!cost) {
+            failures += check(false, "the cost model prices " + id + " " + label + " on " + gpu);
+            continue;
+        }
+        if (!cost->priced) { // a one-lab-card generation: unpriced by rule, not part of the check
+            ++unpriced;
+            continue;
+        }
+        const double e = (round_time(*cost, 1, SpecConfig::parse(label).k) - measured) / measured;
+        sum_sq += e * e;
+        ++n;
+    }
+    const double rms = n > 0 ? std::sqrt(sum_sq / n) : 1.0;
+    std::cout << "spec cost model: " << n << " priced registry floors (" << unpriced
+              << " on one-lab-card generations unpriced), in-sample rms error " << 100.0 * rms
+              << " %\n";
+    failures += check(n >= 85 && n + unpriced >= 110,
+                      "the registry has the fit's floors (" + std::to_string(n) + " priced)");
+    failures += check(
+        rms < 0.15, "in sample: the cost model's rms error over the registry floors is under 15 %");
+    return failures;
+}
+
+// The depth per context class (class_depths): the model's pick where the cost and the factor are
+// known, captured depths only, and the labelled conservative rule elsewhere.
+int test_class_depths() {
+    using namespace ninferno::spec;
+    int failures = 0;
+    const RoundCost cost{.alpha = 0.02, .delta = 0.10, .pass_per_draft = false};
+    const std::vector<std::int32_t> captured{7, 0, 5, 3, 5};
+    const std::array<ClassFactor, kContextClasses> factors{
+        ClassFactor{1.0, ""}, ClassFactor{0.85, ""}, ClassFactor{0.6, ""},
+        ClassFactor{std::nullopt, "no data for the class"}};
+    const auto by = class_depths(cost, 0.75, 0.97, captured, factors, 7);
+    failures += check(by[0].estimate && by[0].depth == 7,
+                      "short: the deepest captured depth pays (" + by[0].reason + ")");
+    failures += check(by[1].estimate && by[1].depth > 0 && by[1].depth <= by[0].depth,
+                      "mid: a captured depth no deeper than short's (" + by[1].reason + ")");
+    failures += check(by[2].estimate && by[2].depth <= by[1].depth, "long: no deeper than mid's");
+    for (const ClassDepth& c : by) {
+        failures += check(c.depth == 0 || c.depth == 3 || c.depth == 5 || c.depth == 7,
+                          "a class picks only a captured depth or plain");
+    }
+    failures +=
+        check(!by[3].estimate && by[3].depth == 0 && by[3].reason.starts_with("estimate: none (") &&
+                  by[3].reason.find("huge acceptance unknown") != std::string::npos,
+              "huge, factor unknown: plain, labelled (" + by[3].reason + ")");
+    // Drafts that are almost never accepted, or a margin nothing beats: plain, by the model.
+    const std::array<ClassFactor, kContextClasses> poor{
+        ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}};
+    const auto low = class_depths(cost, 0.75, 0.97, captured, poor, 7);
+    failures += check(low[1].estimate && low[1].depth == 0 && low[1].reason.starts_with("plain:"),
+                      "mid, low acceptance: plain by the model (" + low[1].reason + ")");
+    const auto strict = class_depths(cost, 0.75, 0.97, captured, factors, 7, 10.0);
+    failures += check(strict[0].depth == 0, "a margin no depth beats: plain");
+    // An unreliable fit or no cost model: the deepest captured depth up to 3 below 8K, plain past.
+    RoundCost unsure = cost;
+    unsure.fit       = ModelFit{false, "sm70: fewer than two lab cards measured"};
+    for (const auto& rule : {class_depths(unsure, 0.75, 0.97, captured, factors, 7),
+                             class_depths(std::nullopt, 0.75, 0.97, captured, factors, 7)}) {
+        failures += check(rule[0].depth == 3 && rule[1].depth == 3 && rule[2].depth == 0 &&
+                              rule[3].depth == 0 && !rule[0].estimate &&
+                              rule[0].reason.starts_with("estimate: none ("),
+                          "unsure: depth 3 below 8K, plain past (" + rule[0].reason + ")");
+    }
+    const std::vector<std::int32_t> deep{5, 7};
+    const auto none = class_depths(unsure, 0.75, 0.97, deep, factors, 7);
+    failures +=
+        check(none[0].depth == 0 && none[1].depth == 0, "unsure, no captured depth up to 3: plain");
+    const auto empty = class_depths(cost, 0.75, 0.97, std::vector<std::int32_t>{}, factors, 7);
+    failures += check(empty[0].depth == 0, "nothing captured: plain");
+    // Short is the baseline: an unknown Short factor alone never lowers its depth; Mid and Long
+    // still fall back when theirs are unknown.
+    const std::array<ClassFactor, kContextClasses> unknown{
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"}};
+    const auto base = class_depths(cost, 0.75, 0.97, captured, unknown, 7);
+    failures += check(base[0].estimate && base[0].depth == by[0].depth,
+                      "short, factor unknown: the baseline's own pick (" + base[0].reason + ")");
+    failures +=
+        check(!base[1].estimate && base[1].depth == 3 && !base[2].estimate && base[2].depth == 0,
+              "mid and long, factors unknown: the conservative rule");
+    // The fallback of an unknown factor is capped at Short's pick: Short plain by the model (a
+    // margin nothing beats) leaves Mid plain too, never the fallback's depth 3.
+    const auto capped = class_depths(cost, 0.75, 0.97, captured, unknown, 7, 10.0);
+    failures +=
+        check(capped[0].estimate && capped[0].depth == 0 && !capped[1].estimate &&
+                  capped[1].depth == 0 && capped[2].depth == 0,
+              "mid, factor unknown: no deeper than short's pick (" + capped[1].reason + ")");
+    // A factor above 1 never takes a longer prompt deeper than Short's pick.
+    const std::array<ClassFactor, kContextClasses> rising{
+        ClassFactor{1.0, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}};
+    // a 0.45: Short picks 3, while Mid at 1.5x the drafts would pick 5 without the cap.
+    const auto up = class_depths(cost, 0.45, 0.97, captured, rising, 7);
+    failures +=
+        check(up[0].depth > 0 && up[0].depth < 7 && up[1].depth == up[0].depth &&
+                  up[2].depth == up[0].depth && up[3].depth == up[0].depth,
+              "factor above 1: no class deeper than short's " + std::to_string(up[0].depth));
+    const auto up_plain = class_depths(cost, 0.75, 0.97, captured, rising, 7, 10.0);
+    failures += check(up_plain[0].depth == 0 && up_plain[1].depth == 0 && up_plain[1].estimate &&
+                          up_plain[1].reason == "plain: short is plain",
+                      "short plain: every class plain (" + up_plain[1].reason + ")");
+    // modeled_load under an unreliable fit: no deeper than kUnsureDepth at any load.
+    RoundCost free_unsure;
+    free_unsure.fit = ModelFit{false, "sm89 gemma4: not covered"};
+    free_unsure.fitted_rows = 8; // the cap alone, not the one-row rule
+    const std::vector<std::int32_t> menu{3, 5, 7};
+    const auto unsure_load = modeled_load(free_unsure, 0.75, 0.97, menu, 8);
+    failures +=
+        check(unsure_load.size() == 1 && unsure_load[0].lanes == 1 && unsure_load[0].depth == 3,
+              "modeled_load, unreliable fit: capped at depth 3");
+    const auto sure_load = modeled_load(RoundCost{.fitted_rows = 8}, 0.75, 0.97, menu, 8);
+    failures += check(sure_load.empty(), "modeled_load, reliable free rounds: unbounded");
+    // A board without tensor cores (mma_slow): no price, the conservative rule, labelled.
+    const auto* qwen = Registry::builtin().by_id("qwen3.8-27b");
+    if (qwen != nullptr) {
+        GpuKey tu116    = card_key(kCards[12]); // a 2080 Ti's rates, as a TU116 board of sm75
+        tu116.mma_slow  = true;
+        const auto slow = round_cost_of(tu116, target_facts(*qwen, "qwen3_8_27b.ninferno"),
+                                        DrafterFacts{.kind = "mtp"});
+        failures += check(slow && !slow->priced && !slow->fit.reliable &&
+                              slow->fit.reason == "mma emulated",
+                          "mma_slow: unpriced, labelled mma emulated");
+        if (slow) {
+            const auto rule = class_depths(slow, 0.75, 0.97, captured, factors, 7);
+            failures += check(rule[0].depth == 3 && rule[2].depth == 0 && !rule[0].estimate &&
+                                  rule[0].reason.starts_with("estimate: none (mma emulated)"),
+                              "mma_slow: the conservative rule (" + rule[0].reason + ")");
+            bool refused = false;
+            try {
+                (void)round_time(*slow, 1, 3);
+            } catch (const std::invalid_argument&) { refused = true; }
+            failures += check(refused, "mma_slow: round_time refuses an unpriced cost");
+            std::vector<LoadBound> load;
+            bool threw = false;
+            try {
+                load = modeled_load(*slow, 0.75, 0.97, captured, 8);
+            } catch (const std::exception&) { threw = true; }
+            failures +=
+                check(!threw && load.size() == 1 && load[0].lanes == 1 && load[0].depth == 0,
+                      "mma_slow: modeled_load plain from one row, no throw");
+        }
+    } else {
+        failures += check(false, "registry has qwen3.8-27b");
+    }
     return failures;
 }
 
@@ -1911,6 +2491,8 @@ int main() {
     failures += test_fit_fallback();
     failures += test_load();
     failures += test_load_model();
+    failures += test_cost_model();
+    failures += test_class_depths();
     failures += test_select_published();
     failures += test_registry_and_corpus();
     failures += test_context_classes();
