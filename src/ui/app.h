@@ -95,7 +95,9 @@ struct LaunchRequest {
 };
 
 // Throws std::invalid_argument on a value outside the allowed set. `gpu`: what NVML says of the GPU
-// the request runs on (nullptr: unknown), which a tune beside the model must have been made for.
+// the request runs on (nullptr: unknown), which a tune beside the model must have been made for;
+// its UUID binds the process to that board (CUDA_VISIBLE_DEVICES=<uuid>), else GPU `request.gpu`
+// in PCI bus order.
 [[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
                                      const GpuStat* gpu = nullptr);
 
@@ -119,8 +121,10 @@ struct TuneRequest {
     int gpu = 0;
 };
 
-// Throws std::invalid_argument when `artifact` is not an existing .ninferno file.
-[[nodiscard]] LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request);
+// Throws std::invalid_argument when `artifact` is not an existing .ninferno file. `gpu` binds the
+// process to its board as make_launch does.
+[[nodiscard]] LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request,
+                                   const GpuStat* gpu = nullptr);
 
 // "org/name:Q4_K_M" -> ("org/name", "Q4_K_M"); a path or a name without a tag is returned whole.
 [[nodiscard]] std::pair<std::string, std::string> split_model_tag(const std::string& model);

@@ -674,6 +674,20 @@ int resolve_device(int requested) {
     return device == kDefaultDevice ? 0 : device;
 }
 
+int select_device(const DeviceSelector& selector) {
+    const std::vector<DeviceIdentity> identities = visible_device_identities();
+    if (identities.empty()) { return 0; }
+    if (const auto device = select_device(selector, identities)) { return *device; }
+    std::string visible;
+    const std::vector<int> order = canonical_device_order(identities);
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        visible += (i == 0 ? "" : ", ") + std::to_string(i) + " = " +
+                   identity_text(identities[static_cast<std::size_t>(order[i])]);
+    }
+    throw std::invalid_argument("--device " + device_selector_text(selector) +
+                                " names no visible GPU; visible in PCI bus order: " + visible);
+}
+
 const DeviceIdentity& device_identity() { return device_class().identity; }
 
 const DeviceClass& device_class() {

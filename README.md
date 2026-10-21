@@ -191,7 +191,7 @@ table, so give `--spec-load` too.
 | `--spec-load L:D,...\|none` | with `auto`: the measured table | from `L` requests at once, drafts at most `D` deep (`0`: none) |
 | `--kv-dtype bf16\|fp8` | per model family and GPU | a smaller KV cache holds a longer context (`fp8` before RTX 40 is emulated, slower); Qwen also `int8\|nvfp4\|k8v4` |
 | `--activations exact\|fast` | `fast` | `exact`: the same output whatever the load and the drafts |
-| `--device N` | the first by PCI bus id | the GPU |
+| `--device N` | `0` | the GPU, counted in PCI bus order as nvidia-smi does (or `pci:BUSID`, `GPU-UUID`) |
 | `--host H` `--port N` `--api-key-file F` | `127.0.0.1:8080`, no key (or `$NINFERNO_API_KEY`) | `--host 0.0.0.0` with a key opens it to the network |
 
 ```bash

@@ -263,8 +263,13 @@ int main(int argc, char** argv) {
     ninferno::warn_removed_environment("ninferno");
 
     if (!cli.drafter_registry.empty()) { ninferno::spec::Registry::use_file(cli.drafter_registry); }
-    // No --device: the first GPU in PCI bus order, whatever order CUDA enumerates them in.
-    cli.device = ninferno::resolve_device(cli.device);
+    // The GPU --device names, counted in PCI bus order whatever order CUDA enumerates them in.
+    try {
+        cli.device = ninferno::select_device(cli.device_selector);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "error: " << error.what() << '\n';
+        return 1;
+    }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno",

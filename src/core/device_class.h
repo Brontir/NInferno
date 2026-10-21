@@ -267,11 +267,16 @@ template <class Measured, std::size_t Extent>
 // (domain 0xFFFFFFFF), so it is never the default.
 [[nodiscard]] std::vector<DeviceIdentity> visible_device_identities();
 
-// The ordinal an option names (resolve_device in core/device_identity.h over the visible boards):
-// an explicit ordinal as given, kDefaultDevice the first visible board in PCI order, whatever
-// CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER made of the enumeration. 0 when CUDA reports no
-// device, which DeviceContext then refuses as it refuses any ordinal there.
+// The ordinal EngineOptions::device names (resolve_device in core/device_identity.h over the
+// visible boards): an explicit ordinal as given, kDefaultDevice the first visible board in PCI
+// order, whatever CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER made of the enumeration. 0 when CUDA
+// reports no device, which DeviceContext then refuses as it refuses any ordinal there.
 [[nodiscard]] int resolve_device(int requested);
+
+// The ordinal of the visible board a --device selector names (select_device in
+// core/device_identity.h). 0 when CUDA reports no device (DeviceContext refuses it, as above);
+// throws std::invalid_argument listing the visible GPUs when none matches.
+[[nodiscard]] int select_device(const DeviceSelector& selector);
 
 // The board the current device's facts were read from, for the decision fingerprint to print
 // beside its hash (never hashed: two boards of one chip type share a fingerprint).

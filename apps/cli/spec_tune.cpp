@@ -231,10 +231,9 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
         out.erase(std::unique(out.begin(), out.end()), out.end());
         return out;
     };
-    // No --device: the first GPU in PCI bus order, as the engine takes it (core/device_identity.h).
-    const int device        = flags.contains("device")
-                                  ? parse_nonnegative_int(flags.at("device").c_str(), "device")
-                                  : resolve_device(kDefaultDevice);
+    // --device as ninferno parses it: N counts GPUs in PCI bus order (core/device_identity.h).
+    const int device = select_device(
+        flags.contains("device") ? parse_device_option(flags.at("device")) : DeviceSelector{});
     const auto concurrency  = numbers("load", "2,4,8");
     const auto wanted       = numbers("load-depths", "1,2,3,5");
     const float temperature = parse_float_in(text("temperature", "1.0").c_str(), "temperature",
@@ -763,9 +762,8 @@ int run_spec_tune(int argc, char** argv) {
     const std::string decode_wait = decode_wait_name(engine.pacing.wait);
     if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, engine); }
     const auto started = std::chrono::steady_clock::now();
-    const int device   = flags.contains("device")
-                             ? parse_nonnegative_int(flags.at("device").c_str(), "device")
-                             : resolve_device(kDefaultDevice);
+    const int device   = select_device(
+        flags.contains("device") ? parse_device_option(flags.at("device")) : DeviceSelector{});
     std::optional<spec::Corpus> own;
     if (flags.contains("corpus")) { own = spec::load_corpus(flags["corpus"]); }
     const auto& corpus = own ? *own : spec::builtin_corpus();

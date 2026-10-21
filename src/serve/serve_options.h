@@ -77,7 +77,10 @@ struct ServeOptions {
     std::uint32_t media_preprocess_threads = 0;
     std::size_t response_store_max_records = kDefaultResponseStoreRecords;
     std::size_t response_store_max_bytes   = kDefaultResponseStoreBytes;
-    int device                             = kDefaultDevice; // resolve_device in main
+    // --device: the GPU the user named (core/device_identity.h); main turns it into the CUDA
+    // ordinal `device` (select_device) before anything reads that.
+    DeviceSelector device_selector;
+    int device = kDefaultDevice;
     // --kv-dtype auto (or omitted): the model family chooses (EngineOptions::kv_cache_automatic).
     std::optional<KvCacheStorage> kv_cache;
     KvCacheStorage sliding_kv_cache        = KvCacheStorage::BFloat16; // --sliding-kv-dtype

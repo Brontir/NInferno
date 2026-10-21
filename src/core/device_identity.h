@@ -9,8 +9,9 @@
 // Within one process an ordinal stays bound to its board, so in-process caches may be indexed by
 // it (core/per_device.h). Anything that outlives the process or chooses among GPUs reads the
 // identity instead: a choice among GPUs depends only on the set of identities, sorted
-// canonically (canonical_device_order), never on the enumeration order. An ordinal the user
-// passes (--device N) is an explicit option and is taken as given.
+// canonically (canonical_device_order), never on the enumeration order. The user names a GPU by
+// --device (DeviceSelector): N counts the visible GPUs in that order, as nvidia-smi numbers them,
+// or a PCI address or UUID names one board.
 //
 // The identity names a board; it is never a decision input beyond that ordering, and it is not
 // part of the decision fingerprint: two boards of one chip type make the same decisions. The
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <optional>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <string_view>
@@ -32,7 +34,7 @@
 
 namespace ninferno {
 
-// The device option's default: no ordinal given, so the first GPU in canonical order runs.
+// EngineOptions::device's default: no ordinal given, so the first GPU in canonical order runs.
 inline constexpr int kDefaultDevice = -1;
 
 struct DeviceIdentity {
@@ -103,12 +105,133 @@ canonical_device_order(std::span<const DeviceIdentity> enumerated) {
     return order;
 }
 
-// The device an option names: `requested` as given when it is an ordinal, else (kDefaultDevice)
-// the first board in canonical order; kDefaultDevice when nothing is enumerated.
+// The ordinal EngineOptions::device names: as given, or for kDefaultDevice the first board in
+// canonical order; kDefaultDevice when nothing is enumerated.
 [[nodiscard]] inline int resolve_device(int requested, std::span<const DeviceIdentity> enumerated) {
     if (requested != kDefaultDevice) { return requested; }
     const std::vector<int> order = canonical_device_order(enumerated);
     return order.empty() ? kDefaultDevice : order.front();
+}
+
+// What --device names. Every form reads the boards, never the enumeration order:
+//   absent              the first visible GPU in canonical order (Default);
+//   N                   the N-th visible GPU in canonical order, counted from 0: nvidia-smi's
+//                       numbering when CUDA_VISIBLE_DEVICES hides none (Index);
+//   pci:0000:01:00.0    the board at that PCI address; of MIG instances there, the first (Pci);
+//   GPU-<uuid>          the board with that UUID, as nvidia-smi -L prints it (Uuid).
+struct DeviceSelector {
+    enum class Kind { Default, Index, Pci, Uuid };
+    Kind kind = Kind::Default;
+    int index = 0;          // Index
+    DeviceIdentity address; // Pci: the PCI fields; Uuid: the uuid
+    friend bool operator==(const DeviceSelector&, const DeviceSelector&) = default;
+};
+
+// "GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" in either case; nullopt for anything else.
+[[nodiscard]] inline std::optional<std::array<std::uint8_t, 16>>
+parse_uuid_text(std::string_view text) {
+    if (text.size() != 40 || (text.substr(0, 4) != "GPU-" && text.substr(0, 4) != "gpu-")) {
+        return std::nullopt;
+    }
+    std::array<std::uint8_t, 16> uuid{};
+    std::size_t at = 4;
+    for (std::size_t i = 0; i < uuid.size(); ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            if (text[at++] != '-') { return std::nullopt; }
+        }
+        unsigned byte           = 0;
+        const char* first       = text.data() + at;
+        const auto [ptr, error] = std::from_chars(first, first + 2, byte, 16);
+        if (error != std::errc{} || ptr != first + 2) { return std::nullopt; }
+        uuid[i] = static_cast<std::uint8_t>(byte);
+        at += 2;
+    }
+    return uuid;
+}
+
+// The selector `text` spells (see DeviceSelector); nullopt for anything else.
+[[nodiscard]] inline std::optional<DeviceSelector> parse_device_selector(std::string_view text) {
+    DeviceSelector selector;
+    if (text.starts_with("pci:")) {
+        const auto address = parse_pci_bus_id(text.substr(4));
+        if (!address) { return std::nullopt; }
+        selector.kind    = DeviceSelector::Kind::Pci;
+        selector.address = *address;
+        return selector;
+    }
+    if (const auto uuid = parse_uuid_text(text)) {
+        selector.kind         = DeviceSelector::Kind::Uuid;
+        selector.address.uuid = *uuid;
+        return selector;
+    }
+    int index               = 0;
+    const auto [ptr, error] = std::from_chars(text.data(), text.data() + text.size(), index);
+    if (text.empty() || error != std::errc{} || ptr != text.data() + text.size() || index < 0) {
+        return std::nullopt;
+    }
+    selector.kind  = DeviceSelector::Kind::Index;
+    selector.index = index;
+    return selector;
+}
+
+// parse_device_selector for an option parser: throws std::invalid_argument naming the forms.
+[[nodiscard]] inline DeviceSelector parse_device_option(std::string_view text) {
+    if (const auto selector = parse_device_selector(text)) { return *selector; }
+    throw std::invalid_argument("--device must be N (counting GPUs in PCI bus order, as "
+                                "nvidia-smi does), pci:DDDD:BB:DD.F or GPU-<uuid>, not \"" +
+                                std::string(text) + "\"");
+}
+
+// How the selector is spelled ("" for the default).
+[[nodiscard]] inline std::string device_selector_text(const DeviceSelector& selector) {
+    switch (selector.kind) {
+    case DeviceSelector::Kind::Default:
+        return "";
+    case DeviceSelector::Kind::Index:
+        return std::to_string(selector.index);
+    case DeviceSelector::Kind::Pci:
+        return "pci:" + pci_bus_id_text(selector.address);
+    case DeviceSelector::Kind::Uuid:
+        return uuid_text(selector.address);
+    }
+    return "";
+}
+
+// The ordinal of the board `selector` names among `enumerated` (entry i is ordinal i's identity);
+// nullopt when none does.
+[[nodiscard]] inline std::optional<int> select_device(const DeviceSelector& selector,
+                                                      std::span<const DeviceIdentity> enumerated) {
+    const std::vector<int> order = canonical_device_order(enumerated);
+    const auto at                = [&](int ordinal) -> const DeviceIdentity& {
+        return enumerated[static_cast<std::size_t>(ordinal)];
+    };
+    switch (selector.kind) {
+    case DeviceSelector::Kind::Default:
+        if (!order.empty()) { return order.front(); }
+        break;
+    case DeviceSelector::Kind::Index:
+        if (static_cast<std::size_t>(selector.index) < order.size()) {
+            return order[static_cast<std::size_t>(selector.index)];
+        }
+        break;
+    case DeviceSelector::Kind::Pci:
+        for (const int ordinal : order) {
+            const DeviceIdentity& d = at(ordinal);
+            if (d.pci_domain == selector.address.pci_domain &&
+                d.pci_bus == selector.address.pci_bus &&
+                d.pci_device == selector.address.pci_device &&
+                d.pci_function == selector.address.pci_function) {
+                return ordinal;
+            }
+        }
+        break;
+    case DeviceSelector::Kind::Uuid:
+        for (const int ordinal : order) {
+            if (at(ordinal).uuid == selector.address.uuid) { return ordinal; }
+        }
+        break;
+    }
+    return std::nullopt;
 }
 
 } // namespace ninferno

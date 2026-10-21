@@ -12,15 +12,15 @@
 // 8.7, 8.9), or it carries PTX and arch <= cc (89 with PTX: Hopper, datacenter Blackwell, any later
 // generation, the driver compiling each kernel once). The most specific, newest match wins.
 //
-// The GPU is the one the command names (--device N), numbered as the engine numbers it: through
-// the CUDA driver itself, so CUDA_VISIBLE_DEVICES and the device order agree. Without --device it
-// is the one the engine takes, the first in PCI bus order (core/device_identity.h). Every
-// argument goes to the engine unchanged. On Linux the engine replaces this process; on Windows it
-// runs as a child in this console (Ctrl+C and Ctrl+Break reach it) and its exit code is returned.
+// The GPU is the one the command names (--device N, pci:BUSID or GPU-UUID; without it the first),
+// found as the engine finds it: among the GPUs the CUDA driver enumerates, so CUDA_VISIBLE_DEVICES
+// agrees, by PCI bus order and identity, never the enumeration order (core/device_identity.h).
+// Every argument goes to the engine unchanged. On Linux the engine replaces this process; on
+// Windows it runs as a child in this console (Ctrl+C and Ctrl+Break reach it) and its exit code is
+// returned.
 
 #include "core/command_line.h"
 #include "core/device_identity.h"
-#include "core/parse.h"
 #include "core/sys.h"
 
 #include <nlohmann/json.hpp>
@@ -182,18 +182,21 @@ std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) {
     return pick([&](const Engine& e) { return e.ptx && e.arch <= cc; });
 }
 
-// --device N among the arguments, the spelling every engine parses; 0 when not a count, which the
-// engine then refuses itself. Absent, the GPU the engine takes: the first in PCI bus order.
+// The ordinal of the GPU --device names among the arguments (the spelling every engine parses),
+// as the engine selects it; -1 when it names none or does not parse, which the engine then
+// refuses itself (the newest engine runs to say so).
 int device_argument(int argc, char** argv, const std::vector<Gpu>& gpus) {
+    ninferno::DeviceSelector selector;
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string_view(argv[i]) != "--device") { continue; }
-        const auto device = ninferno::parse_exact<int>(argv[i + 1]);
-        return device && *device >= 0 ? *device : 0;
+        const auto parsed = ninferno::parse_device_selector(argv[i + 1]);
+        if (!parsed) { return -1; }
+        selector = *parsed;
+        break;
     }
     std::vector<ninferno::DeviceIdentity> identities;
     for (const Gpu& gpu : gpus) { identities.push_back(gpu.identity); }
-    const int device = ninferno::resolve_device(ninferno::kDefaultDevice, identities);
-    return device == ninferno::kDefaultDevice ? 0 : device;
+    return ninferno::select_device(selector, identities).value_or(-1);
 }
 
 std::string engines_text(const std::vector<Engine>& engines) {
@@ -212,12 +215,17 @@ int print_version(const std::vector<Engine>& engines, const Driver* driver) {
     }
     const auto gpus = driver->gpus();
     int runnable    = 0;
-    for (std::size_t i = 0; i < gpus.size(); ++i) {
-        if (gpus[i].cc == 0) { continue; }
-        const auto engine = choose(engines, gpus[i].cc);
+    // Numbered as --device counts them: in PCI bus order.
+    std::vector<ninferno::DeviceIdentity> identities;
+    for (const Gpu& gpu : gpus) { identities.push_back(gpu.identity); }
+    const std::vector<int> order = ninferno::canonical_device_order(identities);
+    for (std::size_t n = 0; n < order.size(); ++n) {
+        const Gpu& gpu = gpus[static_cast<std::size_t>(order[n])];
+        if (gpu.cc == 0) { continue; }
+        const auto engine = choose(engines, gpu.cc);
         runnable += engine ? 1 : 0;
-        std::cout << "GPU " << i << " (" << ninferno::pci_bus_id_text(gpus[i].identity)
-                  << "): " << gpus[i].name << ", sm_" << gpus[i].cc << " -> "
+        std::cout << "GPU " << n << " (" << ninferno::pci_bus_id_text(gpu.identity)
+                  << "): " << gpu.name << ", sm_" << gpu.cc << " -> "
                   << (engine ? "engine sm_" + engine->tag
                              : std::string("no engine in this release"))
                   << '\n';

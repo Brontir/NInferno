@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -85,6 +86,26 @@ void test_permutations_choose_the_same_board() {
         const int chosen = ninferno::resolve_device(ninferno::kDefaultDevice, enumerated);
         expect(chosen >= 0 && enumerated[static_cast<std::size_t>(chosen)] == boards[0],
                "the default must be the same board under every enumeration");
+
+        // Every --device form names the same board under every enumeration.
+        const auto names = [&](std::string_view text, const DeviceIdentity& want) {
+            const auto selector = ninferno::parse_device_selector(text);
+            const auto ordinal =
+                selector ? ninferno::select_device(*selector, enumerated) : std::nullopt;
+            return ordinal && enumerated[static_cast<std::size_t>(*ordinal)] == want;
+        };
+        expect(names("0", canonical[0]) && names("2", canonical[2]) && names("4", canonical[4]),
+               "--device N must count boards in PCI bus order under every enumeration");
+        expect(names("pci:0000:81:00.0", boards[2]) && names("pci:00000001:01:00.0", boards[3]),
+               "--device pci:... must name the board at that address");
+        expect(names("pci:0000:41:00.0", boards[4]),
+               "--device pci:... at a MIG parent must name its first instance by UUID");
+        expect(names(ninferno::uuid_text(boards[1]), boards[1]),
+               "--device GPU-<uuid> must name that board");
+        expect(!ninferno::select_device(*ninferno::parse_device_selector("5"), enumerated) &&
+                   !ninferno::select_device(*ninferno::parse_device_selector("pci:0000:02:00.0"),
+                                            enumerated),
+               "--device naming no board must resolve to none");
         ++seen;
     } while (std::next_permutation(permutation.begin(), permutation.end()));
     expect(seen == 120, "every permutation of five boards must be tried");
@@ -103,6 +124,24 @@ void test_explicit_ordinal_is_kept() {
 }
 
 // A board the driver could not report (domain 0xFFFFFFFF) is never the default.
+// The --device spellings, and their text back.
+void test_device_selector_text() {
+    using ninferno::parse_device_selector;
+    for (const char* text :
+         {"0", "17", "pci:0000:01:00.0", "GPU-00112233-4455-6677-8899-aabbccddeeff"}) {
+        const auto selector = parse_device_selector(text);
+        expect(selector && ninferno::device_selector_text(*selector) == text,
+               std::string("--device ") + text + " must round-trip");
+    }
+    for (const char* bad : {"", "-1", "+1", "1x", "pci:", "pci:01:00.0", "GPU-0011",
+                            "GPU-00112233-4455-6677-8899-aabbccddeefg", "MIG-1"}) {
+        expect(!parse_device_selector(bad), std::string("must refuse --device \"") + bad + '"');
+    }
+    expect(parse_device_selector("gpu-00112233-4455-6677-8899-AABBCCDDEEFF") ==
+               parse_device_selector("GPU-00112233-4455-6677-8899-aabbccddeeff"),
+           "a UUID must parse in either case");
+}
+
 void test_unreadable_board_sorts_last() {
     const std::vector<DeviceIdentity> enumerated = {board(0xFFFFFFFFu, 0, 0, 0, 0),
                                                     board(0, 0x02, 0, 0, 3)};
@@ -116,6 +155,7 @@ int main() {
     test_pci_bus_id_text();
     test_permutations_choose_the_same_board();
     test_explicit_ordinal_is_kept();
+    test_device_selector_text();
     test_unreadable_board_sorts_last();
     if (failures != 0) {
         std::cerr << failures << " device identity check(s) failed\n";

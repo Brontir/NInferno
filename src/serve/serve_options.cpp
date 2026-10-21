@@ -39,7 +39,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--max-pending-requests N] [--pending-timeout-ms N] "
            "[--prefill-chunk N] [--kv-lease-window N] [--log-stats-interval-ms N] "
            "[--drain-timeout-ms N] "
-           "[--health-stall-ms N] [--device N] "
+           "[--health-stall-ms N] [--device N|pci:BUSID|GPU-UUID] "
            "[--context-cost-presets FILE] "
            "[--max-request-mib N] [--max-request-messages N] "
            "[--media-cache-mib N] [--media-live-mib N] "
@@ -194,7 +194,9 @@ std::string serve_usage_text(const char* argv0) {
            "       --draft-width: the columns a DFlash drafter computes each round: block (every\n"
            "       column it was trained on) or drafts (the anchor and the round's drafts only);\n"
            "       by default block for a round of one request, drafts from two (any case).\n"
-           "       Under --spec auto a width the served speculation does not run is dropped.\n";
+           "       Under --spec auto a width the served speculation does not run is dropped.\n"
+           "       --device: N counts GPUs in PCI bus order, as nvidia-smi does (0 first; without\n"
+           "       --device, GPU 0), or pci:0000:01:00.0 or GPU-<uuid> names one.\n";
 }
 
 // The key file's contents without its trailing line break or spaces (as an editor or `echo` leaves
@@ -387,7 +389,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--response-store-max-mib") {
             options.response_store_max_bytes = mib("--response-store-max-mib", false);
         } else if (arg == "--device") {
-            options.device = parse_nonnegative_int(require_value("--device"), "device");
+            options.device_selector = parse_device_option(require_value("--device"));
         } else if (arg == "--kv-dtype") {
             const std::string value = require_value("--kv-dtype");
             options.kv_cache =

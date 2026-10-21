@@ -393,6 +393,22 @@ const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
     return nullptr;
 }
 
+namespace {
+
+// The child sees one GPU: the board with `uuid` (NVML's), or, when NVML did not say, GPU `gpu`
+// counted in PCI bus order, as NVML and --device count them. Either way its own default device is
+// that board.
+void bind_gpu(LaunchSpec& spec, int gpu, const GpuStat* stat) {
+    if (stat != nullptr && !stat->uuid.empty()) {
+        spec.env["CUDA_VISIBLE_DEVICES"] = stat->uuid;
+        return;
+    }
+    spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
+    spec.env["CUDA_VISIBLE_DEVICES"] = std::to_string(gpu);
+}
+
+} // namespace
+
 LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, const GpuStat* gpu) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
@@ -493,15 +509,12 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
             }
         }
     }
-    if (request.gpu >= 0) {
-        spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
-        spec.env["CUDA_VISIBLE_DEVICES"] = std::to_string(request.gpu);
-    }
+    if (request.gpu >= 0) { bind_gpu(spec, request.gpu, gpu); }
     if (!options.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = options.hub_cache.string(); }
     return spec;
 }
 
-LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request) {
+LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request, const GpuStat* gpu) {
     std::error_code ec;
     if (request.artifact.empty() || request.artifact.front() == '-' ||
         fs::path(request.artifact).extension() != ".ninferno" ||
@@ -520,10 +533,7 @@ LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request) {
         spec.argv = {(bin / "ninferno").string(), "spec-tune", request.artifact, "--budget-seconds",
                      "120"};
     }
-    if (request.gpu >= 0) {
-        spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
-        spec.env["CUDA_VISIBLE_DEVICES"] = std::to_string(request.gpu);
-    }
+    if (request.gpu >= 0) { bind_gpu(spec, request.gpu, gpu); }
     return spec;
 }
 
@@ -1678,7 +1688,9 @@ void App::install(httplib::Server& server) {
             request.artifact = body.value("artifact", std::string());
             request.gpu      = body.value("gpu", 0);
             request.engine   = convert::describe_artifact(request.artifact, "").engine;
-            const auto id    = processes_.start(make_tune(options_, request));
+            const auto stats = gpus_->snapshot();
+            const auto id =
+                processes_.start(make_tune(options_, request, launch_gpu(stats, request.gpu)));
             reply_json(res, {{"id", id}});
         } catch (const std::invalid_argument& error) {
             reply_error(res, 400, error.what());

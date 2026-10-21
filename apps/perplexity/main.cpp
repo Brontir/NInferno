@@ -60,6 +60,7 @@ struct Options {
     std::uint32_t context               = 4096;
     std::uint32_t stride                = 2048;
     float rope_yarn_factor              = 1.0F;
+    ninferno::DeviceSelector device_selector; // --device; main sets `device` from it
     int device                            = ninferno::kDefaultDevice;
     ninferno::KvCacheStorage kv           = ninferno::KvCacheStorage::Fp8E4M3Row256;
     ninferno::ActivationMode activations  = ninferno::kDefaultActivationMode;
@@ -80,7 +81,8 @@ std::string usage_text() {
     return "usage: ninferno-perplexity --version\n"
            "       ninferno-perplexity <model.ninferno> "
            "(--corpus <manifest.json> [--quick] | --text <utf8-file>)\n"
-           "       [--context N] [--stride N] [--device N] [--rope-yarn-factor F]\n"
+           "       [--context N] [--stride N] [--device N|pci:BUSID|GPU-UUID]\n"
+           "       [--rope-yarn-factor F]\n"
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
@@ -91,7 +93,8 @@ std::string usage_text() {
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
            "  --step-tokens  run the scored targets N tokens per call, as decode (1) or a\n"
-           "             speculative round (N) runs them\n";
+           "             speculative round (N) runs them\n"
+           "  --device   N counts GPUs in PCI bus order, as nvidia-smi does\n";
 }
 
 [[noreturn]] void usage_error(std::string_view message) {
@@ -134,8 +137,7 @@ Options parse_options(int argc, char** argv) {
         } else if (option == "--stride") {
             out.stride = parse_count(value("--stride"), "stride");
         } else if (option == "--device") {
-            out.device = ninferno::product::parse_nonnegative_int(
-                std::string(value("--device")).c_str(), "device");
+            out.device_selector = ninferno::parse_device_option(value("--device"));
         } else if (option == "--kv-dtype") {
             const auto storage = ninferno::parse_kv_cache_storage(value("--kv-dtype"));
             if (!storage) {
@@ -640,8 +642,13 @@ int main(int argc, char** argv) {
     }
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-perplexity");
-    // No --device: the first GPU in PCI bus order, whatever order CUDA enumerates them in.
-    options.device = ninferno::resolve_device(options.device);
+    // The GPU --device names, counted in PCI bus order whatever order CUDA enumerates them in.
+    try {
+        options.device = ninferno::select_device(options.device_selector);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "ninferno-perplexity: " << error.what() << '\n';
+        return 1;
+    }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-perplexity",
