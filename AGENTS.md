@@ -67,8 +67,14 @@ before changing it, starting with
   translation. Model code does not acquire media or own transport.
 - Prefer explicit implementations over generic model graphs, family base classes, plugin discovery,
   string-driven execution or placeholders for hypothetical targets.
-- Defaults should be the measured optimum for the model and GPU; a flag exists to turn a default
-  off, not to ask the user to tune.
+- Decisions must be deterministic and come from the chip's specification
+  ([`docs/maintainer/deterministic-decisions.md`](docs/maintainer/deterministic-decisions.md), a
+  pillar of the project; its known gaps are listed there): nothing is measured, tuned or calibrated
+  on the user's machine; a rule reads device facts, the artifact and explicit options, never
+  timings, clocks, environment variables or state left by an earlier run; the more a decision
+  changes output bytes, the fewer facts it reads. Lab measurements enter only as facts or as
+  constants fitted on two or more cards of a generation. A flag exists to turn a default off, not to
+  ask the user to tune.
 - Project-owned APIs, CLIs, tools, fixtures and formats keep no backward compatibility: when
   replacing a behavior, remove the old aliases, fallbacks and their tests. The advertised OpenAI and
   Anthropic behavior is an external contract: change schema tests and

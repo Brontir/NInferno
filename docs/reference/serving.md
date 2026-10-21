@@ -334,7 +334,8 @@ this order:
    between them (a few Engine builds from any depth). It runs the deepest that fits (for a user's
    `--max-context` longer than the tune's, or a card nobody tuned).
 3. It tries the model's own MTP head (when the choice drafts with another drafter and the model
-   has one), the built-in MTP default with its floors calibrated on this GPU.
+   has one), the built-in MTP default with its floors calibrated on this GPU (a measurement being
+   replaced by a model: [deterministic decisions](../maintainer/deterministic-decisions.md)).
 4. Only then it decodes plainly and warns, rather than failing to start.
 
 An explicit `--prefill-chunk` stays as given: the shallower drafts are tried beside it, and the
