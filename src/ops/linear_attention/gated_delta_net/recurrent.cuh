@@ -596,7 +596,8 @@ __device__ __forceinline__ void stage_record_window(RecordStage& stage,
     __syncthreads();
 }
 
-// A long direct call (an `exact` prefill) streams its inputs through two shared-memory windows of
+// A direct call of two tokens or more (an `exact` prefill, or a short fast-mode call outside
+// prefill) streams its inputs through two shared-memory windows of
 // kDirectStageTokens tokens: the next window's q, k, this CTA's value rows and the gates are copied
 // with cp.async while the current one runs. run_recurrent_sequence otherwise loads each token's
 // value, gates and query behind the previous token's output store, so every token paid a global
@@ -938,8 +939,8 @@ __global__ void __launch_bounds__(kWarpSize* kNumWarps, 2)
     store_state_tile(state, access.state_write_base(coord), coord);
 }
 
-// The direct recurrence over two staged windows (DirectStage). Launched for calls wider than
-// kDirectStageMinTokens; decode's one-token calls keep recurrent_bf16_direct_kernel.
+// The direct recurrence over two staged windows (DirectStage). Launched for calls of
+// kDirectStageMinTokens tokens or more; decode's one-token calls keep recurrent_bf16_direct_kernel.
 inline constexpr int kDirectStageMinTokens = 2;
 
 template <bool NormalizeInputs, class StateT = float>
