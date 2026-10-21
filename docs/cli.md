@@ -396,8 +396,8 @@ Engines with CUDA Graphs pace their decode rounds (rows without constrained deco
   read once at startup; none on Windows). Four CPUs cover the threads the engine keeps busy while
   decoding, and a quota at or above the logical cores can never run out.
   `--decode-steps N` replaces that default. The count is never chosen from timings: it
-  decides which requests share each step's batch. The startup log reports it
-  (`decode | N step(s) per round | CPU quota ...`).
+  decides which requests share each step's batch. The startup log reports it on the
+  `engine ready` line (`decode N step(s) per round`, then `CPU quota ... CPUs` when there is one).
   - Nothing measures the host. On a contended host the rule does not see (other processes use the
     CPU without a quota, or a quota of 4 CPUs or more that a busy cgroup still runs out of), or
     where 16 steps do not hide the stall, set `--decode-steps N`: about 100 ms divided by

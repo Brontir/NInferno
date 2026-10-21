@@ -96,7 +96,6 @@ int check_kld() {
     const auto path = scratch.path() / "reference.bin";
     pp::write_kld_reference(path, written);
     const pp::KldReference read = pp::read_kld_reference(path);
-    std::filesystem::remove(path);
     failures += require(read.top_k == 2 && read.context == 4096 && read.stride == 2048 &&
                             read.model == "reference" && read.prefill_signature == "bf16" &&
                             read.streams.size() == 1 && read.streams[0].id == "wiki" &&
@@ -120,7 +119,6 @@ int check_kld() {
         try {
             (void)pp::read_kld_reference(path);
         } catch (const std::runtime_error&) { rejected = true; }
-        std::filesystem::remove(path);
         failures += require(rejected, "KLD reference with an invalid slot is rejected");
     }
     return failures;

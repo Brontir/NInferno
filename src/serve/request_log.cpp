@@ -1,5 +1,6 @@
 #include "serve/request_log.h"
 #include "serve/plan_report.h"
+#include "core/sha256.h"
 #include "product/logging/pretty_format.h"
 #include "product/activation_options.h"
 #include "product/speculative_options.h"
@@ -108,20 +109,21 @@ Json decode_pacing_record(const ninferno::DecodePacingOptions& pacing) {
 }
 
 // What the maintainer options asked for (all defaults: the release's behaviour), with
-// --drafter-registry (empty: the compiled-in registry).
+// --drafter-registry (empty: the compiled-in registry). Paths in UTF-8 (path::string() throws on
+// Windows for a character outside the ANSI code page).
 Json maintainer_record(const ninferno::MaintainerOptions& m,
                        const std::filesystem::path& drafter_registry) {
     Json poison = nullptr;
     if (m.debug_poison) { poison = *m.debug_poison; }
-    return Json{{"route_table", m.route_table.string()},
-                {"route_dir", m.route_dir.string()},
+    return Json{{"route_table", ninferno::utf8_path(m.route_table)},
+                {"route_dir", ninferno::utf8_path(m.route_dir)},
                 {"dense_tune", ninferno::tune_mode_name(m.dense_tune)},
                 {"moe_tune", ninferno::tune_mode_name(m.moe_tune)},
-                {"tune_cache", m.tune_cache.string()},
+                {"tune_cache", ninferno::utf8_path(m.tune_cache)},
                 {"debug_prefill_cuts", m.debug_prefill_cuts},
                 {"debug_poison", poison},
                 {"debug_poison_skip", m.debug_poison_skip},
-                {"drafter_registry", drafter_registry.string()}};
+                {"drafter_registry", ninferno::utf8_path(drafter_registry)}};
 }
 
 const char* proposal_head_name(ninferno::ProposalHead proposal) {
