@@ -75,20 +75,21 @@ constexpr DrafterKind kDrafterKinds[] = {
 // sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b (an MoE, the
 // registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So the key is
 // what the points cover: the generation, the family, the target's shape as far as the facts tell it
-// (its routed experts, 32, and hidden size, 2880: gpt-oss-20b), the weight format and the drafter
-// kind. A dense target, another MoE, another weight format (BF16, NVFP4, Q8, Q4_0, a GGUF k-quant)
-// or another drafter on sm120 dense stays unsure.
+// (its routed experts, 32, top-4, and hidden size, 2880: gpt-oss-20b), the weight format and the
+// drafter kind. A dense target, another MoE, another weight format (BF16, NVFP4, Q8, Q4_0, a GGUF
+// k-quant) or another drafter on sm120 dense stays unsure.
 struct Tested {
     int cc;
     std::string_view family;
     int experts; // routed experts (0: dense)
+    int experts_per_token;
     std::uint64_t hidden_size;
     std::string_view weight_format; // the one quantized format (format_name spelling)
     std::string_view drafter;
 };
 
 constexpr Tested kTested[] = {
-    {120, "dense", 32, 2880, "mxfp4", "dflash"},
+    {120, "dense", 32, 4, 2880, "mxfp4", "dflash"},
 };
 
 ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
@@ -111,6 +112,7 @@ ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
     const std::string arch = "sm" + std::to_string(cc);
     for (const Tested& t : kTested) {
         if (t.cc == cc && t.family == family && t.experts == target.experts &&
+            t.experts_per_token == target.experts_per_token &&
             t.hidden_size == target.hidden_size && !quantized.empty() &&
             t.weight_format == quantized && t.drafter == drafter) {
             return {};
@@ -126,9 +128,27 @@ ModelFit fit_of(int cc, const TargetFacts& target, std::string_view drafter) {
 
 std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
                                        const DrafterFacts& drafter) {
-    if (gpu.sms <= 0 || gpu.sm_clock_khz <= 0 || gpu.dram_gbps <= 0 ||
-        target.bytes_per_weight <= 0 || target.active_params <= 0 || target.hidden_size == 0 ||
+    // Every fact the price reads is checked here, before any generation, mma_slow or provenance
+    // outcome: a missing or malformed one is nullopt on every GPU, never read as "absent".
+    const auto positive = [](double x) { return std::isfinite(x) && x > 0; };
+    if (gpu.sms <= 0 || gpu.sm_clock_khz <= 0 || !positive(gpu.dram_gbps) ||
+        gpu.compute_capability <= 0 || !positive(target.bytes_per_weight) ||
+        !positive(target.active_params) || target.hidden_size == 0 ||
         target.num_hidden_layers == 0) {
+        return std::nullopt;
+    }
+    // MoE facts come together: experts, experts per token in [1, experts] and the routed experts'
+    // parameters; a dense target has none of them.
+    if (target.experts < 0 || target.experts_per_token < 0 ||
+        !std::isfinite(target.routed_expert_params)) {
+        return std::nullopt;
+    }
+    if (target.experts > 0) {
+        if (target.experts_per_token <= 0 || target.experts_per_token > target.experts ||
+            !positive(target.routed_expert_params)) {
+            return std::nullopt;
+        }
+    } else if (target.experts_per_token != 0 || target.routed_expert_params != 0) {
         return std::nullopt;
     }
     // An unsupported drafter kind has no model on any GPU, mma_slow or not.
@@ -179,7 +199,7 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
                    .delta          = kind->cost * size,
                    .pass_per_draft = kind->pass_per_draft,
                    .fit            = fit_of(gpu.compute_capability, target, kind->kind)};
-    if (target.experts > 0 && target.experts_per_token > 0 && target.routed_expert_params > 0) {
+    if (target.experts > 0) { // the MoE facts were checked together above
         cost.moe_pick  = static_cast<double>(target.experts_per_token) / target.experts;
         cost.moe_bytes = kMoeRead * target.routed_expert_params / target.active_params;
     }

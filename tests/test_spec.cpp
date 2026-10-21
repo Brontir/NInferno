@@ -27,6 +27,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <regex>
@@ -874,6 +875,47 @@ int test_cost_model() {
                                       std::to_string(key.compute_capability));
             }
         }
+        // Malformed facts: nullopt on every GPU, never read as "absent" (an MoE priced as dense).
+        TargetFacts moe = target_facts(*registry.by_id("gpt-oss-20b"), "openai/gpt-oss-20b MXFP4");
+        const auto malformed = [&](const char* what, auto change) {
+            TargetFacts t = moe;
+            change(t);
+            for (const GpuKey& key :
+                 {card_key(kCards[0]), card_key(kCards[12]), slow_key, ex_key}) {
+                failures += check(!round_cost_of(key, t, DrafterFacts{.kind = "dflash"}),
+                                  std::string(what) + ": no model on sm" +
+                                      std::to_string(key.compute_capability));
+            }
+        };
+        malformed("experts without experts per token",
+                  [](TargetFacts& t) { t.experts_per_token = 0; });
+        malformed("experts without routed parameters",
+                  [](TargetFacts& t) { t.routed_expert_params = 0; });
+        malformed("more experts per token than experts",
+                  [](TargetFacts& t) { t.experts_per_token = 33; });
+        malformed("experts per token on a dense target", [](TargetFacts& t) { t.experts = 0; });
+        malformed("routed parameters on a dense target", [](TargetFacts& t) {
+            t.experts           = 0;
+            t.experts_per_token = 0;
+        });
+        malformed("negative experts", [](TargetFacts& t) { t.experts = -1; });
+        malformed("NaN bytes per weight",
+                  [](TargetFacts& t) { t.bytes_per_weight = std::nan(""); });
+        malformed("infinite active parameters", [](TargetFacts& t) {
+            t.active_params = std::numeric_limits<double>::infinity();
+        });
+        GpuKey no_cc             = card_key(kCards[0]);
+        no_cc.compute_capability = 0;
+        failures += check(!round_cost_of(no_cc, moe, DrafterFacts{.kind = "dflash"}),
+                          "no compute capability: no model");
+        // The gate's tested shape includes the experts per token: gpt-oss-20b is 32 experts, top-4.
+        TargetFacts top8       = moe;
+        top8.experts_per_token = 8;
+        const auto t8 = round_cost_of(card_key(kCards[0]), top8, DrafterFacts{.kind = "dflash"});
+        failures += check(t8 && !t8->fit.reliable, "32 experts top-8 on sm120: unsure");
+        const auto t4 = round_cost_of(card_key(kCards[0]), moe, DrafterFacts{.kind = "dflash"});
+        failures += check(t4 && t4->fit.reliable && t4->moe_bytes > 0,
+                          "32 experts top-4 on sm120: covered, MoE priced");
         failures += check(round_cost_of(card_key(kCards[0]), no_vocab,
                                         DrafterFacts{.kind = "mtp", .proposal_head = true})
                               .has_value(),

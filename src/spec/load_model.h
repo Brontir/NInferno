@@ -121,8 +121,10 @@ struct DrafterFacts {
 // the others: hidden_size^2) over the target's active weights. An MoE target reads 0.30 of the
 // experts independent routing of the w columns would add. The knee is where the verify GEMM takes
 // its next tile (RTX 4090 8 columns, RTX 5090 12, A100 24, RTX 3090 32; measured grids, none on
-// Volta or Turing). nullopt: unknown rates or shape, or a drafter kind the fit has no cost for (on
-// every GPU, an mma_slow one too).
+// Volta or Turing). nullopt, on every GPU (an mma_slow one too): unknown or non-finite rates or
+// compute capability, a missing or non-finite shape fact, MoE facts that do not come together
+// (experts > 0 needs experts_per_token in [1, experts] and routed_expert_params > 0; a dense target
+// has all three 0), an MTP drafter without head rows, or a drafter kind the fit has no cost for.
 [[nodiscard]] std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& target,
                                                      const DrafterFacts& drafter);
 
