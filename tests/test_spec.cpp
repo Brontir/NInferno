@@ -962,6 +962,8 @@ int test_context_classes() {
         ninferno::gpu_chip_arch("ga102") == "sm86" && ninferno::gpu_chip_arch("GB203:84sm") == "" &&
             ninferno::gpu_chip_arch("gb203:84sm") == "sm120" &&
             ninferno::gpu_chip_arch("sm89") == "sm89" && ninferno::gpu_chip_arch("xx999").empty() &&
+            ninferno::gpu_chip_arch("sm999").empty() &&
+            ninferno::gpu_chip_arch("sm86:999sm").empty() &&
             ninferno::gpu_chip_full_sms("ga102:82sm") == 84 &&
             ninferno::gpu_chip_full_sms("sm86") == 0,
         "gpu_chip_arch and gpu_chip_full_sms read the chip table");
@@ -986,7 +988,7 @@ int test_context_classes() {
         return R"({"model": "m", "target_artifact": "t1", "drafter": "dflash",
             "drafter_artifact": "component:dflash",
             "byte_class": {"activations": "fast-a8", "kv": "k8v4", "summation": "s", "parity": "p"},
-            "sampling": "t0", "depth": 7, "lanes": 1, "corpus": "sha256:ab", "schedule": "x",
+            "sampling": "t0", "depth": 7, "lanes": 1, "corpus": "sha256:abababababababababababababababababababababababababababababababab", "schedule": "x",
             "tolerance": 0.05, "cards": )" +
                cards + "}";
     };
@@ -1015,7 +1017,7 @@ int test_context_classes() {
     key.sampling = "t0";
     key.depth    = 7;
     key.lanes    = 1;
-    key.corpus   = "sha256:ab";
+    key.corpus   = "sha256:abababababababababababababababababababababababababababababababab";
 
     // Two generations that agree: their mean.
     const auto agree = parsed(pair(card("ga102", 0.90), card("AD102", 0.92)));
@@ -1064,6 +1066,11 @@ int test_context_classes() {
                 .value == 0.9,
         "one generation on two routes (read in lower case): known");
 
+    failures += check(
+        !factor(parsed(pair(card("ga102", 0.9, "rmma"), card("ga104", 0.9, "rmma.m1.n8.w4x1"))),
+                key, ContextClass::Mid)
+             .value,
+        "two names of one route family on one generation: unknown");
     // Every key field: a different one is unknown, the reason naming it.
     const std::vector<std::pair<std::string, std::function<void(AcceptanceKey&)>>> fields = {
         {"target_artifact differs", [](AcceptanceKey& k) { k.target_artifact = "t2"; }},
@@ -1074,7 +1081,10 @@ int test_context_classes() {
         {"sampling differs", [](AcceptanceKey& k) { k.sampling = "t1"; }},
         {"depth differs", [](AcceptanceKey& k) { k.depth = 5; }},
         {"lanes differs", [](AcceptanceKey& k) { k.lanes = 4; }},
-        {"corpus differs", [](AcceptanceKey& k) { k.corpus = "sha256:cd"; }},
+        {"corpus differs",
+         [](AcceptanceKey& k) {
+             k.corpus = "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+         }},
         {"no context_classes entry for model", [](AcceptanceKey& k) { k.model = "other"; }},
     };
     for (const auto& [reason, change] : fields) {
@@ -1089,7 +1099,17 @@ int test_context_classes() {
         {R"("target_artifact": "t1")", R"("target_artifact": "placeholder:t1")",
          "placeholder key: target_artifact=placeholder:t1"},
         {R"("kv": "k8v4")", R"("kv": "auto")", "placeholder key: byte_class.kv=auto"},
-        {R"("corpus": "sha256:ab")", R"("corpus": "x13-docs")", "placeholder key: corpus=x13-docs"},
+        {R"("kv": "k8v4")", R"("kv": "AUTO")", "placeholder key: byte_class.kv=AUTO"},
+        {R"("target_artifact": "t1")", R"("target_artifact": "Placeholder:t1")",
+         "placeholder key: target_artifact=Placeholder:t1"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "sha256:ab")", "placeholder key: corpus=sha256:ab"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "sha256:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB")",
+         "placeholder key: "
+         "corpus=sha256:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "x13-docs")", "placeholder key: corpus=x13-docs"},
     };
     for (const auto& [from, to, reason] : placeholders) {
         auto text = key_json(pair(card("ga102", 0.9), card("ad102", 0.9)));
@@ -1136,11 +1156,15 @@ int test_context_classes() {
         R"({"bounds": [1024, 8192]})",
         R"({"bounds": [0, 8192, 24576]})",
         R"({"bounds": [1024.5, 8192, 24576]})",
+        R"({"bounds": [1024, 8192, 32768]})",
+        R"({"bounds": [512, 8192, 24576]})",
         R"({"bounds": [1024, 8192, 24576], "entries": {}})",
         entry_with(R"("tolerance": 0.05, )", ""),
         entry_with(R"("tolerance": 0.05)", R"("tolerance": 0.06)"),
         entry_with(R"("target_artifact": "t1", )", ""),
-        entry_with(R"("corpus": "sha256:ab", )", ""),
+        entry_with(
+            R"("corpus": "sha256:abababababababababababababababababababababababababababababababab", )",
+            ""),
         entry_with(R"("schedule": "x",
             "tolerance")",
                    R"("tolerance")"),
@@ -1155,6 +1179,8 @@ int test_context_classes() {
         entry_with(R"("ga102")", R"("ga102:sm")"),
         entry_with(R"("ga102")", R"("ga102:200sm")"),
         entry_with(R"("ga102")", R"("ga102:0sm")"),
+        entry_with(R"("ga102")", R"("sm999")"),
+        entry_with(R"("ga102")", R"("sm86:999sm")"),
         entry_with(R"("ga102")", R"("ga102", "route": "mmq")"),
         entry_with(R"({"schedule": "x", )", R"({"schedule": "y", )"),
         entry_with(R"({"schedule": "x", )", "{"),
@@ -1166,6 +1192,8 @@ int test_context_classes() {
         entry_with(R"(0.900000, 0.75)", R"("x", 0.75)"),
         with_entry(key_json(pair(card_a, card_a))),
         with_entry(key_json(pair(card_a, card("GA102", 0.9)))),
+        with_entry(
+            key_json(pair(card("ga102", 0.9, "rmma"), card("ga102", 0.9, "rmma.m1.n8.w4x1")))),
         with_entry(key_json("[" + card_a + "]") + ", " + key_json("[" + card_a + "]")),
     };
     for (const auto& bad : refused) {

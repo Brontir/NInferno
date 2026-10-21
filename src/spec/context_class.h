@@ -11,13 +11,13 @@
 // the draft depth K, the prompt set (corpus hash) and, under fast activations, the lane count
 // (at small T the bytes depend on the batch). The registry's top-level "context_classes":
 //
-//   {"bounds": [1024, 8192, 24576], "tolerance": 0.05,
+//   {"bounds": [1024, 8192, 24576] (must be kContextBounds),
 //    "entries": [{"model": registry model id, "target_artifact": id,
 //                 "drafter": kind, "drafter_artifact": id | "component:<name>" (of the target),
 //                 "byte_class": {"activations": "exact" | "fast-a8" | "fast-a4", "kv": ...,
 //                                "summation": ..., "parity": ...},
-//                 "sampling": "t0" | ..., "depth": K, "lanes": C, "corpus": "sha256:<hex>" | label,
-//                 "schedule": the request schedule every card ran, "tolerance": 0.05,
+//                 "sampling": "t0" | ..., "depth": K, "lanes": C, "corpus": "sha256:<64 hex>" |
+//                 label, "schedule": the request schedule every card ran, "tolerance": 0.05,
 //                 "source": free text,
 //                 "cards": [{"gpu_class": "ga102", "route": optional route family or name,
 //                            "schedule": the entry's, "factors": [1, f_mid, f_long,
@@ -26,8 +26,9 @@
 // A factor is the class's acceptance (accepted drafts per round) over the Short class's, so Short
 // is 1. It is known only when at least two cards that differ in generation (architecture) or both
 // name routes that differ measured it, each within the tolerance of their mean
-// (|v - mean| / mean); the estimate is that mean. A key holding a placeholder ("auto", an id
-// "placeholder:...", a corpus that is no "sha256:" hash) is never known. Otherwise factor() says
+// (|v - mean| / mean); the estimate is that mean. Routes count by family (the text before the
+// first '.'). A key holding a placeholder ("auto", an id "placeholder:...", in any case, or a
+// corpus that is no "sha256:" and 64 lower-case hex digits) is never known. Otherwise factor() says
 // unknown and why. Unknown is never 1.0.
 //
 // No decision reads factor() yet: this is the data and the API (idea 32, step 2); the rule that
@@ -96,13 +97,13 @@ struct ContextFactors {
 // alone or a full name ("rmma.m1.n8.w4x1"). Lower case only.
 [[nodiscard]] bool known_route(std::string_view route);
 
-// Parses a "context_classes" object. Throws std::invalid_argument naming what is wrong: bounds not
-// three strictly increasing positive integers, an entry missing a key field, with a tolerance
-// other than kContextTolerance or a byte class that is not an object of string activations, kv,
-// summation and parity, a card whose gpu_class is not a known chip or architecture (ga102,
-// gb203:84sm, sm86) or names more SMs than its chip has, whose route is unknown, whose schedule
-// is not the entry's, or that repeats another card's class and route, factors not 4 values in
-// (0, 1.5] or null with a Short factor of 1, two entries of the same key.
+// Parses a "context_classes" object. Throws std::invalid_argument naming what is wrong: bounds
+// other than kContextBounds, an entry missing a key field, with a tolerance other than
+// kContextTolerance or a byte class that is not an object of string activations, kv, summation and
+// parity, a card whose gpu_class is not a known chip or architecture (ga102, gb203:84sm, sm86) or
+// names more SMs than its chip has, whose route is unknown, whose schedule is not the entry's, or
+// that repeats another card's class and route, factors not 4 values in (0, 1.5] or null with a
+// Short factor of 1, two entries of the same key.
 [[nodiscard]] ContextFactors parse_context_factors(const nlohmann::json& object);
 
 struct ClassFactor {
@@ -110,10 +111,10 @@ struct ClassFactor {
     std::string reason; // why it is unknown; empty when known
 };
 
-// The factor for `key` in class `c`, or unknown with a labelled reason: no context_classes, other
-// class bounds, no entry for the model, a key field that differs ("<field> differs"), a placeholder
-// key ("placeholder key: <field>=<value>"), no data for the class, fewer than two cards of
-// different generations or routes, a card beyond the tolerance of the mean. No caller yet.
+// The factor for `key` in class `c`, or unknown with a labelled reason: no context_classes, no
+// entry for the model, a key field that differs ("<field> differs"), a placeholder key
+// ("placeholder key: <field>=<value>"), no data for the class, fewer than two cards of different
+// generations or routes, a card beyond the tolerance of the mean. No caller yet.
 [[nodiscard]] ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key,
                                  ContextClass c);
 

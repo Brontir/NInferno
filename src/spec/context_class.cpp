@@ -43,8 +43,18 @@ bool fast(const Json& byte_class) {
 
 // A key value that stands for something not recorded: never matched to a running server.
 bool placeholder(std::string_view value) {
-    return value == "auto" || value.starts_with("placeholder:");
+    const auto lower = ascii_lower(value);
+    return lower == "auto" || lower.starts_with("placeholder:");
 }
+
+// A corpus hash: "sha256:" and 64 lower-case hex digits.
+bool corpus_hash(const std::string& corpus) {
+    static const std::regex hash("sha256:[0-9a-f]{64}");
+    return std::regex_match(corpus, hash);
+}
+
+// The family of a route name: the text before its first '.' ("rmma" of "rmma.m1.n8.w4x1").
+std::string_view route_family(std::string_view route) { return route.substr(0, route.find('.')); }
 
 std::string percent(double fraction) {
     char text[32];
@@ -83,7 +93,7 @@ std::vector<Field> compare(const AcceptanceKey& entry, const AcceptanceKey& want
 bool known_route(std::string_view route) {
     static const std::regex name("[a-z0-9_]+(\\.[a-z0-9]+)*");
     if (!std::regex_match(route.begin(), route.end(), name)) { return false; }
-    const auto family = route.substr(0, route.find('.'));
+    const auto family = route_family(route);
     for (const char* known : {"scalar", "rmma", "w4a4", "tiled", "w4a8", "w4a8ws", "staged",
                               "nvfp4t", "r8", "ggml_mmq", "ggml_vec", "i8"}) {
         if (family == known) { return true; }
@@ -127,6 +137,9 @@ ContextFactors parse_context_factors(const Json& object) {
             refuse("bounds must be strictly increasing positive integers");
         }
         out.bounds[i] = b.get<std::int64_t>();
+    }
+    if (out.bounds != kContextBounds) {
+        refuse("bounds must be the lab's class bounds 1024, 8192, 24576");
     }
     const auto entries = object.value("entries", Json::array());
     if (!entries.is_array()) { refuse("entries must be a list"); }
@@ -194,7 +207,8 @@ ContextFactors parse_context_factors(const Json& object) {
                        "' is not the entry's '" + entry.schedule + "'");
             }
             const auto same = [&](const CardFactors& o) {
-                return o.gpu_class == card.gpu_class && o.route == card.route;
+                return o.gpu_class == card.gpu_class &&
+                       route_family(o.route) == route_family(card.route);
             };
             if (std::any_of(entry.cards.begin(), entry.cards.end(), same)) {
                 refuse(where + ": card " + card.gpu_class + " is listed twice");
@@ -236,9 +250,6 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
         return ClassFactor{std::nullopt, std::move(reason)};
     };
     if (!factors.present) { return unknown("the registry has no context_classes"); }
-    if (factors.bounds != kContextBounds) {
-        return unknown("context_classes measured for other class bounds");
-    }
     // The entry of this model that matches every field, else the one matching the longest run of
     // fields in lookup order, whose first differing field is the reason.
     const ContextEntry* best = nullptr;
@@ -274,7 +285,7 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
             return unknown("placeholder key: byte_class." + field + "=" + value.get<std::string>());
         }
     }
-    if (!k.corpus.starts_with("sha256:")) { return unknown("placeholder key: corpus=" + k.corpus); }
+    if (!corpus_hash(k.corpus)) { return unknown("placeholder key: corpus=" + k.corpus); }
 
     const auto i = static_cast<std::size_t>(c);
     std::vector<const CardFactors*> measured;
@@ -288,7 +299,8 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
     for (const auto* a : measured) {
         for (const auto* b : measured) {
             differ = differ || a->arch != b->arch ||
-                     (!a->route.empty() && !b->route.empty() && a->route != b->route);
+                     (!a->route.empty() && !b->route.empty() &&
+                      route_family(a->route) != route_family(b->route));
         }
     }
     if (!differ) {

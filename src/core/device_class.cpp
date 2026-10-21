@@ -388,7 +388,11 @@ std::string gpu_chip_arch(std::string_view gpu_class) {
     const auto chip = gpu_class.substr(0, gpu_class.find(':'));
     if (chip.size() > 2 && chip.starts_with("sm") &&
         chip.find_first_not_of("0123456789", 2) == std::string_view::npos) {
-        return std::string(chip);
+        if (chip.size() != gpu_class.size()) { return {}; }
+        for (const auto& full : kFullChips) {
+            if (gpu_arch_id(full.major, full.minor) == chip) { return std::string(chip); }
+        }
+        return {};
     }
     for (const auto& full : kFullChips) {
         if (chip == full.chip) { return gpu_arch_id(full.major, full.minor); }

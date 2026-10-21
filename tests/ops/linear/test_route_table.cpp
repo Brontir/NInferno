@@ -11,6 +11,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
+#include "spec/context_class.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -153,6 +154,15 @@ int similar_default() {
 }
 
 int main(int argc, char** argv) {
+    // Every route family's name is one spec/context_class.h's known_route takes (it keeps its own
+    // list: the speculation library does not link the GEMM). No device needed.
+    for (int f = 0; f <= static_cast<int>(generic::Family::I8Mma); ++f) {
+        const generic::Route route{static_cast<generic::Family>(f), 0};
+        if (!ninferno::spec::known_route(generic::route_name(route))) {
+            std::cerr << "FAILED: known_route refuses " << generic::route_name(route) << '\n';
+            return 1;
+        }
+    }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
