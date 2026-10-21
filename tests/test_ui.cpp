@@ -752,6 +752,8 @@ int child(const std::string& mode) {
         std::cerr << "12:00 INFO  context | 32 768 tokens per request (auto)" << std::endl;
         std::cout << "12:00 INFO  speculation | registry x | default mtp:3\n"
                      "12:00 INFO  speculation | family code -> mtp:5\n"
+                     "12:00 WARN  speculation | first warning\n"
+                     "12:00 WARN  speculation | fit fallback: x; running mtp:3\n"
                      "  m-Q4_K_M.gguf: 42% (1.2 GB of 2.9 GB), 61 MB/s, about 1 min left"
                   << std::endl;
         return 3;
@@ -780,6 +782,8 @@ void test_processes([[maybe_unused]] const std::string& self) {
         "echo '12:00 INFO  context | 32 768 tokens per request (auto)' >&2; "
         "echo '12:00 INFO  speculation | registry x | default mtp:3'; "
         "echo '12:00 INFO  speculation | family code -> mtp:5'; "
+        "echo '12:00 WARN  speculation | first warning'; "
+        "echo '12:00 WARN  speculation | fit fallback: x; running mtp:3'; "
         "echo '  m-Q4_K_M.gguf: 42% (1.2 GB of 2.9 GB), 61 MB/s, about 1 min left'; exit 3"};
 #endif
     spec.env["NINFERNO_UI_TEST"] = "env-ok";
@@ -792,12 +796,14 @@ void test_processes([[maybe_unused]] const std::string& self) {
     }
     check(info.state == "failed" && info.exit_code == 3, "exit code kept");
     const auto lines = pool.log(id);
-    check(lines.size() == 7 && lines[2] == "env-ok", "output and environment captured");
+    check(lines.size() == 9 && lines[2] == "env-ok", "output and environment captured");
     check(info.percent == 42 && info.progress_file == "m-Q4_K_M.gguf" &&
               info.progress == "42% (1.2 GB of 2.9 GB), 61 MB/s, about 1 min left",
           "download progress noted");
     check(info.context == "32 768 tokens per request (auto)", "serve's context noted");
     check(info.speculation == "registry x | default mtp:3", "serve's first speculation line noted");
+    check(info.speculation_fallback == "fit fallback: x; running mtp:3",
+          "serve's last speculation warning noted");
 
     LaunchSpec sleeper;
     sleeper.kind   = "serve";

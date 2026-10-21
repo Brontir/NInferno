@@ -511,6 +511,49 @@ int main() {
     failures +=
         check(done.at("speculative").at("accepted_per_position") == Json::array({290, 240, 190}),
               "speculative position counts missing");
+    failures += check(done.at("speculative").at("fallback") == "none" &&
+                          done.at("speculative").at("context_plain") == false &&
+                          !done.at("speculative").contains("config"),
+                      "a request without a speculation fallback must log fallback none");
+    {
+        GenerationOutcome plain                 = outcome;
+        plain.metrics.speculative_config        = "plain";
+        plain.metrics.speculative_selection     = "fixed";
+        plain.metrics.speculative_reason        = "--spec-select fixed";
+        plain.metrics.speculative_context_plain = true;
+        plain.metrics.speculative_fallback = speculation_fallback(plain.metrics, "fit_fallback");
+        const Json logged =
+            Json::parse(format_request_done_json("serve-test", 3002, context, plain));
+        failures += check(logged.at("speculative").at("fallback") == "context_plain" &&
+                              logged.at("speculative").at("context_plain") == true &&
+                              logged.at("speculative").at("selection") == "fixed",
+                          "a context-bound plain request must log fallback context_plain");
+        failures += check(
+            render_request_done(context, plain)
+                    .message.find(" | plain (fixed) | mtp accepted 720/900 (80.0%) | fallback "
+                                  "context_plain") != std::string::npos,
+            "the operational line must name the speculation fallback");
+    }
+    {
+        // The first fallback that applies, else the server's own since startup.
+        GenerationMetrics m;
+        failures += check(speculation_fallback(m, "") == "none" &&
+                              speculation_fallback(m, "none") == "none" &&
+                              speculation_fallback(m, "startup_plain") == "startup_plain",
+                          "no request fallback: the startup one");
+        m.speculative_step_downs = 1;
+        failures += check(speculation_fallback(m, "fit_fallback") == "step_down",
+                          "a step-down outranks the startup fallback");
+        m.speculative_watchdog_tripped = true;
+        failures += check(speculation_fallback(m, "none") == "watchdog_plain",
+                          "a watchdog trip to plain outranks its step-downs");
+        m.speculative_load_plain = true;
+        failures += check(speculation_fallback(m, "none") == "load_plain",
+                          "a load bound of 0 outranks the watchdog");
+        m.speculative_context_plain = true;
+        failures += check(speculation_fallback(m, "none") == "context_plain",
+                          "the context bound outranks every other fallback");
+    }
     failures += check(done.at("materialization").at("predicted_total_ns") == 250000 &&
                           done.at("materialization").at("targets_evaluated") == 7 &&
                           done.at("materialization").at("stop_reason") == "queue_exhausted" &&

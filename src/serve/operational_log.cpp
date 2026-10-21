@@ -293,6 +293,9 @@ OperationalRecord render_request_done(const RequestLogContext& context,
     if (metrics.speculative_load_plain) {
         out << " | load plain " << product::format_pretty_count(metrics.speculative_plain_steps);
     }
+    if (!metrics.speculative_fallback.empty() && metrics.speculative_fallback != "none") {
+        out << " | fallback " << metrics.speculative_fallback;
+    }
     if (outcome.thinking.configured_budget) {
         out << " | thinking "
             << product::format_pretty_count(outcome.thinking.model_thinking_tokens) << '/'
@@ -662,6 +665,12 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         } else {
             logger_->warn("{}", line);
         }
+    }
+    // One line with what runs since startup, whatever chose it (/v1/models meta.speculation).
+    {
+        const StartupSpeculation& startup = service.startup_speculation();
+        logger_->info("speculation | serves {} ({}) | fallback {} | {}", startup.config,
+                      startup.selection, startup.fallback, startup.reason);
     }
 
     if (cache.enabled) {

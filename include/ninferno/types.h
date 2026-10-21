@@ -1239,6 +1239,9 @@ struct SpeculativeStats {
     // tokens.
     std::uint64_t plain_steps = 0;
     bool load_plain           = false;
+    // Its prompt held more tokens than the context bound (SpeculativeOptions::context_limit):
+    // a request that would have drafted decoded plainly from its first token.
+    bool context_plain = false;
     // The acceptance watchdog's verdict (SpeculativeOptions::acceptance_floor): the round it
     // tripped at and the rolling tokens per round it saw. From then on the request drafts no
     // more (fallback_steps beside drafting rows, else plain_steps).

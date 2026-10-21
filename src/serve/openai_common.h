@@ -13,6 +13,9 @@
 
 namespace ninferno::serve {
 
+struct GenerationMetrics;
+struct StartupSpeculation;
+
 enum class OpenAIPromptCacheAutomatic : std::uint8_t {
     Default,
     Requested,
@@ -31,10 +34,19 @@ struct OpenAIPromptCachePolicy {
 [[nodiscard]] OpenAIPromptCachePolicy parse_openai_prompt_cache_policy(const RequestJson& body);
 void apply_openai_prompt_cache_policy(GenerationRequest& request, OpenAIPromptCachePolicy policy);
 
+// `speculation`, when given, is meta.speculation: what the server runs since startup.
 std::string make_models_list(const std::string& model_id, std::int64_t created,
-                             std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata);
+                             std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
+                             const StartupSpeculation* speculation = nullptr);
 std::string make_model_object(const std::string& model_id, std::int64_t created,
-                              std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata);
+                              std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
+                              const StartupSpeculation* speculation = nullptr);
+// The speculation a request ran (GenerationMetrics' speculative_* choice): config, selection,
+// reason, fallback (speculation_fallback()) and note when there is one. OpenAI chat
+// timings.speculation carries it with its counters; Anthropic messages and OpenAI Responses carry
+// it as usage.ninferno.speculation, an extension key strict clients ignore. Null when the request
+// carries no configuration.
+[[nodiscard]] nlohmann::json speculation_summary_json(const GenerationMetrics& metrics);
 // GET /props: llama.cpp's server properties, as clients read them for the context and slots.
 std::string make_props(const std::string& model_id, std::uint32_t max_context,
                        std::uint32_t slots, const ninferno::ModelMetadata& metadata);

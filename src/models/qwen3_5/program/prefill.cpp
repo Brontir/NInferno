@@ -655,11 +655,16 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
         ensure_sequence_kv_mapped(sequence, prompt_tokens, backend_materialized);
         // A prompt past the context bound decodes plainly (SpeculativeOptions::context_limit).
         RequestSpeculationPlan speculation = request_plan.speculation;
-        if (speculation_context_limit != 0 && prompt_tokens > speculation_context_limit) {
+        const bool past_context_limit =
+            speculation_context_limit != 0 && prompt_tokens > speculation_context_limit;
+        if (past_context_limit) {
             speculation.draft_depth = 0;
             speculation.step_down.clear();
         }
         install_sampling(sequence, request, request_plan.sampling, speculation);
+        request.speculative_stats.context_plain = past_context_limit &&
+                                                  speculative_backend != SpeculativeBackend::None &&
+                                                  request_plan.speculation.draft_depth != 0;
         sequence.rope_delta = staged.prompt.rope_delta;
         set_device_i32(io.rope_delta, sequence.rope_delta);
 

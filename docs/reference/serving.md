@@ -345,9 +345,24 @@ fit either, the refusal is plain decode's and says `--spec auto` was refused fir
 ### Per-request record
 
 The configuration each request ran is in its request-log record (`speculative.config`, `family`,
-`selection`, `reason`, `floor`, `plain_steps`, `wide_rounds`, `capped_rounds`, `ungraphed_rounds`,
-`load_plain`, `watchdog_tripped`, `shared_trip_deferrals`) and in the OpenAI Chat
-`timings.speculation` object.
+`selection`, `reason`, `note`, `floor`, `fallback`, `context_plain`, `plain_steps`, `wide_rounds`,
+`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`)
+and in the OpenAI Chat `timings.speculation` object. Anthropic messages and OpenAI Responses carry
+`config`, `selection`, `reason`, `fallback` and `note` as `usage.ninferno.speculation`, an
+extension key strict clients ignore. Every request carries them, also under an explicit `--spec`
+and on a server plain since startup:
+
+| Field | Meaning |
+|---|---|
+| `config` | what the request ran: `dflash:7`, `mtp K=3` (explicit `--spec`), `plain` |
+| `selection` | how: `fixed` or `thinking` (`--spec-select`), `explicit` (`--spec`), `startup` (`--spec auto` runs nothing) |
+| `reason` | why that choice, or why the server is plain |
+| `note` | what the profile would have run, and the fit fallback's refusal, when there is one |
+| `fallback` | the first that applies: `context_plain` (the prompt passed the profile's `context_limit`: plain from the first token), `load_plain` (a load bound of 0), `watchdog_plain` (the acceptance watchdog stopped drafting), `step_down` (the watchdog went shallower), `fit_fallback` (the profile's choice did not fit at startup; a fallback runs), `startup_plain` (nothing that drafts fit at startup), `none` |
+
+`GET /v1/models` shows the startup part before any request (`meta.speculation`), and the startup
+log has one line with it: `speculation | serves <config> (<selection>) | fallback <fallback> |
+<reason>`. The UI keeps the last speculation warning of a server's log beside it.
 
 ### Measured throughput under load
 
@@ -489,6 +504,7 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `ftype` | encoded tensor formats of the artifact, joined with `+` when mixed |
 | `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
 | `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
+| `speculation` | what the server runs since startup: `config`, `selection`, `reason`, `fallback` ([per-request record](#per-request-record)) |
 
 `GET /v1/models/{id}` returns the same object for the single configured alias and `404` for any
 other id.

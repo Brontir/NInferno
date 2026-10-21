@@ -43,6 +43,8 @@ struct ProcessInfo {
     // and the speculation it runs ("speculation | ...", the first such line).
     std::string context;
     std::string speculation;
+    // The last speculation warning ("WARN  speculation | ..."): a fit fallback or plain decode.
+    std::string speculation_fallback;
     // The converted artifact it runs ("cached artifact PATH (" / "converted artifact PATH (").
     std::string artifact;
     bool converted = false; // "converted artifact": made now (its original may go)

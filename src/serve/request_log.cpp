@@ -271,6 +271,9 @@ Json speculative_json(const GenerationMetrics& metrics) {
              {"copy_accepted_tokens", metrics.speculative_copy_accepted},
              {"shared_trip_deferrals", metrics.speculative_trips_held},
              {"load_plain", metrics.speculative_load_plain},
+             {"context_plain", metrics.speculative_context_plain},
+             {"fallback", metrics.speculative_fallback.empty() ? std::string("none")
+                                                               : metrics.speculative_fallback},
              {"watchdog_tripped", metrics.speculative_watchdog_tripped},
              {"watchdog_round", metrics.speculative_watchdog_round},
              {"step_downs", metrics.speculative_step_downs},

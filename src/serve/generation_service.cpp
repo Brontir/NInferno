@@ -296,6 +296,14 @@ void mark_fit_fallback(SpeculativeOptions& speculative, std::string_view label) 
 
 } // namespace
 
+std::string speculation_fallback(const GenerationMetrics& metrics, std::string_view startup) {
+    if (metrics.speculative_context_plain) { return "context_plain"; }
+    if (metrics.speculative_load_plain) { return "load_plain"; }
+    if (metrics.speculative_watchdog_tripped) { return "watchdog_plain"; }
+    if (metrics.speculative_step_downs != 0) { return "step_down"; }
+    return startup.empty() ? std::string("none") : std::string(startup);
+}
+
 std::string auto_plain_reason(const std::string& refused, const std::string& why,
                               bool prefill_chunk_explicit) {
     return "--spec auto (" + refused +
@@ -440,10 +448,15 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             }
             if (served_speculation_) {
                 served_speculation_->engine.load = engine_options.speculative.load;
-                served_speculation_->notes.push_back(
+                const std::string why =
                     "load " + product::speculation_load_label(asked.load) +
                     " does not fit with graphs of its own on this device: bounds at captured "
-                    "depths instead");
+                    "depths instead";
+                served_speculation_->notes.push_back(why);
+                // A fit fallback like the profile's own (startup and request fallback reports).
+                if (served_speculation_->fit_fallback.empty()) {
+                    served_speculation_->fit_fallback = why;
+                }
             }
         }
     };
@@ -627,6 +640,40 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             "prefill chunk " + std::to_string(engine_->options().prefill_chunk) + " (of " +
             std::to_string(options_.prefill_chunk) + ") to fit the served context");
     }
+    // What runs since startup, for /v1/models, the startup log, and every request when the
+    // server does not choose per request (choose_speculation).
+    if (served_speculation_) {
+        const spec::MenuChoice& primary = served_speculation_->menu.primary;
+        const bool fell_back            = !served_speculation_->fit_fallback.empty();
+        startup_speculation_            = {
+                       .config    = primary.config.enabled() ? primary.config.label() : "plain",
+                       .selection = options_.per_request_speculation ? "thinking" : "fixed",
+                       .reason    = fell_back ? served_speculation_->fit_fallback
+                                              : "profile " + served_speculation_->source,
+                       .fallback  = fell_back ? "fit_fallback" : "none",
+        };
+    } else if (!speculation_plain_reason_.empty()) {
+        startup_speculation_ = {.selection = "startup",
+                                .reason    = speculation_plain_reason_,
+                                .fallback  = "startup_plain"};
+    } else if (options_.speculation_from_profile) {
+        std::string why = "no speculation profile for this model on this GPU";
+        for (const std::string& note : speculation_absent_notes_) {
+            why += (&note == &speculation_absent_notes_.front() ? " (" : "; ") + note;
+        }
+        if (!speculation_absent_notes_.empty()) { why += ")"; }
+        startup_speculation_ = {.selection = "startup", .reason = std::move(why)};
+    } else {
+        const SpeculativeOptions& given = engine_->options().speculative;
+        const bool drafts               = given.backend != SpeculativeBackend::None;
+        startup_speculation_ = {.config    = drafts ? product::speculation_label(given) : "plain",
+                                .selection = "explicit",
+                                .reason    = "--spec"};
+    }
+    // An explicit --spec runs the engine's own watchdog floor.
+    if (!served_speculation_ && engine_->options().speculative.backend != SpeculativeBackend::None) {
+        startup_speculation_.floor = engine_->options().speculative.acceptance_floor;
+    }
     request_capacity_ = std::make_shared<RequestCapacity>(
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests);
     count_capacity_ = std::make_shared<RequestCapacity>(
@@ -762,7 +809,14 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
 
 void GenerationService::choose_speculation(bool thinking, ninferno::RequestOptions& request_options,
                                            PreparedRequest& prepared) const {
-    if (!served_speculation_) { return; }
+    prepared.speculation_fallback = startup_speculation_.fallback;
+    if (!served_speculation_) {
+        prepared.speculation_config    = startup_speculation_.config;
+        prepared.speculation_selection = startup_speculation_.selection;
+        prepared.speculation_reason    = startup_speculation_.reason;
+        prepared.speculation_floor     = startup_speculation_.floor;
+        return;
+    }
     const spec::SpeculationMenu& menu = served_speculation_->menu;
     const spec::MenuChoice* choice    = &menu.primary;
     if (!options_.per_request_speculation) {
@@ -776,6 +830,12 @@ void GenerationService::choose_speculation(bool thinking, ninferno::RequestOptio
     }
     prepared.speculation_config = choice->config.enabled() ? choice->config.label() : "plain";
     prepared.speculation_note   = choice->note;
+    // The fit fallback the server runs in place of the profile's choice: why.
+    if (!served_speculation_->fit_fallback.empty()) {
+        prepared.speculation_note +=
+            (prepared.speculation_note.empty() ? "fit fallback: " : "; fit fallback: ") +
+            served_speculation_->fit_fallback;
+    }
     prepared.speculation_floor =
         choice->config.enabled() ? product::watchdog_floor(choice->floor) : 0.0;
 }
@@ -930,10 +990,13 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_copy_accepted         = result.speculative.copy_accepted_tokens;
     outcome.metrics.speculative_trips_held            = result.speculative.shared_trip_deferrals;
     outcome.metrics.speculative_load_plain            = result.speculative.load_plain;
+    outcome.metrics.speculative_context_plain         = result.speculative.context_plain;
     outcome.metrics.speculative_watchdog_tripped      = result.speculative.watchdog_tripped;
     outcome.metrics.speculative_watchdog_round        = result.speculative.watchdog_round;
     outcome.metrics.speculative_step_downs            = result.speculative.step_downs;
     outcome.metrics.speculative_final_draft_window    = result.speculative.final_draft_window;
+    outcome.metrics.speculative_fallback =
+        speculation_fallback(outcome.metrics, prepared.speculation_fallback);
     outcome.metrics.constraint_masked_positions = result.constraint.masked_positions;
     outcome.metrics.constraint_mask_host_seconds = result.constraint.mask_host_seconds;
 

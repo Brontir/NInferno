@@ -94,6 +94,9 @@ void note_fact(ProcessInfo& info, const std::string& line) {
     };
     take(" context | ", info.context, false);
     take(" speculation | ", info.speculation, true);
+    if (line.find("WARN ") != std::string::npos) {
+        take(" speculation | ", info.speculation_fallback, false);
+    }
     static const std::regex download(R"((\S+): (\d{1,3})% \((.+ of [^)]+)\)(.*)$)");
     std::smatch match;
     if (std::regex_search(line, match, download)) {
@@ -127,6 +130,7 @@ nlohmann::json ProcessInfo::to_json() const {
             {"last_line", last_line},
             {"context", context},
             {"speculation", speculation},
+            {"speculation_fallback", speculation_fallback},
             {"artifact", artifact},
             {"percent", percent},
             {"progress", progress},
