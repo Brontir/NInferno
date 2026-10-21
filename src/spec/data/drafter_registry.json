@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 106,
+  "version": 107,
   "published": "2026-10-21",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -6761,7 +6761,7 @@
             "tokens_per_round": 3.584917228694053
           },
           "gpu": "NVIDIA GeForce RTX 5070 Ti",
-          "gpu_class": "gb203",
+          "gpu_class": "gb203:70sm",
           "measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
           "measured_at": "2026-10-20",
           "non_thinking": {
@@ -6824,7 +6824,7 @@
             }
           ],
           "load_measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), context 8192, kv fp8, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T14:59:10Z",
-          "revision": "6b6eb908e34a"
+          "revision": "439ce0c2b6da"
         }
       ]
     },
