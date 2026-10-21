@@ -1321,7 +1321,10 @@ int check_nvfp4_a8_routes() {
         const generic::Route r0 = generic::select_route(p4, no_divisor, t, false);
         const bool wide         = t >= 17;
         const ops::ScopedPrefillRoutes prefill(true);
-        if ((r8.family == generic::Family::W4a8Mma) != wide ||
+        // Without tensor mma.sync (sm_70) the tiled tensor-core route takes these calls whatever
+        // the policy (volta_tiled_route); the callers leave their plans for it all the same.
+        const bool volta = generic::volta_tiled_route(dw.weight, a8, t).has_value();
+        if ((r8.family == generic::Family::W4a8Mma) != (wide && !volta) ||
             generic::owned_prefill_w4a8(dw.weight, a8, t) != wide) {
             std::cerr << "nvfp4 A8 T=" << t << ": " << generic::route_name(r8) << "\n";
             ++failures;
