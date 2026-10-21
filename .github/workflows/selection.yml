@@ -1,16 +1,38 @@
 name: selection
 
 # The deterministic-decision checks that need no GPU (docs/maintainer/deterministic-decisions.md):
-# the source scan of the selection rules, and the CTest suites labelled "cpu" (the selector's
-# properties and digests over substituted boards, its golden files, route classes). The selector is
-# host code inside the CUDA ops library (route admission reads what the build compiled), so the
-# tree configures only with the CUDA toolkit: the job builds in NVIDIA's CUDA container and runs no
-# kernel.
+# the source scan of the selection rules and the digests' self-consistency (every route set), and
+# the CTest suites labelled "cpu" (the selector's properties and digests over substituted boards,
+# its golden files, route classes) for the route sets a CPU job can build: full (120a) and base
+# (sm_89). sm_70 and sm_75 are built and regenerated on their stands (tests/README.md). The
+# selector is host code inside the CUDA ops library (route admission reads what the build
+# compiled), so the tree configures only with the CUDA toolkit: the job builds in NVIDIA's CUDA
+# container and runs no kernel.
 
 on:
   pull_request:
+    paths:
+      - "src/**"
+      - "include/**"
+      - "tests/**"
+      - "cmake/**"
+      - "routes/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "tools/audit/**"
+      - ".github/workflows/selection.yml"
   push:
     branches: [master]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "tests/**"
+      - "cmake/**"
+      - "routes/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "tools/audit/**"
+      - ".github/workflows/selection.yml"
 
 concurrency:
   group: selection-${{ github.ref }}
@@ -26,44 +48,64 @@ jobs:
           python-version: "3.11"
       - name: Selection rules read no environment, clock, timer or file
         run: python3 tools/audit/selection_static_check.py .
+      - name: Every route set's digests are its golden files' hashes
+        run: python3 tools/audit/selector_digest_check.py .
 
   properties:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ["120a", "89"] # the full and the base route sets
     container:
       image: nvidia/cuda:13.2.1-devel-ubuntu24.04
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 3G
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "1"
     steps:
       - name: Build tools and the tree's host dependencies
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            cmake ninja-build pkg-config ccache git python3 \
-            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libcurl4-openssl-dev
+            cmake ninja-build pkg-config ccache git python3 zstd \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libcurl4-openssl-dev \
+            libssl-dev
           # The ops library links the driver API (TMA tensor maps); there is no driver here, and
           # the stub loads and answers every call with an error: these tests make none.
           ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so.1
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - name: Let the build read the checkout's commit (owned by another user in the container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Restored from the newest cache of this architecture; saved even when the build fails or
+      # times out, so a cold build still seeds the next run.
+      - uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: ccache-selection-120a-${{ github.sha }}
-          restore-keys: ccache-selection-120a-
-      - name: Configure (120a, the full route set)
+          key: ccache-selection-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: ccache-selection-${{ matrix.arch }}-
+      - name: Configure (tests only, no apps or benchmarks)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CUDA_ARCHITECTURES=120a -DNINFERNO_CUDA_LINEINFO=OFF \
+            -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.arch }} -DNINFERNO_CUDA_LINEINFO=OFF \
             -DNINFERNO_BUILD_APPS=OFF -DNINFERNO_BUILD_BENCHMARKS=OFF -DBUILD_TESTING=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
       - name: Build the cpu-labelled tests
+        timeout-minutes: 290
         run: |
           targets=$(ctest --test-dir build -L cpu -N -V | sed -n 's/^.*Test command: \([^ ]*\).*$/\1/p' \
             | xargs -n1 basename | grep '^ninferno_' | sort -u)
           echo "targets: $targets"
           cmake --build build -j "$(nproc)" --target $targets
-          ccache --show-stats || true
       - name: Run the cpu-labelled tests
         run: ctest --test-dir build -L cpu --output-on-failure
+      - name: ccache statistics
+        if: always()
+        run: ccache --show-stats || true
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache
+          key: ccache-selection-${{ matrix.arch }}-${{ github.run_id }}

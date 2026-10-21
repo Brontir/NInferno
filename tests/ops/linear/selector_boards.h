@@ -182,9 +182,13 @@ struct Choices {
     std::vector<Item> items;
 };
 
-// Called for every choice that did not throw, with the weight it was made for.
+// Called for every choice that did not throw, with the weight it was made for; problem() once per
+// problem before any of its choices (the property suite primes the dense tuner there).
 struct ChoiceCheck {
-    virtual ~ChoiceCheck()                     = default;
+    virtual ~ChoiceCheck() = default;
+
+    virtual void problem(const generic::Problem& /*problem*/, const Weight& /*weight*/) {}
+
     virtual void check(const Row& row, std::int32_t tokens, const Weight& weight,
                        const Outcome& outcome) = 0;
 };
@@ -225,6 +229,7 @@ inline Choices evaluate(const char* board_name, ChoiceCheck* checker = nullptr) 
                     const std::int32_t rows =
                         epilogue == generic::Epilogue::SwiGlu ? shape.n / 2 : shape.n;
                     const generic::Problem problem{qtype, policy, rows, shape.k, epilogue};
+                    if (checker != nullptr) checker->problem(problem, w);
                     for (const Profile profile :
                          {Profile::Speed, Profile::Prefill, Profile::Invariant}) {
                         std::optional<ops::ScopedInvariantRoutes> invariant;

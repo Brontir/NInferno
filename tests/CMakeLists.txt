@@ -48,3 +48,10 @@ add_test(NAME ninferno_selection_static_check
   COMMAND ${Python3_EXECUTABLE} -B "${PROJECT_SOURCE_DIR}/tools/audit/selection_static_check.py"
           "${PROJECT_SOURCE_DIR}")
 set_tests_properties(ninferno_selection_static_check PROPERTIES LABELS cpu)
+
+# The selector digests of every route set (sm_70 and sm_75 included, which no CPU job builds) are
+# the hashes of their golden files, and name the same boards. No GPU.
+add_test(NAME ninferno_selector_digest_check
+  COMMAND ${Python3_EXECUTABLE} -B "${PROJECT_SOURCE_DIR}/tools/audit/selector_digest_check.py"
+          "${PROJECT_SOURCE_DIR}")
+set_tests_properties(ninferno_selector_digest_check PROPERTIES LABELS cpu)

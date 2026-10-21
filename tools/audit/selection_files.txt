@@ -1,0 +1,30 @@
+# The files under src/ that hold decision rules (routes, plans, bands, tuners), scanned by
+# selection_static_check.py: one glob per line, relative to the repository root, ** for any depth.
+# Every glob must match a file. Kernels (*.cu, *.cuh) and the option readers (route_options.h:
+# the user's --route-dir / --route-table, an explicit option) are not rules.
+
+# The generic projection path: selector, tuner, route tables, R8 decode table.
+src/ops/generic/generic_gemm.cpp
+src/ops/generic/generic_tune.cpp
+src/ops/generic/route_table.h
+src/ops/generic/r8_decode_table.h
+src/ops/route_table.cpp
+src/ops/prefill_routes.cpp
+# Shared route and band rules.
+src/ops/common/column_routes.h
+src/ops/common/route_compute.h
+src/ops/common/route_probe.h
+src/ops/common/shape_routes.h
+src/ops/common/small_t_bands.h
+# The MoE tuner.
+src/ops/moe/moe_tune.cpp
+# Per-op plans, dispatchers and policies.
+src/ops/**/*_plan.cpp
+src/ops/**/*_plan.h
+src/ops/**/plan.cpp
+src/ops/**/plan.h
+src/ops/**/plan_rules.h
+src/ops/**/split_policy.h
+src/ops/**/*_dispatch.cpp
+src/ops/**/*_dispatch.h
+src/ops/**/*_policy.h

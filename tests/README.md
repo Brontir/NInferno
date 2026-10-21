@@ -25,11 +25,35 @@ cmake --build build --parallel --target ninferno_sampling_test
 ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 ```
 
-The checks that need no GPU (the selector properties and digests over substituted boards, its golden
-files, route classes, the source scan of the selection rules) carry the label `cpu`; the
-`selection` workflow builds them in a CUDA container and runs `ctest --test-dir build -L cpu`.
-`ninferno_selector_properties_test --only <board>` runs one board; `--update` rewrites
-`ops/linear/selector_digest/<route set>.txt` after a change that means to move routes.
+The checks that need no GPU carry the label `cpu`: the selector's properties and digests over
+substituted boards, its golden files, route classes, the source scan of the selection rules and the
+digests' self-consistency. The `selection` workflow builds them for the full (120a) and base
+(sm_89) route sets in a CUDA container and runs `ctest --test-dir build -L cpu`; the sm_70 and
+sm_75 sets are built on their stands. `ninferno_selector_properties_test --only <board>` runs the
+boards whose name contains `<board>`.
+
+### Updating the selector goldens and digests
+
+A change that means to move routes regenerates, for each of the four route sets, the golden files
+(`ops/linear/selector_golden/<set>/`) and the digests (`ops/linear/selector_digest/<set>.txt`). The
+set is the build's: `full` from `CMAKE_CUDA_ARCHITECTURES=120a` (or 121a / 120f), `base` from 89
+(or 86, 80), `sm75` from 75 and `sm70` from 70. In each of the four trees, with the GPU hidden:
+
+```bash
+export CUDA_VISIBLE_DEVICES=
+build/tests/ninferno_selector_golden_test --update
+build/tests/ninferno_selector_properties_test --update
+ctest --test-dir build -L cpu --output-on-failure   # must now pass
+```
+
+The 120a and 89 trees build on any CUDA host (a workstation or the CI container). The 75 and 70
+trees are built on the RTX 2080 Ti and V100 stands (or any host whose nvcc targets them): their
+gate job builds the cpu-labelled targets, runs the two `--update` commands and packs
+`selector_golden/` and `selector_digest/` for the change to take. Check the result with
+`python3 tools/audit/selector_digest_check.py .`, which verifies that every set's digests are its
+golden files' hashes and that the four sets name the same boards. A property violation that the
+change accepts goes into `ops/linear/selector_properties_known.txt` with its gap, route sets
+(`@set`) and boards (`%board`, a `group`, `%known-pci` or `%unknown-pci`).
 
 ## Build options
 

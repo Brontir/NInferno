@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Source scan of the selection rules (docs/maintainer/deterministic-decisions.md, principle 8).
 
-The files under src/ops that choose a route, a plan, a band or a tune (their names say route,
-select, plan, tune, band, heuristic, dispatch, policy or rules, and the generic path's selector
-generic_gemm.cpp) may not read the environment, a clock, a timer, free memory or a file. Each
-existing exception is listed in selection_static_allow.txt with its count; the scan fails on a call
-the list does not cover and on an entry whose count is now lower (tighten it).
+The files that hold decision rules (an explicit list of globs, selection_files.txt: the generic
+selector, tuners, route tables, per-op plans, dispatchers and policies) may not read the
+environment, a clock, a timer, free memory or a file. Each existing exception is listed in
+selection_static_allow.txt with its count; the scan fails on a call the list does not cover and on
+an entry whose count is now lower (tighten it). An environment read whose name is not a string
+literal is flagged on its own (env-nonliteral): a built-up name escapes the variable check below.
 
 It also checks that every NINFERNO_* variable named in src/, apps/ or include/ is one the selector
 property suite sets (kEnvVars, tests/ops/linear/test_selector_properties.cpp), so a new knob is
@@ -20,14 +21,16 @@ import re
 import sys
 from pathlib import Path
 
-SELECTION_NAME = re.compile(r"route|select|plan|tune|band|heuristic|dispatch|policy|rules")
-EXTRA_FILES = {"src/ops/generic/generic_gemm.cpp"}
 SUFFIXES = {".cpp", ".h", ".cu", ".cuh"}
 
 # Name -> pattern of what a rule may not call.
 BANNED = {
     "getenv": re.compile(r"\bgetenv\s*\("),
     "sys::env": re.compile(r"\bsys::env\s*\("),
+    # An environment read whose name argument is not a string literal (a built-up name).
+    "env-nonliteral": re.compile(
+        r"\b(?:getenv|secure_getenv|sys::env)\s*\(\s*(?!\")|\b_dupenv_s\s*\([^,]*,[^,]*,\s*(?!\")"
+    ),
     "std::chrono": re.compile(r"\bstd::chrono\b|\b(steady|system|high_resolution)_clock\b"),
     "cudaEvent": re.compile(r"\bcudaEvent[A-Za-z]*\b"),
     "cudaMemGetInfo": re.compile(r"\bcudaMemGetInfo\b"),
@@ -67,17 +70,20 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
-def selection_files(root: Path) -> list[Path]:
-    files = []
-    for path in sorted((root / "src" / "ops").rglob("*")):
-        if path.suffix not in SUFFIXES or not path.is_file():
+def selection_files(root: Path) -> tuple[list[Path], list[str]]:
+    """The files selection_files.txt names, and the globs that match none."""
+    files: set[Path] = set()
+    empty: list[str] = []
+    listing = root / "tools" / "audit" / "selection_files.txt"
+    for raw in listing.read_text(encoding="utf-8").splitlines():
+        pattern = raw.split("#", 1)[0].strip()
+        if not pattern:
             continue
-        rel = path.relative_to(root).as_posix()
-        if "/shapes/" in rel:  # generated per-shape kernels, no rules
-            continue
-        if rel in EXTRA_FILES or SELECTION_NAME.search(path.name):
-            files.append(path)
-    return files
+        matched = [p for p in root.glob(pattern) if p.is_file() and p.suffix in SUFFIXES]
+        if not matched:
+            empty.append(pattern)
+        files.update(matched)
+    return sorted(files), empty
 
 
 def read_allow(path: Path) -> dict[tuple[str, str], int]:
@@ -99,7 +105,9 @@ def main() -> int:
     failures: list[str] = []
     seen: dict[tuple[str, str], int] = {}
     where: dict[tuple[str, str], list[str]] = {}
-    files = selection_files(root)
+    files, empty = selection_files(root)
+    for pattern in empty:
+        failures.append(f"selection_files.txt: {pattern} matches no file (renamed? fix the list)")
     for path in files:
         rel = path.relative_to(root).as_posix()
         code = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
