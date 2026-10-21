@@ -6,7 +6,7 @@ add_library(ninferno_artifact STATIC
   reader.cpp
   binder.cpp
   materializer.cpp
-  expert_groups.cpp
+  routed_experts.cpp
   views.cpp
 )
 ninferno_internal_includes(ninferno_artifact)

@@ -11,7 +11,6 @@
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/generic/generic_gemm.h"
-#include "ops/host_experts/host_kernels.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "runtime/engine/decision_sources.h"
@@ -72,7 +71,6 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
 runtime::HostFacts host_facts() {
     runtime::HostFacts host;
     host.logical_cores = std::thread::hardware_concurrency();
-    host.cpu_isa       = ops::host::isa_name(ops::host::detect_isa());
     try {
         if (const auto memory = read_host_memory()) { host.ram_bytes = memory->total_bytes; }
     } catch (const std::exception&) {}

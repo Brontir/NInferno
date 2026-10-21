@@ -629,69 +629,28 @@ int main() {
     } catch (const std::invalid_argument&) { zero_context_refused = true; }
     failures += check(zero_context_refused, "--max-context 0 was accepted");
 
-    // MoE expert offload: off by default; auto; a positive layer count; nothing else.
-    failures += check(parse({"ninferno-serve", "model.ninferno"}).moe_offload.mode ==
-                          ninferno::MoeOffloadMode::Off,
-                      "MoE expert offload is not off by default");
-    failures += check(parse({"ninferno-serve", "model.ninferno", "--moe-offload", "auto"})
-                              .moe_offload.mode == ninferno::MoeOffloadMode::Automatic,
-                      "--moe-offload auto was not automatic");
-    const ServeOptions offload_layers =
-        parse({"ninferno-serve", "model.ninferno", "--moe-offload", "12"});
-    failures += check(offload_layers.moe_offload.mode == ninferno::MoeOffloadMode::Layers &&
-                          offload_layers.moe_offload.layers == 12,
-                      "--moe-offload 12 did not offload 12 layers");
-    failures += check(parse({"ninferno-serve", "model.ninferno", "--moe-offload", "off"})
-                              .moe_offload.mode == ninferno::MoeOffloadMode::Off,
-                      "--moe-offload off was not off");
-    for (const char* refused : {"0", "-1", "all", ""}) {
-        bool offload_refused = false;
-        try {
-            (void)parse({"ninferno-serve", "model.ninferno", "--moe-offload", refused});
-        } catch (const std::invalid_argument&) { offload_refused = true; }
-        failures += check(offload_refused, "an invalid --moe-offload was accepted");
-    }
-    failures += check(serve_usage_text("ninferno-serve").find("--moe-offload") != std::string::npos,
-                      "serve help omits --moe-offload");
-
-    // Where decode computes offloaded experts: auto by default; cpu|gpu; threads for cpu only;
-    // both need offload on, in either order.
-    failures +=
-        check(offload_layers.moe_offload.compute == ninferno::MoeOffloadCompute::Automatic &&
-                  offload_layers.moe_offload.threads == 0,
-              "MoE offload compute is not auto with default threads");
-    const ServeOptions offload_cpu = parse({"ninferno-serve", "model.ninferno",
-                                            "--moe-offload-compute", "cpu",
-                                            "--moe-offload-threads", "6", "--moe-offload", "8"});
-    failures += check(offload_cpu.moe_offload.mode == ninferno::MoeOffloadMode::Layers &&
-                          offload_cpu.moe_offload.layers == 8 &&
-                          offload_cpu.moe_offload.compute == ninferno::MoeOffloadCompute::Cpu &&
-                          offload_cpu.moe_offload.threads == 6,
-                      "--moe-offload-compute cpu with 6 threads did not parse");
-    failures += check(parse({"ninferno-serve", "model.ninferno", "--moe-offload", "auto",
-                             "--moe-offload-compute", "gpu"})
-                              .moe_offload.compute == ninferno::MoeOffloadCompute::Gpu,
-                      "--moe-offload-compute gpu was not gpu");
-    const std::vector<std::vector<std::string>> compute_refused = {
-        {"ninferno-serve", "model.ninferno", "--moe-offload-compute", "cpu"},
-        {"ninferno-serve", "model.ninferno", "--moe-offload-threads", "4"},
-        {"ninferno-serve", "model.ninferno", "--moe-offload", "4", "--moe-offload-compute", "host"},
-        {"ninferno-serve", "model.ninferno", "--moe-offload", "4", "--moe-offload-threads", "0"},
-        {"ninferno-serve", "model.ninferno", "--moe-offload", "4", "--moe-offload-compute", "gpu",
-         "--moe-offload-threads", "4"},
+    // MoE expert offload was removed: each of its options is refused by name, with or without a
+    // value, and the help no longer offers it.
+    const std::vector<std::pair<std::vector<std::string>, std::string>> removed = {
+        {{"ninferno-serve", "model.ninferno", "--moe-offload", "auto"}, "--moe-offload"},
+        {{"ninferno-serve", "model.ninferno", "--moe-offload", "off"}, "--moe-offload"},
+        {{"ninferno-serve", "model.ninferno", "--moe-offload=4"}, "--moe-offload"},
+        {{"ninferno-serve", "model.ninferno", "--moe-offload-compute", "cpu"},
+         "--moe-offload-compute"},
+        {{"ninferno-serve", "model.ninferno", "--moe-offload-threads", "4"},
+         "--moe-offload-threads"},
     };
-    for (const std::vector<std::string>& refused : compute_refused) {
-        bool compute_was_refused = false;
+    for (const auto& [args, name] : removed) {
+        std::string message;
         try {
-            (void)parse(refused);
-        } catch (const std::invalid_argument&) { compute_was_refused = true; }
-        failures += check(compute_was_refused, "an invalid MoE offload compute choice was accepted");
+            (void)parse(args);
+        } catch (const std::invalid_argument& error) { message = error.what(); }
+        failures += check(message == name + " was removed (MoE expert offload is not supported "
+                                            "in this version)",
+                          (name + " was not refused as removed: " + message).c_str());
     }
-    failures += check(serve_usage_text("ninferno-serve").find("--moe-offload-compute") !=
-                              std::string::npos &&
-                          serve_usage_text("ninferno-serve").find("--moe-offload-threads") !=
-                              std::string::npos,
-                      "serve help omits --moe-offload-compute or --moe-offload-threads");
+    failures += check(serve_usage_text("ninferno-serve").find("moe-offload") == std::string::npos,
+                      "serve help still offers MoE expert offload");
 
     const ServeOptions automatic =
         parse({"ninferno-serve", "model.ninferno", "--kv-capacity", "auto"});

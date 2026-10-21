@@ -42,8 +42,7 @@ public:
     // `vision`: also bind the artifact's vision tower (its "vision" component; refused when it
     // has none). Without it the tower is not loaded at all.
     static std::unique_ptr<Model> load(const std::filesystem::path& path, DeviceContext& device,
-                                       ActivationProfile profile,
-                                       const MoeOffloadOptions& offload = {}, bool vision = false);
+                                       ActivationProfile profile, bool vision = false);
     ~Model();
 
     [[nodiscard]] const Config& config() const noexcept { return config_; }
@@ -62,15 +61,7 @@ public:
 
     [[nodiscard]] std::uint64_t device_bytes() const noexcept;
     [[nodiscard]] double upload_seconds() const noexcept;
-    // Routed experts left in the device arena (MoE expert offload off, or layers it did not take).
-    [[nodiscard]] std::uint64_t device_expert_bytes() const noexcept;
-    [[nodiscard]] std::uint32_t device_expert_layers() const noexcept;
     [[nodiscard]] std::uint64_t host_to_device_bytes() const noexcept;
-    // MoE expert offload's CPU decode path: whether every offloaded layer's experts are in a
-    // format the CPU computes (else why), and the executor the Engine attaches once the groups
-    // are placed (before anything runs).
-    [[nodiscard]] bool host_experts_readable(std::string* why) const;
-    void attach_host_experts(ops::HostExperts* host) noexcept { weights_.host_experts = host; }
 
 private:
     Model() = default;

@@ -7,7 +7,6 @@
 
 #include "core/gdn_replay_records.h"
 #include "core/linear_attention_state.h"
-#include "models/common/expert_offload.h"
 #include "ninferno/ops/gdn_replay.h"
 #include "ninferno/ops/moe.h"
 
@@ -46,18 +45,12 @@ struct ModelTraits {
 // into it. The Program owns the mechanism (paged KV, state images, transactions, graphs, the
 // resource policy's physical side); a family lays out the state and workspace its math needs and
 // implements the entry points over the resources the contexts carry. Qwen 3.5 is the first family.
-// Tunes every generic MoE layer the visitor names (ops::tune_moe): one line per layer shape. Under
-// MoE expert offload (`experts`) a layer is tuned through its Lease: a resident group's experts
-// are on the device by then, an offloaded one's in Host memory (the tuner leaves it be).
+// Tunes every generic MoE layer the visitor names (ops::tune_moe): one line per layer shape.
 template <class Visit>
-std::vector<std::string> tune_moe_layers(cudaStream_t stream, Visit&& visit,
-                                         ExpertResidency* experts = nullptr) {
+std::vector<std::string> tune_moe_layers(cudaStream_t stream, Visit&& visit) {
     std::vector<std::string> lines;
     visit([&](const ops::MoeWeights& weights, const ops::MoeConfig& config) {
-        const auto lease  = experts != nullptr
-                                ? experts->bind(weights.gate_up.payload, false, stream)
-                                : ExpertResidency::Lease{};
-        const auto report = ops::tune_moe(bound(weights, lease), config, 16, stream);
+        const auto report = ops::tune_moe(weights, config, 16, stream);
         if ((report.ran || !report.cached) &&
             std::find(lines.begin(), lines.end(), report.summary) == lines.end()) {
             lines.push_back(report.summary);

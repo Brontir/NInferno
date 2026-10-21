@@ -11,7 +11,6 @@
 #include "ops/common/math.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
-#include "ops/host_experts/host_experts.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/common/arch_limits.h"
 
@@ -987,27 +986,6 @@ SharedBranch& shared_branch() {
     return b;
 }
 
-// A host view's routed expert planes as the CPU reads them (host::host_plane refuses a format it
-// does not compute).
-host::GenericLayer host_layer(const MoeWeights& w, const MoeConfig& c, const Geometry& g) {
-    host::GenericLayer l;
-    l.gate_up           = host::host_plane(w.gate_up);
-    l.down              = host::host_plane(w.down);
-    l.gate_up_bias      = w.gate_up_bias.data;
-    l.gate_up_bias_bf16 = w.gate_up_bias.dtype == DType::BF16;
-    l.down_bias         = w.down_bias.data;
-    l.down_bias_bf16    = w.down_bias.dtype == DType::BF16;
-    l.experts           = g.experts;
-    l.hidden            = g.hidden;
-    l.inter             = g.inter;
-    l.top_k             = c.top_k;
-    l.activation        = c.activation;
-    l.alpha             = c.alpha;
-    l.limit             = c.limit;
-    l.interleaved       = c.gate_up_layout == MoeGateUpLayout::Interleaved;
-    return l;
-}
-
 // The R8 down stage combines in its epilogue; set_fused_combine(false) keeps the separate combine
 // kernel, which the test compares it with in one process (read at every call).
 bool fused_combine_enabled() { return g_fused_combine.load(std::memory_order_relaxed); }
@@ -1029,10 +1007,10 @@ CombineArgs combine_args(const Workspace& ws, const Geometry& g, const MoeConfig
     return args;
 }
 
-// The launch sequence; with `host`, steps 3-5 (plan, gate/up, down) run on the CPU instead.
+// The launch sequence.
 void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue epilogue,
          Tensor& out, WorkspaceArena& workspace, cudaStream_t stream, const MoePlan& p,
-         const MoeWeights* host_w, HostExperts* host, const Tensor* router_input = nullptr) {
+         const Tensor* router_input = nullptr) {
     namespace generic = detail::generic;
     const Geometry g = validate(w, c);
     for (const int s : {p.router_schedule, p.gate_up_schedule, p.down_schedule}) {
@@ -1111,8 +1089,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // capacity bound covers here.
     SharedBranch* branch = nullptr;
     std::optional<WorkspaceArena> branch_arena;
-    if (g.shared && host == nullptr && w.shared_gate_up.k_order == nullptr &&
-        w.shared_down.k_order == nullptr && (!g.shared_gate || w.shared_gate.k_order == nullptr)) {
+    if (g.shared && w.shared_gate_up.k_order == nullptr && w.shared_down.k_order == nullptr &&
+        (!g.shared_gate || w.shared_gate.k_order == nullptr)) {
         if (w.shared_policy != LinearPolicy::A16Only) {
             const std::size_t bytes = shared_planes_bytes(w, t, t);
             // A route that takes no planes at this T reads no workspace.
@@ -1166,13 +1144,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // The SIMT router: a BF16 router at decode widths outside the invariant profile (whose router
     // streams with the K split of every width) and outside a token-invariant plan (the prefill
     // schedule), x within the default shared memory.
-    const bool router_simt = host == nullptr && t <= kRouterSimtMaxTokens &&
+    const bool router_simt = t <= kRouterSimtMaxTokens &&
                              generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
                              !invariant_routes_active() && p.router_schedule != kPrefillSchedule &&
                              router_simt_smem_bytes(t, g.hidden) <= kStaticSharedBytesPerBlock;
     // Programmatic dependent launches (decode chain): each kernel below waits for the previous one
     // before its first load; a copy or a quantizer between two stages keeps the plain launch.
-    const bool pdl = host == nullptr && device_class().features.pdl && c.pdl;
+    const bool pdl = device_class().features.pdl && c.pdl;
     // The SIMT router's last CTA selects and plans (one launch fewer) when the warp plan covers
     // the call (at most 32 assignments, on the device) and the chain has no programmatic
     // dependent launches: without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1
@@ -1193,7 +1171,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.bias        = w.router_bias.data;
         args.bias_bf16   = w.router_bias.dtype == DType::BF16;
         args.out_f32     = static_cast<float*>(ws.logits.data);
-        if (host == nullptr && router_quantizes_x(g, p, t)) {
+        if (router_quantizes_x(g, p, t)) {
             args.xq        = x.data;
             args.xq_ldx    = g.hidden;
             args.xq_k      = g.hidden;
@@ -1211,15 +1189,6 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
                         stream);
         }
     }
-    if (host != nullptr) {
-        // 2 on the device, 3-5 on the CPU: y[a] for every assignment a, and slot_of the identity.
-        if (t > HostExperts::max_tokens()) { fail("the CPU expert path takes at most 16 tokens"); }
-        if (g.input != g.hidden) { fail("the CPU expert path reads no zero-padded gate/up bank"); }
-        launch_select(select, stream);
-        host->enqueue_generic(host_layer(*host_w, c, g), t, x.data,
-                              static_cast<const std::int32_t*>(ws.ids.data), ws.y.data,
-                              static_cast<std::int32_t*>(ws.slot_of.data), stream);
-    } else {
     // 3. Plan (with 2. selection in the same launch when it is short enough).
     if (route_in_router) {
         // Done by the router's last CTA.
@@ -1357,7 +1326,6 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
                         stream);
         }
     }
-    }
     // The shared expert (forked at the top of the call, or here on the stream).
     if (branch != nullptr) {
         CUDA_CHECK(cudaEventRecord(branch->join, branch->stream));
@@ -1381,7 +1349,7 @@ void set_fused_combine(bool enabled) { g_fused_combine.store(enabled, std::memor
 void moe_with_plan(const Tensor& x, const MoeWeights& w, const MoeConfig& c,
                    MoeEpilogue epilogue, Tensor& out, WorkspaceArena& workspace,
                    cudaStream_t stream, const MoePlan& p, const Tensor* router_input) {
-    run(x, w, c, epilogue, out, workspace, stream, p, nullptr, nullptr, router_input);
+    run(x, w, c, epilogue, out, workspace, stream, p, router_input);
 }
 
 } // namespace detail::moe
@@ -1411,33 +1379,6 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     const auto plan = detail::moe::select_plan(w, c, t, prefill_routes_active());
     detail::moe::moe_with_plan(x, w, c, epilogue, out, workspace, stream, plan, router_input);
-}
-
-void moe_host_experts(const Tensor& x, const MoeWeights& w, const MoeWeights& host_w,
-                      const MoeConfig& c, MoeEpilogue epilogue, Tensor& out,
-                      WorkspaceArena& workspace, cudaStream_t stream, HostExperts& host) {
-    // Everything the CPU side needs is checked before the first launch.
-    if (x.ne[1] < 1 || x.ne[1] > HostExperts::max_tokens()) {
-        detail::moe::fail("the CPU expert path takes 1 to " +
-                          std::to_string(HostExperts::max_tokens()) + " tokens");
-    }
-    std::string why;
-    if (!host::host_readable(host_w.gate_up, &why) || !host::host_readable(host_w.down, &why)) {
-        detail::moe::fail("the CPU cannot compute these experts: " + why);
-    }
-    const auto same_plane = [](const Weight& a, const Weight& b) {
-        return a.qtype == b.qtype && a.layout == b.layout && a.n == b.n && a.k == b.k;
-    };
-    if (!same_plane(w.gate_up, host_w.gate_up) || !same_plane(w.down, host_w.down) ||
-        (w.gate_up_bias.data == nullptr) != (host_w.gate_up_bias.data == nullptr) ||
-        (w.down_bias.data == nullptr) != (host_w.down_bias.data == nullptr) ||
-        w.gate_up_bias.dtype != host_w.gate_up_bias.dtype ||
-        w.down_bias.dtype != host_w.down_bias.dtype) {
-        detail::moe::fail("host_weights must be the same layer's experts as weights");
-    }
-    // The router's schedule is the one moe() takes at this T, so the selection is moe()'s.
-    const auto plan = detail::moe::select_plan(w, c, x.ne[1], prefill_routes_active());
-    detail::moe::run(x, w, c, epilogue, out, workspace, stream, plan, &host_w, &host);
 }
 
 LinearPolicy moe_policy(LinearPolicy gate_up, LinearPolicy down) {

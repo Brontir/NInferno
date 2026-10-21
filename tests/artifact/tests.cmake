@@ -28,10 +28,6 @@ set_tests_properties(
   ninferno_artifact_materialization_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_artifact_expert_offload_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_expert_offload.cpp"
+ninferno_add_test(ninferno_artifact_routed_experts_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_routed_experts.cpp"
   LIBRARIES ninferno_artifact)
-
-set_tests_properties(
-  ninferno_artifact_expert_offload_test
-  PROPERTIES SKIP_RETURN_CODE 77)

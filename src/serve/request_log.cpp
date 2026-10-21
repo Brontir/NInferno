@@ -466,21 +466,6 @@ std::string format_server_start_json(
                   }
                   return fits;
               }()},
-             {"moe_offload",
-              Json{{"mode", memory.moe_offload_mode == ninferno::MoeOffloadMode::Off      ? "off"
-                            : memory.moe_offload_mode == ninferno::MoeOffloadMode::Layers ? "layers"
-                                                                                        : "auto"},
-                   {"layers", memory.moe_offload_layers},
-                   {"offloaded", memory.moe_offload_offloaded},
-                   {"pinned_bytes", memory.moe_offload_pinned_bytes},
-                   {"resident_bytes", memory.moe_offload_resident_bytes},
-                   {"staging_bytes", memory.moe_offload_staging_bytes},
-                   {"target_context", memory.moe_offload_target_context},
-                   {"compute",
-                    memory.moe_offload_compute == ninferno::MoeOffloadCompute::Cpu ? "cpu" : "gpu"},
-                   {"cpu_threads", memory.moe_offload_cpu_threads},
-                   {"cpu_isa", memory.moe_offload_cpu_isa},
-                   {"compute_reason", memory.moe_offload_compute_reason}}},
              {"kv_capacity_mode",
               std::string(ninferno::kv_capacity_mode_name(memory.kv_capacity_mode))},
              {"kv_capacity", memory.kv_capacity},

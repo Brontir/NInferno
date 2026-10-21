@@ -4,7 +4,6 @@
 // in the form its Op consumes, every norm weight a device vector. They borrow device storage from
 // the loaded model's materialized artifact and live exactly as long as it.
 
-#include "core/expert_residency.h"
 #include "core/tensor.h"
 #include "core/weight.h"
 #include "models/gemma4/config.h"
@@ -52,10 +51,6 @@ struct Weights {
     Projection output_head; // tied to the embedding source, unscaled
     Tensor final_norm;
     std::vector<Layer> layers;
-    // MoE expert offload: where each expert-bank call reads its bank (null when off), and the
-    // CPU that computes the offloaded layers' experts in decode calls (null: the GPU does).
-    ExpertResidency* experts       = nullptr;
-    ops::HostExperts* host_experts = nullptr;
     // Per-layer embeddings (Config::ple()): the [vocab, L*P] table as published (unscaled), the
     // [L*P, H] projection of the embedded token, and the norm of each P-wide projection slice.
     Weight ple_table;

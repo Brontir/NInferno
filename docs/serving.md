@@ -99,7 +99,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--device N` | `0` | CUDA device index |
 | `--temperature`, `--top-p`, `--top-k`, `--min-p`, `--seed`, `--greedy` | unset | process-level sampling overrides ([presets](cli.md#sampling-presets)); `--greedy` forces argmax |
 
-All other options (media, Host cache, response store, MoE offload, penalties, limits) are in the
+All other options (media, Host cache, response store, penalties, limits) are in the
 [option tables](reference/serving.md#11-server-options).
 
 ## Endpoints
@@ -264,7 +264,6 @@ Notes that often matter:
   state lives in Device memory and in pinned Host memory (`--host-state-slots`, `--host-kv-mib`).
 - **Does not fit?** Try a smaller quantization, a lower `--max-concurrency`, a shorter
   `--max-context`, or a smaller `--prefill-chunk`. The refusal message names options that fit.
-  MoE models can also keep experts in Host memory (`--moe-offload`).
 - **Requests with images or video** need `--vision`. Without it they fail with HTTP 400
   `vision_disabled`.
 

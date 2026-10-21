@@ -5,7 +5,6 @@
 #include "ninferno/ops/weight_input.h"
 
 #include "ops/gemma4_moe/gemma4_moe_internal.h"
-#include "ops/host_experts/host_experts.h"
 #include "ops/oracle.h"
 #ifndef NINFERNO_WITHOUT_NVFP4
 #include "ops/linear/nvfp4/nvfp4_format.h" // the validator is built with the NVFP4 family only
@@ -361,14 +360,6 @@ public:
         down_device_                                 = to_device(down_.payload);
         gate_up_inputs_device_                       = to_device(gate_up_input_divisors_);
         down_inputs_device_                          = to_device(down_input_divisors_);
-    }
-
-    // The same layer with its expert planes at host addresses (MoE expert offload's CPU path).
-    ops::Gemma4MoeWeights host_weights() const {
-        ops::Gemma4MoeWeights w = weights();
-        w.gate_up = device_plane_weight(gate_up_, const_cast<std::uint8_t*>(gate_up_.payload.data()));
-        w.down    = device_plane_weight(down_, const_cast<std::uint8_t*>(down_.payload.data()));
-        return w;
     }
 
     ops::Gemma4MoeWeights weights() const {
@@ -1231,136 +1222,6 @@ int check_dead_expert(const Fixture& fixture) {
 
 } // namespace
 
-// MoE expert offload's CPU decode path (gemma4_moe_host_experts): the router and the top-8 run on
-// the GPU, the experts on the CPU from the planes at host addresses. Held to the decode route's
-// bound (FP32 intermediates, one BF16 rounding of the output) with every control failing it; close
-// to gemma4_moe; bytes independent of the CPU's thread count and instruction set; a replayed graph
-// gives the eager bytes; 17 tokens refused before any launch.
-int check_host_experts(const Fixture& fixture) {
-    const ops::Gemma4MoeWeights weights      = fixture.weights();
-    const ops::Gemma4MoeWeights host_weights = fixture.host_weights();
-    ops::HostExperts fast(kHidden, kTopK, 0, ops::host::detect_isa());
-    ops::HostExperts scalar(kHidden, kTopK, 1, ops::host::Isa::Scalar);
-    cudaStream_t stream = nullptr;
-    cuda_check(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), "create stream");
-    int failures = 0;
-    for (const int tokens : {1, 5, 16}) {
-        const std::string label = "gemma4_moe host experts T=" + std::to_string(tokens);
-        std::vector<std::uint16_t> router_bits(static_cast<std::size_t>(tokens) * kHidden);
-        std::vector<std::uint16_t> expert_bits(router_bits.size());
-        std::vector<double> reference(router_bits.size());
-        std::array<std::vector<double>, kControls> controls;
-        for (auto& control : controls) { control.resize(router_bits.size()); }
-        for (int t = 0; t < tokens; ++t) {
-            const PoolToken& token = fixture.token((t * 37 + tokens * 11) % kPool);
-            for (int h = 0; h < kHidden; ++h) {
-                const std::size_t at = static_cast<std::size_t>(t) * kHidden + h;
-                router_bits[at]      = f32_to_bf16(token.router_input[h]);
-                expert_bits[at]      = f32_to_bf16(token.expert_input[h]);
-                reference[at]        = token.reference[h];
-                for (int c = 0; c < kControls; ++c) { controls[c][at] = token.controls[c][h]; }
-            }
-        }
-        DeviceBuffer router_input = to_device(router_bits);
-        DeviceBuffer expert_input = to_device(expert_bits);
-        DeviceBuffer output(router_bits.size() * 2);
-        Tensor router_tensor(router_input.p, DType::BF16, {kHidden, tokens});
-        Tensor expert_tensor(expert_input.p, DType::BF16, {kHidden, tokens});
-        Tensor out(output.p, DType::BF16, {kHidden, tokens});
-        WorkspaceArena workspace(ops::gemma4_moe_workspace_bytes(tokens, tokens));
-        const auto run = [&](ops::HostExperts* host, bool graph) {
-            cuda_check(cudaMemsetAsync(output.p, 0xff, router_bits.size() * 2, stream), "poison");
-            const auto call = [&] {
-                if (host != nullptr) {
-                    ops::gemma4_moe_host_experts(router_tensor, expert_tensor, weights,
-                                                 host_weights, kEps, out, workspace, stream,
-                                                 *host);
-                } else {
-                    ops::gemma4_moe(router_tensor, expert_tensor, weights, kEps, out, workspace,
-                                    stream);
-                }
-            };
-            if (!graph) {
-                call();
-            } else {
-                cudaGraph_t captured = nullptr;
-                cudaGraphExec_t exec = nullptr;
-                cuda_check(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
-                           "begin capture");
-                call();
-                cuda_check(cudaStreamEndCapture(stream, &captured), "end capture");
-                cuda_check(cudaGraphInstantiate(&exec, captured, nullptr, nullptr, 0),
-                           "instantiate");
-                for (int replay = 0; replay < 3; ++replay) {
-                    cuda_check(cudaMemsetAsync(output.p, 0xff, router_bits.size() * 2, stream),
-                               "poison");
-                    cuda_check(cudaGraphLaunch(exec, stream), "graph launch");
-                }
-                cuda_check(cudaStreamSynchronize(stream), "graph sync");
-                cudaGraphExecDestroy(exec);
-                cudaGraphDestroy(captured);
-            }
-            cuda_check(cudaStreamSynchronize(stream), "host experts sync");
-            return from_device<std::uint16_t>(output, router_bits.size());
-        };
-        const auto eager  = run(&fast, false);
-        const auto one    = run(&scalar, false);
-        const auto graph  = run(&fast, true);
-        const auto device = run(nullptr, false);
-        failures += verify_exact((label + ": scalar x1 equals " +
-                                  ops::host::isa_name(fast.isa()) + " x" +
-                                  std::to_string(fast.threads())).c_str(),
-                                 one, eager);
-        failures += verify_exact((label + ": graph replay equals eager").c_str(), graph, eager);
-        std::vector<double> got(eager.size()), gpu(eager.size());
-        for (std::size_t i = 0; i < eager.size(); ++i) {
-            got[i] = bf16_to_f32(eager[i]);
-            gpu[i] = bf16_to_f32(device[i]);
-        }
-        failures += verify_reduction(label, got, reference, kA16Tolerance);
-        failures += verify_reduction(label + " vs gemma4_moe", got, gpu, kA16Tolerance);
-        const ReductionStats stats  = compute_reduction_stats(got.data(), reference.data(),
-                                                              static_cast<std::int64_t>(got.size()));
-        const ReductionStats versus = compute_reduction_stats(got.data(), gpu.data(),
-                                                              static_cast<std::int64_t>(got.size()));
-        std::printf("CASE %-58s rel_l2=%.4e (limit %.1e) vs gemma4_moe rel_l2=%.4e\n",
-                    label.c_str(), stats.relative_l2, kA16Tolerance.relative_l2,
-                    versus.relative_l2);
-        for (int c = 0; c < kControls; ++c) {
-            const ReductionStats control = compute_reduction_stats(
-                got.data(), controls[c].data(), static_cast<std::int64_t>(got.size()));
-            if (reduction_passes(control, static_cast<std::int64_t>(got.size()), kA16Tolerance)) {
-                std::printf("  CONTROL %-30s PASSED - the bound cannot see this defect\n",
-                            kControlNames[c]);
-                ++failures;
-            }
-        }
-        if (workspace.used() != 0) {
-            std::cerr << label << ": workspace was not released\n";
-            ++failures;
-        }
-    }
-    {
-        constexpr int kTooMany = 17;
-        DeviceBuffer input(static_cast<std::size_t>(kTooMany) * kHidden * 2);
-        DeviceBuffer output(static_cast<std::size_t>(kTooMany) * kHidden * 2);
-        Tensor in(input.p, DType::BF16, {kHidden, kTooMany});
-        Tensor out(output.p, DType::BF16, {kHidden, kTooMany});
-        WorkspaceArena workspace(ops::gemma4_moe_workspace_bytes(kTooMany, kTooMany));
-        bool refused = false;
-        try {
-            ops::gemma4_moe_host_experts(in, in, weights, host_weights, kEps, out, workspace,
-                                         stream, fast);
-        } catch (const std::invalid_argument&) { refused = true; }
-        if (!refused) {
-            std::cerr << "gemma4_moe host experts: 17 tokens were accepted\n";
-            ++failures;
-        }
-    }
-    cudaStreamDestroy(stream);
-    return failures;
-}
-
 int main() {
     if (cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
@@ -1436,7 +1297,6 @@ int main() {
     }
     failures += check_prefill_token_invariance(fixture, ops::Gemma4MoeActivations::A16Only, true);
     failures += check_prefill_token_invariance(fixture, ops::Gemma4MoeActivations::Recorded, true);
-    failures += check_host_experts(fixture);
     failures += run_rejections(fixture);
     failures += check_prepare_weights();
     failures += fixture.verify_persistent();

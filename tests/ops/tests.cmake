@@ -208,13 +208,6 @@ ninferno_add_op_test(ninferno_mamba2_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mamba2.cpp"
   LIBRARIES ninferno_ops)
 
-# MoE expert offload's CPU decode path: row dots against FP64, bytes across ISAs and thread
-# counts, the worker pool, the generic and Gemma 4 layers. CPU only.
-ninferno_add_op_test(ninferno_host_experts_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_host_experts.cpp"
-  LIBRARIES ninferno_ops)
-ninferno_op_oracle_options(ninferno_host_experts_test)
-
 ninferno_add_op_test(ninferno_mtp_pack_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mtp_pack.cpp"
   LIBRARIES ninferno_ops)

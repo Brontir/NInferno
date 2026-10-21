@@ -18,18 +18,15 @@ public:
 
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
     [[nodiscard]] std::vector<std::string> tune_routes(cudaStream_t stream) const override {
-        return tune_moe_layers(
-            stream,
-            [&](const auto& tune) {
-                const auto ffn = [&](const execution::FfnParameters& p) {
-                    if (const auto* moe = std::get_if<execution::GenericMoeParameters>(&p)) {
-                        tune(moe->weights, moe->config);
-                    }
-                };
-                for (const auto& layer : parameters_.text.layers) { ffn(layer.ffn); }
-                if (parameters_.mtp) { ffn(parameters_.mtp->ffn); }
-            },
-            parameters_.experts.residency);
+        return tune_moe_layers(stream, [&](const auto& tune) {
+            const auto ffn = [&](const execution::FfnParameters& p) {
+                if (const auto* moe = std::get_if<execution::GenericMoeParameters>(&p)) {
+                    tune(moe->weights, moe->config);
+                }
+            };
+            for (const auto& layer : parameters_.text.layers) { ffn(layer.ffn); }
+            if (parameters_.mtp) { ffn(parameters_.mtp->ffn); }
+        });
     }
 
     [[nodiscard]] models::LoadOptions load_options() const override;

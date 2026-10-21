@@ -47,8 +47,6 @@ struct ServeOptions {
     std::uint32_t max_context          = 0;
     // Unset --kv-capacity: automatic with an automatic context, else max_context tokens.
     KvCapacityPolicy kv_capacity       = KvCapacityPolicy::automatic();
-    // --moe-offload off|auto|N: MoE expert offload (EngineOptions::moe_offload); off by default.
-    MoeOffloadOptions moe_offload;
     std::uint32_t max_concurrency      = 1;
     std::uint32_t max_pending_requests = 16;
     // Ten minutes: agents send several 20-40K-token prompts at once, and a prompt waits for the

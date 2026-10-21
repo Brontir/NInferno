@@ -3,7 +3,7 @@
 #include "core/cache_file.h"
 #include "core/hex.h"
 
-#include "artifact/expert_groups.h"
+#include "artifact/routed_experts.h"
 #include "artifact/formats.h"
 #include "artifact/framing.h"
 #include "artifact/reader.h"

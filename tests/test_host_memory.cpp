@@ -179,17 +179,8 @@ int main() {
                   message.find("at most 18.00 GiB pinned in all") != std::string::npos &&
                   message.ends_with("Ask for less."),
               "refusal carries the numbers: " + message);
-        // Counted pins (MoE expert offload) come off the cap: 9 GiB pinned leaves 9 GiB.
-        count_pinned_host(9 * kGiB);
-        check(counted_pinned_host() == 9 * kGiB, "counted pins");
-        check(pinned_host_limit(*memory) == 9 * kGiB, "the cap less the counted pins");
         const HostMemory idle{.total_bytes = 30 * kGiB, .available_bytes = 29 * kGiB};
-        check(pinned_host_limit(idle) == 9 * kGiB, "an idle host still stops at the cap");
-        count_pinned_host(10 * kGiB);
-        check(pinned_host_limit(idle) == 0, "nothing past the cap");
-        uncount_pinned_host(19 * kGiB);
-        check(counted_pinned_host() == 0 && pinned_host_limit(idle) == 18 * kGiB,
-              "uncounted pins free the cap");
+        check(pinned_host_limit(idle) == 18 * kGiB, "an idle host still stops at the cap");
     }
     // A large host keeps an eighth: 512 GiB total, 500 available -> 436 GiB may be pinned, under
     // the cap of 3/5 (307.2 GiB).

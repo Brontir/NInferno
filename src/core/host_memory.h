@@ -73,14 +73,8 @@ read_host_memory(const std::filesystem::path& meminfo      = "/proc/meminfo",
 // with more pinned; 18 GiB of its 30).
 [[nodiscard]] std::uint64_t pinned_host_cap(const HostMemory& memory) noexcept;
 
-// Bytes this process holds pinned where the pinning is counted (MoE expert offload,
-// core/expert_residency.h). Counted pins lower pinned_host_limit.
-void count_pinned_host(std::uint64_t bytes) noexcept;
-void uncount_pinned_host(std::uint64_t bytes) noexcept;
-[[nodiscard]] std::uint64_t counted_pinned_host() noexcept;
-
-// The most bytes that may be pinned now: available - headroom, within the cap less what this
-// process has pinned already (counted_pinned_host); 0 when either is exhausted.
+// The most bytes that may be pinned now: available - headroom, within the cap; 0 when the
+// available memory is within the headroom.
 [[nodiscard]] std::uint64_t pinned_host_limit(const HostMemory& memory) noexcept;
 
 // Throws std::runtime_error, with every number, when `pinned_bytes` exceed pinned_host_limit.

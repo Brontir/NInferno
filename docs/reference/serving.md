@@ -1539,9 +1539,6 @@ contract.
 | `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
-| `--moe-offload off\|auto\|N` | keep the routed experts of MoE layers in pinned Host memory: the first `N` MoE layers, or `auto`, the fewest that let the model fit, none when it fits or has no MoE layers ([MoE expert offload](#moe-expert-offload)); a count on a model without routed experts is refused, and Nemotron-H refuses every mode | `off` |
-| `--moe-offload-compute auto\|cpu\|gpu` | where decode computes offloaded experts: the CPU (fast mode) or the GPU over PCIe (byte-equal); `auto` is `cpu` under `--activations fast` when the family and format allow | `auto` |
-| `--moe-offload-threads N` | CPU expert worker threads | one per physical core |
 | `--context-cost-presets FILE` | optional runtime context-cost preset registry | generic + compiled defaults |
 
 **`--kv-dtype`.** `auto` takes the model family's format:
@@ -1669,7 +1666,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v24 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v25 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1928,53 +1925,6 @@ Examples on a 16 GB card (RTX 5080):
   NVFP4). The +- is the standard error over the windows, of the same order as switching the model's
   own activation profile (+0.028 and -0.001). The top-1 token agrees with BF16 at 75-97 % of
   positions, so FP8 is neutral in NLL, not in bytes.
-
-### MoE expert offload
-
-`--moe-offload` runs a MoE model whose weights do not fit the GPU. The routed experts (88-91 % of the
-parameters of a 20-35B MoE) of chosen layers stay in pinned Host memory. Attention, the router,
-shared experts and KV stay on the GPU.
-
-- `N` offloads the first `N` MoE layers.
-- `auto` loads the experts of as many leading layers as the host can pin (every layer on a host with
-  the memory) to Host memory, keeps the fewest leading layers there with which the plan at the
-  automatic context's floor fits, and copies the rest to the GPU. The floor is 8192 tokens, or the
-  model's own when smaller; an explicit `--max-context` is used instead.
-- A decode step's kernels read the selected experts over PCIe in place (zero-copy, also inside the
-  CUDA graph). A call whose tokens select at least as many experts as the layer has (prefill)
-  streams the whole layer into one of two GPU staging slots on a copy stream, the next offloaded
-  layer already in flight. The kernels are the same and read the same bytes, so the output is the
-  same as without offload.
-- Pinned memory counts against the host. The experts loaded to Host memory must fit what the host
-  can pin (MemAvailable less max(4 GiB, MemTotal/8), and at most 3/5 of MemTotal pinned by the
-  process in all), else the start is refused with the numbers. An automatic Host tier fits what is
-  left after the offload.
-- A model that does not fit even with every MoE layer offloaded is refused with the numbers. Without
-  `--moe-offload`, weights that do not fit are refused with their size, the free memory and, for a
-  MoE model, the bytes its experts take.
-- The startup log's `moe offload |` line and the request log's `engine.moe_offload` state the
-  placement.
-
-`--moe-offload-compute auto|cpu|gpu` chooses where a decode step (up to 16 tokens per call) computes
-the offloaded layers' experts.
-
-- `gpu`: the GPU reads them over PCIe, byte-equal to no offload, bounded by the PCIe bandwidth.
-- `cpu`: the CPU computes them from the same pinned Host bytes in their published format (MXFP4,
-  NVFP4), reading only the selected experts at DRAM bandwidth. The GPU runs the router and top-k (the
-  same selection), copies the routed tokens to the host inside the step (a host node, also inside
-  the CUDA graph), and receives the experts' output. For Gemma 4 the CPU runs while the GPU computes
-  the dense MLP.
-- One pinned worker per physical core of the process affinity (`--moe-offload-threads N` to set it),
-  AVX-512 or AVX2 when the CPU has it.
-- The CPU's arithmetic has a fixed order (fixed 32-value blocks, fixed reduction tree, one owner per
-  output), so its result does not depend on the thread count or instruction set. It is close to the
-  GPU's, not byte-equal, so `cpu` is the fast mode and is refused with `--activations exact`.
-- Prefill always streams whole layers to the GPU.
-- `auto`, the default, is `cpu` under `--activations fast` when the model family has the CPU path
-  (dense MoE families such as gpt-oss, Gemma 4) and the experts' format is one the CPU reads, else
-  `gpu`. An explicit `cpu` that cannot hold is refused with the reason.
-- The startup log's second `moe offload |` line and `engine.moe_offload.compute`, `cpu_threads`,
-  `cpu_isa` and `compute_reason` state the choice.
 
 ### Checkpoints and resource pressure
 

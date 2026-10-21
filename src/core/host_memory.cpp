@@ -11,7 +11,6 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <cstdio>
 #include <fstream>
@@ -256,24 +255,12 @@ std::uint64_t pinned_host_cap(const HostMemory& memory) noexcept {
     return memory.total_bytes / 5 * 3;
 }
 
-namespace {
-std::atomic<std::uint64_t> counted_pins{0};
-} // namespace
-
-void count_pinned_host(std::uint64_t bytes) noexcept { counted_pins.fetch_add(bytes); }
-
-void uncount_pinned_host(std::uint64_t bytes) noexcept { counted_pins.fetch_sub(bytes); }
-
-std::uint64_t counted_pinned_host() noexcept { return counted_pins.load(); }
-
 std::uint64_t pinned_host_limit(const HostMemory& memory) noexcept {
     const std::uint64_t headroom  = pinned_host_headroom(memory);
     const std::uint64_t available = memory.available_bytes > headroom
                                         ? memory.available_bytes - headroom
                                         : 0;
-    const std::uint64_t cap    = pinned_host_cap(memory);
-    const std::uint64_t pinned = counted_pinned_host();
-    return std::min(available, cap > pinned ? cap - pinned : 0);
+    return std::min(available, pinned_host_cap(memory));
 }
 
 namespace {
@@ -297,15 +284,13 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
                               std::string_view what, std::string_view remedy) {
     const std::uint64_t limit = pinned_host_limit(memory);
     if (pinned_bytes <= limit) { return; }
-    std::string message = std::string(what) + " needs " + format_gib(pinned_bytes) +
-                          " of pinned Host memory, but this host can pin at most " +
-                          format_gib(limit) + ": " + describe_available(memory) + " minus " +
-                          format_gib(pinned_host_headroom(memory)) +
-                          " kept for the rest of the host (max(4 GiB, total/8); pinned pages "
-                          "cannot be reclaimed or swapped), and at most " +
-                          format_gib(pinned_host_cap(memory)) +
-                          " pinned in all (3/5 of the total), " +
-                          format_gib(counted_pinned_host()) + " of it pinned already.";
+    std::string message =
+        std::string(what) + " needs " + format_gib(pinned_bytes) +
+        " of pinned Host memory, but this host can pin at most " + format_gib(limit) + ": " +
+        describe_available(memory) + " minus " + format_gib(pinned_host_headroom(memory)) +
+        " kept for the rest of the host (max(4 GiB, total/8); pinned pages "
+        "cannot be reclaimed or swapped), and at most " +
+        format_gib(pinned_host_cap(memory)) + " pinned in all (3/5 of the total).";
     if (!remedy.empty()) { message += " " + std::string(remedy); }
     throw std::runtime_error(message);
 }

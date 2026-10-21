@@ -80,10 +80,8 @@ public:
     bool has(const std::string& name) const { return binder_.contains(name); }
 
     // Consumes the binder: uploads every demanded parameter and binds each one's view at its Id.
-    // No demand may follow. `offload`: the routed experts it places in Host groups
-    // (artifact/expert_groups.h; MaterializedArtifact::expert_residency).
-    [[nodiscard]] std::unique_ptr<ArtifactBacking>
-    materialize(DeviceContext& device, const MoeOffloadOptions& offload = {});
+    // No demand may follow.
+    [[nodiscard]] std::unique_ptr<ArtifactBacking> materialize(DeviceContext& device);
 
     [[nodiscard]] const std::vector<Pending>& items() const noexcept { return items_; }
 

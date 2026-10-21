@@ -1,6 +1,5 @@
 #include "artifact/materializer.h"
 
-#include "artifact/expert_groups.h"
 #include "artifact/framing.h"
 #include "artifact/reader.h"
 #include "core/cuda_error.h"
@@ -144,32 +143,15 @@ void check_order(const Reader& reader, ObjectHandle handle, const WeightGeometry
     }
 }
 
-// Why the weight arena did not fit, with the numbers, and for a MoE model what offload would
-// keep off the device.
-std::string device_shortage(const Reader& reader, const MaterializationPlan& plan,
-                            const char* error) {
+// Why the weight arena did not fit, with the numbers.
+std::string device_shortage(const MaterializationPlan& plan, const char* error) {
     std::size_t free_bytes  = 0;
     std::size_t total_bytes = 0;
     (void)cudaGetLastError();
     (void)cudaMemGetInfo(&free_bytes, &total_bytes);
-    std::string message = "the weights need " + format_gib(plan.device_capacity_bytes) +
-                          " of Device memory and " + format_gib(free_bytes) + " of " +
-                          format_gib(total_bytes) + " is free (" + error + ").";
-    if (plan.expert_groups.empty()) {
-        const auto groups = routed_expert_groups(reader, plan);
-        std::uint64_t experts = 0;
-        for (const auto& group : groups) { experts += group.bytes; }
-        if (!groups.empty()) {
-            message += " Its routed experts are " + format_gib(experts) + " of that (" +
-                       std::to_string(groups.size()) +
-                       " MoE layers): MoE expert offload (ninferno-serve --moe-offload auto) keeps "
-                       "them in pinned Host memory.";
-        }
-    } else {
-        message += " " + std::to_string(plan.expert_groups.size()) +
-                   " MoE layers' experts are already offloaded; offload more of them.";
-    }
-    return message;
+    return "the weights need " + format_gib(plan.device_capacity_bytes) + " of Device memory and " +
+           format_gib(free_bytes) + " of " + format_gib(total_bytes) + " is free (" + error +
+           "). A smaller quantization of the model needs less.";
 }
 
 } // namespace
@@ -217,10 +199,6 @@ MaterializedArtifact materialize(const Reader& reader, MaterializationPlan&& pla
     out.stats_.owned_value_bytes     = plan.owned_value_bytes;
     out.stats_.device_capacity_bytes = plan.device_capacity_bytes;
     out.stats_.device_object_count   = plan.device_objects.size();
-    for (const auto& group : routed_expert_groups(reader, plan)) {
-        out.stats_.expert_device_bytes += group.bytes;
-        ++out.stats_.expert_device_layers;
-    }
     out.stats_.host_object_count     = plan.host_objects.size();
     if (plan.device_capacity_bytes > std::numeric_limits<std::size_t>::max()) {
         throw ArtifactError("device backing exceeds size_t");
@@ -232,7 +210,7 @@ MaterializedArtifact materialize(const Reader& reader, MaterializationPlan&& pla
         } catch (const std::runtime_error& error) {
             // A capacity refusal, like a context that does not fit: --spec auto then drops its
             // drafter (whose weights share this arena) instead of the server failing to start.
-            throw CapacityError(device_shortage(reader, plan, error.what()));
+            throw CapacityError(device_shortage(plan, error.what()));
         }
         // Debug poison (NINFERNO_DEBUG_POISON): the weight arena starts as poison, so
         // a parameter byte the upload never wrote reads as NaN instead of the allocator's zeros.
@@ -269,50 +247,6 @@ MaterializedArtifact materialize(const Reader& reader, MaterializationPlan&& pla
             check_order(reader, placement.object, geometry, storage.host_data, out.stats_);
             storage.host = WeightParent{geometry, storage.host_data.data(), divisor};
         }
-    }
-    // Routed experts offloaded (MoE expert offload): each layer's objects in one Host group, laid
-    // out as in the arena; the weights point at the Host bytes until the Engine resolves where
-    // each group is read from (core/expert_residency.h).
-    if (!plan.expert_groups.empty()) {
-        // Every group is loaded to Host memory and any may be pinned: all of them must fit what
-        // the host can pin (pageable until the Engine places them, but just as unreclaimable).
-        std::uint64_t group_bytes = 0;
-        for (const auto& group : plan.expert_groups) { group_bytes += group.bytes; }
-        if (const std::optional<HostMemory> memory = read_host_memory()) {
-            require_pinned_host_fits(
-                group_bytes, *memory,
-                "MoE expert offload (the experts of " + std::to_string(plan.expert_groups.size()) +
-                    " MoE layers in Host memory)",
-                "Offload fewer layers (--moe-offload N) or free Host memory.");
-        }
-        out.experts_ = std::make_unique<ExpertResidency>();
-        for (const auto& group : plan.expert_groups) {
-            std::byte* base = out.experts_->add_group(group.name, group.bytes);
-            for (const auto& placement : group.objects) {
-                const auto& geometry = reader.geometry(placement.object);
-                auto& object         = out.objects_.at(placement.object.index);
-                const auto& source   = reader.directory().tensor(placement.object);
-                if (object.device || geometry.bytes != placement.bytes ||
-                    source.bytes > placement.bytes ||
-                    placement.alignment > ExpertResidency::kGroupAlignment ||
-                    placement.offset + placement.bytes > group.bytes) {
-                    throw ArtifactError("invalid or duplicate expert placement");
-                }
-                const std::span<std::byte> bytes(base + placement.offset,
-                                                 static_cast<std::size_t>(placement.bytes));
-                reader.read_into(source.offset, bytes.first(static_cast<std::size_t>(source.bytes)));
-                std::fill(bytes.begin() + static_cast<std::ptrdiff_t>(source.bytes), bytes.end(),
-                          std::byte{0});
-                out.stats_.read_bytes = checked_add(out.stats_.read_bytes, source.bytes, "read bytes");
-                const auto divisor =
-                    object.host ? object.host->weight_scale_divisor
-                                : read_divisor(reader, placement.object, geometry, bytes, out.stats_);
-                object.device = WeightParent{geometry, bytes.data(), divisor};
-            }
-            out.stats_.expert_host_bytes =
-                checked_add(out.stats_.expert_host_bytes, group.bytes, "expert Host bytes");
-        }
-        out.stats_.expert_group_count = plan.expert_groups.size();
     }
     for (const auto handle : plan.mapped_objects) {
         reader.validate_object(handle);

@@ -18,7 +18,6 @@
 #include "ninferno/ops/softmax_attention.h"
 #include "ninferno/types.h"
 #include "ops/generic/generic_gemm.h"
-#include "ops/host_experts/host_experts.h"
 
 #include <algorithm>
 #include <array>
@@ -207,20 +206,6 @@ void validate_engine_options(const EngineOptions& options) {
     default:
         throw std::invalid_argument("Engine kv_capacity mode is invalid");
     }
-    if (options.moe_offload.mode == MoeOffloadMode::Layers && options.moe_offload.layers == 0) {
-        throw std::invalid_argument("Engine moe_offload of a layer count needs at least one layer");
-    }
-    if (options.moe_offload.mode == MoeOffloadMode::Off &&
-        (options.moe_offload.compute != MoeOffloadCompute::Automatic ||
-         options.moe_offload.threads != 0)) {
-        throw std::invalid_argument(
-            "Engine moe_offload compute and threads apply only with moe_offload on");
-    }
-    if (options.moe_offload.compute == MoeOffloadCompute::Gpu &&
-        options.moe_offload.threads != 0) {
-        throw std::invalid_argument(
-            "Engine moe_offload threads apply only to CPU expert compute, not gpu");
-    }
     if (options.max_concurrency == 0 || options.max_concurrency > kMaximumConcurrency) {
         throw std::invalid_argument("Engine max_concurrency must be in [1,8]");
     }
@@ -367,17 +352,13 @@ FamilyLoad load_qwen3_5(const EngineOptions& options, DeviceContext& device) {
     artifact::Reader reader(options.artifact_path);
     inspect.complete();
     StartupPhaseScope binding(options.startup_observer, StartupPhase::TargetPlan);
-    auto plan =
-        models::qwen3_5::plan_load(reader, models::load_options(options), options.moe_offload);
+    auto plan = models::qwen3_5::plan_load(reader, models::load_options(options));
     binding.complete();
     auto loaded = std::make_unique<Qwen35LoadedModel>(
         models::qwen3_5::materialize_model(std::move(plan), device, &options.startup_observer));
     device.synchronize();
     const models::qwen3_5::Model& model = *loaded->model;
     FamilyLoad out;
-    out.expert_residency     = model.expert_residency();
-    out.device_expert_bytes  = model.storage_stats().expert_device_bytes;
-    out.device_expert_layers = static_cast<std::uint32_t>(model.storage_stats().expert_device_layers);
     out.execution = models::qwen3_5::detail::make_qwen3_5_execution(loaded->parameters);
     const models::qwen3_5::FrontendOptions frontend_options{
         .chat_template_path       = options.chat_template_path,
@@ -551,120 +532,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         return planned_at(max_context, cached, resolved.max_concurrency, resolved.prefill_chunk,
                           resolved.kv_capacity);
     };
-    // MoE expert offload: the loaded groups are placed before anything else is planned or pinned
-    // (the Host tier below fits what the host can pin after them). Automatic keeps the fewest
-    // leading MoE layers in Host memory with which the plan at the target context fits: the
-    // automatic context's floor, or an explicit max_context.
-    MoeOffloadResolution offload{.mode = options.moe_offload.mode};
-    std::unique_ptr<ops::HostExperts> host_experts;
-    if (ExpertResidency* experts = loaded.expert_residency) {
-        const std::size_t groups = experts->group_count();
-        std::size_t offloaded    = groups; // Layers: exactly the groups the load placed
-        if (options.moe_offload.mode == MoeOffloadMode::Automatic) {
-            const std::uint32_t target = context.automatic
-                                             ? std::min(resolved.max_context, kAutomaticContextFloor)
-                                             : resolved.max_context;
-            offload.target_context      = target;
-            const std::size_t available = current_free_device_bytes();
-            const auto fits             = [&](std::size_t count) {
-                const std::uint64_t placed = experts->device_bytes(count);
-                return placed < available &&
-                       try_resolve_runtime_capacity(
-                           resolved.kv_capacity, cached_states,
-                           [&](std::uint32_t states) {
-                               return models::qwen3_5::make_sequence_planner(
-                                          execution, device, planned_options(target, states))
-                                   .capacity_curve();
-                           },
-                           static_cast<std::size_t>(available - placed))
-                           .has_value();
-            };
-            std::optional<std::size_t> chosen;
-            for (std::size_t count = 0; count <= groups && !chosen; ++count) {
-                if (fits(count)) { chosen = count; }
-            }
-            if (!chosen) {
-                // A free-memory refusal like the KV fit's: a caller may retry with less (a plain
-                // engine without its drafter, a shorter context).
-                throw CapacityError(
-                    "MoE expert offload: the model does not fit even with the experts of all " +
-                    std::to_string(groups) + " MoE layers (" + format_gib(experts->total_bytes()) +
-                    ") in Host memory: " + format_gib(available) +
-                    " of Device memory is free after the other weights, the expert staging "
-                    "slots take " + format_gib(experts->staging_bytes(groups)) +
-                    ", and the rest does not hold the plan for " + std::to_string(target) +
-                    " tokens of context (KV, cached states, activations). Ask for a shorter "
-                    "context (--max-context) or a lower concurrency.");
-            }
-            offloaded = *chosen;
-        }
-        experts->resolve(offloaded, device.device);
-        offload.moe_layers     = static_cast<std::uint32_t>(groups);
-        offload.offloaded      = static_cast<std::uint32_t>(offloaded);
-        offload.pinned_bytes   = experts->pinned_bytes(offloaded);
-        offload.staging_bytes  = experts->staging_bytes(offloaded);
-        offload.resident_bytes = experts->device_bytes(offloaded) - offload.staging_bytes;
-
-        // Where decode calls compute the offloaded experts: the CPU (the fast mode) or the GPU
-        // over PCIe (byte-equal to no offload). An explicit choice that cannot hold is refused.
-        const MoeOffloadCompute asked = options.moe_offload.compute;
-        const bool exact              = options.activations == ActivationMode::Exact;
-        const bool family             = static_cast<bool>(loaded.attach_host_experts);
-        std::string unreadable;
-        const bool readable =
-            family && offloaded > 0 && loaded.host_experts_readable(&unreadable);
-        if (asked == MoeOffloadCompute::Cpu) {
-            if (exact) {
-                throw std::invalid_argument(
-                    "--moe-offload-compute cpu is the fast mode (the CPU's results are close to "
-                    "the GPU's, not byte-equal), and --activations exact asks for bytes that do "
-                    "not depend on where the experts are: drop one of the two");
-            }
-            if (!family) {
-                throw std::invalid_argument(
-                    "--moe-offload-compute cpu: this model family computes offloaded experts on "
-                    "the GPU only (--moe-offload-compute gpu or auto)");
-            }
-            if (offloaded > 0 && !readable) {
-                throw std::invalid_argument("--moe-offload-compute cpu: the CPU cannot compute "
-                                            "these experts (" + unreadable +
-                                            "); --moe-offload-compute gpu reads them over PCIe");
-            }
-        }
-        bool on_cpu = false;
-        if (offloaded == 0) {
-            offload.compute_reason = "no MoE layer offloaded";
-        } else if (asked == MoeOffloadCompute::Gpu) {
-            offload.compute_reason = "--moe-offload-compute gpu";
-        } else if (asked == MoeOffloadCompute::Cpu) {
-            on_cpu                 = true;
-            offload.compute_reason = "--moe-offload-compute cpu";
-        } else if (exact) {
-            offload.compute_reason = "auto: --activations exact keeps them on the GPU, byte-equal "
-                                     "to no offload";
-        } else if (!family) {
-            offload.compute_reason = "auto: this model family has no CPU expert path";
-        } else if (!readable) {
-            offload.compute_reason = "auto: the CPU cannot compute them (" + unreadable + ")";
-        } else {
-            on_cpu                 = true;
-            offload.compute_reason = "auto: --activations fast";
-        }
-        if (!on_cpu && options.moe_offload.threads != 0) {
-            throw std::invalid_argument("--moe-offload-threads sets the CPU's expert threads, "
-                                        "but the GPU computes the offloaded experts (" +
-                                        offload.compute_reason + ")");
-        }
-        if (on_cpu) {
-            host_experts = std::make_unique<ops::HostExperts>(
-                loaded.host_experts_hidden, loaded.host_experts_top_k,
-                static_cast<int>(options.moe_offload.threads), ops::host::detect_isa());
-            loaded.attach_host_experts(host_experts.get());
-            offload.compute     = MoeOffloadCompute::Cpu;
-            offload.cpu_threads = static_cast<std::uint32_t>(host_experts->threads());
-            offload.cpu_isa     = ops::host::isa_name(host_experts->isa());
-        }
-    }
     // An automatic Host tier is fitted to what the host can pin before anything is planned over it
     // (its KV pages widen the logical page tables).
     ContextCacheOptions& cache = resolved.context_cache;
@@ -720,16 +587,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                         .first;
         }
         return found->second;
-    };
-    // A shortage names what MoE expert offload could still take off the device.
-    const auto offload_hint = [&]() -> std::string {
-        if (loaded.device_expert_bytes == 0 || options.moe_offload.mode == MoeOffloadMode::Automatic) {
-            return {};
-        }
-        return " The routed experts of " + std::to_string(loaded.device_expert_layers) +
-               " MoE layers take " + format_gib(loaded.device_expert_bytes) +
-               " of the weights on the GPU: MoE expert offload (ninferno-serve --moe-offload auto) "
-               "keeps the fewest of them in pinned Host memory that let the plan fit.";
     };
     // The fit: every choice below depends on the free Device memory and the plans only.
     // `warmed`: the free memory is measured after the kernel warm-up and net of the Host tier's
@@ -957,7 +814,7 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                 .max_concurrency         = resolved.max_concurrency,
                 .graph_allowance         = graph_allowance,
             });
-            throw_capacity_shortage(error, instead + offload_hint());
+            throw_capacity_shortage(error, instead);
         }
         return *resolved_capacity;
     };
@@ -1210,8 +1067,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                                                     resolved.max_context);
     instance->kv_capacity_resolution = resolution;
     instance->host_tier              = host_tier;
-    instance->moe_offload            = offload;
-    instance->host_experts           = std::move(host_experts);
     instance->context                = context;
     instance->kernel_warm_up         = warm_up;
     StartupPhaseScope program(options.startup_observer, StartupPhase::ProgramInitialize);

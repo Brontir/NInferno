@@ -1,6 +1,6 @@
 #include "convert/planner.h"
 
-#include "artifact/expert_groups.h"
+#include "artifact/routed_experts.h"
 #include "artifact/formats.h"
 #include "convert/expert_layout.h"
 #include "convert/numerics.h"
@@ -290,7 +290,7 @@ private:
         jobs_.push_back(std::move(job));
     }
 
-    // Whether every parameter is a routed expert of one layer (artifact/expert_groups.h).
+    // Whether every parameter is a routed expert of one layer (artifact/routed_experts.h).
     bool expert_bank(const std::vector<std::size_t>& names) const {
         std::optional<std::string> first;
         for (const auto name : names) {

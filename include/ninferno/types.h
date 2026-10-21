@@ -406,33 +406,6 @@ struct ContextCostOptions {
     std::filesystem::path preset_path;
 };
 
-// MoE expert offload: the routed-expert banks of MoE layers kept in pinned Host memory and read
-// over PCIe (core/expert_residency.h); attention, the router, shared experts and KV stay on the
-// device. The result is the same in every placement.
-enum class MoeOffloadMode : std::uint8_t {
-    Off,       // every weight on the device
-    Automatic, // the fewest leading MoE layers that let the plan fit (see EngineOptions)
-    Layers,    // exactly the first `layers` MoE layers
-};
-
-// Where the offloaded layers' experts are computed in decode calls (T <= 16; a longer call
-// streams the layer into a Device staging slot whatever this says).
-//   Gpu: the Op reads them over PCIe (zero-copy): byte-equal to no offload.
-//   Cpu: the CPU computes them from Host memory (src/ops/host_experts): the fast mode, close to
-//        no offload but not byte-equal; deterministic whatever the CPU's thread count.
-//   Automatic: Cpu under --activations fast when the CPU computes the experts' format (MXFP4,
-//        NVFP4), Gpu otherwise; MemorySummary names the choice and why.
-enum class MoeOffloadCompute : std::uint8_t { Automatic, Cpu, Gpu };
-
-struct MoeOffloadOptions {
-    MoeOffloadMode mode = MoeOffloadMode::Off;
-    std::uint32_t layers = 0; // Layers only: 1..the model's MoE layer count
-    MoeOffloadCompute compute = MoeOffloadCompute::Automatic;
-    std::uint32_t threads     = 0; // Cpu: worker threads, 0 = one per physical core
-
-    bool operator==(const MoeOffloadOptions&) const = default;
-};
-
 struct EngineOptions {
     std::filesystem::path artifact_path;
     std::filesystem::path chat_template_path;
@@ -501,13 +474,6 @@ struct EngineOptions {
     std::uint32_t media_preprocess_threads = 0;
     bool enable_vision                     = false; // load the vision tower (image and video input)
     bool use_cuda_graph                    = true;  // decode through captured CUDA graphs
-    // Automatic: the experts of the leading MoE layers that the host can pin (every layer on a
-    // host with the memory) are loaded to Host memory, then the Engine keeps the first O layers
-    // there and copies the rest to the device, O the fewest for which the plan
-    // at the automatic context's floor (8192 tokens, or the model's own when smaller; an explicit
-    // max_context otherwise) fits the free Device memory. A model that does not fit even with
-    // every layer offloaded is refused with the numbers.
-    MoeOffloadOptions moe_offload;
     ContextCacheOptions context_cache;
     ContextCostOptions context_cost;
     StartupObserver startup_observer;
@@ -1504,22 +1470,6 @@ struct MemorySummary {
     std::size_t host_kv_capacity_default_bytes    = 0;
     std::size_t host_tier_budget_bytes            = 0;
     std::size_t host_kv_occupied_bytes            = 0;
-    // MoE expert offload (EngineOptions::moe_offload): of the MoE layers whose experts the load
-    // placed in Host groups, how many are read from pinned Host memory, and the bytes pinned,
-    // copied to the device and staged; Automatic chose the count for moe_offload_target_context.
-    MoeOffloadMode moe_offload_mode               = MoeOffloadMode::Off;
-    std::uint32_t moe_offload_layers              = 0;
-    std::uint32_t moe_offload_offloaded           = 0;
-    std::uint64_t moe_offload_pinned_bytes        = 0;
-    std::uint64_t moe_offload_resident_bytes      = 0;
-    std::uint64_t moe_offload_staging_bytes       = 0;
-    std::uint32_t moe_offload_target_context      = 0;
-    // Where decode calls compute the offloaded experts, and on the CPU with how many threads and
-    // which instruction set; moe_offload_compute_reason says why when it was chosen automatically.
-    MoeOffloadCompute moe_offload_compute         = MoeOffloadCompute::Gpu;
-    std::uint32_t moe_offload_cpu_threads         = 0;
-    std::string moe_offload_cpu_isa;
-    std::string moe_offload_compute_reason;
     // The kernel warm-up construction ran before it measured the free memory for an automatic fit
     // (the plan's kernels load their code and grow the per-thread local memory for good at their
     // first launch): the prefill widths it ran (1..N), the probe Programs that captured every

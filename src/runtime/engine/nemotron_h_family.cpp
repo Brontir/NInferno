@@ -26,11 +26,6 @@ public:
 
 FamilyLoad load_nemotron_h(const EngineOptions& options, DeviceContext& device) {
     refuse_qwen_only_options(options, "Nemotron-H");
-    // Every expert loads on the GPU: no expert offload, which the Engine would otherwise skip.
-    if (options.moe_offload.mode != MoeOffloadMode::Off) {
-        throw std::invalid_argument(
-            "Nemotron-H places every MoE expert on the GPU: --moe-offload is not available for it");
-    }
     // Before the weights load, as the dense family checks (validate_options repeats it after).
     if (options.speculative.backend != SpeculativeBackend::None &&
         options.speculative.backend != SpeculativeBackend::Mtp) {
