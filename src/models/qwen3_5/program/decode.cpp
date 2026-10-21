@@ -1,5 +1,6 @@
 #include "models/qwen3_5/program/program_impl.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
+#include "models/qwen3_5/program/context_clock.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/program/graph_execution.h"
@@ -13,6 +14,7 @@
 #include "ninferno/ops/prepare_ragged_prefix.h"
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/scatter.h"
+#include "runtime/contract/timing.h"
 
 #include <algorithm>
 #include <atomic>

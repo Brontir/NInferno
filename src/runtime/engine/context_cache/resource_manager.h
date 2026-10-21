@@ -6,12 +6,12 @@
 #include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/context_cache/materialization_planner.h"
 #include "runtime/engine/context_cache/capture_planner.h"
+#include "runtime/engine/context_cache/planning_stopwatch.h"
 #include "core/fnv.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -59,7 +59,9 @@ struct CheckpointObservation {
 
 // ResourceManager owns logical policy only.  Every physical feasibility decision and mutation is
 // represented by an opaque ModelContract::ResourcePlan sealed against Program::resource_revision().
-template <class ModelContract>
+// PlanningClock times plans for their diagnostics only (planning_stopwatch.h); no decision reads
+// it.
+template <class ModelContract, class PlanningClock = DefaultPlanningClock>
 class ResourceManager {
 public:
     using Program                 = typename ModelContract::Program;
@@ -297,7 +299,8 @@ public:
         }
         if (!destination) { return {.readiness = Readiness::TemporarilyBlocked}; }
 
-        const typename Planner::Clock::time_point planning_started = Planner::Clock::now();
+        // Wall time for the plan's diagnostics only: the planner itself reads no clock.
+        BasicPlanningStopwatch<PlanningClock> stopwatch;
         rebuild_prefix_index();
         PrefixDemandRecord provisional_demand;
         provisional_demand.domain =
@@ -401,7 +404,7 @@ public:
 
         std::optional<Choice> selected =
             plan_materialization(program, prompt, base, *destination, candidates, publication_order,
-                                 planning_started, provisional_demand, allowance);
+                                 stopwatch, provisional_demand, allowance);
         if (!selected) { return {.readiness = Readiness::TemporarilyBlocked}; }
         return {
             .readiness = selected->needs_transfer() ? Readiness::NeedsTransfer : Readiness::Ready,
@@ -2008,7 +2011,7 @@ private:
     plan_materialization(Program& program, const PreparedPrompt& prompt,
                          const RequestBasePlan& base, LaneId destination,
                          std::vector<Candidate>& candidates, std::uint64_t publication_order,
-                         typename Planner::Clock::time_point planning_started,
+                         BasicPlanningStopwatch<PlanningClock>& stopwatch,
                          PrefixDemandRecord& provisional_demand, PlanningAllowance allowance) {
         std::vector<typename Planner::CandidateInput> candidate_inputs;
         std::vector<const ContinuationHandle*> private_owners;
@@ -2268,7 +2271,8 @@ private:
 
         std::optional<typename Planner::Result> planned =
             planner_.plan(program, prompt, cost_model_, candidate_inputs, 0, build_pressure_inputs,
-                          logical_goal, final_schedule, planning_started, allowance);
+                          logical_goal, final_schedule, allowance, &stopwatch);
+        if (planned) { stopwatch.stamp(planned->diagnostics); }
         const auto selected_candidate =
             planned ? std::find_if(candidate_inputs.begin(), candidate_inputs.end(),
                                    [&](const typename Planner::CandidateInput& input) {

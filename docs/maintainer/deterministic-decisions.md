@@ -10,6 +10,13 @@ This page states the rule and its target. The engine does not meet all of it yet
 - a constrained row's measured mask time decides whether its masks are filled before launch and
   whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
   wait cannot change bytes or batches;
+- a token mask the device does not see released within its wall-clock wait bound ends the request;
+- wall-clock bounds decide whether a request or the server goes on (outcome, not bytes): a queued
+  request expires after `--pending-timeout-ms` (also during media preparation), a DFlash round
+  whose drafts do not reach the host within 30 s fails, and a second transient CUDA error within
+  5 minutes restarts the server;
+- `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
+  the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;
@@ -94,7 +101,15 @@ What the design guarantees once complete:
      schedule.
    - **S, byte-neutral choices.** These may read any canonical fact.
 3. **No timings, clocks or hidden state in decisions.** That rules out a cache left by an earlier
-   run, an environment variable that changes a choice, and a budget in milliseconds.
+   run, an environment variable that changes a choice, and a budget in milliseconds. The monitor is
+   write-only: timings, step latencies, throughput and NVML readings (clocks, temperature, power)
+   may be logged and exported, never read back by a decision. Counts that follow from the request
+   schedule (drafts accepted, rounds run, requests runnable) are not observations of the machine.
+   A planner reports the points of its search to a caller that times them, and reads nothing back
+   (the stopwatch, `planning_stopwatch.h`, is included only by the ResourceManager).
+   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads and timers
+   out of the text of the decision files it lists; what those files include is not checked (see
+   the known gaps and [Runtime observations](#runtime-observations)).
 4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
@@ -195,6 +210,29 @@ option change moves the fingerprint only, a plan change both, an observed size t
   their band.
 - Promises of a confidence level that two lab cards per generation cannot support, such as "at
   least 90 %" or n/(n+1).
+
+## Runtime observations
+
+Where the engine observes the machine while it runs, and whether a decision reads it. Classes: (a)
+logged or exported only; (b) moves only scheduling or latency, not the bytes of a fixed schedule
+(S tier); (c) changes routes, bytes or depth.
+
+| Observation | Where | Class |
+|---|---|---|
+| Context-cache planning search | `src/runtime/engine/context_cache/materialization_planner.h`, `src/runtime/engine/context_cache/capture_planner.h` | counted work units, no clock; the ResourceManager times the reported points (a) |
+| Concurrent-prefill interleave | `src/runtime/engine/engine_core.h`, `src/runtime/engine/interleave_cost.h` | priced by shape, no clock |
+| Decode run-ahead | `src/models/qwen3_5/program/round_pacing.h` | from the CPU-quota fact, no clock |
+| Decode wait, spin or block | `src/models/qwen3_5/program/round_pacing.h` | (b), measured host lag |
+| Grammar compile timeout | `src/structured/constraint.cpp` | (b), fails a request, no bytes |
+| Queue expiry (`--pending-timeout-ms`) | `src/runtime/engine/engine_core.h` (submit, admission head and backfill), `src/models/qwen3_5/frontend/media_cache.cpp` | (b), expires a waiting request, no bytes |
+| DFlash draft arrival, 30 s | `src/models/qwen3_5/program/decode.cpp` (`fill_dflash_draft_masks`) | (b), fails a stuck round, no bytes |
+| Second transient CUDA error within 5 minutes | `src/runtime/engine/engine_core.h` (`kTransientCudaErrorWindow`) | (b), restarts the server instead of going on |
+| Mask fill order, constrained DFlash drafting | `src/structured/request_constraint.cpp` → `src/models/qwen3_5/program/decode.cpp` | (c), open |
+| Device mask-release wait bound | `src/ops/kernel/sampling_device.cuh` | (c), open: ends a request |
+| Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), opt-in by option (`--dense-tune`, `--moe-tune`), off by default |
+| Free memory after warm-up | `src/runtime/engine/model_instance.cpp` | (c), open (gaps above) |
+| Acceptance watchdog | `src/spec/watchdog.h` | counts of the request's own drafts, not a timing |
+| Planning, transfer, phase and request timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
 
 ## Review checklist
 

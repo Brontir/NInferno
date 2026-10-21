@@ -4,11 +4,11 @@
 #include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/context_cache/context_portfolio_value.h"
 #include "runtime/engine/context_cache/materialization_budget.h"
+#include "runtime/engine/context_cache/planning_telemetry.h"
 #include "runtime/engine/context_cache/resource_search.h"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -39,7 +39,9 @@ struct MaterializationOwnerPolicy {
     bool explicit_shared_credit            = false;
 };
 
-template <class ModelContract, class SearchClock = std::chrono::steady_clock>
+// The planner reads no clock: its search counts work units (materialization_budget.h) and it
+// reports the points of the search to a write-only PlanningTelemetry.
+template <class ModelContract>
 class MaterializationPlanner {
 public:
     using Program                = typename ModelContract::Program;
@@ -50,8 +52,6 @@ public:
     using SharedPrefixHandle     = typename ModelContract::SharedPrefixHandle;
     using PressureTargetHandle   = typename ModelContract::PressureTargetHandle;
     using AssessedPressureTarget = typename ModelContract::AssessedPressureTarget;
-    // Telemetry only (planning and search elapsed time): no decision reads it.
-    using Clock                  = SearchClock;
 
     struct CandidateInput {
         AdmissionCandidate* candidate = nullptr;
@@ -98,7 +98,9 @@ public:
          const ContextMachineCostModel& machine_cost, std::span<const CandidateInput> candidates,
          std::uint32_t root_candidate_index, PressureInputsFn&& pressure_inputs,
          LogicalGoalFn&& logical_goal, FinalScheduleFn&& final_schedule,
-         Clock::time_point planning_started, PlanningAllowance allowance = {}) {
+         PlanningAllowance allowance = {}, PlanningTelemetry* telemetry = nullptr) {
+        PlanningTelemetry no_telemetry;
+        if (telemetry == nullptr) { telemetry = &no_telemetry; }
         if (candidates.empty() || root_candidate_index >= candidates.size()) {
             throw std::invalid_argument("materialization planning problem has no root candidate");
         }
@@ -195,7 +197,7 @@ public:
                 if (!sealed) { return std::nullopt; }
                 MaterializationDiagnostics diagnostics = complete_diagnostics(
                     identity_best->cost, static_cast<std::uint32_t>(candidates.size()),
-                    projection_work, planning_started,
+                    projection_work,
                     needs_optional_search ? MaterializationStopReason::PlanningBudget
                                           : MaterializationStopReason::NoPressure,
                     false);
@@ -216,7 +218,7 @@ public:
             }
         }
 
-        typename Clock::time_point search_started = Clock::now();
+        telemetry->search_started();
         std::vector<const AdmissionCandidate*> candidate_handles;
         std::vector<PlanningCandidateId> candidate_ids;
         candidate_handles.reserve(candidates.size());
@@ -273,12 +275,12 @@ public:
             mark_target(assessment.stable_target_ordinal, kTargetDiscovered | kTargetAssessed);
         }
 
-        if (!identity_best) { search_started = Clock::now(); }
+        if (!identity_best) { telemetry->search_started(); }
         const std::uint64_t search_units_before = allowance.spent();
         MaterializationSearchBudget search_budget(allowance, search_units_before,
                                                   incumbent.cost.total_ns);
         const auto initial_cost_ns = incumbent.cost.total_ns;
-        std::optional<std::uint64_t> first_improvement_ns;
+        bool first_improvement_reported      = false;
         std::uint32_t incumbent_improvements = 0;
         // Predicted operation costs in work units: the declared costs, then following what the
         // operations were charged (materialization_budget.h), never a clock.
@@ -387,8 +389,9 @@ public:
                 candidate_seeded[expected_candidate] = true;
             }
             if (goal && cost.less(incumbent.cost)) {
-                if (cost.total_ns < initial_cost_ns && !first_improvement_ns) {
-                    first_improvement_ns = elapsed_ns(search_started, Clock::now());
+                if (cost.total_ns < initial_cost_ns && !first_improvement_reported) {
+                    first_improvement_reported = true;
+                    telemetry->first_improvement();
                 }
                 ++incumbent_improvements;
                 incumbent = make_incumbent(target, expected_candidate, assessment,
@@ -711,7 +714,7 @@ public:
             ++search_work;
         }
 
-        const std::uint64_t search_elapsed_ns = elapsed_ns(search_started, Clock::now());
+        telemetry->search_ended();
         if (!incumbent.assessed) {
             AssessedPressureTarget assessed            = session.assess(incumbent.target);
             const PressureTargetAssessment& assessment = assessed.assessment();
@@ -736,12 +739,11 @@ public:
                          FinalScheduleIntent{.shared_capture_frontiers = shared_frontiers});
         if (!sealed) { throw std::logic_error("selected pressure target could not be sealed"); }
 
-        MaterializationDiagnostics diagnostics = make_diagnostics(
-            incumbent.cost, targets_evaluated, projection_work, planning_started, search_elapsed_ns,
-            stop_reason, budget_exhausted, incumbent.degradation_units, incumbent.root_maximal);
+        MaterializationDiagnostics diagnostics =
+            make_diagnostics(incumbent.cost, targets_evaluated, projection_work, stop_reason,
+                             budget_exhausted, incumbent.degradation_units, incumbent.root_maximal);
 
         diagnostics.initial_predicted_total_ns = initial_cost_ns;
-        diagnostics.first_improvement_ns       = first_improvement_ns;
         diagnostics.incumbent_improvements     = incumbent_improvements;
         diagnostics.search_work                = search_work;
         diagnostics.search_granted_units       = search_budget.granted_units();
@@ -767,14 +769,14 @@ public:
     plan(Program& program, const PreparedPrompt& prompt,
          const ContextMachineCostModel& machine_cost, std::span<const CandidateInput> candidates,
          std::uint32_t root_candidate_index, PressureInputsFn&& pressure_inputs,
-         LogicalGoalFn&& logical_goal, Clock::time_point planning_started,
-         PlanningAllowance allowance = {}) {
+         LogicalGoalFn&& logical_goal, PlanningAllowance allowance = {},
+         PlanningTelemetry* telemetry = nullptr) {
         const auto no_optional_schedule = [](PlanningCandidateId, const RequestPlanSummary&,
                                              const auto&) { return std::vector<std::uint32_t>{}; };
         return plan(program, prompt, machine_cost, candidates, root_candidate_index,
                     std::forward<PressureInputsFn>(pressure_inputs),
-                    std::forward<LogicalGoalFn>(logical_goal), no_optional_schedule,
-                    planning_started, allowance);
+                    std::forward<LogicalGoalFn>(logical_goal), no_optional_schedule, allowance,
+                    telemetry);
     }
 
 private:
@@ -957,13 +959,6 @@ private:
         CheckpointRef checkpoint;
         std::uint64_t target_ns = 0;
     };
-
-    [[nodiscard]] static std::uint64_t elapsed_ns(Clock::time_point begin,
-                                                  Clock::time_point end) noexcept {
-        const auto count =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
-        return count > 0 ? static_cast<std::uint64_t>(count) : 0;
-    }
 
     [[nodiscard]] static const MaterializationOwnerPolicy*
     owner_policy_for(std::span<const MaterializationOwnerPolicy> policies,
@@ -1312,16 +1307,15 @@ private:
 
     [[nodiscard]] static MaterializationDiagnostics
     complete_diagnostics(const FoldedCost& cost, std::uint32_t targets_evaluated,
-                         std::uint64_t projection_work, Clock::time_point planning_started,
-                         MaterializationStopReason reason, bool maximal_fallback) noexcept {
-        return make_diagnostics(cost, targets_evaluated, projection_work, planning_started, 0,
-                                reason, false, 0, maximal_fallback);
+                         std::uint64_t projection_work, MaterializationStopReason reason,
+                         bool maximal_fallback) noexcept {
+        return make_diagnostics(cost, targets_evaluated, projection_work, reason, false, 0,
+                                maximal_fallback);
     }
 
     [[nodiscard]] static MaterializationDiagnostics
     make_diagnostics(const FoldedCost& cost, std::uint32_t targets_evaluated,
-                     std::uint64_t projection_work, Clock::time_point planning_started,
-                     std::uint64_t search_elapsed_ns, MaterializationStopReason reason,
+                     std::uint64_t projection_work, MaterializationStopReason reason,
                      bool budget_exhausted, std::uint32_t degradation_units,
                      bool maximal_fallback) noexcept {
         return MaterializationDiagnostics{
@@ -1330,8 +1324,6 @@ private:
             .predicted_total_ns         = cost.total_ns,
             .targets_evaluated          = targets_evaluated,
             .projection_work            = projection_work,
-            .planning_elapsed_ns        = elapsed_ns(planning_started, Clock::now()),
-            .search_elapsed_ns          = search_elapsed_ns,
             .stop_reason                = reason,
             .budget_exhausted           = budget_exhausted,
             .selected_degradation_units = degradation_units,

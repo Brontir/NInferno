@@ -1,7 +1,6 @@
 #pragma once
 
 #include "models/qwen3_5/program/program_impl.h"
-#include <chrono>
 #include <span>
 
 namespace ninferno::models::qwen3_5::execution {
@@ -12,9 +11,6 @@ struct DFlashEnvelopes;
 namespace ninferno::models::qwen3_5::detail {
 
 using execution::dimension;
-using Clock = std::chrono::steady_clock;
-
-std::uint64_t elapsed_ns(Clock::time_point started) noexcept;
 
 std::int32_t checked_i32(std::uint32_t value, const char* label);
 
