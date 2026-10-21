@@ -421,7 +421,7 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 | `--kv-dtype`, `--max-context N`, `--prefill-chunk N` | `bf16`, `4096`, `1024` | The engine settings measured with. |
 | `--corpus FILE` | built in (`NINFERNO_SPEC_CORPUS`) | Prompt corpus. |
 | `--device N` | `0` | CUDA device. |
-| `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app). |
+| `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app); a named tune that does not serve (unreadable, or another artifact, GPU class or drafters) refuses start-up. |
 | `--profile PROFILE` | `<model>.ninferno.spec_profile.json` | With `--load`: the tune whose choices the load bounds are measured for. |
 | `--publish FILE --applies-to REPO,... --measured-on TEXT [--gpu-class CLASS] [--requires LIST]` | none | Also write a registry entry (`tools/spec/registry_add.py` adds it). |
 | `--load C,...` | none | Measure the bound per concurrency instead (`2..8`, default set `2,4,8`), with `--load-depths`, `--temperature`, `--top-p`, `--thinking on\|off\|corpus`, `--tolerance`, `--min-gain`, `--max-tokens`, `--draft-width` and `--resume FILE`. |

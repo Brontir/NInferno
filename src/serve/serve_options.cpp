@@ -171,6 +171,8 @@ std::string serve_usage_text(const char* argv0) {
            "       --spec-profile TUNE.json: a tune of this model on this GPU (ninferno\n"
            "       spec-tune's output) in place of the published profile; one beside the\n"
            "       artifact is read only when named here.\n"
+           "       A named tune that does not serve (unreadable, or another artifact, GPU\n"
+           "       class or drafters) refuses start-up.\n"
            "       --spec-shared-floor F: a request below its break-even floor keeps drafting\n"
            "       while another request of its step drafts and it emits F tokens per round or\n"
            "       more (default 1.4; 1 or less: it stops at its floor).\n"
