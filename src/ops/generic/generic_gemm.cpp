@@ -1700,7 +1700,9 @@ namespace {
 bool qx_prefill_a8_pays() {
     try {
         const auto& d = device_class();
-        return d.features.mma_tensor && !generation_row(d.major, d.minor).fp32acc_full_rate;
+        // Not on a chip whose mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq.
+        return d.features.mma_tensor && !d.features.mma_slow &&
+               !generation_row(d.major, d.minor).fp32acc_full_rate;
     } catch (const std::exception&) {
         return false;
     }

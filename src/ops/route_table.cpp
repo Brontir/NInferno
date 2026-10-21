@@ -29,6 +29,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -317,12 +318,17 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
         table->status.path      = path;
         table->status.gpu_class = root.at("gpu").at("class").get<std::string>();
         // "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300}: the card it was
-        // measured on, which the default lookup ranks tables by (board_distance).
+        // measured on, which the default lookup ranks tables by (board_distance). "mma_slow"
+        // (written only when set) defaults to the class's chip fact, so a table without it keyed
+        // tu116 / tu117 still counts as one of those chips.
         if (const Json& gpu = root.at("gpu"); gpu.contains("board")) {
-            const Json& b  = gpu.at("board");
-            const int cc   = b.at("cc").get<int>();
-            table->board   = Board{cc / 10, cc % 10, b.at("sms").get<int>(),
-                                   b.value("l2_mib", 0.0), b.value("dram_gbps", 0.0)};
+            const Json& b    = gpu.at("board");
+            const int cc     = b.at("cc").get<int>();
+            const auto& cls  = table->status.gpu_class;
+            const auto chip  = std::string_view(cls).substr(0, cls.find(':'));
+            table->board     = Board{cc / 10, cc % 10, b.at("sms").get<int>(),
+                                     b.value("l2_mib", 0.0), b.value("dram_gbps", 0.0),
+                                     b.value("mma_slow", chip_mma_slow(cc / 10, cc % 10, chip))};
         }
         for (const Json& e : root.at("entries")) parse_entry(e, path, *table);
         for (const Json& e : root.value("moe", Json::array())) parse_moe_entry(e, path, *table);
@@ -888,6 +894,7 @@ std::string write_route_table(const std::string& gpu_class, const std::string& g
         const Board b        = board_of(device_class());
         root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor}, {"sms", b.sms},
                                 {"l2_mib", b.l2_mib}, {"dram_gbps", b.dram_gbps}};
+        if (b.mma_slow) root["gpu"]["board"]["mma_slow"] = true;
     } catch (const std::exception&) {
     }
     Json list      = Json::array();
