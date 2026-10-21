@@ -5,6 +5,7 @@
 #include "core/debug_poison.h"
 #include "core/startup.h"
 #include "core/device.h"
+#include "core/host_cpu_quota.h"
 #include "core/host_memory.h"
 #include "ninferno/ops/argmax.h"
 #include "ninferno/ops/target_logprobs.h"
@@ -25,6 +26,7 @@
 #include <span>
 #include <string>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -361,15 +363,34 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         uncommitted_row_limit  = model.uncommitted_row_limit(plan);
         const bool speculative = speculative_backend != SpeculativeBackend::None;
         const bool runs_ahead  = !speculative && uncommitted_row_limit > 0;
+        // The CPU quota and the logical cores are machine facts read once per process
+        // (host_cpu_quota.h); both enter the decision fingerprint's host facts.
+        static const HostCpuQuota cpu_quota = read_host_cpu_quota();
+        static const bool quota_limits      = cpu_quota.limits_run_ahead(usable_logical_cores());
         const RoundPacing pacing(
-            std::getenv("NINFERNO_DECODE_STEPS"),
-            std::getenv("NINFERNO_DECODE_WAIT"), qwen3_5::kMaximumOrdinaryDecodeSteps,
+            std::getenv("NINFERNO_DECODE_STEPS"), std::getenv("NINFERNO_DECODE_WAIT"),
+            qwen3_5::kMaximumOrdinaryDecodeSteps,
             runs_ahead ? std::min(qwen3_5::kMaximumOrdinaryDecodeSteps, uncommitted_row_limit + 1U)
-                       : 1U);
+                       : 1U,
+            quota_limits);
         const bool paced = use_cuda_graph;
         if (paced) {
             round_pacing = pacing;
             round_timer.emplace(device, device.stream, /*blocking_stop=*/true);
+        }
+        decode_pacing =
+            DecodePacingFacts{.steps_per_round        = paced ? pacing.steps() : 1U,
+                              .verify_tokens_per_lane = speculative ? draft_window + 1U : 1U,
+                              .cpu_quota_us           = cpu_quota.quota_us,
+                              .cpu_period_us          = cpu_quota.period_us};
+        if (pacing.auto_ignored()) {
+            static std::once_flag warned;
+            std::call_once(warned, [&] {
+                std::fprintf(stderr,
+                             "warning: NINFERNO_DECODE_STEPS=auto is no longer a mode; ordinary "
+                             "decode runs its default of %u step(s) per round\n",
+                             decode_pacing.steps_per_round);
+            });
         }
         // A step count this engine cannot run is reported once per process.
         const std::optional<std::uint32_t> fixed = pacing.fixed_steps();

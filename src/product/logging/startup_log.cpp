@@ -327,6 +327,14 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
             canonical.remove_prefix(end + 1);
         }
     }
+    if (load.cpu_quota_us != 0 && load.cpu_quota_period_us != 0) {
+        impl_->logger->info(
+            "decode | {} step(s) per round | CPU quota {:.2f} CPUs", load.decode_steps_per_round,
+            static_cast<double>(load.cpu_quota_us) / static_cast<double>(load.cpu_quota_period_us));
+    } else {
+        impl_->logger->info("decode | {} step(s) per round | no CPU quota",
+                            load.decode_steps_per_round);
+    }
     impl_->logger->debug(
         "load detail | architecture {} | artifact read {} | H2D {} | staging peak {} | device "
         "objects {} | host objects {}",

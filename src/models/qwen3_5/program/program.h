@@ -728,9 +728,23 @@ private:
     friend struct detail::RuntimeContractAccess;
 };
 
+// How ordinary decode rounds run (round_pacing.h) and the machine fact they follow: it enters the
+// load summary (and the decision fingerprint).
+struct DecodePacingFacts {
+    std::uint32_t steps_per_round = 1;
+    // Tokens a speculative round verifies per lane at most: the largest draft window plus the
+    // bonus token (1: not speculative).
+    std::uint32_t verify_tokens_per_lane = 1;
+    std::uint64_t cpu_quota_us           = 0; // 0: no CPU bandwidth quota
+    std::uint64_t cpu_period_us          = 0;
+};
+
 struct PrefillProgress {
     runtime::BeginSummary summary;
     std::uint32_t processed_prompt_tokens = 0;
+    // The unit's prefill work from its own shape (calls, tokens, attention pairs from its start
+    // position, the images it encoded): the Engine prices it to share the GPU with decode.
+    runtime::PrefillWork work;
     bool complete                         = false;
     // The unit ended inside an image whose encoded output stays in the Program's one Vision
     // handoff region: no other request's prefill may run before this one's next unit (it would
@@ -914,6 +928,7 @@ public:
     // request keeps its Fork open from its Begin round until its first state-writing decode commit.
     // Resource planning (admission, captures) must not seal against that window.
     [[nodiscard]] bool has_unsettled_state_fork() const noexcept;
+    [[nodiscard]] DecodePacingFacts decode_pacing() const noexcept;
     // masks: constrained-decoding source for this unit's single row, or null.
     [[nodiscard]] PrefillProgress
     advance_prefill(SequenceHandle sequence, runtime::ExecutionTiming* failed_timing = nullptr,

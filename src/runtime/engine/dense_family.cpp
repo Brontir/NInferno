@@ -84,6 +84,10 @@ FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device) {
     FamilyLoad out;
     const std::int32_t vocabulary = attach_hf_text_frontend(
         out, loaded->text, options, static_cast<std::size_t>(config.vocab_size), "dense decoder");
+    if (config.moe) {
+        out.routed_experts    = static_cast<std::uint32_t>(config.moe->experts);
+        out.experts_per_token = static_cast<std::uint32_t>(config.moe->op.top_k);
+    }
     out.execution = models::dense::make_program_execution(model, loaded->drafter.get(), device,
                                                           vocabulary, options.activations);
     frontend.complete();

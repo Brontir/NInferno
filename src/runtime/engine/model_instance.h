@@ -4,6 +4,7 @@
 #include "models/qwen3_5/program/runtime_types.h"
 #include "models/qwen3_5/program/model_family.h"
 #include "runtime/engine/context_cache/context_cost.h"
+#include "runtime/engine/interleave_cost.h"
 #include "runtime/engine/kv_capacity.h"
 #include "ninferno/types.h"
 
@@ -40,6 +41,10 @@ struct FamilyLoad {
     // (an automatic one depends on the plan over the loaded model).
     std::function<models::qwen3_5::Frontend(std::uint32_t max_context)> make_frontend;
     LoadSummary summary;
+    // The routed experts of a MoE layer and how many each token selects (0: dense), for the
+    // decode-round price (interleave_cost.h).
+    std::uint32_t routed_experts    = 0;
+    std::uint32_t experts_per_token = 0;
 };
 
 // Loads and materializes one artifact of a family (the phases ArtifactInspect through
@@ -104,6 +109,8 @@ struct ModelInstance {
     HostTierResolution host_tier;
     ContextResolution context;
     KernelWarmUpResolution kernel_warm_up;
+    // The served model's shape facts the decode-round price reads (interleave_cost.h).
+    DecodeRoundShape decode_round_shape;
     const std::uint32_t capacity; // the longest admitted prompt: the resolved max_context
     std::unique_ptr<models::qwen3_5::Program> program;
 

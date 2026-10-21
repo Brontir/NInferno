@@ -251,6 +251,9 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     features_into(out, "feature.", d.features);
     features_into(out, "build_feature.", build);
     out["host.cpu_cores"]     = number(host.logical_cores);
+    out["host.cpu_quota"]     = host.cpu_quota_us != 0 && host.cpu_period_us != 0
+                                    ? number(host.cpu_quota_us) + "/" + number(host.cpu_period_us)
+                                    : std::string("none");
     const std::uint64_t gib   = host.ram_bytes >> 30U;
     out["host.ram_gib_class"] = number(gib == 0 ? std::uint64_t{0} : std::bit_floor(gib));
     return out;
@@ -356,8 +359,9 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
 
 DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                         std::span<const std::int32_t> route_breakpoints,
-                        std::string_view route_table) {
+                        std::string_view route_table, std::uint32_t decode_steps_per_round) {
     DecisionSection out;
+    out["decode.steps_per_round"] = number(decode_steps_per_round);
     out["kv_cache"]         = std::string(kv_cache_storage_name(memory.kv_cache));
     out["recurrent_state"]  = std::string(recurrent_state_storage_name(resolved.recurrent_state));
     std::vector<std::string> windows;

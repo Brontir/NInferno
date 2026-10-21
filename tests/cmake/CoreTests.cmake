@@ -68,6 +68,9 @@ ninferno_add_test(ninferno_layout_test       SOURCES "${CMAKE_CURRENT_LIST_DIR}/
 ninferno_add_test(ninferno_materialization_budget_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_materialization_budget.cpp"
   LIBRARIES ninferno_core)
 
+ninferno_add_test(ninferno_host_cpu_quota_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_host_cpu_quota.cpp"
+  LIBRARIES ninferno_core)
+
 ninferno_add_test(ninferno_kv_cache_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_kv_cache.cpp"
   LIBRARIES ninferno_core)

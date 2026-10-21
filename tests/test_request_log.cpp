@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <unistd.h>
@@ -452,10 +453,11 @@ int main() {
                           .first_improvement_ns       = 2000,
                           .incumbent_improvements     = 2,
                           .search_work                = 42,
-                          .search_granted_ns          = 8000,
+                          .search_granted_units       = 8000,
+                          .planning_units             = 9100,
+                          .search_units               = 7600,
                           .search_renewals            = 1,
                           .search_discovery_used      = true,
-                          .search_overshoot_ns        = 0,
     };
     outcome.thinking = ninferno::ThinkingBudgetStats{.configured_budget     = 256,
                                                    .model_thinking_tokens = 256,
@@ -465,10 +467,21 @@ int main() {
     const Json done = Json::parse(format_request_done_json("serve-test", 3000, context, outcome));
     failures += check(done.at("materialization").at("initial_predicted_total_ns") == 500000 &&
                           done.at("materialization").at("first_improvement_ns") == 2000 &&
-                          done.at("materialization").at("search_granted_ns") == 8000 &&
+                          done.at("materialization").at("search_granted_units") == 8000 &&
                           done.at("materialization").at("search_renewals") == 1 &&
                           done.at("materialization").at("search_discovery_used") == true,
                       "materialization search quality or cumulative budget diagnostics missing");
+    // Schema 26: the planning budgets are counted in work units, not nanoseconds.
+    failures +=
+        check(kRequestLogSchemaVersion == 26 &&
+                  std::string_view(ninferno::materialization_stop_reason_name(
+                      ninferno::MaterializationStopReason::PlanningBudget)) == "planning_budget" &&
+                  done.at("materialization").at("planning_units") == 9100 &&
+                  done.at("materialization").at("search_units") == 7600 &&
+                  !done.at("materialization").contains("search_granted_ns") &&
+                  !done.at("materialization").contains("search_overshoot_ns"),
+              "schema 26: search_granted_units and planning_budget replace the "
+              "nanosecond budget keys");
     failures +=
         check(done.at("result").at("finish_reason") == "output_limit", "finish reason missing");
     failures += check(done.at("result").at("prompt_tokens") == 401, "prompt tokens missing");
@@ -676,6 +689,11 @@ int main() {
     throughput.current.pressure_private_owners_degraded = 1;
     throughput.current.pressure_checkpoints_dropped     = 1;
     throughput.current.pressure_searches                = 1;
+    throughput.previous.capture_targets_assessed        = 10;
+    throughput.current.capture_searches                 = 2;
+    throughput.current.capture_targets_assessed         = 40;
+    throughput.current.capture_search_ns                = 600000;
+    throughput.current.capture_search_max_ns            = 450000;
     throughput.current.host_work                        = {
                                .engine_boundary_ns            = 1000000,
                                .program_submit_ns             = 2000000,
@@ -724,6 +742,11 @@ int main() {
     const Json throughput_json =
         Json::parse(format_throughput_json("serve-test", 5000, throughput));
     failures += check(throughput_json.at("event") == "throughput", "throughput event mismatch");
+    const Json& capture_search = throughput_json.at("context_cache").at("capture_search");
+    failures += check(capture_search.at("decisions") == 2 && capture_search.at("targets") == 30 &&
+                          capture_search.at("elapsed_ns") == 600000 &&
+                          capture_search.at("max_decision_ns_since_start") == 450000,
+                      "capture search calibration counters missing");
     failures += check(throughput_json.at("tokens").at("computed_prefill") == 100 &&
                           throughput_json.at("tokens").at("committed_decode") == 40,
                       "throughput token deltas mismatch");

@@ -3,6 +3,7 @@
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
 #include "artifact/formats.h"
+#include "artifact/routed_experts.h"
 #include "core/arena.h"
 #include "core/device_class.h"
 #include "core/hex.h"
@@ -359,6 +360,10 @@ FamilyLoad load_qwen3_5(const EngineOptions& options, DeviceContext& device) {
     device.synchronize();
     const models::qwen3_5::Model& model = *loaded->model;
     FamilyLoad out;
+    if (const auto* moe = std::get_if<models::qwen3_5::MoeConfig>(&model.config().text.ffn)) {
+        out.routed_experts    = moe->num_experts;
+        out.experts_per_token = moe->num_experts_per_tok;
+    }
     out.execution = models::qwen3_5::detail::make_qwen3_5_execution(loaded->parameters);
     const models::qwen3_5::FrontendOptions frontend_options{
         .chat_template_path       = options.chat_template_path,
@@ -416,10 +421,11 @@ namespace {
 // The static /v1/models facts of any family: the identity and dimensions from the loaded model's
 // traits, the parameters, weight bytes and weights profile from the artifact's tensor inventory
 // (every component, as llama.cpp counts a whole GGUF).
-// `artifact_id`: the artifact's id (hex), from the same read.
+// `artifact_id`: the artifact's id (hex), and `routed_expert_bytes`: the bytes of its routed-expert
+// objects (artifact/routed_experts.h; the decode-round price's MoE share), from the same read.
 ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const LoadSummary& summary,
                              const models::qwen3_5::detail::ModelTraits& traits,
-                             std::string& artifact_id) {
+                             std::string& artifact_id, std::uint64_t& routed_expert_bytes) {
     ModelMetadata metadata;
     metadata.model_id       = summary.model_name;
     metadata.vocab_size     = static_cast<std::uint64_t>(traits.public_tokens);
@@ -428,9 +434,13 @@ ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const L
     const artifact::Reader reader(artifact_path);
     artifact_id = hex_encode(reader.artifact_id().data(), reader.artifact_id().size());
     std::set<std::string> formats;
-    for (const auto& object : reader.directory().objects) {
+    const auto expert_layers = artifact::routed_expert_object_layers(reader.directory());
+    routed_expert_bytes      = 0;
+    for (std::size_t index = 0; index < reader.directory().objects.size(); ++index) {
+        const auto& object = reader.directory().objects[index];
         const auto* tensor = std::get_if<artifact::TensorObject>(&object);
         if (tensor == nullptr) { continue; } // resources: tokenizer, templates
+        if (expert_layers[index]) { routed_expert_bytes += tensor->bytes; }
         std::uint64_t elements = 1;
         for (const auto dimension : tensor->shape) { elements *= dimension; }
         metadata.parameters += elements;
@@ -1063,8 +1073,11 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     StartupPhaseScope frontend(options.startup_observer, StartupPhase::FrontendInitialize);
     models::qwen3_5::Frontend served_frontend = loaded.make_frontend(resolved.max_context);
     frontend.complete();
+    const DecodeRoundShape round_shape{.experts           = loaded.routed_experts,
+                                       .experts_per_token = loaded.experts_per_token};
     auto instance = std::make_unique<ModelInstance>(std::move(loaded), std::move(served_frontend),
                                                     resolved.max_context);
+    instance->decode_round_shape     = round_shape;
     instance->kv_capacity_resolution = resolution;
     instance->host_tier              = host_tier;
     instance->context                = context;
@@ -1075,6 +1088,12 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     device.synchronize();
     program.complete();
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();
+    const models::qwen3_5::DecodePacingFacts pacing     = instance->program->decode_pacing();
+    summary.decode_steps_per_round                      = pacing.steps_per_round;
+    summary.cpu_quota_us                                = pacing.cpu_quota_us;
+    summary.cpu_quota_period_us                         = pacing.cpu_period_us;
+    instance->decode_round_shape.steps_per_round        = pacing.steps_per_round;
+    instance->decode_round_shape.verify_tokens_per_lane = pacing.verify_tokens_per_lane;
     for (auto& line : ops::detail::generic::dense_tune_report()) {
         summary.moe_tune.push_back(std::move(line));
     }
@@ -1083,8 +1102,10 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     summary.route_table  = ops::route_table_status().message;
     summary.load_seconds = std::chrono::duration<double>(Clock::now() - start).count();
     summary.context_cost = std::move(context_cost.summary);
-    summary.metadata = model_metadata(options.artifact_path, summary, instance->execution->traits(),
-                                      summary.artifact_id);
+    summary.metadata =
+        model_metadata(options.artifact_path, summary, instance->execution->traits(),
+                       summary.artifact_id, instance->decode_round_shape.routed_expert_bytes);
+    instance->decode_round_shape.weight_bytes = summary.metadata.weight_bytes;
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};
 }

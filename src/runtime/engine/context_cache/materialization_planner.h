@@ -50,6 +50,7 @@ public:
     using SharedPrefixHandle     = typename ModelContract::SharedPrefixHandle;
     using PressureTargetHandle   = typename ModelContract::PressureTargetHandle;
     using AssessedPressureTarget = typename ModelContract::AssessedPressureTarget;
+    // Telemetry only (planning and search elapsed time): no decision reads it.
     using Clock                  = SearchClock;
 
     struct CandidateInput {
@@ -110,6 +111,10 @@ public:
                 throw std::invalid_argument("materialization candidate IDs are invalid");
             }
         }
+        // Without a boundary ledger the allowance belongs to this call alone.
+        PlanningLedger call_ledger;
+        if (allowance.ledger == nullptr) { allowance.ledger = &call_ledger; }
+        const std::uint64_t units_before = allowance.spent();
         queue_.clear();
         pending_.clear();
         const std::size_t frontier_capacity = candidates.size() + 1U + kTargetBudget;
@@ -160,13 +165,17 @@ public:
             });
         }
 
+        // The identity assessments are mandatory work; they still use the boundary's headroom.
+        allowance.charge(
+            saturating_add(PlanningWork::kAssessment * candidates.size(), projection_work));
+
         if (identity_best) {
             const bool needs_optional_search =
                 std::any_of(roots.begin(), roots.end(),
                             [](const IdentityRoot& root) { return root.expandable; });
-            const bool no_allowance =
-                allowance.remaining(planning_now_ns<Clock>()) == 0 ||
-                identity_best->cost.total_ns / 20U / std::max(1U, allowance.affected_requests) == 0;
+            const bool no_allowance = allowance.remaining() == 0 ||
+                                      economic_planning_units(identity_best->cost.total_ns,
+                                                              allowance.affected_requests) == 0;
             if (!needs_optional_search || no_allowance) {
                 const CandidateInput& selected = candidates[identity_best->candidate_index];
                 const auto price_split         = [&](std::span<const std::uint32_t> frontiers) {
@@ -187,15 +196,16 @@ public:
                 MaterializationDiagnostics diagnostics = complete_diagnostics(
                     identity_best->cost, static_cast<std::uint32_t>(candidates.size()),
                     projection_work, planning_started,
-                    needs_optional_search ? MaterializationStopReason::TimeBudget
+                    needs_optional_search ? MaterializationStopReason::PlanningBudget
                                           : MaterializationStopReason::NoPressure,
                     false);
                 diagnostics.budget_exhausted  = needs_optional_search;
+                diagnostics.planning_units    = allowance.spent() - units_before;
                 diagnostics.search_stop_phase = needs_optional_search
                                                     ? MaterializationSearchPhase::Setup
                                                     : MaterializationSearchPhase::None;
                 diagnostics.search_boundary_limited =
-                    needs_optional_search && allowance.remaining(planning_now_ns<Clock>()) == 0;
+                    needs_optional_search && allowance.remaining() == 0;
                 Result result;
                 result.plan             = std::move(*sealed);
                 result.candidate        = candidates[identity_best->candidate_index].id;
@@ -243,6 +253,7 @@ public:
                 session.root_maximal_target(candidates[root_candidate_index].id);
             AssessedPressureTarget assessed            = session.assess(root_maximal);
             const PressureTargetAssessment& assessment = assessed.assessment();
+            allowance.charge(saturating_add(PlanningWork::kAssessment, assessment.projection_work));
             if (assessment.candidate != candidates[root_candidate_index].id) {
                 throw std::logic_error("maximal pressure target changed admission candidate");
             }
@@ -263,16 +274,17 @@ public:
         }
 
         if (!identity_best) { search_started = Clock::now(); }
-        const auto search_origin_ns = static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(search_started.time_since_epoch())
-                .count());
-        MaterializationSearchBudget search_budget(allowance, search_origin_ns,
+        const std::uint64_t search_units_before = allowance.spent();
+        MaterializationSearchBudget search_budget(allowance, search_units_before,
                                                   incumbent.cost.total_ns);
         const auto initial_cost_ns = incumbent.cost.total_ns;
         std::optional<std::uint64_t> first_improvement_ns;
         std::uint32_t incumbent_improvements = 0;
-        std::uint64_t option_step_ns = 1'000, assessment_step_ns = 20'000,
-                      expansion_step_ns = 20'000;
+        // Predicted operation costs in work units: the declared costs, then following what the
+        // operations were charged (materialization_budget.h), never a clock.
+        std::uint64_t option_step       = PlanningWork::kOption,
+                      assessment_step   = PlanningWork::kAssessment,
+                      expansion_step    = PlanningWork::kExpansion;
         std::uint64_t search_work       = 0;
         const auto work_limit           = static_cast<std::uint64_t>(kTargetBudget) *
                                 (16U + 16ULL * pressure.owner_policy.size());
@@ -288,19 +300,24 @@ public:
                 budget_exhausted = true;
                 return false;
             }
-            if (!search_budget.allow(planning_now_ns<Clock>(), operation, completion, gain,
-                                     complete, search_work, discovery_eligible)) {
+            if (!search_budget.allow(allowance.spent(), operation, completion, gain, complete,
+                                                     search_work, discovery_eligible)) {
                 stop_reason      = search_budget.stop_reason();
-                budget_exhausted = stop_reason == MaterializationStopReason::TimeBudget;
+                budget_exhausted = stop_reason == MaterializationStopReason::PlanningBudget;
                 return false;
             }
             stop_reason      = MaterializationStopReason::QueueExhausted;
             budget_exhausted = false;
             return true;
         };
-        const auto observe_step = [&](std::uint64_t& estimate, Clock::time_point started) {
-            const auto sample = elapsed_ns(started, Clock::now());
-            estimate          = std::max<std::uint64_t>(1, estimate / 2 + sample / 2);
+        const auto observe_step = [&](std::uint64_t& estimate, std::uint64_t charged) {
+            allowance.charge(charged);
+            estimate = std::max<std::uint64_t>(1, estimate / 2 + charged / 2);
+        };
+        // An assessment costs its declared base plus the owner decisions and recovery
+        // alternatives it projected; an expansion its base plus the targets it committed.
+        const auto assessment_charge = [&](std::uint64_t projection_before) {
+            return saturating_add(PlanningWork::kAssessment, projection_work - projection_before);
         };
 
 
@@ -499,7 +516,7 @@ public:
                         const auto gain =
                             incumbent.cost.total_ns - identity_costs_[candidate].lower_bound_ns;
                         search_phase = MaterializationSearchPhase::Assessment;
-                        if (allow_work(assessment_step_ns, assessment_step_ns, gain, false)) {
+                        if (allow_work(assessment_step, assessment_step, gain, false)) {
                             const auto rescue = session.maximal_target(candidates[candidate].id);
                             const auto guide  = session.guidance(rescue);
                             if (!target_marked(guide.stable_target_ordinal, kTargetAssessed)) {
@@ -507,9 +524,9 @@ public:
                                                    kTargetDiscovered)) {
                                     ++optional_targets;
                                 }
-                                const auto started = Clock::now();
+                                const auto before = projection_work;
                                 (void)assess_target(rescue, candidate, guide.stable_target_ordinal);
-                                observe_step(assessment_step_ns, started);
+                                observe_step(assessment_step, assessment_charge(before));
                                 ++search_work;
                             }
                         }
@@ -540,21 +557,19 @@ public:
                     const auto steps =
                         std::min<std::uint64_t>(64, 1ULL + forecast.estimated_remaining_steps);
                     const auto completion =
-                        assessment_step_ns +
-                        option_step_ns * steps *
+                        assessment_step +
+                        option_step * steps *
                             std::max<std::size_t>(1, pressure.owner_policy.size());
                     search_phase = path.restore ? MaterializationSearchPhase::Refinement
                                                 : MaterializationSearchPhase::Construction;
-                    if (!allow_work(option_step_ns, completion, gain, complete,
+                    if (!allow_work(option_step, completion, gain, complete,
                                     !candidate_seeded[path.candidate_index])) {
-                        search_stopped = search_work >= work_limit ||
-                                         allowance.remaining(planning_now_ns<Clock>()) == 0;
+                        search_stopped = search_work >= work_limit || allowance.remaining() == 0;
                         path.cursor.reset();
                         break;
                     }
-                    const auto step_started = Clock::now();
-                    const auto step         = session.next_construction_option(*path.cursor);
-                    observe_step(option_step_ns, step_started);
+                    const auto step = session.next_construction_option(*path.cursor);
+                    observe_step(option_step, PlanningWork::kOption);
                     ++search_work;
                     if (step.guidance) {
                         auto cost = rank_guidance(path.candidate_index, *step.guidance);
@@ -602,20 +617,20 @@ public:
                                 ? incumbent.cost.total_ns - chosen.estimated_total_ns
                                 : 0;
                         search_phase = MaterializationSearchPhase::Assessment;
-                        if (!allow_work(assessment_step_ns, assessment_step_ns,
+                        if (!allow_work(assessment_step, assessment_step,
                                         chosen.recovery_complete ? target_gain : gain,
                                         chosen.recovery_complete &&
                                             chosen.unsatisfied_constraints == 0,
                                         !candidate_seeded[path.candidate_index])) {
-                            search_stopped = search_work >= work_limit ||
-                                             allowance.remaining(planning_now_ns<Clock>()) == 0;
+                            search_stopped =
+                                search_work >= work_limit || allowance.remaining() == 0;
                             path.cursor.reset();
                             break;
                         }
-                        const auto started = Clock::now();
+                        const auto before = projection_work;
                         (void)assess_target(*target, path.candidate_index,
                                             chosen.stable_target_ordinal);
-                        observe_step(assessment_step_ns, started);
+                        observe_step(assessment_step, assessment_charge(before));
                         ++search_work;
                     }
                     const bool feasible =
@@ -653,20 +668,17 @@ public:
                                                  : queue_.front().lower_bound_ns;
             const auto gain =
                 incumbent.cost.total_ns > estimate ? incumbent.cost.total_ns - estimate : 0;
-            const auto predicted_step = assess_pending ? assessment_step_ns : expansion_step_ns;
+            const auto predicted_step = assess_pending ? assessment_step : expansion_step;
             search_phase              = assess_pending ? MaterializationSearchPhase::Assessment
                                                        : MaterializationSearchPhase::Expansion;
-            if (!allow_work(predicted_step,
-                            predicted_step + (assess_pending ? 0 : assessment_step_ns), gain,
+            if (!allow_work(predicted_step, predicted_step + (assess_pending ? 0 : assessment_step),
+                            gain,
                             assess_pending && pending_.front().guidance.recovery_complete &&
                                 pending_.front().guidance.unsatisfied_constraints == 0 &&
                                 pending_.front().guidance.logical_ready,
                             !candidate_seeded[assess_pending ? pending_.front().candidate_index
                                                              : queue_.front().candidate_index])) {
-                if (search_work >= work_limit ||
-                    allowance.remaining(planning_now_ns<Clock>()) == 0) {
-                    break;
-                }
+                if (search_work >= work_limit || allowance.remaining() == 0) { break; }
                 // A forecast that cannot justify another window must not starve a different source.
                 if (assess_pending) {
                     (void)pending_pop();
@@ -675,24 +687,26 @@ public:
                 }
                 continue;
             }
-            const auto started = Clock::now();
             if (assess_pending) {
-                const auto next = pending_pop();
+                const auto next   = pending_pop();
+                const auto before = projection_work;
                 (void)assess_target(next.target, next.candidate_index,
                                     next.guidance.stable_target_ordinal);
-                observe_step(assessment_step_ns, started);
+                observe_step(assessment_step, assessment_charge(before));
             } else {
                 if (optional_targets >= kTargetBudget) {
                     stop_reason      = MaterializationStopReason::TargetBudget;
                     budget_exhausted = true;
                     break;
                 }
+                const std::uint32_t targets_before = optional_targets;
                 if (!expand_target(queue_pop())) {
                     stop_reason      = MaterializationStopReason::ExpansionCapacity;
                     budget_exhausted = true;
                     break;
                 }
-                observe_step(expansion_step_ns, started);
+                observe_step(expansion_step,
+                             PlanningWork::kExpansion + (optional_targets - targets_before));
             }
             ++search_work;
         }
@@ -730,14 +744,13 @@ public:
         diagnostics.first_improvement_ns       = first_improvement_ns;
         diagnostics.incumbent_improvements     = incumbent_improvements;
         diagnostics.search_work                = search_work;
-        diagnostics.search_granted_ns          = search_budget.granted_ns();
+        diagnostics.search_granted_units       = search_budget.granted_units();
+        diagnostics.search_units               = allowance.spent() - search_units_before;
+        diagnostics.planning_units             = allowance.spent() - units_before;
         diagnostics.search_renewals            = search_budget.renewals();
         diagnostics.search_discovery_used      = search_budget.discovery_used();
         diagnostics.search_stop_phase          = search_phase;
         diagnostics.search_boundary_limited    = search_budget.boundary_limited();
-        diagnostics.search_overshoot_ns        = search_elapsed_ns > search_budget.granted_ns()
-                                                     ? search_elapsed_ns - search_budget.granted_ns()
-                                                     : 0;
         Result result;
         result.plan                = std::move(*sealed);
         result.candidate           = candidates[incumbent.candidate_index].id;

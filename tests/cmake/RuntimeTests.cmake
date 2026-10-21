@@ -11,6 +11,9 @@ ninferno_add_test(ninferno_context_cost_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/
 ninferno_add_test(ninferno_resource_manager_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_resource_manager.cpp"
   LIBRARIES ninferno_runtime_support)
 
+ninferno_add_test(ninferno_interleave_cost_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_interleave_cost.cpp"
+  LIBRARIES ninferno_runtime_support)
+
 ninferno_add_test(ninferno_kv_capacity_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_kv_capacity.cpp"
   LIBRARIES ninferno_runtime_support)
 

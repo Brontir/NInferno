@@ -1280,7 +1280,7 @@ enum class MaterializationStopReason : std::uint8_t {
     QueueExhausted,
     TargetBudget,
     ExpansionCapacity,
-    TimeBudget,
+    PlanningBudget,
     InsufficientExpectedGain,
     WorkBudget,
 };
@@ -1296,8 +1296,8 @@ materialization_stop_reason_name(MaterializationStopReason reason) noexcept {
         return "target_budget";
     case MaterializationStopReason::ExpansionCapacity:
         return "expansion_capacity";
-    case MaterializationStopReason::TimeBudget:
-        return "time_budget";
+    case MaterializationStopReason::PlanningBudget:
+        return "planning_budget";
     case MaterializationStopReason::InsufficientExpectedGain:
         return "insufficient_expected_gain";
     case MaterializationStopReason::WorkBudget:
@@ -1351,10 +1351,13 @@ struct MaterializationDiagnostics {
     std::optional<std::uint64_t> first_improvement_ns;
     std::uint32_t incumbent_improvements         = 0;
     std::uint64_t search_work                    = 0;
-    std::uint64_t search_granted_ns              = 0;
+    std::uint64_t search_granted_units           = 0;
+    // Work units this planning call, and its optional search, charged to the boundary
+    // (materialization_budget.h): what planning_elapsed_ns and search_elapsed_ns calibrate.
+    std::uint64_t planning_units                 = 0;
+    std::uint64_t search_units                   = 0;
     std::uint32_t search_renewals                = 0;
     bool search_discovery_used                   = false;
-    std::uint64_t search_overshoot_ns            = 0;
     MaterializationSearchPhase search_stop_phase = MaterializationSearchPhase::None;
     bool search_boundary_limited                 = false;
 
@@ -1537,6 +1540,12 @@ struct RuntimeStats {
     std::uint32_t terminal_pending_requests = 0;
     std::uint64_t active_captures_completed = 0;
     std::uint64_t active_captures_aborted   = 0;
+    // Capture decisions that assessed a target, the targets they assessed, their host time and
+    // the longest one (since start): what kWorstTargetUs and kNominalTargetNs calibrate against.
+    std::uint64_t capture_searches         = 0;
+    std::uint64_t capture_targets_assessed = 0;
+    std::uint64_t capture_search_ns        = 0;
+    std::uint64_t capture_search_max_ns    = 0;
 
     std::uint64_t root_selections                    = 0;
     std::uint64_t private_endpoint_selections        = 0;
@@ -1672,6 +1681,11 @@ struct LoadSummary {
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.
     std::string drafter;
+    // Steps an ordinary decode round runs, and the machine fact that default follows: the
+    // process's CPU bandwidth quota (0: none). Both enter the decision fingerprint.
+    std::uint32_t decode_steps_per_round = 1;
+    std::uint64_t cpu_quota_us           = 0;
+    std::uint64_t cpu_quota_period_us    = 0;
     double load_seconds                = 0.0;
     double upload_seconds              = 0.0;
     std::uint64_t artifact_bytes_read  = 0;

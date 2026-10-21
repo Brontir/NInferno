@@ -204,12 +204,11 @@ int main() {
                           lane_a == 1U && lane_b == 3U && lane_c == 1U && skip == 3U &&
                           scheduler.owns_prefill_lane(3) && !scheduler.owns_prefill_lane(2),
                       "concurrent prefill must keep admission open and serve lanes in turn");
-    // Equal GPU time per request: decode owed after a chunk goes on before the next chunk.
-    failures += check(scheduler.choose_execution(true, true, true, true) == ExecutionAction::Decode &&
-                          scheduler.choose_execution(true, true, true, false) == ExecutionAction::Prefill &&
-                          scheduler.fair_decode_seconds(0.8, 3, 2) == 0.8 * 3 / 2 &&
-                          scheduler.fair_decode_seconds(0.8, 2, 0) == 0.0,
-                      "fair decode time beside prefill changed");
+    // Decode owed after a chunk goes on before the next chunk (interleave_cost.h prices it).
+    failures +=
+        check(scheduler.choose_execution(true, true, true, true) == ExecutionAction::Decode &&
+                  scheduler.choose_execution(true, true, true, false) == ExecutionAction::Prefill,
+              "owed decode beside prefill changed");
     scheduler.clear_prefill_lane(1);
     scheduler.clear_prefill_lane(3);
     scheduler.allow_concurrent_prefill(false);

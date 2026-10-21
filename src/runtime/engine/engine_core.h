@@ -13,6 +13,7 @@
 #include "runtime/engine/request_record.h"
 #include "structured/output_constraint.h"
 #include "runtime/engine/context_cache/resource_manager.h"
+#include "runtime/engine/interleave_cost.h"
 #include "runtime/engine/scheduler.h"
 #include "runtime/engine/generation_budget.h"
 #include "runtime/engine/memory_summary.h"
@@ -1404,9 +1405,23 @@ private:
         };
         // Requests not yet admitted: the Program keeps a free Device StateImage for each of them
         // (up to the idle lanes) instead of placing this checkpoint on Device.
-        const auto reserved = resources_.reserve_active_capture(
+        // The decision's host time is telemetry for the capture search's declared costs
+        // (CapturePlanner::kWorstTargetUs); it decides nothing.
+        const auto decision_started = std::chrono::steady_clock::now();
+        const auto reserved         = resources_.reserve_active_capture(
             *instance_.program, *request->lane, std::move(offer), saturate(blocked),
             saturate(waiting), CancellationFlagView{&request->cancelled});
+        if (const std::uint32_t targets = resources_.last_capture_targets(); targets != 0) {
+            const auto elapsed =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - decision_started)
+                                               .count());
+            ++cumulative_stats_.capture_searches;
+            cumulative_stats_.capture_targets_assessed += targets;
+            cumulative_stats_.capture_search_ns += elapsed;
+            cumulative_stats_.capture_search_max_ns =
+                std::max(cumulative_stats_.capture_search_max_ns, elapsed);
+        }
         if (reserved == ResourceManagement::ActiveCaptureReserveResult::Skipped) { return; }
         request->capture_pending    = true;
         request->post_capture_state = post_capture_state;
@@ -1469,7 +1484,9 @@ private:
         progress.pending.reset();
     }
 
-    void run_prefill_step(const std::array<bool, kMaximumConcurrency>& cancelled_at_unit_start) {
+    // Returns the prefill work the step ran.
+    PrefillWork
+    run_prefill_step(const std::array<bool, kMaximumConcurrency>& cancelled_at_unit_start) {
         nvtx::ScopedRange prefill_range(nvtx::Name::Prefill, nvtx::Category::Prefill);
         EnginePhaseScope setup(*this, EngineHostPhase::CommitOutput);
         // A request whose last unit ended inside an image keeps the prefill until the image is
@@ -1501,12 +1518,14 @@ private:
         program_call.finish(progress.timing);
         vision_handoff_lane_ =
             progress.holds_vision_handoff ? std::optional<std::uint32_t>(lane) : std::nullopt;
+        const PrefillWork processed = progress.work;
         resolve_prefill_progress(request, std::move(progress), cancelled_at_unit_start);
         // Each chunk boundary admits the next waiting request under --concurrent-prefill.
         if (scheduler_.concurrent_prefill() && scheduler_.owns_prefill_lane(lane)) {
             request_admission_check();
         }
         publish_runtime_stats();
+        return processed;
     }
 
     [[nodiscard]] FifoSnapshot pending_snapshot() const {
@@ -1539,11 +1558,9 @@ private:
 
     [[nodiscard]] ResourceInspection inspect_admission(const std::shared_ptr<Request>& request,
                                                        PlanningAllowance allowance) {
+        // The queue deadline is checked before inspection; it does not shorten the search, whose
+        // allowance is counted work (materialization_budget.h).
         allowance.cancellation = &request->cancelled;
-        allowance.control_deadline_ns =
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                           request->deadline.time_since_epoch())
-                                           .count());
         return resources_.inspect(*instance_.program, request->prompt, *request->base_plan,
                                   request->publication_order, allowance);
     }
@@ -1788,7 +1805,10 @@ private:
                 return request && !request->capture_pending &&
                        (request->is_decode_ready() || request->is_prefilling());
             }));
-        const PlanningAllowance allowance = PlanningAllowance::boundary(other_runnable);
+        // Every inspection at this boundary (the head and each backfill) charges one ledger.
+        PlanningLedger planning_ledger;
+        const PlanningAllowance allowance =
+            PlanningAllowance::boundary(other_runnable, &planning_ledger);
         DetailScope detail(*this, &RuntimeHostWorkStats::admission_policy_ns,
                            &RuntimeHostWorkStats::admission_policy_invocations,
                            nvtx::Name::AdmissionPolicy);
@@ -2396,7 +2416,7 @@ private:
     void worker_loop() noexcept {
         std::optional<std::chrono::steady_clock::time_point> last_transient_error;
         bool previous_unit_was_decode = false;
-        double decode_owed_seconds    = 0.0;
+        std::uint64_t decode_credit   = 0; // predicted ns of decode owed (scheduler.h)
         for (;;) {
             {
                 std::unique_lock lock(queue_mutex_);
@@ -2478,21 +2498,18 @@ private:
                 }
                 const ExecutionAction action = scheduler_.choose_execution(
                     !membership.empty(), prefill_runnable, previous_unit_was_decode,
-                    scheduler_.concurrent_prefill() && decode_owed_seconds > 0.0);
+                    scheduler_.concurrent_prefill() && decode_credit > 0);
                 if (action == ExecutionAction::Prefill) {
                     set_host_work_class(HostWorkClass::Prefill);
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
-                    const auto start = std::chrono::steady_clock::now();
-                    run_prefill_step(cancelled_at_unit_start);
+                    const PrefillWork processed = run_prefill_step(cancelled_at_unit_start);
                     if (scheduler_.concurrent_prefill()) {
-                        const std::chrono::duration<double> spent =
-                            std::chrono::steady_clock::now() - start;
                         std::uint32_t prefilling = 0;
                         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
                             prefilling += scheduler_.owns_prefill_lane(lane) ? 1U : 0U;
                         }
-                        decode_owed_seconds = scheduler_.fair_decode_seconds(
-                            spent.count(),
+                        decode_credit = fair_decode_credit(
+                            prefill_unit_ns(resources_.cost_model(), processed),
                             static_cast<std::uint32_t>(
                                 scheduler_.build_round_membership(slots_, max_concurrency_)
                                     .lane_span()
@@ -2505,11 +2522,24 @@ private:
                 if (action == ExecutionAction::Decode) {
                     set_host_work_class(HostWorkClass::Decode, membership.lane_span());
                     finish_engine_phase(boundary, EngineHostPhase::Boundary);
-                    const auto start = std::chrono::steady_clock::now();
+                    // The round's predicted cost from its lanes' contexts as it starts.
+                    std::array<std::uint64_t, kMaximumConcurrency> contexts{};
+                    std::size_t lanes = 0;
+                    for (const std::uint32_t lane : membership.lane_span()) {
+                        const auto& request = slots_[lane];
+                        contexts[lanes++] =
+                            request == nullptr
+                                ? 0
+                                : (request->admitted_begin ? request->admitted_begin->prompt_tokens
+                                                           : 0U) +
+                                      static_cast<std::uint64_t>(request->generated.size());
+                    }
+                    const std::uint64_t round_ns = std::max<std::uint64_t>(
+                        1, decode_round_ns(resources_.cost_model().prefill,
+                                           instance_.decode_round_shape,
+                                           std::span<const std::uint64_t>(contexts.data(), lanes)));
                     run_decode_round(membership, cancelled_at_unit_start);
-                    const std::chrono::duration<double> spent =
-                        std::chrono::steady_clock::now() - start;
-                    decode_owed_seconds = std::max(0.0, decode_owed_seconds - spent.count());
+                    decode_credit -= std::min(decode_credit, round_ns);
                     previous_unit_was_decode = true;
                     continue;
                 }

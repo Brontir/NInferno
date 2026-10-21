@@ -1000,6 +1000,7 @@ public:
                                                         bool permit_shared_publication,
                                                         std::uint32_t waiting_admissions) const {
         inspected_capture_waiting = waiting_admissions;
+        ++capture_inspections;
         FakeCaptureAssessment assessment = capture_assessment;
         if (!permit_shared_publication) { assessment.publishes_shared = false; }
         return assessment;
@@ -1154,7 +1155,9 @@ public:
     bool combined_target_cancels_pressure_copy      = false;
     std::optional<std::uint64_t> pressure_target_immediate_ns_override;
     std::optional<std::uint64_t> required_action_id;
-    std::uint32_t pressure_assessment_delay_us           = 0;
+    // Projection work each pressure assessment reports beyond its outcomes: the planner charges
+    // it to the search budget (one work unit, about 1 us nominal, each).
+    std::uint32_t pressure_assessment_work               = 0;
     std::uint64_t pressure_checkpoint_recovery_ns        = 100;
     bool require_evictions                               = false;
     bool abort_start                                     = false;
@@ -1187,6 +1190,7 @@ public:
     std::uint64_t abort_calls                 = 0;
     std::uint64_t skipped_captures            = 0;
     mutable std::uint32_t inspected_capture_waiting = 0;
+    mutable std::uint32_t capture_inspections       = 0;
     std::uint32_t reserved_capture_waiting          = 0;
     std::uint32_t pressured_capture_waiting         = 0;
     std::size_t pressure_target_count_peak    = 0;
@@ -1528,10 +1532,6 @@ FakePressurePlanningSession::guidance_for(const Target& target) {
 
 FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTargetHandle handle) {
     require(valid(handle) && !scratch_live_, "fake pressure assessment is stale");
-    if (program_->pressure_assessment_delay_us != 0) {
-        std::this_thread::sleep_for(
-            std::chrono::microseconds(program_->pressure_assessment_delay_us));
-    }
     ++program_->pressure_target_assessments;
     const Target& target = targets_[handle.index];
     populate_options(target.candidate_index);
@@ -1633,10 +1633,10 @@ FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTarge
         .stable_target_ordinal = target.stable_ordinal,
         .degradation_units     = degradation_units,
         .dropped_checkpoints   = dropped,
-        .projection_work       = 1U + assessment_outcomes_.size(),
-        .assessment_digest     = digest,
-        .expandable            = expandable,
-        .root_maximal          = target.root_maximal,
+        .projection_work   = 1U + assessment_outcomes_.size() + program_->pressure_assessment_work,
+        .assessment_digest = digest,
+        .expandable        = expandable,
+        .root_maximal      = target.root_maximal,
     };
     return FakeAssessedPressureTarget(handle, assessment);
 }
@@ -2110,19 +2110,26 @@ void test_shared_capture_budget_bounds_committed_canonical_targets() {
             "shared-capture search committed more canonical targets than its budget");
 }
 
-void test_capture_search_grant_bounds_wall_time() {
+void test_capture_search_grant_counts_targets() {
     using Planner = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
-    require(Planner::economic_grant_ns(0, 0) == 200'000, "capture grant floor");
-    require(Planner::economic_grant_ns(20'000'000, 0) == 1'000'000, "capture grant is a twentieth");
-    require(Planner::economic_grant_ns(20'000'000, 3) == 250'000,
+    require(Planner::economic_grant_targets(0, 0) == 20, "capture grant floor");
+    require(Planner::economic_grant_targets(6'000'000, 0) == 30,
+            "capture grant is a twentieth of the saving at the nominal target cost");
+    require(Planner::economic_grant_targets(20'000'000, 3) == 25,
             "capture grant is shared by the waiting requests");
-    require(Planner::economic_grant_ns(1'000'000'000, 0) == 5'000'000, "capture grant ceiling");
+    require(Planner::economic_grant_targets(1'000'000'000, 0) == Planner::kDecisionTargets,
+            "capture grant ceiling is the decision's target count");
+    // Whatever the grant, a capture decision assesses at most kDecisionTargets over all its
+    // scenarios: 10 ms at a worst 200 us a target.
+    require(Planner::kDecisionTargets == 50 &&
+                Planner::kDecisionTargets * Planner::kWorstTargetUs <= 10'000,
+            "a capture decision's targets are not bounded to 10 ms");
 
     constexpr std::size_t private_owner_count = 16;
     constexpr std::size_t shared_owner_count  = 4;
     constexpr std::uint32_t target_budget     = 64;
 
-    const auto search = [&](std::uint64_t grant_ns) {
+    const auto search = [&](std::uint32_t grant_targets) {
         FakeProgram program;
         program.required_pressure_actions         = private_owner_count + shared_owner_count + 1U;
         program.pressure_optional_target_capacity = target_budget;
@@ -2152,24 +2159,25 @@ void test_capture_search_grant_bounds_wall_time() {
         Planner planner;
         const auto result = planner.plan(program, test_cost_model(),
                                          Planner::Input{
-                                             .capture           = &capture,
-                                             .private_owners    = private_owners,
-                                             .private_owner_ids = private_owner_ids,
-                                             .shared_owners     = shared_owners,
-                                             .shared_owner_ids  = shared_owner_ids,
-                                             .target_budget     = target_budget,
-                                             .search_grant_ns   = grant_ns,
+                                             .capture              = &capture,
+                                             .private_owners       = private_owners,
+                                             .private_owner_ids    = private_owner_ids,
+                                             .shared_owners        = shared_owners,
+                                             .shared_owner_ids     = shared_owner_ids,
+                                             .target_budget        = target_budget,
+                                             .search_grant_targets = grant_targets,
                                          });
         require(!result, "infeasible capture search unexpectedly found a plan");
         return program.pressure_target_assessments;
     };
-    // A 1 ns grant is spent by the identity assessment, so no further target is assessed; without
-    // a grant the target budget alone bounds the walk.
-    const std::uint64_t granted   = search(1);
+    // With no selectable target the grant does not stop the search: the target budget (the
+    // decision's share of kDecisionTargets in the engine) alone bounds the walk, whatever the
+    // machine's speed.
     const std::uint64_t unbounded = search(0);
-    require(granted == 1, "an exhausted capture grant did not stop the search");
-    require(unbounded > 1 && unbounded <= target_budget,
+    require(unbounded > 8 && unbounded <= target_budget,
             "the unbounded capture search did not walk its target budget");
+    require(search(1) == unbounded && search(2) == unbounded,
+            "a grant stopped a search with no selectable target");
 }
 
 void test_equal_lower_bound_does_not_short_circuit_tie_break() {
@@ -2313,7 +2321,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
     program.eviction_pressure_action_units    = 2;
     program.pressure_action_immediate_ns      = 1'000'000;
     program.pressure_action_degradation_units = 1;
-    program.pressure_assessment_delay_us      = 1'000;
+    program.pressure_assessment_work          = 1'000;
     program.pressure_checkpoint_recovery_ns   = 8'000'000'000ULL;
 
     FakeAdmissionCandidate root;
@@ -2977,7 +2985,7 @@ void test_guided_pressure_reaches_deep_retention_before_maximal_fallback() {
 
     program.required_pressure_actions     = 3;
     program.private_pressure_alternatives = 4;
-    program.pressure_assessment_delay_us  = 2'000;
+    program.pressure_assessment_work      = 2'000;
     auto inspection = manager.inspect(program, FakePreparedPrompt{90}, make_base(90), 20);
     require(inspection.choice.has_value(), "guided pressure search found no admission plan");
 
@@ -3130,6 +3138,72 @@ void test_repeated_private_reuse_selects_zero_prefill_shared_promotion() {
     require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{16},
             "repeated private base was not selected for zero-prefill shared promotion");
     (void)finish_active(manager, program, second, 16);
+}
+
+// A capture decision with three replacement scenarios and a private fallback, none of which can
+// find a feasible target, assesses at most kDecisionTargets targets over all of them: the bound
+// that keeps a capture decision within 10 ms at a worst 200 us a target.
+void test_capture_decision_targets_are_bounded_over_scenarios() {
+    using Planner       = ninferno::runtime::CapturePublicationPlanner<FakeModelContract>;
+    FakeManager manager = make_manager(1, 4, 3);
+    FakeProgram program;
+    for (std::uint32_t source = 0; source < 3; ++source) {
+        const std::uint32_t key  = 111 + source;
+        FakeRequestBasePlan base = make_base(key);
+        base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+            .frontier = 16, // the fake's finish frontier: the owners' checkpoint
+        });
+        const ActiveRequest seed   = start_active(manager, program, key, base, 1U + source);
+        program.capture_assessment = FakeCaptureAssessment{
+            .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = 16},
+            .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+            .protected_rebuild_work = PrefillWork{.tokens = 64},
+            .publishes_shared       = true,
+            .physically_feasible    = true,
+        };
+        require(manager.reserve_active_capture(program, seed.lane,
+                                               FakeCaptureOffer{.id = 200U + source}, 0, 0, {}) ==
+                    FakeManager::ActiveCaptureReserveResult::Reserved,
+                "bounded-decision fixture could not publish a shared source");
+        auto progress = manager.progress_context_transaction(program, {});
+        require(std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress)).status ==
+                    ContextTransactionStatus::Published,
+                "bounded-decision fixture did not publish a shared source");
+        (void)finish_active(manager, program, seed);
+    }
+
+    FakeRequestBasePlan base = make_base(120);
+    base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+        .frontier = 64,
+    });
+    const ActiveRequest active                = start_active(manager, program, 120, base, 10);
+    program.required_pressure_actions         = 1000; // no target is ever selectable
+    program.pressure_optional_target_capacity = Planner::kTargetBudget;
+    program.capture_assessment                = FakeCaptureAssessment{
+                       .shortlist_key          = FakeShortlistKey{.digest = 120, .frontier = 64},
+                       .shared_evidence        = ninferno::SharedCandidateEvidence::ExplicitBoundary,
+                       .protected_rebuild_work = PrefillWork{.tokens = 64},
+                       .publishes_private      = true,
+                       .publishes_shared       = true,
+                       .physically_feasible    = false,
+    };
+    const std::uint64_t assessed_before = program.pressure_target_assessments;
+    program.capture_inspections         = 0;
+    (void)manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = 220}, 0, 0,
+                                         {});
+    const std::uint64_t assessed = program.pressure_target_assessments - assessed_before;
+    require(program.capture_inspections >= 3,
+            "the bounded-decision fixture did not offer three replacement scenarios");
+    require(assessed > 0 && assessed <= Planner::kDecisionTargets,
+            "a capture decision assessed more than kDecisionTargets targets over its scenarios");
+    require(manager.last_capture_targets() == assessed,
+            "the capture decision's target count is not what it assessed");
+    program.required_pressure_actions = 0;
+    (void)finish_active(manager, program, active);
 }
 
 void test_shared_fanout_keeps_owner_edges_live_across_summary_refresh() {
@@ -3719,8 +3793,8 @@ void test_complete_search_against_small_exhaustive_oracle() {
                     }
                 }
                 Planner planner;
-                auto allowance     = ninferno::runtime::PlanningAllowance::boundary(0);
-                allowance.limit_ns = 5 * ms;
+                auto allowance  = ninferno::runtime::PlanningAllowance::boundary(0);
+                allowance.limit = ninferno::runtime::PlanningWork::kInitialGrant;
                 auto result =
                     planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
                                  inputs, goal, Planner::Clock::now(), allowance);
@@ -3752,8 +3826,8 @@ void test_publication_only_pressure_constructs_adoptable_target() {
         (void)finish_active(manager, program, active);
     }
     require(program.required_pressure_actions == 0, "publication fixture has physical pressure");
-    auto allowance     = ninferno::runtime::PlanningAllowance::boundary(0);
-    allowance.limit_ns = 5'000'000;
+    auto allowance  = ninferno::runtime::PlanningAllowance::boundary(0);
+    allowance.limit = ninferno::runtime::PlanningWork::kInitialGrant;
     auto result = manager.inspect(program, FakePreparedPrompt{600}, make_base(600), 20, allowance);
     require(result.choice.has_value(),
             "publication-only pressure did not produce an adoptable target");
@@ -3784,7 +3858,9 @@ int main() {
              test_full_cache_private_capture_evicts_lower_value_owner);
     run_test("shared capture committed target budget",
              test_shared_capture_budget_bounds_committed_canonical_targets);
-    run_test("capture search grant bounds wall time", test_capture_search_grant_bounds_wall_time);
+    run_test("capture search grant counts targets", test_capture_search_grant_counts_targets);
+    run_test("capture decision targets bounded over scenarios",
+             test_capture_decision_targets_are_bounded_over_scenarios);
     run_test("equal lower-bound tie-break",
              test_equal_lower_bound_does_not_short_circuit_tie_break);
     run_test("machine cost is selection-only",

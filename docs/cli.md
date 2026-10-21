@@ -369,18 +369,29 @@ builds and other programs. Once it is used up, every thread that needs CPU stops
 100 ms period, whatever its `nice` priority. A decode that waits for each step before submitting
 the next loses the whole stall every time.
 
-Engines with CUDA Graphs therefore watch their decode rounds (rows without constrained decoding).
-A quiet host runs one step per round and spins on its end. When rounds lag (wall time exceeds GPU
-time by more than 2 ms, twice within a second), until five seconds after the last lag:
+Engines with CUDA Graphs pace their decode rounds (rows without constrained decoding):
 
-- **Run-ahead.** A round runs about 250 ms of steps, up to 32, feeding each step's sampled tokens
-  to the next on the GPU, so the GPU keeps working while the host is stopped.
+- **Run-ahead.** A round runs one step, or 16 when the process's CPU bandwidth quota is below
+  min(4, logical cores) CPUs, feeding each step's sampled tokens to the next on the GPU, so the GPU
+  keeps working while the host is stopped. The quota is the tightest along the process's cgroup
+  and its parents (cgroup `cpu.max`, or `cpu.cfs_quota_us` / `cpu.cfs_period_us` under cgroup v1,
+  read once at startup; none on Windows). Four CPUs cover the threads the engine keeps busy while
+  decoding, and a quota at or above the logical cores can never run out.
+  `NINFERNO_DECODE_STEPS=N` replaces that default. The count is never chosen from timings: it
+  decides which requests share each step's batch. The startup log reports it
+  (`decode | N step(s) per round | CPU quota ...`).
+  - Nothing measures the host. On a contended host the rule does not see (other processes use the
+    CPU without a quota, or a quota of 4 CPUs or more that a busy cgroup still runs out of), or
+    where 16 steps do not hide the stall, set `NINFERNO_DECODE_STEPS=N`: about 100 ms divided by
+    the step time, at most 32. Both thresholds await calibration on lab containers.
   - Tokens reach the stream in groups of that size. A request that stops mid-round has its
     remaining steps discarded.
   - Applies to Gemma 4 and dense-decoder models. Models with recurrent state (Qwen 3.5/3.6,
     Nemotron-H) and speculative engines (MTP, DFlash) run one step (one verify) per round.
-- **Wait mode.** The host waits for the end of each round by spinning, or by blocking (a
-  blocking-sync CUDA event) where that decodes faster.
+- **Wait mode.** A quiet host spins on the end of each round. When rounds lag (wall time exceeds
+  GPU time by more than 2 ms, twice within a second), until five seconds after the last lag, the
+  host waits by spinning, or by blocking (a blocking-sync CUDA event) where that decodes faster.
+  The wait follows timings, but it cannot change a round's output or the next round's batch.
   - It tries both for a second each (at least 8 rounds, at most 3 seconds). It spins first when the
     first lag begins, and tries the kept wait first afterwards.
   - It blocks for the next 30 seconds only if it ran at least 3 % more steps per second while
@@ -392,14 +403,14 @@ time by more than 2 ms, twice within a second), until five seconds after the las
     spinning does better.
 
 A request that arrives during a run-ahead round starts after it, so its time to first token can grow
-by up to one round (about 250 ms) while the host stalls. Greedy outputs do not depend on the step
+by up to one round. Greedy outputs do not depend on the step
 count at concurrency 1. With several requests, they stay identical only where the kernels give the
 same result at every batch size: a run-ahead round keeps its batch for all its steps, while one step
 per round admits and retires requests between steps.
 
 | Variable | Values | Default | Meaning |
 |---|---|---|---|
-| `NINFERNO_DECODE_STEPS` | `auto`, or integer `1..32` | `auto` | `auto` adapts as above. `N` runs N steps in every round that can; `1` disables run-ahead. An engine that cannot run ahead says so once at startup and runs one step per round. |
+| `NINFERNO_DECODE_STEPS` | integer `1..32` | 16 under a CPU quota below min(4, cores) CPUs, else 1 | `N` runs N steps in every round that can. An engine that cannot run ahead says so once at startup and runs one step per round. `auto` warns and keeps the default. |
 | `NINFERNO_DECODE_WAIT` | `auto`, `spin`, `block` | `auto` | `auto` chooses as above while rounds lag. `spin` never blocks (the CUDA synchronization schedule alone). `block` blocks in every round. |
 
 Other values of either variable fail startup. `ninferno spec-tune` waits as a quiet host does

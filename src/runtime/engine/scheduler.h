@@ -239,8 +239,9 @@ public:
                (!have_decode || previous_unit_was_decode);
     }
 
-    // decode_owed: under --concurrent-prefill the decoding requests are still owed GPU time for
-    // the last prefill chunk (fair_decode_seconds), so decode goes on before the next chunk.
+    // decode_owed: under --concurrent-prefill the decoding requests are still owed decode for the
+    // last prefill unit (fair_decode_credit, interleave_cost.h), so decode goes on before the next
+    // chunk.
     [[nodiscard]] ExecutionAction choose_execution(bool have_decode, bool prefill_runnable,
                                                    bool previous_unit_was_decode,
                                                    bool decode_owed = false) const noexcept {
@@ -257,14 +258,6 @@ public:
     void allow_concurrent_prefill(bool allow) noexcept { concurrent_prefill_ = allow; }
     [[nodiscard]] bool concurrent_prefill() const noexcept { return concurrent_prefill_; }
 
-    // Every active request gets an equal share of GPU time: a prefill chunk of `seconds` serving
-    // one of `prefilling` requests owes the `decoding` ones decode time in proportion. One decode
-    // round per chunk (the plain alternation) gave a decoding request a few tokens a second beside
-    // a long prompt's 2048-token chunks.
-    [[nodiscard]] static double fair_decode_seconds(double seconds, std::uint32_t decoding,
-                                                    std::uint32_t prefilling) noexcept {
-        return prefilling == 0 ? 0.0 : seconds * decoding / prefilling;
-    }
 
     [[nodiscard]] bool owns_prefill_lane(std::uint32_t lane) const noexcept {
         return lane < kMaximumConcurrency && ((prefill_lanes_ >> lane) & 1U) != 0;

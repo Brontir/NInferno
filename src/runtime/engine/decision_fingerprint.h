@@ -80,17 +80,21 @@ struct DecisionFingerprint {
 [[nodiscard]] std::string canonical_text(const DecisionInputs& inputs);
 [[nodiscard]] DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs);
 
-// The host's facts as the Engine reads them: logical CPU count and the RAM the process may use
-// (0: unknown).
+// The host's facts as the Engine reads them: logical CPU count, the RAM the process may use
+// (0: unknown) and the process's CPU bandwidth quota (host_cpu_quota.h; 0 and 0: none), which the
+// decode round's default step count follows (round_pacing.h).
 struct HostFacts {
-    unsigned logical_cores  = 0;
-    std::uint64_t ram_bytes = 0;
+    unsigned logical_cores      = 0;
+    std::uint64_t ram_bytes     = 0;
+    std::uint64_t cpu_quota_us  = 0;
+    std::uint64_t cpu_period_us = 0;
 };
 
 // The device's facts (no name, no ordinal), `build` (build_features()), the driver version
-// (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores" and
-// "host.ram_gib_class", the largest power of two of GiB at or below the RAM (0 below 1 GiB or
-// unknown), so that a few MiB the kernel keeps do not move it.
+// (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores", "host.cpu_quota"
+// ("QUOTA/PERIOD" in microseconds, or "none") and "host.ram_gib_class", the largest power of two
+// of GiB at or below the RAM (0 below 1 GiB or unknown), so that a few MiB the kernel keeps do not
+// move it.
 // Of the clocks, "machine.*" are the facts the decisions read (DeviceClass::facts: source,
 // reference and memory clock, bus width, share, mma_slow); "driver.*" (the driver's clocks and
 // bus width) enter only when they fed a fact (MachineFacts::driver_read: an unknown id, a laptop
@@ -113,10 +117,12 @@ struct HostFacts {
 
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and
-// `route_table` the effective route table's content (its hash and its lenders'; empty: none).
+// `route_table` the effective route table's content (its hash and its lenders'; empty: none) and
+// `decode_steps_per_round` the steps an ordinary decode round runs (LoadSummary).
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
-                                      std::string_view route_table);
+                                      std::string_view route_table,
+                                      std::uint32_t decode_steps_per_round);
 
 // What startup sized from the free memory (the observed section): max_context, prefill_chunk,
 // kv_tokens, cached_device_states, host_state_slots, host_kv_bytes.

@@ -7,7 +7,6 @@
 #include "runtime/engine/context_cache/resource_search.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -69,9 +68,11 @@ public:
         std::uint32_t blocked_runnable_requests     = 0;
         std::uint32_t stable_scenario_ordinal       = 0;
         std::uint32_t target_budget                 = kTargetBudget;
-        // Wall time the search may take once a target has been assessed (four times this while
-        // no target is selectable); 0 leaves it bounded by target_budget alone.
-        std::uint64_t search_grant_ns = 0;
+        // Targets the search may assess once one is selectable (while none is, target_budget
+        // alone bounds it); 0 leaves it bounded by target_budget alone. A count, never a clock:
+        // the same catalog makes the same capture decision on every machine
+        // (economic_grant_targets()).
+        std::uint32_t search_grant_targets = 0;
     };
 
     struct Result {
@@ -87,6 +88,11 @@ public:
         std::uint32_t targets_evaluated       = 0;
     };
 
+    // Targets the last plan() assessed, whether or not it selected one.
+    [[nodiscard]] std::uint32_t last_targets_evaluated() const noexcept {
+        return last_targets_evaluated_;
+    }
+
     CapturePublicationPlanner() : target_ledger_(kTargetBudget + 1U) {
         queue_.reserve(kTargetBudget);
         impact_scratch_.reserve(64);
@@ -97,10 +103,9 @@ public:
     [[nodiscard]] std::optional<Result>
     plan(Program& program, const ContextMachineCostModel& machine_cost, const Input& input) {
         validate(input);
+        last_targets_evaluated_ = 0;
         queue_.clear();
         target_ledger_.reset(static_cast<std::size_t>(input.target_budget) + 1U);
-        const auto started = std::chrono::steady_clock::now();
-        const std::chrono::nanoseconds grant{input.search_grant_ns};
 
         auto session = program.begin_capture_pressure_planning(
             *input.capture, input.private_owners, input.private_owner_ids, input.shared_owners,
@@ -126,9 +131,9 @@ public:
         std::size_t cursor              = 0;
 
         while (cursor < queue_.size() && targets_evaluated < input.target_budget) {
-            if (input.search_grant_ns != 0 && targets_evaluated != 0) {
-                const auto elapsed = std::chrono::steady_clock::now() - started;
-                if (elapsed >= (incumbent ? grant : 4 * grant)) { break; }
+            if (input.search_grant_targets != 0 && incumbent &&
+                targets_evaluated >= input.search_grant_targets) {
+                break;
             }
             const QueuedTarget queued = queue_[cursor++];
             if (target_marked(queued.ordinal, kTargetAssessed)) { continue; }
@@ -198,6 +203,7 @@ public:
             }
         }
 
+        last_targets_evaluated_ = targets_evaluated;
         if (!incumbent) { return std::nullopt; }
         std::optional<CapturePressurePlan> pressure = session.seal(std::move(*incumbent->assessed));
         if (!pressure) {
@@ -219,20 +225,38 @@ public:
 
     static constexpr std::uint32_t kTargetBudget = 4096;
 
-    // The search runs on the Engine thread while every runnable lane waits, so it gets the
-    // admission search's economic grant (MaterializationSearchBudget): a twentieth of the
-    // capture's rebuild saving shared by the waiting requests, between 0.2 and 5 ms. Uncapped, it
-    // walked up to 4096 targets in 39-43 ms a capture (Qwen3.6-35B C=8 on an RTX 5090: 1225
-    // against 1261 tok/s with the grant).
-    [[nodiscard]] static constexpr std::uint64_t
-    economic_grant_ns(std::uint64_t candidate_rebuild_ns,
-                      std::uint32_t blocked_runnable_requests) noexcept {
-        constexpr std::uint64_t kMinimumNs = 200'000;
-        constexpr std::uint64_t kMaximumNs = 5'000'000;
+    // No clock bounds the search, so a count must bound its wall time on the slowest host, as
+    // PlanningWork's units bound an admission boundary: a target's assessment can cost about
+    // kWorstTargetUs, and a capture decision (every scenario and the private fallback together)
+    // assesses at most kDecisionTargets, so it holds the lanes for at most kWorstDecisionUs. At
+    // the measured 10 us a target that is 0.5 ms. Both worst-case numbers await calibration
+    // against the request log's capture_search telemetry, like kNominalTargetNs.
+    static constexpr std::uint64_t kWorstTargetUs   = 200;
+    static constexpr std::uint64_t kWorstDecisionUs = 10'000;
+    static constexpr std::uint32_t kDecisionTargets =
+        static_cast<std::uint32_t>(kWorstDecisionUs / kWorstTargetUs);
+    static_assert(kDecisionTargets * kWorstTargetUs <= kWorstDecisionUs,
+                  "a capture decision's worst case exceeds 10 ms");
 
-        const std::uint64_t share = candidate_rebuild_ns / 20U /
+    // Within that bound the search gets the admission search's economic share
+    // (MaterializationSearchBudget) once a target is selectable: a twentieth of the capture's
+    // predicted rebuild saving, shared by the waiting requests, counted in targets at a declared
+    // kNominalTargetNs each and kept between kMinimumTargets and kMaximumTargets (at most the
+    // decision's kDecisionTargets). Uncapped, the search walked up to 4096 targets in 39-43 ms a
+    // capture (Qwen3.6-35B C=8 on an RTX 5090), about 10 us a target. The nominal cost is that one
+    // measurement's mean and awaits calibration like PlanningWork's constants.
+    static constexpr std::uint64_t kNominalTargetNs = 10'000;
+    static constexpr std::uint32_t kMinimumTargets  = 20;
+    static constexpr std::uint32_t kMaximumTargets  = kDecisionTargets;
+    static_assert(kMinimumTargets <= kMaximumTargets);
+
+    [[nodiscard]] static constexpr std::uint32_t
+    economic_grant_targets(std::uint64_t candidate_rebuild_ns,
+                           std::uint32_t blocked_runnable_requests) noexcept {
+        const std::uint64_t share = candidate_rebuild_ns / 20U / kNominalTargetNs /
                                     (1U + static_cast<std::uint64_t>(blocked_runnable_requests));
-        return std::clamp(share, kMinimumNs, kMaximumNs);
+        return static_cast<std::uint32_t>(
+            std::clamp<std::uint64_t>(share, kMinimumTargets, kMaximumTargets));
     }
 
 private:
@@ -467,6 +491,7 @@ private:
     ContextPortfolioValue portfolio_value_;
     std::vector<QueuedTarget> queue_;
     BoundedTargetLedger target_ledger_;
+    std::uint32_t last_targets_evaluated_ = 0;
     std::vector<CombinedImpact> impact_scratch_;
     std::vector<ContextPortfolioOwnerPolicy> owner_scratch_;
     std::vector<ContextPortfolioCheckpointValue> checkpoint_scratch_;
