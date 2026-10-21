@@ -848,6 +848,60 @@ int check_r8_invariance(const Format& f, Op op, std::int32_t out_rows, std::int3
     return failures;
 }
 
+// R8 past four tokens (Volta's verify widths) runs four-token slices: every token of a 7- or
+// 16-token call gives the bytes it gives alone (T = 1, decode), on every epilogue.
+int check_r8_slices(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                    generic::Route route, std::uint32_t seed) {
+    constexpr std::int32_t kWide = 16;
+    const std::int32_t rows_n    = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host        = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device          = upload_weight(host);
+    const auto activation = make_linear_activation(k, kWide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(std::max(
+        generic::route_workspace_bytes(route, k, kWide),
+        generic::route_workspace_bytes(generic::Route{generic::Family::W4a8Mma, 0}, k,
+                                       generic::kR8MaxTokens)));
+    const auto run = [&](std::int32_t offset, std::int32_t t) {
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+        Tensor tx(static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k,
+                  DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &device.weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = gated(op) ? generic::Epilogue::SwiGlu : generic::Epilogue::Store;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        return download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+    };
+    std::vector<std::vector<std::uint16_t>> alone(kWide);
+    for (std::int32_t token = 0; token < kWide; ++token) alone[token] = run(token, 1);
+    int failures = 0;
+    for (const std::int32_t t : {7, kWide}) {
+        const auto bits = run(0, t);
+        for (std::int32_t token = 0; token < t; ++token) {
+            if (std::memcmp(bits.data() + static_cast<std::size_t>(token) * out_rows,
+                            alone[token].data(), static_cast<std::size_t>(out_rows) * 2) != 0) {
+                std::cerr << f.name << " " << op_name(op) << " R8 slices: route "
+                          << generic::route_name(route) << " T=" << t << " token " << token
+                          << " differs from the token alone\n";
+                ++failures;
+                break;
+            }
+        }
+    }
+    return failures;
+}
+
 // Every R8 schedule gives the same bytes: a lane sums the block groups lane, lane + 32, ... of its
 // row in one order whatever the warps per CTA and rows per warp, so heuristic_r8 may pick any of
 // them. K spans more than 64 groups (both ring slots, several loop trips); N is no multiple of
@@ -1506,6 +1560,10 @@ int main() {
                 }
             }
             failures += check_r8_invariance(f, Op::Linear, 136, 2560, r, 67U);
+            if (generic::r8_verify_compiled(f.qtype)) {
+                failures += check_r8_slices(f, Op::Linear, 136, 2560, r, 79U);
+                failures += check_r8_slices(f, Op::SwiGlu, 136, 2560, r, 83U);
+            }
             failures += check_r8_invariance(f, Op::SwiGlu, 136, 2560, r, 71U);
             if (2112 % f.k_multiple == 0 && 2112 % generic::r8_k_values(f.qtype) == 0) {
                 failures += check_r8_invariance(f, Op::Linear, 176, 2112, r, 73U);
