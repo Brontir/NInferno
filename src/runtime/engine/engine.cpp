@@ -4,14 +4,17 @@
 #include "core/device_class.h"
 #include "core/host_memory.h"
 #include "core/nvtx.h"
+#include "core/sha256.h"
 #include "core/startup.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
+#include "ninferno/ops/moe.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/host_experts/host_kernels.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/model_instance.h"
 #include "structured/constraint.h"
@@ -66,16 +69,6 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     return resolved;
 }
 
-// A separate drafter as the fingerprint names it: its file name and size, never its path (the
-// family read it; it is not opened again here). "unreadable" when its size cannot be read.
-std::string drafter_identity(const std::filesystem::path& path) {
-    if (path.empty()) { return {}; }
-    std::error_code error;
-    const std::uintmax_t size = std::filesystem::file_size(path, error);
-    if (error) { return "unreadable"; }
-    return path.filename().string() + " " + std::to_string(size);
-}
-
 runtime::HostFacts host_facts() {
     runtime::HostFacts host;
     host.logical_cores = std::thread::hardware_concurrency();
@@ -90,8 +83,8 @@ runtime::HostFacts host_facts() {
 // facts, sources and environment are collected here, where CUDA and files may be read, and handed
 // to the pure collectors. `requested`: the options as the caller passed them; `resolved`:
 // Engine::options() after the plan.
-void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
-                           const EngineOptions& resolved, const MemorySummary& memory) {
+void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requested,
+                                    const EngineOptions& resolved, const MemorySummary& memory) {
     runtime::DecisionInputs in;
     int driver_version = 0;
     if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
@@ -103,15 +96,15 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     in.build   = runtime::build_of();
     in.options = runtime::options_of(
         requested, load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
-        load.prefill_signature, drafter_identity(requested.speculative.drafter));
+        load.prefill_signature, runtime::drafter_identity(requested.speculative.drafter));
     for (const auto& [key, value] : requested.speculative.decision_sources) {
         in.sources[key] = value;
     }
     const ops::RouteTableStatus routes = ops::route_table_status();
     std::string route_table;
     if (routes.loaded) {
-        in.sources["route_table"] = std::filesystem::path(routes.path).filename().string() +
-                                    " sha256:" + routes.content_sha256;
+        in.sources["route_table"] =
+            utf8_file_name(std::filesystem::path(routes.path)) + " sha256:" + routes.content_sha256;
         in.sources["route_table.class"] = routes.gpu_class;
         route_table                     = routes.content_sha256;
         if (!routes.lender_sha256.empty()) {
@@ -124,6 +117,9 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     for (auto& [key, value] : ops::detail::generic::dense_tune_sources()) {
         in.sources[key] = std::move(value);
     }
+    for (auto& [key, value] : ops::moe_tune_sources()) { in.sources[key] = std::move(value); }
+    in.sources["context_cost.presets"] =
+        runtime::context_cost_presets_source(requested.context_cost.preset_path);
     in.env   = runtime::env_of([](const char* name) -> std::optional<std::string> {
         const char* value = std::getenv(name);
         return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
@@ -142,6 +138,26 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     for (const auto& [what, detail] : in.taint) {
         load.decision_taint.push_back(what + "=" + detail);
     }
+}
+
+// Fingerprinting never stops a start: an input that cannot be read (a file, a name the platform
+// cannot convert) leaves the fingerprint "unreadable" and says why in the taint.
+void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
+                           const EngineOptions& resolved, const MemorySummary& memory) {
+    std::string why;
+    try {
+        fingerprint_decisions_or_throw(load, requested, resolved, memory);
+        return;
+    } catch (const std::exception& error) { why = error.what(); } catch (...) {
+        why = "unknown error";
+    }
+    load.decision_fingerprint          = "unreadable";
+    load.decision_manifest             = "unreadable";
+    load.metadata.decision_fingerprint = "unreadable";
+    load.metadata.decision_manifest    = "unreadable";
+    load.decision_canonical.clear();
+    load.decision_observed.clear();
+    load.decision_taint = {"fingerprint=unreadable: " + why};
 }
 
 std::string context_capacity_error(std::size_t prompt_tokens, std::uint32_t max_context) {

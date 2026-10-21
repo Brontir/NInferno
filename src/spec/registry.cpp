@@ -2,9 +2,9 @@
 
 #include "core/ascii.h"
 #include "core/file_io.h"
+#include "core/sha256.h"
 
 #include "spec/embedded_data.h"
-#include "spec/fingerprint.h"
 #include "spec/json_fields.h"
 
 #include <algorithm>

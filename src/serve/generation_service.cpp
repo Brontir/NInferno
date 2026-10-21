@@ -12,6 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace ninferno::serve {
@@ -285,6 +286,14 @@ void add_turn_anchor(ninferno::PromptInput& input) {
     });
 }
 
+// A --spec auto fallback that a capacity refusal forced, for the decision fingerprint: the free
+// memory chose it, so it is taint (sources and taint "spec_fit_fallback"; successive fallbacks
+// join with "+").
+void mark_fit_fallback(SpeculativeOptions& speculative, std::string_view label) {
+    std::string& value = speculative.decision_sources["spec_fit_fallback"];
+    value += (value.empty() ? "" : "+") + std::string(label);
+}
+
 } // namespace
 
 std::string auto_plain_reason(const std::string& refused, const std::string& why,
@@ -423,6 +432,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                                 engine_options.max_concurrency)) {
                 throw;
             }
+            mark_fit_fallback(engine_options.speculative, "captured_load");
             try {
                 engine_ = std::make_unique<ninferno::Engine>(engine_options);
             } catch (const ninferno::CapacityError&) {
@@ -456,6 +466,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 product::fit_refusal(refused_label, engine_options.max_context, why);
             engine_options.speculative =
                 product::with_given_settings(fallback->engine, options_.speculative);
+            mark_fit_fallback(engine_options.speculative, "profile_fit_fallback");
             served_speculation_ = std::move(fallback);
             bound_load(engine_options.speculative);
             try {
@@ -480,13 +491,15 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             const std::string first_refusal = refused.what();
             // A candidate replaces the served speculation and builds the Engine (dropping one an
             // earlier candidate built, so each is planned on the whole device): true when it fits.
-            const auto fits = [&](const product::ServedSpeculation& candidate) {
+            const auto fits = [&](const product::ServedSpeculation& candidate,
+                                  std::string_view fallback) {
                 engine_.reset();
                 auto served         = candidate;
                 served.fit_fallback =
                     product::fit_refusal(refused_label, engine_options.max_context, first_refusal);
                 engine_options.speculative =
                     product::with_given_settings(served.engine, options_.speculative);
+                mark_fit_fallback(engine_options.speculative, fallback);
                 served_speculation_ = std::move(served);
                 bound_load(engine_options.speculative);
                 try {
@@ -497,15 +510,18 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                     return false;
                 }
             };
-            built = product::deepest_fitting_shallower(served_speculation_->menu.primary,
-                                                       shallower, fits)
+            built = product::deepest_fitting_shallower(
+                        served_speculation_->menu.primary, shallower,
+                        [&](const product::ServedSpeculation& candidate) {
+                            return fits(candidate, "shallower");
+                        })
                         .has_value();
             // Then the model's own MTP head, before plain decode.
             if (!built) {
                 if (auto head = product::served_head_fallback(options_.artifact_path,
                                                               options_.device,
                                                               options_.per_request_speculation)) {
-                    built = fits(*head);
+                    built = fits(*head, "head");
                 }
             }
         }
@@ -514,6 +530,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 auto_plain_reason(refused_label, why, options_.prefill_chunk_explicit);
             served_speculation_.reset();
             engine_options.speculative = SpeculativeOptions{};
+            mark_fit_fallback(engine_options.speculative, "plain");
             // When plain decode does not fit either, the refusal is plain decode's, and it says
             // that --spec auto was refused first.
             try {
@@ -538,6 +555,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             const SpeculativeOptions speculative = engine_options.speculative;
             engine_.reset();
             engine_options.speculative = SpeculativeOptions{};
+            mark_fit_fallback(engine_options.speculative, "pool_plain");
             std::uint32_t plain        = 0;
             std::uint32_t plain_tokens = 0;
             try {
@@ -566,6 +584,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                          " full contexts beside its drafter";
                     engine_options.speculative =
                         product::with_given_settings(head->engine, options_.speculative);
+                    mark_fit_fallback(engine_options.speculative, "pool_head");
                     served_speculation_ = std::move(head);
                     bound_load(engine_options.speculative);
                     try {
@@ -577,6 +596,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                         engine_.reset();
                         served_speculation_.reset();
                         engine_options.speculative = SpeculativeOptions{};
+                        mark_fit_fallback(engine_options.speculative, "pool_plain");
                         engine_ = std::make_unique<ninferno::Engine>(engine_options);
                     }
                 }

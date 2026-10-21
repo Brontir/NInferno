@@ -35,7 +35,8 @@ ninferno_add_test(ninferno_warmup_widths_test NEEDS_SOURCE_DIR
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The decision fingerprint: canonical text, a pinned value, every input reaching it, the SHA-256
-# vectors, and the inventory of NINFERNO_* variables read in src/. CPU.
+# vectors, the inventory of NINFERNO_* variables read in src/, and the source files it names by
+# content (presets, MoE-tune cache, drafter). CPU.
 ninferno_add_test(ninferno_decision_fingerprint_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_fingerprint.cpp"
-  LIBRARIES ninferno_runtime_support)
+  LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)

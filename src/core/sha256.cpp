@@ -140,4 +140,17 @@ std::optional<std::string> file_sha256_hex(const std::filesystem::path& path) {
     return sha256_hex(std::string_view(bytes));
 }
 
+std::string utf8_file_name(const std::filesystem::path& path) {
+    const std::u8string name = path.filename().u8string();
+    return std::string(name.begin(), name.end());
+}
+
+std::optional<std::string> named_file_sha256(const std::filesystem::path& path) {
+    try {
+        const auto digest = file_sha256_hex(path);
+        if (!digest) { return std::nullopt; }
+        return utf8_file_name(path) + " sha256:" + *digest;
+    } catch (const std::exception&) { return std::nullopt; }
+}
+
 } // namespace ninferno

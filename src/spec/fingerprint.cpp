@@ -2,26 +2,14 @@
 
 #include "core/file_io.h"
 #include "core/hex.h"
+#include "core/sha256.h"
 
 #include "artifact/reader.h"
 
-#include <openssl/evp.h>
-
 #include <map>
-#include <memory>
 #include <stdexcept>
 
 namespace ninferno::spec {
-std::string sha256_hex(std::string_view bytes) {
-    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned length = 0;
-    EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr);
-    EVP_DigestUpdate(ctx.get(), bytes.data(), bytes.size());
-    EVP_DigestFinal_ex(ctx.get(), digest, &length);
-    return hex_encode(digest, length);
-}
-
 VocabFingerprint vocab_fingerprint(const nlohmann::json& tokenizer) {
     const auto model = tokenizer.find("model");
     if (model == tokenizer.end() || !model->is_object()) {

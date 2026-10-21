@@ -27,5 +27,11 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 [[nodiscard]] std::string sha256_hex(std::string_view input);
 // The digest of a file's bytes; nullopt when it cannot be read.
 [[nodiscard]] std::optional<std::string> file_sha256_hex(const std::filesystem::path& path);
+// A path's file name as UTF-8 (path::string() throws on Windows for a name outside the ANSI code
+// page; this never throws for a name the file system gave).
+[[nodiscard]] std::string utf8_file_name(const std::filesystem::path& path);
+// How the decision fingerprint names a source file: "<file name> sha256:<hex of its bytes>";
+// nullopt when it cannot be read. Never throws.
+[[nodiscard]] std::optional<std::string> named_file_sha256(const std::filesystem::path& path);
 
 } // namespace ninferno

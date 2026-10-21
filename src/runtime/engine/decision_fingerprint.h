@@ -12,16 +12,20 @@
 //   options  the options as the caller asked for them (before normalize_engine_options), the
 //            artifact's id and its prefill signature;
 //   sources  the data files decisions were read from, by content (route table and its lenders,
-//            dense-tune files, speculation profile, drafter registry);
+//            dense- and MoE-tune files, context-cost presets, speculation profile, drafter
+//            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
 //   env      every decision environment variable that is set (set to "" counts), by a hash of
 //            its value;
 //   plan     what startup resolved without reading the free memory: KV and state storage, MoE
-//            offload mode and compute, speculative graph windows, route breakpoints and table;
+//            offload mode (and its compute unless the offload is automatic), speculative graph
+//            windows, route breakpoints and table;
 //   taint    the pillar violations present (an environment knob, the user's tune cache, floor
-//            calibration, clocks of 0, borrowed or foreign route data, a local spec-tune).
+//            calibration, clocks of 0, borrowed or foreign route data, a local spec-tune, a
+//            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
 //   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
-//            cached states, Host tier, offloaded MoE layers). Until the plan levels of
+//            cached states, Host tier, offloaded MoE layers, and under an automatic offload its
+//            compute and CPU instruction set). Until the plan levels of
 //            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
 //            two identical starts, so they enter the manifest only.
 //
@@ -107,12 +111,15 @@ struct HostFacts {
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and
 // `route_table` the effective route table's content (its hash and its lenders'; empty: none).
+// The MoE offload's compute and CPU instruction set enter only when the offload is not automatic:
+// an automatic one chose its layer count from the free memory, and so whether the CPU runs any.
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
                                       std::string_view route_table);
 
 // What startup sized from the free memory (the observed section): max_context, prefill_chunk,
-// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes, moe_offload.layers.
+// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes, moe_offload.layers, and under
+// an automatic offload moe_offload.compute and moe_offload.cpu_isa.
 [[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
 // The environment variables that steer a decision (a tuner, a route table, a decode schedule,
@@ -125,10 +132,11 @@ struct HostFacts {
 [[nodiscard]] DecisionSection
 env_of(const std::function<std::optional<std::string>(const char*)>& lookup);
 
-// The taint of the other sections: "env" (the decision variables set), "user_tune_cache",
-// "calibrate_floor", "clocks" (a driver clock of 0), "borrowed_routes" (route entries lent by
-// another chip's table), "foreign_route_table" (a table keyed by a class not in the device's own
-// chain), "local_spec_tune".
+// The taint of the other sections: "env" (the decision variables set), "user_tune_cache" (which
+// tuners: "dense", "moe"), "calibrate_floor", "clocks" (a driver clock of 0), "borrowed_routes"
+// (route entries lent by another chip's table), "foreign_route_table" (a table keyed by a class not
+// in the device's own chain), "local_spec_tune", "spec_fit_fallback" (the --spec auto fallback a
+// capacity refusal forced, sources.spec_fit_fallback).
 [[nodiscard]] DecisionSection taint_of(const DecisionInputs& inputs);
 
 } // namespace ninferno::runtime

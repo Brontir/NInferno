@@ -316,9 +316,10 @@ struct SpeculativeOptions {
     bool calibrate_floor = false;
     // Where the product's speculation choices above came from, for the decision fingerprint
     // (runtime/engine/decision_fingerprint.h, section "sources"): "speculation.profile" and
-    // "drafter_registry", each "<kind> sha256:<hex>". The Engine reads no profile itself; the
-    // product code that resolved one (src/product/speculation) fills this. Never read by a
-    // decision.
+    // "drafter_registry", each "<kind> sha256:<hex>", and "spec_fit_fallback" when a capacity
+    // refusal made --spec auto fall back (src/serve/generation_service.cpp). The Engine reads no
+    // profile itself; the product code that resolved one (src/product/speculation) fills this.
+    // Never read by a decision.
     std::map<std::string, std::string> decision_sources;
 };
 
@@ -1735,8 +1736,9 @@ struct LoadSummary {
     // "nf1-" + 16 hex digits of SHA-256 over decision_canonical, the canonical text of every input
     // the engine's decisions read (device facts, build, requested options, source files, decision
     // environment variables, the resolved plan, taint); decision_manifest, "nm1-" + 16 hex digits,
-    // covers the resolved plan alone. decision_taint lists the pillar violations present
-    // ("<what>=<detail>"), each also in the canonical text.
+    // covers the resolved plan and the observed sizes (decision_observed). decision_taint lists
+    // the pillar violations present ("<what>=<detail>"), each also in the canonical text. Both are
+    // "unreadable" when an input could not be read; the start goes on.
     std::string decision_fingerprint;
     std::string decision_manifest;
     std::string decision_canonical;

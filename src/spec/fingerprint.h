@@ -43,7 +43,4 @@ artifact_vocab_fingerprint(const std::filesystem::path& artifact);
 // The artifact's 16-byte id as 32 lowercase hex digits (the conversion report's artifact_id).
 [[nodiscard]] std::string artifact_id_hex(const std::filesystem::path& artifact);
 
-// sha256 of a byte string, lowercase hex.
-[[nodiscard]] std::string sha256_hex(std::string_view bytes);
-
 } // namespace ninferno::spec

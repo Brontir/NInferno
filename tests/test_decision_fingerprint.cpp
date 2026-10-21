@@ -4,14 +4,19 @@
 // manifest; every option, plan and fact the collectors read reaches their section; an environment
 // variable set, set empty and unset are three inputs, and one off the decision list is none; the
 // SHA-256 matches the FIPS 180-4 vectors; and every NINFERNO_* variable src/ reads is either on
-// the decision list or on the list of those known to steer no decision.
+// the decision list or on the list of those known to steer no decision. The file-reading half
+// (decision_sources.h, ops::moe_tune_sources): a presets or MoE-tune file moves the fingerprint by
+// its content, and a drafter under a non-ASCII name is named without an exception.
 #include "core/device_class.h"
 #include "core/sha256.h"
+#include "ninferno/ops/moe.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_sources.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -271,6 +276,25 @@ int plan_reaches_its_section() {
         failures += check(collect(changed) == collect(MemorySummary{}),
                           std::string("plan: ") + field + " stays out of the plan");
     }
+    // An automatic MoE offload chose its layer count, and so whether the CPU computes any, from
+    // the free memory: compute and instruction set are observed then, planned otherwise.
+    MemorySummary automatic;
+    automatic.moe_offload_mode   = ninferno::MoeOffloadMode::Automatic;
+    MemorySummary on_cpu         = automatic;
+    on_cpu.moe_offload_compute   = ninferno::MoeOffloadCompute::Cpu;
+    on_cpu.moe_offload_cpu_isa   = "avx512";
+    on_cpu.moe_offload_offloaded = 4;
+    failures += check(collect(on_cpu) == collect(automatic),
+                      "plan: an automatic offload's compute stays out of the plan");
+    failures += check(rt::observed_of(on_cpu) != rt::observed_of(automatic) &&
+                          rt::observed_of(on_cpu).at("moe_offload.compute") == "cpu" &&
+                          rt::observed_of(on_cpu).at("moe_offload.cpu_isa") == "avx512",
+                      "observed: an automatic offload's compute and instruction set");
+    MemorySummary layers    = on_cpu;
+    layers.moe_offload_mode = ninferno::MoeOffloadMode::Layers;
+    failures += check(!rt::observed_of(layers).contains("moe_offload.compute") &&
+                          collect(layers).at("moe_offload.compute") == "cpu",
+                      "plan: an explicit layer count's compute is planned");
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
     failures +=
@@ -400,11 +424,16 @@ int taint() {
     in.sources["route_table.lenders"]         = "gb206 ab";
     in.sources["route_table.class"]           = "gb206";
     in.sources["speculation.profile"]         = "local tune sha256:ab";
+    in.sources["moe_tune.user"]               = "moe_tune.json sha256:ab";
+    in.sources["spec_fit_fallback"]           = "shallower+captured_load";
     const auto t                              = rt::taint_of(in);
     for (const char* key : {"clocks", "calibrate_floor", "user_tune_cache", "borrowed_routes",
-                            "foreign_route_table", "local_spec_tune"}) {
+                            "foreign_route_table", "local_spec_tune", "spec_fit_fallback"}) {
         failures += check(t.contains(key), std::string("taint names ") + key);
     }
+    failures += check(t.at("user_tune_cache") == "dense,moe", "taint names both tuners' caches");
+    failures += check(t.at("spec_fit_fallback") == "shallower+captured_load",
+                      "taint names the --spec auto fallback");
     in.sources["route_table.class"] = "sm120";
     failures += check(!rt::taint_of(in).contains("foreign_route_table"),
                       "the architecture's own table is not foreign");
@@ -541,6 +570,103 @@ int environment_inventory() {
     return failures;
 }
 
+void set_env(const char* name, const std::string& value) {
+#ifdef _WIN32
+    (void)_putenv_s(name, value.c_str());
+#else
+    (void)setenv(name, value.c_str(), 1);
+#endif
+}
+
+void unset_env(const char* name) {
+#ifdef _WIN32
+    (void)_putenv_s(name, "");
+#else
+    (void)unsetenv(name);
+#endif
+}
+
+void write_file(const std::filesystem::path& path, std::string_view bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+// The fingerprint of the sample inputs with one source set.
+std::string with_source(const std::string& key, const std::string& value) {
+    rt::DecisionInputs in = sample_inputs();
+    in.sources[key]       = value;
+    in.taint              = rt::taint_of(in);
+    return rt::decision_fingerprint(in).value;
+}
+
+// The files decisions read enter by content: a presets file and the MoE tuner's cache move nf1
+// when their bytes change, and none of the names throws, a non-ASCII one included.
+int file_sources() {
+    int failures   = 0;
+    const auto dir = std::filesystem::temp_directory_path() /
+                     ("ninferno_fingerprint_" + std::to_string(std::rand()));
+    std::filesystem::create_directories(dir);
+
+    // --context-cost-presets FILE.
+    const auto presets = dir / "presets.json";
+    write_file(presets, R"({"schema":"a"})");
+    const std::string first = rt::context_cost_presets_source(presets);
+    write_file(presets, R"({"schema":"b"})");
+    const std::string second = rt::context_cost_presets_source(presets);
+    failures += check(first.starts_with("presets.json sha256:") && first != second,
+                      "presets: named by file name and content: " + first);
+    failures += check(with_source("context_cost.presets", first) !=
+                          with_source("context_cost.presets", second),
+                      "presets: a changed file moves the fingerprint");
+    failures += check(rt::context_cost_presets_source({}) == "none", "presets: none");
+    failures += check(rt::context_cost_presets_source(dir / "missing.json") == "unreadable",
+                      "presets: a missing file is unreadable");
+
+    // The MoE tuner's cache, read only while NINFERNO_MOE_TUNE times.
+    const auto cache = dir / "moe_tune.json";
+    set_env("NINFERNO_MOE_TUNE_CACHE", cache.string());
+    unset_env("NINFERNO_MOE_TUNE");
+    failures += check(ninferno::ops::moe_tune_sources().empty(), "moe tune: off reads no file");
+    set_env("NINFERNO_MOE_TUNE", "on");
+    failures += check(ninferno::ops::moe_tune_sources().at("moe_tune.user") == "absent",
+                      "moe tune: a cache not written yet is absent");
+    write_file(cache, R"({"layers":{"a":1}})");
+    const std::string tuned_a = ninferno::ops::moe_tune_sources().at("moe_tune.user");
+    write_file(cache, R"({"layers":{"a":2}})");
+    const std::string tuned_b = ninferno::ops::moe_tune_sources().at("moe_tune.user");
+    failures += check(tuned_a.starts_with("moe_tune.json sha256:") && tuned_a != tuned_b,
+                      "moe tune: named by file name and content: " + tuned_a);
+    failures +=
+        check(with_source("moe_tune.user", tuned_a) != with_source("moe_tune.user", tuned_b),
+              "moe tune: a changed cache moves the fingerprint");
+    rt::DecisionInputs tuned       = sample_inputs();
+    tuned.sources["moe_tune.user"] = tuned_a;
+    failures += check(rt::taint_of(tuned).at("user_tune_cache") == "moe",
+                      "moe tune: the user's cache is taint");
+    unset_env("NINFERNO_MOE_TUNE");
+    unset_env("NINFERNO_MOE_TUNE_CACHE");
+
+    // A drafter under a non-ASCII name: named by its artifact id, "unreadable" when it is none,
+    // never an exception (path::string() throws on Windows outside the ANSI code page).
+    const std::filesystem::path drafter = dir / std::filesystem::path(u8"черновик-日本.ninferno");
+    write_file(drafter, "not an artifact");
+    std::string id = "threw";
+    try {
+        id = rt::drafter_identity(drafter);
+    } catch (...) {}
+    failures += check(id == "unreadable", "drafter: a non-artifact under a non-ASCII name: " + id);
+    failures += check(rt::drafter_identity({}).empty(), "drafter: none is empty");
+    failures += check(rt::drafter_identity(dir / "missing.ninferno") == "unreadable",
+                      "drafter: a missing file is unreadable");
+    const auto named = ninferno::named_file_sha256(drafter);
+    failures += check(named && named->starts_with("\xd1\x87\xd0\xb5\xd1\x80"),
+                      "a non-ASCII file name is named in UTF-8");
+
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -554,6 +680,7 @@ int main() {
     failures += taint();
     failures += sha256_vectors();
     failures += environment_inventory();
+    failures += file_sources();
     std::cout << (failures == 0 ? "OK" : "FAIL") << " decision_fingerprint (" << failures
               << " failures)\n";
     return failures == 0 ? 0 : 1;

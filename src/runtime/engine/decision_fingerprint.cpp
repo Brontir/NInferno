@@ -16,9 +16,6 @@
 #ifndef NINFERNO_VERSION_STRING
 #    define NINFERNO_VERSION_STRING "unknown"
 #endif
-#ifndef NINFERNO_GIT_COMMIT
-#    define NINFERNO_GIT_COMMIT "unknown"
-#endif
 #ifndef NINFERNO_CUDA_EMBED_PTX
 #    define NINFERNO_CUDA_EMBED_PTX 0
 #endif
@@ -27,6 +24,11 @@
 #endif
 
 namespace ninferno::runtime {
+
+// The commit this tree was built at, read at every build (cmake/GitCommit.cmake writes its
+// definition); "unknown" without git or a checkout.
+const char* build_git_commit() noexcept;
+
 namespace {
 
 constexpr std::array<std::string_view, 14> kDecisionVariables{
@@ -266,7 +268,7 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
 DecisionSection build_of() {
     DecisionSection out;
     out["version"]    = NINFERNO_VERSION_STRING;
-    out["git_commit"] = NINFERNO_GIT_COMMIT;
+    out["git_commit"] = build_git_commit();
 #ifdef NINFERNO_BUILD_ARCH
     out["arch"] = number(NINFERNO_BUILD_ARCH);
 #else
@@ -373,8 +375,12 @@ DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memo
     out["kv_cache"]         = std::string(kv_cache_storage_name(memory.kv_cache));
     out["recurrent_state"]  = std::string(recurrent_state_storage_name(resolved.recurrent_state));
     out["moe_offload.mode"] = std::string(offload_mode_name(memory.moe_offload_mode));
-    out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
-    out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
+    // Under an automatic offload the free memory chose how many layers leave the device, and with
+    // none the experts stay on the GPU: compute and instruction set are then observed.
+    if (memory.moe_offload_mode != MoeOffloadMode::Automatic) {
+        out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
+        out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
+    }
     std::vector<std::string> windows;
     for (const auto& window : memory.speculative_graph_windows) {
         windows.push_back(number(window.draft_tokens));
@@ -396,6 +402,10 @@ DecisionSection observed_of(const MemorySummary& memory) {
     out["host_state_slots"]     = number(memory.host_state_capacity_slots);
     out["host_kv_bytes"]        = number(static_cast<std::uint64_t>(memory.host_kv_capacity_bytes));
     out["moe_offload.layers"]   = number(memory.moe_offload_offloaded);
+    if (memory.moe_offload_mode == MoeOffloadMode::Automatic) {
+        out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
+        out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
+    }
     return out;
 }
 
@@ -425,7 +435,11 @@ DecisionSection taint_of(const DecisionInputs& in) {
         for (const auto& [name, hash] : in.env) { names.push_back(name); }
         out["env"] = joined(names);
     }
-    if (in.sources.contains("dense_tune.user")) { out["user_tune_cache"] = "1"; }
+    std::vector<std::string> tuners;
+    for (const char* tuner : {"dense", "moe"}) {
+        if (in.sources.contains(std::string(tuner) + "_tune.user")) { tuners.emplace_back(tuner); }
+    }
+    if (!tuners.empty()) { out["user_tune_cache"] = joined(tuners); }
     if (value(in.options, "speculative.calibrate_floor") == "1") { out["calibrate_floor"] = "1"; }
     if (value(in.facts, "memory_clock_khz") == "0" || value(in.facts, "sm_clock_khz") == "0") {
         out["clocks"] = "0";
@@ -443,6 +457,9 @@ DecisionSection taint_of(const DecisionInputs& in) {
     }
     if (value(in.sources, "speculation.profile").starts_with("local tune")) {
         out["local_spec_tune"] = "1";
+    }
+    if (const auto fallback = value(in.sources, "spec_fit_fallback"); !fallback.empty()) {
+        out["spec_fit_fallback"] = fallback;
     }
     return out;
 }

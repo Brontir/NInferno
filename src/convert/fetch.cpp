@@ -2,12 +2,12 @@
 
 #include "core/ascii.h"
 #include "core/hex.h"
+#include "core/sha256.h"
 
 #include "convert/gguf.h"
 
 #include "core/sys.h"
 #include "core/units.h"
-#include "spec/fingerprint.h"
 
 #include <curl/curl.h>
 #include <openssl/evp.h>
@@ -1410,7 +1410,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
         // One file by URL: cached under urls/<sha256 of the URL>/<file name>.
         auto name = spec.substr(spec.rfind('/') + 1);
         name      = name.substr(0, name.find('?'));
-        const auto dir    = root / "urls" / spec::sha256_hex(spec).substr(0, 16);
+        const auto dir    = root / "urls" / ninferno::sha256_hex(spec).substr(0, 16);
         const auto target = dir / name;
         out.repo          = spec;
         out.snapshot      = dir;

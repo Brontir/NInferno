@@ -776,13 +776,9 @@ void enable_dense_tune(bool on) {
 std::map<std::string, std::string> dense_tune_sources() {
     std::map<std::string, std::string> out;
     if (!g_enabled.load(std::memory_order_relaxed)) { return out; }
-    const auto named = [](const std::filesystem::path& path) -> std::optional<std::string> {
-        const auto digest = file_sha256_hex(path);
-        if (!digest) { return std::nullopt; }
-        return path.filename().string() + " sha256:" + *digest;
-    };
     if (const std::string dir = route_table_dir(); !dir.empty()) {
-        if (auto shipped = named(std::filesystem::path(dir) / "tuner" / "dense_tune.json")) {
+        if (auto shipped =
+                named_file_sha256(std::filesystem::path(dir) / "tuner" / "dense_tune.json")) {
             out["dense_tune.shipped"] = std::move(*shipped);
         }
     }
@@ -792,7 +788,7 @@ std::map<std::string, std::string> dense_tune_sources() {
     } catch (const std::invalid_argument&) {}
     if (mode != TuneMode::Off) {
         const auto path        = cache_path();
-        auto user              = path.empty() ? std::nullopt : named(path);
+        auto user              = path.empty() ? std::nullopt : named_file_sha256(path);
         out["dense_tune.user"] = user ? std::move(*user) : std::string("absent");
     }
     return out;

@@ -1,6 +1,7 @@
 #include "spec/manifest.h"
 
 #include "artifact/reader.h"
+#include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
 #include "spec/registry.h"
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <set>
 #include <vector>
 
@@ -82,16 +82,8 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
 
 // The profiles `manifest` serves from: the registry this binary carries when the manifest came
 // from it (profiles are re-measured and republished; a model converted earlier takes them without
-// being converted again), else the manifest's own copy. Where they come from into `origin`.
-// SHA-256 of a file's bytes; empty when it cannot be read.
-std::string file_sha256(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) { return {}; }
-    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    return in.bad() ? std::string() : sha256_hex(bytes);
-}
-
-// `digest`: the SHA-256 of what the profiles were read from (ResolvedSpeculation::sha256).
+// being converted again), else the manifest's own copy. Where they come from into `origin`, and
+// into `digest` the SHA-256 of what the profiles were read from (ResolvedSpeculation::sha256).
 const Json& manifest_profiles(const SpeculationManifest& manifest,
                               const std::filesystem::path& artifact, std::string& origin,
                               std::string* digest = nullptr) {
@@ -103,7 +95,7 @@ const Json& manifest_profiles(const SpeculationManifest& manifest,
             return entry->profiles;
         }
     }
-    if (digest) { *digest = file_sha256(manifest_path(artifact)); }
+    if (digest) { *digest = file_sha256_hex(manifest_path(artifact)).value_or(""); }
     return manifest.profiles;
 }
 
@@ -265,7 +257,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             out.notes.push_back(tuned_path.string() + " was tuned for another " + mismatch);
         } else if (drafters_ok) {
             out.source  = "local tune " + tuned_path.string();
-            out.sha256  = file_sha256(tuned_path);
+            out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);
             for (const auto& d : out.profile.drafters) {
                 const auto name = d.name.empty() ? d.kind : d.name;

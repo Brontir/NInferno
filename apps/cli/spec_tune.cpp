@@ -14,6 +14,7 @@
 
 #include "artifact/reader.h"
 #include "core/clock.h"
+#include "core/sha256.h"
 #include "core/paged_kv_cache.h"
 #include "ninferno/engine.h"
 #include "spec/config.h"
@@ -103,7 +104,7 @@ std::string corpus_digest(const spec::Corpus& corpus) {
         bytes += p.id + '\n' + p.family + '\n' + (p.thinking ? "1" : "0") + '\n' +
                  std::to_string(p.max_tokens) + '\n' + p.text + '\0';
     }
-    return spec::sha256_hex(bytes);
+    return ninferno::sha256_hex(bytes);
 }
 
 // The artifact's id, or its path's text when it has none readable (a drafter directory).
