@@ -57,6 +57,9 @@ struct RoundCost {
     double moe_bytes = 0;
     double moe_pick  = 0;
     ModelFit fit;
+    // false: no price at all (fit unreliable, its reason says why: "mma emulated" on a board
+    // without tensor cores); round_time refuses it, so the conservative fallback is the only use.
+    bool priced = true;
 };
 
 // What the artifact says about the target (no measurement).
@@ -128,8 +131,10 @@ struct ClassDepth {
 // ignored), the one that maximizes tokens_per_round(a_c, d, k) / round_time(cost, 1, k), when it
 // beats plain by (1 + margin); otherwise 0. a_c is the first-draft acceptance whose accepted drafts
 // per round at `factor_depth` (the depth the factors were measured at) are the class factor times
-// those of `a`. No cost, an unreliable fit (RoundCost::fit) or an unknown factor: the deepest
-// captured depth up to kUnsureDepth for Short and Mid, 0 for Long and Huge, labelled. No caller
+// those of `a`. Short is the baseline (factor 1 by definition, whatever `factors` says of it). No
+// cost, an unreliable or unpriced fit (RoundCost::fit, "mma emulated") or an unknown factor of
+// another class: the deepest captured depth up to kUnsureDepth for Short and Mid, 0 for Long and
+// Huge, labelled "estimate: none (<why>)". No caller
 // yet: routing a request by class is the next step.
 [[nodiscard]] std::array<ClassDepth, kContextClasses>
 class_depths(const std::optional<RoundCost>& cost, double a, double d,

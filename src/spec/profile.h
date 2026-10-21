@@ -258,6 +258,9 @@ struct GpuKey {
     int compute_capability = 0;   // 89: Ada
     int sm_clock_khz       = 0;   // reference SM clock (DeviceClass::facts, not the driver's)
     double dram_gbps       = 0;   // nominal memory bandwidth (DeviceClass::facts)
+    // mma.sync without tensor cores (DeviceFeatures::mma_slow, board_mma_slow): the verify MMA is
+    // emulated, which the load model has no price for.
+    bool mma_slow = false;
 };
 
 // Whether the published profile's class is one of the device's own keys, and if not, the note

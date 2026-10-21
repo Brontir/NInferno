@@ -837,8 +837,8 @@ int test_class_depths() {
     const std::array<ClassFactor, kContextClasses> poor{
         ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}, ClassFactor{0.02, ""}};
     const auto low = class_depths(cost, 0.75, 0.97, captured, poor, 7);
-    failures += check(low[0].estimate && low[0].depth == 0 && low[0].reason.starts_with("plain:"),
-                      "low acceptance: plain by the model (" + low[0].reason + ")");
+    failures += check(low[1].estimate && low[1].depth == 0 && low[1].reason.starts_with("plain:"),
+                      "mid, low acceptance: plain by the model (" + low[1].reason + ")");
     const auto strict = class_depths(cost, 0.75, 0.97, captured, factors, 7, 10.0);
     failures += check(strict[0].depth == 0, "a margin no depth beats: plain");
     // An unreliable fit or no cost model: the deepest captured depth up to 3 below 8K, plain past.
@@ -857,6 +857,43 @@ int test_class_depths() {
         check(none[0].depth == 0 && none[1].depth == 0, "unsure, no captured depth up to 3: plain");
     const auto empty = class_depths(cost, 0.75, 0.97, std::vector<std::int32_t>{}, factors, 7);
     failures += check(empty[0].depth == 0, "nothing captured: plain");
+    // Short is the baseline: an unknown Short factor alone never lowers its depth; Mid and Long
+    // still fall back when theirs are unknown.
+    const std::array<ClassFactor, kContextClasses> unknown{
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"},
+        ClassFactor{std::nullopt, "no context_classes"}};
+    const auto base = class_depths(cost, 0.75, 0.97, captured, unknown, 7);
+    failures += check(base[0].estimate && base[0].depth == by[0].depth,
+                      "short, factor unknown: the baseline's own pick (" + base[0].reason + ")");
+    failures +=
+        check(!base[1].estimate && base[1].depth == 3 && !base[2].estimate && base[2].depth == 0,
+              "mid and long, factors unknown: the conservative rule");
+    // A board without tensor cores (mma_slow): no price, the conservative rule, labelled.
+    const auto* qwen = Registry::builtin().by_id("qwen3.8-27b");
+    if (qwen != nullptr) {
+        GpuKey tu116    = card_key(kCards[12]); // a 2080 Ti's rates, as a TU116 board of sm75
+        tu116.mma_slow  = true;
+        const auto slow = round_cost_of(tu116, target_facts(*qwen, "qwen3_8_27b.ninferno"),
+                                        DrafterFacts{.kind = "mtp"});
+        failures += check(slow && !slow->priced && !slow->fit.reliable &&
+                              slow->fit.reason == "mma emulated",
+                          "mma_slow: unpriced, labelled mma emulated");
+        if (slow) {
+            const auto rule = class_depths(slow, 0.75, 0.97, captured, factors, 7);
+            failures += check(rule[0].depth == 3 && rule[2].depth == 0 && !rule[0].estimate &&
+                                  rule[0].reason.starts_with("estimate: none (mma emulated)"),
+                              "mma_slow: the conservative rule (" + rule[0].reason + ")");
+            bool refused = false;
+            try {
+                (void)round_time(*slow, 1, 3);
+            } catch (const std::invalid_argument&) { refused = true; }
+            failures += check(refused, "mma_slow: round_time refuses an unpriced cost");
+        }
+    } else {
+        failures += check(false, "registry has qwen3.8-27b");
+    }
     return failures;
 }
 

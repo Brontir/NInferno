@@ -89,6 +89,11 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
         target.num_hidden_layers == 0) {
         return std::nullopt;
     }
+    if (gpu.mma_slow) {
+        // TU116 / TU117 and the GTX 16 boards: the verify MMA runs on the FP16 units, a cost no
+        // floor measured. Not priced as the generation's tensor-core boards: unpriced, labelled.
+        return RoundCost{.fit = ModelFit{false, "mma emulated"}, .priced = false};
+    }
     const DrafterKind* kind = nullptr;
     for (const DrafterKind& k : kDrafterKinds) {
         if (k.kind == drafter.kind) { kind = &k; }
@@ -135,6 +140,9 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
 
 double round_time(const RoundCost& cost, std::int32_t rows, std::int32_t depth) {
     if (rows < 1 || depth < 0) { throw std::invalid_argument("round_time: rows >= 1, depth >= 0"); }
+    if (!cost.priced) {
+        throw std::invalid_argument("round_time: an unpriced cost (" + cost.fit.reason + ")");
+    }
     const double w      = static_cast<double>(rows) * (depth + 1);
     const double passes = depth == 0 ? 0.0 : (cost.pass_per_draft ? depth : 1.0);
     // Experts w columns routed independently read over the r of one: E (1 - (1 - r/E)^w) - r.
@@ -232,21 +240,25 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
             continue;
         }
         if (!cost->fit.reliable) {
-            out[i] = unsure(c, "cost model unsure: " + cost->fit.reason);
+            out[i] = unsure(c, cost->fit.reason);
             continue;
         }
-        if (!factors[i].value) {
+        // Short is the baseline the factors are relative to: 1 by definition, so an unknown Short
+        // factor never lowers the depth by itself. Only the other classes fall back.
+        const bool baseline = c == ContextClass::Short;
+        if (!baseline && !factors[i].value) {
             out[i] =
                 unsure(c, std::string(class_name(c)) + " acceptance unknown: " + factors[i].reason);
             continue;
         }
+        const double factor = baseline ? 1.0 : *factors[i].value;
         if (depths.empty() || factor_depth < 1) {
             out[i] = ClassDepth{.depth = 0, .estimate = true, .reason = "no captured depth: plain"};
             continue;
         }
         // The factor scales the accepted drafts per round at the depth it was measured at.
-        const double drafts = (tokens_per_round(a, d, factor_depth) - 1.0) * *factors[i].value;
-        const double a_c    = first_draft_acceptance(1.0 + drafts, factor_depth, d);
+        const double drafts = (tokens_per_round(a, d, factor_depth) - 1.0) * factor;
+        const double a_c    = baseline ? a : first_draft_acceptance(1.0 + drafts, factor_depth, d);
         std::int32_t best   = 0;
         double speed        = 0; // over plain decode's
         for (const std::int32_t k : depths) {
