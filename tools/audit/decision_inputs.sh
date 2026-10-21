@@ -47,6 +47,8 @@ decision_patterns=(
   'src/models/qwen3_5/program/planning/*.cpp'
   src/ops/prefill_routes.cpp
   src/ops/route_table.cpp
+  src/runtime/engine/process_options_lease.h
+  src/product/engine_flags.h
   src/ops/generic/route_table.h
   src/ops/wrapper/candidate_selector.cpp
   src/ops/candidate_selector/bf16/candidate_selector_path_plan.cpp
