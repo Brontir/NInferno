@@ -3,6 +3,7 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "core/ascii.h"
+#include "core/device_class.h"
 #include "spec/fingerprint.h"
 #include "spec/manifest.h"
 #include "spec/profile.h"
@@ -365,7 +366,37 @@ std::pair<std::string, std::string> split_model_tag(const std::string& model) {
     return {model.substr(0, colon), model.substr(colon + 1)};
 }
 
-LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
+std::string tune_refusal_on(const fs::path& tune, const std::string& artifact_id,
+                            const GpuStat* gpu) {
+    // The tune itself first: unreadable, another artifact, or a drafter replaced since.
+    if (auto why = spec::tune_refusal(tune, artifact_id); !why.empty()) { return why; }
+    if (gpu == nullptr || gpu->cc_major <= 0) {
+        return tune.string() + ": the GPU it would run on is unknown here";
+    }
+    const int major = gpu->cc_major, minor = gpu->cc_minor;
+    // gpu_chip guesses the chip by the SM count when the PCI id names none: not without one.
+    if (gpu->sms <= 0 && !gpu_chip_by_pci(gpu->pci_device_id, major, minor)) {
+        return tune.string() + ": the chip of GPU " + std::to_string(gpu->index) +
+               " is unknown here";
+    }
+    const std::string chip = gpu_chip(gpu->pci_device_id, major, minor, gpu->sms);
+    // The class the server keys a tune by (device_class's id(), its similarity chain's front).
+    if (gpu->sms > 0) {
+        return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
+    }
+    std::string why;
+    const auto tuned = spec::read_profile(tune, &why);
+    if (!tuned) { return tune.string() + ": " + why; }
+    const auto& recorded = tuned->key.gpu;
+    if (recorded.substr(0, recorded.find(':')) != chip) {
+        return tune.string() + " was tuned for another GPU (" + recorded + "; GPU " +
+               std::to_string(gpu->index) + " is " + chip + ")";
+    }
+    return {};
+}
+
+LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
+                       const GpuStat* gpu) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
     if (model.front() == '-') { throw std::invalid_argument("a model name cannot start with '-'"); }
@@ -444,13 +475,14 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
         // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
         // by its artifact path: named, since the server reads none by itself, and only when it
         // would serve (a named tune that does not refuses to start): a stale one is passed over
-        // with a note in the log. The GPU class is the server's to check (no device here).
+        // with a note in the log. Checked against the GPU the request runs on (tune_refusal_on):
+        // one not known well enough here passes the tune over too.
         std::error_code ec;
         const fs::path tune = spec::default_profile_path(model);
         if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
             std::string why;
             try {
-                why = spec::tune_refusal(tune, spec::artifact_id_hex(model));
+                why = tune_refusal_on(tune, spec::artifact_id_hex(model), gpu);
             } catch (const std::exception& e) {
                 why = std::string("the model's id is unreadable: ") + e.what();
             }
@@ -458,8 +490,9 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
                 spec.argv.push_back("--spec-profile");
                 spec.argv.push_back(tune.string());
             } else {
-                spec.notes.push_back("the tune beside the model is stale (" + why +
-                                     "); the published profile runs: calibrate again");
+                spec.notes.push_back("the tune beside the model is passed over (" + why +
+                                     "); the published profile runs: calibrate again if "
+                                     "it is stale");
             }
         }
     }
@@ -1627,8 +1660,18 @@ void App::install(httplib::Server& server) {
                                 request.quant.clear();
                             }
                         }
-                        request.port  = processes_.free_port();
-                        const auto id = processes_.start(make_launch(options_, request));
+                        request.port = processes_.free_port();
+                        // The GPU it runs on (CUDA_VISIBLE_DEVICES in PCI order: NVML's index);
+                        // without one named, the only GPU there is, else none known.
+                        const auto stats = gpus_->snapshot();
+                        const GpuStat* gpu = nullptr;
+                        for (const auto& stat : stats) {
+                            if (stat.index == request.gpu ||
+                                (request.gpu < 0 && stats.size() == 1)) {
+                                gpu = &stat;
+                            }
+                        }
+                        const auto id = processes_.start(make_launch(options_, request, gpu));
                         reply_json(res, {{"id", id}, {"port", request.port}});
                     } catch (const std::invalid_argument& error) {
                         reply_error(res, 400, error.what());

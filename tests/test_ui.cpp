@@ -3,6 +3,7 @@
 
 #include "convert/acquire.h"
 #include "core/sys.h"
+#include "spec/profile.h"
 #include "ui/access.h"
 #include "ui/app.h"
 #include "ui/browser.h"
@@ -266,6 +267,45 @@ void test_launch() {
                       stale.argv.end() &&
                   stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
               "a stale tune beside the model is a note, not --spec-profile");
+        fs::remove_all(dir);
+    }
+
+    // A tune beside the model is named only for the GPU class it was made on, as the server keys
+    // it ("<chip>:<sms>sm"); without the SM count the chip decides; an unknown GPU or chip passes
+    // it over (the published profile runs rather than a refused start).
+    {
+        namespace fs   = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "ninferno_ui_tune_gpu";
+        fs::create_directories(dir);
+        const auto tune = dir / "m.ninferno.spec_profile.json";
+        ninferno::spec::Profile tuned;
+        tuned.key.artifact_id = "aaaa";
+        tuned.key.gpu         = "gb202:170sm";
+        ninferno::spec::write_profile(tune, tuned);
+        GpuStat rtx5090;
+        rtx5090.index         = 1;
+        rtx5090.cc_major      = 12;
+        rtx5090.cc_minor      = 0;
+        rtx5090.pci_device_id = 0x2B85;
+        rtx5090.sms           = 170;
+        check(tune_refusal_on(tune, "aaaa", &rtx5090).empty(), "a tune made on this GPU's class");
+        check(!tune_refusal_on(tune, "bbbb", &rtx5090).empty(), "a tune of another artifact");
+        GpuStat other = rtx5090;
+        other.sms     = 188;
+        check(tune_refusal_on(tune, "aaaa", &other).find("another") != std::string::npos,
+              "a tune of another SM count of the chip is passed over");
+        other.pci_device_id = 0x2C02; // RTX 5080: gb203
+        other.sms           = 0;
+        check(tune_refusal_on(tune, "aaaa", &other).find("another GPU") != std::string::npos,
+              "without the SM count, a tune of another chip is passed over");
+        other.pci_device_id = 0x2B85;
+        check(tune_refusal_on(tune, "aaaa", &other).empty(),
+              "without the SM count, a tune of the same chip is named");
+        other.pci_device_id = 0;
+        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
+              "an unknown chip passes the tune over");
+        check(tune_refusal_on(tune, "aaaa", nullptr).find("unknown") != std::string::npos,
+              "an unknown GPU passes the tune over");
         fs::remove_all(dir);
     }
 
