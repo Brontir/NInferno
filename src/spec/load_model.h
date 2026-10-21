@@ -78,9 +78,13 @@ struct TargetFacts {
     int experts = 0, experts_per_token = 0;
     double routed_expert_params = 0;
     std::string family; // the registry's engine ("gemma4", "qwen3_5", "nemotron_h", "dense")
-    // The weight format, lower case: "mxfp4", "nvfp4", "q4_g64", "q8", "q4_0", "bf16", or a GGUF
-    // type ("q4_k_m", "iq3_xxs"). "" unknown: never a covered pair.
-    std::string weight_format;
+    // The weight formats the artifact holds, spelt as artifact::format_name spells a QType
+    // ("mxfp4", "nvfp4", "q4_g64_fp16", "q8_g32_fp16", "bf16", "ggml_q4_k", "ggml_iq3_xxs", ...):
+    // the set LoadSummary::weight_formats collects. A covered pair needs every format covered: the
+    // set is the covered quantized format plus only unquantized ones (bf16, fp32, int32: norms,
+    // embeddings, router). Empty (unknown), another quantized format beside it, or none of it:
+    // unsure.
+    std::vector<std::string> weight_formats;
 };
 
 struct DrafterFacts {

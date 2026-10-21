@@ -655,24 +655,24 @@ struct QuantFacts {
     const char* pattern;
     double bytes_per_weight;
     bool kquant;
-    const char* format; // TargetFacts::weight_format
+    const char* format; // its quantized format, as artifact::format_name spells it ("": unknown)
 };
 
 const QuantFacts kQuants[] = {
-    {"pirola-IQ3_XXS", 15.4 / 31.6, true, "iq3_xxs"},
-    {"IQ2_XXS|iq2xxs", 2.06 / 8, true, "iq2_xxs"},
-    {"IQ3_XXS", 3.06 / 8, true, "iq3_xxs"},
-    {"IQ4_XS", 4.25 / 8, true, "iq4_xs"},
-    {"IQ3", 3.44 / 8, true, "iq3"},
-    {"Q4_K_XL", 4.9 / 8, true, "q4_k_xl"},
-    {"Q4_K_M", 4.85 / 8, true, "q4_k_m"},
-    {"Q4_0|q40", 4.5 / 8, false, "q4_0"},
+    {"pirola-IQ3_XXS", 15.4 / 31.6, true, "ggml_iq3_xxs"},
+    {"IQ2_XXS|iq2xxs", 2.06 / 8, true, "ggml_iq2_xxs"},
+    {"IQ3_XXS", 3.06 / 8, true, "ggml_iq3_xxs"},
+    {"IQ4_XS", 4.25 / 8, true, "ggml_iq4_xs"},
+    {"IQ3", 3.44 / 8, true, "ggml_iq3_s"},
+    {"Q4_K_XL", 4.9 / 8, true, "ggml_q4_k"},
+    {"Q4_K_M", 4.85 / 8, true, "ggml_q4_k"},
+    {"Q4_0|q40", 4.5 / 8, false, "ggml_q4_0"},
     {"nvfp4|NVFP4", 4.5 / 8, false, "nvfp4"},
     {"MXFP4|gpt-oss-20b-gguf|openai/gpt-oss-20b", 4.25 / 8, false, "mxfp4"},
-    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false, "q8"},
+    {R"(_q8|q8\.ninferno|recipe qwen3_5_q8)", 8.5 / 8, false, "q8_g32_fp16"},
     {"BF16|bf16", 2.0, false, "bf16"},
-    {"Q4", 0.53, false, "q4_g64"},
-    {".", 0.53, false, "q4_g64"},
+    {"Q4", 0.53, false, "q4_g64_fp16"},
+    {".", 0.53, false, ""},
 };
 
 TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on) {
@@ -694,7 +694,8 @@ TargetFacts target_facts(const ModelEntry& model, const std::string& measured_on
         if (std::regex_search(head, std::regex(q.pattern))) {
             t.bytes_per_weight = q.bytes_per_weight;
             t.kquant = q.kquant;
-            t.weight_format    = q.format;
+            // The quantized format beside the unquantized norms and embeddings, as a load collects.
+            if (*q.format != '\0') { t.weight_formats = {"bf16", q.format}; }
             break;
         }
     }
@@ -765,6 +766,22 @@ int test_cost_model() {
         const auto c = floor_of("gpt-oss-20b", "gb202", other, "dflash", "dflash:7");
         failures += check(c && !c->fit.reliable,
                           std::string("gpt-oss on sm120, ") + other + ": not covered, unsure");
+    }
+    // An unknown format set, or a second quantized format beside mxfp4: unsure.
+    const auto oss_unknown =
+        floor_of("gpt-oss-20b", "gb202", "an artifact of no known format", "dflash", "dflash:7");
+    failures += check(oss_unknown && !oss_unknown->fit.reliable &&
+                          oss_unknown->fit.reason.find("unknown format") != std::string::npos,
+                      "gpt-oss on sm120, unknown format: unsure (" +
+                          (oss_unknown ? oss_unknown->fit.reason : "") + ")");
+    if (const auto* oss_model = registry.by_id("gpt-oss-20b")) {
+        TargetFacts mixed = target_facts(*oss_model, "openai/gpt-oss-20b MXFP4");
+        const auto both = round_cost_of(card_key(kCards[0]), mixed, DrafterFacts{.kind = "dflash"});
+        failures += check(both && both->fit.reliable, "gpt-oss on sm120, {bf16, mxfp4}: covered");
+        mixed.weight_formats.push_back("ggml_q4_k");
+        const auto two = round_cost_of(card_key(kCards[0]), mixed, DrafterFacts{.kind = "dflash"});
+        failures +=
+            check(two && !two->fit.reliable, "gpt-oss on sm120, mxfp4 beside ggml_q4_k: unsure");
     }
     const auto muse =
         floor_of("muse-glimmer-30b", "gb202", "muse_glimmer_30b.ninferno", "dflash", "dflash:7");

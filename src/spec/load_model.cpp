@@ -73,7 +73,7 @@ struct Tested {
     int cc;
     std::string_view family;
     bool moe;
-    std::string_view weight_format;
+    std::string_view weight_format; // the one quantized format (format_name spelling)
     std::string_view drafter;
 };
 
@@ -84,21 +84,34 @@ constexpr Tested kTested[] = {
 ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::string_view drafter) {
     const std::string& family = target.family;
     const bool moe            = target.experts > 0;
+    // The quantized format of the set: one, beside unquantized ones only; "" when the set is empty
+    // or holds two quantized formats (not a covered pair either way).
+    std::string quantized;
+    int quantized_count = 0;
+    for (const std::string& f : target.weight_formats) {
+        if (f == "bf16" || f == "fp32" || f == "int32") { continue; }
+        quantized = f;
+        ++quantized_count;
+    }
+    if (quantized_count != 1) { quantized.clear(); }
+    std::string formats;
+    for (const std::string& f : target.weight_formats) {
+        formats += (formats.empty() ? "" : "+") + f;
+    }
     const std::string arch = "sm" + std::to_string(cc);
     if (g == nullptr) {
         return {false, arch + ": a generation the fit never measured, priced as its costliest"};
     }
     if (g->lab_cards < 2) { return {false, arch + ": fewer than two lab cards measured"}; }
     for (const Tested& t : kTested) {
-        if (t.cc == cc && t.family == family && t.moe == moe &&
-            t.weight_format == target.weight_format && t.drafter == drafter) {
+        if (t.cc == cc && t.family == family && t.moe == moe && !quantized.empty() &&
+            t.weight_format == quantized && t.drafter == drafter) {
             return {};
         }
     }
     return {false, arch + " " + family + (moe ? " moe" : "") + " " +
-                       (target.weight_format.empty() ? std::string("unknown format")
-                                                     : target.weight_format) +
-                       " " + std::string(drafter) +
+                       (formats.empty() ? std::string("unknown format") : formats) + " " +
+                       std::string(drafter) +
                        ": not held out within the 10 % margin by the fit's points"};
 }
 
