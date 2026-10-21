@@ -3128,8 +3128,11 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                             problem.qtype == QType::Q6_G64_FP16)
                                ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
                                : 0;
-    return with_gather(std::max(
-        {mmq, i8, route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)}));
+    // R8 alone (no W4A8 width in the interval) reads one slice's planes, reused slice by slice.
+    const std::size_t planes =
+        a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)
+           : route_workspace_bytes(Route{Family::R8Mma, 0}, problem.k, max_tokens);
+    return with_gather(std::max({mmq, i8, planes}));
 }
 
 // GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
