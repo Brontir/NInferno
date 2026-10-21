@@ -64,26 +64,39 @@ constexpr DrafterKind kDrafterKinds[] = {
 // pred_m3_loc and pred_m3_lom in points.csv, rms by cc and engine). Only sm120 dense passes (7.1 %,
 // 6.8 %); sm89 dense (11.0 % card-out), sm120 gemma4 (11.3 %, 16.1 %), sm89 qwen3_5 (12.2 %,
 // 25.5 %), sm89 gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one
-// card each.
+// card each. The sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b
+// (an MoE, the registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So
+// the key is what the points cover, (generation, family, MoE, k/IQ quant, drafter kind); a dense
+// target, a GGUF k-quant or another drafter on sm120 dense stays unsure.
 struct Tested {
     int cc;
     std::string_view family;
+    bool moe;
+    bool kquant;
+    std::string_view drafter;
 };
 
 constexpr Tested kTested[] = {
-    {120, "dense"},
+    {120, "dense", true, false, "dflash"},
 };
 
-ModelFit fit_of(const Generation* g, int cc, const std::string& family) {
+ModelFit fit_of(const Generation* g, int cc, const TargetFacts& target, std::string_view drafter) {
+    const std::string& family = target.family;
+    const bool moe            = target.experts > 0;
     const std::string arch = "sm" + std::to_string(cc);
     if (g == nullptr) {
         return {false, arch + ": a generation the fit never measured, priced as its costliest"};
     }
     if (g->lab_cards < 2) { return {false, arch + ": fewer than two lab cards measured"}; }
     for (const Tested& t : kTested) {
-        if (t.cc == cc && t.family == family) { return {}; }
+        if (t.cc == cc && t.family == family && t.moe == moe && t.kquant == target.kquant &&
+            t.drafter == drafter) {
+            return {};
+        }
     }
-    return {false, arch + " " + family + ": held-out error past the 10 % margin"};
+    return {false, arch + " " + family + (moe ? " moe" : "") + (target.kquant ? " k-quant" : "") +
+                       " " + std::string(drafter) +
+                       ": not held out within the 10 % margin by the fit's points"};
 }
 
 } // namespace
@@ -137,7 +150,7 @@ std::optional<RoundCost> round_cost_of(const GpuKey& gpu, const TargetFacts& tar
                    .knee  = priced.knee,
                    .delta = kind->cost * size,
                    .pass_per_draft = kind->pass_per_draft,
-                   .fit = fit_of(gen, gpu.compute_capability, target.family)};
+                   .fit            = fit_of(gen, gpu.compute_capability, target, kind->kind)};
     if (target.experts > 0 && target.experts_per_token > 0 && target.routed_expert_params > 0) {
         cost.moe_pick  = static_cast<double>(target.experts_per_token) / target.experts;
         cost.moe_bytes = kMoeRead * target.routed_expert_params / target.active_params;
@@ -201,7 +214,10 @@ std::vector<LoadBound> modeled_load(const RoundCost& cost, double a, double d,
         return best;
     };
     const std::int32_t deepest = candidates.back();
-    std::int32_t previous      = best_at(1, deepest);
+    // An unreliable fit: no deeper than kUnsureDepth at any load, as class_depths' fallback below
+    // 8K.
+    std::int32_t previous =
+        best_at(1, cost.fit.reliable ? deepest : std::min(deepest, kUnsureDepth));
     std::vector<LoadBound> out;
     if (previous != deepest) { out.push_back(LoadBound{.lanes = 1, .depth = previous}); }
     for (std::int32_t rows = 2; rows <= max_rows; ++rows) {
@@ -274,9 +290,18 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
         // The factor scales the accepted drafts per round at the depth it was measured at.
         const double drafts = (tokens_per_round(a, d, factor_depth) - 1.0) * factor;
         const double a_c    = baseline ? a : first_draft_acceptance(1.0 + drafts, factor_depth, d);
+        // A longer prompt never speculates deeper than a short one: Mid, Long and Huge choose among
+        // the captured depths up to Short's pick, even with a factor above 1.
+        if (!baseline && out[0].depth == 0) {
+            out[i] = ClassDepth{.depth = 0, .estimate = true, .reason = "plain: short is plain"};
+            continue;
+        }
+        const std::int32_t ceiling =
+            baseline ? std::numeric_limits<std::int32_t>::max() : out[0].depth;
         std::int32_t best   = 0;
         double speed        = 0; // over plain decode's
         for (const std::int32_t k : depths) {
+            if (k > ceiling) { continue; }
             const double s =
                 tokens_per_round(a_c, d, k) / round_time(*cost, 1, k) * round_time(*cost, 1, 0);
             if (s > speed) {

@@ -738,6 +738,19 @@ int test_cost_model() {
     const auto oss_bw =
         floor_of("gpt-oss-20b", "gb202", "openai/gpt-oss-20b MXFP4", "dflash", "dflash:7");
     failures += check(oss_bw && oss_bw->fit.reliable, "gpt-oss on sm120: a tested pair");
+    // The sm120 dense points are gpt-oss MXFP4 DFlash only: another drafter kind, a GGUF k-quant or
+    // a dense (non-MoE) target of the same family stays unsure.
+    const auto oss_mtp =
+        floor_of("gpt-oss-20b", "gb202", "openai/gpt-oss-20b MXFP4", "mtp", "mtp:3");
+    failures +=
+        check(oss_mtp && !oss_mtp->fit.reliable, "gpt-oss MTP on sm120: not covered, unsure");
+    const auto oss_k = floor_of("gpt-oss-20b", "gb202", "gpt-oss-20b Q4_K_M", "dflash", "dflash:7");
+    failures +=
+        check(oss_k && !oss_k->fit.reliable, "gpt-oss GGUF k-quant on sm120: not covered, unsure");
+    const auto muse =
+        floor_of("muse-glimmer-30b", "gb202", "muse_glimmer_30b.ninferno", "dflash", "dflash:7");
+    failures +=
+        check(muse && !muse->fit.reliable, "a dense non-MoE target on sm120: not covered, unsure");
     // Where the fit is unsure it says so: one lab card (V100), a pair past the margin held out
     // (sm89 gemma4), a generation it never saw (priced as its costliest: dearer than Ada).
     const auto v100 = floor_of("qwen3.8-27b", "gv100", "qwen3_8_27b.ninferno", "mtp", "mtp:3");
@@ -918,6 +931,27 @@ int test_class_depths() {
         check(capped[0].estimate && capped[0].depth == 0 && !capped[1].estimate &&
                   capped[1].depth == 0 && capped[2].depth == 0,
               "mid, factor unknown: no deeper than short's pick (" + capped[1].reason + ")");
+    // A factor above 1 never takes a longer prompt deeper than Short's pick.
+    const std::array<ClassFactor, kContextClasses> rising{
+        ClassFactor{1.0, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}, ClassFactor{1.5, ""}};
+    const auto up = class_depths(cost, 0.35, 0.97, captured, rising, 7);
+    failures +=
+        check(up[0].depth > 0 && up[1].depth <= up[0].depth && up[2].depth <= up[0].depth &&
+                  up[3].depth <= up[0].depth,
+              "factor above 1: no class deeper than short's " + std::to_string(up[0].depth));
+    const auto up_plain = class_depths(cost, 0.75, 0.97, captured, rising, 7, 10.0);
+    failures += check(up_plain[0].depth == 0 && up_plain[1].depth == 0 && up_plain[1].estimate,
+                      "short plain: every class plain (" + up_plain[1].reason + ")");
+    // modeled_load under an unreliable fit: no deeper than kUnsureDepth at any load.
+    RoundCost free_unsure;
+    free_unsure.fit = ModelFit{false, "sm89 gemma4: not covered"};
+    const std::vector<std::int32_t> menu{3, 5, 7};
+    const auto unsure_load = modeled_load(free_unsure, 0.75, 0.97, menu, 8);
+    failures +=
+        check(unsure_load.size() == 1 && unsure_load[0].lanes == 1 && unsure_load[0].depth == 3,
+              "modeled_load, unreliable fit: capped at depth 3");
+    const auto sure_load = modeled_load(RoundCost{}, 0.75, 0.97, menu, 8);
+    failures += check(sure_load.empty(), "modeled_load, reliable free rounds: unbounded");
     // A board without tensor cores (mma_slow): no price, the conservative rule, labelled.
     const auto* qwen = Registry::builtin().by_id("qwen3.8-27b");
     if (qwen != nullptr) {
