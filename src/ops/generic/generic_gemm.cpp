@@ -1258,6 +1258,8 @@ int w4a4_schedule_count() {
     return static_cast<int>(kW4a4Schedules.size());
 #endif
 }
+
+int w4a4_schedule_names() { return static_cast<int>(kW4a4Schedules.size()); }
 W4a4ScheduleInfo w4a4_schedule_info(int index) {
     return kW4a4Schedules.at(static_cast<std::size_t>(index));
 }
@@ -1587,7 +1589,7 @@ std::optional<Route> parse_route(std::string_view name) {
     }
     // Every W4A4 name, compiled or not: a shipped Blackwell table names them, and route_admits
     // refuses them on a build without the kernels.
-    for (std::size_t i = 0; i < kW4a4Schedules.size(); ++i) {
+    for (int i = 0; i < w4a4_schedule_names(); ++i) {
         const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(i)};
         if (route_name(r) == name) return r;
     }

@@ -203,6 +203,14 @@ template <class Measured, std::size_t Extent>
 // never silent.
 [[nodiscard]] std::vector<std::string> device_fact_notes(const DeviceClass& d);
 
+// The architecture ("sm86") of a chip ("ga102") or GPU class key ("ga102:84sm") by the
+// full-chip table; an architecture key ("sm86") is its own when the table has a chip of it. Empty
+// for a chip the table does not know, an unknown architecture, or an architecture with an SM
+// count ("sm86:84sm": the count belongs to a chip). Lower-case keys only.
+[[nodiscard]] std::string gpu_chip_arch(std::string_view gpu_class);
+// The full-chip SM count of a chip or GPU class key by the same table; 0 when unknown.
+[[nodiscard]] int gpu_chip_full_sms(std::string_view gpu_class);
+
 // "<chip>:<sms>sm".
 [[nodiscard]] std::string gpu_class_id(std::string_view chip, int sms);
 

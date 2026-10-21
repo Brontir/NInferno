@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 107,
+  "version": 108,
   "published": "2026-10-21",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -70,6 +70,108 @@
         "MedusaModel"
       ]
     }
+  },
+  "context_classes": {
+    "bounds": [
+      1024,
+      8192,
+      24576
+    ],
+    "entries": [
+      {
+        "model": "qwen3.6-35b-a3b",
+        "target_artifact": "placeholder:unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL",
+        "drafter": "dflash",
+        "drafter_artifact": "component:dflash",
+        "byte_class": {
+          "activations": "fast-a8",
+          "kv": "auto",
+          "summation": "auto",
+          "parity": "auto"
+        },
+        "sampling": "pooled t0+t1",
+        "depth": 7,
+        "lanes": 1,
+        "corpus": "x13-docs-5191d5466",
+        "schedule": "x13-v1",
+        "tolerance": 0.05,
+        "source": "X13 (b_p600_x13, master 5191d5466), RTX 3090, ninferno-serve C=1 with an explicit --spec (no watchdog, no context_limit), --activations fast; 10 prompts per class (windows of docs/*.md at 5191d5466, the same tasks in every class), thinking on and off, temperature 0 and 1 pooled; accepted drafts per round by measured prompt tokens (<1K with the chat prompts, 1-8K, 8-24K): dflash:7 2.56/2.26/1.91. Placeholder target id (no artifact id recorded); kv, summation and parity were the server's defaults (not recorded: auto).",
+        "cards": [
+          {
+            "gpu_class": "ga102",
+            "schedule": "x13-v1",
+            "factors": [
+              1.0,
+              0.883,
+              0.746,
+              null
+            ]
+          }
+        ]
+      },
+      {
+        "model": "qwen3.8-27b",
+        "target_artifact": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+        "drafter": "dflash2",
+        "drafter_artifact": "component:dflash2",
+        "byte_class": {
+          "activations": "fast-a8",
+          "kv": "auto",
+          "summation": "auto",
+          "parity": "auto"
+        },
+        "sampling": "pooled t0+t1",
+        "depth": 7,
+        "lanes": 1,
+        "corpus": "x13-docs-5191d5466",
+        "schedule": "x13-v1",
+        "tolerance": 0.05,
+        "source": "X13 (b_p600_x13, master 5191d5466), RTX 3090, ninferno-serve C=1 with an explicit --spec (no watchdog, no context_limit), --activations fast; 10 prompts per class (windows of docs/*.md at 5191d5466, the same tasks in every class), thinking on and off, temperature 0 and 1 pooled; accepted drafts per round by measured prompt tokens (<1K with the chat prompts, 1-8K, 8-24K): dflash2:7 3.25/2.71/2.04. Placeholder target id (no artifact id recorded); kv, summation and parity were the server's defaults (not recorded: auto).",
+        "cards": [
+          {
+            "gpu_class": "ga102",
+            "schedule": "x13-v1",
+            "factors": [
+              1.0,
+              0.834,
+              0.628,
+              null
+            ]
+          }
+        ]
+      },
+      {
+        "model": "qwen3.8-27b",
+        "target_artifact": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+        "drafter": "mtp",
+        "drafter_artifact": "component:mtp",
+        "byte_class": {
+          "activations": "fast-a8",
+          "kv": "auto",
+          "summation": "auto",
+          "parity": "auto"
+        },
+        "sampling": "pooled t0+t1",
+        "depth": 5,
+        "lanes": 1,
+        "corpus": "x13-docs-5191d5466",
+        "schedule": "x13-v1",
+        "tolerance": 0.05,
+        "source": "X13 (b_p600_x13, master 5191d5466), RTX 3090, ninferno-serve C=1 with an explicit --spec (no watchdog, no context_limit), --activations fast; 10 prompts per class (windows of docs/*.md at 5191d5466, the same tasks in every class), thinking on and off, temperature 0 and 1 pooled; accepted drafts per round by measured prompt tokens (<1K with the chat prompts, 1-8K, 8-24K): mtp:5 2.69/2.40/2.20. Placeholder target id (no artifact id recorded); kv, summation and parity were the server's defaults (not recorded: auto).",
+        "cards": [
+          {
+            "gpu_class": "ga102",
+            "schedule": "x13-v1",
+            "factors": [
+              1.0,
+              0.892,
+              0.818,
+              null
+            ]
+          }
+        ]
+      }
+    ]
   },
   "models": [
     {

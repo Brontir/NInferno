@@ -237,6 +237,9 @@ struct R8ScheduleInfo {
 // (cluster > 1) needs sm_90+, so the Ada build has none.
 [[nodiscard]] bool rmma_schedule_launchable(int index);
 [[nodiscard]] int w4a4_schedule_count();
+// Every W4A4 schedule, compiled or not: the names parse_route takes on any build (a shipped
+// Blackwell table names them); w4a4_schedule_count is 0 on a build without the kernels.
+[[nodiscard]] int w4a4_schedule_names();
 [[nodiscard]] W4a4ScheduleInfo w4a4_schedule_info(int index);
 [[nodiscard]] int tiled_schedule_count();
 [[nodiscard]] TiledScheduleInfo tiled_schedule_info(int index);

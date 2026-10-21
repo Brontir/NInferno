@@ -2,7 +2,10 @@
 // watchdog, profile selection and publication, the shipped registry and corpus, and resolving
 // what an artifact came with (spec/manifest.h) from files next to it.
 
+#include "core/device_class.h"
+
 #include "spec/config.h"
+#include "spec/context_class.h"
 #include "spec/corpus.h"
 #include "spec/engine_support.h"
 #include "spec/fingerprint.h"
@@ -27,6 +30,7 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 
 namespace {
@@ -942,6 +946,289 @@ int test_select_published() {
     return failures;
 }
 
+// Context classes (spec/context_class.h): the bounds, and a factor only from two cards of different
+// generations or routes that agree, for exactly the key measured; never a silent 1.0.
+int test_context_classes() {
+    int failures                                         = 0;
+    const std::pair<std::int64_t, ContextClass> bounds[] = {
+        {0, ContextClass::Short},    {1023, ContextClass::Short},  {1024, ContextClass::Mid},
+        {8191, ContextClass::Mid},   {8192, ContextClass::Long},   {24575, ContextClass::Long},
+        {24576, ContextClass::Huge}, {1 << 20, ContextClass::Huge}};
+    for (const auto& [tokens, want] : bounds) {
+        failures += check(class_of(tokens) == want,
+                          "class_of(" + std::to_string(tokens) + ") is " + class_name(want));
+    }
+    failures += check(
+        ninferno::gpu_chip_arch("ga102") == "sm86" && ninferno::gpu_chip_arch("GB203:84sm") == "" &&
+            ninferno::gpu_chip_arch("gb203:84sm") == "sm120" &&
+            ninferno::gpu_chip_arch("sm89") == "sm89" && ninferno::gpu_chip_arch("xx999").empty() &&
+            ninferno::gpu_chip_arch("sm999").empty() &&
+            ninferno::gpu_chip_arch("sm86:999sm").empty() &&
+            ninferno::gpu_chip_full_sms("ga102:82sm") == 84 &&
+            ninferno::gpu_chip_full_sms("sm86") == 0,
+        "gpu_chip_arch and gpu_chip_full_sms read the chip table");
+    failures += check(known_route("ggml_mmq") && known_route("rmma.m1.n8.w4x1") &&
+                          known_route("w4a8ws.64x128.p1") && !known_route("mmq") &&
+                          !known_route("RMMA") && !known_route(""),
+                      "known_route takes the GEMM route families");
+
+    // The shipped registry: the RTX 3090 X13 entries, one card each and placeholder ids, so every
+    // factor is unknown.
+    const auto& shipped = Registry::builtin().context_classes();
+    failures += check(shipped.present && shipped.entries.size() == 3,
+                      "the registry carries three X13 entries");
+    for (const auto& entry : shipped.entries) {
+        const auto mid = factor(shipped, entry.key, ContextClass::Mid);
+        failures += check(entry.tolerance == kContextTolerance && !mid.value &&
+                              mid.reason.starts_with("placeholder key: "),
+                          "the X13 entries are placeholders: unknown (" + mid.reason + ")");
+    }
+
+    const auto key_json = [](const std::string& cards) {
+        return R"({"model": "m", "target_artifact": "t1", "drafter": "dflash",
+            "drafter_artifact": "component:dflash",
+            "byte_class": {"activations": "fast-a8", "kv": "k8v4", "summation": "s", "parity": "p"},
+            "sampling": "t0", "depth": 7, "lanes": 1, "corpus": "sha256:abababababababababababababababababababababababababababababababab", "schedule": "x",
+            "tolerance": 0.05, "cards": )" +
+               cards + "}";
+    };
+    const auto with_entry = [](const std::string& entry) {
+        return R"({"bounds": [1024, 8192, 24576], "entries": [)" + entry + "]}";
+    };
+    const auto parsed = [&](const std::string& cards) {
+        return parse_context_factors(Json::parse(with_entry(key_json(cards))));
+    };
+    // A card of the entry's schedule: "<gpu_class>", optionally a route, its mid factor.
+    const auto card = [](const char* gpu_class, double mid, const char* route = nullptr) {
+        return std::string(R"({"schedule": "x", "gpu_class": ")") + gpu_class + "\"" +
+               (route ? std::string(R"(, "route": ")") + route + "\"" : std::string()) +
+               R"(, "factors": [1, )" + std::to_string(mid) + ", 0.75, null]}";
+    };
+    const auto pair = [](const std::string& a, const std::string& b) {
+        return "[" + a + ", " + b + "]";
+    };
+    AcceptanceKey key;
+    key.model            = "m";
+    key.target_artifact  = "t1";
+    key.drafter          = "dflash";
+    key.drafter_artifact = "component:dflash";
+    key.byte_class =
+        Json{{"activations", "fast-a8"}, {"kv", "k8v4"}, {"summation", "s"}, {"parity", "p"}};
+    key.sampling = "t0";
+    key.depth    = 7;
+    key.lanes    = 1;
+    key.corpus   = "sha256:abababababababababababababababababababababababababababababababab";
+
+    // Two generations that agree: their mean.
+    const auto agree = parsed(pair(card("ga102", 0.90), card("AD102", 0.92)));
+    const auto mid   = factor(agree, key, ContextClass::Mid);
+    failures += check(mid.value && std::abs(*mid.value - 0.91) < 1e-12 && mid.reason.empty(),
+                      "two generations agreeing: the mean (" + mid.reason + ")");
+    failures += check(factor(agree, key, ContextClass::Short).value == 1.0, "short is 1");
+    const auto null_class = factor(agree, key, ContextClass::Huge);
+    failures += check(!null_class.value && null_class.reason.find("no huge") != std::string::npos,
+                      "a null class is unknown, labelled (" + null_class.reason + ")");
+    const auto one_huge =
+        parsed(pair(card("ga102", 0.9),
+                    R"({"schedule": "x", "gpu_class": "ad102", "factors": [1, 0.9, 0.75, 0.7]})"));
+    const auto huge = factor(one_huge, key, ContextClass::Huge);
+    failures += check(!huge.value && huge.reason.find("2 cards") != std::string::npos,
+                      "a class one card measured is unknown (" + huge.reason + ")");
+
+    // Each card within the tolerance of the mean: exactly at it stands, beyond it does not.
+    const auto at_edge =
+        factor(parsed(pair(card("ga102", 0.95), card("ad102", 1.05))), key, ContextClass::Mid);
+    failures +=
+        check(at_edge.value && std::abs(*at_edge.value - 1.0) < 1e-12,
+              "cards at exactly the tolerance from the mean: the mean (" + at_edge.reason + ")");
+    const auto beyond =
+        factor(parsed(pair(card("ga102", 0.94), card("ad102", 1.06))), key, ContextClass::Mid);
+    failures += check(!beyond.value && beyond.reason.find("6.0 %") != std::string::npos,
+                      "cards beyond the tolerance: unknown (" + beyond.reason + ")");
+    const auto split =
+        factor(parsed(pair(card("ga102", 0.80), card("ad102", 0.90))), key, ContextClass::Mid);
+    failures +=
+        check(!split.value && split.reason.starts_with(
+                                  "unreliable: hardware-dependent (cards disagree by 5.9 %"),
+              "cards disagreeing: unreliable (" + split.reason + ")");
+
+    // One generation: vacuous agreement unless both name routes that differ.
+    failures += check(
+        !factor(parsed(pair(card("ga102", 0.9), card("ga104", 0.9))), key, ContextClass::Mid).value,
+        "two cards of one generation: unknown");
+    failures += check(!factor(parsed(pair(card("ga102", 0.9, "ggml_mmq"), card("ga104", 0.9))), key,
+                              ContextClass::Mid)
+                           .value,
+                      "a route beside no route on one generation: unknown");
+    failures += check(
+        factor(parsed(pair(card("ga102", 0.9, "GGML_MMQ"), card("ga102", 0.9, "rmma.m1.n8.w4x1"))),
+               key, ContextClass::Mid)
+                .value == 0.9,
+        "one generation on two routes (read in lower case): known");
+
+    failures += check(
+        !factor(parsed(pair(card("ga102", 0.9, "rmma"), card("ga104", 0.9, "rmma.m1.n8.w4x1"))),
+                key, ContextClass::Mid)
+             .value,
+        "two names of one route family on one generation: unknown");
+    failures += check(!factor(parsed(pair(card("ga102", 0.9, "w4a8.64x128"),
+                                          card("ga104", 0.9, "w4a8ws.64x128.p1"))),
+                              key, ContextClass::Mid)
+                              .value &&
+                          route_family("w4a8ws.64x128.p1") == "w4a8" &&
+                          route_family("rmma.m1.n8.w4x1") == "rmma",
+                      "W4A8 with and without producer warps: one family, unknown");
+    // Every key field: a different one is unknown, the reason naming it.
+    const std::vector<std::pair<std::string, std::function<void(AcceptanceKey&)>>> fields = {
+        {"target_artifact differs", [](AcceptanceKey& k) { k.target_artifact = "t2"; }},
+        {"drafter differs", [](AcceptanceKey& k) { k.drafter = "mtp"; }},
+        {"drafter_artifact differs", [](AcceptanceKey& k) { k.drafter_artifact = "d1"; }},
+        {"byte_class differs", [](AcceptanceKey& k) { k.byte_class["kv"] = "bf16"; }},
+        {"byte_class differs", [](AcceptanceKey& k) { k.byte_class["activations"] = "exact"; }},
+        {"sampling differs", [](AcceptanceKey& k) { k.sampling = "t1"; }},
+        {"depth differs", [](AcceptanceKey& k) { k.depth = 5; }},
+        {"lanes differs", [](AcceptanceKey& k) { k.lanes = 4; }},
+        {"corpus differs",
+         [](AcceptanceKey& k) {
+             k.corpus = "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+         }},
+        {"no context_classes entry for model", [](AcceptanceKey& k) { k.model = "other"; }},
+    };
+    for (const auto& [reason, change] : fields) {
+        auto other = key;
+        change(other);
+        const auto got = factor(agree, other, ContextClass::Mid);
+        failures += check(!got.value && got.reason.starts_with(reason),
+                          "unknown: " + reason + " (" + got.reason + ")");
+    }
+    // A placeholder in the key is unknown even where two generations agree.
+    const std::vector<std::tuple<std::string, std::string, std::string>> placeholders = {
+        {R"("target_artifact": "t1")", R"("target_artifact": "placeholder:t1")",
+         "placeholder key: target_artifact=placeholder:t1"},
+        {R"("kv": "k8v4")", R"("kv": "auto")", "placeholder key: byte_class.kv=auto"},
+        {R"("kv": "k8v4")", R"("kv": "AUTO")", "placeholder key: byte_class.kv=AUTO"},
+        {R"("drafter": "dflash")", R"("drafter": "auto")", "placeholder key: drafter=auto"},
+        {R"("model": "m")", R"("model": "placeholder:m")", "placeholder key: model=placeholder:m"},
+        {R"("target_artifact": "t1")", R"("target_artifact": "Placeholder:t1")",
+         "placeholder key: target_artifact=Placeholder:t1"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "sha256:ab")", "placeholder key: corpus=sha256:ab"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "sha256:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB")",
+         "placeholder key: "
+         "corpus=sha256:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"},
+        {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
+         R"("corpus": "x13-docs")", "placeholder key: corpus=x13-docs"},
+    };
+    for (const auto& [from, to, reason] : placeholders) {
+        auto text = key_json(pair(card("ga102", 0.9), card("ad102", 0.9)));
+        text.replace(text.find(from), from.size(), to);
+        const auto entry = parse_context_factors(Json::parse(with_entry(text)));
+        const auto got   = factor(entry, entry.entries[0].key, ContextClass::Mid);
+        failures += check(!got.value && got.reason == reason,
+                          "unknown: " + reason + " (" + got.reason + ")");
+    }
+    // Under exact activations the lane count does not change the bytes.
+    auto exact = Json::parse(with_entry(key_json(pair(card("ga102", 0.9), card("sm89", 0.9)))));
+    exact["entries"][0]["byte_class"]["activations"] = "exact";
+    auto exact_key                                   = key;
+    exact_key.byte_class["activations"]              = "exact";
+    exact_key.lanes                                  = 8;
+    failures +=
+        check(factor(parse_context_factors(exact), exact_key, ContextClass::Mid).value == 0.9,
+              "exact activations: the lane count is not compared");
+    failures += check(!factor(ContextFactors{}, key, ContextClass::Short).value,
+                      "absent context_classes: unknown");
+    failures += check(!Registry::parse(R"({"schema": 1, "models": []})").context_classes().present,
+                      "a registry without context_classes has none");
+    failures += check(
+        parsed(std::string("[") +
+               R"({"schedule": "x", "gpu_class": "ga102:84sm", "factors": [1, 1, 1, 1]})" + "]")
+                .entries[0]
+                .cards[0]
+                .arch == "sm86",
+        "a full GA102 (84 SMs) is a GPU class");
+
+    // Refusals.
+    const auto refuses = [](const std::string& object) {
+        return rejects([&] { (void)parse_context_factors(Json::parse(object)); });
+    };
+    const std::string card_a = card("ga102", 0.9);
+    const auto entry_with    = [&](const std::string& from, const std::string& to) {
+        auto text = key_json("[" + card_a + "]");
+        text.replace(text.find(from), from.size(), to);
+        return with_entry(text);
+    };
+    const std::vector<std::string> refused = {
+        R"({"bounds": [1024, 1024, 24576]})",
+        R"({"bounds": [8192, 1024, 24576]})",
+        R"({"bounds": [1024, 8192]})",
+        R"({"bounds": [0, 8192, 24576]})",
+        R"({"bounds": [1024.5, 8192, 24576]})",
+        R"({"bounds": [1024, 8192, 32768]})",
+        R"({"bounds": [512, 8192, 24576]})",
+        R"({"bounds": [1024, 8192, 24576], "entries": {}})",
+        entry_with(R"("tolerance": 0.05, )", ""),
+        entry_with(R"("tolerance": 0.05)", R"("tolerance": 0.06)"),
+        entry_with(R"("target_artifact": "t1", )", ""),
+        entry_with(
+            R"("corpus": "sha256:abababababababababababababababababababababababababababababababab", )",
+            ""),
+        entry_with(R"("schedule": "x",
+            "tolerance")",
+                   R"("tolerance")"),
+        entry_with(R"("depth": 7)", R"("depth": 0)"),
+        entry_with(R"("lanes": 1)", R"("lanes": 1.5)"),
+        entry_with(R"("kv": "k8v4", )", ""),
+        entry_with(R"("activations": "fast-a8")", R"("activations": "fast")"),
+        entry_with(R"("parity": "p")", R"("parity": 1)"),
+        entry_with(R"("byte_class": {)", R"("byte_class": "b1", "x": {)"),
+        entry_with(R"("ga102")", R"("RTX 3090")"),
+        entry_with(R"("ga102")", R"("xx999")"),
+        entry_with(R"("ga102")", R"("ga102:sm")"),
+        entry_with(R"("ga102")", R"("ga102:200sm")"),
+        entry_with(R"("ga102")", R"("ga102:0sm")"),
+        entry_with(R"("ga102")", R"("sm999")"),
+        entry_with(R"("ga102")", R"("sm86:999sm")"),
+        entry_with(R"("ga102")", R"("ga102", "route": "mmq")"),
+        entry_with(R"({"schedule": "x", )", R"({"schedule": "y", )"),
+        entry_with(R"({"schedule": "x", )", "{"),
+        entry_with(R"(0.75, null])", R"(0.75])"),
+        entry_with(R"(0.900000, 0.75)", R"(0, 0.75)"),
+        entry_with(R"(0.900000, 0.75)", R"(1.6, 0.75)"),
+        entry_with(R"([1, 0.900000)", R"([0.9, 0.900000)"),
+        entry_with(R"([1, 0.900000)", R"([null, 0.900000)"),
+        entry_with(R"(0.900000, 0.75)", R"("x", 0.75)"),
+        with_entry(key_json(pair(card_a, card_a))),
+        with_entry(key_json(pair(card_a, card("GA102", 0.9)))),
+        with_entry(
+            key_json(pair(card("ga102", 0.9, "rmma"), card("ga102", 0.9, "rmma.m1.n8.w4x1")))),
+        with_entry(key_json("[" + card_a + "]") + ", " + key_json("[" + card_a + "]")),
+    };
+    for (const auto& bad : refused) {
+        failures += check(refuses(bad), "context_classes refuses " + bad);
+    }
+    const auto registry_with = [](const char* model, const char* drafter) {
+        return std::string(R"({"schema": 1, "kinds": {"dflash": {}}, "models": [{"id": "m",
+            "engine": "qwen3_5", "drafters": [{"kind": "dflash"}]}],
+            "context_classes": {"bounds": [1024, 8192, 24576], "entries": [
+            {"model": ")") +
+               model + R"(", "target_artifact": "t", "drafter": ")" + drafter +
+               R"(", "drafter_artifact": "component:dflash", "byte_class": {"activations": "exact",
+               "kv": "bf16", "summation": "s", "parity": "p"}, "sampling": "t0", "depth": 7,
+               "lanes": 1, "corpus": "c", "schedule": "x", "tolerance": 0.05,
+               "cards": [{"schedule": "x", "gpu_class": "ga102", "factors": [1, 1, 1, 1]}]}]}})";
+    };
+    failures +=
+        check(Registry::parse(registry_with("m", "dflash")).context_classes().entries.size() == 1,
+              "the registry takes an entry of a registered model and drafter");
+    failures += check(rejects([&] { (void)Registry::parse(registry_with("x", "dflash")); }),
+                      "the registry refuses an entry of an unregistered model");
+    failures += check(rejects([&] { (void)Registry::parse(registry_with("m", "mtp")); }),
+                      "the registry refuses an entry of a drafter the model does not declare");
+    return failures;
+}
+
 int test_registry_and_corpus() {
     int failures = 0;
     const auto& registry = Registry::builtin();
@@ -1506,6 +1793,7 @@ int main() {
     failures += test_load_model();
     failures += test_select_published();
     failures += test_registry_and_corpus();
+    failures += test_context_classes();
     failures += test_variants();
     failures += test_resolve();
     if (failures == 0) { std::cout << "spec: all checks passed\n"; }

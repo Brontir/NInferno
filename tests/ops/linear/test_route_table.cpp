@@ -11,6 +11,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
+#include "spec/context_class.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,8 @@
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -152,7 +155,84 @@ int similar_default() {
     return failures == 0 ? 0 : 1;
 }
 
+namespace {
+
+// Every route name, every schedule of every family (as parse_route enumerates them), is one
+// spec/context_class.h's known_route takes, and route_family groups two names exactly when their
+// Family is the same: the speculation library keeps its own list (it does not link the GEMM).
+// No device needed.
+int route_schedules(generic::Family family) {
+    switch (family) { // no default: a new family warns here
+    case generic::Family::Scalar:
+    case generic::Family::GgmlMmq:
+    case generic::Family::GgmlVec:
+        return 1;
+    case generic::Family::RegisterMma:
+        return generic::rmma_schedule_count();
+    case generic::Family::W4a4Mma:
+        return generic::w4a4_schedule_names(); // compiled or not, as parse_route
+    case generic::Family::TiledMma:
+        return generic::tiled_schedule_count();
+    case generic::Family::W4a8Mma:
+        return generic::w4a8_schedule_count();
+    case generic::Family::StagedMma:
+        return generic::staged_schedule_count();
+    case generic::Family::Nvfp4TiledMma:
+        return generic::nvfp4_tiled_schedule_count();
+    case generic::Family::R8Mma:
+        return generic::r8_schedule_count();
+    case generic::Family::I8Mma:
+        return generic::i8_schedule_count();
+    }
+    return -1; // a family this switch lacks: the caller fails
+}
+
+int route_names_known() {
+    constexpr int kFamilies = static_cast<int>(generic::Family::I8Mma) + 1;
+    // The sentinel: past I8Mma route_name knows no family. A family added after it must join
+    // route_schedules here and known_route / route_family in spec/context_class.cpp.
+    if (generic::route_name(generic::Route{static_cast<generic::Family>(kFamilies), 0}) !=
+        "unknown") {
+        std::cerr << "FAILED: a route family after I8Mma: add it here and to known_route\n";
+        return 1;
+    }
+    int failures = 0;
+    std::vector<std::pair<int, std::string>> names;
+    for (int f = 0; f < kFamilies; ++f) {
+        const auto family = static_cast<generic::Family>(f);
+        // Every family names at least one route: a count of 0 or less is a family this test
+        // does not enumerate (a new one inserted before I8Mma), or one with nothing to check.
+        if (route_schedules(family) <= 0) {
+            std::cerr << "FAILED: route family " << f << " has no schedules to check\n";
+            ++failures;
+        }
+        for (int i = 0; i < route_schedules(family); ++i) {
+            const auto name =
+                generic::route_name(generic::Route{family, static_cast<std::uint8_t>(i)});
+            if (!ninferno::spec::known_route(name)) {
+                std::cerr << "FAILED: known_route refuses " << name << '\n';
+                ++failures;
+            }
+            names.emplace_back(f, name);
+        }
+    }
+    for (const auto& [fa, a] : names) {
+        for (const auto& [fb, b] : names) {
+            if ((fa == fb) !=
+                (ninferno::spec::route_family(a) == ninferno::spec::route_family(b))) {
+                std::cerr << "FAILED: route_family of " << a << " and " << b
+                          << (fa == fb ? " differ in one Family\n" : " agree across Families\n");
+                ++failures;
+            }
+        }
+    }
+    return failures;
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
+    if (route_names_known() != 0) { return 1; }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
