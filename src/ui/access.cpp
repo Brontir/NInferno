@@ -237,7 +237,9 @@ std::string kept_access_key(const std::filesystem::path& path, bool* kept) {
     fs::create_directories(path.parent_path(), ec);
     // Two starters that both found no key would each make one, and the later rename would take
     // away the key the first one already serves. Under the lock the later one reads the first
-    // one's key instead. Without a lock (a read-only directory) the write below fails anyway.
+    // one's key instead. Where the file system refuses the lock (ENOLCK, no flock on a network
+    // share) a missing key is published only by a hard link, which never replaces one: a later
+    // starter then serves the earlier one's key, and an unusable key file is left as it is.
     const int lock = sys::open(fs::path(path) += ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 
     struct Close {
@@ -248,8 +250,11 @@ std::string kept_access_key(const std::filesystem::path& path, bool* kept) {
         }
     } closer{lock};
 
+    bool locked = false;
     if (lock >= 0) {
-        while (sys::lock(lock, true) != 0 && errno == EINTR) {}
+        int rc = 0;
+        while ((rc = sys::lock(lock, true)) != 0 && errno == EINTR) {}
+        locked = rc == 0;
     }
     if (auto key = key_file_line(path); usable_key(key)) {
         if (kept != nullptr) { *kept = true; }
@@ -266,11 +271,23 @@ std::string kept_access_key(const std::filesystem::path& path, bool* kept) {
         sys::close(fd);
         const fs::path made(std::u8string(temp.begin(), temp.end()));
         written = static_cast<bool>(std::ofstream(made, std::ios::trunc) << key << '\n');
-        if (written) {
+        if (written && locked) {
             fs::remove(path, ec); // an unusable kept key; rename does not replace it on Windows
             fs::rename(made, path, ec);
+        } else if (written) {
+            fs::create_hard_link(made, path, ec);
         }
-        if (!written || ec) { fs::remove(made, ec); }
+        if (!written || ec || !locked) {
+            std::error_code ignored;
+            fs::remove(made, ignored);
+        }
+        if (written && !locked && ec) {
+            // Another starter published first: serve its key.
+            if (auto other = key_file_line(path); usable_key(other)) {
+                if (kept != nullptr) { *kept = true; }
+                return other;
+            }
+        }
         written = written && key_file_line(path) == key;
     }
     if (kept != nullptr) { *kept = written; }
