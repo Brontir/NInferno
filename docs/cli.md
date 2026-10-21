@@ -64,6 +64,15 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 
 ### Context and memory
 
+> **Changed: which GPU runs on a host with several.** The default GPU and `--device N` used to
+> follow CUDA's enumeration, `FASTEST_FIRST` unless `CUDA_DEVICE_ORDER` said otherwise: on a host
+> with an RTX 3060 on PCI bus 01 and an RTX 4090 on bus 02, GPU 0 was the 4090. Now both count
+> GPUs in PCI bus order, as `nvidia-smi` does, so GPU 0 there is the 3060. To pin a card whatever
+> the order, name it: `--device GPU-<uuid>` (from `nvidia-smi -L`) or
+> `--device pci:0000:02:00.0`. At startup, a host with more than one GPU logs which one runs
+> (`device | 2 GPUs visible; using 0000:01:00.0 ...`). MIG instances are not named by `--device`:
+> choose one with `CUDA_VISIBLE_DEVICES=MIG-<uuid>`, and the process runs on it by default.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `--device N\|pci:BUSID\|GPU-UUID` | `0` | The GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. |

@@ -189,6 +189,11 @@ int main(int argc, char** argv) {
     const TerminateLog terminate_log(*logger);
     ninferno::product::StartupLogRenderer startup_log(logging);
     ninferno::serve::OperationalLog operational_log(logger);
+    if (const std::string note =
+            ninferno::visible_devices_note(options.device, options.device_selector);
+        !note.empty()) {
+        logger->info("device | {}", note);
+    }
     bool serving = false;
 
     try {

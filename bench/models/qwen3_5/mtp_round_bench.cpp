@@ -39,7 +39,8 @@ struct Options {
 
 void print_usage(const char* executable) {
     std::cout << "usage: " << executable
-              << " [--artifact <model.ninferno>] [--device <id>] [--warmup <n>] [--reps <n>]"
+              << " [--artifact <model.ninferno>] [--device <N|pci:BUSID|GPU-UUID>] [--warmup <n>] "
+                 "[--reps <n>]"
                  " [--draft-tokens <1..5>] [--proposal-head full|optimized]"
                  " [--no-cuda-graph]\n";
 }
@@ -57,7 +58,9 @@ Options parse_options(int argc, char** argv) {
         if (argument == "--artifact") {
             options.artifact = value("--artifact");
         } else if (argument == "--device") {
-            options.device = std::stoi(value("--device"));
+            // As ninferno-serve takes it: N counts GPUs in PCI bus order.
+            options.device =
+                ninferno::select_device(ninferno::parse_device_option(value("--device")));
         } else if (argument == "--warmup") {
             options.warmup = std::stoi(value("--warmup"));
         } else if (argument == "--reps") {
@@ -82,7 +85,6 @@ Options parse_options(int argc, char** argv) {
             throw std::invalid_argument("unknown argument: " + std::string(argument));
         }
     }
-    if (options.device < 0) { throw std::invalid_argument("--device must be nonnegative"); }
     if (options.warmup < 0) { throw std::invalid_argument("--warmup must be nonnegative"); }
     if (options.repetitions <= 0) { throw std::invalid_argument("--reps must be positive"); }
     if (options.draft_tokens == 0 || options.draft_tokens > 5) {

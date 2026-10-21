@@ -282,7 +282,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, required=True, help="campaign output directory")
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
-    parser.add_argument("--device", type=int, default=0, help="CUDA device index")
+    parser.add_argument("--device", type=int, default=0, help="the GPU, as ninferno-serve counts it: N in PCI bus order, as nvidia-smi does")
     parser.add_argument("--kv-dtype", choices=tuple(KV_CACHE_NAMES), default="int8")
     return parser.parse_args(argv)
 
@@ -472,7 +472,7 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         "proposal_head": engine.get("proposal_head"),
     }
     expected = {
-        "device": device,
+        # Not "device": the server logs its CUDA ordinal, the --device given counts PCI order.
         "max_context": 262144,
         "kv_capacity": 262144,
         "prefill_chunk": 1024,

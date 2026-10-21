@@ -89,9 +89,14 @@ struct Driver {
         get       = reinterpret_cast<Get>(ninferno::sys::symbol(library, "cuDeviceGet"));
         attribute = reinterpret_cast<Attribute>(ninferno::sys::symbol(library, "cuDeviceGetAttribute"));
         name      = reinterpret_cast<Name>(ninferno::sys::symbol(library, "cuDeviceGetName"));
+        // The board's identity is optional: a driver without these entry points leaves it
+        // unknown (sorted last), as the engine does when CUDA cannot say.
         bus_id    = reinterpret_cast<BusId>(ninferno::sys::symbol(library, "cuDeviceGetPCIBusId"));
         uuid      = reinterpret_cast<Uuid>(ninferno::sys::symbol(library, "cuDeviceGetUuid_v2"));
-        return init && count && get && attribute && name && bus_id && uuid && init(0) == 0;
+        if (uuid == nullptr) {
+            uuid = reinterpret_cast<Uuid>(ninferno::sys::symbol(library, "cuDeviceGetUuid"));
+        }
+        return init && count && get && attribute && name && init(0) == 0;
     }
 
     // Entry i is ordinal i. A device the driver cannot report keeps its place, with cc 0 and an
@@ -113,10 +118,13 @@ struct Driver {
                 (void)name(text, sizeof(text), device);
                 gpu.name = text;
                 gpu.cc   = major * 10 + minor;
-                if (bus_id(bus, sizeof(bus), device) == 0) {
+                if (bus_id != nullptr && bus_id(bus, sizeof(bus), device) == 0) {
                     if (const auto identity = ninferno::parse_pci_bus_id(bus)) {
                         gpu.identity = *identity;
-                        (void)uuid(gpu.identity.uuid.data(), device);
+                        // A UUID the driver does not report stays zero, as on the engine side.
+                        if (uuid == nullptr || uuid(gpu.identity.uuid.data(), device) != 0) {
+                            gpu.identity.uuid.fill(0);
+                        }
                     }
                 }
             }

@@ -123,7 +123,6 @@ void test_explicit_ordinal_is_kept() {
            "no board must resolve to no device");
 }
 
-// A board the driver could not report (domain 0xFFFFFFFF) is never the default.
 // The --device spellings, and their text back.
 void test_device_selector_text() {
     using ninferno::parse_device_selector;
@@ -142,6 +141,7 @@ void test_device_selector_text() {
            "a UUID must parse in either case");
 }
 
+// A board the driver could not report (domain 0xFFFFFFFF) is never the default.
 void test_unreadable_board_sorts_last() {
     const std::vector<DeviceIdentity> enumerated = {board(0xFFFFFFFFu, 0, 0, 0, 0),
                                                     board(0, 0x02, 0, 0, 3)};

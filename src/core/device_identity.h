@@ -119,6 +119,9 @@ canonical_device_order(std::span<const DeviceIdentity> enumerated) {
 //                       numbering when CUDA_VISIBLE_DEVICES hides none (Index);
 //   pci:0000:01:00.0    the board at that PCI address; of MIG instances there, the first (Pci);
 //   GPU-<uuid>          the board with that UUID, as nvidia-smi -L prints it (Uuid).
+// MIG-<uuid> is not a form: CUDA gives a MIG instance's UUID in the same bytes as a GPU's, and
+// only NVML tells them apart, untested here. CUDA_VISIBLE_DEVICES=MIG-<uuid> chooses an instance,
+// which is then the only visible device (deterministic-decisions.md, Device identity).
 struct DeviceSelector {
     enum class Kind { Default, Index, Pci, Uuid };
     Kind kind = Kind::Default;

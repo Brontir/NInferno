@@ -260,7 +260,8 @@ template <class Measured, std::size_t Extent>
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,
 // without the rest of the class (no NVML, no kernel probe). Throws std::runtime_error when CUDA
-// cannot report it.
+// cannot report the PCI address; a UUID it cannot report stays zero. DeviceClass::identity keeps
+// an unreadable board as unknown (domain 0xFFFFFFFF) instead of failing the start.
 [[nodiscard]] DeviceIdentity query_device_identity(int device);
 
 // Every ordinal's identity, entry i for ordinal i. A board CUDA cannot report is sorted last
@@ -277,6 +278,10 @@ template <class Measured, std::size_t Extent>
 // core/device_identity.h). 0 when CUDA reports no device (DeviceContext refuses it, as above);
 // throws std::invalid_argument listing the visible GPUs when none matches.
 [[nodiscard]] int select_device(const DeviceSelector& selector);
+
+// The startup line for a host with more than one visible GPU ("" with one): how many, and which
+// one runs (its PCI bus id and name) and why, so a changed default is never silent.
+[[nodiscard]] std::string visible_devices_note(int device, const DeviceSelector& selector);
 
 // The board the current device's facts were read from, for the decision fingerprint to print
 // beside its hash (never hashed: two boards of one chip type share a fingerprint).

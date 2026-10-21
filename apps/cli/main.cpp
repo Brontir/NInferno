@@ -277,6 +277,10 @@ int main(int argc, char** argv) {
          .presentation = ninferno::product::LogPresentation::Tool});
     const std::shared_ptr<spdlog::logger> logger = logging.logger();
     ninferno::product::StartupLogRenderer startup_log(logging);
+    if (const std::string note = ninferno::visible_devices_note(cli.device, cli.device_selector);
+        !note.empty()) {
+        logger->info("device | {}", note);
+    }
 
     try {
 

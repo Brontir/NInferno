@@ -46,7 +46,8 @@
 // model and GPU are the profiles of src/spec/data/drafter_registry.json (what --spec auto runs).
 //
 // Token files are little-endian int32 ids, produced by the model's own tokenizer outside this
-// program (BOS included by the producer). Common options: --context L, --chunk C (without them
+// program (BOS included by the producer). Common options: --device N|pci:BUSID|GPU-UUID (as
+// ninferno-serve: N counts GPUs in PCI bus order), --context L, --chunk C (without them
 // the session is sized to the free device memory: the largest context up to 32768, spec-tune 4096,
 // with the widest chunk up to 2048 that keeps it; see fit_session), --kv-dtype bf16|fp8|fp8-full
 // (keys and values in BF16, the default, or FP8 E4M3 with a scale per row: about half the KV bytes;
@@ -135,13 +136,14 @@ Arguments parse(int argc, char** argv) {
         key = key.substr(2);
         // Every option some command reads; anything else is refused, not ignored (an unread
         // --activations exact once ran the default profile unnoticed).
+        // clang-format off
         static const std::set<std::string> known = {
             "a16",         "a16-full",    "acceptance-floor",
             "applies-to",  "block",       "budget-seconds",
             "chunk",       "configs",     "consume-source",
             "context",     "corpus",      "cuda-sync",   "cuts",
             "debug-poison", "debug-poison-skip", "dense-tune",
-            "decode",      "dflash",      "draft",
+            "decode",      "device",      "dflash",      "draft",
             "draft-min",   "drafter",     "drafter-variant",
             "dump",        "dump-tokens", "gpu-class",
             "drafter-registry",
@@ -153,6 +155,7 @@ Arguments parse(int argc, char** argv) {
             "spec",        "spec-profile", "stop",       "tag",
             "temperature", "tokens",      "top-k",       "tune-cache",
             "top-p",       "window"};
+        // clang-format on
         if (!known.contains(key)) {
             throw std::invalid_argument("unknown option --" + key +
                                         " (activation profiles: --a16, --a16-full)");
@@ -883,7 +886,11 @@ int main(int argc, char** argv) {
                                    : profile == ActivationProfile::A16Full ? "a16_full"
                                    : profile == ActivationProfile::A16   ? "a16"
                                                                          : "artifact";
-        DeviceContext device(0, cuda_sync);
+        // --device as ninferno-serve takes it: N counts GPUs in PCI bus order.
+        DeviceContext device(
+            select_device(args.flag("device") ? parse_device_option(args.text("device", ""))
+                                              : DeviceSelector{}),
+            cuda_sync);
         product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
         auto model            = Model::load(artifact, device, profile);

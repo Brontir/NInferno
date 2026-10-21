@@ -454,6 +454,12 @@ same cards get other ordinals on another run or machine. The rules:
   startup line ends `| device 0000:01:00.0 GPU-…`, and `/v1/models` carries
   `meta.device_pci_bus_id` and `meta.device_uuid`.
 
+MIG instances are not selectors: CUDA reports a MIG instance's UUID in the same 16 bytes as a
+GPU's, and telling the two apart needs NVML's MIG handles, which no lab card here exercises.
+`--device` therefore takes `GPU-` UUIDs only and prints every UUID with that prefix; a MIG
+instance is chosen with `CUDA_VISIBLE_DEVICES=MIG-<uuid>`, after which it is the only visible
+device and the default.
+
 NInferno runs one GPU per process; there is no layout across GPUs. A future one must follow the
 first rule.
 
