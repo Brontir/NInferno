@@ -195,6 +195,28 @@ int check_feature_table() {
                            "similarity chain: own keys, the architecture's chips, \"*\", then "
                            "the nearest compute capability's chips first");
     }
+    {
+        // A guessed chip and unreported clocks are labelled; a known board has no note.
+        auto known       = ninferno::synthetic_device_class(0x2B85, 12, 0, 170, 96u << 20, 32ull << 30);
+        known.sm_clock_khz = known.memory_clock_khz = known.memory_bus_bits = 1;
+        auto guessed     = ninferno::synthetic_device_class(0, 12, 0, 170, 96u << 20, 32ull << 30);
+        guessed.sm_clock_khz = guessed.memory_clock_khz = guessed.memory_bus_bits = 1;
+        const auto mig   = ninferno::synthetic_device_class(0x2B85, 12, 0, 170, 96u << 20, 32ull << 30);
+        const auto none  = ninferno::device_fact_notes(known);
+        const auto chip  = ninferno::device_fact_notes(guessed);
+        const auto clock = ninferno::device_fact_notes(mig);
+        const auto h100 = ninferno::device_fact_notes(
+            ninferno::synthetic_device_class(0x2330, 9, 0, 132, 50u << 20, 80ull << 30));
+        failures += expect(!h100.empty() && h100[0].find("chip unknown") != std::string::npos &&
+                               h100[0].find("sm90") != std::string::npos,
+                           "a chip the table lacks: keyed by the architecture, not 'guessed'");
+        failures += expect(known.chip_from_pci && none.empty() && !guessed.chip_from_pci &&
+                               guessed.chip == "gb202" && chip.size() == 1 &&
+                               chip[0].find("from the SM count") != std::string::npos &&
+                               clock.size() == 1 &&
+                               clock[0].find("SM clock, memory clock") != std::string::npos,
+                           "degraded device facts are labelled, a known board has none");
+    }
     const auto blackwell = ninferno::device_features_for(12, 0);
     const auto spark     = ninferno::device_features_for(12, 1);
     const auto hopper    = ninferno::device_features_for(9, 0);

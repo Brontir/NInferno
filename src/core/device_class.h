@@ -87,6 +87,7 @@ struct DeviceClass {
     std::string name; // informational only; never a key
     std::uint32_t pci_device_id = 0; // PCI product id (0x2B85: RTX 5090); 0 when unreadable
     std::string chip;                // "gb202"; the architecture ("sm120") when the chip is unknown
+    bool chip_from_pci = false;      // chip named by the PCI id's block, not guessed by SM count
 
     int max_threads_per_sm              = 0;
     int max_blocks_per_sm               = 0;
@@ -174,6 +175,14 @@ template <class Measured, std::size_t Extent>
 // The chip of a GPU: by its PCI product id when the table knows it, else the smallest chip of its
 // architecture whose full SM count holds `sms`, else the architecture ("sm<major><minor>").
 [[nodiscard]] std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms);
+// Whether the PCI id's block names a chip of this architecture (gpu_chip then needs no SM count).
+[[nodiscard]] bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor);
+
+// The facts this class lacks or guessed, each with the conservative choice taken in its place:
+// the chip from the SM count (no PCI id, or one no block lists) and the clocks or bus width a
+// virtualized or MIG GPU leaves unreported (no roofline: the A16 routes stand alone). Empty for
+// a fully known GPU. Logged at startup, so a degraded fact is never silent.
+[[nodiscard]] std::vector<std::string> device_fact_notes(const DeviceClass& d);
 
 // "<chip>:<sms>sm".
 [[nodiscard]] std::string gpu_class_id(std::string_view chip, int sms);

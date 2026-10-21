@@ -303,6 +303,9 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     for (const auto& line : load.moe_tune) {
         impl_->logger->info("routes | {}", format_pretty_text(line));
     }
+    for (const auto& line : load.device_facts) {
+        impl_->logger->warn("device | {}", format_pretty_text(line));
+    }
     if (!load.drafter.empty()) { impl_->logger->info("drafter | {}", load.drafter); }
     // The decision fingerprint (docs/maintainer/deterministic-decisions.md): two runs that print
     // the same one were asked the same thing on the same kind of machine.
