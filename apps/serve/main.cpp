@@ -5,6 +5,7 @@
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
 #include "serve/model_source.h"
+#include "serve/plan_offline.h"
 #include "serve/plan_report.h"
 #include "serve/serve_options.h"
 #include "spec/registry.h"
@@ -178,6 +179,14 @@ int main(int argc, char** argv) {
     bool serving = false;
 
     try {
+        // --plan --no-load: the plan from the model's header or config and the device's facts,
+        // on stdout; no weights are loaded or downloaded and no GPU is needed.
+        if (options.plan_only && options.plan_no_load) {
+            const ninferno::serve::OfflinePlan plan = ninferno::serve::plan_without_load(options);
+            std::cout << (options.plan_json ? plan.json.dump(1) + '\n' : plan.text);
+            std::cout.flush();
+            return plan.fits ? 0 : 2;
+        }
         // The model named on the command line, as an artifact: fetched and converted first when
         // it is a hub id or a checkpoint (serve/model_source.h).
         const ninferno::serve::ModelSource source = ninferno::serve::resolve_model_source(

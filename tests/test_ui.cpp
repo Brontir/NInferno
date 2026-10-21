@@ -472,6 +472,24 @@ void test_catalog() {
     check(estimate(catalog, fitted, gb203, small_sizes).recommended, "16 GB: recommended with IQ3");
     check(with_fitting_quant(*qwen, blackwell, listings).sources.size() == qwen->sources.size(),
           "32 GB: nothing added when a source fits");
+    // The plan without the weights decides where it can say: it refuses IQ3 and keeps IQ2 (the
+    // weights against the budget would take IQ3), and where it cannot (nullopt) the budget stands.
+    const QuantFits planned = [](const std::string&,
+                                 const nlohmann::json& q) -> std::optional<bool> {
+        const std::string label = q.value("quant", std::string());
+        if (label == "UD-IQ3_XXS") { return false; }
+        if (label == "UD-IQ2_M") { return true; }
+        return std::nullopt;
+    };
+    const auto by_plan = with_fitting_quant(*qwen, gb203, listings, planned);
+    check(by_plan.sources.size() == qwen->sources.size() + 1 &&
+              by_plan.sources.back().quant == "UD-IQ2_M",
+          "16 GB: the plan's fit decides which quant is added");
+    const QuantFits unknown = [](const std::string&, const nlohmann::json&) -> std::optional<bool> {
+        return std::nullopt;
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown).sources.back().quant == "UD-IQ3_XXS",
+          "16 GB: without the plan's word the weights against the budget decide");
 
     // The chat proxy names the served model when the page sends none, and keeps one it sends.
     check(first_model_id(R"({"object":"list","data":[{"id":"qwen3.5-4b","object":"model"}]})") ==
@@ -962,7 +980,21 @@ void test_http() {
     res = client.Post("/api/tune", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");
-    for (const char* query : {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx"}) {
+    // The plan without the weights: its parameters as ninferno-serve takes them, refused with 400;
+    // offline the repository's shape cannot be read (502 with the reason, never a guess).
+    for (const char* query :
+         {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9", "/api/plan?repo=a/b&par=0",
+          "/api/plan?repo=a/b&kv=fp16", "/api/plan?repo=a/b&spec=eagle",
+          "/api/quants?repo=a/b&gpu=0&ctx=-5"}) {
+        res = client.Get(query);
+        check(res && res->status == 400 && res->body.find("\"error\"") != std::string::npos,
+              std::string("a bad plan parameter answered 400: ") + query);
+    }
+    res = client.Get("/api/plan?repo=a/b&ctx=auto&par=4&kv=auto&spec=auto");
+    check(res && res->status == 502 && res->body.find("\"error\"") != std::string::npos,
+          "offline: the plan says it cannot read the repository");
+    for (const char* query :
+         {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx", "/api/plan?repo=..%2Fx"}) {
         res = client.Get(query);
         check(res && res->status == 400 &&
                   res->body.find("repo must be org/name") != std::string::npos,

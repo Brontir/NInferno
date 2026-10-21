@@ -32,7 +32,8 @@ using product::parse_u64;
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
-           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] [--with-drafters] "
+           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
+           "[--plan-device NAME]]] [--with-drafters] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
@@ -84,7 +85,15 @@ std::string serve_usage_text(const char* argv0) {
            "       --plan prints the memory plan ladder these options give (every rung's bytes),\n"
            "       the rung the free GPU memory picks now and what would get more, then exits\n"
            "       without serving (the weights are loaded to size the rungs, then released);\n"
-           "       --json prints it as JSON.\n"
+           "       --json prints it as JSON. --no-load plans without loading or downloading\n"
+           "       the weights and without a GPU, from the model's header or config (an\n"
+           "       estimate: the start is the authority); for a GGUF hub repository without\n"
+           "       --quant it lists every quantization and the largest that fits.\n"
+           "       --plan-device NAME plans for a named board instead (\"RTX 4090\", 0x2684,\n"
+           "       then ,headless or ,display and ,linux or ,wddm).\n"
+           "       Without --quant a GGUF hub repository is fetched at the largest\n"
+           "       quantization that fits --max-context x --max-concurrency on this GPU (an\n"
+           "       idle card of its class), and refused before the download when none does.\n"
            "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
            "       download); a checkpoint's are attached without it.\n"
            "       --default-max-tokens defaults to " +
@@ -512,6 +521,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_only = true;
         } else if (arg == "--json") {
             options.plan_json = true;
+        } else if (arg == "--no-load") {
+            options.plan_no_load = true;
+        } else if (arg == "--plan-device") {
+            options.plan_device = require_value("--plan-device");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
         } else if (arg == "--log-level") {
@@ -541,6 +554,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.plan_json && !options.plan_only) {
         throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.plan_no_load && !options.plan_only) {
+        throw std::invalid_argument("--no-load plans without the weights: it needs --plan");
+    }
+    if (!options.plan_device.empty() && !options.plan_no_load) {
+        throw std::invalid_argument("--plan-device names a board to plan for: it needs --plan "
+                                    "--no-load");
     }
     if (options.plan_only && options.prepare_only) {
         throw std::invalid_argument("--plan and --prepare-only exclude each other");

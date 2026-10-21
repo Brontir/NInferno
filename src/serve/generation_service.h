@@ -165,6 +165,11 @@ struct PreparedRequest {
 [[nodiscard]] std::string auto_then_plain_refusal(const std::string& refused,
                                                   const std::string& plain);
 
+// The Engine options a server's options give before any speculation is chosen (the speculative
+// settings as given: --spec auto replaces them with the profile's choice): what a start and the
+// plan without the weights (serve/plan_offline.h) both build from.
+[[nodiscard]] ninferno::EngineOptions engine_options_of(const ServeOptions& options);
+
 // The --plan dry run of a server's options: the plan ladder of the Engine it would build first
 // (with the speculation --spec auto chooses, or as asked) and the rung the free memory picks now.
 struct ServePlan {

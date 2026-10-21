@@ -37,6 +37,11 @@ struct ServeOptions {
     // serving (GenerationService::plan); --json prints it as JSON.
     bool plan_only = false;
     bool plan_json = false;
+    // --no-load (with --plan): plan without loading or downloading the weights and without a GPU,
+    // from the model's header or config (serve/plan_offline.h); --plan-device NAME plans for a
+    // named board of the PCI-ID table instead of the CUDA device.
+    bool plan_no_load = false;
+    std::string plan_device;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;

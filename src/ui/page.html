@@ -116,6 +116,11 @@ ul.why{margin:5px 0 6px;padding-left:18px;font-size:12px;color:var(--fg)}
 .note{font-size:12px;color:var(--muted);margin:8px 2px 0}
 .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
 .d-full{background:var(--ok)}.d-tight{background:var(--warn)}.d-no{background:transparent;border:2px solid var(--bad)}
+.d-unknown,.d-off{background:transparent;border:2px dashed var(--muted)}
+.ctxnum{width:88px;padding:2px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel);font:11px/1.4 var(--mono)}
+.ctxnum.bad{border-color:var(--bad);color:var(--bad)}
+.fitalt{font-size:11px;color:var(--muted)}
+.fitalt button{padding:1px 6px;margin:2px 4px 0 0;font:11px/1.4 var(--mono)}
 .pbar{height:8px;background:var(--bar-bg);border-radius:4px;overflow:hidden;margin:6px 0}
 .pbar>i{display:block;height:100%;background:var(--accent);transition:width .4s}
 pre.log{margin:0;background:var(--soft);border-top:1px solid var(--line);padding:10px 12px;max-height:300px;overflow:auto;font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}
@@ -957,6 +962,52 @@ for (const [code, words] of Object.entries({
       updDone:"NInferno {v} をインストールしました。再起動すると使えます：実行中のモデルは停止し、再度起動できます。",updRestart:"今すぐ再起動",
       updFailed:"更新が完了しませんでした。",updRetry:"再試行",updManual:"次のコマンドでインストール：ninferno-update",updRestarting:"再起動中…"},
 })) { if (T[code]) Object.assign(T[code], words); }
+// The plan's words (the fit, the star and the memory come from the server's planner): English and
+// Russian; the other languages show the English ones.
+Object.assign(T.en, {
+  ctxAuto:"Auto",ctxAutoWord:"auto",ctxAutoTip:"Auto: the longest context that fits this card at the chosen number of requests (the server's plan)",
+  ctxTypeHint:"auto / 32k",ctxTypeTip:"Type the context in tokens: 32768, 32k, 128K or 1M; empty or auto is Auto",
+  ctxTypeBad:"Not a context: type tokens (32768), 32k, 1M or auto",parMax:"At most 8: the server's limit",
+  fitUnknown:"not planned",fitUnknownTip:"No plan for this quantization: the server decides at start",
+  fitsYes:"Fits",fitsYesTip:"Each of the {par} requests has its own {ctx} of context",
+  fitsShared:"Fits, the requests share one pool",fitsSharedTip:"Fits only as one shared pool: the {n} requests share {pool} tokens of cache, so long ones wait their turn",
+  fitsNot:"Does not fit",fitsNotTip:"Does not fit: {reason}",fitsInstead:"fits instead",fitsInsteadTip:"Take this context × requests",
+  poolHolds:"The cache holds {n} whole contexts of {ctx}",largestFits:"Largest that fits",
+  planning:"Planning…",planFailed:"Could not plan; the list is shown without the fit",ruleLabel:"Choice",
+  planEstNote:"Fit and memory: the server's plan, an estimate; the server decides at start.",
+  ctxPlanTip:"The context each request gets in the plan\nauto → N: what Auto gives on this card",
+  kvAuto:"Auto",kvAutoTip:"Auto: the cache format the server picks for this model and card",
+  memRings:"sliding windows",memGraphs:"CUDA graphs",memOther:"other",memFreeAfter:"free after the weights",
+  memReserve:"kept for the system and the desktop",memNeedOf:"needs ≈ {need} of {free}",
+  specPlanned:"The plan runs",specPlain:"no speed-up",specBasis_own:"measured on this GPU",specBasis_similar:"measured on a similar GPU",
+  specBasis_generic:"general profile",specBasis_builtin:"the model's own drafter, not tuned",specBasis_explicit:"as chosen",specBasis_none:"no profile",
+  specDepthAt:"{d} tokens ahead at {n}",specClassesTip:"Tokens guessed ahead by prompt length (estimate)",
+  specClass_short:"short",specClass_mid:"medium",specClass_long:"long",specClass_huge:"very long",
+  specDepthN:"{d} ahead",specNoEstimate:"no estimate",specServedStar:"★ what the plan runs",
+  quantTip:"The weights' format as the repository publishes it; ★ is the largest that fits the chosen context × requests on this card (the server's plan), ✓ is downloaded",
+});
+Object.assign(T.ru, {
+  ctxAuto:"Авто",ctxAutoWord:"авто",ctxAutoTip:"Авто: самый длинный контекст, который влезает на эту карту при выбранном числе запросов (расчёт сервера)",
+  ctxTypeHint:"авто / 32k",ctxTypeTip:"Впишите контекст в токенах: 32768, 32k, 128K или 1M; пусто или «авто» — Авто",
+  ctxTypeBad:"Это не контекст: впишите токены (32768), 32k, 1M или «авто»",parMax:"Не больше 8: предел сервера",
+  fitUnknown:"нет расчёта",fitUnknownTip:"Для этого кванта нет расчёта: сервер решит при запуске",
+  fitsYes:"Влезает",fitsYesTip:"У каждого запроса свой контекст {ctx} (всего запросов: {par})",
+  fitsShared:"Влезает, но кеш общий на все запросы",fitsSharedTip:"Влезает только с общим кешем: запросы (всего {n}) делят {pool} токенов, длинные ждут очереди",
+  fitsNot:"Не влезает",fitsNotTip:"Не влезает: {reason}",fitsInstead:"влезет так",fitsInsteadTip:"Взять этот контекст × число запросов",
+  poolHolds:"Кеш вмещает целых контекстов по {ctx}: {n}",largestFits:"Самый большой, что влезает",
+  planning:"Считаем…",planFailed:"Не удалось посчитать; список показан без оценки, влезет ли",ruleLabel:"Выбор",
+  planEstNote:"Влезет ли и сколько памяти — расчёт сервера, это оценка; окончательно решает сервер при запуске.",
+  ctxPlanTip:"Контекст каждого запроса по расчёту\nавто → N: сколько даёт Авто на этой карте",
+  kvAuto:"Авто",kvAutoTip:"Авто: формат кеша, который сервер выбирает для этой модели и карты",
+  memRings:"скользящие окна",memGraphs:"графы CUDA",memOther:"прочее",memFreeAfter:"свободно после весов",
+  memReserve:"оставлено системе и рабочему столу",memNeedOf:"нужно ≈ {need} из {free}",
+  specPlanned:"По расчёту",specPlain:"без ускорения",specBasis_own:"замерено на этой видеокарте",specBasis_similar:"замерено на похожей видеокарте",
+  specBasis_generic:"общий профиль",specBasis_builtin:"встроенный черновик модели, без настройки",specBasis_explicit:"как выбрано",specBasis_none:"нет профиля",
+  specDepthAt:"угадывает вперёд: {d} при {n}",specClassesTip:"Сколько токенов угадывается вперёд, по длине промпта (оценка)",
+  specClass_short:"короткий",specClass_mid:"средний",specClass_long:"длинный",specClass_huge:"очень длинный",
+  specDepthN:"вперёд: {d}",specNoEstimate:"нет оценки",specServedStar:"★ что запустится по расчёту",
+  quantTip:"Формат весов, как его публикует репозиторий; ★ — самый большой квант, который влезает при выбранных контексте × запросах на эту карту (расчёт сервера), ✓ — уже скачано",
+});
 const LANGS = [
   ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
   ["uk", "Українська", '<svg viewBox="0 0 3 2"><rect width="3" height="1" fill="#0057B7"/><rect y="1" width="3" height="1" fill="#FFD700"/></svg>'],
@@ -1363,8 +1414,106 @@ function setHub(name) {
   renderSortBar(); search($("q").value.trim());
 }
 
+// ---- plan helpers (tested) ----
+// Pure functions over the plan without the weights (ninferno-dry-plan/1, /api/plan); the test
+// tests/ui_page/test_page_plan.mjs slices this block out of the page and runs it.
+// A context the user typed: tokens ("32768", "32 768", "32,768"), "32k", "128K", "1M", or "auto"
+// (also empty): 0, the server's automatic context. null when it is none of these.
+function parseCtxText(text) {
+  const s = String(text ?? "").trim().toLowerCase().replace(/[\s,_']/g, "");
+  if (s === "" || s === "auto" || s === "авто" || s === "0") return 0;
+  const m = /^(\d+(?:\.\d+)?)([kкmм]?)$/.exec(s);
+  if (!m) return null;
+  const unit = m[2] === "k" || m[2] === "к" ? 1024 : m[2] === "m" || m[2] === "м" ? 1048576 : 1;
+  const n = Math.round(parseFloat(m[1]) * unit);
+  return n >= 1 && n <= 16777216 ? n : null;
+}
+const planTok = n => n >= 1048576 && n % 1048576 === 0 ? n / 1048576 + "M" : n >= 1024 ? Math.round(n / 1024) + "K" : String(n);
+// The speed-up mode as the plan's spec: off is none; auto is none when the measured table says
+// plain decode is faster here (the launch sends the same); a manual kind as it is.
+function planSpecOf(mode, plain) { return mode === "off" ? "none" : mode === "auto" ? (plain ? "none" : "auto") : mode; }
+// The /api/plan request of an ask {repo, hub, gpu, quant, ctx (0: auto), par, kv, spec, precision}.
+function planQuery(a) {
+  const p = [["repo", a.repo], ["hub", a.hub || "huggingface"], ["gpu", a.gpu ?? 0]];
+  if (a.quant) p.push(["quant", a.quant]);
+  p.push(["ctx", a.ctx > 0 ? Math.round(a.ctx) : "auto"], ["par", Math.min(8, Math.max(1, Math.round(a.par || 1)))],
+         ["kv", a.kv || "auto"], ["spec", a.spec || "auto"]);
+  if (a.precision === "exact") p.push(["precision", "exact"]);
+  return "/api/plan?" + p.map(([k, v]) => k + "=" + encodeURIComponent(String(v))).join("&");
+}
+// The plan row of a quantization: the document's row of that label. A document without rows (one
+// model: a safetensors repository) planned the model itself, which stands for its one quantization.
+function planRowOf(doc, label) {
+  if (!doc) return null;
+  const rows = doc.quants || [];
+  if (rows.length) return rows.find(r => r.quant === label) || null;
+  const p = doc.plan;
+  if (!p) return null;
+  const whole = !!p.fits && p.private_contexts !== false && !(p.chosen && p.chosen.survival);
+  return {quant: label, supported: true, why_unsupported: "", fits: whole, fits_shared: !!p.fits && !whole, largest: whole, plan: p};
+}
+// What a row shows: the dot's class (full, tight, no; off: not runnable; unknown: no plan), the star
+// (the largest that fits), the words and the tooltip, the planned context, what fits instead, and
+// whether Run may start it. `ask` is {ctx (0: auto), par}; tr(key, vars) gives the page's words.
+function planRowState(row, ask, tr) {
+  const par = ask.par || 1, asked = ask.ctx > 0 ? planTok(ask.ctx) : tr("ctxAutoWord");
+  const times = par > 1 ? " ×" + par : "";
+  if (!row) return {cls: "unknown", star: false, label: tr("fitUnknown"), tip: tr("fitUnknownTip"), why: "",
+                    ctxText: asked + times, ctxTip: "", instead: [], run: true, runWhy: "", warn: ""};
+  if (row.supported === false) {
+    const why = row.why_unsupported || tr("unsupportedRun");
+    return {cls: "off", star: false, label: tr("fitsNot"), tip: why, why, ctxText: "—", ctxTip: "", instead: [],
+            run: false, runWhy: why, warn: ""};
+  }
+  const p = row.plan || {}, chosen = p.chosen || {}, ctx = p.context > 0 ? p.context : 0;
+  const ctxText = ctx ? (ask.ctx > 0 ? "" : tr("ctxAutoWord") + " → ") + planTok(ctx) + times : "—";
+  const ctxTip = [p.description || "", p.pool_contexts > 0 ? tr("poolHolds", {n: p.pool_contexts, ctx: planTok(ctx)}) : ""]
+    .filter(Boolean).join("\n");
+  const base = {star: !!row.largest, ctxText, ctxTip, instead: [], warn: ""};
+  if (row.fits) {
+    return {...base, cls: "full", label: tr("fitsYes"), tip: tr("fitsYesTip", {ctx: planTok(ctx), par}), why: "", run: true, runWhy: ""};
+  }
+  if (row.fits_shared) {
+    const pool = planTok(chosen.kv_tokens > 0 ? chosen.kv_tokens : ctx);
+    const tip = tr("fitsSharedTip", {n: par, pool});
+    return {...base, cls: "tight", label: tr("fitsShared", {n: par}), tip, why: "", run: true, runWhy: "", warn: tip};
+  }
+  const reason = p.reason || tr("noFitAt", {ctx: asked, par});
+  const seen = new Set(), instead = [];
+  for (const f of p.fits_instead || []) {
+    const c = f.concurrency, x = f.context;
+    if (!(c >= 1 && c <= 8 && x > 0) || seen.has(c + ":" + x)) continue;
+    seen.add(c + ":" + x);
+    instead.push({ctx: x, par: c, text: planTok(x) + " × " + c});
+  }
+  return {...base, cls: "no", label: tr("fitsNot"), tip: tr("fitsNotTip", {reason}), why: reason, instead,
+          run: false, runWhy: tr("fitsNotTip", {reason})};
+}
+// The bytes a plan's chosen step takes (null without one): the weights, the KV pool, the recurrent
+// states, the sliding rings, the workspace, the CUDA Graph allowance; need = weights + what the
+// step needs after them (every margin), of the card's free memory.
+function planMemory(p) {
+  if (!p || !p.chosen) return null;
+  const b = p.chosen.bytes || {}, weights = p.weights_bytes || 0;
+  return {weights, kv: b.kv || 0, states: b.states || 0, rings: b.rings || 0, workspace: b.workspace || 0,
+          graphs: b.graphs || 0, fixed: b.fixed || 0, need: weights + (p.chosen.needed_bytes || 0),
+          free: p.free_bytes || 0, freeAfter: p.free_after_weights_bytes || 0, reserve: p.class_reserve_bytes || 0};
+}
+// The speculation a plan was made with (SPEC): the served label, its drafter kind as the page's
+// --spec names it ("" for plain decode), where the choice came from, the depth at the streams
+// asked and the depth per context class.
+function planSpecSummary(s) {
+  if (!s) return null;
+  const served = s.served || "plain";
+  const kind = served === "plain" || s.backend === "none" ? "" : String(served).split(":")[0];
+  return {served, kind, basis: s.basis || "none", depth: s.depth_at_concurrency > 0 ? s.depth_at_concurrency : s.depth || 0,
+          classes: (s.classes || []).map(c => ({cls: c.class, below: c.below_tokens || 0, depth: c.depth || 0, basis: c.basis || ""}))};
+}
+// ---- end plan helpers ----
+
 // Detail: one hub repository; the catalog's model when it lists the repository.
-let ctxValue = 32768, parallel = 1, quantSel = null, catalogCache = {}, useSpec = true;
+// ctxValue: the context asked, in tokens; 0 is Auto (the longest the plan fits).
+let ctxValue = 0, parallel = 1, quantSel = null, quantPicked = false, catalogCache = {}, useSpec = true;
 // Speculation: "auto" (the measured choice), "off", or a drafter kind the page offers (mtp, dflash,
 // dflash2): the launch's --spec.
 let specMode = "auto";
@@ -1375,7 +1524,8 @@ function openRepo(repo, hub) {
 const repoUrl = sel => sel.hubName === "modelscope" ? `https://modelscope.cn/models/${sel.repo}` : `https://huggingface.co/${sel.repo}`;
 async function loadRepo() {
   const sel = selected;
-  sel.quants = null; sel.error = ""; quantSel = null;
+  sel.quants = null; sel.error = ""; quantSel = null; quantPicked = false;
+  sel.plan = null; sel.planQ = ""; sel.planErr = ""; sel.planBusy = false;
   const started = Date.now(), tick = setInterval(() => {
     if (sel !== selected || sel.quants || sel.error) { clearInterval(tick); return; }
     const el = $("readsec");
@@ -1399,63 +1549,90 @@ async function loadRepo() {
   catch (e) { if (sel === selected) sel.error = e.message; }
   if (sel === selected) renderDetail();
 }
-function gpuMem() { const g = S.gpus.find(x => x.index === gpu); return g ? g.memory_total / GiB : 0; }
+// ---- the plan: /api/plan for the selected repository at the asked context x streams ----------
+// The fit of every quantization, the star and the memory come from the server's planner (the same
+// one a start runs, without the weights). Fetched 300 ms after the ask settles; a small cache by
+// the request; a reply for an ask no longer shown is dropped.
+const planDocs = new Map(), PLAN_CACHE = 48;
+let planTimer = 0;
+function planAsk(sel, quant) {
+  return {repo: sel.repo, hub: sel.hubName, gpu, quant: quant || "", ctx: ctxValue, par: parallel,
+          kv: kvChosen && !kvWhyNot(kvType, sel.kv) ? kvType : "auto", spec: planSpecOf(specMode, autoVerdict()?.plain)};
+}
+function schedulePlan() {
+  const sel = selected;
+  if (!sel || !sel.quants) return;
+  const q = planQuery(planAsk(sel));
+  if (q === sel.planQ) return;
+  sel.planQ = q; clearTimeout(planTimer);
+  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; return; }
+  sel.planBusy = true;
+  planTimer = setTimeout(async () => {
+    let doc = null, err = "";
+    try { doc = await api(q); } catch (e) { err = e.message || String(e); }
+    if (doc) { planDocs.set(q, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); }
+    if (sel !== selected || sel.planQ !== q) return;
+    sel.planBusy = false; sel.planErr = err;
+    if (doc) sel.plan = doc; else sel.plan = null;
+    renderBody();
+  }, 300);
+}
+// The plan row of a quantization of the selected repository (null: no plan, or none for it).
+function rowPlan(x) {
+  const sel = selected;
+  if (!sel || !sel.plan || x.drafter) return null;
+  const rows = sel.plan.quants || [];
+  // A document without rows planned the one model: it stands for the first runnable listing.
+  if (!rows.length && sel.quants && x !== sel.quants.find(q => !q.drafter && q.supported)) return null;
+  return planRowOf(sel.plan, x.quant);
+}
+const planTr = (k, v) => fill(t(k), v || {});
+function rowStateOf(x) {
+  const r = rowPlan(x);
+  return planRowState(r || (x.supported === false ? {supported: false, why_unsupported: t("over8")} : null),
+                      {ctx: ctxValue, par: parallel}, planTr);
+}
+// The context the speed estimates take: the one asked, else (Auto) the selected row's planned one.
+function ctxEff() {
+  if (ctxValue > 0) return ctxValue;
+  const r = quantSel ? rowPlan(quantSel) : null;
+  return r && r.plan && r.plan.context > 0 ? r.plan.context : Math.min(32768, nativeCtx());
+}
+// KV bytes the speed estimate reads per token (the bandwidth model only; the fit is the plan's).
 function kvGiB(kv, ctx) {
   if (!kv || !kv.known) return 0;
   const w = kv.window > 0 ? Math.min(ctx, kv.window) : ctx;
-  return (kv.full_bytes_per_token * kvScale(kv) * ctx + kv.window_bytes_per_token * w) / GiB;
+  return (kv.full_bytes_per_token * kvSpeedScale() * ctx + kv.window_bytes_per_token * w) / GiB;
 }
-// Memory as ninferno-serve plans it (catalog.h KvModel, checked against its capacity lines): the
-// weights, the drafter's when speculating, the KV pool (requests x context x bytes per token, bf16),
-// per sequence (each request and one cached state of the context cache) the recurrent state and a
-// sliding ring of window + prefill chunk rows, the prefill workspace, and the CUDA runtime.
-const CHUNK = 1024, RUNTIME = 0.75 * GiB;
-// serve's --kv-dtype: bytes per element of a 256-wide head with its scales (core/paged_kv_storage.h).
-// Only BF16 holds other head sizes; FP8 needs the E4M3 MMA of an RTX 40 or 50.
+// serve's --kv-dtype: bytes per element of a 256-wide head with its scales (core/paged_kv_storage.h),
+// relative to BF16 for the speed estimate.
 const KV = {bf16: 2, int8: 264 / 256, fp8: 258 / 256, nvfp4: 144 / 256, k8v4: 402 / 512};
-// The KV storage: the one the user picked, else the server's default for the model's family
-// (ninferno-serve, product::default_kv_storage: int8 for Qwen 3.5's, BF16 for the others).
+// The KV storage: the one the user picked, else Auto (the codec the plan resolves for the family
+// and the card).
 let kvType = "bf16", kvChosen = false;
-function kvDefault(kv) {
-  const arch = (kv && kv.architecture || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  return arch.startsWith("qwen35") && !kvWhyNot("int8", kv) ? "int8" : "bf16";
+function kvPlanned() {
+  const r = quantSel ? rowPlan(quantSel) : null;
+  const k = r && r.plan && r.plan.kv_dtype || selected && selected.plan && selected.plan.plan && selected.plan.plan.kv_dtype || "";
+  return KV[k] ? k : "";
 }
-function kvNow() { return kvChosen ? kvType : kvDefault(selected && selected.kv); }
+function kvNow() { return kvChosen && !kvWhyNot(kvType, selected && selected.kv) ? kvType : kvPlanned() || "bf16"; }
+// Why a codec cannot be chosen: FP8 takes any head width (the server resolves it) but the E4M3 MMA
+// of an RTX 40 or 50; INT8, NVFP4 and K8V4 hold 256-wide heads only.
 function kvWhyNot(type, kv) {
   if (type === "bf16") return "";
-  if (!kv || !kv.known) return t("kvUnknownHead");
-  if (kv.kv_head_dim !== 256) return t("kvNeeds256");
   const g = gpuOf();
   if ((type === "fp8" || type === "k8v4") && g && parseFloat(g.cc) < 8.9) return t("kvNeedsFp8");
+  if (type === "fp8") return "";
+  if (!kv || !kv.known) return t("kvUnknownHead");
+  if (kv.kv_head_dim !== 256) return t("kvNeeds256");
   return "";
 }
-function kvScale(kv) { const k = kvNow(); return (kvWhyNot(k, kv) ? KV.bf16 : KV[k]) / KV.bf16; }
+function kvSpeedScale() { return KV[kvNow()] / KV.bf16; }
 function specOf() { const sp = selected && selected.spec; return useSpec && sp && sp.known && sp.config !== "plain" && !(specMode === "auto" && autoVerdict()?.plain) ? sp : null; }
-function memOf(q, kv, streams) {
-  const k = kv && kv.known ? kv : null, sp = specOf(), seqs = streams + 1;
-  const ring = (w, bytes) => w > 0 ? (w + CHUNK) * bytes : 0;
-  const parts = {
-    weights: q.bytes,
-    drafter: sp ? sp.drafter_bytes + seqs * ring(sp.drafter_window, sp.drafter_window_bytes_per_token) : 0,
-    states: k ? seqs * ((k.state_bytes || 0) + ring(k.window, k.window_bytes_per_token)) : 0,
-    workspace: (k ? k.workspace_bytes || 0 : 0) + RUNTIME,
-  };
-  const perTok = (k ? k.full_bytes_per_token * kvScale(k) : 0) + (sp ? sp.drafter_kv_bytes_per_token || 0 : 0);
-  return {parts, fixed: parts.weights + parts.drafter + parts.states + parts.workspace, perTok};
-}
-// What the card holds for one model: its memory less the 1 GiB a desktop keeps. What other
-// processes hold now is said apart (busyNote), not counted: the table is about the card.
-function availBytes() { const g = gpuOf(); return g ? g.memory_total - GiB : 0; }
+// What other processes hold on the card now is said apart, not counted: the plan is about the card.
 function busyNote(needGib) {
   const g = gpuOf();
   return g && g.memory_free < needGib * GiB ? fill(t("busyNow"), {free: gib(g.memory_free)}) : "";
-}
-function fitOf(q, kv) {
-  const avail = availBytes(), m = memOf(q, kv, parallel);
-  const kvBytes = parallel * ctxValue * m.perTok;
-  const need = m.fixed + kvBytes;
-  if (!avail) return {cls:"tight", need: need / GiB, kv: kvBytes, m, spare: 0};
-  return {need: need / GiB, kv: kvBytes, m, spare: avail - need, cls: need <= avail - 0.5 * GiB ? "full" : need <= avail ? "tight" : "no"};
 }
 // Rough estimates from the card and the model's shape (catalog.h KvModel), not measurements.
 const capLabel = n => n >= 1048576 && n % 1048576 === 0 ? n / 1048576 + "M" : n >= 1024 ? Math.floor(n / 1024) + "K" : String(n);
@@ -1472,16 +1649,6 @@ function shapeOf(q, kv) {
 function nativeCtx() {
   const kv = selected && selected.kv, h = selected && selected.hub;
   return kv && kv.native_context > 0 ? kv.native_context : h && h.context > 0 ? h.context : 262144;
-}
-// Context each of `streams` requests can hold beside the weights (fitOf's budget), up to the model's own.
-function ctxCap(q, kv, streams) {
-  const native = nativeCtx();
-  const avail = availBytes();
-  if (!avail) return native;
-  const m = memOf(q, kv, streams), pool = avail - m.fixed;
-  if (pool <= 0) return 0;
-  if (!(m.perTok > 0)) return native;
-  return Math.min(native, Math.floor(pool / (streams * m.perTok)));
 }
 // Decode is bound by memory traffic: per step the dense part once, the routed experts as far as the
 // streams' picks reach (1 - (1 - used)^streams of them) and each stream's KV up to `depth` tokens
@@ -1668,51 +1835,13 @@ function prefillTps(q, kv) {
   // prompt: longer chunks fill the tensor cores better); taken at the chosen depth.
   const mode = depthCells(false);
   if (mode && mode["1"]) {
-    const v = atDepth(mode["1"], Math.max(SHORT, ctxValue * DEPTH), x => x.prefill, () => 1);
+    const v = atDepth(mode["1"], Math.max(SHORT, ctxEff() * DEPTH), x => x.prefill, () => 1);
     if (v > 0) return v;
   }
   const g = gpuOf(), s = shapeOf(q, kv);
   if (!g || !s.active) return 0;
   const c = tensorOf(g);
   return c.sms > 0 && c.mhz > 0 ? c.sms * c.mhz * 1e6 * 1024 * 0.38 / (2 * s.active) : 0;
-}
-// The cache the card holds, counted in whole contexts of the model (each request may grow to the
-// model's own length) and what is left beside them; below one whole context, the longest one.
-function capacityOf(q, kv) {
-  const native = nativeCtx();
-  const one = ctxCap(q, kv, 1);
-  if (one < 4096) return t("tooBig");
-  if (!(memOf(q, kv, 1).perTok > 0)) return fill(t("capFull"), {n: nReq(1), ctx: capLabel(native), rest: "0"});
-  let k = 0;
-  while (k < 64 && ctxCap(q, kv, k + 1) >= native) k++;
-  if (k === 0) return fill(t("capShort"), {ctx: one.toLocaleString(lang), native: capLabel(native)});
-  const m = memOf(q, kv, k), rest = Math.max(0, Math.floor((availBytes() - m.fixed) / m.perTok) - k * native);
-  return fill(t("capFull"), {n: nReq(k), ctx: capLabel(native), rest: capLabel(rest)});
-}
-// The recommendation, with its reasons: of the quantizations that fit the chosen context x
-// requests with room to spare, the most precise (most bits, then the largest) whose decode is
-// within 10 % of the fastest one of 4 bits or more (below 4 bits quality drops); the reasons name
-// the next more precise one and why not it.
-const precision = q => [q.bits || 16, q.bytes];
-const morePrecise = (a, b) => { const [x, y] = [precision(a), precision(b)]; return x[0] !== y[0] ? x[0] > y[0] : x[1] > y[1]; };
-function recommend(quants, kv) {
-  const usable = quants.filter(q => !q.drafter && q.supported);
-  const ok = usable.filter(q => fitOf(q, kv).cls === "full");
-  const pars = {ctx: ctxLabel(ctxValue), par: parallel};
-  if (!ok.length) return {q: null, why: [fill(t("recNone"), pars)]};
-  const speed = q => reqTps(q, kv, ctxValue, parallel);
-  const four = ok.filter(q => (q.bits || 16) >= 4);
-  const base = Math.max(...(four.length ? four : ok).map(speed));
-  const pick = ok.filter(q => speed(q) >= 0.9 * base).sort((a, b) => morePrecise(a, b) ? -1 : 1)[0];
-  const why = [fill(t("recWhyFit"), {...pars, free: gib(Math.max(0, fitOf(pick, kv).spare))}), t("recWhyRule")];
-  if ((pick.bits || 16) < 4) why.push(t("recWhyLow"));
-  const better = usable.filter(q => morePrecise(q, pick)).sort((a, b) => morePrecise(a, b) ? 1 : -1)[0];
-  if (better) {
-    const name = quantLabel(better, selected.repo);
-    if (fitOf(better, kv).cls !== "full") why.push(fill(t("recWhyNoFit"), {...pars, name}));
-    else why.push(fill(t("recWhySlower"), {name, p: Math.round((1 - speed(better) / base) * 100)}));
-  }
-  return {q: pick, why};
 }
 // A safetensors repository's weights are named by the format its name says (RedHatAI/...-NVFP4).
 const FORMATS = ["NVFP4", "MXFP4", "FP8", "W4A16", "W8A8", "AWQ", "GPTQ", "INT4", "INT8", "BF16"];
@@ -1740,7 +1869,8 @@ function sliderAt(c) {
   return hi > lo ? Math.round((Math.log(c) - lo) / (hi - lo) * SLIDER) : SLIDER;
 }
 const PRESETS = [8192, 32768, 131072, 262144, 1048576];
-const MAX_PAR = 16;
+// At most 8 streams: the server's limit (--max-concurrency 1..8).
+const MAX_PAR = 8;
 // The header and the controls are drawn once per model; the controls redraw only the body, so a
 // slider keeps the pointer while it is dragged.
 function renderDetail() {
@@ -1750,7 +1880,8 @@ function renderDetail() {
   const cat = sel.catalog;
   const src = cat ? cat.sources.find(s => s.repo === sel.repo) : null;
   const repos = cat ? [...new Set(cat.sources.map(s => s.repo))] : [];
-  ctxValue = Math.min(Math.max(ctxValue, CTX_MIN), nativeCtx());
+  if (ctxValue > 0) ctxValue = Math.min(ctxValue, nativeCtx());
+  parallel = Math.min(Math.max(parallel, 1), MAX_PAR);
   const h = sel.hub || found.hub.find(x => x.id === sel.repo);
   let html = `<div class="detail"><h3>${esc(name)}</h3>
     <div class="sub"><a href="${esc(repoUrl(sel))}" target="_blank" rel="noopener noreferrer">${esc(sel.repo)} ↗</a> · ${esc(HUBS[sel.hubName][1])}
@@ -1764,10 +1895,11 @@ function renderDetail() {
   html += `<div class="controls">
     ${S.gpus.length > 1 ? `<div class="ctl"><span>${t("gpu")}</span><select id="dgpu">${S.gpus.map(g => `<option value="${g.index}" ${g.index === gpu ? "selected" : ""}>#${g.index} ${esc(g.name.replace("NVIDIA GeForce ", ""))} · ${(g.memory_total / GiB).toFixed(0)} GiB</option>`).join("")}</select></div>` : ""}
     <div class="ctl wide"><div class="row"><span>${t("context")}${info(t("ctxTip"))}</span><output id="ctxout"></output>
-        <span class="presets">${PRESETS.filter(c => c < nativeCtx()).concat([nativeCtx()]).map(c => `<button data-ctx="${c}" data-tip="${esc(c === nativeCtx() ? t("maxCtx") + " · " + c.toLocaleString(lang) : c.toLocaleString(lang))}">${capLabel(c)}</button>`).join("")}</span></div>
-      <input type="range" id="ctx" min="0" max="${SLIDER}" step="1" value="${sliderAt(ctxValue)}" aria-label="${esc(t("context"))}"></div>
-    <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip"))}</span><output id="parout"></output></div>
-      <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}"></div>
+        <input id="ctxnum" class="ctxnum" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="${esc(t("ctxTypeHint"))}" aria-label="${esc(t("ctxTypeTip"))}" data-tip="${esc(t("ctxTypeTip"))}">
+        <span class="presets"><button data-ctx="auto" data-tip="${esc(t("ctxAutoTip"))}">${t("ctxAuto")}</button>${PRESETS.filter(c => c < nativeCtx()).concat([nativeCtx()]).map(c => `<button data-ctx="${c}" data-tip="${esc(c === nativeCtx() ? t("maxCtx") + " · " + c.toLocaleString(lang) : c.toLocaleString(lang))}">${capLabel(c)}</button>`).join("")}</span></div>
+      <input type="range" id="ctx" min="0" max="${SLIDER}" step="1" value="${sliderAt(ctxEff())}" aria-label="${esc(t("context"))}"></div>
+    <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip") + "\n" + t("parMax"))}</span><output id="parout"></output></div>
+      <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}" data-tip="${esc(t("parMax"))}"></div>
     <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div>
 </div></div>
     ${accelBlock(sel)}
@@ -1775,8 +1907,25 @@ function renderDetail() {
   el.innerHTML = html + "</div>";
   const ctx = $("ctx");
   ctx.oninput = () => { ctxValue = ctxAt(+ctx.value); renderBody(); };
+  // The typed context: applied 400 ms after typing stops, at once on Enter or leaving the box.
+  const num = $("ctxnum");
+  let numTimer = 0;
+  const applyNum = final => {
+    clearTimeout(numTimer);
+    const v = parseCtxText(num.value);
+    num.classList.toggle("bad", v === null);
+    if (v === null) { num.dataset.tip = t("ctxTypeBad"); return; }
+    num.dataset.tip = t("ctxTypeTip");
+    ctxValue = v > 0 ? Math.min(Math.max(v, 1024), nativeCtx()) : 0;
+    if (final) num.value = ctxBoxText();
+    renderBody();
+  };
+  num.value = ctxBoxText();
+  num.oninput = () => { clearTimeout(numTimer); numTimer = setTimeout(() => applyNum(false), 400); };
+  num.onchange = () => applyNum(true);
+  num.onkeydown = ev => { if (ev.key === "Enter") applyNum(true); };
   const par = $("par");
-  par.oninput = () => { parallel = +par.value; renderBody(); };
+  par.oninput = () => { parallel = Math.min(Math.max(+par.value, 1), MAX_PAR); renderBody(); };
   // The speed-up mode: useSpec follows it (the estimates take speculation when it is not off).
   const setMode = m => { specMode = m; useSpec = m !== "off"; renderDetail(); };
   el.querySelectorAll("[data-specmode]").forEach(b => { b.onclick = () => setMode(b.dataset.specmode); });
@@ -1784,22 +1933,74 @@ function renderDetail() {
   const dg = $("dgpu"); if (dg) dg.onchange = () => { gpu = +dg.value; refreshState(); loadRepo(); };
   renderBody();
 }
-function memParts(f) {
-  return t("memWeights") + " " + gib(f.m.parts.weights) + (f.m.parts.drafter ? " + " + t("memDrafter") + " " + gib(f.m.parts.drafter) : "") +
-    " + KV " + gib(f.kv) + (f.m.parts.states ? " + " + t("memStates") + " " + gib(f.m.parts.states) : "") + " + " + t("memRuntime") + " " + gib(f.m.parts.workspace);
+// The context box's text: empty under Auto (its placeholder says so), else "32k" or the tokens.
+function ctxBoxText() { return ctxValue > 0 ? (ctxValue % 1024 === 0 ? ctxValue / 1024 + "k" : String(ctxValue)) : ""; }
+// The memory a plan's step takes, line by line, for a tooltip.
+function memTipOf(mem) {
+  const parts = [[t("memWeights"), mem.weights], ["KV", mem.kv], [t("memStates"), mem.states], [t("memRings"), mem.rings],
+                 [t("memRuntime"), mem.workspace], [t("memGraphs"), mem.graphs], [t("memOther"), mem.fixed]];
+  return [t("memTip"), fill(t("memNeedOf"), {need: gib(mem.need), free: gib(mem.free)}),
+          ...parts.filter(([, b]) => b > 0).map(([k, b]) => `${k} ${gib(b)}`),
+          `${t("memFreeAfter")} ${gib(mem.freeAfter)}`, `${t("memReserve")} ${gib(mem.reserve)}`, t("planEstNote")].join("\n");
 }
 function renderKv() {
+  // Auto's codec: the plan's while Auto is on; under a chosen codec, the one Auto last planned.
   const kv = selected.kv;
-  $("kvsel").innerHTML = Object.keys(KV).map(k => {
+  if (!kvChosen && kvPlanned()) selected.kvAuto = kvPlanned();
+  const planned = kvChosen ? selected.kvAuto || "" : kvPlanned();
+  const auto = `<span data-tip="${esc(t("kvAutoTip"))}"><button data-kv="auto" class="${kvChosen ? "" : "on"}">${esc(t("kvAuto"))}${planned ? " (" + esc(planned.toUpperCase()) + ")" : ""}</button></span>`;
+  $("kvsel").innerHTML = auto + Object.keys(KV).map(k => {
     const why = kvWhyNot(k, kv);
-    return `<span data-tip="${esc(t("kv_" + k) + (why ? "\n" + why : ""))}"><button data-kv="${k}" class="${k === kvNow() && !why ? "on" : ""}" ${why ? "disabled" : ""}>${k.toUpperCase()}</button></span>`;
+    return `<span data-tip="${esc(t("kv_" + k) + (why ? "\n" + why : ""))}"><button data-kv="${k}" class="${kvChosen && k === kvType && !why ? "on" : ""}" ${why ? "disabled" : ""}>${k.toUpperCase()}</button></span>`;
   }).join("");
+}
+// What the plan says of speculation for the selected quantization: the line under the speed-up
+// choice, and ★ on the drafter kind it serves.
+function renderPlanSpec() {
+  const r = quantSel ? rowPlan(quantSel) : null;
+  const s = planSpecSummary(r && r.plan && r.plan.speculation);
+  const el = $("planspec");
+  if (el) {
+    if (!s) el.innerHTML = "";
+    else {
+      const tip = [t("specClassesTip"), ...s.classes.map(c => `${t("specClass_" + c.cls)}${c.below ? " (< " + planTok(c.below) + ")" : ""}: ${c.basis === "modeled" ? fill(t("specDepthN"), {d: c.depth}) : t("specNoEstimate")}`), t("planEstNote")].join("\n");
+      el.innerHTML = `<span data-tip="${esc(tip)}">${esc(t("specPlanned"))}: <b class="mono">${esc(s.kind ? s.served : t("specPlain"))}</b> · ${esc(t("specBasis_" + s.basis))}${s.kind && s.depth > 0 ? " · " + esc(fill(t("specDepthAt"), {d: s.depth, n: nReq(parallel)})) : ""}</span>`;
+    }
+  }
+  const star = s && s.kind;
+  document.querySelectorAll("#specmanual option[value]").forEach(o => {
+    if (!o.value) return;
+    if (o.dataset.label === undefined) o.dataset.label = o.textContent;
+    o.textContent = (o.value === star ? "★ " : "") + o.dataset.label;
+  });
+  document.querySelectorAll("[data-drkind]").forEach(b => {
+    if (b.dataset.label === undefined) b.dataset.label = b.textContent;
+    b.textContent = (b.dataset.drkind && b.dataset.drkind === star ? "★ " : "") + b.dataset.label;
+    b.title = b.dataset.drkind && b.dataset.drkind === star ? t("specServedStar") : "";
+  });
 }
 function renderBody() {
   const sel = selected, el = $("dbody");
   if (!sel || !el) return;
-  $("ctxout").textContent = `${ctxLabel(ctxValue)} ${t("tokens")}`;
-  document.querySelectorAll(".presets [data-ctx]").forEach(b => b.classList.toggle("on", +b.dataset.ctx === ctxValue));
+  schedulePlan();
+  // The quantization shown: the one the user picked, else the plan's largest that fits (before the
+  // first plan, the list's own pick).
+  if (sel.quants) {
+    if (quantSel && !sel.quants.includes(quantSel)) { quantSel = null; quantPicked = false; }
+    if (!quantPicked) {
+      const usable = sel.quants.filter(x => !x.drafter && x.supported);
+      quantSel = sel.plan ? usable.find(x => { const r = rowPlan(x); return r && r.largest; }) || null
+                          : usable.find(x => x.recommended) || null;
+    }
+  }
+  const selRow = quantSel ? rowPlan(quantSel) : null;
+  const autoCtx = selRow && selRow.plan && selRow.plan.context > 0 ? selRow.plan.context : 0;
+  $("ctxout").textContent = ctxValue > 0 ? `${ctxLabel(ctxValue)} ${t("tokens")}` : autoCtx ? `${t("ctxAuto")} → ${planTok(autoCtx)} ${t("tokens")}` : t("ctxAuto");
+  document.querySelectorAll(".presets [data-ctx]").forEach(b => b.classList.toggle("on", b.dataset.ctx === "auto" ? ctxValue === 0 : +b.dataset.ctx === ctxValue));
+  const num = $("ctxnum");
+  if (num && document.activeElement !== num) { num.value = ctxBoxText(); num.classList.remove("bad"); }
+  const slider = $("ctx");
+  if (slider && document.activeElement !== slider) slider.value = sliderAt(ctxEff());
   $("parout").textContent = String(parallel);
   const av = $("autoverdict");
   if (av) {
@@ -1808,57 +2009,65 @@ function renderBody() {
   }
   if (+$("par").value !== parallel) $("par").value = parallel;
   renderKv();
+  renderPlanSpec();
   let html = "";
   if (sel.error) html += `<p class="err">${esc(sel.error)}</p>`;
   else if (!sel.quants) html += `<p class="muted"><span class="sup spin">…</span> ${t("readingRepo")} <span id="readsec"></span></p>`;
   else {
     const h = sel.hub || found.hub.find(x => x.id === sel.repo);
     const unsupported = h && ["none", "format"].includes(h.support);
-    const r = recommend(sel.quants, sel.kv), rec = r.q;
-    if (!quantSel || !sel.quants.includes(quantSel)) quantSel = rec;
-    const q = quantSel;
-    const depth = Math.max(SHORT, Math.round(ctxValue * DEPTH));
+    const q = quantSel, ctxNow = ctxEff();
+    const depth = Math.max(SHORT, Math.round(ctxNow * DEPTH));
+    const asked = {ctx: ctxValue > 0 ? ctxLabel(ctxValue) : t("ctxAutoWord"), par: parallel};
+    if (sel.planBusy) html += `<div class="note"><span class="sup spin">…</span> ${t("planning")}</div>`;
+    else if (sel.planErr) html += `<div class="note err">${esc(t("planFailed"))}: ${esc(sel.planErr)}</div>`;
     if (q) {
-      const f = fitOf(q, sel.kv), here = localFor(sel.repo, q.quant);
-      const one = reqTps(q, sel.kv, ctxValue, parallel), plain = reqTps(q, sel.kv, ctxValue, parallel, false);
-      const runWhy = unsupported ? t("unsupportedRun") : f.cls === "no" ? fill(t("noFitAt"), {ctx: ctxLabel(ctxValue), par: parallel}) : "";
-      html += `<div class="pick"><div class="pickmain"><div class="sub">${q === rec ? t("recommended") : t("selected")}</div>
+      const st = rowStateOf(q), here = localFor(sel.repo, q.quant);
+      const mem = planMemory(selRow && selRow.plan), need = mem ? mem.need / GiB : 0;
+      const one = reqTps(q, sel.kv, ctxNow, parallel), plain = reqTps(q, sel.kv, ctxNow, parallel, false);
+      const runWhy = unsupported ? t("unsupportedRun") : !st.run ? st.runWhy : "";
+      const runTip = runWhy || st.warn || (sel.planBusy ? t("planning") : st.cls === "unknown" ? t("fitUnknownTip") : "");
+      const instead = st.instead.length ? ` <span class="fitalt">${t("fitsInstead")}: ${st.instead.map(f => `<button data-fitctx="${f.ctx}" data-fitpar="${f.par}" data-tip="${esc(t("fitsInsteadTip"))}">${esc(f.text)}</button>`).join("")}</span>` : "";
+      html += `<div class="pick"><div class="pickmain"><div class="sub">${st.star ? t("largestFits") : t("selected")}</div>
         <div class="big">${esc(quantLabel(q, sel.repo))} · ${q.size_gib.toFixed(1)} GiB</div>
-        ${q === rec || !rec ? `<ul class="why">${r.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
-        <div class="sub"><span data-tip="${esc(t("memTip") + "\n" + memParts(f))}">${t("need")} ≈ ${f.need.toFixed(1)} ${t("of")} ${(availBytes() / GiB).toFixed(1)} GiB</span> · ${fill(t("ctxTimes"), {ctx: ctxLabel(ctxValue), par: nReq(parallel)})}${sel.kv && sel.kv.known ? "" : " · " + t("kvUnknown")}${busyNote(f.need) ? ` · <span class="err">${esc(busyNote(f.need))}</span>` : ""}</div>
+        <div class="sub"><span class="dot d-${st.cls}"></span> <span data-tip="${esc(st.tip)}" class="${st.cls === "no" ? "err" : ""}">${esc(st.label)}${st.why ? ": " + esc(st.why) : ""}</span>${instead}</div>
+        <div class="sub">${mem ? `<span data-tip="${esc(memTipOf(mem))}">${t("need")} ≈ ${need.toFixed(1)} ${t("of")} ${gib(mem.free)}</span> · ` : ""}<span data-tip="${esc(t("ctxPlanTip") + (st.ctxTip ? "\n" + st.ctxTip : ""))}">${esc(st.ctxText)}</span>${mem && busyNote(need) ? ` · <span class="err">${esc(busyNote(need))}</span>` : ""}</div>
         ${one ? `<div class="sub">${fill(t(parallel > 1 ? "speedLine" : "speedLine1"), {depth: ctxLabel(depth), one: rate(one), all: rate(one * parallel), n: nReq(parallel)})}${specOf() && one > plain * 1.02 ? ` · ${t("noSpec")} ≈ ${rate(plain)}` : ""}${(() => { const l = loadOf(), lc = loadHere(l) && q.quant === l.quant ? llamaReq(depth, parallel) : 0; return lc > 0 ? ` · llama.cpp ≈ ${rate(lc)}` : ""; })()} · ${t("prefill")} ≈ ${rate(prefillTps(q, sel.kv))} ${t("perSec")}</div>` : ""}</div>
         <span style="flex:1"></span>
         <div class="pickacts">
         ${here ? `<span class="pill ok">✓ ${t("here")}</span>` : `<span ${unsupported ? `data-tip="${esc(t("unsupportedRun"))}"` : ""}><button data-get ${unsupported ? "disabled" : ""}>${t("download")}</button></span>`}
-        <span ${runWhy ? `data-tip="${esc(runWhy)}"` : ""}><button class="primary" data-go ${runWhy ? "disabled" : ""}>${t("run")}</button></span></div></div>`;
-    } else {
-      html += `<div class="pick none"><ul class="why">${r.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
+        <span ${runTip ? `data-tip="${esc(runTip)}"` : ""}><button class="primary" data-go ${runWhy ? "disabled" : ""}>${t("run")}${st.cls === "tight" && !runWhy ? " ⚠" : ""}</button></span></div></div>`;
+    } else if (sel.plan) {
+      html += `<div class="pick none"><ul class="why"><li>${esc(sel.plan.rule || fill(t("recNone"), asked))}</li></ul></div>`;
     }
     const ex = extrapolated(parallel) ? " ~" : "";
     const head = `<div class="q head"><span></span><span>${t("quant")}${info(t("quantTip"))}</span><span>${t("bits")}</span><span class="num">${t("size")}${info(t("sizeTip"))}</span>
-      <span class="num">${t("ctxReq")}${info(t("ctxReqTip"))}</span>
+      <span class="num">${t("ctxReq")}${info(t("ctxPlanTip"))}</span>
       <span class="num">${t("prefillCol")}${info(t("promptTip"))}</span>
-      <span class="num">${t("decodeCol")}<small>${parallel > 1 ? t("decodeOne") : ""}</small>${info(fill(t("genTip2"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxValue)}) + "\n" + basisNote(sel.kv))}</span>
+      <span class="num">${t("decodeCol")}<small>${parallel > 1 ? t("decodeOne") : ""}</small>${info(fill(t("genTip2"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxNow)}) + "\n" + basisNote(sel.kv))}</span>
       ${parallel > 1 ? `<span class="num">${t("decodeTot")}<small>${nReq(parallel)}</small>${info(t("decodeAllTip") + "\n" + basisNote(sel.kv) + (ex ? "\n" + t("extrap") : ""))}</span>` : ""}</div>`;
-    html += `<div class="note">${fill(t("depthNote"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxValue)})}</div>`;
+    html += `<div class="note">${fill(t("depthNote"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxNow)})}</div>`;
     html += `<div class="qwrap"><div class="quants ${parallel > 1 ? "multi" : ""}">${head}${sel.quants.map((x, i) => {
-      const f = x.drafter || !x.supported ? null : fitOf(x, sel.kv);
-      const name = `${x === rec ? "★ " : ""}${esc(quantLabel(x, sel.repo))}${localFor(sel.repo, x.quant) ? " ✓" : ""}`;
+      const st = x.drafter ? null : rowStateOf(x);
+      const name = `${st && st.star ? "★ " : ""}${esc(quantLabel(x, sel.repo))}${localFor(sel.repo, x.quant) ? " ✓" : ""}`;
       const bits = x.bits ? x.bits : "";
-      if (!f) return `<div class="q off" data-qi="${i}"><span></span><span class="mono">${name}</span><span class="muted">${bits}</span>
-        <span class="num">${x.size_gib.toFixed(1)} GiB</span><span class="sub" style="grid-column:span ${parallel > 1 ? 4 : 3}">${x.drafter ? t(/mmproj/i.test(x.quant + " " + (x.files || []).join(" ")) ? "visionProj" : "drafter") : t("over8")}</span></div>`;
-      const cap = ctxCap(x, sel.kv, 1), gen = reqTps(x, sel.kv, ctxValue, parallel), pre = prefillTps(x, sel.kv);
-      const why = f.cls === "no" ? (cap < 4096 ? t("tooBig") : fill(t("noFitAt"), {ctx: ctxLabel(ctxValue), par: parallel})) : "";
-      const ctxTip = t("ctxReqTip") + "\n" + capacityOf(x, sel.kv);
-      return `<div class="q ${x === quantSel ? "sel" : ""} ${f.cls === "no" ? "no" : ""}" data-qi="${i}">
-        <span><span class="dot d-${f.cls}" data-tip="${esc(t(f.cls === "full" ? "fitsFull" : f.cls === "tight" ? "fitsTight" : "fitsNo") + (why ? "\n" + why : ""))}"></span></span>
-        <span><span class="mono qn">${name}</span>${why ? `<div class="why">${esc(why)}</div>` : ""}</span>
+      if (!st || !x.supported || st.cls === "off") return `<div class="q off" data-qi="${i}"><span></span><span class="mono">${name}</span><span class="muted">${bits}</span>
+        <span class="num">${x.size_gib.toFixed(1)} GiB</span><span class="sub" style="grid-column:span ${parallel > 1 ? 4 : 3}">${x.drafter ? t(/mmproj/i.test(x.quant + " " + (x.files || []).join(" ")) ? "visionProj" : "drafter") : esc(st.why || t("over8"))}</span></div>`;
+      const gen = reqTps(x, sel.kv, ctxNow, parallel), pre = prefillTps(x, sel.kv);
+      const r = rowPlan(x), mem = planMemory(r && r.plan);
+      const dotTip = st.cls === "unknown" && sel.planBusy ? t("planning") : st.label + "\n" + st.tip;
+      const instead = st.instead.length ? `<div class="fitalt">${t("fitsInstead")}: ${st.instead.map(f => `<button data-fitctx="${f.ctx}" data-fitpar="${f.par}" data-tip="${esc(t("fitsInsteadTip"))}">${esc(f.text)}</button>`).join("")}</div>` : "";
+      return `<div class="q ${x === quantSel ? "sel" : ""} ${st.cls === "no" ? "no" : ""}" data-qi="${i}">
+        <span><span class="dot d-${st.cls}" data-tip="${esc(dotTip)}"></span></span>
+        <span><span class="mono qn">${name}</span>${st.why ? `<div class="why">${esc(st.why)}</div>` : ""}${instead}</span>
         <span class="muted">${bits}</span><span class="num">${x.size_gib.toFixed(1)} GiB</span>
-        <span class="num mono" data-tip="${esc(ctxTip)}">${ctxLabel(ctxValue)}${parallel > 1 ? " ×" + parallel : ""}</span>
+        <span class="num mono" data-tip="${esc(t("ctxPlanTip") + (st.ctxTip ? "\n" + st.ctxTip : ""))}">${esc(st.ctxText)}</span>
         <span class="num est" data-tip="${esc(t("promptTip"))}">${pre ? "≈ " + rate(pre) : "—"}</span>
-        <span class="num est" data-tip="${esc(t("memTip") + "\n" + f.need.toFixed(1) + " GiB · " + t("memWeights") + " " + gib(f.m.parts.weights) + (f.m.parts.drafter ? " + " + t("memDrafter") + " " + gib(f.m.parts.drafter) : "") + " + KV " + gib(f.kv) + (f.m.parts.states ? " + " + t("memStates") + " " + gib(f.m.parts.states) : "") + " + " + t("memRuntime") + " " + gib(f.m.parts.workspace))}">${gen ? "≈ " + rate(gen) : "—"}</span>
+        <span class="num est" data-tip="${esc(mem ? memTipOf(mem) : t("genTip2").split("\n")[0])}">${gen ? "≈ " + rate(gen) : "—"}</span>
         ${parallel > 1 ? `<span class="num est" data-tip="${esc(t("decodeAllTip") + (ex ? "\n" + t("extrap") : ""))}">${gen ? "≈" + ex + " " + rate(gen * parallel) : "—"}</span>` : ""}</div>`;
-    }).join("")}</div></div><div class="note">${t("estNote")}</div>`;
+    }).join("")}</div></div>`;
+    if (sel.plan && sel.plan.rule) html += `<div class="note">${esc(t("ruleLabel"))}: ${esc(sel.plan.rule)}</div>`;
+    html += `<div class="note">${t("planEstNote")} ${t("estNote")}</div>`;
   }
   el.innerHTML = html;
 }
@@ -1926,7 +2135,9 @@ function autoVerdict() {
   const counts = Object.keys(l.by_depth.auto).map(Number).filter(c => l.by_depth.none[String(c)] && c <= parallel);
   if (!counts.length) return null;
   const n = Math.max(...counts);
-  const depth = Math.max(SHORT, Math.round(ctxValue * DEPTH));
+  // The context asked, or 32K under Auto: the verdict picks the plan's spec, so it may not follow
+  // the plan's own context.
+  const depth = Math.max(SHORT, Math.round((ctxValue || 32768) * DEPTH));
   const near = cells => cells.filter(x => x.aggregate > 0).sort((a, b) => Math.abs(a.tokens - depth) - Math.abs(b.tokens - depth))[0];
   const a = near(l.by_depth.auto[String(n)]), p = near(l.by_depth.none[String(n)]);
   if (!a || !p) return null;
@@ -1937,7 +2148,7 @@ function accelBlock(sel) {
   const cat = catalogFor(sel.repo) || {};
   const drafters = cat.drafters || [];
   const sp = sel.spec && sel.spec.known ? sel.spec : null;
-  if (!sp && !drafters.length) return "";
+  if (!sp && !drafters.length) return `<div class="sub" id="planspec"></div>`;
   const suite = suiteHere(cat);
   const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])
     .filter((d, i, all) => all.findIndex(x => KIND_SPEC[x.kind] === KIND_SPEC[d.kind]) === i);
@@ -1950,7 +2161,8 @@ function accelBlock(sel) {
       ${manualKinds.length ? `<select id="specmanual" class="${!["auto", "off"].includes(specMode) ? "primary" : ""}">
         <option value="">${t("accelManual")}…</option>
         ${manualKinds.map(k => `<option value="${k}" ${specMode === k ? "selected" : ""}>${t("manualPick")} ${esc(KIND_LABEL[k] || k)}</option>`).join("")}</select>` : ""}
-    </span></div>`;
+    </span></div>
+    <div class="sub" id="planspec"></div>`;
   if (specMode === "auto" && sp) {
     const best = suite && suite.configs.find(c => c.config === sp.config.split("+")[0]) || (suite && suite.configs[0]);
     html += `<div class="sub">${esc(sp.config)}${sp.speedup > 0 ? ` ×${sp.speedup.toFixed(2)}` : ""} <span class="muted">· ${esc(specWhere(sp))}</span></div>`;
@@ -1987,7 +2199,7 @@ function accelBlock(sel) {
         const precRun = pmPass ? `<div class="muted">${t("drOurs")}, ${esc(pm.gpu || "")}: ${Object.entries(pm[pmPass]).map(([q, k]) => `${esc(q)} ×${Number(k).toFixed(2)}`).join(" · ")} (${t(pmPass === "sampled" ? "passSampled" : "passGreedy")})</div>` : "";
         const result = best ? `${t("drOurs")}: ${esc(best.config)} ×${best.weighted.toFixed(2)} <span class="muted">(${t(best.pass === "sampled" ? "passSampled" : "passGreedy")})</span><div>${gainChips(best.gains)}</div>`
           : d.claim ? `<span class="muted">${t("drOthers")}: ${esc(d.claim)}</span>` : `<span class="muted">${t("drNone")}</span>`;
-        return `<tr><td><b>${esc(KIND_LABEL[d.kind] || d.kind)}</b><div class="muted">${src}${d.params_m ? ` · ${d.params_m >= 1000 ? (d.params_m / 1000).toFixed(1) + "B" : d.params_m + "M"}` : ""}</div></td>
+        return `<tr><td><b data-drkind="${esc(KIND_SPEC[d.kind] || "")}">${esc(KIND_LABEL[d.kind] || d.kind)}</b><div class="muted">${src}${d.params_m ? ` · ${d.params_m >= 1000 ? (d.params_m / 1000).toFixed(1) + "B" : d.params_m + "M"}` : ""}</div></td>
           <td>${where}</td><td>${engine}${d.engine === "yes" && d.convert ? `<div class="muted">${d.convert === "on download" ? t("drOnDownload") : t("drInCkpt")}</div>` : ""}</td>
           <td>${esc(prec)}${precRun}</td><td>${result}</td></tr>`;
       }).join("")}</table></div>
@@ -2047,7 +2259,7 @@ function renderDownloads() {
 async function launch(model, quant, button) {
   if (button) { button.disabled = true; button.textContent = t("launching"); }
   try {
-    const j = await api("/api/launch", {model, quant, gpu, max_context: ctxValue, max_concurrency: parallel,
+    const j = await api("/api/launch", {model, quant, gpu, max_context: ctxValue > 0 ? ctxValue : 0, max_concurrency: Math.min(Math.max(parallel, 1), MAX_PAR),
       hub: selected && model === selected.repo ? selected.hubName : "",
       spec: specMode === "off" || (specMode === "auto" && autoVerdict()?.plain) ? "none" : specMode, kv_dtype: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : ""});
     openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);
@@ -2061,10 +2273,15 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
   if (!el || el.disabled) return;
   const d = el.dataset;
-  if (d.tab) setTab(d.tab);
+  if (d.fitctx !== undefined) {
+    // What fits instead: that context x requests.
+    ctxValue = Math.min(+d.fitctx, nativeCtx()); parallel = Math.min(Math.max(+d.fitpar || 1, 1), MAX_PAR);
+    $("par").value = parallel; renderBody();
+  }
+  else if (d.tab) setTab(d.tab);
   else if (d.chat) {
     if (ev.target.closest("[data-gpu]")) ev.stopPropagation();
     if (chatUi) openChat(+d.chat); else showError(t("noChat"));
@@ -2093,11 +2310,11 @@ document.addEventListener("click", async ev => {
     try { localStorage.setItem("ninferno-sort", sortBy); } catch (e) {}
     renderSortBar(); search($("q").value.trim());
   }
-  else if (d.ctx) { ctxValue = +d.ctx; $("ctx").value = sliderAt(ctxValue); renderBody(); }
+  else if (d.ctx) { ctxValue = d.ctx === "auto" ? 0 : +d.ctx; $("ctx").value = sliderAt(ctxEff()); renderBody(); }
   else if (d.hub) openRepo(d.hub, found.hub.find(h => h.id === d.hub));
   else if (d.repo) { selected.repo = d.repo; loadRepo(); }
-  else if (d.kv) { kvType = d.kv; kvChosen = true; renderBody(); }
-  else if (d.qi !== undefined) { const q = selected.quants[+d.qi]; if (!q.drafter && q.supported) { quantSel = q; renderBody(); } }
+  else if (d.kv) { if (d.kv === "auto") kvChosen = false; else { kvType = d.kv; kvChosen = true; } renderBody(); }
+  else if (d.qi !== undefined) { const q = selected.quants[+d.qi]; if (!q.drafter && q.supported) { quantSel = q; quantPicked = true; renderBody(); } }
   else if (d.get !== undefined) prepare(selected.repo, quantSel.quant);
   else if (d.go !== undefined) { const here = localFor(selected.repo, quantSel.quant); launch(here ? here.artifact : selected.repo, here ? "" : quantSel.quant, el); }
 });

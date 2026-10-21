@@ -13,6 +13,9 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
+#include "product/plan/plan_speculation.h"
 #include "artifact/framing.h"
 #include "core/cache_file.h"
 #include "core/clock.h"
@@ -52,6 +55,47 @@ void reply_json(httplib::Response& res, const Json& body, int status = 200) {
 
 void reply_error(httplib::Response& res, int status, const std::string& message) {
     reply_json(res, {{"error", message}}, status);
+}
+
+int int_param(const httplib::Request& req, const char* name, int fallback);
+
+// What a launch would ask for, from /api/plan's and /api/quants' parameters: ctx (tokens, "auto"
+// or absent: automatic), par (1..8), kv, spec, precision. Throws std::invalid_argument for a value
+// ninferno-serve refuses.
+product::LaunchAsk launch_ask_of(const httplib::Request& req) {
+    product::LaunchAsk out;
+    const std::string ctx = req.get_param_value("ctx");
+    if (!ctx.empty() && ctx != "auto") {
+        long value = 0;
+        try {
+            value = std::stol(ctx);
+        } catch (const std::exception&) {
+            throw std::invalid_argument("ctx must be tokens or auto");
+        }
+        if (value < 1 || value > (1L << 24)) {
+            throw std::invalid_argument("ctx must be in [1, 16777216] tokens or auto");
+        }
+        out.max_context = static_cast<std::uint32_t>(value);
+    }
+    const int par = int_param(req, "par", 1);
+    if (par < 1 || par > static_cast<int>(kMaximumConcurrency)) {
+        throw std::invalid_argument("par must be in [1, 8]");
+    }
+    out.max_concurrency  = static_cast<std::uint32_t>(par);
+    const std::string kv = req.get_param_value("kv");
+    if (!kv.empty() && kv != "auto" && kv != "bf16" && kv != "int8" && kv != "fp8" &&
+        kv != "nvfp4" && kv != "k8v4") {
+        throw std::invalid_argument("kv must be auto, bf16, int8, fp8, nvfp4 or k8v4");
+    }
+    out.kv_dtype         = kv == "auto" ? std::string() : kv;
+    const std::string sp = req.get_param_value("spec");
+    if (!sp.empty() && sp != "auto" && sp != "none" && sp != "mtp" && sp != "dflash" &&
+        sp != "dflash2") {
+        throw std::invalid_argument("spec must be auto, none, mtp, dflash or dflash2");
+    }
+    out.spec  = sp.empty() ? std::string("auto") : sp;
+    out.exact = req.get_param_value("precision") == "exact";
+    return out;
 }
 
 int int_param(const httplib::Request& req, const char* name, int fallback) {
@@ -803,7 +847,112 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
     return out;
 }
 
-Json App::quants_json(const std::string& repo, int gpu, const std::string& hub) {
+namespace {
+
+// A GPU as the plan without the weights sees it (product/plan/plan_facts.h), from NVML.
+std::optional<runtime::PlanDeviceFacts> plan_device(const std::vector<GpuStat>& stats, int gpu) {
+    for (const auto& stat : stats) {
+        if (stat.index != gpu) { continue; }
+        return product::plan_device_of_stats(stat.name, stat.memory_total, stat.cc_major,
+                                             stat.cc_minor, std::nullopt, stat.pci_device_id,
+                                             stat.sms);
+    }
+    return std::nullopt;
+}
+
+// A listing's rows as the quant rule reads them.
+std::vector<product::QuantListing> quant_listing(const Json& list) {
+    std::vector<product::QuantListing> out;
+    for (const auto& q : list) {
+        out.push_back({.quant   = q.value("quant", std::string()),
+                       .format  = q.value("format", std::string()),
+                       .bytes   = q.value("bytes", std::uint64_t{0}),
+                       .bits    = q.value("bits", 0),
+                       .drafter = q.value("drafter", false)});
+    }
+    return out;
+}
+
+std::string launch_key(const product::LaunchAsk& launch) {
+    return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
+           launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
+}
+
+} // namespace
+
+std::optional<product::PlanSourceFacts>
+App::plan_facts(const std::string& repo, const Json& listing, const std::string& hub) {
+    (void)kv_json(repo, listing, hub); // reads the header once, and the facts with it
+    std::lock_guard lock(sizes_mutex_);
+    if (const auto it = plan_facts_.find(hub_key(repo, hub)); it != plan_facts_.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
+                    const std::string& quant, const product::LaunchAsk& launch) {
+    const Json list   = listing_of(repo, hub);
+    const auto device = plan_device(gpus_->snapshot(), gpu);
+    if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
+    const std::string key =
+        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch);
+    {
+        std::lock_guard lock(sizes_mutex_);
+        if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
+    }
+    const auto facts = plan_facts(repo, list, hub);
+    if (!facts) {
+        throw std::runtime_error(repo + ": the model's shape could not be read (offline, or no "
+                                        "GGUF header or config.json)");
+    }
+    const std::vector<product::QuantListing> listing = quant_listing(list);
+    const bool gguf                                  = std::any_of(listing.begin(), listing.end(),
+                                                                   [](const auto& q) { return !q.drafter && q.format == "gguf"; });
+    const product::LaunchPlanOptions options         = product::launch_options(launch);
+    product::DryRunInputs inputs;
+    inputs.device         = *device;
+    inputs.gpu            = product::gpu_key_of(*device);
+    inputs.options        = options.options;
+    inputs.ask            = options.ask;
+    inputs.ask.model_repo = repo;
+    // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
+    // attached, its MTP layers are.
+    const product::SpeculationSubject subject = product::planned_subject(
+        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu);
+    inputs.subject = &subject;
+    Json doc;
+    if (quant.empty() && gguf) {
+        const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
+        const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
+        product::PlannedSpeculation planned;
+        product::PlanSourceFacts at = *facts;
+        if (chosen != nullptr) {
+            planned = chosen->planned;
+            at      = product::with_weights(*facts, chosen->listing.bytes, chosen->basis);
+        } else {
+            planned = product::plan_model(*facts, inputs);
+        }
+        doc = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
+    } else {
+        product::PlanSourceFacts at = *facts;
+        for (const auto& q : listing) {
+            if (!q.drafter && (quant.empty() || q.quant == quant)) {
+                at = product::with_weights(*facts, q.bytes, runtime::WeightBasis::FileSize);
+                break;
+            }
+        }
+        const product::PlannedSpeculation planned = product::plan_model(at, inputs);
+        doc = product::dry_plan_document(at, quant.empty() ? repo : repo + ":" + quant, "hub",
+                                         inputs, planned, nullptr);
+    }
+    std::lock_guard lock(sizes_mutex_);
+    plans_[key] = doc;
+    return doc;
+}
+
+Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
+                      const product::LaunchAsk& launch) {
     const Json list = listing_of(repo, hub);
     // Fit for the GPU asked about.
     double memory_gib = 0;
@@ -850,6 +999,40 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub) 
     for (std::size_t i = out.size(); i-- > 0 && !pick;) {
         if (fits(out[i])) { pick = i; }
     }
+    // The largest that fits (product/plan/plan_quants.h, the same rule ninferno-serve applies
+    // before it fetches): each row's fit from the plan without the weights at the launch's
+    // context x streams on an idle card of this GPU; the name order above stays only where the
+    // shape cannot be read.
+    Json plan = nullptr;
+    if (gpu >= 0) {
+        try {
+            plan = plan_json(repo, hub, gpu, "", launch);
+        } catch (const std::exception&) {}
+    }
+    if (plan.is_object() && plan.contains("quants")) {
+        pick.reset();
+        for (auto& entry : out) {
+            for (const auto& row : plan["quants"]) {
+                if (row.value("quant", std::string()) != entry.value("quant", std::string()) ||
+                    entry.value("drafter", false)) {
+                    continue;
+                }
+                entry["fit"]     = row.value("fits", false)          ? "fits"
+                                   : row.value("fits_shared", false) ? "tight"
+                                                                     : "no";
+                entry["planned"] = {
+                    {"fits", row["fits"]},
+                    {"fits_shared", row["fits_shared"]},
+                    {"largest", row["largest"]},
+                    {"bits_per_weight", row["bits_per_weight"]},
+                    {"weights_basis", row["weights_basis"]},
+                    {"context", row["plan"].is_object() ? row["plan"].value("context", 0) : 0}};
+                if (row.value("largest", false)) {
+                    pick = static_cast<std::size_t>(&entry - &out[0]);
+                }
+            }
+        }
+    }
     if (pick) { out[*pick]["recommended"] = true; }
     auto kv          = kv_json(repo, list, hub);
     auto speculation = speculation_json(repo, gpu, kv, list);
@@ -859,6 +1042,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub) 
             {"architecture", arch},
             {"support", architecture_support(arch, "")},
             {"quants", out},
+            {"rule", plan.is_object() ? plan.value("rule", std::string()) : std::string()},
             {"kv", std::move(kv)},
             {"speculation", std::move(speculation)}};
 }
@@ -1053,7 +1237,22 @@ Json App::catalog_json(int gpu) {
     Json models        = Json::array();
     const auto catalog = this->catalog();
     for (const auto& listed : catalog->models()) {
-        const auto model = with_fitting_quant(listed, target, listings);
+        // The plan without the weights for a repository whose shape is read already (no network
+        // here: the catalog is drawn often).
+        const auto fits = [&](const std::string& repo, const Json& q) -> std::optional<bool> {
+            {
+                std::lock_guard lock(sizes_mutex_);
+                if (!plan_facts_.contains(hub_key(repo, "huggingface"))) { return std::nullopt; }
+            }
+            try {
+                const Json doc   = plan_json(repo, "huggingface", gpu,
+                                             q.value("quant", std::string()), product::LaunchAsk{});
+                const Json& plan = doc["plan"];
+                return plan.value("fits", false) && plan["chosen"].is_object() &&
+                       !plan["chosen"].value("survival", true);
+            } catch (const std::exception&) { return std::nullopt; }
+        };
+        const auto model = with_fitting_quant(listed, target, listings, fits);
         auto json        = to_json(estimate(*catalog, model, target, table));
         attach_speculation(json, speculation_plan(model.id, target));
         models.push_back(std::move(json));
@@ -1432,7 +1631,17 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                                  .value("base", Json::object())
                                  .value("repo_id", repo);
                 }
-                out = to_json(kv_model_of_config(convert::fetch_config(source, fetch)));
+                const Json config     = convert::fetch_config(source, fetch);
+                out                   = to_json(kv_model_of_config(config));
+                std::uint64_t weights = 0;
+                for (const auto& q : listing) {
+                    if (!q.value("drafter", false)) {
+                        weights = std::max<std::uint64_t>(weights, q.value("bytes", 0ULL));
+                    }
+                }
+                std::lock_guard lock(sizes_mutex_);
+                plan_facts_[hub_key(repo, hub)] =
+                    product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
             }
         } catch (const std::exception&) {}
         std::lock_guard lock(sizes_mutex_);
@@ -1447,6 +1656,11 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
             out = to_json(kv_model_of_gguf(file.metadata));
+            {
+                std::lock_guard lock(sizes_mutex_);
+                plan_facts_[hub_key(repo, hub)] =
+                    product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+            }
             break;
         } catch (const convert::GgufTruncated&) { continue; } catch (const std::exception&) {
             break;
@@ -1609,7 +1823,26 @@ void App::install(httplib::Server& server) {
         }
         const auto hub = req.get_param_value("hub") == "modelscope" ? "modelscope" : "huggingface";
         try {
-            reply_json(res, quants_json(repo, int_param(req, "gpu", -1), hub));
+            reply_json(res, quants_json(repo, int_param(req, "gpu", -1), hub, launch_ask_of(req)));
+        } catch (const std::invalid_argument& error) {
+            reply_error(res, 400, error.what());
+        } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
+    });
+    // The plan without the weights (ninferno-dry-plan/1): repo, hub, gpu, quant ("" or absent:
+    // every quantization and the largest that fits), ctx (tokens or "auto"), par (streams), kv
+    // (auto or a codec), spec (auto, none, mtp, dflash, dflash2), precision (exact).
+    server.Get("/api/plan", [this](const httplib::Request& req, httplib::Response& res) {
+        const auto [repo, tag] = split_model_tag(req.get_param_value("repo"));
+        if (!convert::is_repository_spec(repo)) {
+            return reply_error(res, 400, "repo must be org/name");
+        }
+        const auto hub = req.get_param_value("hub") == "modelscope" ? "modelscope" : "huggingface";
+        try {
+            reply_json(res, plan_json(repo, hub, int_param(req, "gpu", 0),
+                                      req.has_param("quant") ? req.get_param_value("quant") : tag,
+                                      launch_ask_of(req)));
+        } catch (const std::invalid_argument& error) {
+            reply_error(res, 400, error.what());
         } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
     });
     server.Get("/api/arch", [this](const httplib::Request& req, httplib::Response& res) {

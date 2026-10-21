@@ -50,7 +50,16 @@ For a hub id:
 - `--plan` prints the memory plan these options give on this GPU now (the plan ladder, every rung's
   bytes, the rung that fits and what would get more), then exits; `--plan --json` prints it as
   JSON for a UI's fit bar ([reference](reference/serving.md#automatic-context-selection)).
+- `--plan --no-load` plans without loading or downloading the weights and without a GPU. It reads
+  only the model's header or config: for a hub id, the file listing and one GGUF header. For a GGUF
+  repository it lists every quantization, says whether each fits the asked `--max-context` x
+  `--max-concurrency`, and names the largest that fits. `--plan-device "RTX 4090"` plans for another
+  card. It is an estimate; the start decides
+  ([reference](reference/serving.md#the-plan-without-the-weights)).
 - `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
+  Without `--quant`, a GGUF repository is fetched at the largest quantization that fits the asked
+  context and streams on this GPU's card type, and the log says which (`quant | ...`). When none
+  fits, nothing is downloaded and the refusal says what fits instead.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is

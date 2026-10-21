@@ -1526,6 +1526,8 @@ contract.
 | `--prepare-only` | fetch and convert, then exit | off |
 | `--plan` | print the plan ladder, the rung the free memory picks now and the advice, then exit without serving ([automatic context selection](#automatic-context-selection)) | off |
 | `--json` | with `--plan`: print it as JSON | off |
+| `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
+| `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
 | `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
@@ -1981,6 +1983,135 @@ fit against the ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
 | same, C=4 | 126,720, 4 cached states | 131,072 (rung 57), none (the Host tier keeps them) |
 | Qwen3.6-35B-A3B UD-IQ3_XXS, C=1 (3.15 GiB) | 262,144 | 262,144 (rung 1) |
 | same, C=4 | 262,144, a pool of 270,336 | 262,144, a pool of 262,144 (rung 37), 4 cached states |
+
+### The plan without the weights
+
+`ninferno-serve <model> --plan --no-load [--json] [--plan-device NAME]` plans a start without loading
+or downloading the weights and without a GPU. It builds the same plan ladder a start builds, from
+the same options, with the same functions (`runtime/engine/plan_dry_run.h`: `plan_axes`,
+`plan_ladder_inputs`, `plan_margins`, the ladder and its selection). The facts come from what the
+model says about itself:
+
+- **A hub id**: the repository listing (every file's size) and the header of one GGUF file (an HTTP
+  range of a few MiB), or `config.json` for safetensors weights. Nothing else is downloaded.
+- **A local GGUF file, checkpoint or `.ninferno` artifact**: its header, `config.json` or text
+  config.
+
+The device is the CUDA device (`--device`), or, with `--plan-device`, a named board of the PCI-ID
+table (`core/data/gpu_facts.json`). A named board is a what-if:
+
+- `--plan-device "RTX 4090"`, `--plan-device 0x2684` (the PCI product id);
+- optional facts after commas: `headless` or `display`, `linux` or `wddm`;
+- by default the board has this host's driver model, and a display under WDDM.
+
+Its memory is 97.5 % of the marketed VRAM. The free memory is the device's now, less the weights,
+when the device is real. On a named board, and in ninferno-ui, the dry run takes an idle card: the
+memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
+(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
+
+**What is estimated.** A start sizes each rung with the family's planner over the loaded model. The
+dry run sizes it from the shape:
+
+- KV pages at the codec's bytes per token;
+- the recurrent states and sliding rings of the active and the cached sequences;
+- the prefill chunk's activations and the decode logits;
+- a declared CUDA Graph allowance (16 MiB a lane for each set of graphs).
+
+The weights are the GGUF tensor table's bytes when one file holds the whole model
+(`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
+size"), and an artifact's tensors (`artifact`). The start stays the authority.
+
+The documented exception is what the start measures and the dry run cannot:
+
+- the load-time route tuner runs before the start reads the free memory, and whatever it leaves
+  resident;
+- the kernel warm-up, which may move the plan a rung down.
+
+The CPU tests check that the dry run and a start build the same ladder inputs and margins from
+the same options (`tests/test_plan_dry_run.cpp`).
+
+**Speculation.** `--spec auto` is resolved as a start resolves it, with the same functions
+(`product/speculation/speculation.h`, `SpeculationSubject`). For an artifact, the resolution is the
+artifact's own. A model not yet converted gets the drafter manifest the converter would write. A
+GGUF hub model gets it only with `--with-drafters`; without it, the registry entry of its shape
+over the MTP layers it carries is used. The start's fallback order is then judged by the dry run
+instead of an Engine build:
+
+1. the profile's choice;
+2. its fit fallback;
+3. the deepest shallower depth that fits;
+4. the model's own MTP head;
+5. plain decode.
+
+With an automatic pool at an explicit context, the pool rule follows. When the drafter leaves fewer
+whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if it keeps
+four fifths of plain decode's contexts; otherwise plain decode runs.
+
+The depth per context class (`spec::class_depths`: Short < 1,024 prompt tokens, Mid < 8,192, Long
+< 24,576, Huge) is reported from the card's round cost and the registry's class acceptance factors.
+No request routes by class yet.
+
+**The largest quantization that fits.** A hub GGUF repository without `--quant` plans every listed
+quantization at the asked context and `--max-concurrency`. It takes the largest that fits:
+- the most bits per weight (the bytes over the parameter count; the label's bits when the count is
+  unknown);
+- within 1 % of the bytes, a tie goes to the lower published quality loss where both have one, then
+  to the larger;
+- "fits" means a rung that is not a survival rung, whose pool holds a whole context of the asked
+  length for every stream (of its context with an automatic one);
+- when none does, the largest that fits as one pool the streams share.
+
+Above 8 bits per weight, drafters and sidecars are not served. A start does the same before the
+download. It logs the rule's line (`quant | UD-Q6_K_XL: the largest that fits 32,768 x 1 on NVIDIA
+GeForce RTX 4090 (23.50 GiB class)`). When nothing fits, it refuses before anything is downloaded and
+names what fits instead. The rule judges an idle card of the device's class, so the same card type
+gets the same quantization.
+
+**JSON** (`--plan --no-load --json`, ninferno-ui `/api/plan`), schema `ninferno-dry-plan/1`:
+
+| Field | Content |
+|---|---|
+| `estimate` | always `true` |
+| `model` | `source`, `kind` (`hub`, `gguf`, `checkpoint`, `artifact`), `architecture`, `family` (the artifact's model_type, `""` when no family serves it), `native_context`, `params`, `shape_known`, `weights_bytes`, `weights_basis`, `kv_bytes_per_token` (`bf16`, `int8`, `fp8`, `nvfp4`, `k8v4`), `window`, `builtin_mtp` |
+| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)`), `total_bytes`, `class_bytes`, `compute_capability`, `pci_device_id`, `wddm`, `display`, `integrated`, `free_basis` (`measured_now` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` |
+| `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
+| `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes`, `weights_basis`, `supported`, `why_unsupported`, `fits` (whole contexts), `fits_shared`, `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when unsupported); empty for a single model |
+| `chosen` | the rule's quantization, `null` when none fits or there is no listing |
+| `rule` | the rule's line, or why nothing fits |
+
+PLAN:
+
+| Field | Content |
+|---|---|
+| `planned` | the facts were enough to plan (else `reason`) |
+| `fits` | a rung was selected |
+| `rung`, `rungs` | the selected rung (1 is the top; 0 when none) and the ladder's length |
+| `reserve`, `reserve_kept` | how the rung was admitted (`kept`, `soft`, `warm_up`) |
+| `context`, `pool_contexts`, `private_contexts` | the rung's context, the whole contexts its pool holds, and whether every stream has one of its own (`false`: the streams share one pool) |
+| `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`), `needed_bytes` |
+| `description` | the rung in words |
+| `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
+| `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
+| `reason`, `fits_instead` | when nothing fits: why, and `[{concurrency, context}]`, the longest automatic context each concurrency fits |
+| `ladder` | every rung, top first, as `chosen` |
+| `speculation` | SPEC: the speculation the plan was made with |
+
+SPEC:
+
+| Field | Content |
+|---|---|
+| `ask` | `auto`, `none` or the explicit label |
+| `served`, `backend`, `depth` | what the start would serve (`plain`, `mtp:3`, `dflash2:7`, ...) |
+| `drafter`, `drafter_kind` | the drafter (`mtp`, `dflash`, `dflash2`, `gemma4_assistant`, `nemotron_h_mtp`) |
+| `basis`, `source` | where the choice came from: `own` (this GPU's profile), `similar` (another GPU's standing in), `generic` (the `*` profile), `builtin` (the built-in drafter's untuned default), `explicit`, `none` |
+| `depths`, `floor` | the depths the engine captures and the watchdog floor |
+| `load`, `load_label`, `load_basis` | the profile's load table (`[{lanes, depth}]`, after the stand-in cap; `measured` or `none`) |
+| `depth_at_concurrency` | the depth a step of `--max-concurrency` lanes runs at |
+| `modeled_load`, `model_note` | the round-cost model's load table (`spec::modeled_load`) and why it is unsure |
+| `classes` | `[{class, below_tokens, depth, basis, reason}]` for `short`, `mid`, `long`, `huge`: `basis` `modeled` or `no estimate` |
+| `fallbacks` | the start's order as tried: `[{step, label, fits, served, note}]`, `step` one of `profile`, `explicit`, `fit_fallback`, `shallower`, `head`, `plain`, `pool_head`, `pool_plain`; `served` marks the one the start ends on |
+| `notes` | the resolution's notes |
 
 ### KV capacity
 

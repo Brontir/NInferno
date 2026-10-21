@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -135,9 +136,15 @@ inline constexpr double kReserveGib = 2.0;
 // drafter}], as App keeps them) that fits with the reserve. A 16 GB card then gets the 3-bit
 // quantization of a 30B model instead of "does not fit". Unchanged when a source fits, or when no
 // listing has a quantization that fits.
-[[nodiscard]] CatalogModel
-with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
-                   const std::map<std::string, nlohmann::json>& listings);
+//
+// `fits(repo, quant)` is the plan without the weights (App::plan_json: an idle card of this GPU,
+// automatic context, one stream, the server's own ladder); nullopt where it cannot say (the
+// repository's shape not read yet), where the weights against the card with kReserveGib stand in.
+using QuantFits =
+    std::function<std::optional<bool>(const std::string& repo, const nlohmann::json& quant)>;
+[[nodiscard]] CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
+                                              const std::map<std::string, nlohmann::json>& listings,
+                                              const QuantFits& fits = {});
 
 // The KV cache a model keeps per token of a request, from its GGUF metadata (general.architecture
 // and its keys): full-attention layers grow with the context, sliding-window layers stop at the

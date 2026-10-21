@@ -355,6 +355,96 @@ void require_named_tune(const ResolvedSpeculation& resolved) {
                              " (name none to run the model's published profile)");
 }
 
+namespace {
+
+// 2. The published profile for this GPU from a manifest (manifest_profiles: the registry's, or
+//    the manifest's own copy for a bundle declaration or a registry entry this binary no longer
+//    knows), over its usable drafters.
+void resolve_manifest_profile(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, const GpuKey& gpu,
+                              ResolvedSpeculation& out) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    std::vector<std::string> available;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable()) { available.push_back(d.name); }
+    }
+    std::string origin;
+    std::string digest;
+    const Json* profiles  = &manifest_profiles(manifest, artifact, origin, &digest);
+    out.floor_sources     = *profiles; // also for a built-in default the caller falls to
+    const auto* published = select_published(*profiles, gpu, manifest.repo, &available);
+    if (published == nullptr) {
+        out.notes.push_back(origin + " has no profile for " + gpu_class +
+                            " along its similarity chain");
+        return;
+    }
+    Profile p;
+    if (!take_published(*profiles, *published, gpu, out, p)) { return; }
+    for (const auto& name : referenced(p)) {
+        const auto* d = manifest.drafter(name);
+        if (d == nullptr || !d->usable()) {
+            out.notes.push_back("profile drafter '" + name + "' is not attached" +
+                                (d ? " (" + d->status + ")" : std::string()));
+            continue;
+        }
+        if (!d->artifact.empty()) {
+            try {
+                if (artifact_id_hex(d->artifact) != d->artifact_id) {
+                    out.notes.push_back("drafter " + d->artifact + " changed since attach");
+                    continue;
+                }
+            } catch (const std::exception& e) {
+                out.notes.push_back("drafter " + d->artifact + ": " + e.what());
+                continue;
+            }
+            out.drafters[name] = d->artifact;
+        } else {
+            out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
+        }
+    }
+    out.source  = published_source(origin, *published);
+    out.sha256  = std::move(digest);
+    out.profile = std::move(p);
+}
+
+// 3. No manifest: the registry entry of the model the artifact is (by its shape), over the
+//    drafters it carries as components.
+void resolve_entry_profile(const ModelEntry& entry, const std::set<std::string>& components,
+                           const GpuKey& gpu, ResolvedSpeculation& out) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    // A GGUF converted with its MTP layers or DFlash drafter built in, never attached: the
+    // entry's profile rather than the built-in drafter's untuned default.
+    std::vector<std::string> available;
+    for (const char* name : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(name)) { available.emplace_back(name); }
+    }
+    out.floor_sources     = entry.profiles;
+    const auto* published = select_published(entry.profiles, gpu, {}, &available);
+    if (published == nullptr) {
+        out.notes.push_back("registry " + entry.id + " (by the artifact's shape) has no " +
+                            "profile for " + gpu_class +
+                            " along its similarity chain over the built-in drafters");
+        return;
+    }
+    Profile p;
+    if (!take_published(entry.profiles, *published, gpu, out, p)) { return; }
+    // Only the drafters the artifact carries: a profile whose drafter ships as an artifact of
+    // its own (gpt-oss-20b's DFlash) decodes plainly here rather than failing to load it.
+    for (const auto& name : referenced(p)) {
+        if (components.contains(name)) {
+            out.drafters[name] = "component:" + name;
+        } else {
+            out.notes.push_back("profile drafter '" + name +
+                                "' is neither attached nor built into the artifact");
+        }
+    }
+    out.source  = published_source("registry " + entry.id + " by the artifact's shape", *published);
+    out.sha256  = Registry::builtin().source_sha256();
+    out.profile = std::move(p);
+}
+
+} // namespace
+
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,
                                         const GpuKey& gpu,
@@ -447,80 +537,28 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     // 2. The published profile for this GPU (manifest_profiles: the registry's, or the manifest's
     //    own copy for a bundle declaration or a registry entry this binary no longer knows).
     if (manifest) {
-        std::vector<std::string> available;
-        for (const auto& d : manifest->drafters) {
-            if (d.usable()) { available.push_back(d.name); }
-        }
-        std::string origin;
-        std::string digest;
-        const Json* profiles  = &manifest_profiles(*manifest, artifact, origin, &digest);
-        out.floor_sources     = *profiles; // also for a built-in default the caller falls to
-        const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
-        if (published == nullptr) {
-            out.notes.push_back(origin + " has no profile for " + gpu_class +
-                                " along its similarity chain");
-            return out;
-        }
-        Profile p;
-        if (!take_published(*profiles, *published, gpu, out, p)) { return out; }
-        for (const auto& name : referenced(p)) {
-            const auto* d = manifest->drafter(name);
-            if (d == nullptr || !d->usable()) {
-                out.notes.push_back("profile drafter '" + name + "' is not attached" +
-                                    (d ? " (" + d->status + ")" : std::string()));
-                continue;
-            }
-            if (!d->artifact.empty()) {
-                try {
-                    if (artifact_id_hex(d->artifact) != d->artifact_id) {
-                        out.notes.push_back("drafter " + d->artifact + " changed since attach");
-                        continue;
-                    }
-                } catch (const std::exception& e) {
-                    out.notes.push_back("drafter " + d->artifact + ": " + e.what());
-                    continue;
-                }
-                out.drafters[name] = d->artifact;
-            } else {
-                out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
-            }
-        }
-        out.source  = published_source(origin, *published);
-        out.sha256  = std::move(digest);
-        out.profile = std::move(p);
+        resolve_manifest_profile(*manifest, artifact, gpu, out);
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {
-        // 3. No manifest: the registry entry of the model the artifact is, over the drafters it
-        //    carries as components (a GGUF converted with its MTP layers or DFlash drafter built
-        //    in, never attached), rather than the built-in drafter's untuned default.
-        std::vector<std::string> available;
-        for (const char* name : {"mtp", "dflash", "dflash2"}) {
-            if (components.contains(name)) { available.emplace_back(name); }
-        }
-        out.floor_sources     = entry->profiles;
-        const auto* published = select_published(entry->profiles, gpu, {}, &available);
-        if (published == nullptr) {
-            out.notes.push_back("registry " + entry->id + " (by the artifact's shape) has no " +
-                                "profile for " + gpu_class +
-                                " along its similarity chain over the built-in drafters");
-            return out;
-        }
-        Profile p;
-        if (!take_published(entry->profiles, *published, gpu, out, p)) { return out; }
-        // Only the drafters the artifact carries: a profile whose drafter ships as an artifact of
-        // its own (gpt-oss-20b's DFlash) decodes plainly here rather than failing to load it.
-        for (const auto& name : referenced(p)) {
-            if (components.contains(name)) {
-                out.drafters[name] = "component:" + name;
-            } else {
-                out.notes.push_back("profile drafter '" + name +
-                                    "' is neither attached nor built into the artifact");
-            }
-        }
-        out.source =
-            published_source("registry " + entry->id + " by the artifact's shape", *published);
-        out.sha256  = Registry::builtin().source_sha256();
-        out.profile = std::move(p);
+        resolve_entry_profile(*entry, components, gpu, out);
+    }
+    return out;
+}
+
+ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
+                                                const ModelEntry* entry,
+                                                const std::set<std::string>& components,
+                                                const GpuKey& gpu,
+                                                const std::filesystem::path& label) {
+    ResolvedSpeculation out;
+    if (manifest) {
+        out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
+        resolve_manifest_profile(*manifest, label, gpu, out);
+    } else if (entry != nullptr) {
+        resolve_entry_profile(*entry, components, gpu, out);
+    } else {
+        out.notes.push_back("no drafter manifest would be written and no registry entry has this "
+                            "model's shape");
     }
     return out;
 }

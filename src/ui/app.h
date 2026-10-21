@@ -6,6 +6,8 @@
 //   GET  /api/state        GPUs (NVML), running processes, UI settings: polled by the page
 //   GET  /api/catalog?gpu  recommended models with fit, speed and context for that GPU
 //   GET  /api/quants?repo&gpu   a hub repository's quantizations with sizes and fit (one listing)
+//   GET  /api/plan?repo&gpu&quant&ctx&par&kv&spec  the plan without the weights of one or every
+//                          quantization and the largest that fits (ninferno-dry-plan/1)
 //   GET  /api/local        models already converted (hub cache, --models-dir): architecture,
 //                          size, quantization, what they take, the original kept beside them
 //   GET  /api/search?q     the catalog's models and Hugging Face's search for q
@@ -29,6 +31,7 @@
 #include "ui/catalog.h"
 #include "ui/gpu_stats.h"
 #include "ui/processes.h"
+#include "product/plan/plan_quants.h"
 #include "product/update/update_check.h"
 
 #include <atomic>
@@ -185,7 +188,19 @@ private:
     nlohmann::json state_json();
     nlohmann::json catalog_json(int gpu);
     nlohmann::json quants_json(const std::string& repo, int gpu,
-                               const std::string& hub = "huggingface");
+                               const std::string& hub           = "huggingface",
+                               const product::LaunchAsk& launch = {});
+    // The plan without the weights of a repository's quantization (all of them when `quant` is
+    // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
+    // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
+    // --no-load --json would print it for an idle card of that GPU. Throws when the repository's
+    // shape cannot be read.
+    nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
+                             const std::string& quant, const product::LaunchAsk& launch);
+    // The facts of a repository's model (kv_json reads them from the same header); nullopt
+    // offline or unreadable.
+    std::optional<product::PlanSourceFacts>
+    plan_facts(const std::string& repo, const nlohmann::json& listing, const std::string& hub);
     // The architecture the repository's main weights name, read from them (the head of its
     // smallest GGUF model, else config.json), with how far the engine runs it.
     nlohmann::json arch_json(const std::string& repo, const std::string& hub);
@@ -222,6 +237,10 @@ private:
     std::mutex kinds_mutex_;
     std::map<std::string, std::pair<std::filesystem::file_time_type, ArtifactFacts>> kinds_;
     std::map<std::string, nlohmann::json> kv_; // repo -> KvModel json
+    // hub_key -> the plan facts kv_json read with it (product/plan/plan_facts.h)
+    std::map<std::string, product::PlanSourceFacts> plan_facts_;
+    // plan_json's documents by their inputs (the listing and the GPU's facts do not change)
+    std::map<std::string, nlohmann::json> plans_;
     std::map<std::string, nlohmann::json> archs_;    // arch_json, by hub_key
     std::map<std::string, std::string> base_models_; // repo -> its card's base_model ("-": none)
     std::map<std::string, std::pair<std::int64_t, nlohmann::json>> searches_; // q -> (time, hits)

@@ -27,7 +27,11 @@ This page states the rule and its target. The engine does not meet all of it yet
   more than its declared allowance (recorded as `selected_rung` in the plan summary, and as
   `observed.rung_selected` in the fingerprint's manifest);
 - the dry run (`ninferno-serve --plan`) uploads the weights to size the rungs: the planner reads
-  the bound model, and no family plans from the artifact alone yet;
+  the bound model. `--plan --no-load` (and ninferno-ui's `/api/plan`, and the quantization a GGUF
+  hub repository is fetched at) builds the same ladder with the same seams
+  (`runtime/engine/plan_dry_run.h`), but it sizes each rung from the shape (`plan_rung_estimate`),
+  not from the family's SequencePlanner. It is an estimate, and the start stays the authority;
+  no family plans its exact bytes from the artifact alone yet;
 - `ninferno-gemma4`'s session fit (a maintainer tool) still bisects the context on the free memory;
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
@@ -406,6 +410,32 @@ check, and the shortfall that moves a rung down.
   load-time route tuner before it reads the free memory, and the code of the kernels it launched
   stays loaded, so `--plan` can read a little more free memory than the start; the start may then
   land a rung lower, and its warm-up may move it down again, never up.
+
+### Without the weights
+
+`runtime/engine/plan_dry_run.h` builds the ladder of a start from facts alone. Those facts are:
+- the model's shape, from a GGUF header, a config.json or an artifact's text config;
+- its weight bytes, from the tensor table or the listed file sizes;
+- the device's VRAM class, compute capability and class-reserve facts, from the CUDA device or a
+  named board of `gpu_facts.json`.
+
+It uses the functions a start uses: `plan_axes`, `plan_ladder_inputs`, `plan_margins` and
+`plan_advice_margins`, then `plan_ladder`, `prune_plan_ladder` and `select_plan_rung`.
+`construct_or_plan` calls the same seams. `tests/test_plan_dry_run.cpp` checks that the two
+build the same rungs for the same options, and that the family table the dry run reads
+(`plan_family_storage`) is the Engine's.
+
+Only the rung bytes differ: a declared estimate of KV pages, states, rings, workspace and a graph
+allowance.
+
+The free memory is either the device's now, less the weights, or that of an idle card of the class:
+the VRAM less a declared driver share and a desktop share. It still only selects a declared rung.
+
+The quantization rule (`largest_fitting_quant`) is a pure function of the listing, the shape and
+those facts. It takes the most bits per weight whose selected rung is not a survival rung and holds
+a whole context for every stream. Ties go to the published quality loss, then the bytes. Without a
+private fit it takes the largest shared one. The rule reads the idle-card free memory, so the same
+card type gets the same quantization.
 
 ### The fingerprint
 

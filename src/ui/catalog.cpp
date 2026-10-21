@@ -168,15 +168,23 @@ void attach_speculation(nlohmann::json& model_json, const SpeculationPlan& plan)
 }
 
 CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
-                                const std::map<std::string, nlohmann::json>& listings) {
+                                const std::map<std::string, nlohmann::json>& listings,
+                                const QuantFits& fits) {
     if (gpu.memory_gib <= 0) { return model; }
     const double budget = gpu.memory_gib * 0.95 - kReserveGib;
+    // The plan's word where it has one, else the weights against the budget.
+    const auto fit = [&](const std::string& repo, const nlohmann::json& q) {
+        if (fits) {
+            if (const std::optional<bool> planned = fits(repo, q)) { return *planned; }
+        }
+        return to_gib(q.value("bytes", 0.0)) <= budget;
+    };
     for (const auto& source : model.sources) {
         const auto it = listings.find(source.repo);
         if (it == listings.end()) { continue; }
         for (const auto& q : it->second) {
             if (q.value("quant", std::string()) == source.quant && !q.value("drafter", false) &&
-                to_gib(q.value("bytes", 0.0)) <= budget) {
+                fit(source.repo, q)) {
                 return model; // a listed source fits already
             }
         }
@@ -189,8 +197,7 @@ CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
         if (it == listings.end()) { continue; }
         for (const auto& q : it->second) {
             const int bits = q.value("bits", 0);
-            if (q.value("drafter", false) || bits < 2 || bits > 4 ||
-                to_gib(q.value("bytes", 0.0)) > budget) {
+            if (q.value("drafter", false) || bits < 2 || bits > 4 || !fit(source.repo, q)) {
                 continue;
             }
             if (best == nullptr || q.value("bytes", 0.0) > best->value("bytes", 0.0)) {

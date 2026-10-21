@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -70,6 +71,42 @@ struct ServedSpeculation {
     // fallback runs instead: why (the Engine's refusal). Logged as a warning.
     std::string fit_fallback;
 };
+
+// What the served functions read of a target, resolved once: an artifact on disk and the device's
+// profile key (speculation_subject), or what a dry run without the artifact (ninferno-serve --plan
+// --no-load, ninferno-ui /api/plan) builds from the drafter plan the converter would write
+// (product/plan/plan_speculation.h). The functions below that take a subject are the ones the
+// artifact-and-device ones call: one code path for a start and a dry run.
+struct SpeculationSubject {
+    std::filesystem::path artifact; // empty: none yet (a dry run)
+    // The resolved profile (spec::resolve_speculation), with the built-in drafter's default when
+    // none was found; nullopt: the artifact's id is unreadable.
+    std::optional<spec::ResolvedSpeculation> resolved;
+    std::set<std::string> components; // the artifact's (text, mtp, dflash, dflash2, ...)
+    bool proposal_head = false;       // it carries Qwen's proposal head
+    spec::EngineSupport support;      // what the Engine's family runs
+};
+
+[[nodiscard]] SpeculationSubject
+speculation_subject(const std::filesystem::path& artifact, int device,
+                    const std::filesystem::path& local_profile = {});
+[[nodiscard]] SpeculationSubject
+speculation_subject(const std::filesystem::path& artifact, const spec::GpuKey& gpu,
+                    const std::filesystem::path& local_profile = {});
+// A subject whose profile was not found takes its built-in drafter's default (MTP 3, else
+// DFlash2 or DFlash 7), as speculation_subject does for an artifact.
+void apply_builtin_default(SpeculationSubject& subject);
+
+[[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
+                                                                  bool thinking, bool per_request);
+[[nodiscard]] std::optional<ServedSpeculation> served_shallower(const SpeculationSubject& subject,
+                                                                bool per_request,
+                                                                const spec::SpecConfig& config,
+                                                                double floor);
+[[nodiscard]] std::optional<ServedSpeculation>
+served_fit_fallback(const SpeculationSubject& subject, bool per_request);
+[[nodiscard]] std::optional<ServedSpeculation>
+served_head_fallback(const SpeculationSubject& subject, bool per_request);
 
 // nullopt when the artifact came with no speculation profile for this GPU. `thinking` is the
 // server's thinking default: the profile's default for it is the engine's default (primary)
