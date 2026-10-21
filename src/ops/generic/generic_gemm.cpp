@@ -2260,7 +2260,8 @@ std::optional<Route> staged_speed_route(const Problem& problem, const Weight& we
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
-    if (!d.features.mma_tensor || !d.features.mma_bf16_native || !allows_a8(problem.policy)) return;
+    // BF16 operands in the MMA itself (sm_80 on) imply tensor mma.sync (device_features_for).
+    if (!d.features.mma_bf16_native || !allows_a8(problem.policy)) return;
     // A device that reports no clock or bus width has no roofline: the A16 routes stand alone.
     if (d.sms <= 0 || d.sm_clock_khz <= 0 || d.memory_clock_khz <= 0 || d.memory_bus_bits <= 0) return;
     const GenerationRow& g = generation_row(d.major, d.minor);
@@ -2430,7 +2431,9 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
     };
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const auto s = rmma_schedule_info(i);
-        if (!rmma_schedule_launchable(i) || (s.cluster > 1 && d.major < 9)) continue;
+        // Cluster schedules exist in the full (sm_12x) build only (rmma_schedule_launchable); a
+        // substituted board without clusters is refused by route_admits (route_requires).
+        if (!rmma_schedule_launchable(i)) continue;
         if (emulated && s.n_tiles == 8) continue;
         const double threads = 32.0 * s.warps_m * s.warps_k;
         const double occ     = std::min(std::floor(max_thr / threads), max_cta);

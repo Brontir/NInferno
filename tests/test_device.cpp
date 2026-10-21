@@ -196,6 +196,17 @@ int check_feature_table() {
                            ninferno::device_features_for(7, 5).mma_tensor && ampere.mma_tensor &&
                            ada.mma_tensor && blackwell.mma_tensor,
                        "tensor mma.sync from sm_75 on; Volta emulates it");
+    {
+        // The selector reads BF16-native MMA as implying tensor mma.sync (a8_candidates).
+        bool implied = true;
+        for (int major = 7; major <= 13; ++major) {
+            for (int minor = 0; minor <= 9; ++minor) {
+                const auto f = ninferno::device_features_for(major, minor);
+                implied      = implied && (!f.mma_bf16_native || f.mma_tensor);
+            }
+        }
+        failures += expect(implied, "BF16-native MMA implies tensor mma.sync on every row");
+    }
     failures +=
         expect(ada.mma_fp8 && hopper.mma_fp8 && b200.mma_fp8 && blackwell.mma_fp8 && spark.mma_fp8,
                "the un-prefixed E4M3 mma.sync from sm_89 on");
