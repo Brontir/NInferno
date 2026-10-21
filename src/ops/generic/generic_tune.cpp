@@ -192,12 +192,16 @@ std::filesystem::path cache_path() {
 // ones would no longer match their prefill_base and drop untimed).
 constexpr const char* kSchema = "ninferno-dense-tune/4";
 
-void load_cache_locked() {
+// user_file: the cache an earlier run on this machine wrote, read only while tuning is on (a lab
+// run). Tuning off, decisions read no state left by an earlier run
+// (docs/maintainer/deterministic-decisions.md): the release's measurements alone.
+void load_cache_locked(bool user_file) {
     if (g_cache_loaded) { return; }
     g_cache_loaded = true;
     g_cache        = Json{{"schema", kSchema}, {"problems", Json::object()}};
     // An unreadable cache is a cache miss: the problem is timed again and the file rewritten.
-    if (std::optional<Json> j = read_cache_file(cache_path(), kSchema, "problems")) {
+    if (std::optional<Json> j =
+            user_file ? read_cache_file(cache_path(), kSchema, "problems") : std::nullopt) {
         g_cache = std::move(*j);
     }
     // The release's measurements (routes/tuner/dense_tune.json, keyed like this file: GPU class,
@@ -630,7 +634,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
         return;
     }
     const TuneMode mode = tune_mode("NINFERNO_DENSE_TUNE");
-    // Off (the default): the cached measurements are read, nothing is timed.
+    // Off (the default): the release's measurements are read, nothing is timed.
     const bool read_only = mode == TuneMode::Off;
     const Key id = key_of(problem);
     std::lock_guard lock(g_mutex);
@@ -644,7 +648,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
     }
     const std::string key = problem_key(problem);
 
-    load_cache_locked();
+    load_cache_locked(!read_only);
     auto& problems = g_cache["problems"];
     if (mode != TuneMode::Retune && problems.contains(key)) {
         Tuned tuned;
