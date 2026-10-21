@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NInferno</title>
-<script>try { const v = localStorage.getItem("ninferno-theme"); if (v) document.documentElement.dataset.theme = v; } catch (e) {}</script>
+<!-- Before the first paint: the saved theme, else dark (whatever the system's), so no light flash. -->
+<script>(function () { let v = null; try { v = localStorage.getItem("ninferno-theme"); } catch (e) {}
+document.documentElement.dataset.theme = v === "light" ? "light" : "dark"; })();</script>
 <style>
 :root{--bg:#f5f6f8;--panel:#fff;--soft:#f0f2f5;--fg:#1a1d21;--muted:#646d78;--line:#e1e4e9;--accent:#4b3df5;--accent-hover:#3627d6;--accent-soft:#ecebfe;--accent-fg:#fff;
 --ok:#1f8a4c;--ok-soft:#e2f4ea;--warn:#a86a00;--warn-soft:#fff2d9;--bad:#b42323;--bad-soft:#fce7e7;--bar-bg:#e7e9ee;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111316;--panel:#191c20;--soft:#20242a;--fg:#e7e9ec;--muted:#98a1ac;--line:#2a2f36;--accent:#8b80ff;--accent-hover:#a59dff;--accent-soft:#2a2650;--accent-fg:#0f0d24;
---ok:#6fd49b;--ok-soft:#173326;--warn:#f0c36b;--warn-soft:#3a2d11;--bad:#f29a9a;--bad-soft:#3d1c1c;--bar-bg:#2a2f36;color-scheme:dark}}
 :root[data-theme=dark]{--bg:#111316;--panel:#191c20;--soft:#20242a;--fg:#e7e9ec;--muted:#98a1ac;--line:#2a2f36;--accent:#8b80ff;--accent-hover:#a59dff;--accent-soft:#2a2650;--accent-fg:#0f0d24;
 --ok:#6fd49b;--ok-soft:#173326;--warn:#f0c36b;--warn-soft:#3a2d11;--bad:#f29a9a;--bad-soft:#3d1c1c;--bar-bg:#2a2f36;color-scheme:dark}
 *{box-sizing:border-box}
@@ -18,6 +18,10 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-app
 main{max-width:1240px;margin:0 auto;padding:14px 16px 40px}
 header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .brand{font-weight:750;font-size:19px;letter-spacing:.01em}
+.ver{margin-left:-4px;font:500 12px/1 var(--mono);color:var(--muted);white-space:nowrap}
+.ver.newer{color:var(--accent);cursor:pointer;border-radius:4px}
+.ver.newer:hover{text-decoration:underline}
+.ver.newer:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .tabs{display:flex;gap:4px;margin-left:auto;background:var(--soft);padding:3px;border-radius:10px}
 .tabs button{border:0;background:transparent;padding:6px 14px;border-radius:8px;color:var(--muted);font-weight:600}
 .tabs button.on{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
@@ -181,6 +185,7 @@ a.btnlink:hover{background:var(--soft)}
 <main>
 <header>
   <span class="brand">NInferno</span>
+  <span class="ver" id="ver" hidden></span>
   <span id="exposure" class="pill ok"></span>
   <span class="muted" id="gpuerr"></span>
   <nav class="tabs">
@@ -911,43 +916,43 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   srcGguf:"GGUF ファイル 1 つのヘッダー",srcConfig:"config.json",srcTag:"リポジトリの model_type タグ",memDetail:"重み {w} + KV {kv} + その他 {o}"});
 // The update bar.
 for (const [code, words] of Object.entries({
-  en:{updAvail:"NInferno {v} is available (you have {cur}).",updRequired:"This version ({cur}) is out of date: please update to {v}.",
+  en:{verTip:"This version of NInferno",updAvail:"NInferno {v} is available (you have {cur}).",updRequired:"This version ({cur}) is out of date: please update to {v}.",
       updNotes:"What's new",updNow:"Update",updLater:"Later",updWorking:"Updating to {v}…",updLog:"Progress",
       updDone:"NInferno {v} is installed. Restart to use it: running models stop and can be started again.",updRestart:"Restart now",
       updFailed:"The update did not finish.",updRetry:"Try again",updManual:"Install it with: ninferno-update",updRestarting:"Restarting…"},
-  ru:{updAvail:"Вышла NInferno {v} (у вас {cur}).",updRequired:"Эта версия ({cur}) устарела: обновитесь до {v}.",
+  ru:{verTip:"Установленная версия NInferno",updAvail:"Вышла NInferno {v} (у вас {cur}).",updRequired:"Эта версия ({cur}) устарела: обновитесь до {v}.",
       updNotes:"Что нового",updNow:"Обновить",updLater:"Позже",updWorking:"Обновление до {v}…",updLog:"Ход",
       updDone:"NInferno {v} установлена. Перезапустите: запущенные модели остановятся, их можно будет запустить снова.",updRestart:"Перезапустить",
       updFailed:"Обновление не завершилось.",updRetry:"Повторить",updManual:"Установите командой: ninferno-update",updRestarting:"Перезапуск…"},
-  uk:{updAvail:"Вийшла NInferno {v} (у вас {cur}).",updRequired:"Ця версія ({cur}) застаріла: оновіться до {v}.",
+  uk:{verTip:"Встановлена версія NInferno",updAvail:"Вийшла NInferno {v} (у вас {cur}).",updRequired:"Ця версія ({cur}) застаріла: оновіться до {v}.",
       updNotes:"Що нового",updNow:"Оновити",updLater:"Пізніше",updWorking:"Оновлення до {v}…",updLog:"Перебіг",
       updDone:"NInferno {v} встановлено. Перезапустіть: запущені моделі зупиняться, їх можна буде запустити знову.",updRestart:"Перезапустити",
       updFailed:"Оновлення не завершилося.",updRetry:"Повторити",updManual:"Встановіть командою: ninferno-update",updRestarting:"Перезапуск…"},
-  de:{updAvail:"NInferno {v} ist verfügbar (Sie haben {cur}).",updRequired:"Diese Version ({cur}) ist veraltet: bitte auf {v} aktualisieren.",
+  de:{verTip:"Installierte Version von NInferno",updAvail:"NInferno {v} ist verfügbar (Sie haben {cur}).",updRequired:"Diese Version ({cur}) ist veraltet: bitte auf {v} aktualisieren.",
       updNotes:"Neuerungen",updNow:"Aktualisieren",updLater:"Später",updWorking:"Aktualisiere auf {v}…",updLog:"Verlauf",
       updDone:"NInferno {v} ist installiert. Neu starten, um sie zu nutzen: laufende Modelle stoppen und lassen sich wieder starten.",updRestart:"Jetzt neu starten",
       updFailed:"Die Aktualisierung wurde nicht abgeschlossen.",updRetry:"Erneut versuchen",updManual:"Installieren mit: ninferno-update",updRestarting:"Starte neu…"},
-  fr:{updAvail:"NInferno {v} est disponible (vous avez {cur}).",updRequired:"Cette version ({cur}) est obsolète : mettez à jour vers {v}.",
+  fr:{verTip:"Version installée de NInferno",updAvail:"NInferno {v} est disponible (vous avez {cur}).",updRequired:"Cette version ({cur}) est obsolète : mettez à jour vers {v}.",
       updNotes:"Nouveautés",updNow:"Mettre à jour",updLater:"Plus tard",updWorking:"Mise à jour vers {v}…",updLog:"Progression",
       updDone:"NInferno {v} est installée. Redémarrez pour l'utiliser : les modèles en cours s'arrêtent et peuvent être relancés.",updRestart:"Redémarrer",
       updFailed:"La mise à jour n'a pas abouti.",updRetry:"Réessayer",updManual:"Installez-la avec : ninferno-update",updRestarting:"Redémarrage…"},
-  es:{updAvail:"NInferno {v} está disponible (tienes {cur}).",updRequired:"Esta versión ({cur}) está obsoleta: actualiza a {v}.",
+  es:{verTip:"Versión instalada de NInferno",updAvail:"NInferno {v} está disponible (tienes {cur}).",updRequired:"Esta versión ({cur}) está obsoleta: actualiza a {v}.",
       updNotes:"Novedades",updNow:"Actualizar",updLater:"Más tarde",updWorking:"Actualizando a {v}…",updLog:"Progreso",
       updDone:"NInferno {v} está instalada. Reinicia para usarla: los modelos en marcha se detienen y pueden volver a iniciarse.",updRestart:"Reiniciar ahora",
       updFailed:"La actualización no terminó.",updRetry:"Reintentar",updManual:"Instálala con: ninferno-update",updRestarting:"Reiniciando…"},
-  it:{updAvail:"È disponibile NInferno {v} (hai {cur}).",updRequired:"Questa versione ({cur}) è superata: aggiorna a {v}.",
+  it:{verTip:"Versione installata di NInferno",updAvail:"È disponibile NInferno {v} (hai {cur}).",updRequired:"Questa versione ({cur}) è superata: aggiorna a {v}.",
       updNotes:"Novità",updNow:"Aggiorna",updLater:"Più tardi",updWorking:"Aggiornamento a {v}…",updLog:"Avanzamento",
       updDone:"NInferno {v} è installata. Riavvia per usarla: i modelli in esecuzione si fermano e si possono riavviare.",updRestart:"Riavvia ora",
       updFailed:"L'aggiornamento non è terminato.",updRetry:"Riprova",updManual:"Installala con: ninferno-update",updRestarting:"Riavvio…"},
-  pl:{updAvail:"Dostępna jest NInferno {v} (masz {cur}).",updRequired:"Ta wersja ({cur}) jest przestarzała: zaktualizuj do {v}.",
+  pl:{verTip:"Zainstalowana wersja NInferno",updAvail:"Dostępna jest NInferno {v} (masz {cur}).",updRequired:"Ta wersja ({cur}) jest przestarzała: zaktualizuj do {v}.",
       updNotes:"Co nowego",updNow:"Aktualizuj",updLater:"Później",updWorking:"Aktualizacja do {v}…",updLog:"Postęp",
       updDone:"NInferno {v} jest zainstalowana. Uruchom ponownie, aby jej użyć: działające modele zatrzymają się i można je uruchomić znowu.",updRestart:"Uruchom ponownie",
       updFailed:"Aktualizacja się nie zakończyła.",updRetry:"Spróbuj ponownie",updManual:"Zainstaluj poleceniem: ninferno-update",updRestarting:"Ponowne uruchamianie…"},
-  zh:{updAvail:"NInferno {v} 已发布（当前 {cur}）。",updRequired:"此版本（{cur}）已过时：请更新到 {v}。",
+  zh:{verTip:"已安装的 NInferno 版本",updAvail:"NInferno {v} 已发布（当前 {cur}）。",updRequired:"此版本（{cur}）已过时：请更新到 {v}。",
       updNotes:"更新内容",updNow:"更新",updLater:"稍后",updWorking:"正在更新到 {v}…",updLog:"进度",
       updDone:"NInferno {v} 已安装。重启后生效：正在运行的模型会停止，之后可再次启动。",updRestart:"立即重启",
       updFailed:"更新未完成。",updRetry:"重试",updManual:"用此命令安装：ninferno-update",updRestarting:"正在重启…"},
-  ja:{updAvail:"NInferno {v} が利用できます（現在 {cur}）。",updRequired:"このバージョン（{cur}）は古くなっています：{v} に更新してください。",
+  ja:{verTip:"インストール済みの NInferno のバージョン",updAvail:"NInferno {v} が利用できます（現在 {cur}）。",updRequired:"このバージョン（{cur}）は古くなっています：{v} に更新してください。",
       updNotes:"新機能",updNow:"更新",updLater:"後で",updWorking:"{v} に更新中…",updLog:"進行状況",
       updDone:"NInferno {v} をインストールしました。再起動すると使えます：実行中のモデルは停止し、再度起動できます。",updRestart:"今すぐ再起動",
       updFailed:"更新が完了しませんでした。",updRetry:"再試行",updManual:"次のコマンドでインストール：ninferno-update",updRestarting:"再起動中…"},
@@ -964,10 +969,13 @@ const LANGS = [
   ["zh", "中文", '<svg viewBox="0 0 30 20"><rect width="30" height="20" fill="#DE2910"/><path d="M5,2.5 6.2,6.1 2.4,3.9H7.6L3.8,6.1Z" fill="#FFDE00"/></svg>'],
   ["ja", "日本語", '<svg viewBox="0 0 3 2"><rect width="3" height="2" fill="#fff"/><circle cx="1.5" cy="1" r=".6" fill="#BC002D"/></svg>'],
 ];
+// The language: the one the user picked (saved), else the first of the system's languages the
+// page has (by primary subtag: "uk-UA" → uk, "en-GB" → en), else English.
 let lang = null; try { lang = localStorage.getItem("ninferno-lang"); } catch (e) {}
-if (!T[lang]) {
-  const want = (navigator.languages || [navigator.language || "en"]).map(x => String(x).toLowerCase().slice(0, 2));
-  lang = want.find(x => T[x]) || "en";
+const hasLang = x => Object.prototype.hasOwnProperty.call(T, x);
+if (!hasLang(lang)) {
+  const system = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+  lang = system.map(x => String(x || "").toLowerCase().split(/[-_]/)[0]).find(hasLang) || "en";
 }
 const L = T[lang];
 document.documentElement.lang = lang;
@@ -991,12 +999,14 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const GiB = 2 ** 30;
 
 // ---- theme and language ----------------------------------------------------------------------
-let theme = document.documentElement.dataset.theme || null;
-const isDark = () => theme ? theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+// Dark unless the user switched to light (saved); the system's theme is not followed. The script in
+// <head> set the attribute before the first paint.
+let theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+const isDark = () => theme === "dark";
 // The chat (llama-ui, served from this origin) keeps its theme under mode-watcher's key: it takes
 // ours, at its next load and, when it is open, at once.
 function shareTheme() {
-  const mode = theme || "system";
+  const mode = theme;
   try {
     localStorage.setItem("mode-watcher-mode", mode);
     // llama-ui applies its own setting (LlamaUi.config.theme) over mode-watcher's at load.
@@ -1018,7 +1028,6 @@ $("theme").onclick = () => {
   try { localStorage.setItem("ninferno-theme", theme); } catch (e) {}
   paintTheme();
 };
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTheme);
 paintTheme();
 const flag = svg => `<span class="flag">${svg.replace("<svg ", '<svg preserveAspectRatio="none" ')}</span>`;
 const here = LANGS.find(x => x[0] === lang) || LANGS[0];
@@ -1058,7 +1067,28 @@ let S = {gpus:[], processes:[]}, gpu = 0, chatUi = false, logId = 0;
 function live(p) { return !["exited","failed"].includes(p.state); }
 // ---- update bar: a newer release (ninferno-ui's daily check), its install and the restart ------
 let restarting = false;
+// The version beside the name, always: this build's (the one the update check compares), and the
+// newer release after an arrow; a click on it brings back the bar hidden by "Later".
+function renderVersion(u) {
+  const ver = $("ver"), newer = !!(u && u.current && u.latest && u.latest !== u.current);
+  ver.hidden = !(u && u.current);
+  if (ver.hidden) return;
+  ver.textContent = newer ? `${u.current} → ${u.latest}` : u.current;
+  const tip = u.installed ? "updDone" : u.required ? "updRequired" : "updAvail";
+  ver.title = newer ? fill(t(tip), {v: u.latest, cur: u.current}) : t("verTip");
+  ver.classList.toggle("newer", newer);
+  // A button for the keyboard too while it does something (Enter or Space, like a button).
+  if (newer) { ver.setAttribute("role", "button"); ver.tabIndex = 0; }
+  else { ver.removeAttribute("role"); ver.removeAttribute("tabindex"); }
+  const reopen = () => {
+    try { localStorage.removeItem("ninferno-update-later"); } catch (e) {}
+    renderUpdate(u);
+  };
+  ver.onclick = newer ? reopen : null;
+  ver.onkeydown = newer ? ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); reopen(); } } : null;
+}
 function renderUpdate(u) {
+  renderVersion(u);
   const bar = $("update");
   if (!u || !u.latest) { bar.hidden = true; return; }
   let later = null; try { later = localStorage.getItem("ninferno-update-later"); } catch (e) {}
