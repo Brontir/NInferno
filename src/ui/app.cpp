@@ -1424,6 +1424,13 @@ void App::watch_health() {
     }
 }
 
+// What a browser without the access key sees.
+constexpr const char* kKeyPage =
+    "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+    "<title>NInferno</title><body style='font:16px system-ui;margin:3em auto;max-width:22em'>"
+    "<form method=get action=/><p>NInferno: access key</p><input name=key type=password "
+    "autofocus required style='width:100%;font:inherit'><p><button>Open</button></p></form>";
+
 void App::install(httplib::Server& server) {
     const AccessPolicy policy = options_.access;
     server.set_pre_routing_handler([policy](const httplib::Request& req, httplib::Response& res) {
@@ -1436,9 +1443,45 @@ void App::install(httplib::Server& server) {
                         "Host not allowed: ninferno-ui answers localhost only (see --listen)");
             return httplib::Server::HandlerResponse::Handled;
         }
+        const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
+                             req.has_header("X-Real-IP");
+        switch (check_key(policy, req.remote_addr, req.get_header_value("Host"), proxied,
+                          req.get_header_value("Cookie"), req.get_header_value("Authorization"),
+                          req.get_param_value("key"))) {
+        case KeyCheck::pass: break;
+        case KeyCheck::pass_set_cookie:
+            res.set_header("Set-Cookie",
+                           key_cookie(policy.port) + "=" + policy.key + "; Path=/; HttpOnly; SameSite=Lax" +
+                               (forwarded_https(req.get_header_value("X-Forwarded-Proto"),
+                                                req.get_header_value("Forwarded"))
+                                    ? "; Secure"
+                                    : ""));
+            if (req.method == "GET") { // the key leaves the address bar and the history
+                const bool local = req.path.size() < 2 || (req.path[1] != '/' && req.path[1] != '\\');
+                res.set_redirect(local ? req.path : std::string("/"), 303);
+                return httplib::Server::HandlerResponse::Handled;
+            }
+            break;
+        case KeyCheck::keyless_proxy:
+            reply_error(res, 403,
+                        "a proxy in front of ninferno-ui needs an access key: start it with "
+                        "NINFERNO_UI_KEY or --access-key-file F (16-256 of A-Z a-z 0-9 . _ ~ -)");
+            return httplib::Server::HandlerResponse::Handled;
+        case KeyCheck::refused:
+            if (req.path != "/") {
+                reply_error(res, 401, "access key required");
+            } else {
+                res.status = 401;
+                res.set_content(kKeyPage, "text/html; charset=utf-8");
+            }
+            return httplib::Server::HandlerResponse::Handled;
+        }
         if (req.method != "GET" && req.method != "HEAD") {
             if (!origin_allowed(req.get_header_value("Origin"), req.get_header_value("Host"))) {
-                reply_error(res, 403, "cross-origin request refused");
+                reply_error(res, 403,
+                            origin_refusal(req.get_header_value("Origin"),
+                                           req.get_header_value("Host"),
+                                           proxied || req.has_header("X-Forwarded-Proto")));
                 return httplib::Server::HandlerResponse::Handled;
             }
             if (req.get_header_value("Content-Type").rfind("application/json", 0) != 0) {
