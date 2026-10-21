@@ -213,8 +213,6 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.speculative.watchdog_min_rounds = 8; }},
         {"speculative.shared_trip_floor",
          [](EngineOptions& o) { o.speculative.shared_trip_floor = 1.1; }},
-        {"speculative.calibrate_floor",
-         [](EngineOptions& o) { o.speculative.calibrate_floor = true; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
     // The artifact, its prefill signature and a separate drafter enter by id.
@@ -415,7 +413,6 @@ int taint() {
     in.env.clear();
     failures += check(rt::taint_of(in).empty(), "a clean input has no taint");
     in.facts["machine.reference_clock_khz"]   = "0";
-    in.options["speculative.calibrate_floor"] = "1";
     in.sources["dense_tune.user"]             = "absent";
     in.sources["route_table.lenders"]         = "gb206 ab";
     in.sources["route_table.class"]           = "gb206";
@@ -423,7 +420,7 @@ int taint() {
     in.sources["moe_tune.user"]               = "moe_tune.json sha256:ab";
     in.sources["spec_fit_fallback"]           = "shallower+captured_load";
     const auto t                              = rt::taint_of(in);
-    for (const char* key : {"clocks", "calibrate_floor", "user_tune_cache", "borrowed_routes",
+    for (const char* key : {"clocks", "user_tune_cache", "borrowed_routes",
                             "foreign_route_table", "local_spec_tune", "spec_fit_fallback"}) {
         failures += check(t.contains(key), std::string("taint names ") + key);
     }

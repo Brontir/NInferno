@@ -351,7 +351,6 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["speculative.watchdog_window"]     = number(s.watchdog_window);
     out["speculative.watchdog_min_rounds"] = number(s.watchdog_min_rounds);
     out["speculative.shared_trip_floor"]   = bits(s.shared_trip_floor);
-    out["speculative.calibrate_floor"]     = flag(s.calibrate_floor);
     return out;
 }
 
@@ -421,7 +420,6 @@ DecisionSection taint_of(const DecisionInputs& in) {
         if (in.sources.contains(std::string(tuner) + "_tune.user")) { tuners.emplace_back(tuner); }
     }
     if (!tuners.empty()) { out["user_tune_cache"] = joined(tuners); }
-    if (value(in.options, "speculative.calibrate_floor") == "1") { out["calibrate_floor"] = "1"; }
     // No roofline (MachineFacts::has_roofline): the cost model stands aside. A known id whose
     // driver reports no clocks (MIG, some WSL drivers) has the table's and is not tainted.
     if (value(in.facts, "machine.reference_clock_khz") == "0" ||
