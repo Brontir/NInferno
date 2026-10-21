@@ -20,10 +20,10 @@ ninferno-serve unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF --quant UD-Q4_
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | 14,587 | 547 | 488 | 860 | 1,077 | 2026-10-21 |
-| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-Q4_K_XL | off | auto | 15,404 | 356 | 377 | 807 | 973 | 2026-10-21 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | fast | 14,587 | 547 | 488 | 860 | 1,077 | 2026-10-21 |
+| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-Q4_K_XL | off | auto | fast | 15,404 | 356 | 377 | 807 | 973 | 2026-10-21 |
 
 ## Measurement
 

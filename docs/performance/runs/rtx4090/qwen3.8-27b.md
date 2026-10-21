@@ -20,11 +20,22 @@ ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --with-drafters --spe
 
 Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *n* concurrent short chats, all streams together.
 
-| Weights | Speculation | KV | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
-|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | 3,345 | 127 | 122 | 277 | – | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | – | – | – | – | 366 | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | 3,376 | 48.7 | 50.5 | 156 | 234 | 2026-10-19 |
+| Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | fast | 3,345 | 127 | 122 | 277 | – | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | fast | – | – | – | – | 366 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | fast | 3,376 | 48.7 | 50.5 | 156 | 234 | 2026-10-19 |
+
+## Quality
+
+What each `--activations` mode gives: its speed (the fastest setting measured in it), perplexity (lower is better) on `ninferno-ppl-1m-v1/quick`, and how far it moves the next-token distribution from `exact`: mean KL divergence and the share of positions with the same top token.
+
+| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from exact | Same top token | Measured |
+|---|---|---:|---:|---:|---:|---:|---|
+| UD-Q4_K_XL | exact | – | – | 4.2663 | reference |  | 2026-10-20 |
+| UD-Q4_K_XL | fast | 122 | 3,376 | 4.2675 | 0.00256 | 98.02 % | 2026-10-20 |
+| UD-Q4_K_XL | int8 | – | – | 4.2675 | 0.00256 | 98.02 % | 2026-10-20 |
+
 
 ## Measurement
 

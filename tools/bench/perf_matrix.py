@@ -145,6 +145,7 @@ def main():
     rows.add_argument("--spec", default="none", help="none, mtp, dflash or dflash2")
     rows.add_argument("--draft-tokens", type=int)
     rows.add_argument("--kv", default="auto", help="the server's --kv-dtype")
+    rows.add_argument("--activations", default="fast", help="the server's --activations mode")
     rows.add_argument("--flags", default="", help="the server flags, as on the pair's page")
     rows.add_argument("--version", help="the NInferno release or public commit (with --engine, that engine's build)")
     rows.add_argument("--engine", default="ninferno",
@@ -176,6 +177,7 @@ def main():
     if args.jsonl:
         common = {"machine": machine(args.device), "model": args.model, "recipe": args.recipe,
                   "spec": args.spec, "draft_tokens": args.draft_tokens, "kv": args.kv,
+                  "activations": args.activations,
                   "sampling": "greedy", "warmup": 1, "unit": "tok/s", "flags": args.flags,
                   "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         if args.version:
