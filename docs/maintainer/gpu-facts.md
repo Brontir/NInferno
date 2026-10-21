@@ -72,7 +72,9 @@ its range's bottom fingerprint alike whatever their driver reports.
 1. Take the id from pci-ids and the figures from NVIDIA's datasheet or product page. Use a
    database page (TechPowerUp) only for a figure NVIDIA does not publish, and say so in `note`.
 2. Add one row, in the chip's block, with every field and at least the spec page and the pci-ids
-   entry in `sources`. Set `mma_slow` only for a board without tensor cores.
+   entry in `sources`. Set `mma_slow` only for a board without tensor cores. The row decides it
+   for its id (`board_mma_slow`); `chip_mma_slow` (TU116, TU117) answers only for an id the table
+   lacks, so every board of those chips carries it here.
 3. Run `ninferno_machine_facts_test`. It parses the embedded table and checks every row: sources,
    ranges, the chip against `gpu_chip`, and `mma_slow` against the chip. A new lab card also goes
    into the test's lab list, with the values its driver reports.

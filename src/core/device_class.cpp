@@ -153,13 +153,11 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->memory_clock_khz = optional_attribute(cudaDevAttrMemoryClockRate, device);
     out->sm_clock_khz     = optional_attribute(cudaDevAttrClockRate, device);
     out->features = common_features(device_features_for(prop.major, prop.minor), build_features());
-    out->pci_device_id    = pci_product_id(prop, device);
-    out->chip             = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
-    out->chip_from_pci    = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
-    out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
-    out->facts            = machine_facts_of(*out);
-    // The table also marks the GTX boards built on TU106 (chip_mma_slow knows only TU116/117).
-    out->features.mma_slow = out->features.mma_slow || out->facts.mma_slow;
+    out->pci_device_id     = pci_product_id(prop, device);
+    out->chip              = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
+    out->chip_from_pci     = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
+    out->facts             = machine_facts_of(*out);
+    out->features.mma_slow = board_mma_slow(out->facts, prop.major, prop.minor, out->chip);
     return out;
 }
 
@@ -167,6 +165,11 @@ std::unique_ptr<DeviceClass> query(int device) {
 
 bool chip_mma_slow(int major, int minor, std::string_view chip) noexcept {
     return major == 7 && minor == 5 && (chip == "tu116" || chip == "tu117");
+}
+
+bool board_mma_slow(const MachineFacts& facts, int major, int minor,
+                    std::string_view chip) noexcept {
+    return !facts.sku.empty() ? facts.mma_slow : chip_mma_slow(major, minor, chip);
 }
 
 DeviceFeatures device_features_for(int major, int minor) noexcept {
@@ -531,10 +534,10 @@ std::vector<std::string> DeviceClass::class_chain() const {
 }
 
 namespace {
-// The board's own mma_slow: the features' (the chip's or the table's, as the query sets it), the
-// chip's and the table's facts, for a class a test assembled by hand.
+// The board's own mma_slow: the features' (board_mma_slow, as the query sets it), or
+// board_mma_slow of the class's facts and chip, for a class a test assembled by hand.
 bool own_mma_slow(const DeviceClass& d) {
-    return d.features.mma_slow || d.facts.mma_slow || chip_mma_slow(d.major, d.minor, d.chip);
+    return d.features.mma_slow || board_mma_slow(d.facts, d.major, d.minor, d.chip);
 }
 } // namespace
 
@@ -590,9 +593,9 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
     d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
     d.features      = device_features_for(major, minor);
-    // The chip's mma_slow or the table's (the GTX boards of TU106), as the query sets it; `facts`
-    // itself stays empty until a test asks for it.
-    d.features.mma_slow = chip_mma_slow(major, minor, d.chip) || machine_facts_of(d).mma_slow;
+    // board_mma_slow as the query sets it (the table's row, else the chip's); `facts` itself stays
+    // empty until a test asks for it.
+    d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
     // The architecture's limits (CUDA programming guide, compute capability tables).
     const int cc           = major * 10 + minor;
     d.smem_per_block_optin = cc == 75                  ? 64 * 1024

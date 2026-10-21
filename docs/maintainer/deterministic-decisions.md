@@ -24,10 +24,7 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
-  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the `mma_slow`
-  exception is `chip_mma_slow` (TU116/117) OR the table's fact (also the GTX boards on TU106), in
-  the device query, `synthetic_device_class` and the similar-chip filter: two sources of one fact
-  rather than the table alone;
+  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;
 - model constants (speculative acceptance) do not record their keys, corpus hash and tolerance yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
