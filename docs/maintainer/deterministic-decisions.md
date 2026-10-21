@@ -21,14 +21,18 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the TU116/117 exception, the PCI-ID reference table, the speed labels and the kernel hash on
   constants do not exist yet;
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
-  `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the build,
-  the requested options, the route table, dense-tune files, speculation profile and drafter
-  registry by content, the decision environment variables that are set, the plan startup resolved
-  (context, chunk, KV, cached states, Host tier, MoE offload, speculative windows, route
-  breakpoints) and the violations of this page present (taint). It does not yet cover the PCI-ID
-  reference facts, plan levels (there are none: the plan is the free-memory result itself), the
-  constants and the kernel hash, nor the route each shape took: two runs with equal fingerprints
-  read the same inputs, which is not yet proof of the same decisions.
+  `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the host's
+  logical CPU count, CPU instruction set and RAM class (a power of two of GiB), the build, the
+  requested options, the route table, dense-tune files, speculation profile and drafter registry
+  by content, the decision environment variables that are set, the plan startup resolved without
+  the free memory (KV and state storage, MoE offload mode and compute, speculative windows, route
+  breakpoints) and the violations of this page present (taint). What startup sized from the free
+  memory (context, chunk, KV tokens, cached states, Host tier, offloaded MoE layers) is observed
+  and enters only the manifest, so `nf1` is the same across identical starts on one machine while
+  `nm1` v1 still varies with the free memory until the plan levels exist. It does not yet cover
+  the PCI-ID reference facts, plan levels, the constants and the kernel hash, nor the route each
+  shape took: two runs with equal fingerprints read the same inputs, which is not yet proof of the
+  same decisions.
 
 Each gap is closed in its own change, which updates this list.
 
@@ -106,8 +110,8 @@ the canonical text and the taint at debug level), exports it in `/metrics`
 (`ninferno_decision_fingerprint_info`) and `/v1/models` (`meta.decision_fingerprint`,
 `meta.decision_manifest`), writes it into the server-start record of the request log, and
 `tools/bench/perf_matrix.py` writes it into every bench row. Two runs with the same fingerprint
-must make the same decisions. The manifest, `nm1-…`, hashes the plan alone: an option change moves
-the fingerprint only, a plan change both.
+must make the same decisions. The manifest, `nm1-…`, hashes the plan and the observed sizes: an
+option change moves the fingerprint only, a plan change both, an observed size the manifest only.
 
 ## What will be promised
 

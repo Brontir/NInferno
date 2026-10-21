@@ -22,6 +22,9 @@
 #ifndef NINFERNO_CUDA_EMBED_PTX
 #    define NINFERNO_CUDA_EMBED_PTX 0
 #endif
+#ifndef NINFERNO_CUDA_ARCHITECTURES
+#    define NINFERNO_CUDA_ARCHITECTURES "unknown"
+#endif
 
 namespace ninferno::runtime {
 namespace {
@@ -36,7 +39,9 @@ constexpr std::array<std::string_view, 14> kDecisionVariables{
 
 // Read by the products, steering no decision: outputs (dumps, records, debug files), I/O modes,
 // credentials, update checks and where a tool finds its inputs.
-constexpr std::array<std::string_view, 18> kNonDecisionVariables{
+// The <dump>_ROWS names are built at run time from their dump's name (models/common/layer_dump.h).
+constexpr std::array<std::string_view, 21> kNonDecisionVariables{
+    "NINFERNO_DENSE_DUMP_ROWS",   "NINFERNO_GEMMA4_DUMP_ROWS",   "NINFERNO_QWEN_DUMP_ROWS",
     "NINFERNO_API_KEY",           "NINFERNO_ARTIFACT_DIRECT_IO", "NINFERNO_DEBUG_CUDA_ERROR_FILE",
     "NINFERNO_DEBUG_FREEZE_FILE", "NINFERNO_DEBUG_NAN_FILE",     "NINFERNO_DEBUG_TRAP_FILE",
     "NINFERNO_DENSE_DUMP",        "NINFERNO_GEMMA4_DUMP",        "NINFERNO_PDFIUM",
@@ -223,11 +228,13 @@ DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs) {
     out.value           = "nf1-" + short_hash(out.canonical);
     std::string planned = schema_line();
     section_into(planned, "plan", inputs.plan);
-    out.manifest = "nm1-" + short_hash(planned);
+    section_into(out.observed, "observed", inputs.observed);
+    out.manifest = "nm1-" + short_hash(planned + out.observed);
     return out;
 }
 
-DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int driver_version) {
+DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int driver_version,
+                         const HostFacts& host) {
     DecisionSection out;
     out["cc_major"]                = number(d.major);
     out["cc_minor"]                = number(d.minor);
@@ -249,6 +256,10 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["driver_version"]          = number(driver_version);
     features_into(out, "feature.", d.features);
     features_into(out, "build_feature.", build);
+    out["host.cpu_cores"]     = number(host.logical_cores);
+    out["host.cpu_isa"]       = host.cpu_isa.empty() ? std::string("unknown") : host.cpu_isa;
+    const std::uint64_t gib   = host.ram_bytes >> 30U;
+    out["host.ram_gib_class"] = number(gib == 0 ? std::uint64_t{0} : std::bit_floor(gib));
     return out;
 }
 
@@ -266,7 +277,8 @@ DecisionSection build_of() {
 #else
     out["arch_specific"] = "0";
 #endif
-    out["embed_ptx"] = flag(NINFERNO_CUDA_EMBED_PTX != 0);
+    out["cuda_architectures"] = NINFERNO_CUDA_ARCHITECTURES; // every entry, comma-joined
+    out["embed_ptx"]          = flag(NINFERNO_CUDA_EMBED_PTX != 0);
 #ifdef NINFERNO_WITHOUT_NVFP4
     out["nvfp4"] = "0";
 #else
@@ -358,18 +370,11 @@ DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memo
                         std::span<const std::int32_t> route_breakpoints,
                         std::string_view route_table) {
     DecisionSection out;
-    out["max_context"]     = number(memory.max_context);
-    out["prefill_chunk"]   = number(memory.prefill_chunk);
-    out["kv_cache"]        = std::string(kv_cache_storage_name(memory.kv_cache));
-    out["recurrent_state"] = std::string(recurrent_state_storage_name(resolved.recurrent_state));
-    out["kv_tokens"]       = number(memory.kv_capacity);
-    out["cached_device_states"] = number(memory.cached_device_states);
-    out["host_state_slots"]     = number(memory.host_state_capacity_slots);
-    out["host_kv_bytes"]        = number(static_cast<std::uint64_t>(memory.host_kv_capacity_bytes));
-    out["moe_offload.mode"]     = std::string(offload_mode_name(memory.moe_offload_mode));
-    out["moe_offload.layers"]   = number(memory.moe_offload_offloaded);
-    out["moe_offload.compute"]  = std::string(offload_compute_name(memory.moe_offload_compute));
-    out["moe_offload.cpu_isa"]  = memory.moe_offload_cpu_isa;
+    out["kv_cache"]         = std::string(kv_cache_storage_name(memory.kv_cache));
+    out["recurrent_state"]  = std::string(recurrent_state_storage_name(resolved.recurrent_state));
+    out["moe_offload.mode"] = std::string(offload_mode_name(memory.moe_offload_mode));
+    out["moe_offload.compute"] = std::string(offload_compute_name(memory.moe_offload_compute));
+    out["moe_offload.cpu_isa"] = memory.moe_offload_cpu_isa;
     std::vector<std::string> windows;
     for (const auto& window : memory.speculative_graph_windows) {
         windows.push_back(number(window.draft_tokens));
@@ -379,6 +384,18 @@ DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memo
     for (const std::int32_t t : route_breakpoints) { breakpoints.push_back(number(t)); }
     out["route_breakpoints"] = joined(breakpoints);
     out["route_table"]       = std::string(route_table);
+    return out;
+}
+
+DecisionSection observed_of(const MemorySummary& memory) {
+    DecisionSection out;
+    out["max_context"]          = number(memory.max_context);
+    out["prefill_chunk"]        = number(memory.prefill_chunk);
+    out["kv_tokens"]            = number(memory.kv_capacity);
+    out["cached_device_states"] = number(memory.cached_device_states);
+    out["host_state_slots"]     = number(memory.host_state_capacity_slots);
+    out["host_kv_bytes"]        = number(static_cast<std::uint64_t>(memory.host_kv_capacity_bytes));
+    out["moe_offload.layers"]   = number(memory.moe_offload_offloaded);
     return out;
 }
 

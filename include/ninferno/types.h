@@ -1741,6 +1741,11 @@ struct LoadSummary {
     std::string decision_manifest;
     std::string decision_canonical;
     std::vector<std::string> decision_taint;
+    // The sizes startup took from the free memory (the "observed" section): in the manifest, not in
+    // the fingerprint, until plan levels exist.
+    std::string decision_observed;
+    // The artifact's id (16 bytes, lowercase hex), as the load read it.
+    std::string artifact_id;
 };
 
 } // namespace ninferno

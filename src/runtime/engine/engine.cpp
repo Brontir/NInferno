@@ -1,15 +1,15 @@
 #include "ninferno/engine.h"
 
-#include "artifact/reader.h"
 #include "core/device.h"
 #include "core/device_class.h"
-#include "core/hex.h"
+#include "core/host_memory.h"
 #include "core/nvtx.h"
 #include "core/startup.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/host_experts/host_kernels.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "runtime/engine/family_registry.h"
@@ -29,6 +29,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace ninferno {
@@ -65,13 +66,24 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     return resolved;
 }
 
-// The id (hex) of the artifact at `path`; "unreadable: <why>" when it cannot be opened again.
-std::string artifact_id_of(const std::filesystem::path& path) {
+// A separate drafter as the fingerprint names it: its file name and size, never its path (the
+// family read it; it is not opened again here). "unreadable" when its size cannot be read.
+std::string drafter_identity(const std::filesystem::path& path) {
+    if (path.empty()) { return {}; }
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error) { return "unreadable"; }
+    return path.filename().string() + " " + std::to_string(size);
+}
+
+runtime::HostFacts host_facts() {
+    runtime::HostFacts host;
+    host.logical_cores = std::thread::hardware_concurrency();
+    host.cpu_isa       = ops::host::isa_name(ops::host::detect_isa());
     try {
-        const artifact::Reader reader(path);
-        const auto& id = reader.artifact_id();
-        return hex_encode(id.data(), id.size());
-    } catch (const std::exception& error) { return std::string("unreadable: ") + error.what(); }
+        if (const auto memory = read_host_memory()) { host.ram_bytes = memory->total_bytes; }
+    } catch (const std::exception&) {}
+    return host;
 }
 
 // The decision fingerprint of a constructed Engine (runtime/engine/decision_fingerprint.h): the
@@ -86,12 +98,12 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
         (void)cudaGetLastError();
         driver_version = 0;
     }
-    in.facts   = runtime::facts_of(device_class(resolved.device), build_features(), driver_version);
+    in.facts   = runtime::facts_of(device_class(resolved.device), build_features(), driver_version,
+                                   host_facts());
     in.build   = runtime::build_of();
     in.options = runtime::options_of(
-        requested, artifact_id_of(requested.artifact_path), load.prefill_signature,
-        requested.speculative.drafter.empty() ? std::string()
-                                              : artifact_id_of(requested.speculative.drafter));
+        requested, load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
+        load.prefill_signature, drafter_identity(requested.speculative.drafter));
     for (const auto& [key, value] : requested.speculative.decision_sources) {
         in.sources[key] = value;
     }
@@ -117,11 +129,13 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
         return value != nullptr ? std::optional<std::string>(value) : std::nullopt;
     });
     in.plan  = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table);
-    in.taint = runtime::taint_of(in);
+    in.taint    = runtime::taint_of(in);
+    in.observed = runtime::observed_of(memory);
     const runtime::DecisionFingerprint fingerprint = runtime::decision_fingerprint(in);
     load.decision_fingerprint                      = fingerprint.value;
     load.decision_manifest                         = fingerprint.manifest;
     load.decision_canonical                        = fingerprint.canonical;
+    load.decision_observed                         = fingerprint.observed;
     load.metadata.decision_fingerprint             = fingerprint.value;
     load.metadata.decision_manifest                = fingerprint.manifest;
     load.decision_taint.clear();

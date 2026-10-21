@@ -56,9 +56,11 @@ ninferno::DeviceClass sample_device() {
     return d;
 }
 
+const rt::HostFacts kHost{.logical_cores = 32, .cpu_isa = "avx512", .ram_bytes = 100ULL << 30};
+
 rt::DecisionInputs sample_inputs() {
     rt::DecisionInputs in;
-    in.facts = rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 13020);
+    in.facts = rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 13020, kHost);
     in.build = rt::build_of();
     in.options =
         rt::options_of(ninferno::EngineOptions{}, "00112233445566778899aabbccddeeff", "sig", "");
@@ -70,16 +72,18 @@ rt::DecisionInputs sample_inputs() {
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
     in.plan  = rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab");
     in.taint = rt::taint_of(in);
+    in.observed = rt::observed_of(ninferno::MemorySummary{});
     return in;
 }
 
-// Every key of every section, one at a time, given another value.
+// Every key of every section, one at a time, given another value: the fingerprint moves for every
+// section but the observed one, the manifest for the plan and the observed section only.
 int each_key_moves_the_fingerprint() {
     int failures                  = 0;
     const rt::DecisionInputs base = sample_inputs();
     const auto reference          = rt::decision_fingerprint(base);
     using Member                  = rt::DecisionSection rt::DecisionInputs::*;
-    const std::array<std::pair<const char*, Member>, 7> sections{{
+    const std::array<std::pair<const char*, Member>, 8> sections{{
         {"facts", &rt::DecisionInputs::facts},
         {"build", &rt::DecisionInputs::build},
         {"options", &rt::DecisionInputs::options},
@@ -87,6 +91,7 @@ int each_key_moves_the_fingerprint() {
         {"env", &rt::DecisionInputs::env},
         {"plan", &rt::DecisionInputs::plan},
         {"taint", &rt::DecisionInputs::taint},
+        {"observed", &rt::DecisionInputs::observed},
     }};
     for (const auto& [name, member] : sections) {
         failures += check(!(base.*member).empty(), std::string(name) + " has keys to vary");
@@ -94,17 +99,22 @@ int each_key_moves_the_fingerprint() {
             rt::DecisionInputs varied = base;
             (varied.*member)[key]     = value + "x";
             const auto moved          = rt::decision_fingerprint(varied);
-            const bool plan           = std::string(name) == "plan";
-            failures += check(moved.value != reference.value,
-                              std::string(name) + "." + key + " moves the fingerprint");
+            const bool observed       = std::string(name) == "observed";
+            const bool plan           = std::string(name) == "plan" || observed;
+            failures +=
+                check((moved.value != reference.value) != observed,
+                      std::string(name) + "." + key +
+                          (observed ? " leaves the fingerprint" : " moves the fingerprint"));
             failures += check((moved.manifest != reference.manifest) == plan,
                               std::string(name) + "." + key +
                                   (plan ? " moves the manifest" : " leaves the manifest"));
             // A key added or removed is an input too.
             rt::DecisionInputs removed = base;
             (removed.*member).erase(key);
-            failures += check(rt::decision_fingerprint(removed).value != reference.value,
-                              std::string(name) + "." + key + " removed moves the fingerprint");
+            const auto gone = rt::decision_fingerprint(removed);
+            failures += check(observed ? gone.manifest != reference.manifest
+                                       : gone.value != reference.value,
+                              std::string(name) + "." + key + " removed moves its hash");
         }
     }
     return failures;
@@ -231,16 +241,9 @@ int plan_reaches_its_section() {
         return rt::plan_of(ninferno::EngineOptions{}, m, breakpoints, "ab");
     };
     std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> edits{
-        {"max_context", [](MemorySummary& m) { m.max_context = 4096; }},
-        {"prefill_chunk", [](MemorySummary& m) { m.prefill_chunk = 512; }},
         {"kv_cache", [](MemorySummary& m) { m.kv_cache = ninferno::KvCacheStorage::Nvfp4Group16; }},
-        {"kv_tokens", [](MemorySummary& m) { m.kv_capacity = 8192; }},
-        {"cached_device_states", [](MemorySummary& m) { m.cached_device_states = 3; }},
-        {"host_state_slots", [](MemorySummary& m) { m.host_state_capacity_slots = 3; }},
-        {"host_kv_bytes", [](MemorySummary& m) { m.host_kv_capacity_bytes = 3; }},
         {"moe_offload.mode",
          [](MemorySummary& m) { m.moe_offload_mode = ninferno::MoeOffloadMode::Layers; }},
-        {"moe_offload.layers", [](MemorySummary& m) { m.moe_offload_offloaded = 3; }},
         {"moe_offload.compute",
          [](MemorySummary& m) { m.moe_offload_compute = ninferno::MoeOffloadCompute::Cpu; }},
         {"moe_offload.cpu_isa", [](MemorySummary& m) { m.moe_offload_cpu_isa = "avx512"; }},
@@ -248,6 +251,26 @@ int plan_reaches_its_section() {
          [](MemorySummary& m) { m.speculative_graph_windows = {{.draft_tokens = 3}}; }},
     };
     int failures = each_field_reaches("plan", MemorySummary{}, collect, edits);
+    // What the free memory sized is observed, not planned: two identical starts that found a few
+    // MiB more or less keep one fingerprint.
+    std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> sized{
+        {"max_context", [](MemorySummary& m) { m.max_context = 4096; }},
+        {"prefill_chunk", [](MemorySummary& m) { m.prefill_chunk = 512; }},
+        {"kv_tokens", [](MemorySummary& m) { m.kv_capacity = 8192; }},
+        {"cached_device_states", [](MemorySummary& m) { m.cached_device_states = 3; }},
+        {"host_state_slots", [](MemorySummary& m) { m.host_state_capacity_slots = 3; }},
+        {"host_kv_bytes", [](MemorySummary& m) { m.host_kv_capacity_bytes = 3; }},
+        {"moe_offload.layers", [](MemorySummary& m) { m.moe_offload_offloaded = 3; }},
+    };
+    failures += each_field_reaches(
+        "observed", MemorySummary{}, [](const MemorySummary& m) { return rt::observed_of(m); },
+        sized);
+    for (const auto& [field, edit] : sized) {
+        MemorySummary changed;
+        edit(changed);
+        failures += check(collect(changed) == collect(MemorySummary{}),
+                          std::string("plan: ") + field + " stays out of the plan");
+    }
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
     failures +=
@@ -265,7 +288,7 @@ int plan_reaches_its_section() {
 int facts_reach_their_section() {
     using ninferno::DeviceClass;
     const auto collect = [](const DeviceClass& d) {
-        return rt::facts_of(d, ninferno::device_features_for(12, 0), 13020);
+        return rt::facts_of(d, ninferno::device_features_for(12, 0), 13020, kHost);
     };
     std::vector<std::pair<const char*, std::function<void(DeviceClass&)>>> edits{
         {"major", [](DeviceClass& d) { d.major = 8; }},
@@ -287,11 +310,30 @@ int facts_reach_their_section() {
         {"features", [](DeviceClass& d) { d.features.tma = !d.features.tma; }},
     };
     int failures = each_field_reaches("facts", sample_device(), collect, edits);
-    failures += check(rt::facts_of(sample_device(), {}, 13020) != collect(sample_device()),
+    failures += check(rt::facts_of(sample_device(), {}, 13020, kHost) != collect(sample_device()),
                       "facts: build features reach the section");
-    failures += check(rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 12080) !=
-                          collect(sample_device()),
+    failures += check(rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 12080,
+                                   kHost) != collect(sample_device()),
                       "facts: the driver version reaches the section");
+    // The host: cores and instruction set as read, the RAM by its power-of-two class of GiB.
+    const auto with_host = [](rt::HostFacts host) {
+        return rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 13020, host);
+    };
+    rt::HostFacts host = kHost;
+    host.logical_cores = 16;
+    failures += check(with_host(host) != collect(sample_device()), "facts: host.cpu_cores");
+    host         = kHost;
+    host.cpu_isa = "avx2";
+    failures += check(with_host(host) != collect(sample_device()), "facts: host.cpu_isa");
+    host           = kHost;
+    host.ram_bytes = (100ULL << 30) - (300ULL << 20); // a few hundred MiB the kernel keeps
+    failures += check(with_host(host) == collect(sample_device()) &&
+                          collect(sample_device()).at("host.ram_gib_class") == "64",
+                      "facts: RAM of 99.7 and 100 GiB is one class (64)");
+    host.ram_bytes = 130ULL << 30;
+    failures += check(with_host(host).at("host.ram_gib_class") == "128", "facts: 130 GiB is 128");
+    host.ram_bytes = 0;
+    failures += check(with_host(host).at("host.ram_gib_class") == "0", "facts: unknown RAM is 0");
     DeviceClass renamed = sample_device();
     renamed.name        = "another board name";
     renamed.device      = 0;
@@ -488,7 +530,11 @@ int environment_inventory() {
                                                        "(runtime/engine/decision_fingerprint.cpp)");
     }
     for (const auto& name : known) {
-        failures += check(found.contains(name), name + " is listed but no longer read in src/");
+        // <dump>_ROWS is built at run time from its dump's name (models/common/layer_dump.h).
+        const bool rows = name.ends_with("_ROWS") &&
+                          found.contains(name.substr(0, name.size() - std::string("_ROWS").size()));
+        failures +=
+            check(found.contains(name) || rows, name + " is listed but no longer read in src/");
     }
     failures += check(found.size() > 20,
                       "the scan found the variables (" + std::to_string(found.size()) + ")");

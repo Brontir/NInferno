@@ -15,17 +15,22 @@
 //            dense-tune files, speculation profile, drafter registry);
 //   env      every decision environment variable that is set (set to "" counts), by a hash of
 //            its value;
-//   plan     what startup resolved from the free memory and the tables: context, chunk, KV, cached
-//            states, Host tier, MoE offload, speculative graph windows, route breakpoints;
+//   plan     what startup resolved without reading the free memory: KV and state storage, MoE
+//            offload mode and compute, speculative graph windows, route breakpoints and table;
 //   taint    the pillar violations present (an environment knob, the user's tune cache, floor
 //            calibration, clocks of 0, borrowed or foreign route data, a local spec-tune).
+// and one section that is not part of the fingerprint:
+//   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
+//            cached states, Host tier, offloaded MoE layers). Until the plan levels of
+//            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
+//            two identical starts, so they enter the manifest only.
 //
 // The canonical text is "schema\tninferno-fingerprint/1\n" followed by one
 // "<section>.<key>\t<value>\n" line per entry in byte order (tab, newline, carriage return and
-// backslash escaped as \t, \n, \r and \\). The fingerprint is "nf1-" and the first 16 hex digits
-// of its SHA-256; the manifest is "nm1-" and the first 16 hex digits of the SHA-256 of the schema
-// line and the plan lines alone, so a plan change moves both and an option change only the
-// fingerprint.
+// backslash escaped as \t, \n, \r and \\), without the observed section. The fingerprint is "nf1-"
+// and the first 16 hex digits of its SHA-256; the manifest is "nm1-" and the first 16 hex digits
+// of the SHA-256 of the schema line, the plan lines and the observed lines, so a plan change moves
+// both, an option change only the fingerprint and an observed size only the manifest.
 //
 // Canonical values: integers in decimal, booleans 0/1, enumerations by name, floating-point
 // numbers as the hex of their bits, sequences joined by commas, an unset optional as "unset".
@@ -58,21 +63,33 @@ struct DecisionInputs {
     DecisionSection env;
     DecisionSection plan;
     DecisionSection taint;
+    DecisionSection observed; // in the manifest, not the fingerprint
 };
 
 struct DecisionFingerprint {
     std::string value;     // "nf1-" + 16 hex digits
     std::string manifest;  // "nm1-" + 16 hex digits
     std::string canonical; // the canonical text value hashes
+    std::string observed;  // the observed lines (manifest only)
 };
 
 [[nodiscard]] std::string canonical_text(const DecisionInputs& inputs);
 [[nodiscard]] DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs);
 
-// The device's facts (no name, no ordinal), `build` (build_features()) and the driver version
-// (cudaDriverGetVersion; 0 when unknown).
+// The host's facts as the Engine reads them: logical CPU count, the widest CPU instruction set the
+// host-expert kernels run (ops/host_experts), and the RAM the process may use (0: unknown).
+struct HostFacts {
+    unsigned logical_cores = 0;
+    std::string cpu_isa;
+    std::uint64_t ram_bytes = 0;
+};
+
+// The device's facts (no name, no ordinal), `build` (build_features()), the driver version
+// (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores", "host.cpu_isa" and
+// "host.ram_gib_class", the largest power of two of GiB at or below the RAM (0 below 1 GiB or
+// unknown), so that a few MiB the kernel keeps do not move it.
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
-                                       int driver_version);
+                                       int driver_version, const HostFacts& host);
 
 // This binary's build, from its compile definitions.
 [[nodiscard]] DecisionSection build_of();
@@ -87,12 +104,16 @@ struct DecisionFingerprint {
                                          std::string_view prefill_signature,
                                          std::string_view drafter_id);
 
-// What startup resolved: `resolved` is Engine::options() (after the plan), `memory` the
-// MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and `route_table` the
-// effective route table's content (its hash and its lenders'; empty: none).
+// What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
+// `memory` the MemorySummary, `route_breakpoints` ops::route_table_breakpoints(17) and
+// `route_table` the effective route table's content (its hash and its lenders'; empty: none).
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
                                       std::string_view route_table);
+
+// What startup sized from the free memory (the observed section): max_context, prefill_chunk,
+// kv_tokens, cached_device_states, host_state_slots, host_kv_bytes, moe_offload.layers.
+[[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
 // The environment variables that steer a decision (a tuner, a route table, a decode schedule,
 // a debug mode), and those the inventory test knows to steer none.
