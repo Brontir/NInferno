@@ -195,9 +195,12 @@ template <class Measured, std::size_t Extent>
 [[nodiscard]] bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor);
 
 // The facts this class lacks or guessed, each with the conservative choice taken in its place:
-// the chip from the SM count (no PCI id, or one no block lists) and the clocks or bus width a
-// virtualized or MIG GPU leaves unreported (no roofline: the A16 routes stand alone). Empty for
-// a fully known GPU. Logged at startup, so a degraded fact is never silent.
+// the chip from the SM count (no PCI id, or one no block lists; the board's clocks may still be
+// the PCI-ID table's), the clocks or bus width a virtualized or MIG GPU leaves unreported (the
+// table's facts stand in for a listed board; otherwise no roofline: the A16 routes stand alone),
+// and facts the table only approximates (MachineFacts::source extrapolated: an unlisted id, a
+// laptop, a MIG slice). Empty for a fully known GPU. Logged at startup, so a degraded fact is
+// never silent.
 [[nodiscard]] std::vector<std::string> device_fact_notes(const DeviceClass& d);
 
 // "<chip>:<sms>sm".

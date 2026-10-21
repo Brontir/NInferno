@@ -322,12 +322,20 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         const std::string why = d.pci_device_id == 0 ? std::string("PCI id unreadable")
                                                      : std::string("PCI id ") + id + " in no chip block";
         const std::string arch = gpu_arch_id(d.major, d.minor);
-        notes.push_back(d.chip == arch
-                            ? "chip unknown (" + why + "; no chip of " + arch +
-                                  " in the table): per-chip data is keyed by the architecture " + arch
-                            : "chip " + d.chip + " from the SM count (" + why +
-                                  "): the smallest chip of " + arch + " holding " +
-                                  std::to_string(d.sms) + " SMs");
+        // The PCI-ID reference table may still know the board (H100: its chip has no block): its
+        // facts are the table's, only the per-chip keys are guessed.
+        const GpuFactsRow* row = d.facts.sku.empty() ? nullptr : find_gpu_facts(d.pci_device_id);
+        const std::string board =
+            row != nullptr ? "; the board's clocks and bandwidth are the reference table's " +
+                                 row->name + " (" + row->chip + ")"
+                           : std::string();
+        notes.push_back(d.chip == arch ? "chip unknown (" + why + "; no chip of " + arch +
+                                             " in the chip blocks): per-chip data is keyed by the "
+                                             "architecture " +
+                                             arch + board
+                                       : "chip " + d.chip + " from the SM count (" + why +
+                                             "): the smallest chip of " + arch + " holding " +
+                                             std::to_string(d.sms) + " SMs" + board);
     }
     std::string missing;
     const auto add = [&](bool absent, const char* what) {
@@ -336,11 +344,34 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
     add(d.sm_clock_khz <= 0, "SM clock");
     add(d.memory_clock_khz <= 0, "memory clock");
     add(d.memory_bus_bits <= 0, "memory bus width");
-    if (!missing.empty()) {
+    const MachineFacts& f = d.facts;
+    if (!missing.empty() && f.has_roofline()) {
+        // A board the PCI-ID table knows: its row stands in, and no decision reads the driver's.
+        notes.push_back(missing +
+                        " unreported (a virtualized or MIG GPU, for example): the "
+                        "PCI-ID reference table's facts stand in (" +
+                        describe(f) + ")");
+    } else if (!missing.empty()) {
         notes.push_back(missing +
                         " unreported (a virtualized or MIG GPU, for example): the route cost model "
                         "and the speculative load model are off, routes come from the fixed rules, "
                         "and measured tables are matched to this board without its bandwidth");
+    }
+    // Facts that only approximate this device (MachineFacts::source extrapolated), with the
+    // conservative choice taken.
+    if (f.source == FactSource::Extrapolated) {
+        std::string why;
+        if (f.sku.empty()) {
+            why = "PCI id not in the reference table: the driver's clocks on the 2^(1/16) grid";
+        } else if (f.form == FormFactor::Laptop) {
+            why = f.sku + ", a laptop: priced at the bottom of its published boost range";
+        } else if (f.share < 1.0) {
+            why = f.sku + ", a slice of " + std::to_string(d.sms) +
+                  " SMs (MIG): its share of the board's bandwidth";
+        } else {
+            why = f.sku + " reporting " + std::to_string(d.sms) + " SMs, not the row's";
+        }
+        notes.push_back("device facts extrapolated (" + why + "): " + describe(f));
     }
     return notes;
 }
