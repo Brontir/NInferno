@@ -11,8 +11,9 @@
 //   build    the release, its commit, the architecture it compiled for, PTX, NVFP4, the CUDA
 //            runtime it was built against;
 //   options  the options as the caller asked for them (before normalize_engine_options), the
-//            decode pacing and the maintainer options among them, the artifact's id and its
-//            prefill signature;
+//            decode pacing and the maintainer options among them, the artifact's source identity
+//            (artifact/source_identity.h: what it was converted from and how, the same for every
+//            conversion of the same sources) and its prefill signature;
 //   sources  the data files decisions were read from, by content (route table and its lenders,
 //            dense- and MoE-tune files, context-cost presets, speculation profile, drafter
 //            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
@@ -26,9 +27,10 @@
 // and one section that is not part of the fingerprint:
 //   observed what startup measured beside the plan: the rung the selection picked before the
 //            kernel warm-up and the tier it admitted it at (rung_selected, rung_reserve), what it
-//            sized from the Host memory (the Host tier), and the driver's clocks where they fed
-//            no fact (MachineFacts::driver_read), so no decision reads them; they enter the
-//            manifest only.
+//            sized from the Host memory (the Host tier), the driver's clocks where they fed
+//            no fact (MachineFacts::driver_read), so no decision reads them, and the artifact ids
+//            (drawn at random per conversion: they name the file, which a cache may key by, not
+//            what it computes); they enter the manifest only.
 //
 // The canonical text is "schema\tninferno-fingerprint/1\n" followed by one
 // "<section>.<key>\t<value>\n" line per entry in byte order (tab, newline, carriage return and
@@ -105,16 +107,18 @@ struct HostFacts {
 // This binary's build, from its compile definitions.
 [[nodiscard]] DecisionSection build_of();
 
-// The options as asked (a copy taken before normalize_engine_options), with the artifact's id
-// (hex), its prefill signature (LoadSummary::prefill_signature) and a separate drafter's artifact
-// id (empty: none). Paths, the device ordinal, queue limits, media budgets, observers and
-// SpeculativeOptions::decision_sources do not enter (the drafter enters by its id, the sources
-// in their own section): a maintainer option naming a file or directory (--route-table,
-// --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content in sources.
+// The options as asked (a copy taken before normalize_engine_options), with the artifact's source
+// identity (LoadSummary::source_identity: 64 hex digits, "none" for an artifact converted before
+// the converter recorded its inputs), its prefill signature (LoadSummary::prefill_signature) and a
+// separate drafter's source identity (empty: none). Paths, the device ordinal, queue limits, media
+// budgets, observers and SpeculativeOptions::decision_sources do not enter (the drafter enters by
+// its identity, the sources in their own section): a maintainer option naming a file or directory
+// (--route-table, --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content
+// in sources.
 [[nodiscard]] DecisionSection options_of(const EngineOptions& requested,
-                                         std::string_view artifact_id,
+                                         std::string_view source_identity,
                                          std::string_view prefill_signature,
-                                         std::string_view drafter_id);
+                                         std::string_view drafter_source_identity);
 
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary (with the plan ladder's rung, MemorySummary::plan),
@@ -136,6 +140,11 @@ struct HostFacts {
 // fact (!MachineFacts::driver_read), so no decision reads them; empty otherwise (facts_of holds
 // them).
 [[nodiscard]] DecisionSection observed_of(const DeviceClass& device);
+
+// The artifact ids (observed): "artifact_id" and, with a separate drafter, "drafter_artifact_id".
+// They name the files (a cache may key by them); decisions key by the source identity.
+[[nodiscard]] DecisionSection artifact_ids_of(std::string_view artifact_id,
+                                              std::string_view drafter_artifact_id);
 
 // The environment variables the products read. None steers a decision (an option does:
 // docs/maintainer/deterministic-decisions.md); the inventory test fails on a variable read in

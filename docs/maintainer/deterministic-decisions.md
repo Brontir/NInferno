@@ -40,7 +40,8 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;
-- model constants (speculative acceptance) do not record their keys, corpus hash and tolerance yet;
+- model constants (speculative acceptance) record their keys, corpus hash and tolerance, but no
+  decision reads them yet, and the shipped ones name no complete source identity yet;
 - the admission planner's work units (1 an option, 200 an assessment or expansion, 10 000 / 50 000 a
   boundary, 1 us an option assumed) and the capture search's 10 us a target and 50 targets a
   decision are declared estimates sized for a worst case of about 200 us an assessment; they await calibration against the request log's
@@ -63,8 +64,8 @@ This page states the rule and its target. The engine does not meet all of it yet
   logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
   build, not at configure), the requested options (the decode pacing and the maintainer options
   among them; no environment variable decides), the route table, dense- and MoE-tune files,
-  context-cost presets, speculation profile and drafter registry by content, a separate drafter by
-  its artifact id, the plan startup resolved without the free memory (KV and state storage,
+  context-cost presets, speculation profile and drafter registry by content, the artifact and a
+  separate drafter by their source identity (their artifact ids are observed), the plan startup resolved without the free memory (KV and state storage,
   speculative windows, route breakpoints, decode steps per round) and the violations of this page
   present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
@@ -124,7 +125,7 @@ What the design guarantees once complete:
    generation's speed estimates become "no estimate".
    A constant about a model, such as a drafter's acceptance per context class, records instead
    what it depends on:
-   - the target and drafter artifact ids;
+   - the target and drafter by their source identity (below), never by artifact id;
    - the whole B1 byte class it was measured under (activation precision, summation class, KV
      codec, decode/verify parity, placement and plan level);
    - the sampling settings and the draft depth;
@@ -136,6 +137,35 @@ What the design guarantees once complete:
    relative tolerance its cards must agree within. When they disagree, the constant depends on
    the hardware: it is fitted per generation like a cost, and until then the forecasts that use
    it are "no estimate".
+
+   **The source identity** (`src/artifact/source_identity.h`) is how a constant and the decision
+   fingerprint name an artifact. The artifact id is a random UUID drawn at each conversion, so two
+   conversions of the same model differ in id and a constant keyed by it applies to one file only.
+   The source identity is the SHA-256 of a record of everything that can change the converted
+   bytes (schema `ninferno-source/1`, compact JSON with sorted keys):
+   - the inputs, which the converter records in the provenance (`"inputs"`): every checkpoint and
+     `--resource` the conversion read, by role, each file by `repo`, `commit` and `name` (its path
+     in the repository) when it comes from a Hugging Face snapshot, and always by `sha256` of its
+     content. A local file without hub provenance is keyed by its content alone, so a rename does
+     not move it. Weight files are listed with the config, tokenizer, template and processor files
+     beside them. An LFS snapshot file takes its blob name, the sha256 the fetch verified at
+     download; any other file is hashed when it is converted;
+   - the quant (a GGUF's label, from its file name);
+   - the converter format version (`"converter"`, `ninferno-v3`) and the recipe;
+   - the byte-changing choices the provenance records (drafter quantization, vocabulary, GGUF
+     mapper, ranking);
+   - the tensor index: the SHA-256 of every object's id, format, layout, shape, size and divisor
+     count (and every resource's encoding and size), so a converter change that keeps its version
+     still moves the identity. The artifact stores no per-object content hashes, so contents enter
+     only through the inputs.
+
+   An artifact converted before the converter recorded its inputs has no source identity: the
+   fingerprint names it `none` and every constant keyed by an identity reads as unknown for it.
+   An embedded component (an MTP head, a DFlash companion) is keyed by the target's identity and
+   its name (`component:<name>`); a separate drafter by its own identity. A constant measured
+   before its identity could be computed records the parts it can prove and names the missing
+   ones (`"target": {"source_identity": null, "proven": {...}, "missing": [...]}`); it is never
+   known. The artifact id stays in the fingerprint's observed section, as the name of the file.
 5. **Capabilities decide what is admissible; speeds decide what pays.**
 6. **Decisions compare ratios, not absolute times.**
 7. **The unknown is conservative and labelled.** This covers an unknown PCI ID, MIG, laptops, JIT

@@ -1808,8 +1808,13 @@ struct LoadSummary {
     // The sizes startup took from the free memory (the "observed" section): in the manifest, not in
     // the fingerprint, until plan levels exist.
     std::string decision_observed;
-    // The artifact's id (16 bytes, lowercase hex), as the load read it.
+    // The artifact's id (16 bytes, lowercase hex), as the load read it: drawn at random per
+    // conversion, so it names the file (observed), not what it computes.
     std::string artifact_id;
+    // The artifact's source identity (artifact/source_identity.h, 64 lowercase hex digits: what it
+    // was converted from and how), the key decisions and constants use; "none" for an artifact
+    // converted before the converter recorded its inputs.
+    std::string source_identity;
 };
 
 } // namespace ninferno

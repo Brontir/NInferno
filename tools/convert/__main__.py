@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import re
 import sys
 from collections.abc import Mapping
 
@@ -73,6 +76,73 @@ class SourceInputs(Mapping):
         return {
             name: {"path": str(source.path)} for name, source in self._sources.items()
         }
+
+    def opened(self):
+        return dict(self._sources)
+
+
+# The files beside a checkpoint's weights a conversion may read, hashed into its source identity
+# when present (src/artifact/source_identity.h; src/convert/convert.cpp kCheckpointFiles).
+_CHECKPOINT_FILES = (
+    "config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json",
+    "special_tokens_map.json", "tokenizer.model", "vocab.json", "merges.txt",
+    "chat_template.jinja", "chat_template.json", "preprocessor_config.json",
+    "video_preprocessor_config.json", "hf_quant_config.json", "model.safetensors.index.json",
+)
+
+
+def _content_sha256(file: Path) -> str:
+    """A Hugging Face LFS snapshot file's blob name (its sha256, verified at download), else the
+    sha256 of its bytes."""
+    if file.is_symlink():
+        target = file.resolve()
+        if target.parent.name == "blobs" and re.fullmatch(r"[0-9a-f]{64}", target.name):
+            return target.name
+    digest = hashlib.sha256()
+    with open(file, "rb") as stream:
+        for block in iter(lambda: stream.read(16 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _input_file(file: Path, sha256: str) -> dict:
+    """A hub snapshot file (<hub>/models--org--name/snapshots/<commit>/<path>) by repository,
+    commit, path and content; any other by its content alone (keys sorted, as the native
+    converter writes them)."""
+    parts = Path(os.path.normpath(file)).parts
+    for i in range(len(parts) - 3):
+        if (parts[i].startswith("models--") and parts[i + 1] == "snapshots"
+                and re.fullmatch(r"[0-9a-f]{40}", parts[i + 2])):
+            org, sep, name = parts[i][8:].partition("--")
+            if not org or not sep or not name:
+                break
+            return {"commit": parts[i + 2], "name": "/".join(parts[i + 3:]),
+                    "repo": f"{org}/{name}", "sha256": sha256}
+    return {"sha256": sha256}
+
+
+def _input_of(role: str, files: list[Path], directory: Path | None) -> dict:
+    files = list(files)
+    if directory is not None:
+        for name in _CHECKPOINT_FILES:
+            path = directory / name
+            if path.is_file() and path not in files:
+                files.append(path)
+    return {"role": role, "files": [_input_file(f, _content_sha256(f)) for f in files]}
+
+
+def source_inputs(sources, resources) -> list[dict]:
+    """The provenance's "inputs" (src/convert/convert.cpp source_inputs): every opened checkpoint
+    by its weight files (sorted by path) and side files, then every --resource."""
+    out = []
+    for role, source in sources.opened().items():
+        files = sorted(set(source.weight_map.values()), key=lambda f: Path(f).as_posix())
+        out.append(_input_of(role, [Path(f) for f in files], source.root))
+    for role, path in resources.items():
+        path = Path(path)
+        out.append(_input_of(f"resource:{role}", [] if path.is_dir() else [path],
+                             path if path.is_dir() else None))
+    return out
 
 
 def _pairs(values, label):
@@ -203,6 +273,7 @@ def main(argv=None):
             "converter": "ninferno-v3",
             "recipe": args.recipe,
             "sources": sources.provenance(),
+            "inputs": source_inputs(sources, overrides),
         }
         if args.override:
             provenance["override"] = args.override

@@ -301,10 +301,11 @@ DecisionSection build_of() {
     return out;
 }
 
-DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
-                           std::string_view prefill_signature, std::string_view drafter_id) {
+DecisionSection options_of(const EngineOptions& o, std::string_view source_identity,
+                           std::string_view prefill_signature,
+                           std::string_view drafter_source_identity) {
     DecisionSection out;
-    out["artifact_id"]           = std::string(artifact_id);
+    out["source_identity"]       = std::string(source_identity);
     out["prefill_signature"]     = std::string(prefill_signature);
     out["purpose"]               = std::string(purpose_name(o.purpose));
     out["activations"]           = std::string(activation_name(o.activations));
@@ -348,7 +349,7 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["speculative.ngram_min_match"]      = number(s.ngram_min_match);
     out["speculative.proposal_head"]        = std::string(head_name(s.proposal_head));
     out["speculative.draft_width"]          = std::string(width_name(s.draft_width));
-    out["speculative.drafter_id"]           = std::string(drafter_id);
+    out["speculative.drafter_source_identity"] = std::string(drafter_source_identity);
     out["speculative.acceptance_floor"]     = bits(s.acceptance_floor);
     std::vector<std::string> steps;
     for (const SpeculationStep& step : s.step_down) {
@@ -428,6 +429,16 @@ DecisionSection observed_of(const MemorySummary& memory) {
 DecisionSection observed_of(const DeviceClass& device) {
     DecisionSection out;
     if (!device.facts.driver_read) { driver_into(out, device); }
+    return out;
+}
+
+DecisionSection artifact_ids_of(std::string_view artifact_id,
+                                std::string_view drafter_artifact_id) {
+    DecisionSection out;
+    out["artifact_id"] = std::string(artifact_id);
+    if (!drafter_artifact_id.empty()) {
+        out["drafter_artifact_id"] = std::string(drafter_artifact_id);
+    }
     return out;
 }
 

@@ -143,6 +143,10 @@ struct DownloadRequest {
 
 [[nodiscard]] FetchedFile download_file(const DownloadRequest& request, const FetchOptions& options);
 
+// The SHA-256 (lowercase hex) of a file's bytes, read in 16 MiB blocks. Throws when it cannot
+// be read.
+[[nodiscard]] std::string file_sha256(const std::filesystem::path& path);
+
 // The quantization label a GGUF file name ends with, as --quant takes it:
 // "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" -> "UD-Q4_K_M", "m-Q6_K-00001-of-00002.gguf" -> "Q6_K";
 // "" when the name ends with none.

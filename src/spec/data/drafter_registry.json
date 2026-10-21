@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 108,
+  "version": 109,
   "published": "2026-10-21",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -80,9 +80,9 @@
     "entries": [
       {
         "model": "qwen3.6-35b-a3b",
-        "target_artifact": "placeholder:unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL",
+        "target": "placeholder:unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL",
         "drafter": "dflash",
-        "drafter_artifact": "component:dflash",
+        "drafter_source": "component:dflash",
         "byte_class": {
           "activations": "fast-a8",
           "kv": "auto",
@@ -111,9 +111,9 @@
       },
       {
         "model": "qwen3.8-27b",
-        "target_artifact": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+        "target": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
         "drafter": "dflash2",
-        "drafter_artifact": "component:dflash2",
+        "drafter_source": "component:dflash2",
         "byte_class": {
           "activations": "fast-a8",
           "kv": "auto",
@@ -142,9 +142,9 @@
       },
       {
         "model": "qwen3.8-27b",
-        "target_artifact": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+        "target": "placeholder:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
         "drafter": "mtp",
-        "drafter_artifact": "component:mtp",
+        "drafter_source": "component:mtp",
         "byte_class": {
           "activations": "fast-a8",
           "kv": "auto",

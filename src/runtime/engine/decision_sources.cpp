@@ -1,6 +1,7 @@
 #include "runtime/engine/decision_sources.h"
 
 #include "artifact/reader.h"
+#include "artifact/source_identity.h"
 #include "core/hex.h"
 #include "core/sha256.h"
 
@@ -9,6 +10,13 @@
 namespace ninferno::runtime {
 
 std::string drafter_identity(const std::filesystem::path& drafter) noexcept {
+    try {
+        if (drafter.empty()) { return {}; }
+        return artifact::source_identity(drafter).value_or("none");
+    } catch (...) { return "unreadable"; }
+}
+
+std::string drafter_artifact_id(const std::filesystem::path& drafter) noexcept {
     try {
         if (drafter.empty()) { return {}; }
         const artifact::Reader reader(drafter);

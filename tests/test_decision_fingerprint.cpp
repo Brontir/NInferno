@@ -72,7 +72,8 @@ rt::DecisionInputs sample_inputs() {
     in.build = rt::build_of();
     ninferno::EngineOptions options;
     options.maintainer.dense_tune = ninferno::TuneMode::On; // a maintainer option: taint
-    in.options = rt::options_of(options, "00112233445566778899aabbccddeeff", "sig", "");
+    in.options                    = rt::options_of(
+        options, "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee", "sig", "");
     in.sources = {{"route_table", "gb202.json sha256:ab"}, {"route_table.class", "gb202"}};
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
     in.plan =
@@ -80,6 +81,8 @@ rt::DecisionInputs sample_inputs() {
     in.taint = rt::taint_of(in);
     in.observed = rt::observed_of(ninferno::MemorySummary{});
     in.observed.merge(rt::observed_of(sample_device()));
+    in.observed.merge(rt::artifact_ids_of("00112233445566778899aabbccddeeff",
+                                          "8899aabbccddeeff0011223344556677"));
     return in;
 }
 
@@ -228,12 +231,32 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.maintainer.debug_poison_skip = {"kv"}; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
-    // The artifact, its prefill signature and a separate drafter enter by id.
+    // The artifact, its prefill signature and a separate drafter enter by source identity.
     const auto base = rt::options_of(EngineOptions{}, "id", "sig", "");
-    failures += check(rt::options_of(EngineOptions{}, "id2", "sig", "") != base, "artifact id");
+    failures += check(base.contains("source_identity") && !base.contains("artifact_id") &&
+                          base.at("source_identity") == "id",
+                      "the artifact enters by its source identity, not its id");
+    failures += check(rt::options_of(EngineOptions{}, "id2", "sig", "") != base, "source identity");
     failures +=
         check(rt::options_of(EngineOptions{}, "id", "sig2", "") != base, "prefill signature");
-    failures += check(rt::options_of(EngineOptions{}, "id", "sig", "d") != base, "drafter id");
+    failures +=
+        check(rt::options_of(EngineOptions{}, "id", "sig", "d") != base, "drafter source identity");
+    // The artifact ids are observed: another conversion of the same sources (another random id)
+    // moves the manifest, never the fingerprint.
+    {
+        auto one                      = sample_inputs();
+        auto other                    = sample_inputs();
+        other.observed["artifact_id"] = "ffeeddccbbaa99887766554433221100";
+        const auto a                  = rt::decision_fingerprint(one);
+        const auto b                  = rt::decision_fingerprint(other);
+        failures +=
+            check(a.value == b.value && a.manifest != b.manifest &&
+                      a.canonical.find("00112233445566778899aabbccddeeff") == std::string::npos,
+                  "the artifact id is observed: the manifest moves, the fingerprint not");
+        failures += check(rt::artifact_ids_of("a", "").size() == 1 &&
+                              rt::artifact_ids_of("a", "b").at("drafter_artifact_id") == "b",
+                          "a drafter's artifact id only with a separate drafter");
+    }
     // Paths, the ordinal, queue limits and the speculation sources do not.
     EngineOptions other;
     other.artifact_path                = "/elsewhere/model.ninferno";
@@ -824,6 +847,10 @@ int file_sources() {
     failures += check(rt::drafter_identity({}).empty(), "drafter: none is empty");
     failures += check(rt::drafter_identity(dir / "missing.ninferno") == "unreadable",
                       "drafter: a missing file is unreadable");
+    failures += check(rt::drafter_artifact_id({}).empty() &&
+                          rt::drafter_artifact_id(dir / "missing.ninferno") == "unreadable" &&
+                          rt::drafter_artifact_id(drafter) == "unreadable",
+                      "drafter artifact id: empty without one, unreadable for a non-artifact");
     const auto named = ninferno::named_file_sha256(drafter);
     failures += check(named && named->starts_with("\xd1\x87\xd0\xb5\xd1\x80"),
                       "a non-ASCII file name is named in UTF-8");

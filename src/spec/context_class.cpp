@@ -1,5 +1,6 @@
 #include "spec/context_class.h"
 
+#include "artifact/source_identity.h"
 #include "core/ascii.h"
 #include "core/device_class.h"
 
@@ -69,11 +70,10 @@ struct Field {
 std::vector<Field> compare(const AcceptanceKey& entry, const AcceptanceKey& wanted) {
     const bool lanes_matter = fast(entry.byte_class) || fast(wanted.byte_class);
     return {
-        {"target_artifact", entry.target_artifact == wanted.target_artifact, entry.target_artifact,
-         wanted.target_artifact},
+        {"target", entry.target == wanted.target, entry.target, wanted.target},
         {"drafter", entry.drafter == wanted.drafter, entry.drafter, wanted.drafter},
-        {"drafter_artifact", entry.drafter_artifact == wanted.drafter_artifact,
-         entry.drafter_artifact, wanted.drafter_artifact},
+        {"drafter_source", entry.drafter_source == wanted.drafter_source, entry.drafter_source,
+         wanted.drafter_source},
         {"byte_class", entry.byte_class == wanted.byte_class, entry.byte_class.dump(),
          wanted.byte_class.dump()},
         {"sampling", entry.sampling == wanted.sampling, entry.sampling, wanted.sampling},
@@ -155,9 +155,38 @@ ContextFactors parse_context_factors(const Json& object) {
         auto& key            = entry.key;
         key.model            = required_text(item, "model", "entry");
         const auto where     = "entry " + key.model;
-        key.target_artifact  = required_text(item, "target_artifact", where);
+        const auto target    = item.find("target");
+        if (target != item.end() && target->is_object()) {
+            const auto missing = target->value("missing", Json());
+            const auto parts   = target->value("proven", Json());
+            const auto id      = target->value("source_identity", Json());
+            if (!missing.is_array() || !parts.is_object() || !(id.is_null() || id.is_string())) {
+                refuse(where + ": target must name its proven parts and the missing ones");
+            }
+            for (const auto& name : missing) {
+                if (!name.is_string() || name.get<std::string>().empty()) {
+                    refuse(where + ": target: each missing part must be named");
+                }
+                entry.target_missing.push_back(name.get<std::string>());
+            }
+            entry.target_parts = parts;
+            if (!entry.target_missing.empty()) {
+                std::string names;
+                for (const auto& name : entry.target_missing) {
+                    names += (names.empty() ? "" : ",") + name;
+                }
+                key.target = "missing:" + names;
+            } else if (id.is_string() && artifact::is_source_identity(id.get<std::string>())) {
+                key.target = id.get<std::string>();
+            } else {
+                refuse(where +
+                       ": target: a source_identity of 64 hex digits, or the missing parts");
+            }
+        } else {
+            key.target = required_text(item, "target", where);
+        }
         key.drafter          = required_text(item, "drafter", where);
-        key.drafter_artifact = required_text(item, "drafter_artifact", where);
+        key.drafter_source   = required_text(item, "drafter_source", where);
         key.sampling         = required_text(item, "sampling", where);
         key.corpus           = required_text(item, "corpus", where);
         key.depth            = required_count(item, "depth", where);
@@ -280,11 +309,20 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
     const auto& k = best->key;
     for (const auto& [field, value] : std::initializer_list<std::pair<std::string, std::string>>{
              {"model", k.model},
-             {"target_artifact", k.target_artifact},
+             {"target", k.target},
              {"drafter", k.drafter},
-             {"drafter_artifact", k.drafter_artifact},
+             {"drafter_source", k.drafter_source},
              {"sampling", k.sampling}}) {
         if (placeholder(value)) { return unknown("placeholder key: " + field + "=" + value); }
+    }
+    // The artifacts by what they were converted from: a target without a source identity (one
+    // recorded only in part, or an artifact id) is not known.
+    if (!artifact::is_source_identity(k.target)) {
+        return unknown("placeholder key: target=" + k.target);
+    }
+    if (!k.drafter_source.starts_with("component:") &&
+        !artifact::is_source_identity(k.drafter_source)) {
+        return unknown("placeholder key: drafter_source=" + k.drafter_source);
     }
     for (const auto& [field, value] : k.byte_class.items()) {
         if (placeholder(value.get<std::string>())) {
