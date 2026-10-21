@@ -92,6 +92,7 @@ GpuFactsRow parse_row(const Json& j) {
     r.form          = form_of(j.at("form").get<std::string>());
     r.sms           = j.at("sms").get<int>();
     r.boost_mhz     = j.at("boost_mhz").get<int>();
+    r.boost_min_mhz = j.value("boost_min_mhz", 0);
     r.bus_bits      = j.at("bus_bits").get<int>();
     r.gbps          = j.at("gbps").get<double>();
     r.tdp_w         = j.at("tdp_w").get<int>();
@@ -104,6 +105,10 @@ GpuFactsRow parse_row(const Json& j) {
     if (cc < 70 || r.sms <= 0 || r.boost_mhz <= 0 || r.bus_bits <= 0 || r.gbps <= 0 ||
         r.tdp_w <= 0 || r.vram_gib <= 0 || r.pcie_gen < 3 || r.name.empty() || r.chip.empty()) {
         throw std::runtime_error("a quantity is missing or out of range");
+    }
+    if (r.boost_min_mhz < 0 || r.boost_min_mhz > r.boost_mhz ||
+        (r.boost_min_mhz > 0 && r.form != FormFactor::Laptop)) {
+        throw std::runtime_error("boost_min_mhz is not a laptop's bottom of its boost range");
     }
     if (r.sources.empty()) throw std::runtime_error("no source");
     for (const auto& s : r.sources) {
@@ -149,6 +154,18 @@ const GpuFactsRow* find_gpu_facts(std::uint32_t pci_device_id) {
     return nullptr;
 }
 
+// The decision is k = round(16 log2 x); the rest is the exact power 2^(k/16) of a binary k/16.
+// Different libm implementations of log2 and exp2 (glibc, MSVC, a CUDA host compiler's) differ by
+// at most a few ulp, and that cannot move the snap of an integer-kHz input, which is every input
+// machine_facts passes (a driver clock as int, 1 <= x < 2^31):
+//  - log2: the snap turns at the midpoints 2^((k+1/2)/16), which are irrational, so no integer
+//    lies on one. Over all integers below 2^31 the closest one, 1767116489 next to 2^(983/32),
+//    gives |16 log2 x - (k+1/2)| = 3.8e-10 (exact arithmetic, 60 digits), while a few ulp of
+//    16 log2 x <= 496 is about 1e-13: more than three orders of magnitude to spare.
+//  - exp2: the caller rounds 2^(k/16) to an integer kHz (llround), and for 0 <= k < 496 no grid
+//    point lies within 1.1e-3 of a half-integer (closest: k = 86, 41.49887), against an error of
+//    a few ulp: about 2e-6 at most, at the 2^31 end.
+// A non-integer input could sit on a midpoint, and then the libm decides; no decision passes one.
 double snap_to_fact_grid(double x) noexcept {
     if (!(x > 0)) return 0;
     const double k = std::floor(16.0 * std::log2(x) + 0.5);
@@ -185,9 +202,21 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         f.vram_gib            = row->vram_gib;
         f.pcie_gen            = row->pcie_gen;
         f.mma_slow            = row->mma_slow;
-        // A laptop's clocks follow the OEM's power limit; a device reporting other SMs than the
-        // row (a MIG slice) is a part of the board, and sees that part of its bandwidth.
-        if (row->form == FormFactor::Laptop) f.source = FactSource::Extrapolated;
+        // A laptop's clocks follow the OEM's power limit (80 to 150 W for one name): it is priced
+        // at the bottom of the published boost range (principle 7, the unknown is conservative),
+        // or, where the table lacks the bottom, at the lower of the row's top and the driver's
+        // clock on the grid. A device reporting other SMs than the row (a MIG slice) is a part of
+        // the board, and sees that part of its bandwidth.
+        if (row->form == FormFactor::Laptop) {
+            f.source = FactSource::Extrapolated;
+            if (row->boost_min_mhz > 0) {
+                f.reference_clock_khz = row->boost_min_mhz * 1000;
+            } else if (driver.sm_clock_khz > 0) {
+                const int snapped =
+                    static_cast<int>(std::llround(snap_to_fact_grid(driver.sm_clock_khz)));
+                f.reference_clock_khz = std::min(f.reference_clock_khz, snapped);
+            }
+        }
         if (driver.sms > 0 && driver.sms != row->sms) {
             f.source = FactSource::Extrapolated;
             if (driver.sms < row->sms) f.share = static_cast<double>(driver.sms) / row->sms;

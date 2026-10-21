@@ -18,7 +18,8 @@ Each row is one SKU, keyed by its PCI product id:
 | `segment` | `geforce`, `pro` or `datacenter` |
 | `form` | `desktop`, `laptop` or `server` |
 | `sms` | multiprocessors of the board |
-| `boost_mhz` | the **reference clock** (below) |
+| `boost_mhz` | the **reference clock** (below); on a laptop the top of the published range, which it is not priced at |
+| `boost_min_mhz` | laptops only, and on every laptop: the bottom of the published boost range |
 | `bus_bits`, `gbps` | memory bus width and data rate per pin; bandwidth = `gbps` x `bus_bits` / 8 |
 | `tdp_w` | total board power; on a laptop, the top TGP without Dynamic Boost |
 | `vram_gib` | the marketed memory size |
@@ -28,10 +29,17 @@ Each row is one SKU, keyed by its PCI product id:
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
-The reference clock is the published boost clock of NVIDIA's reference board. On a laptop it is
-the top of the published range. It is the value the CUDA driver reports as the peak SM clock of a
-stock board, so a lab card's cost model sees the same clock as before the table. The memory clock
-the facts carry is half the data rate, as the driver spells it.
+The reference clock is the published boost clock of NVIDIA's reference board. It is the value the
+CUDA driver reports as the peak SM clock of a stock board, so a lab card's cost model sees the same
+clock as before the table. The memory clock the facts carry is half the data rate, as the driver
+spells it.
+
+A laptop has no reference board: one name spans the OEMs' power limits (an RTX 4090 Laptop GPU
+runs 80 to 150 W, 1455 to 2040 MHz). Under principle 7 (the unknown is conservative) its facts take
+the **bottom** of the published boost range, `boost_min_mhz`, whatever the driver reports, so a
+low-power laptop is never priced like the fastest one of its name; the source is *extrapolated*. A
+laptop row without `boost_min_mhz` takes the lower of `boost_mhz` and the driver's clock on the
+2^(1/16) grid (the row's top without a driver clock). Every laptop row in the table has it.
 
 ## How facts are derived
 
@@ -40,15 +48,19 @@ the facts carry is half the data rate, as the driver spells it.
 - **A known id** of the reported architecture takes the row, whatever the driver reports: an
   overclock, a driver's rounding (14001 MHz against 14000), or no clocks at all on MIG or WSL. The
   source is *verified*.
-- **A laptop row, or a device whose SM count differs from the row's**, is *extrapolated*. A MIG
-  slice (fewer SMs) also gets `share` = its SMs over the board's, and its bandwidth scales by it.
+- **A laptop row, or a device whose SM count differs from the row's**, is *extrapolated*. A laptop
+  takes the bottom of its boost range (above). A MIG slice (fewer SMs) also gets `share` = its SMs
+  over the board's, and its bandwidth scales by it.
 - **An unknown id** takes the driver's SM and memory clocks rounded to the nearest 2^(k/16), and
   keeps the bus width. The source is *extrapolated*. With no clocks reported it is *none*, there is
   no roofline, and the cost model stands aside.
 
 `cost_route`, `a8_candidates`, `board_of` (the board distance for route tables and measured gates)
 and the speculation load model (`GpuKey`) read `DeviceClass::facts`. Nothing reads
-`DeviceClass::sm_clock_khz`, `memory_clock_khz` or `memory_bus_bits` for a decision.
+`DeviceClass::sm_clock_khz`, `memory_clock_khz` or `memory_bus_bits` for a decision. The decision
+fingerprint records the facts (`facts.machine.*`: source, reference and memory clock, bus width,
+share, `mma_slow`); the driver's values enter it (`facts.driver.*`) only when the facts are not the
+verified table's, and are observed (the manifest's `observed.driver.*`) otherwise.
 
 ## Adding a SKU
 

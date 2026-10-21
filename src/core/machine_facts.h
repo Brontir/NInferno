@@ -8,7 +8,10 @@
 //
 // machine_facts() is a pure function of the PCI id and the values the driver reported, so a CPU
 // test reproduces any device's facts. A known id takes the table's values whatever the driver said
-// (overclocks, a WDDM or MIG device that reports no clocks): source Verified. An unknown id takes
+// (overclocks, a WDDM or MIG device that reports no clocks): source Verified. A laptop row is
+// priced at the bottom of its published boost range (principle 7: the unknown is conservative),
+// or, where the table lacks it, at the lower of the row's top and the driver's clock on the grid:
+// source Extrapolated. An unknown id takes
 // the driver's clocks rounded to a 2^(1/16) grid: source Extrapolated, and none at all when the
 // driver reported none (FactSource::None: no roofline, the cost model stands aside as before).
 // This header and its source need no CUDA.
@@ -47,6 +50,8 @@ struct GpuFactsRow {
     FormFactor form = FormFactor::Unknown;
     int sms         = 0;
     int boost_mhz   = 0; // the reference clock (see MachineFacts::reference_clock_khz)
+    // A laptop's bottom of the published boost range (0: not given): the clock it is priced at.
+    int boost_min_mhz = 0;
     int bus_bits    = 0;
     double gbps     = 0; // memory data rate per pin
     int tdp_w       = 0;
@@ -83,9 +88,9 @@ struct MachineFacts {
     std::string sku; // the table row's name; empty when the id is unknown
     Segment segment = Segment::Unknown;
     FormFactor form = FormFactor::Unknown;
-    // The reference clock: the published boost clock of NVIDIA's reference board (the top of the
-    // published range on a laptop), which is what the driver reports as the peak SM clock of a
-    // stock board. 0: unknown.
+    // The reference clock: the published boost clock of NVIDIA's reference board, which is what
+    // the driver reports as the peak SM clock of a stock board; on a laptop the bottom of the
+    // published range (machine_facts). 0: unknown.
     int reference_clock_khz = 0;
     int memory_bus_bits     = 0;
     // Half the memory data rate, as the driver spells the memory clock (28 Gbps GDDR7: 14 000 000).

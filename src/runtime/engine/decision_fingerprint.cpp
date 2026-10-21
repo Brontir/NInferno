@@ -148,6 +148,12 @@ void features_into(DecisionSection& out, const std::string& prefix, const Device
     out[prefix + "tma"]             = flag(f.tma);
 }
 
+void driver_into(DecisionSection& out, const DeviceClass& d) {
+    out["driver.memory_bus_bits"]  = number(d.memory_bus_bits);
+    out["driver.memory_clock_khz"] = number(d.memory_clock_khz);
+    out["driver.sm_clock_khz"]     = number(d.sm_clock_khz);
+}
+
 void escaped_into(std::string& out, std::string_view text) {
     for (const char c : text) {
         switch (c) {
@@ -228,10 +234,19 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["max_threads_per_sm"]      = number(d.max_threads_per_sm);
     out["max_blocks_per_sm"]       = number(d.max_blocks_per_sm);
     out["registers_per_sm"]        = number(d.registers_per_sm);
-    out["memory_bus_bits"]         = number(d.memory_bus_bits);
-    out["memory_clock_khz"]        = number(d.memory_clock_khz);
-    out["sm_clock_khz"]            = number(d.sm_clock_khz);
-    out["driver_version"]          = number(driver_version);
+    // The facts the decisions read (DeviceClass::facts), not the driver's clocks: an overclocked
+    // board and a stock one of a listed id fingerprint alike.
+    const MachineFacts& m              = d.facts;
+    out["machine.source"]              = std::string(to_string(m.source));
+    out["machine.reference_clock_khz"] = number(m.reference_clock_khz);
+    out["machine.memory_clock_khz"]    = number(m.memory_clock_khz);
+    out["machine.memory_bus_bits"]     = number(m.memory_bus_bits);
+    out["machine.share"]               = bits(m.share);
+    out["machine.mma_slow"]            = flag(m.mma_slow);
+    // Off the verified table the driver's values feed the facts (an unknown id snaps them, a
+    // laptop without its range's bottom bounds its clock by them): they are inputs then.
+    if (m.source != FactSource::Verified) { driver_into(out, d); }
+    out["driver_version"] = number(driver_version);
     features_into(out, "feature.", d.features);
     features_into(out, "build_feature.", build);
     out["host.cpu_cores"]     = number(host.logical_cores);
@@ -368,6 +383,12 @@ DecisionSection observed_of(const MemorySummary& memory) {
     return out;
 }
 
+DecisionSection observed_of(const DeviceClass& device) {
+    DecisionSection out;
+    if (device.facts.source == FactSource::Verified) { driver_into(out, device); }
+    return out;
+}
+
 std::span<const std::string_view> decision_environment_variables() { return kDecisionVariables; }
 
 std::span<const std::string_view> non_decision_environment_variables() {
@@ -400,7 +421,11 @@ DecisionSection taint_of(const DecisionInputs& in) {
     }
     if (!tuners.empty()) { out["user_tune_cache"] = joined(tuners); }
     if (value(in.options, "speculative.calibrate_floor") == "1") { out["calibrate_floor"] = "1"; }
-    if (value(in.facts, "memory_clock_khz") == "0" || value(in.facts, "sm_clock_khz") == "0") {
+    // No roofline (MachineFacts::has_roofline): the cost model stands aside. A known id whose
+    // driver reports no clocks (MIG, some WSL drivers) has the table's and is not tainted.
+    if (value(in.facts, "machine.reference_clock_khz") == "0" ||
+        value(in.facts, "machine.memory_clock_khz") == "0" ||
+        value(in.facts, "machine.memory_bus_bits") == "0") {
         out["clocks"] = "0";
     }
     if (const auto lenders = value(in.sources, "route_table.lenders"); !lenders.empty()) {

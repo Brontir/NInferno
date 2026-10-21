@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -59,6 +60,10 @@ void table_well_formed() {
         const bool gtx_on_tu106 = r.chip == "tu106" && r.name.find("GTX") != std::string::npos;
         const bool slow_chip    = r.chip == "tu116" || r.chip == "tu117";
         expect(r.mma_slow == (slow_chip || gtx_on_tu106), where + ": mma_slow");
+        // A laptop row carries the bottom of its published boost range (the clock it is priced
+        // at); no other row does (the parser refuses one).
+        expect((r.form == FormFactor::Laptop) == (r.boost_min_mhz > 0),
+               where + ": boost_min_mhz on laptops only, and on every laptop");
         // Bandwidth plausibility: 64..9000 GB/s.
         const double gbs = r.gbps * r.bus_bits / 8.0;
         expect(gbs >= 64 && gbs <= 9000, where + ": bandwidth " + std::to_string(gbs));
@@ -145,6 +150,41 @@ void deterministic_and_driver_blind() {
            "an id reported by another architecture is not the table's row");
 }
 
+// Principle 7: a laptop is priced at the bottom of its published boost range (an RTX 4090 Laptop
+// GPU runs 80 to 150 W, 1455 to 2040 MHz), whatever its driver reports; a laptop row without the
+// bottom takes the lower of its top and the driver's clock on the grid.
+void laptops_conservative() {
+    for (const DriverReport report : {DriverReport{0x2717, 8, 9, 76, 2040000, 9001000, 256},
+                                      DriverReport{0x2717, 8, 9, 76, 1755000, 9001000, 256},
+                                      DriverReport{0x2717, 8, 9, 76, 0, 0, 0}}) {
+        const MachineFacts f = machine_facts(report);
+        expect(f.source == FactSource::Extrapolated && f.form == FormFactor::Laptop &&
+                   f.reference_clock_khz == 1455000 && f.memory_clock_khz == 9000000,
+               "RTX 4090 Laptop GPU: the bottom of 1455-2040 MHz, whatever the driver says");
+    }
+    expect(
+        machine_facts(DriverReport{0x2520, 8, 6, 30, 1703000, 7001000, 192}).reference_clock_khz ==
+            1283000,
+        "RTX 3060 Laptop GPU: 1283 MHz, the bottom of 1283-1703");
+    const std::string row =
+        R"({"schema":1,"gpus":[{"id":"0x2717","name":"x","chip":"ad103","cc":89,)"
+        R"("segment":"geforce","form":"laptop","sms":76,"boost_mhz":2040,"bus_bits":256,)"
+        R"("gbps":18.0,"tdp_w":150,"vram_gib":16,"pcie":4,"sources":["https://example.org/"]}]})";
+    const std::vector<GpuFactsRow> table = parse_gpu_facts(row);
+    const auto clock                     = [&](int driver_khz) {
+        return machine_facts(DriverReport{0x2717, 8, 9, 76, driver_khz, 9001000, 256}, table)
+            .reference_clock_khz;
+    };
+    const int low = static_cast<int>(std::llround(snap_to_fact_grid(1500000)));
+    expect(clock(1500000) == low && low < 2040000,
+           "no bottom given: a lower driver clock, on the grid");
+    expect(clock(2400000) == 2040000, "no bottom given: never above the row's top");
+    expect(clock(0) == 2040000, "no bottom given, no driver clock: the row's top");
+    std::printf(
+        "laptop 4090: %s\n",
+        describe(machine_facts(DriverReport{0x2717, 8, 9, 76, 2040000, 9001000, 256})).c_str());
+}
+
 void grid() {
     expect(snap_to_fact_grid(0) == 0 && snap_to_fact_grid(-5) == 0, "the grid of 0 is 0");
     for (int k = -32; k <= 400; ++k) {
@@ -152,6 +192,19 @@ void grid() {
         expect(std::abs(snap_to_fact_grid(p) / p - 1) < 1e-12, "a grid point is its own snap");
         expect(std::abs(snap_to_fact_grid(p * 1.02) / p - 1) < 1e-12, "+2 % snaps down");
         expect(std::abs(snap_to_fact_grid(p * 0.98) / p - 1) < 1e-12, "-2 % snaps up");
+    }
+    // The integers either side of each midpoint 2^((k+1/2)/16), up to 2^31, snap to the grid
+    // points either side (the margin snap_to_fact_grid's comment states holds on this libm).
+    for (int k = 0; k < 496; ++k) {
+        const double mid = std::exp2((k + 0.5) / 16.0);
+        const double lo = std::floor(mid), hi = std::ceil(mid);
+        // Only where the integer stays within the half-step on its side.
+        if (lo >= std::exp2((k - 0.5) / 16.0)) {
+            expect(snap_to_fact_grid(lo) == std::exp2(k / 16.0), "below a midpoint snaps down");
+        }
+        if (hi < std::exp2((k + 1.5) / 16.0)) {
+            expect(snap_to_fact_grid(hi) == std::exp2((k + 1) / 16.0), "above a midpoint snaps up");
+        }
     }
     double last = 0;
     for (double x = 1000; x < 4e6; x *= 1.003) {
@@ -226,6 +279,16 @@ void malformed_tables_refused() {
             "a plain-http source");
     refused(R"({"schema":1,"gpus":[)" + row + src + "," + row + src + "]}", "a repeated id");
     refused(R"({"schema":2,"gpus":[]})", "another schema");
+    std::string desktop_min = row;
+    desktop_min.replace(desktop_min.find("\"bus_bits\""), 0, "\"boost_min_mhz\":1500,");
+    refused(R"({"schema":1,"gpus":[)" + desktop_min + src + "]}", "boost_min_mhz on a desktop");
+    std::string laptop_min = desktop_min;
+    laptop_min.replace(laptop_min.find("desktop"), 7, "laptop");
+    expect(parse_gpu_facts(R"({"schema":1,"gpus":[)" + laptop_min + src + "]}")[0].boost_min_mhz ==
+               1500,
+           "boost_min_mhz on a laptop");
+    laptop_min.replace(laptop_min.find("1500"), 4, "2600");
+    refused(R"({"schema":1,"gpus":[)" + laptop_min + src + "]}", "boost_min_mhz above boost_mhz");
     std::string bad = row;
     bad.replace(bad.find("\"pcie\":4"), 8, "\"pcie\":0");
     refused(R"({"schema":1,"gpus":[)" + bad + src + "]}", "PCIe generation 0");
@@ -238,6 +301,7 @@ int main() {
         table_well_formed();
         lab_cards_old_vs_new();
         deterministic_and_driver_blind();
+        laptops_conservative();
         grid();
         mig_and_zero_clocks();
         device_class_wiring();
