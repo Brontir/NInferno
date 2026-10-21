@@ -299,15 +299,12 @@ void ProgramImpl::install_sampling(SequenceState& sequence, RequestControl& requ
         .final_draft_window    = request.draft_depth,
     };
     request.step_down = speculative ? speculation.step_down : std::vector<SpeculationStep>{};
-    for (SpeculationStep& step : request.step_down) {
-        step.acceptance_floor = calibrated_floor(step.draft_tokens, step.acceptance_floor);
-    }
     request.judged_rounds    = 0;
     request.judged_accepted  = 0;
     request.drafting_stopped = false;
     request.watchdog         = spec::AcceptanceWatchdog(spec::WatchdogPolicy{
                 .floor_tokens_per_round =
-            calibrated_floor(request.draft_depth, speculation.acceptance_floor),
+            speculation.acceptance_floor,
                 .window_rounds = watchdog_policy.window_rounds,
                 .min_rounds    = watchdog_policy.min_rounds});
     // Depth 0 in a speculative engine: plain decode from the first step.

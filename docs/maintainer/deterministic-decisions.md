@@ -7,8 +7,7 @@ reach the runtime only as facts or as constants.
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
 - the attention split under `exact` follows the free-memory-sized context;
-- the dense tuner's user cache, local spec-tune, environment knobs, `calibrate_floor` and budgets in
-  milliseconds still steer choices;
+- environment knobs and budgets in milliseconds still steer choices;
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;

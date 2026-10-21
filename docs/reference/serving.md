@@ -275,9 +275,15 @@ The profile therefore bounds speculation under load, in its `load` table.
   `ninferno spec-tune <artifact> --load 2,4,8`, which loads the model once per candidate bound. It
   is measured again for a concurrency the widest engine does not hold. A concurrency it cannot
   decide leaves the table marked `load_partial`.
-- **Local tunes.** A tune without `--load` writes no table. The server then takes the published
-  table for this GPU and the tuned drafters, when its default drafts with the same kind, and names
-  it at startup ("load bounds ... the local tune measured none").
+- **Local tunes.** A maintainer's own tune runs only when named: `--spec-profile TUNE.json` (one
+  left beside the artifact is not read, and a startup note says so). A tune without `--load`
+  writes no table. The server then takes the published table for this GPU and the tuned drafters,
+  when its default drafts with the same kind, and names it at startup ("load bounds ... the local
+  tune measured none").
+- **Floors of a profile from another GPU.** A profile measured on a similar chip, the `"*"` one or
+  a built-in default carries no break-even of this GPU. Each of its watchdog floors is raised to
+  the largest the registry measured for that configuration on any GPU, a startup note names each
+  one, and nothing is timed at startup.
 - **Rule.** A decode step of at least `lanes` rows verifies at most `depth` drafts per row. At depth
   0 its rows finish their requests with plain decode. A row cannot resume speculating: its drafter
   state stops with its last round, so a later request reuses its checkpoints from before the
@@ -334,8 +340,8 @@ this order:
    between them (a few Engine builds from any depth). It runs the deepest that fits (for a user's
    `--max-context` longer than the tune's, or a card nobody tuned).
 3. It tries the model's own MTP head (when the choice drafts with another drafter and the model
-   has one), the built-in MTP default with its floors calibrated on this GPU (a measurement being
-   replaced by a model: [deterministic decisions](../maintainer/deterministic-decisions.md)).
+   has one), the built-in MTP default with the registry's floors for its depth (nothing is
+   timed: [deterministic decisions](../maintainer/deterministic-decisions.md)).
 4. Only then it decodes plainly and warns, rather than failing to start.
 
 An explicit `--prefill-chunk` stays as given: the shallower drafts are tried beside it, and the

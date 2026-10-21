@@ -101,6 +101,9 @@ struct ServeOptions {
     // (SpeculativeOptions::load) instead of the profile's table (spec::Profile::load); with an
     // explicit --spec, its only bounds. Absent: the profile's table (none with an explicit --spec).
     std::optional<std::vector<spec::LoadBound>> speculation_load;
+    // --spec-profile PATH: a maintainer's own tune (`ninferno spec-tune`'s output) in place of the
+    // published profile. Only read when named: a tune left beside the artifact is not.
+    std::filesystem::path spec_profile;
     ContextCacheOptions context_cache;
     bool enable_vision      = false;
     bool use_cuda_graph     = true;

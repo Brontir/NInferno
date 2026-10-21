@@ -136,6 +136,8 @@ Options parse_options(int argc, char** argv) {
                 options.speculative.backend = product::parse_speculative_backend(mode);
                 options.spec_explicit       = true;
             }
+        } else if (arg == "--spec-profile") {
+            options.spec_profile = value(arg);
         } else if (arg == "--acceptance-floor") {
             options.acceptance_floor =
                 parse_float_in(value(arg), "acceptance-floor", 0.0F, 1000.0F);

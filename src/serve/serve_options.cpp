@@ -55,6 +55,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--ngram-draft-tokens N [--ngram-min-match M]] "
            "[--drafter DRAFTER.ninferno] [--draft-width block|drafts] "
            "[--spec auto [--spec-select fixed|thinking]] [--spec-load LANES:DEPTH,...|none] "
+           "[--spec-profile TUNE.json] "
            "[--spec-shared-floor F] "
            "[--default-max-tokens N] [--default-thinking-budget N] [--repetition-stop N] "
            "[--repetition-thinking stop|conclude] "
@@ -167,6 +168,9 @@ std::string serve_usage_text(const char* argv0) {
            "       table: 2:7,3:3,5:0 caps a step of 2+ rows at 7 drafts per row, of 3+ rows\n"
            "       at 3, and turns speculation off from 5 rows (none: no bound); 2:7:drafts\n"
            "       also sets the DFlash draft width of launches of 2+ rows (--draft-width).\n"
+           "       --spec-profile TUNE.json: a tune of this model on this GPU (ninferno\n"
+           "       spec-tune's output) in place of the published profile; one beside the\n"
+           "       artifact is read only when named here.\n"
            "       --spec-shared-floor F: a request below its break-even floor keeps drafting\n"
            "       while another request of its step drafts and it emits F tokens per round or\n"
            "       more (default 1.4; 1 or less: it stops at its floor).\n"
@@ -403,6 +407,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.per_request_speculation = value == "thinking";
         } else if (arg == "--spec-load") {
             options.speculation_load = spec::parse_load(require_value("--spec-load"));
+        } else if (arg == "--spec-profile") {
+            options.spec_profile = require_value("--spec-profile");
         } else if (arg == "--spec-shared-floor") {
             options.speculative.shared_trip_floor = parse_float_in(
                 require_value("--spec-shared-floor"), "spec-shared-floor", 0.0f, 16.0f);

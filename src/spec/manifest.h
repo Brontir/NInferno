@@ -65,17 +65,29 @@ struct ResolvedSpeculation {
     std::map<std::string, std::string> drafters;
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
-    // The profile was measured on another GPU (spec::measured_elsewhere): its watchdog floors are
-    // that GPU's, so the engine calibrates them here (SpeculativeOptions::calibrate_floor).
+    // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
+    // default measured nowhere: its floors are raised to the registry's (raise_foreign_floors).
     bool foreign_floors = false;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
 
 // `artifact_id`: the target's id (hex); `gpu`: this device (a local tune must carry its full class
-// id, gpu.chain.front()).
+// id, gpu.chain.front()). `local_profile`: a maintainer's own tune (`ninferno spec-tune`'s output),
+// read only when named (serve/CLI --spec-profile): one beside the artifact is never read by
+// itself, so a machine's own measurement does not steer what it runs.
 [[nodiscard]] ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                                       const std::string& artifact_id,
-                                                      const GpuKey& gpu);
+                                                      const GpuKey& gpu,
+                                                      const std::filesystem::path& local_profile = {});
+
+// The largest break-even (floor_tokens_per_round) any registry profile measured for this mode and
+// depth, on any GPU class: a lab constant. 0 when the registry measured none.
+[[nodiscard]] double registry_floor_ceiling(const SpecConfig& config);
+
+// A profile measured on another GPU, or measured nowhere, carries no break-even of this one: each
+// choice's floor is raised to registry_floor_ceiling (the conservative side: its watchdog trips
+// sooner). A note names each raised choice.
+void raise_foreign_floors(Profile& profile, std::vector<std::string>& notes);
 
 } // namespace ninferno::spec

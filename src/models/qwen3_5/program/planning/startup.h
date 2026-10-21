@@ -114,7 +114,6 @@ struct SequencePlanningInputs {
     std::uint32_t watchdog_window           = 32;
     std::uint32_t watchdog_min_rounds       = 16;
     double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor
-    bool calibrate_floor                    = false; // SpeculativeOptions::calibrate_floor
     std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
     std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
     std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window
@@ -161,7 +160,6 @@ struct SequencePlanImpl {
     std::uint32_t watchdog_window           = 32;
     std::uint32_t watchdog_min_rounds       = 16;
     double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor
-    bool calibrate_floor                    = false; // SpeculativeOptions::calibrate_floor
     std::uint32_t ngram_draft_tokens        = 0;     // SpeculativeOptions: the copy window
     std::uint32_t ngram_min_match           = 0;     // SpeculativeOptions::ngram_min_match
     std::uint32_t kv_lease_window           = 0;     // EngineOptions::kv_lease_window

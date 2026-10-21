@@ -39,8 +39,8 @@ std::vector<std::string> referenced(const Profile& p) {
 }
 
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
-// measured on another GPU calibrated here, another profile's load bounds where it measured none,
-// and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
+// measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
+// bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
@@ -67,6 +67,7 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
         return false;
     }
     if (out.foreign_floors) {
+        raise_foreign_floors(p, out.notes);
         const auto capped = stand_in_load(p.load, gpu.sms);
         if (capped != p.load) {
             out.notes.push_back("load bounds " + load_label(p.load) + " -> " + load_label(capped) +
@@ -198,9 +199,68 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
     }
 }
 
+namespace {
+
+// Every choice object under `j` (a "config" label beside a "floor_tokens_per_round").
+void collect_floors(const Json& j, const SpecConfig& config, double& ceiling) {
+    if (j.is_object()) {
+        const auto label = j.find("config");
+        const auto floor = j.find("floor_tokens_per_round");
+        if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
+            try {
+                const auto c = SpecConfig::parse(label->get<std::string>());
+                if (c.mode == config.mode && c.k == config.k) {
+                    ceiling = std::max(ceiling, floor->get<double>());
+                }
+            } catch (const std::exception&) {
+            }
+        }
+        for (const auto& [key, value] : j.items()) { collect_floors(value, config, ceiling); }
+    } else if (j.is_array()) {
+        for (const auto& value : j) { collect_floors(value, config, ceiling); }
+    }
+}
+
+void raise_choice(Choice& choice, const char* name, std::vector<std::string>& notes) {
+    if (!choice.config.enabled()) { return; }
+    const double ceiling = registry_floor_ceiling(choice.config);
+    if (ceiling <= choice.floor_tokens_per_round) { return; }
+    notes.push_back(std::string(name) + " " + choice.config.label() + ": watchdog floor " +
+                    std::to_string(choice.floor_tokens_per_round) + " -> " +
+                    std::to_string(ceiling) +
+                    " tokens a round, the largest the registry measured for it (the profile was "
+                    "not measured on this GPU)");
+    choice.floor_tokens_per_round = ceiling;
+}
+
+} // namespace
+
+double registry_floor_ceiling(const SpecConfig& config) {
+    if (!config.enabled()) { return 0.0; }
+    double ceiling = 0.0;
+    for (const auto& model : Registry::builtin().models()) {
+        collect_floors(model.profiles, config, ceiling);
+    }
+    return ceiling;
+}
+
+void raise_foreign_floors(Profile& profile, std::vector<std::string>& notes) {
+    raise_choice(profile.overall, "default", notes);
+    raise_choice(profile.thinking, "thinking", notes);
+    raise_choice(profile.non_thinking, "non-thinking", notes);
+    if (profile.fit_fallback) { raise_choice(*profile.fit_fallback, "fit fallback", notes); }
+    for (auto* served : {&profile.served, &profile.portable}) {
+        if (!served->has_value()) { continue; }
+        raise_choice((*served)->overall, "served default", notes);
+        raise_choice((*served)->thinking, "served thinking", notes);
+        raise_choice((*served)->non_thinking, "served non-thinking", notes);
+    }
+}
+
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,
-                                        const GpuKey& gpu) {
+                                        const GpuKey& gpu,
+                                        const std::filesystem::path& local_profile) {
     const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
     ResolvedSpeculation out;
     std::optional<SpeculationManifest> manifest;
@@ -225,10 +285,17 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         if (manifest) { out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback; }
     }
 
-    // 1. A maintainer's own tune on this machine.
-    const auto tuned_path = default_profile_path(artifact);
+    // 1. A maintainer's own tune, only when named (--spec-profile): one left beside the artifact is
+    //    not read, so a machine's own measurement never steers what it runs by itself.
+    const auto& tuned_path = local_profile;
+    if (tuned_path.empty() && std::filesystem::exists(default_profile_path(artifact))) {
+        out.notes.push_back(default_profile_path(artifact).string() +
+                            " is not read: a local tune applies only when named "
+                            "(--spec-profile " +
+                            default_profile_path(artifact).string() + ")");
+    }
     std::string why;
-    if (auto tuned = read_profile(tuned_path, &why)) {
+    if (auto tuned = tuned_path.empty() ? std::nullopt : read_profile(tuned_path, &why)) {
         ProfileKey expected;
         expected.artifact_id = artifact_id;
         expected.gpu         = gpu_class;
@@ -285,6 +352,8 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
             }
             return out;
         }
+    } else if (!tuned_path.empty()) {
+        out.notes.push_back("--spec-profile " + tuned_path.string() + ": " + why);
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 

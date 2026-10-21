@@ -133,7 +133,7 @@ std::string artifact_id_or_path(const std::filesystem::path& artifact) {
 //   [--top-p 0.95] [--thinking on|off|corpus] [--max-tokens N] [--repeat R] [--min-gain 0.03]
 //   [--tolerance 0.03] [--draft-width block|drafts]
 //   [--max-context N] [--prefill-chunk N] [--kv-dtype bf16] [--corpus FILE] [--out FILE.json]
-//   [--resume FILE.json]
+//   [--resume FILE.json] [--profile TUNE.json (default: the tune beside the artifact)]
 //   [--publish FILE --gpu-class CLASS --applies-to REPO,... --requires a,b --measured-on TEXT]
 //   [--device N]
 // Engines as `ninferno-serve --spec auto` builds them for this GPU (the profile's drafter at its
@@ -214,7 +214,11 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
     const auto started = std::chrono::steady_clock::now();
 
     // As ninferno-serve builds it by default (--spec-select fixed): every request at the default.
-    auto served = product::served_speculation(artifact, device, true, false);
+    // The lab flow: the tune spec-tune wrote beside the artifact (or --profile), named explicitly.
+    const std::filesystem::path tuned = flags.contains("profile")
+                                            ? std::filesystem::path(flags.at("profile"))
+                                            : spec::default_profile_path(artifact);
+    auto served = product::served_speculation(artifact, device, true, false, tuned);
     if (!served || served->menu.mode == spec::Mode::None) {
         throw std::runtime_error("spec-tune --load: the model has no speculation that runs on this "
                                  "GPU (serve --spec auto would decode plainly)");
@@ -673,7 +677,7 @@ int run_spec_tune(int argc, char** argv) {
         "applies-to",    "budget-seconds", "configs",     "corpus",   "device",
         "draft-width",   "gpu-class",      "kv-dtype",    "load",     "load-depths",
         "max-context",   "max-tokens",     "measured-on", "min-gain", "out",
-        "prefill-chunk", "publish",        "repeat",      "requires", "resume",
+        "prefill-chunk", "profile",        "publish",     "repeat",   "requires", "resume",
         "temperature",   "thinking",       "tolerance",   "top-p"};
     for (const auto& [key, value] : flags) {
         if (!kKnown.contains(key)) {

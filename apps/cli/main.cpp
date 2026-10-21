@@ -301,7 +301,8 @@ int main(int argc, char** argv) {
             std::string source;
             std::vector<std::string> notes;
             const auto chosen = ninferno::product::profile_speculation(
-                cli.artifact_path, cli.device, cli.enable_thinking, &source, &notes);
+                cli.artifact_path, cli.device, cli.enable_thinking, &source, &notes,
+                cli.spec_profile);
             for (const auto& note : notes) { logger->info("speculation: {}", note); }
             if (chosen) {
                 engine_options.speculative =
@@ -356,17 +357,19 @@ int main(int argc, char** argv) {
                     logger->warn("speculation: {}; running {}", reason, source);
                     return true;
                 };
-                auto served = product::served_fit_fallback(cli.artifact_path, cli.device, false);
+                auto served = product::served_fit_fallback(cli.artifact_path, cli.device, false,
+                                                           cli.spec_profile);
                 if (served && fits(served->engine, served->source)) { return std::move(*built); }
                 if (!served) {
                     served = product::served_speculation(cli.artifact_path, cli.device,
-                                                         cli.enable_thinking.value_or(true), false);
+                                                         cli.enable_thinking.value_or(true), false,
+                                                         cli.spec_profile);
                 }
                 if (served) {
                     const auto shallower = [&](const ninferno::spec::SpecConfig& config,
                                                double floor) {
                         return product::served_shallower(cli.artifact_path, cli.device, false,
-                                                         config, floor);
+                                                         config, floor, cli.spec_profile);
                     };
                     if (product::deepest_fitting_shallower(
                             served->menu.primary, shallower,
@@ -376,7 +379,8 @@ int main(int argc, char** argv) {
                         return std::move(*built);
                     }
                 }
-                if (auto head = product::served_head_fallback(cli.artifact_path, cli.device, false);
+                if (auto head = product::served_head_fallback(cli.artifact_path, cli.device, false,
+                                                              cli.spec_profile);
                     head && fits(head->engine, head->source)) {
                     return std::move(*built);
                 }

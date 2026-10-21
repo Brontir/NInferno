@@ -140,7 +140,7 @@ Arguments parse(int argc, char** argv) {
             "prefill-split",
             "profile",     "prompt",      "publish",
             "repeat",      "rounds-out",  "seed",
-            "spec",        "stop",        "tag",
+            "spec",        "spec-profile", "stop",       "tag",
             "temperature", "tokens",      "top-k",
             "top-p",       "window"};
         if (!known.contains(key)) {
@@ -746,8 +746,11 @@ StartPlan start_plan(const Arguments& args, const std::string& artifact,
         }
     } else {
         const auto gpu       = spec::gpu_identity(device);
+        // A local tune only when named (--spec-profile): one beside the artifact is not read.
         const auto resolved  = spec::resolve_speculation(
-            artifact, spec::artifact_id_hex(artifact), gpu.key);
+            artifact, spec::artifact_id_hex(artifact), gpu.key,
+            args.flag("spec-profile") ? std::filesystem::path(args.text("spec-profile"))
+                                      : std::filesystem::path());
         plan.notes = resolved.notes;
         if (resolved.found()) {
             const auto& choice = spec::pick(resolved.profile, thinking);

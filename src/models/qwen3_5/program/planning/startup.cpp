@@ -1033,7 +1033,6 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
     impl->watchdog_window     = inputs.watchdog_window;
     impl->watchdog_min_rounds = inputs.watchdog_min_rounds;
     impl->shared_trip_floor   = inputs.shared_trip_floor;
-    impl->calibrate_floor         = inputs.calibrate_floor;
     impl->ngram_draft_tokens      = inputs.ngram_draft_tokens;
     impl->ngram_min_match         = inputs.ngram_min_match;
     impl->kv_lease_window         = inputs.kv_lease_window;
@@ -1199,7 +1198,6 @@ make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
         .watchdog_window     = options.speculative.watchdog_window,
         .watchdog_min_rounds = options.speculative.watchdog_min_rounds,
         .shared_trip_floor   = options.speculative.shared_trip_floor,
-        .calibrate_floor     = options.speculative.calibrate_floor,
         .ngram_draft_tokens  = options.speculative.ngram_draft_tokens,
         .ngram_min_match     = options.speculative.ngram_min_match,
         .kv_lease_window     = options.kv_lease_window,

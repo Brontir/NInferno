@@ -1020,8 +1020,9 @@ int test_registry_and_corpus() {
                                   std::string::npos &&
                               similarity_note(rtx5080, *published).empty(),
                           "an unmeasured GPU takes the most similar measured GPU's profile");
-        // A stand-in's floors are another GPU's: the engine calibrates them (calibrate_floor);
-        // the card's own profile, and a key list without own keys, keep theirs.
+        // A stand-in's floors are another GPU's: they are raised to the registry's
+        // (raise_foreign_floors); the card's own profile, and a key list without own keys, keep
+        // theirs.
         failures += check(measured_elsewhere(rtx3070, *stand_in) &&
                               measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "*"}}) &&
                               !measured_elsewhere(rtx3070, nlohmann::json{{"gpu_class", "sm86"}}) &&
@@ -1353,9 +1354,12 @@ int test_resolve() {
     r = resolve_speculation(artifact, "bbbb", rtx5090);
     failures += check(!r.found() && !r.notes.empty(), "a manifest of another artifact is ignored");
     r = resolve_speculation(artifact, "aaaa", rtx5090);
+    // The "*" profile was measured on no GPU in particular: its floor is at least the registry's
+    // largest for its configuration.
     failures += check(r.found() && r.profile.overall.config.label() == "mtp:5+head" &&
-                          r.drafters.at("mtp") == "component:mtp" &&
-                          r.profile.overall.floor_tokens_per_round == 1.6,
+                          r.drafters.at("mtp") == "component:mtp" && r.foreign_floors &&
+                          r.profile.overall.floor_tokens_per_round ==
+                              std::max(1.6, registry_floor_ceiling(SpecConfig::parse("mtp:5+head"))),
                       "the manifest's profile for the attached drafters");
     // A maintainer's tune for this artifact and GPU wins.
     Profile tuned;
@@ -1365,16 +1369,34 @@ int test_resolve() {
     tuned.overall.config  = SpecConfig::parse("mtp:3+head");
     tuned.overall.drafter = "mtp";
     write_profile(default_profile_path(artifact), tuned);
+    // Left beside the artifact, it is not read (a machine's own measurement steers nothing by
+    // itself); a note names the option that reads it.
     r = resolve_speculation(artifact, "aaaa", rtx5090);
+    failures += check(r.found() && !r.source.starts_with("local tune") &&
+                          std::any_of(r.notes.begin(), r.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.find("is not read") != std::string::npos &&
+                                                 n.find("--spec-profile") != std::string::npos;
+                                      }),
+                      "a local tune beside the artifact is not read unless named");
+    const auto named = default_profile_path(artifact);
+    r                = resolve_speculation(artifact, "aaaa", rtx5090, named);
     failures += check(r.found() && r.source.starts_with("local tune") &&
                           r.profile.overall.config.label() == "mtp:3+head",
-                      "a local tune wins");
+                      "a named local tune wins");
+    r = resolve_speculation(artifact, "aaaa", rtx5090, artifact.parent_path() / "absent.json");
+    failures += check(r.found() && !r.source.starts_with("local tune") &&
+                          std::any_of(r.notes.begin(), r.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.rfind("--spec-profile ", 0) == 0;
+                                      }),
+                      "an unreadable named tune is a note, and the published profile runs");
     // The tune measured no load bounds: the published ones of its drafter kind apply.
     failures += check(r.profile.load.empty(), "no load bounds without a published table");
     manifest["profiles"][1]["load"] =
         Json::array({Json{{"lanes", 2}, {"depth", 2}}, Json{{"lanes", 4}, {"depth", 0}}});
     write(manifest_path(artifact), manifest);
-    r = resolve_speculation(artifact, "aaaa", rtx5090);
+    r = resolve_speculation(artifact, "aaaa", rtx5090, named);
     failures += check(r.source.starts_with("local tune") &&
                           r.profile.overall.config.label() == "mtp:3+head" &&
                           r.profile.load.size() == 2 && r.profile.load[0].depth == 2 &&
@@ -1387,9 +1409,28 @@ int test_resolve() {
                       "a local tune takes the published load bounds of its kind");
     manifest["profiles"][1].erase("load");
     write(manifest_path(artifact), manifest);
-    r = resolve_speculation(artifact, "aaaa", pro6000);
+    r = resolve_speculation(artifact, "aaaa", pro6000, named);
     failures += check(r.found() && r.source.starts_with("manifest"),
                       "a tune for another GPU class falls back to the manifest");
+    // The registry's ceiling: the largest floor its profiles measured for a configuration (a lab
+    // constant), 0 for one it never measured; raise_foreign_floors lifts a choice to it, never
+    // lowers one.
+    {
+        const double mtp8 = registry_floor_ceiling(SpecConfig::parse("mtp:8"));
+        Profile foreign;
+        foreign.overall.config                  = SpecConfig::parse("mtp:8");
+        foreign.overall.floor_tokens_per_round  = 1.1;
+        foreign.thinking.config                 = SpecConfig::parse("mtp:8");
+        foreign.thinking.floor_tokens_per_round = 99.0;
+        std::vector<std::string> raised;
+        raise_foreign_floors(foreign, raised);
+        failures += check(mtp8 > 1.1 && registry_floor_ceiling(SpecConfig::parse("mtp:15")) >= 0.0 &&
+                              registry_floor_ceiling(SpecConfig{}) == 0.0 &&
+                              foreign.overall.floor_tokens_per_round == mtp8 &&
+                              foreign.thinking.floor_tokens_per_round == 99.0 &&
+                              raised.size() == 1,
+                          "a foreign profile's floors rise to the registry's ceiling, never fall");
+    }
     // A manifest the registry wrote, naming its entry: the profiles of the registry this binary
     // carries replace the (stale, here memory-keyed) copy taken at conversion.
     fs::remove(default_profile_path(artifact));
