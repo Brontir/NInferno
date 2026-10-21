@@ -996,14 +996,25 @@ void dense_bf16(Model& model, Recipe& recipe) {
 // calibrated activation divisor when it has one, row/tensor-scaled FP8, int4 GPTQ/AWQ/compressed-
 // tensors as u4 with zero points, int8 as q8_g32_fp16: formats.h kept_encoding) is imported as it
 // is; every other tensor keeps its direct BF16 form (the token embedding, and a head published in
-// BF16). An NVFP4 matrix of any row count keeps its words: the layout completes a last 128-row
+// BF16), but a DFlash drafter's projections, NInferno's own companion, take Q8. An NVFP4 matrix of any row count keeps its words: the layout completes a last 128-row
 // scale tile its rows do not fill. The GDN control projections stay separate, as in every recipe.
 // A MoE model's experts follow the same rule (an expert bank the checkpoint publishes in int4 stays
 // int4); every routed expert bank and shared gate/up pair becomes one parent, as the MoE ops
-// address them (NVFP4 matrices of such a parent that end inside a scale tile share one divisor or
-// are refused: refuse_split_nvfp4_tiles).
+// address them (NVFP4 matrices of such a parent keep a divisor each).
 // (breadth's qwen3_5_published, with every kept encoding rather than NVFP4 and FP8 only.)
 void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
+    // A DFlash drafter is NInferno's companion, not the published model: it takes the Q8 every
+    // recipe gives it (the drafter's fused QKV kernels read Q8).
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const auto& name = model.parameters[i].name;
+        if (model.parameters[i].projection() &&
+            (name.starts_with("dflash/") || name.starts_with("dflash2/")) &&
+            !ends_with_any(name, {"/attention_conv/kernel_projection", "/mlp_conv/kernel_projection",
+                                  "/candidate_selector/hidden_projection"})) {
+            recipe.assign(i, kQ8, Method::GroupedAbsmax);
+        }
+    }
+    share_draft_context(model, recipe);
     std::size_t kept = 0, published = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
@@ -1060,7 +1071,6 @@ void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
                 const auto& name = model.parameters[i].name;
                 return has_part(name, "/moe/experts/") || has_part(name, "/moe/shared/");
             })) {
-            refuse_split_nvfp4_tiles(model, recipe, names);
             recipe.explicit_groups.push_back(names);
         }
     }

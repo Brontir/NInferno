@@ -286,8 +286,8 @@ def test_unequal_nvfp4_sources_with_different_divisors_are_refused_at_plan_time(
 
 
 def test_a_stack_of_divisors_whose_sources_end_inside_a_scale_tile_is_refused_at_plan_time():
-    """Two 192-row sources of their own divisors, grouped: each divisor would cover part of a
-    128-row scale tile, so the plan is refused where the parent's divisors are chosen."""
+    """Two 192-row sources of their own divisors, grouped: the Python writer streams each source
+    from a 128-row tile start, so the plan is refused (the native converter writes it)."""
 
     model = Model({"text": {"config": {}}})
     for name, divisor in (("gate", 2.0), ("up", 4.0)):
@@ -301,12 +301,11 @@ def test_a_stack_of_divisors_whose_sources_end_inside_a_scale_tile_is_refused_at
         recipe.prepare(device="cpu")
 
 
-def test_a_divisor_may_not_cover_part_of_a_scale_tile():
-    """The scale plane is addressed in whole 128-row tiles, so a source shorter than one is not
-    representable however its rows divide the parent."""
+def test_a_divisor_may_cover_part_of_a_scale_tile():
+    """Four divisors over 256 rows: 64 rows each, two per 128-row scale tile."""
 
-    with pytest.raises(ValueError, match="128-row scale tiles"):
-        block_scale_geometry("nvfp4", (256, 64), 4)
+    geometry = block_scale_geometry("nvfp4", (256, 64), 4)
+    assert geometry.payload_bytes == block_scale_geometry("nvfp4", (256, 64), 1).payload_bytes + 12
 
 
 def test_only_the_block_scale_layout_stores_several_divisors():

@@ -24,8 +24,8 @@ Nvfp4WeightGeometry validate_nvfp4_weight(const Weight& weight, const char* oper
     geometry.scale_plane_offset         = align_up(geometry.code_plane_bytes, 256, operation);
     geometry.scale_plane_bytes          = elements / 16;
     const std::int32_t rows_per_divisor = weight.weight_divisor_rows;
+    // A stacked plane's divisor may end inside a 128-row scale tile (each row takes its own).
     const bool divisor_shape = rows_per_divisor > 0 && (weight.n % rows_per_divisor) == 0 &&
-                               (rows_per_divisor % 128) == 0 &&
                                (stacked || rows_per_divisor == weight.n);
     geometry.required_payload_bytes = checked_add(
         checked_add(geometry.scale_plane_offset, geometry.scale_plane_bytes, operation),

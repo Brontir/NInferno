@@ -1,10 +1,13 @@
 #pragma once
 
-// Who may talk to ninferno-ui. The UI has no password: it starts processes, downloads models and
-// spends the GPUs, so by default it answers only this machine.
+// Who may talk to ninferno-ui. It starts processes, downloads models and spends the GPUs, so by
+// default it answers only this machine.
 //
-//   listen    127.0.0.1 unless --listen names another address (the log then warns that anyone who
-//             reaches it controls the GPUs);
+//   listen    127.0.0.1 unless --listen names another address;
+//   key       on another address, a request from another machine carries the access key: the
+//             ninferno_ui_key cookie, "Authorization: Bearer KEY", or ?key=KEY (which sets the
+//             cookie); a request from this machine (loopback peer and Host, no proxy's
+//             Forwarded / X-Forwarded-For / X-Real-IP) needs none;
 //   Host      on a loopback listener, only localhost, 127.0.0.1 or [::1] (any port): a page on
 //             another site whose name resolves to 127.0.0.1 (DNS rebinding) is refused;
 //   Origin    a request that changes something (POST) must come from the UI's own page: an Origin
@@ -12,6 +15,7 @@
 //             to, so another site open in the same browser cannot start or stop anything
 //             (cross-site request forgery). A request without Origin (curl, scripts) is allowed.
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -20,13 +24,15 @@ namespace ninferno::ui {
 struct AccessPolicy {
     std::string listen = "127.0.0.1"; // the address the server binds
     int port           = 8090;
+    std::string key;                  // the access key; empty: none asked
 };
 
 // 127.0.0.0/8, ::1 and "localhost" (with or without brackets).
 [[nodiscard]] bool is_loopback_host(std::string_view host) noexcept;
 
 // The host part of a Host header or of an origin's authority: "[::1]:8090" -> "::1",
-// "localhost:8090" -> "localhost", "example.com" -> "example.com". Lower-cased.
+// "localhost:8090" -> "localhost", "example.com" -> "example.com". Lower-cased. A bare IPv6
+// address (more than one colon, no brackets: --listen ::1) is a host without a port.
 [[nodiscard]] std::string host_of_authority(std::string_view authority);
 
 // Whether a request with this Host header is served at all.
@@ -34,5 +40,54 @@ struct AccessPolicy {
 
 // Whether a state-changing request with this Origin header (empty when absent) is accepted.
 [[nodiscard]] bool origin_allowed(std::string_view origin, std::string_view host_header);
+
+// The reply to a request origin_allowed refuses. Through a proxy (`proxied`) the usual cause is
+// a proxy that sends its backend address as Host instead of the browser's: the reply says so.
+// X-Forwarded-Host is not trusted in its place (any client can send it).
+[[nodiscard]] std::string origin_refusal(std::string_view origin, std::string_view host_header,
+                                         bool proxied);
+
+inline constexpr std::string_view kKeyCookie = "ninferno_ui_key";
+
+// The key cookie of the UI on `port`: ninferno_ui_key_PORT. Cookies are not scoped by port, so UIs
+// on one host with different keys (--access-key-file, NINFERNO_UI_KEY) keep one cookie each.
+[[nodiscard]] std::string key_cookie(int port);
+
+// keyless_proxy: a proxied request to a UI without a key (127.0.0.1 behind a TLS proxy would
+// otherwise serve the public endpoint to anyone).
+enum class KeyCheck { pass, pass_set_cookie, refused, keyless_proxy };
+
+// Whether a request from `remote_addr` comes from this machine (`proxied`: it carries a proxy's
+// header) or carries the policy's key in its Cookie header, its Authorization header or its ?key=
+// value (pass_set_cookie: only there, so the reply sets the cookie). Compared in constant time.
+[[nodiscard]] KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
+                                 std::string_view host_header, bool proxied,
+                                 std::string_view cookie_header, std::string_view authorization,
+                                 std::string_view query_key);
+
+// The value of cookie `name` in a Cookie header; empty when absent.
+[[nodiscard]] std::string cookie_value(std::string_view cookie_header, std::string_view name);
+
+// Whether `key` can be one: 16 to 256 characters of A-Z a-z 0-9 . _ ~ - (they pass a URL and a
+// cookie as they are).
+[[nodiscard]] bool usable_key(std::string_view key) noexcept;
+
+// Whether a request reached the proxy in front over HTTPS (X-Forwarded-Proto, or the proto
+// parameter of Forwarded's first element, RFC 7239: a token or a quoted string, the name in any
+// case): the cookie is then marked Secure.
+[[nodiscard]] bool forwarded_https(std::string_view x_forwarded_proto,
+                                   std::string_view forwarded);
+
+// A new key: 32 hex digits from the operating system's random source; empty if it gives none.
+[[nodiscard]] std::string new_access_key();
+
+// The first line of a key file without surrounding blanks; empty when unreadable.
+[[nodiscard]] std::string key_file_line(const std::filesystem::path& path);
+
+// The key kept in `path`, made there when there is none or it is unusable; empty when no key can
+// be made. UIs started at once on one hub cache agree on one key: the check and the replacement
+// run under a lock on <path>.lock, so the later one finds the earlier one's key. `kept` tells
+// whether the key returned is the one on disk (else the next start makes another).
+[[nodiscard]] std::string kept_access_key(const std::filesystem::path& path, bool* kept = nullptr);
 
 } // namespace ninferno::ui

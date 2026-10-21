@@ -1281,9 +1281,8 @@ void add_experts(Builder& builder, Model& model, const Checkpoint& base, const O
 }
 
 // MoE recipes. The experts keep the checkpoint's own encoding (MXFP4 as mxfp4, NVFP4 with its
-// divisors, row-scaled FP8; a bank whose experts end inside a scale tile shares one divisor or is
-// refused: refuse_split_nvfp4_tiles), BF16 experts stay BF16; the Op computes them with BF16
-// activations.
+// divisors, one per expert matrix, row-scaled FP8), BF16 experts stay BF16; the Op computes them
+// with BF16 activations.
 // The router stays BF16. moe_published keeps every other tensor as published (BF16 unless the
 // checkpoint encoded it); moe_q8 takes Q8 for the attention projections where the checkpoint left
 // them in BF16. The vocabulary follows --vocab (apply_dense_recipe).
@@ -1331,7 +1330,6 @@ void moe_recipe(Model& model, Recipe& recipe, const Checkpoint& base, bool q8) {
     // One stacked plane per bank, even where the automatic packing would keep NVFP4 parents with
     // different divisors apart: only the MoE Op reads a stack, and it reads its divisors.
     for (const auto bank : model.expert_banks) {
-        refuse_split_nvfp4_tiles(model, recipe, model.packing_groups[bank]);
         recipe.explicit_groups.push_back(model.packing_groups[bank]);
     }
 }

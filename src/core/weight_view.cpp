@@ -245,12 +245,8 @@ WeightGeometry weight_geometry(QType format, QuantLayout layout,
         if (n % divisors) {
             throw std::invalid_argument("divisor count must divide the plane's rows");
         }
-        // Every other structural NVFP4 rule is checked here rather than left to the operator, and
-        // this one belongs with them: a divisor that covered part of a 128-row scale tile would
-        // make two rows of one tile disagree about which word they were quantised against.
-        if (divisors > 1 && (n / divisors) % 128) {
-            throw std::invalid_argument("each NVFP4 divisor must cover whole 128-row scale tiles");
-        }
+        // A divisor may end inside a 128-row scale tile: the scale words are per row, and every
+        // consumer divides a row's product by its own word (divisors[row / divisor_rows]).
         out.divisor_offset = out.bytes;
         out.bytes          = add(out.bytes, mul(divisors, 4));
     }
