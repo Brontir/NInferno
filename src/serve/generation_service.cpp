@@ -665,6 +665,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                 .selection = "explicit",
                                 .reason    = "--spec"};
     }
+    // An explicit --spec runs the engine's own watchdog floor.
+    if (!served_speculation_ && engine_->options().speculative.backend != SpeculativeBackend::None) {
+        startup_speculation_.floor = engine_->options().speculative.acceptance_floor;
+    }
     request_capacity_ = std::make_shared<RequestCapacity>(
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests);
     count_capacity_ = std::make_shared<RequestCapacity>(
@@ -805,6 +809,7 @@ void GenerationService::choose_speculation(bool thinking, ninferno::RequestOptio
         prepared.speculation_config    = startup_speculation_.config;
         prepared.speculation_selection = startup_speculation_.selection;
         prepared.speculation_reason    = startup_speculation_.reason;
+        prepared.speculation_floor     = startup_speculation_.floor;
         return;
     }
     const spec::SpeculationMenu& menu = served_speculation_->menu;

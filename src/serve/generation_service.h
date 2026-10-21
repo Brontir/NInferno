@@ -93,6 +93,7 @@ struct StartupSpeculation {
     std::string selection;
     std::string reason;
     std::string fallback = "none";
+    double floor        = 0.0; // the watchdog floor the engine runs without a served menu
 };
 
 struct GenerationOutcome {
