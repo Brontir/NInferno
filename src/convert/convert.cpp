@@ -2064,19 +2064,32 @@ const std::string& supported_architectures_text() {
 
 namespace {
 
-// What stops a Qwen3.5 recipe from planning on a checkpoint (nothing: nullopt). Planning reads
-// headers and scalars only, never the bulk of the weights.
+// What stops a Qwen3.5 recipe from planning on a checkpoint, or (`kept`) from keeping its
+// published encodings as convert() would (nothing: nullopt); with `mtp`, the checkpoint's own MTP
+// layers are planned too, as the conversion keeps them. Planning reads headers and scalars only,
+// never the bulk of the weights.
 std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& checkpoint,
-                                              const RecipeChoice& choice) {
+                                              const RecipeChoice& choice, bool mtp,
+                                              bool kept = false) {
     try {
         const Checkpoint base(checkpoint);
         SourceInputs sources(base, choice.sources);
-        Model model = build_qwen3_5_model(base, {"text"}, {}, {});
+        std::vector<std::string> components{"text"};
+        if (mtp && base.has("mtp.fc.weight")) { components.emplace_back("mtp"); }
+        Model model = build_qwen3_5_model(base, components, {}, {});
         Recipe recipe(model);
         apply_qwen3_5_recipe(choice.recipe, model, recipe, sources);
         (void)share_tied_head(model, recipe);
+        if (kept) { (void)keep_published(model, recipe); }
         const Plan plan = prepare(model, recipe);
-        (void)plan;
+        if (kept) {
+            const auto found = fidelity(base, model, plan);
+            if (!found.foreign.empty()) {
+                const auto& [handling, count] = *found.foreign.begin();
+                return "it would change " + std::to_string(count) + " published matrices: " +
+                       handling;
+            }
+        }
     } catch (const std::exception& error) {
         return std::string(error.what());
     }
@@ -2085,7 +2098,71 @@ std::optional<std::string> qwen3_5_plan_error(const std::filesystem::path& check
 
 } // namespace
 
-RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest request) {
+bool converts_mtp(const ConvertOptions& options) {
+    if (options.components_auto) { return true; }
+    return ("," + options.components + ",").find(",mtp,") != std::string::npos;
+}
+
+namespace {
+
+// Whether the report beside `artifact` records `component` among its converted components.
+bool records_component(const std::filesystem::path& artifact, const std::string& component) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    try {
+        const OJson report     = OJson::parse(stream);
+        // convert() writes the model's components, an object keyed by name; a list of names
+        // is read too.
+        const auto* components = member(report, "components");
+        if (components == nullptr) { return false; }
+        if (components->is_object()) { return components->contains(component); }
+        if (!components->is_array()) { return false; }
+        for (const auto& name : *components) {
+            if (name.is_string() && name.get<std::string>() == component) { return true; }
+        }
+    } catch (const std::exception&) { return false; }
+    return false;
+}
+
+// Whether an artifact of `recipe` was converted from a checkpoint directory: cache.cpp's
+// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno, or acquire.cpp's beside a hub snapshot,
+// <repo>/ninferno/<commit>/model[.vision].<recipe>.ninferno; with `mtp`, one whose report
+// records the checkpoint's MTP layers among its components.
+bool converted(const std::filesystem::path& checkpoint, const std::string& recipe,
+               bool mtp = false) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto cache = checkpoint / ".ninferno-cache";
+    const auto hub   = checkpoint.parent_path().parent_path() / "ninferno" / checkpoint.filename();
+    for (const auto& path : {cache / (recipe + ".ninferno"), cache / ("vision." + recipe + ".ninferno"),
+                             hub / ("model." + recipe + ".ninferno"),
+                             hub / ("model.vision." + recipe + ".ninferno")}) {
+        if (fs::exists(path, ec) && (!mtp || records_component(path, "mtp"))) { return true; }
+    }
+    return false;
+}
+
+// Whether a Hugging Face checkpoint still holds its weight files (a consumed one keeps only its
+// config, and its recipe choice then stays the configuration's).
+bool has_safetensors(const std::filesystem::path& checkpoint) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(checkpoint, ec)) {
+        if (entry.path().extension() == ".safetensors") { return true; }
+    }
+    return false;
+}
+
+// Whether a checkpoint's weight files hold MTP layers, which qwen3_5_plan_error plans with.
+bool has_mtp_weights(const std::filesystem::path& checkpoint) {
+    if (!has_safetensors(checkpoint)) { return false; }
+    try {
+        return Checkpoint(checkpoint).has("mtp.fc.weight");
+    } catch (const std::exception&) { return false; }
+}
+
+} // namespace
+
+RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest request, bool mtp) {
     OJson config;
     bool nvfp4     = false;
     bool mxfp4     = false; // a GGUF with MXFP4 tensors (llama.cpp's MXFP4_MOE experts)
@@ -2173,9 +2250,29 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
             out.recipe  = moe ? "qwen3_6_35b_a3b_nvfp4" : "qwen3_6_27b_nvfp4";
             out.sources = {{"quantized", checkpoint}};
             if (gguf) {
-                if (const auto error = qwen3_5_plan_error(checkpoint, out)) {
+                if (const auto error = qwen3_5_plan_error(checkpoint, out, mtp)) {
                     out.note    = out.recipe + " does not fit this GGUF (" + *error + ")";
                     out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+                    out.sources = {};
+                }
+            } else if (!converted(checkpoint, out.recipe) ||
+                       (mtp && !converted(checkpoint, out.recipe, true) &&
+                        has_mtp_weights(checkpoint))) {
+                // Those recipes fit one layout (NVFP4 experts or MLPs, the rest BF16); another
+                // publisher's (RedHatAI: NVFP4 attention; nvidia: ModelOpt experts, FP8
+                // attention, an NVFP4 head) runs every tensor as published. A converted
+                // artifact of either recipe answers without planning (every serve start, and a
+                // consumed checkpoint, whose shards are gone), unless this conversion keeps the
+                // checkpoint's MTP layers and the artifact was converted without them
+                // (--no-drafters): it then proves nothing about them.
+                if (converted(checkpoint, "qwen3_5_published")) {
+                    out.recipe  = "qwen3_5_published";
+                    out.sources = {};
+                } else if (!has_safetensors(checkpoint)) {
+                    // Nothing to plan on: the configuration's recipe, as before.
+                } else if (const auto error = qwen3_5_plan_error(checkpoint, out, mtp, true)) {
+                    out.note    = out.recipe + " does not fit this checkpoint (" + *error + ")";
+                    out.recipe  = "qwen3_5_published";
                     out.sources = {};
                 }
             }
@@ -2184,7 +2281,7 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
             // published recipe keeps them so (weight-only, BF16 activations: no calibrated
             // divisor) and every Q8_0 / K-quant tensor beside them word for word.
             out.recipe = "qwen3_5_published";
-            if (const auto error = qwen3_5_plan_error(checkpoint, out)) {
+            if (const auto error = qwen3_5_plan_error(checkpoint, out, mtp)) {
                 out.note   = out.recipe + " does not fit this GGUF (" + *error + ")";
                 out.recipe = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
             }

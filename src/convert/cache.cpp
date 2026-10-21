@@ -36,6 +36,36 @@ int cached_revision(const std::filesystem::path& artifact) {
     return in >> revision && revision > 0 ? revision : 1;
 }
 
+bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    try {
+        const OJson report = OJson::parse(stream);
+        const auto methods = report.find("methods");
+        if (methods == report.end() || !methods->is_array()) { return false; }
+        for (const auto& method : *methods) {
+            const auto format = method.value("format", std::string());
+            if (format != "bf16" && format != "fp16" && format != "fp32") { continue; }
+            for (const auto& name : method.value("parameters", OJson::array())) {
+                if (!name.is_string()) { continue; }
+                const auto& text = name.get_ref<const std::string&>();
+                if ((text.starts_with("dflash/") || text.starts_with("dflash2/")) &&
+                    text.ends_with("/attention/query")) {
+                    return true;
+                }
+            }
+        }
+    } catch (const std::exception&) { return false; }
+    return false;
+}
+
+bool cache_current(const std::filesystem::path& artifact, const std::string& recipe) {
+    const int revision = cached_revision(artifact);
+    if (revision >= kCacheRevision) { return true; }
+    return revision >= 3 &&
+           !(recipe == "qwen3_5_published" && unquantized_drafter_attention(artifact));
+}
+
 void stamp_revision(const std::filesystem::path& artifact) {
     std::ofstream out(artifact.string() + ".revision", std::ios::trunc);
     out << kCacheRevision << "\n";
@@ -76,9 +106,10 @@ bool source_present(const std::filesystem::path& path) {
 }
 
 // A cached artifact to serve as it is: current, or older with nothing left to convert from.
-bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source) {
+bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source,
+                  const std::string& recipe) {
     return std::filesystem::exists(artifact) &&
-           (cached_revision(artifact) >= kCacheRevision || !source_present(source));
+           (cache_current(artifact, recipe) || !source_present(source));
 }
 
 } // namespace
@@ -94,7 +125,8 @@ cached_artifact(const std::filesystem::path& path,
         out.path = path;
         return out;
     }
-    const auto choice = choose_recipe(path);
+    // Converted as text (and vision) below: the MTP layers are not planned.
+    const auto choice = choose_recipe(path, GgufRequest::Model, false);
     out.recipe        = choice.recipe;
     // A GGUF file caches beside itself, named after it (a directory may hold several models'
     // files); a directory caches inside.
@@ -118,7 +150,7 @@ cached_artifact(const std::filesystem::path& path,
     }
     out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
                         (vision ? "vision." : "") + out.recipe + ".ninferno");
-    if (serve_cached(out.path, path)) { return out; }
+    if (serve_cached(out.path, path, out.recipe)) { return out; }
     fs::create_directories(cache);
     const auto lock_path = cache / ".convert.lock";
     const int lock       = sys::open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
@@ -133,7 +165,7 @@ cached_artifact(const std::filesystem::path& path,
     if (sys::lock(lock, true) != 0) {
         throw std::runtime_error("cannot lock " + lock_path.string());
     }
-    if (serve_cached(out.path, path)) { return out; }
+    if (serve_cached(out.path, path, out.recipe)) { return out; }
     if (fs::exists(out.path)) {
         if (log) {
             log("converting " + path.string() + " again: its cached artifact is conversion revision " +
