@@ -724,10 +724,10 @@ int run_spec_tune(int argc, char** argv) {
         flags[key.substr(2)] = argv[++i];
     }
     static const std::set<std::string, std::less<>> kKnown = {
-        "applies-to",  "budget-seconds", "configs",     "corpus",   "cuda-sync", "decode-wait",
-        "device",      "draft-width",    "gpu-class",   "kv-dtype", "load",      "load-depths",
-        "max-context", "max-tokens",     "measured-on", "min-gain", "out",       "prefill-chunk",
-        "profile",     "publish",        "repeat",      "requires", "resume",    "route-dir",
+        "applies-to",  "budget-seconds", "configs",     "corpus",    "cuda-sync", "decode-wait",
+        "device",      "draft-width",    "gpu-class",   "kv-dtype",  "load",      "load-depths",
+        "max-context", "max-tokens",     "measured-on", "min-gain",  "out",       "prefill-chunk",
+        "profile",     "publish",        "repeat",      "requires",  "resume",    "route-dir",
         "route-table", "temperature",    "thinking",    "tolerance", "top-p"};
     for (const auto& [key, value] : flags) {
         if (!kKnown.contains(key)) {
