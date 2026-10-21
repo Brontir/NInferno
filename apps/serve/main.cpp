@@ -1,4 +1,5 @@
 #include "core/removed_environment.h"
+#include "core/device_class.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/update/update_check.h"
@@ -130,8 +131,12 @@ int print_version() {
 #else
         const bool runs = sm / 10 == NINFERNO_BUILD_ARCH / 10 && sm >= NINFERNO_BUILD_ARCH;
 #endif
-        std::cout << "GPU " << device << ": " << props.name << ", sm_" << sm << ", "
-                  << (props.totalGlobalMem >> 20) << " MiB"
+        char bus_id[32] = {};
+        if (cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device) != cudaSuccess) {
+            (void)cudaGetLastError();
+        }
+        std::cout << "GPU " << device << " (" << bus_id << "): " << props.name << ", sm_" << sm
+                  << ", " << (props.totalGlobalMem >> 20) << " MiB"
                   << (runs ? "" : " (this build cannot run on it)") << '\n';
     }
     return count > 0 ? 0 : 1;
@@ -166,6 +171,9 @@ int main(int argc, char** argv) {
     if (!options.drafter_registry.empty()) {
         ninferno::spec::Registry::use_file(options.drafter_registry);
     }
+    // No --device: the first GPU in PCI bus order, whatever order CUDA enumerates them in; the
+    // model's fit check, the request log and the Engine all see that ordinal.
+    options.device = ninferno::resolve_device(options.device);
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-serve",

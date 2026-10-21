@@ -2,6 +2,7 @@
 #include "options.h"
 #include "spec_tune.h"
 #include "core/command_line.h"
+#include "core/device_class.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
 #include "product/logging/startup_log.h"
@@ -262,6 +263,8 @@ int main(int argc, char** argv) {
     ninferno::warn_removed_environment("ninferno");
 
     if (!cli.drafter_registry.empty()) { ninferno::spec::Registry::use_file(cli.drafter_registry); }
+    // No --device: the first GPU in PCI bus order, whatever order CUDA enumerates them in.
+    cli.device = ninferno::resolve_device(cli.device);
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno",

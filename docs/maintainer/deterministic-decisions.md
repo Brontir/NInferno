@@ -247,6 +247,8 @@ Rules apply in this order:
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
   labelled *extrapolated*. Its speed estimate is *no estimate*.
 - PCIe is the highest generation the link supports, never the current one.
+- A board is named by its identity, the PCI address (domain:bus:device.function) and the UUID
+  (`core/device_identity.h`), never by its CUDA ordinal. See [Device identity](#device-identity).
 - Free memory must be the only observation made while running. It selects one rung of a declared
   plan ladder ([Plan levels](#plan-levels)), and the chosen rung goes into the fingerprint.
 
@@ -427,6 +429,28 @@ master's or longer (no cached Device states give it more), the KV within 6 % at
 1.39 GiB free, where the 1 GiB reserve does not fit beside the floor quality: the ladder serves
 8,192 tokens at chunk 1024 without the reserve (a warning), where master served 50,816 with none
 left for Windows.
+
+## Device identity
+
+A CUDA ordinal is a position in one process's enumeration. `CUDA_VISIBLE_DEVICES` filters and
+reorders it, and `CUDA_DEVICE_ORDER` defaults to `FASTEST_FIRST`, CUDA's own speed guess, so the
+same cards get other ordinals on another run or machine. The rules:
+
+- A choice among GPUs reads only the set of identities, sorted by PCI address and then UUID (the
+  UUID separates MIG instances, which share their parent's address). The same cards give the same
+  choice whatever the enumeration order.
+- Without `--device` the engine runs on the first visible GPU in that order; the dispatcher picks
+  the engine build for the same GPU. `--device N` is the user's option and is taken as given.
+- Caches inside one process may be indexed by ordinal, which stays bound to its board for the
+  process's life. Anything that outlives the process is keyed by the GPU class or, when it belongs
+  to one board, by the identity, never by the ordinal.
+- Logs name the board by PCI bus id and UUID beside the ordinal (the request log's `environment`).
+- The identity is not hashed into the fingerprint: two boards of one chip type make the same
+  decisions. It is printed beside the hash, to name the board the facts were read from
+  (`device_identity()` in `core/device_class.h`).
+
+NInferno runs one GPU per process; there is no layout across GPUs. A future one must follow the
+first rule.
 
 ## Fingerprint
 

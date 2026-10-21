@@ -99,7 +99,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |
 | `--log-level LEVEL` | `info` | stderr verbosity (`trace` ... `off`) |
-| `--device N` | `0` | CUDA device index |
+| `--device N` | first GPU by PCI bus id | CUDA device index |
 | `--temperature`, `--top-p`, `--top-k`, `--min-p`, `--seed`, `--greedy` | unset | process-level sampling overrides ([presets](cli.md#sampling-presets)); `--greedy` forces argmax |
 
 All other options (media, Host cache, response store, penalties, limits, decode pacing with

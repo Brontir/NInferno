@@ -2,6 +2,7 @@
 #include "core/cache_file.h"
 #include "core/clock.h"
 #include "core/command_line.h"
+#include "core/device_class.h"
 #include "core/sys.h"
 #include "corpus.h"
 #include "evaluation.h"
@@ -59,7 +60,7 @@ struct Options {
     std::uint32_t context               = 4096;
     std::uint32_t stride                = 2048;
     float rope_yarn_factor              = 1.0F;
-    int device                          = 0;
+    int device                            = ninferno::kDefaultDevice;
     ninferno::KvCacheStorage kv           = ninferno::KvCacheStorage::Fp8E4M3Row256;
     ninferno::ActivationMode activations  = ninferno::kDefaultActivationMode;
     ninferno::RecurrentStateStorage state = ninferno::RecurrentStateStorage::FP32;
@@ -639,6 +640,8 @@ int main(int argc, char** argv) {
     }
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-perplexity");
+    // No --device: the first GPU in PCI bus order, whatever order CUDA enumerates them in.
+    options.device = ninferno::resolve_device(options.device);
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-perplexity",

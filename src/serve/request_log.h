@@ -25,8 +25,9 @@ inline constexpr int kRequestLogSchemaVersion        = 30;
 inline constexpr const char* kRequestLogArtifactType = "ninferno_serve_request_log";
 
 struct ServerLogEnvironment {
-    int device = 0;
+    int device = 0; // this process's ordinal; the board is gpu_pci_bus_id and gpu_uuid
     std::string gpu_name;
+    std::string gpu_pci_bus_id;
     std::string gpu_uuid;
     std::uint64_t total_device_memory_bytes = 0;
     int compute_capability_major            = 0;

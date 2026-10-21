@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_identity.h"
 #include "ninferno/types.h"
 #include "product/logging/logging.h"
 #include "spec/profile.h"
@@ -76,7 +77,7 @@ struct ServeOptions {
     std::uint32_t media_preprocess_threads = 0;
     std::size_t response_store_max_records = kDefaultResponseStoreRecords;
     std::size_t response_store_max_bytes   = kDefaultResponseStoreBytes;
-    int device                             = 0;
+    int device                             = kDefaultDevice; // resolve_device in main
     // --kv-dtype auto (or omitted): the model family chooses (EngineOptions::kv_cache_automatic).
     std::optional<KvCacheStorage> kv_cache;
     KvCacheStorage sliding_kv_cache        = KvCacheStorage::BFloat16; // --sliding-kv-dtype

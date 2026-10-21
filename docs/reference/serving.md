@@ -1529,7 +1529,7 @@ contract.
 | `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
-| `--device N` | CUDA device index | `0` |
+| `--device N` | CUDA device index | the first GPU by PCI bus id |
 
 ### Network and access
 

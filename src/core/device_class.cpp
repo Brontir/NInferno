@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -158,6 +159,7 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->chip_from_pci     = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->facts             = machine_facts_of(*out);
     out->features.mma_slow = board_mma_slow(out->facts, prop.major, prop.minor, out->chip);
+    out->identity          = query_device_identity(device);
     return out;
 }
 
@@ -630,6 +632,49 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
     return d;
 }
+
+DeviceIdentity query_device_identity(int device) {
+    char bus_id[32] = {};
+    check(cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device), "cudaDeviceGetPCIBusId", device);
+    std::optional<DeviceIdentity> identity = parse_pci_bus_id(bus_id);
+    if (!identity) {
+        throw std::runtime_error(std::string("device class: unreadable PCI bus id \"") + bus_id +
+                                 "\" for device " + std::to_string(device));
+    }
+    cudaDeviceProp prop{};
+    check(cudaGetDeviceProperties(&prop, device), "cudaGetDeviceProperties", device);
+    for (std::size_t i = 0; i < identity->uuid.size(); ++i) {
+        identity->uuid[i] = static_cast<std::uint8_t>(prop.uuid.bytes[i]);
+    }
+    return *identity;
+}
+
+std::vector<DeviceIdentity> visible_device_identities() {
+    int count = 0;
+    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return {};
+    }
+    std::vector<DeviceIdentity> identities;
+    for (int device = 0; device < count; ++device) {
+        try {
+            identities.push_back(query_device_identity(device));
+        } catch (const std::runtime_error&) {
+            (void)cudaGetLastError();
+            identities.push_back({.pci_domain = 0xFFFFFFFFu});
+        }
+    }
+    return identities;
+}
+
+int resolve_device(int requested) {
+    if (requested != kDefaultDevice) { return requested; }
+    const std::vector<DeviceIdentity> identities = visible_device_identities();
+    const int device                             = resolve_device(requested, identities);
+    return device == kDefaultDevice ? 0 : device;
+}
+
+const DeviceIdentity& device_identity() { return device_class().identity; }
 
 const DeviceClass& device_class() {
     if (t_substitute != nullptr) { return *t_substitute; }
