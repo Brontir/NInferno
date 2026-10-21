@@ -634,7 +634,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
         return;
     }
     const TuneMode mode = tune_mode("NINFERNO_DENSE_TUNE");
-    // Off (the default): the cached measurements are read, nothing is timed.
+    // Off (the default): the release's measurements are read, nothing is timed.
     const bool read_only = mode == TuneMode::Off;
     const Key id = key_of(problem);
     std::lock_guard lock(g_mutex);
