@@ -373,30 +373,27 @@ std::string tune_refusal_on(const fs::path& tune, const std::string& artifact_id
     if (gpu == nullptr || gpu->cc_major <= 0) {
         return tune.string() + ": the GPU it would run on is unknown here";
     }
-    const int major = gpu->cc_major, minor = gpu->cc_minor;
-    // gpu_chip guesses the chip by the SM count when the PCI id names none: not without one.
-    if (gpu->sms <= 0 && !gpu_chip_by_pci(gpu->pci_device_id, major, minor)) {
-        return tune.string() + ": the chip of GPU " + std::to_string(gpu->index) +
+    // The server keys a tune by "<chip>:<sms>sm": boards of one chip differ in SM count (RTX 5090
+    // and RTX PRO 6000, RTX 4090 and L40), so without the count (NVML gave none, or a MIG slice)
+    // the class is unknown here.
+    if (gpu->sms <= 0) {
+        return tune.string() + ": the SM count of GPU " + std::to_string(gpu->index) +
                " is unknown here";
     }
-    const std::string chip = gpu_chip(gpu->pci_device_id, major, minor, gpu->sms);
+    const std::string chip = gpu_chip(gpu->pci_device_id, gpu->cc_major, gpu->cc_minor, gpu->sms);
     // The class the server keys a tune by (device_class's id(), its similarity chain's front).
-    if (gpu->sms > 0) {
-        return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
-    }
-    std::string why;
-    const auto tuned = spec::read_profile(tune, &why);
-    if (!tuned) { return tune.string() + ": " + why; }
-    const auto& recorded = tuned->key.gpu;
-    if (recorded.substr(0, recorded.find(':')) != chip) {
-        return tune.string() + " was tuned for another GPU (" + recorded + "; GPU " +
-               std::to_string(gpu->index) + " is " + chip + ")";
-    }
-    return {};
+    return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
 }
 
-LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
-                       const GpuStat* gpu) {
+const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
+    if (gpu < 0) { return stats.size() == 1 ? &stats.front() : nullptr; }
+    for (const auto& stat : stats) {
+        if (stat.index == gpu) { return &stat; }
+    }
+    return nullptr;
+}
+
+LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, const GpuStat* gpu) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
     if (model.front() == '-') { throw std::invalid_argument("a model name cannot start with '-'"); }
@@ -1660,18 +1657,10 @@ void App::install(httplib::Server& server) {
                                 request.quant.clear();
                             }
                         }
-                        request.port = processes_.free_port();
-                        // The GPU it runs on (CUDA_VISIBLE_DEVICES in PCI order: NVML's index);
-                        // without one named, the only GPU there is, else none known.
+                        request.port     = processes_.free_port();
                         const auto stats = gpus_->snapshot();
-                        const GpuStat* gpu = nullptr;
-                        for (const auto& stat : stats) {
-                            if (stat.index == request.gpu ||
-                                (request.gpu < 0 && stats.size() == 1)) {
-                                gpu = &stat;
-                            }
-                        }
-                        const auto id = processes_.start(make_launch(options_, request, gpu));
+                        const auto id    = processes_.start(
+                            make_launch(options_, request, launch_gpu(stats, request.gpu)));
                         reply_json(res, {{"id", id}, {"port", request.port}});
                     } catch (const std::invalid_argument& error) {
                         reply_error(res, 400, error.what());

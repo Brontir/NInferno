@@ -92,6 +92,7 @@ public:
         bind(pci_, "nvmlDeviceGetPciInfo_v3");
         bind(processes_, "nvmlDeviceGetComputeRunningProcesses_v3");
         bind(cores_, "nvmlDeviceGetNumGpuCores");
+        bind(mig_mode_, "nvmlDeviceGetMigMode");
         if (init_ == nullptr || count_ == nullptr || by_index_ == nullptr) {
             error_ = "libnvidia-ml.so.1 lacks nvmlInit_v2 / nvmlDeviceGetCount_v2";
             return;
@@ -173,7 +174,11 @@ public:
                 stat.memory_bus_bits = static_cast<int>(value);
             }
             // CUDA cores per SM: 64 on Volta, Turing and GA100, 128 on GA10x, Ada and Blackwell.
-            if (cores_ && cores_(device, &value) == kOk && stat.cc_major > 0) {
+            // Under MIG the count is the whole board's, not a slice's: none (no class known).
+            unsigned mig = 0, mig_pending = 0;
+            const bool mig_on =
+                mig_mode_ && mig_mode_(device, &mig, &mig_pending) == kOk && mig == 1;
+            if (!mig_on && cores_ && cores_(device, &value) == kOk && stat.cc_major > 0) {
                 const bool wide = stat.cc_major >= 9 || (stat.cc_major == 8 && stat.cc_minor > 0);
                 stat.sms        = static_cast<int>(value) / (wide ? 128 : 64);
             }
@@ -227,6 +232,7 @@ private:
     int (*capability_)(Device, int*, int*)                 = nullptr;
     int (*pci_)(Device, NvmlPciInfo*)                      = nullptr;
     int (*cores_)(Device, unsigned*)                       = nullptr;
+    int (*mig_mode_)(Device, unsigned*, unsigned*)         = nullptr; // current, pending
     int (*processes_)(Device, unsigned*, NvmlProcessInfo*) = nullptr;
 };
 

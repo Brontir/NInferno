@@ -296,16 +296,22 @@ void test_launch() {
               "a tune of another SM count of the chip is passed over");
         other.pci_device_id = 0x2C02; // RTX 5080: gb203
         other.sms           = 0;
-        check(tune_refusal_on(tune, "aaaa", &other).find("another GPU") != std::string::npos,
+        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
               "without the SM count, a tune of another chip is passed over");
         other.pci_device_id = 0x2B85;
-        check(tune_refusal_on(tune, "aaaa", &other).empty(),
-              "without the SM count, a tune of the same chip is named");
-        other.pci_device_id = 0;
         check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
-              "an unknown chip passes the tune over");
+              "without the SM count, even a tune of the same chip is passed over");
         check(tune_refusal_on(tune, "aaaa", nullptr).find("unknown") != std::string::npos,
               "an unknown GPU passes the tune over");
+        // The GPU a launch runs on: by NVML's index; none named, the only one, else none.
+        std::vector<GpuStat> stats(2);
+        stats[0].index = 0;
+        stats[1].index = 1;
+        check(launch_gpu(stats, 1) == &stats[1] && launch_gpu(stats, 2) == nullptr,
+              "a launch's GPU by its index");
+        check(launch_gpu(stats, -1) == nullptr, "several GPUs and none named: none known");
+        stats.resize(1);
+        check(launch_gpu(stats, -1) == &stats[0], "one GPU and none named: that one");
         fs::remove_all(dir);
     }
 

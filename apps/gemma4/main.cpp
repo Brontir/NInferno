@@ -986,8 +986,7 @@ int main(int argc, char** argv) {
         std::vector<BatchGroup> batch_groups;
         // A tune named by --spec-profile serves or the run does not start (whatever --spec,
         // --drafter or --dflash say), as ninferno's and ninferno-serve's.
-        if ((args.command == "generate" || args.command == "batch") &&
-            args.flag("spec-profile")) {
+        if ((args.command == "generate" || args.command == "batch") && args.flag("spec-profile")) {
             spec::require_named_tune(spec::resolve_speculation(
                 artifact, spec::artifact_id_hex(artifact), spec::gpu_identity(device.device).key,
                 std::filesystem::path(args.text("spec-profile"))));
