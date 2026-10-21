@@ -188,6 +188,7 @@ std::string problem_key(const Problem& p) {
 // set_dense_tune: the mode and the cache directory (empty: NInferno's cache directory).
 std::atomic<TuneMode> g_mode{TuneMode::Off};
 std::filesystem::path g_cache_dir; // under g_mutex
+std::string g_route_dir;           // route_table_dir() when set_dense_tune last ran; under g_mutex
 
 std::filesystem::path cache_path() {
     const auto dir = g_cache_dir.empty() ? sys::cache_dir() : g_cache_dir;
@@ -774,9 +775,18 @@ void enable_dense_tune(bool on) { g_enabled.store(on, std::memory_order_relaxed)
 
 void set_dense_tune(TuneMode mode, const std::filesystem::path& cache_dir) {
     std::lock_guard lock(g_mutex);
-    if (g_cache_dir != cache_dir) {
+    // Another mode, file or route directory (whose tuner/dense_tune.json holds the release's
+    // measurements): nothing an earlier engine tuned or read stays, and the next problem reads the
+    // cache again (on, the file a tuning run wrote too; off, the release's measurements alone).
+    const std::string route_dir = route_table_dir();
+    if (g_cache_dir != cache_dir || g_mode.load(std::memory_order_relaxed) != mode ||
+        g_route_dir != route_dir) {
         g_cache_dir    = cache_dir;
+        g_route_dir    = route_dir;
         g_cache_loaded = false;
+        g_tuned.clear();
+        g_attempted.clear();
+        g_bands_pending.clear();
     }
     g_mode.store(mode, std::memory_order_relaxed);
 }

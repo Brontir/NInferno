@@ -49,6 +49,8 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -173,10 +175,16 @@ const std::string& dump_kinds() {
     return kinds;
 }
 
-// Ascending; set before any engine of the process prefills (Engine construction).
-std::vector<long long> g_prefill_cuts;
+// Ascending, replaced whole by set_debug_prefill_cuts (Engine construction) and read under the
+// mutex by every prefill call: a reader keeps the list it took.
+std::mutex g_prefill_cuts_mutex;
+std::shared_ptr<const std::vector<long long>> g_prefill_cuts =
+    std::make_shared<const std::vector<long long>>();
 
-const std::vector<long long>& prefill_cuts() { return g_prefill_cuts; }
+std::shared_ptr<const std::vector<long long>> prefill_cuts() {
+    std::lock_guard lock(g_prefill_cuts_mutex);
+    return g_prefill_cuts;
+}
 
 // Absolute position of the current prefill call's first column (-1 outside prefill) and the
 // layer being run, for the dump.
@@ -1264,14 +1272,15 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
         mtp_proposal_extent_ > static_cast<std::uint32_t>(io_.mtp->draft_tokens.ne[0])) {
         throw std::logic_error("MTP proposal extent exceeds the configured draft window");
     }
-    int t0 = 0;
+    const auto cuts = prefill_cuts();
+    int t0          = 0;
     for (; t0 < T;) {
         int len = std::min(chunk, T - t0);
         // The next boundary inside this call: the split frontier or a debug cut. The call ends on
         // it, and a call that would end short of it leaves at least kPrefillMinTokens for the
         // next one (see prefill_call_tokens).
         long long boundary = split_rel > t0 ? split_rel : -1;
-        for (const long long cut : prefill_cuts()) {
+        for (const long long cut : *cuts) {
             const long long rel = cut - base64;
             if (rel > t0) {
                 if (boundary < 0 || rel < boundary) { boundary = rel; }
@@ -1569,7 +1578,9 @@ void set_debug_prefill_cuts(const std::vector<std::uint64_t>& cuts) {
         sorted.push_back(static_cast<long long>(cut));
     }
     std::sort(sorted.begin(), sorted.end());
-    g_prefill_cuts = std::move(sorted);
+    auto shared = std::make_shared<const std::vector<long long>>(std::move(sorted));
+    std::lock_guard lock(g_prefill_cuts_mutex);
+    g_prefill_cuts = std::move(shared);
 }
 
 } // namespace ninferno::models::qwen3_5::execution

@@ -44,6 +44,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -75,10 +76,12 @@ struct RouteTableStatus {
 // built); empty when none is set.
 [[nodiscard]] std::string route_table_dir();
 
-// Names the default lookup's directory (empty: the shipped one). A change drops the default
-// tables found so far on every device, so the next lookup reads the new directory; a table
-// loaded explicitly is dropped as well.
-void set_route_table_dir(const std::string& dir);
+// Names the default lookup's directory (empty: the shipped one) and returns every device to the
+// default lookup: a change of directory drops the tables found so far, and a table put in place
+// explicitly (load_route_table, clear_route_table) is dropped whatever the directory, so the next
+// lookup reads `dir`. The engine calls it for each construction that runs with no other engine
+// alive, before an explicit --route-table loads.
+void set_route_table_dir(const std::filesystem::path& dir);
 
 // The routes/ directory shipped with a binary at `exe`: <exe dir>/routes, else
 // <exe dir>/../share/ninferno/routes, the first that holds a table (a .json file); empty when

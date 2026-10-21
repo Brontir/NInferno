@@ -43,25 +43,94 @@
 namespace ninferno {
 namespace {
 
-// The process-wide maintainer options (MaintainerOptions), on the device just bound: the route
-// table the routes are looked up in, the lab tuners' modes, the debug aids. The defaults leave the
-// release's behaviour: the shipped route tables, no timing, no debug aid.
-void apply_maintainer_options(const MaintainerOptions& m) {
-    ops::set_route_table_dir(m.route_dir.string());
-    if (!m.route_table.empty()) {
+// The process-wide options: MaintainerOptions (the route tables, the lab tuners, the debug aids)
+// and the CUDA synchronization schedule. One record per process holds the values the engines alive
+// run under. An engine built while none is alive applies its own values afresh, so nothing an
+// earlier engine set survives it; one built while others run must ask for the same values (it
+// would change their decisions otherwise) and is refused when it does not. A lease holds the
+// record's mutex from its construction until the device is up and the values are applied, so
+// concurrent constructions apply one at a time.
+class ProcessOptionsLease {
+public:
+    explicit ProcessOptionsLease(const EngineOptions& options) : lock_(mutex()) {
+        Record& record = this->record();
+        if (record.live > 0 && (!(record.maintainer == options.maintainer) ||
+                                record.cuda_sync != options.pacing.cuda_sync)) {
+            throw std::invalid_argument(
+                "another Engine of this process runs with other maintainer options or --cuda-sync "
+                "(process-wide: route tables, tuners, debug aids, the CUDA synchronization "
+                "schedule); every live Engine must use the same");
+        }
+        first_ = record.live == 0;
+        if (first_) {
+            record.maintainer = options.maintainer;
+            record.cuda_sync  = options.pacing.cuda_sync;
+        }
+        ++record.live;
+    }
+
+    ~ProcessOptionsLease() {
+        if (!lock_.owns_lock()) { lock_.lock(); }
+        --record().live;
+    }
+
+    ProcessOptionsLease(const ProcessOptionsLease&)            = delete;
+    ProcessOptionsLease& operator=(const ProcessOptionsLease&) = delete;
+
+    // No other engine was alive: this one applies the process-wide values.
+    [[nodiscard]] bool first() const noexcept { return first_; }
+
+    // The values are in place: other constructions may proceed.
+    void applied() { lock_.unlock(); }
+
+private:
+    struct Record {
+        MaintainerOptions maintainer;
+        CudaSyncSchedule cuda_sync = CudaSyncSchedule::Spin;
+        int live                   = 0;
+    };
+
+    static std::mutex& mutex() {
+        static std::mutex m;
+        return m;
+    }
+
+    static Record& record() {
+        static Record r;
+        return r;
+    }
+
+    std::unique_lock<std::mutex> lock_;
+    bool first_ = false;
+};
+
+// The maintainer options, on the device just bound. `first`: no other engine is alive, so every
+// process-wide value is set afresh; otherwise they are already this engine's, and only an
+// explicit route table still has to be loaded on this device. The defaults leave the release's
+// behaviour: the shipped route tables, no timing, no debug aid.
+void apply_maintainer_options(const MaintainerOptions& m, bool first) {
+    if (first) {
+        // Every device back to the default lookup in --route-dir (an earlier engine's explicit
+        // table dropped), before this engine's own table, if any, loads.
+        ops::set_route_table_dir(m.route_dir);
+    }
+    if (!m.route_table.empty() &&
+        (first || ops::route_table_status().path != m.route_table.string())) {
         const ops::RouteTableStatus status = ops::load_route_table(m.route_table.string());
         if (!status.loaded) { throw std::invalid_argument("--route-table: " + status.message); }
     }
+    if (!first) { return; }
     ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
     set_debug_poison(m.debug_poison, m.debug_poison_skip);
 }
 
-DeviceContext initialize_device(const EngineOptions& options) {
+DeviceContext initialize_device(const EngineOptions& options, ProcessOptionsLease& lease) {
     StartupPhaseScope phase(options.startup_observer, StartupPhase::CudaInitialize);
     DeviceContext device(options.device, options.pacing.cuda_sync);
-    apply_maintainer_options(options.maintainer);
+    apply_maintainer_options(options.maintainer, lease.first());
+    lease.applied();
     phase.complete();
     return device;
 }
@@ -284,7 +353,8 @@ public:
 
     // `requested`: the options as the caller passed them, which the decision fingerprint records.
     Impl(const EngineOptions& requested, EngineOptions normalized)
-        : options(std::move(normalized)), device(initialize_device(options)) {
+        : options(std::move(normalized)), process_options(options),
+          device(initialize_device(options, process_options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
@@ -323,6 +393,8 @@ public:
     }
 
     EngineOptions options;
+    // Before the device: alive while the engine is, released after its backend is gone.
+    ProcessOptionsLease process_options;
     DeviceContext device;
     std::unique_ptr<runtime::Backend> backend;
     LoadSummary load;

@@ -8,10 +8,16 @@ none of them changes what the engine computes.
 
 ## Options
 
-`ninferno` and `ninferno-serve` take all of these; `EngineOptions::pacing` and
-`EngineOptions::maintainer` (`include/ninferno/types.h`) carry them for the Engine API. The route
-table, the tuners and the debug aids are process-wide: the engine applies them when it is
-constructed.
+`ninferno`, `ninferno-serve` and `ninferno-perplexity` take all of these (`ninferno spec-tune`
+takes `--decode-wait`, `--cuda-sync`, `--route-table` and `--route-dir`); `EngineOptions::pacing`
+and `EngineOptions::maintainer` (`include/ninferno/types.h`) carry them for the Engine API.
+
+The maintainer options and `--cuda-sync` are process-wide. An Engine built while no other Engine
+of the process is alive applies its own values afresh: the route tables return to the default
+lookup in `--route-dir` (an earlier explicit table is dropped) before its own `--route-table`
+loads, the tuners forget what an earlier engine tuned or read, and the debug aids take its values.
+An Engine built while others are alive must ask for the same values; otherwise it is refused,
+since it would change their decisions.
 
 ### Decode pacing
 
@@ -59,6 +65,15 @@ from; `ninferno-convert --ranking FILE` names the target's own.
 | `--debug-poison-skip SITE,...` | `kv`, `ingress`, `state`, `weights` | Leaves these sites unpoisoned, for bisecting which poisoned memory changed a result. |
 
 Removed with no replacement: `NINFERNO_MMQ_VERIFY` (an A/B knob of the IQ formats' verify rule).
+
+### Outside the engine
+
+Two variables steer choices outside the engine and its products, and stay variables:
+
+| Variable | Read by | Effect |
+|---|---|---|
+| `NINFERNO_FORCE_WSL` | the Windows launcher and installer only (`tools/release/windows`) | `1` installs and runs the WSL engine even where a native Windows engine exists ([Windows](../windows.md)). The engine it starts reads none of it. |
+| `NINFERNO_BENCH_PREFILL_ROUTES` | the op benches only (`bench/ops`) | `1` runs the benched op under the prefill route profile for the rest of the process. |
 
 ## Environment variables
 

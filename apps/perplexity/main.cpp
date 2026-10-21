@@ -8,6 +8,7 @@
 
 #include "ninferno/engine.h"
 #include "product/activation_options.h"
+#include "product/engine_flags.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
 #include "product/logging/startup_log.h"
@@ -69,6 +70,8 @@ struct Options {
     std::uint32_t kld_top_k = ninferno::perplexity::kKldDefaultTopK;
     // --step-tokens N: the scored targets run N tokens per call (ScoreDetailRequest::step_tokens).
     std::uint32_t step_tokens = 0;
+    ninferno::DecodePacingOptions pacing;   // --cuda-sync (the decode flags do not apply: scoring)
+    ninferno::MaintainerOptions maintainer; // --route-table ... --debug-poison-skip
 };
 
 std::string usage_text() {
@@ -80,7 +83,8 @@ std::string usage_text() {
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
            "       [--kld-out <file> [--kld-top-k N] | --kld <file>]\n"
-           "       [--log-level trace|debug|info|warning|error|critical|off]\n"
+           "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
+           std::string(ninferno::product::kEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
@@ -157,6 +161,8 @@ Options parse_options(int argc, char** argv) {
         } else if (option == "--kld-top-k") {
             out.kld_top_k   = parse_count(value("--kld-top-k"), "kld-top-k");
             kld_top_k_given = true;
+        } else if (ninferno::product::parse_engine_flag(
+                       option, [&] { return value(argv[i]); }, out.pacing, out.maintainer)) {
         } else {
             usage_error("unknown option: " + std::string(option));
         }
@@ -263,6 +269,8 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     engine_options.activations      = options.activations;
     engine_options.recurrent_state  = options.state;
     engine_options.rope_yarn_factor = options.rope_yarn_factor;
+    engine_options.pacing           = options.pacing;
+    engine_options.maintainer       = options.maintainer;
     engine_options.startup_observer = startup_log.observer();
     ninferno::Engine engine(std::move(engine_options));
     const ninferno::LoadSummary load = engine.load_summary();

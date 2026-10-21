@@ -85,7 +85,8 @@ Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--dense-tune off
 `--moe-tune off|on|retune`, `--tune-cache DIR`, `--drafter-registry FILE`,
 `--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE` and `--debug-poison-skip SITE,...`
 ([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
-them.
+them. They and `--cuda-sync` are process-wide: an Engine built while another of the process is
+alive must ask for the same values, or it is refused.
 
 ### Speculative decoding
 
@@ -353,8 +354,9 @@ top-k 50) where it names none.
 
 ## CUDA synchronization
 
-`--cuda-sync` selects the CUDA device synchronization schedule at startup, for the CLI and the
-HTTP server (`EngineOptions::pacing.cuda_sync`).
+`--cuda-sync` selects the CUDA device synchronization schedule at startup, for the CLI, the HTTP
+server, `ninferno-perplexity`, `ninferno spec-tune` and the `ninferno-gemma4` lab tool
+(`EngineOptions::pacing.cuda_sync`).
 
 | Value | Behavior |
 |---|---|
@@ -442,6 +444,7 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 | `--kv-dtype`, `--max-context N`, `--prefill-chunk N` | `bf16`, `4096`, `1024` | The engine settings measured with. |
 | `--corpus FILE` | built in | Prompt corpus. |
 | `--decode-wait auto\|spin\|block` | `spin` | How the tune's engines wait for their rounds ([decode round pacing](#decode-round-pacing)). |
+| `--cuda-sync MODE`, `--route-table FILE`, `--route-dir DIR` | `spin`, the shipped tables | The CUDA synchronization schedule and the route tables the tune's engines run (a lab tunes against tables under test); recorded in the settings when given. |
 | `--device N` | `0` | CUDA device. |
 | `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app); a named tune that does not serve (unreadable, or another artifact, GPU class or drafters) refuses start-up. |
 | `--profile PROFILE` | `<model>.ninferno.spec_profile.json` | With `--load`: the tune whose choices the load bounds are measured for. |

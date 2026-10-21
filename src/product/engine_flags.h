@@ -52,7 +52,8 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
     } else if (arg == "--debug-prefill-cuts") {
         maintainer.debug_prefill_cuts.clear();
         for (const auto& item : comma_items(value())) {
-            maintainer.debug_prefill_cuts.push_back(parse_u64(item.c_str(), "debug-prefill-cuts"));
+            maintainer.debug_prefill_cuts.push_back(
+                parse_u64(item.c_str(), "--debug-prefill-cuts"));
         }
     } else if (arg == "--debug-poison") {
         maintainer.debug_poison = parse_debug_poison(value());

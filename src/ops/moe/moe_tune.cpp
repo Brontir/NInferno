@@ -183,9 +183,12 @@ std::map<std::string, std::string> moe_tune_sources() {
 void set_moe_tune(TuneMode mode, const std::filesystem::path& cache_dir) {
     using namespace detail::moe;
     std::lock_guard lock(g_mutex);
-    if (g_cache_dir != cache_dir) {
+    // Another mode or file: no plan an earlier engine tuned or read stays, and the next layer
+    // reads the cache again.
+    if (g_cache_dir != cache_dir || g_mode.load(std::memory_order_relaxed) != mode) {
         g_cache_dir    = cache_dir;
         g_cache_loaded = false;
+        g_plans.clear();
     }
     g_mode.store(mode, std::memory_order_relaxed);
 }

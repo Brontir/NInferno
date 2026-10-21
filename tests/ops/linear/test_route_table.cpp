@@ -265,6 +265,17 @@ int main(int argc, char** argv) {
                           "the default lookup finds " + file + ".json for " + gpu + ": " + s.message);
         failures += check(ninferno::ops::route_table_dir() == dir.string(),
                           "set_route_table_dir names the dir");
+        // An explicit table is dropped when the directory is named again, the same one included
+        // (an engine built with no --route-table after one that had it).
+        const auto explicit_path = write_file("explicit", table(gpu, ""));
+        (void)ninferno::ops::load_route_table(explicit_path);
+        failures += check(ninferno::ops::route_table_status().path == explicit_path,
+                          "the explicit table is not active");
+        ninferno::ops::set_route_table_dir(dir);
+        const auto back = ninferno::ops::route_table_status();
+        failures +=
+            check(back.loaded && std::filesystem::path(back.path).filename() == file + ".json",
+                  "an explicit table outlived set_route_table_dir: " + back.message);
     }
 
     const generic::Problem q8{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,

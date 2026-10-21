@@ -472,6 +472,9 @@ struct DeviceTables {
     std::mutex mutex;
     std::shared_ptr<const Table> table;
     bool default_attempted = false;
+    // The active table was put in place explicitly (load_route_table, clear_route_table), not
+    // found by the default lookup: set_route_table_dir drops it.
+    bool explicit_table = false;
     // Why the default lookup installed nothing (no file for the class chain, a file for another
     // class, or a file refused and why); what route_table_status() reports while no table is
     // active.
@@ -602,13 +605,13 @@ std::string route_dir_beside(const std::string& exe) {
 
 namespace {
 std::mutex g_dir_mutex;
-std::string g_dir; // set_route_table_dir; empty: the shipped directory
+std::filesystem::path g_dir; // set_route_table_dir; empty: the shipped directory
 } // namespace
 
 std::string route_table_dir() {
     {
         std::lock_guard lock(g_dir_mutex);
-        if (!g_dir.empty()) return g_dir;
+        if (!g_dir.empty()) return g_dir.string();
     }
     // A binary copied off the machine that built it (a release, a copy on another machine) reads the
     // routes shipped beside it, not whatever the build's source tree holds now or nothing at all.
@@ -620,14 +623,17 @@ std::string route_table_dir() {
     return NINFERNO_DEFAULT_ROUTE_DIR;
 }
 
-void set_route_table_dir(const std::string& dir) {
+void set_route_table_dir(const std::filesystem::path& dir) {
+    bool changed = false;
     {
         std::lock_guard lock(g_dir_mutex);
-        if (g_dir == dir) return;
-        g_dir = dir;
+        changed = g_dir != dir;
+        g_dir   = dir;
     }
     for (DeviceTables& d : g_devices) {
         std::lock_guard lock(d.mutex);
+        if (!changed && !d.explicit_table) continue;
+        d.explicit_table    = false;
         d.default_attempted = false;
         d.default_status    = {};
         d.table.reset();
@@ -639,6 +645,7 @@ RouteTableStatus load_route_table(const std::string& path) {
     DeviceTables& d = here();
     std::lock_guard lock(d.mutex);
     d.default_attempted = true;
+    d.explicit_table    = true;
     // Settled whatever the outcome (a refused or unreadable file leaves the active table), but only
     // once the outcome is known: settled before the file is parsed, a lock-free reader would answer
     // untuned from the old table's empty parts meanwhile.
@@ -703,6 +710,7 @@ void clear_route_table() {
     DeviceTables& d = here();
     std::lock_guard lock(d.mutex);
     d.default_attempted      = true;
+    d.explicit_table         = true;
     d.default_status         = {};
     d.default_status.message = "route table cleared; routes are untuned";
     publish_locked(d, nullptr);
