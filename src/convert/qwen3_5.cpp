@@ -996,8 +996,12 @@ void dense_bf16(Model& model, Recipe& recipe) {
 // calibrated activation divisor when it has one, row/tensor-scaled FP8, int4 GPTQ/AWQ/compressed-
 // tensors as u4 with zero points, int8 as q8_g32_fp16: formats.h kept_encoding) is imported as it
 // is; every other tensor keeps its direct BF16 form (the token embedding, and a head published in
-// BF16), but a DFlash drafter's projections, NInferno's own companion, take Q8. An NVFP4 matrix of any row count keeps its words: the layout completes a last 128-row
-// scale tile its rows do not fill. The GDN control projections stay separate, as in every recipe.
+// BF16), but a DFlash drafter's projections, NInferno's own companion, take Q8. An NVFP4 matrix
+// of any row count keeps its words: the layout completes a last 128-row scale tile its rows do not
+// fill. The GDN control projections (a/b, num_v_heads rows) stay separate parents, as in every
+// recipe, and follow the same rule: a checkpoint that quantizes them (ModelOpt NVFP4 with no
+// linear_attn exclusion, e.g. AxionML's Qwen3.5 NVFP4) keeps their words, run by the segmented
+// generic path (prepare_gdn_gating_proj_weights); one that leaves them BF16 keeps BF16.
 // A MoE model's experts follow the same rule (an expert bank the checkpoint publishes in int4 stays
 // int4); every routed expert bank and shared gate/up pair becomes one parent, as the MoE ops
 // address them (NVFP4 matrices of such a parent keep a divisor each).
@@ -1019,9 +1023,9 @@ void dense_published(Model& model, Recipe& recipe, const Checkpoint& base) {
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
+        // Separate, never packed with each other; kept as published below like any projection.
         if (ends_with_any(name, {"/gdn/a_projection", "/gdn/b_projection"})) {
             recipe.separate_parameter(i);
-            continue;
         }
         const bool layer = name.starts_with("text/layers/") || name.starts_with("mtp/layers/");
         // A tied head reads the token embedding, which keeps its BF16 form.
