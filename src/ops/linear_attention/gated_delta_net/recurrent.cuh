@@ -596,6 +596,90 @@ __device__ __forceinline__ void stage_record_window(RecordStage& stage,
     __syncthreads();
 }
 
+// A direct call of two tokens or more (an `exact` prefill, or a short fast-mode call outside
+// prefill) streams its inputs through two shared-memory windows of
+// kDirectStageTokens tokens: the next window's q, k, this CTA's value rows and the gates are copied
+// with cp.async while the current one runs. run_recurrent_sequence otherwise loads each token's
+// value, gates and query behind the previous token's output store, so every token paid a global
+// load latency. The sequence runs the same operations on the same values, so the bytes equal the
+// unstaged kernel's, decode's, verify's and replay's.
+inline constexpr int kDirectStageTokens = 16;
+
+struct DirectStage {
+    __align__(16) __nv_bfloat16 key[kDirectStageTokens][kStateDim];
+    __align__(16) __nv_bfloat16 query[kDirectStageTokens][kStateDim];
+    __align__(16) __nv_bfloat16 value[kDirectStageTokens][kBlockDv];
+    float g[kDirectStageTokens];
+    float beta[kDirectStageTokens];
+};
+
+// DirectAccess over one window starting at `first`: inputs from the stage, outputs to global.
+template <class StateT>
+struct StagedDirectAccess : DirectAccess<StateT> {
+    const DirectStage* stage;
+    std::int32_t first;
+
+    __device__ __forceinline__ const __nv_bfloat16* key_ptr(const RecurrentCoordinates&,
+                                                            std::int32_t token) const {
+        return stage->key[token];
+    }
+
+    __device__ __forceinline__ const __nv_bfloat16* query_ptr(const RecurrentCoordinates&,
+                                                              std::int32_t token) const {
+        return stage->query[token];
+    }
+
+    // load_value_lane indexes the row at dv_base + lane; the stage holds this CTA's state tile.
+    __device__ __forceinline__ const __nv_bfloat16* value_ptr(const RecurrentCoordinates& coord,
+                                                              std::int32_t token) const {
+        return stage->value[token] - coord.state_tile * kBlockDv;
+    }
+
+    __device__ __forceinline__ RawGatePair load_gate(const RecurrentCoordinates&,
+                                                     std::int32_t token) const {
+        const float g_value    = stage->g[token];
+        const float beta_value = stage->beta[token];
+        return {make_uint2(__float_as_uint(g_value), __float_as_uint(beta_value)), g_value,
+                beta_value};
+    }
+
+    __device__ __forceinline__ __nv_bfloat16* output_ptr(const RecurrentCoordinates& coord,
+                                                         std::int32_t token) const {
+        return DirectAccess<StateT>::output_ptr(coord, first + token);
+    }
+};
+
+// Issues (does not wait for) the copies of tokens [first, first + count) into `stage`.
+template <class StateT>
+__device__ __forceinline__ void issue_direct_window(DirectStage& stage,
+                                                    const DirectAccess<StateT>& access,
+                                                    const RecurrentCoordinates& coord,
+                                                    std::int32_t first, std::int32_t count) {
+    const int tid              = coord.warp * kWarpSize + coord.lane;
+    constexpr int kThreads     = kWarpSize * kNumWarps;
+    constexpr int kRowChunks   = kStateDim * static_cast<int>(sizeof(__nv_bfloat16)) / 16;
+    constexpr int kValueChunks = kBlockDv * static_cast<int>(sizeof(__nv_bfloat16)) / 16;
+    for (int i = tid; i < count * kRowChunks; i += kThreads) {
+        const int token = i / kRowChunks;
+        const int chunk = (i - token * kRowChunks) * 8;
+        cp_async<16>(&stage.key[token][chunk], access.key_ptr(coord, first + token) + chunk);
+        cp_async<16>(&stage.query[token][chunk], access.query_ptr(coord, first + token) + chunk);
+    }
+    for (int i = tid; i < count * kValueChunks; i += kThreads) {
+        const int token = i / kValueChunks;
+        const int chunk = (i - token * kValueChunks) * 8;
+        cp_async<16>(&stage.value[token][chunk],
+                     access.value_ptr(coord, first + token) + coord.state_tile * kBlockDv + chunk);
+    }
+    if (tid < count) {
+        const std::int64_t offset =
+            access.column(coord, first + tid) * access.heads.H_v + coord.value_head;
+        cp_async<4>(&stage.g[tid], access.g + offset);
+        cp_async<4>(&stage.beta[tid], access.beta + offset);
+    }
+    cp_commit();
+}
+
 // A fold's head counts and conv channels: compile-time for the stacks registered in
 // launch_replay_fold, read from FoldAccess at run time for every other one. Constant geometry
 // turns the group division and the slot, record and history strides into immediates: A100, 27B
@@ -852,6 +936,48 @@ __global__ void __launch_bounds__(kWarpSize* kNumWarps, 2)
     // In a plain launch the wait returns at once.
     pdl::wait_for_dependencies();
     run_recurrent_sequence<NormalizeInputs, OutputEffects>(state, access, coord, width);
+    store_state_tile(state, access.state_write_base(coord), coord);
+}
+
+// The direct recurrence over two staged windows (DirectStage). Launched for calls of
+// kDirectStageMinTokens tokens or more; decode's one-token calls keep recurrent_bf16_direct_kernel.
+inline constexpr int kDirectStageMinTokens = 2;
+
+template <bool NormalizeInputs, class StateT = float>
+__global__ void __launch_bounds__(kWarpSize* kNumWarps, 2)
+    recurrent_bf16_staged_kernel(const __nv_bfloat16* __restrict__ q,
+                                 const __nv_bfloat16* __restrict__ k,
+                                 const __nv_bfloat16* __restrict__ v, const float* __restrict__ g,
+                                 const float* __restrict__ beta,
+                                 const StateT* __restrict__ state_read,
+                                 StateT* __restrict__ state_write, __nv_bfloat16* __restrict__ out,
+                                 std::int32_t width, head_map heads, float scale) {
+    const DirectAccess<StateT> access{q,           k,   v,     g,     beta, state_read,
+                                      state_write, out, heads, width, scale};
+    const RecurrentCoordinates coord = access.coordinates();
+    __shared__ DirectStage stage[2];
+    __align__(16) float state[kDvPerWarp][kQkPerLane];
+    load_state_tile(state, access.state_read_base(coord), coord);
+    pdl::wait_for_dependencies();
+    issue_direct_window(stage[0], access, coord, 0, min(width, kDirectStageTokens));
+    for (std::int32_t first = 0, window = 0; first < width;
+         first += kDirectStageTokens, ++window) {
+        const std::int32_t count = min(width - first, kDirectStageTokens);
+        const std::int32_t next  = first + kDirectStageTokens;
+        // The buffer the next window fills was last read by the window before this one, which
+        // every thread finished before the barrier that closed its iteration.
+        if (next < width) {
+            issue_direct_window(stage[(window + 1) & 1], access, coord, next,
+                                min(width - next, kDirectStageTokens));
+            cp_wait<1>();
+        } else {
+            cp_wait<0>();
+        }
+        __syncthreads();
+        const StagedDirectAccess<StateT> staged{access, &stage[window & 1], first};
+        run_recurrent_sequence<NormalizeInputs, OutputEffects>(state, staged, coord, count);
+        __syncthreads();
+    }
     store_state_tile(state, access.state_write_base(coord), coord);
 }
 

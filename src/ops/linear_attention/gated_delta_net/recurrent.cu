@@ -56,10 +56,13 @@ void launch_recurrent_direct_fixed(const Tensor& q, const Tensor& k, const Tenso
     const auto* sr = static_cast<const StateT*>(state_read.data);
     auto* sw       = static_cast<StateT*>(state_write.data);
     auto* op       = static_cast<__nv_bfloat16*>(out.data);
-    // Where the device has PDL the state loads go out under the previous kernel's tail.
-    CUDA_CHECK(pdl::launch({grid, block, 0, stream}, device_class().features.pdl, false,
-                           recurrent_bf16_direct_kernel<NormalizeQK, StateT>, qp, kp, vp, gp, bp,
-                           sr, sw, op, q.ne[2], heads, scale));
+    // Where the device has PDL the state loads go out under the previous kernel's tail. A call of
+    // several tokens streams its inputs through shared memory; the one-token decode call does not.
+    const auto kernel = q.ne[2] >= kDirectStageMinTokens
+                            ? recurrent_bf16_staged_kernel<NormalizeQK, StateT>
+                            : recurrent_bf16_direct_kernel<NormalizeQK, StateT>;
+    CUDA_CHECK(pdl::launch({grid, block, 0, stream}, device_class().features.pdl, false, kernel,
+                           qp, kp, vp, gp, bp, sr, sw, op, q.ne[2], heads, scale));
 }
 
 template <bool NormalizeInputs, class StateT>
