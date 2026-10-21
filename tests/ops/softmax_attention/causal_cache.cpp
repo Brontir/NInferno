@@ -2858,7 +2858,7 @@ int run_small_prefill_cases(DeviceExecutionView execution, KvCacheStorage storag
 }
 
 // Aligned splits (the invariant profile): a token seeing v keys splits them every
-// 2^aligned_key_shift(v) keys (6..14, the launches' range), whatever the call's envelope or KV row:
+// 2^aligned_key_shift(v) keys (9..14, the launches' range), whatever the call's envelope or KV row:
 // the shift and split count of v do not follow the capacity a partition was planned for, at most
 // 64 splits run, the capacity of a call seeing up to `maximum` keys is the most any v <= maximum
 // runs (so a token's splits always fit the launch), the BF16 live partition agrees, and the 64
@@ -2869,14 +2869,16 @@ int verify_aligned_position_partition() {
     const auto expect = [&](bool ok, const std::string& what) {
         if (!ok && ++failures <= 8) std::cout << "aligned position partition: " << what << "\n";
     };
-    expect(CausalKvPartition::aligned_key_shift(1) == 6, "one key splits every 64 keys");
-    expect(CausalKvPartition::aligned_key_shift(4096) == 6, "4096 keys split every 64 keys");
-    expect(CausalKvPartition::aligned_key_shift(4097) == 7, "past 4096 keys split every 128 keys");
+    expect(CausalKvPartition::aligned_key_shift(1) == 9, "one key splits every 512 keys");
+    expect(CausalKvPartition::aligned_key_shift(32768) == 9, "32768 keys split every 512 keys");
+    expect(CausalKvPartition::aligned_key_shift(32769) == 10,
+           "past 32768 keys split every 1024 keys");
     expect(CausalKvPartition::aligned_key_shift(262144) == 12, "256K keys split every 4096 keys");
     expect(CausalKvPartition::aligned_key_shift(1 << 20) == 14, "1M keys split every 16384 keys");
     const int longest = CausalKvPartition::kAlignedMaxVisibleKeys;
     std::vector<CausalKvPartition> plans;
-    for (const int maximum : {1, 63, 64, 300, 4095, 4096, 4097, 65536, 262144, longest})
+    for (const int maximum : {1, 63, 64, 300, 4095, 4096, 4097, 32768, 32769, 65536, 262144,
+                              longest})
         plans.push_back(CausalKvPartition::aligned_to_positions(maximum));
     const auto reference = plans.back();
     int most             = 0;
@@ -2885,7 +2887,7 @@ int verify_aligned_position_partition() {
         const int splits = reference.splits(visible);
         most             = std::max(most, splits);
         const auto where = " at " + std::to_string(visible) + " keys";
-        if (shift < 6 || shift > 14 ||
+        if (shift < 9 || shift > 14 ||
             splits < 1 || splits > CausalKvPartition::kAlignedSplits ||
             splits != (visible + (1 << shift) - 1) >> shift) {
             expect(false, "shift " + std::to_string(shift) + " runs " + std::to_string(splits) +
@@ -3096,12 +3098,13 @@ int verify_shape_prefix(const std::string& label, const std::vector<std::uint16_
 // (Qwen3.8 IQ3 greedy alone and beside another request parted under exact with speculation
 // before the splits were aligned to the key positions), nor the KV row a session sized from free
 // memory: its splits follow its own position. The contexts put the calls on both sides of the
-// 4096-key shift boundary (a call from 4095 straddles it) and past 32K.
+// 32768-key shift boundary (a call from 32767 straddles it, so its rows close finer splits inside
+// a CTA) and past it.
 int run_shape_invariance_cases(KvCacheStorage storage) {
     const ops::ScopedInvariantRoutes invariant;
     int failures = 0;
     for (const auto& geometry : {kGeometries[0], kGeometries[1]})
-        for (const int context : {300, 2900, 4095, 4097, 12000, 40000}) {
+        for (const int context : {300, 2900, 12000, 32767, 40000}) {
             const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
             const std::string name     = std::string("shape invariance ") + geometry.name + " " +
                                      cache_name(storage) + " ctx=" + std::to_string(context) + " ";
@@ -3133,10 +3136,11 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
                     name + "cached W=" + std::to_string(width) + " vs W=300",
                     shaped_cached_output(geometry, storage, context, width), cached);
             // The KV row (block-table width and envelope) a session sizes from free memory: rows of
-            // 4K, 64K and 256K keys give the bytes of the cache's own row. The 4K row is the
-            // control (its splits were 64 keys before and are now); the splits once followed the
-            // row, so a 64K row split every 1024 keys and a 256K row every 4096.
-            for (const int row_keys : {4096, 65536, 262144}) {
+            // 4K, 32K, 64K and 256K keys give the bytes of the cache's own row. The 32K row is the
+            // control (its splits were 512 keys before and are now up to 32K keys); the splits
+            // once followed the row, so a 4K row split every 64 keys, a 64K row every 1024 and a
+            // 256K row every 4096.
+            for (const int row_keys : {4096, 32768, 65536, 262144}) {
                 const std::string row = name + "row " + std::to_string(row_keys) + " keys ";
                 failures += verify_shape_prefix(
                     row + "W=1 vs W=4", output({.width = 1, .valid = 1, .row_keys = row_keys}),

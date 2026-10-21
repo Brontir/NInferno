@@ -27,12 +27,19 @@ struct CausalAlignedRow {
 struct CausalKvPartition {
     static constexpr int kMaxSplits = 256;
     // Aligned splits: a token seeing v keys splits them every 2^aligned_key_shift(v) keys from
-    // position 0, at most kAlignedSplits of them, each a power of two of at least 64 keys. The
+    // position 0, at most kAlignedSplits of them, each a power of two of at least 512 keys. The
     // partition follows the token's own position only (never the KV row a session sized from free
-    // memory, nor the call that carries it): up to 4096 keys a split holds 64 keys, up to 8192
-    // 128, ..., 256K 4096, 1M 16384.
-    static constexpr int kAlignedSplits      = 64;
-    static constexpr int kAlignedMinKeyShift = 6;
+    // memory, the call that carries it, nor the card): up to 32768 keys a split holds 512 keys,
+    // up to 65536 1024, ..., 256K 4096, 1M 16384.
+    static constexpr int kAlignedSplits = 64;
+    // 512 keys: a split's fixed traffic, its query tile in (BF16), its FP32 partial out and the
+    // merge reading it back (32 rows x 256 dims x 10 bytes = 80 KiB for the grouped CTA), is at
+    // most a sixth of the BF16 keys and values it streams (512 x 256 x 4 bytes = 512 KiB). The
+    // 64-key minimum this replaced cost the fixed work 1.25x the streamed bytes and launched up to
+    // 8x the CTAs and partials of a prefill chunk below 32K keys (A100 exact prefill -6 % against
+    // the row-aligned splits of a 32K session, which split every 512 keys there). A decode
+    // splits as a prefill does: from 32K keys on it runs the 32..64 splits it had before.
+    static constexpr int kAlignedMinKeyShift = 9;
     // The most keys an aligned split is sized for: no call sees more
     // (kCausalAttentionMaximumVisibleKeys: 1M keys under YaRN), so more keys split as these do,
     // every 16384 keys.
@@ -66,7 +73,7 @@ struct CausalKvPartition {
         return tile < tiles ? tile : tiles;
     }
 
-    // log2 of the keys an aligned split owns for `visible` keys: 6..14, 6 up to 4096 keys, then
+    // log2 of the keys an aligned split owns for `visible` keys: 9..14, 9 up to 32768 keys, then
     // one more each time the keys double.
     __host__ __device__ static constexpr int aligned_key_shift(int visible) {
         const int keys = visible < kAlignedMaxVisibleKeys ? visible : kAlignedMaxVisibleKeys;
@@ -100,8 +107,8 @@ struct CausalKvPartition {
         return aligned ? aligned_active(visible) : active(visible);
     }
 
-    // The most aligned splits a token seeing up to max_visible_keys keys runs: 64 at 4096 keys
-    // and past them (every v > 4096 runs at most 64), fewer below.
+    // The most aligned splits a token seeing up to max_visible_keys keys runs: 64 at 32768 keys
+    // and past them (every v > 32768 runs at most 64), fewer below.
     static constexpr int aligned_capacity(int max_visible_keys) {
         const int keys  = (1 << kAlignedMinKeyShift) - 1;
         const int count = (max_visible_keys + keys) >> kAlignedMinKeyShift;

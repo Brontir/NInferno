@@ -25,9 +25,14 @@ inline void require_causal_plan_inputs(const char* dtype, int heads, int kv_head
 
 static_assert(CausalKvPartition::kAlignedSplits <= CausalKvPartition::kMaxSplits);
 static_assert(CausalKvPartition::kAlignedMaxVisibleKeys == kCausalAttentionMaximumVisibleKeys);
-// The aligned shifts run 6..14: 64 keys up to 4096 visible, 16384 at the longest call.
-static_assert(CausalKvPartition::aligned_key_shift(4096) == 6);
-static_assert(CausalKvPartition::aligned_key_shift(4097) == 7);
+// The aligned shifts run 9..14: 512 keys up to 32768 visible, 16384 at the longest call.
+static_assert(CausalKvPartition::aligned_key_shift(1) == 9);
+static_assert(CausalKvPartition::aligned_key_shift(32768) == 9);
+static_assert(CausalKvPartition::aligned_key_shift(32769) == 10);
+// The smallest split's fixed traffic (the grouped CTA's 32 query rows in BF16, its FP32 partial
+// out and back into the merge: 10 bytes a dimension) is at most a sixth of the BF16 keys and
+// values it streams (4 bytes a dimension).
+static_assert(6 * 32 * 10 <= (1 << CausalKvPartition::kAlignedMinKeyShift) * 4);
 static_assert(CausalKvPartition::aligned_key_shift(1 << 18) == 12);
 static_assert(CausalKvPartition::aligned_key_shift(CausalKvPartition::kAlignedMaxVisibleKeys) == 14);
 // A launch's partials hold at most kAlignedSplits per column, whatever the visible keys.

@@ -46,7 +46,7 @@ private:
  *     its columns give a token the same bytes, whatever the batch's envelope;
  *   - causal_softmax_attention (every KV storage): one grouped kernel instance at every width, a
  *     call wider than 64 columns in chunks of 64, each token's key splits aligned to its own
- *     position (at most 64 over the keys it sees, a power of two of at least 64 keys each,
+ *     position (at most 64 over the keys it sees, a power of two of at least 512 keys each,
  *     CausalKvPartition::aligned_to_positions) and merged in split order: a decode step, a verify
  *     pass, a batch neighbour, a prompt cut or the KV capacity a session sized from free memory
  *     leaves a token's bytes unchanged;
