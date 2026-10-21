@@ -26,6 +26,7 @@
 #include <span>
 #include <string>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -362,14 +363,17 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         uncommitted_row_limit  = model.uncommitted_row_limit(plan);
         const bool speculative = speculative_backend != SpeculativeBackend::None;
         const bool runs_ahead  = !speculative && uncommitted_row_limit > 0;
-        // The CPU quota is a machine fact read once per process (host_cpu_quota.h).
+        // The CPU quota and the logical cores are machine facts read once per process
+        // (host_cpu_quota.h); both enter the decision fingerprint's host facts.
         static const HostCpuQuota cpu_quota = read_host_cpu_quota();
+        static const bool quota_limits =
+            cpu_quota.limits_run_ahead(std::thread::hardware_concurrency());
         const RoundPacing pacing(
             std::getenv("NINFERNO_DECODE_STEPS"), std::getenv("NINFERNO_DECODE_WAIT"),
             qwen3_5::kMaximumOrdinaryDecodeSteps,
             runs_ahead ? std::min(qwen3_5::kMaximumOrdinaryDecodeSteps, uncommitted_row_limit + 1U)
                        : 1U,
-            cpu_quota.set());
+            quota_limits);
         const bool paced = use_cuda_graph;
         if (paced) {
             round_pacing = pacing;

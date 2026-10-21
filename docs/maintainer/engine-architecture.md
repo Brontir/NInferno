@@ -533,8 +533,8 @@ The following constraints belong to the Engine architecture, while the concrete 
 - State/KV mapping stays stable within one GPU execution unit;
 - CUDA Graphs are built per legal exact-`B` topology; request identity and page IDs are stable input data, not graph keys;
 - ordinary decode runs no catalog scan, pressure search, or background replica scan;
-- ordinary decode runs one step per execution unit, or 16 when the process runs under a CPU bandwidth quota (a machine fact read once at startup from
-  cgroup `cpu.max` or `cpu.cfs_quota_us`; a container's quota stalls the whole process until the next quota period); `NINFERNO_DECODE_STEPS=N` replaces
+- ordinary decode runs one step per execution unit, or 16 when the process's CPU bandwidth quota is below min(4, logical cores) CPUs (machine facts read once at startup:
+  the tightest cgroup `cpu.max` or `cpu.cfs_quota_us` along the process's cgroup and its parents; a container's quota stalls the whole process until the next quota period); `NINFERNO_DECODE_STEPS=N` replaces
   that default. The count never follows a timing, since it decides which requests share each step's batch (`round_pacing.h`); the startup log and the
   load summary report it. Several steps run back to back within one execution unit:
   later steps take the previous step's sampled result as input on the device. This applies only to models in which rows that were executed but not committed are invisible to later rows

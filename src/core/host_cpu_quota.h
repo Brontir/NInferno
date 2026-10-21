@@ -5,12 +5,14 @@
 // quota is used, so a decode that waits for each step leaves the GPU idle while the host is
 // stopped (round_pacing.h). The rules read the parsed fact, never the files.
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ninferno {
 
@@ -18,8 +20,43 @@ struct HostCpuQuota {
     std::uint64_t quota_us  = 0; // 0: no quota
     std::uint64_t period_us = 0;
 
+    // A run-ahead round needs a quota below this many CPUs (and below the logical cores).
+    static constexpr std::uint64_t kRunAheadCpus = 4;
+
     [[nodiscard]] bool set() const noexcept { return quota_us != 0 && period_us != 0; }
+
+    // Whether the quota stops the host often enough that decode rounds should run ahead
+    // (round_pacing.h): quota / period < min(kRunAheadCpus, logical_cores) CPUs, from the facts
+    // alone. The engine keeps about three host threads busy while it decodes at load (the worker
+    // that submits rounds and spins on their end, the serving front end's request and streaming
+    // threads, detokenization); a quota of four CPUs or more covers them within each period, and
+    // the throttling stall was seen on lab containers with quotas of one to three CPUs on hosts of
+    // 32 to 128 cores. A quota at or above the cores the process can run on can never be used up
+    // (its threads cannot run on more CPUs than there are), so it is no limit at all; half the
+    // cores (another threshold proposed) would leave a 2-CPU quota on a 4-core host, where those
+    // three threads do stall, without run-ahead. logical_cores 0 (unknown) reads as many cores.
+    // The threshold is a declared rule awaiting calibration on lab hosts, like kQuotaSteps.
+    [[nodiscard]] bool limits_run_ahead(unsigned logical_cores) const noexcept {
+        if (!set()) { return false; }
+        const std::uint64_t cpus =
+            logical_cores == 0 ? kRunAheadCpus
+                               : std::min<std::uint64_t>(kRunAheadCpus, logical_cores);
+        // quota / period < cpus, without division.
+        return quota_us < cpus * period_us;
+    }
 };
+
+// The tighter of two quotas (the lower quota / period); an unset one is no limit.
+[[nodiscard]] inline HostCpuQuota tighter_cpu_quota(const HostCpuQuota& a,
+                                                    const HostCpuQuota& b) noexcept {
+    if (!a.set()) { return b; }
+    if (!b.set()) { return a; }
+    // a.quota / a.period <= b.quota / b.period; cgroup periods are at most one second (10^6 us),
+    // so the products of a quota below 2^44 us and a period do not overflow.
+    const long double left  = static_cast<long double>(a.quota_us) * b.period_us;
+    const long double right = static_cast<long double>(b.quota_us) * a.period_us;
+    return left <= right ? a : b;
+}
 
 namespace detail {
 
@@ -69,29 +106,84 @@ namespace detail {
     return {.quota_us = *quota, .period_us = *period};
 }
 
-// The quota of the process's own cgroup (v2: its path in /proc/self/cgroup, then the namespace
-// root a container sees; v1: the cpu controller's root). Windows and other hosts: no quota.
+namespace detail {
+
+// `path` and each of its parents up to the root ("/a/b" gives "/a/b", "/a" and ""), as suffixes
+// of a cgroup mount.
+[[nodiscard]] inline std::vector<std::string> cgroup_lineage(std::string path) {
+    while (!path.empty() && (path.back() == '/' || path.back() == '\n' || path.back() == '\r')) {
+        path.pop_back();
+    }
+    std::vector<std::string> out;
+    for (;;) {
+        out.push_back(path);
+        if (path.empty()) { break; }
+        const std::size_t slash = path.rfind('/');
+        path.resize(slash == std::string::npos ? 0 : slash);
+    }
+    return out;
+}
+
+} // namespace detail
+
+// The quota that binds the process, from its /proc/self/cgroup text and a file reader
+// (`read(path)` returns the file's text or nothing): every ancestor's limit applies to its
+// descendants, so it is the tightest quota along the process's cgroup and its parents. cgroup v2
+// ("0::PATH"): cpu.max under /sys/fs/cgroup; a container whose namespace hides the host's path
+// sees its own cgroup at the mount's root, which the walk reaches as the last ancestor. cgroup v1
+// (the line whose controllers include "cpu"): cpu.cfs_quota_us and cpu.cfs_period_us along the
+// same walk under the cpu controller's mount.
+template <class Reader>
+[[nodiscard]] HostCpuQuota read_cgroup_cpu_quota(std::string_view proc_self_cgroup, Reader&& read) {
+    std::optional<std::string> v2;
+    std::optional<std::string> v1;
+    std::istringstream lines{std::string(proc_self_cgroup)};
+    for (std::string line; std::getline(lines, line);) {
+        if (line.rfind("0::", 0) == 0) {
+            v2 = line.substr(3);
+            continue;
+        }
+        const std::size_t first  = line.find(':');
+        const std::size_t second = first == std::string::npos ? first : line.find(':', first + 1);
+        if (second == std::string::npos) { continue; }
+        const std::string controllers = "," + line.substr(first + 1, second - first - 1) + ",";
+        if (controllers.find(",cpu,") != std::string::npos) { v1 = line.substr(second + 1); }
+    }
+    HostCpuQuota tightest;
+    if (v2) {
+        for (const std::string& suffix : detail::cgroup_lineage(*v2)) {
+            if (const auto text = read("/sys/fs/cgroup" + suffix + "/cpu.max")) {
+                tightest = tighter_cpu_quota(tightest, parse_cgroup_v2_cpu_max(*text));
+            }
+        }
+        return tightest;
+    }
+    for (const char* mount :
+         {"/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct,cpu"}) {
+        bool found = false;
+        for (const std::string& suffix : detail::cgroup_lineage(v1.value_or(""))) {
+            const std::string directory = std::string(mount) + suffix;
+            const auto quota            = read(directory + "/cpu.cfs_quota_us");
+            const auto period           = read(directory + "/cpu.cfs_period_us");
+            if (!quota || !period) { continue; }
+            found    = true;
+            tightest = tighter_cpu_quota(tightest, parse_cgroup_v1_cfs(*quota, *period));
+        }
+        if (found) { return tightest; }
+    }
+    return tightest;
+}
+
+// The quota that binds the process (read_cgroup_cpu_quota on this host's files). Windows and
+// other hosts: no quota.
 [[nodiscard]] inline HostCpuQuota read_host_cpu_quota() {
 #if defined(__linux__)
-    std::string own;
-    if (const auto groups = detail::read_small_file("/proc/self/cgroup")) {
-        std::istringstream lines(*groups);
-        for (std::string line; std::getline(lines, line);) {
-            if (line.rfind("0::", 0) == 0) { own = line.substr(3); }
-        }
-    }
-    for (const std::string& directory : {"/sys/fs/cgroup" + own, std::string("/sys/fs/cgroup")}) {
-        if (const auto text = detail::read_small_file(directory + "/cpu.max")) {
-            return parse_cgroup_v2_cpu_max(*text);
-        }
-    }
-    for (const char* directory : {"/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct"}) {
-        const auto quota  = detail::read_small_file(std::string(directory) + "/cpu.cfs_quota_us");
-        const auto period = detail::read_small_file(std::string(directory) + "/cpu.cfs_period_us");
-        if (quota && period) { return parse_cgroup_v1_cfs(*quota, *period); }
-    }
-#endif
+    const auto groups = detail::read_small_file("/proc/self/cgroup");
+    return read_cgroup_cpu_quota(groups.value_or(""),
+                                 [](const std::string& path) { return detail::read_small_file(path); });
+#else
     return {};
+#endif
 }
 
 } // namespace ninferno

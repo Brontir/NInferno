@@ -6,11 +6,13 @@
 // The step count is a fixed declared rule, never a timing: it decides which requests share each
 // step's batch (one step per round admits and retires requests between steps, a run-ahead round
 // keeps its batch for all its steps), so it must be the same on every machine for the same
-// requests (docs/maintainer/deterministic-decisions.md). It reads one machine fact, read once at
-// startup: whether the process runs under a CPU bandwidth quota (host_cpu_quota.h). A container's
+// requests (docs/maintainer/deterministic-decisions.md). It reads machine facts, read once at
+// startup: the process's CPU bandwidth quota (host_cpu_quota.h) against the logical cores; the
+// quota limits the host when it is below min(4, cores) CPUs (HostCpuQuota::limits_run_ahead,
+// which says why). A container's
 // CFS limit stops every thread of the cgroup for the rest of its 100 ms period once the quota is
 // used; a decode that waits for each step then leaves the GPU idle for the stall (30-40 % of the
-// time on throttled lab containers). Under a quota a round runs kQuotaSteps steps where the engine
+// time on throttled lab containers). Under such a quota a round runs kQuotaSteps steps where the engine
 // can run ahead, the later steps feeding on the sampled tokens on the device so the GPU keeps
 // running while the host is stopped; without one it runs one step, which publishes each token as
 // soon as it exists and runs nothing past a stop. NINFERNO_DECODE_STEPS=N replaces that default.
@@ -89,20 +91,25 @@ public:
         Block, // block on every round's end
     };
 
-    // Steps per round under a CPU quota: a 16-step round of a 5-30 ms step lasts 80-480 ms, about
-    // one CFS period (100 ms) or more, so a stopped host finds the GPU still busy.
+    // Steps per round under a limiting CPU quota: a 16-step round of a 5-30 ms step lasts
+    // 80-480 ms, about one CFS period (100 ms) or more, so a stopped host finds the GPU still
+    // busy. The step cost is not known before the first round, so the count cannot follow it
+    // without a measurement; a fast model's 5 ms steps would want min(32, 100 ms / step) = 20, a
+    // slow one's 30 ms steps 4, and 16 covers both with one period's stall at most. The value
+    // awaits calibration on lab containers (docs/maintainer/deterministic-decisions.md, known
+    // gaps); a host whose stall it does not hide sets --decode-steps N.
     static constexpr std::uint32_t kQuotaSteps = 16;
 
-    // The default steps per round from the facts alone: kQuotaSteps under a CPU quota, else 1,
-    // within the allowed steps.
+    // The default steps per round from the facts alone: kQuotaSteps where the CPU quota limits
+    // the host (HostCpuQuota::limits_run_ahead), else 1, within the allowed steps.
     [[nodiscard]] static constexpr std::uint32_t
-    default_steps(bool cpu_quota, std::uint32_t allowed_steps) noexcept {
-        return cpu_quota ? std::clamp(kQuotaSteps, 1U, std::max(allowed_steps, 1U)) : 1U;
+    default_steps(bool quota_limits, std::uint32_t allowed_steps) noexcept {
+        return quota_limits ? std::clamp(kQuotaSteps, 1U, std::max(allowed_steps, 1U)) : 1U;
     }
 
     // `steps_setting` is NINFERNO_DECODE_STEPS: null (or "auto", which warns: auto_ignored())
     // runs default_steps(); an integer N in [1, maximum_steps] runs N steps in every round that
-    // can. `cpu_quota`: the process runs under a CPU bandwidth quota.
+    // can. `cpu_quota`: the process's CPU quota limits the host (HostCpuQuota::limits_run_ahead).
     // `wait_setting` is NINFERNO_DECODE_WAIT: null or "auto", "spin" or "block". A round runs at
     // most `allowed_steps` steps (1 where rows past a stop could not stay invisible).
     RoundPacing(const char* steps_setting, const char* wait_setting, std::uint32_t maximum_steps,

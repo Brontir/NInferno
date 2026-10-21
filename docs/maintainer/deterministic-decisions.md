@@ -29,6 +29,11 @@ This page states the rule and its target. The engine does not meet all of it yet
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;
 - model constants (speculative acceptance) do not record their keys, corpus hash and tolerance yet;
+- run-ahead under a CPU quota is a declared rule not yet calibrated: a round runs 16 steps when the
+  process's CPU bandwidth quota is below min(4, logical cores) CPUs, else 1 (both numbers await
+  measurements on lab containers). Nothing measures the host, so a host stalled by other
+  processes without a quota, or one whose stall 16 steps do not hide, is not detected; its
+  operator sets `NINFERNO_DECODE_STEPS=N` (1..32) explicitly;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
   memory picks the speculation; the fingerprint only records it, as the taint
@@ -39,12 +44,13 @@ This page states the rule and its target. The engine does not meet all of it yet
   `mma_slow`; the driver's clocks only where they fed a fact, an unknown id or a laptop row without
   the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
   stock one and two laptops of one name from two OEMs alike), the host's
-  logical CPU count and RAM class, the build (the git commit is read at every
+  logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
   build, not at configure), the requested options, the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, a separate drafter by
   its artifact id, the decision environment variables that are set, the plan startup resolved
-  without the free memory (KV and state storage, speculative windows, route breakpoints) and the
-  violations of this page present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
+  without the free memory (KV and state storage, speculative windows, route breakpoints, decode
+  steps per round) and the violations of this page present (taint). The RAM class is `bit_floor`
+  of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
   startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier) is
   observed and enters only the manifest, so `nf1` is the same across identical starts on one
@@ -126,7 +132,7 @@ Rules apply in this order:
 |---|---|---|
 | Discrete | driver | generation and instruction set, SM count, L2, shared memory per block and SM, registers, compiled-kernel occupancy, VRAM class, driver model, MIG, display attached |
 | Discrete | PCI ID | segment (GeForce / pro / datacenter), exceptions (TU116/117: no fast tensor MMA; L40: half rate) |
-| Discrete | OS, once at startup | whether the process runs under a CPU bandwidth quota (cgroup `cpu.max`, v1 `cpu.cfs_quota_us`) |
+| Discrete | OS, once at startup | the process's CPU bandwidth quota: the tightest along its cgroup and the cgroup's parents (v2 `cpu.max`, v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`), and the logical CPU count |
 | Continuous | PCI-ID reference table only | reference clock, bus width x memory clock, TDP, nominal VRAM, source |
 
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
