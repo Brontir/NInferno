@@ -13,6 +13,7 @@ from . import gemma4, gemma4_assistant, gemma4_dflash, qwen3_5
 from .official_recipes import RECIPES
 from .pipeline import convert
 from .proposal import DEFAULT_RANKING, add_official_proposal
+from .published import published_activation_summary
 from .recipe import Recipe
 from .sources.safetensors import SafetensorsSource
 
@@ -207,6 +208,19 @@ def main(argv=None):
             provenance["override"] = args.override
         if args.proposal:
             provenance["ranking"] = str(args.ranking)
+        published = published_activation_summary(model, recipe)
+        if published is not None:
+            provenance["published_activations"] = published
+            widths = [f"{bits}-bit on {published[bits]}" for bits in ("16", "8", "4")
+                      if bits in published]
+            if "unknown" in published:
+                widths.append(f"unnamed on {published['unknown']}")
+            print(
+                f"published activations ({published['source']}): {', '.join(widths)} kept "
+                f"matrices; fast mode allows {published['below']} of them fewer bits, int8 mode "
+                f"{published['below_int8']}",
+                flush=True,
+            )
         report = convert(
             model,
             recipe,

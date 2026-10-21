@@ -60,7 +60,12 @@ def _concat_values(parts, shape, label):
             cursor += count
         return torch.cat(pieces) if len(pieces) != 1 else pieces[0]
 
-    return LogicalSource(shape, f"concat({label}, {len(parts)} matrices)", read)
+    return LogicalSource(
+        shape,
+        f"concat({label}, {len(parts)} matrices)",
+        read,
+        origin=tuple(pair for part in parts for pair in part.origin),
+    )
 
 _TEXT_ARCHITECTURES = (
     "Gemma4ForConditionalGeneration",
@@ -254,6 +259,7 @@ def _scaled_source(source: LogicalSource, factor: float) -> LogicalSource:
         source.shape,
         f"scale({source.label},{factor:.9g})",
         lambda begin, end: source.values(begin, end).to(torch.float32) * factor,
+        origin=source.origin,
     )
 
 

@@ -34,7 +34,11 @@ every profile of the entry with that gpu_class and requires (and applies_to, whe
 repositories), replacing an earlier table; --fallback also puts them into the "*" profile with the
 same requires. A table spec-tune marked "load_partial" (a concurrency it could not decide) is
 merged with a warning, and the profiles keep the mark (so does a re-tune, and the "*" profile
---fallback derives). --create makes the profile when the class has none: the "*" profile's
+--fallback derives). Before merging a table for a class that borrows one today, A/B the server's
+defaults on a short chat against the release: spec-tune --load needs a 3 % gain over plain on
+sampled thinking prompts, yet a short greedy chat can still gain where it picks plain (gpt-oss-20b,
+RTX 3090: a ga102 table going plain from 3 lanes lost 8 % at C=4 to the borrowed ga100 table).
+--create makes the profile when the class has none: the "*" profile's
 choices (what serve --spec auto ran there, so what the bounds were measured with) for the file's
 applies_to.
 

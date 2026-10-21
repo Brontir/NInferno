@@ -125,6 +125,13 @@ void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, Conve
     }
 }
 
+// Whether the conversion keeps a checkpoint's MTP layers: as components_auto is set below (not
+// when the caller named the components or asked for no drafters), or --components names mtp.
+bool keeps_mtp(const AcquireOptions& options, const ConvertOptions& convert_options) {
+    return (!options.components_given && options.with_drafters != false) ||
+           converts_mtp(convert_options);
+}
+
 // What config.json alone says before any weight is downloaded: the recipe the checkpoint takes
 // (throws for an unsupported architecture) and, for a dense decoder, whether the family can
 // represent it (throws naming the field). "" when the repository has no config.json (a GGUF).
@@ -172,7 +179,8 @@ std::string preflight(const std::string& repo, const std::string& revision,
     }
     RecipeChoice choice;
     try {
-        choice = choose_recipe(temp_error ? config.snapshot : alone);
+        choice = choose_recipe(temp_error ? config.snapshot : alone, GgufRequest::Model,
+                               keeps_mtp(options, options.convert));
         if (is_dense_architecture(declared_architecture(parsed))) {
             (void)dense_text_config(parsed, true);
         }
@@ -348,6 +356,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 say(options, "artifact " + kept->string() +
                                  " (converted earlier; its download was removed, so the hub is "
                                  "not asked for a newer commit)");
+                if (out.recipe == "qwen3_5_published" && cached_revision(*kept) < kCacheRevision &&
+                    unquantized_drafter_attention(*kept)) {
+                    say(options, "warning: this cached artifact predates conversion revision " +
+                                     std::to_string(kCacheRevision) +
+                                     " (its DFlash drafter is BF16, which the drafter cannot "
+                                     "load), and its download is gone: delete " +
+                                     kept->string() + " or fetch the model again");
+                }
                 return out;
             }
         }
@@ -386,7 +402,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                                                 : std::string("model");
     RecipeChoice choice;
     if (convert_options.recipe.empty()) {
-        choice                = choose_recipe(convert_options.model);
+        choice                 = choose_recipe(convert_options.model, GgufRequest::Model,
+                                               keeps_mtp(options, convert_options));
         convert_options.recipe = choice.recipe;
         for (auto& [name, path] : choice.sources) {
             bool given = false;
@@ -515,7 +532,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         remove_artifact(out.artifact);
     }
     if (options.reuse) {
-        if (complete(out.artifact, false) && cached_revision(out.artifact) < kCacheRevision) {
+        if (complete(out.artifact, false) && !cache_current(out.artifact, out.recipe)) {
             say(options, "converting " + fetched.repo + " again: its cached artifact is conversion " +
                              "revision " + std::to_string(cached_revision(out.artifact)) +
                              ", this NInferno makes revision " + std::to_string(kCacheRevision));

@@ -170,6 +170,7 @@ def compressed_matrix_source(
         encoded,
         weight_divisor if format == "nvfp4" else None,
         input_divisor if format == "nvfp4" else None,
+        ((store, prefix),),
     )
 
 
@@ -217,6 +218,7 @@ def matrix_source(
         encoded,
         lambda: divisor("weight_divisor"),
         lambda: divisor("input_divisor"),
+        ((store, name),),
     )
 
 
@@ -294,6 +296,7 @@ def divisor_scaled_source(source: LogicalSource, factor, label: str) -> LogicalS
         encoded,
         lambda: scaled(source.weight_divisor(), True),
         (lambda: scaled(source.input_divisor(), False)) if source.input_divisor else None,
+        source.origin,
     )
 
 
@@ -382,4 +385,5 @@ def stacked_matrix_source(
         encoded,
         common_divisor,
         parts[0].input_divisor,
+        tuple(pair for part in parts for pair in part.origin),
     )
