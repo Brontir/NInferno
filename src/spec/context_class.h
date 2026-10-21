@@ -16,7 +16,6 @@
 // A factor is known only when it was measured on at least two distinct cards by this engine
 // version, for these bounds; otherwise factor() says unknown and why. Unknown is never 1.0.
 
-#include "spec/config.h"
 #include "spec/profile.h"
 
 #include <nlohmann/json.hpp>
@@ -48,7 +47,7 @@ struct ContextFactors {
     bool present = false; // the registry carried a "context_classes" object
     std::array<std::int64_t, kContextClasses - 1> bounds = kContextBounds;
     std::string engine;                   // stamp: the engine version measured
-    std::vector<std::string> measured_on; // stamp: GPU classes measured
+    std::vector<std::string> measured_on; // stamp: GPU classes measured (lower case)
     std::string source;                   // stamp: free text
     // Per drafter kind, one factor per class (nullopt: not measured).
     std::map<std::string, std::array<std::optional<double>, kContextClasses>, std::less<>> factors;
@@ -56,7 +55,8 @@ struct ContextFactors {
 
 // Parses a "context_classes" object. Throws std::invalid_argument naming what is wrong: bounds not
 // three strictly increasing positive integers, a factor array not of length 4, a factor outside
-// (0, 1.5] or a Short factor other than 1, a missing stamp engine.
+// (0, 1.5] or a Short factor other than 1, a stamp or factors not an object, a missing stamp
+// engine, a measured_on name not a GPU class key (ga102, gb203:84sm; read in lower case).
 [[nodiscard]] ContextFactors parse_context_factors(const nlohmann::json& object);
 
 struct ClassFactor {
@@ -64,13 +64,12 @@ struct ClassFactor {
     std::string reason; // why it is unknown; empty when known
 };
 
-// The factor of `kind` (a drafter kind: dflash, dflash2, mtp, ...) in class `c`, or unknown with
-// a labelled reason: no context_classes, bounds other than kContextBounds, a stamp of another
-// engine version than `engine`, fewer than kMinContextCards distinct cards, no data for the kind
-// or the class.
+// The factor of `kind` (the drafter's kind, DrafterDecl::kind: dflash, dflash2, mtp, ...; never
+// a speculation Mode, which gemma4_assistant and nemotron_h_mtp share with mtp) in class `c`, or
+// unknown with a labelled reason: no context_classes, bounds other than kContextBounds, a stamp of
+// another engine version than `engine`, fewer than kMinContextCards distinct cards, no data for the
+// kind or the class.
 [[nodiscard]] ClassFactor factor(const ContextFactors& factors, std::string_view kind,
                                  ContextClass c, std::string_view engine = kSpecEngineVersion);
-[[nodiscard]] ClassFactor factor(const ContextFactors& factors, Mode mode, ContextClass c,
-                                 std::string_view engine = kSpecEngineVersion);
 
 } // namespace ninferno::spec

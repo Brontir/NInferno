@@ -1,7 +1,10 @@
 #include "spec/context_class.h"
 
+#include "core/ascii.h"
+
 #include "spec/json_fields.h"
 
+#include <regex>
 #include <set>
 #include <stdexcept>
 
@@ -54,20 +57,25 @@ ContextFactors parse_context_factors(const Json& object) {
         out.bounds[i] = b.get<std::int64_t>();
     }
     const auto stamp = object.value("stamp", Json::object());
+    if (!stamp.is_object()) { refuse("stamp must be an object"); }
     out.engine       = json_text(stamp, "engine");
     out.source       = json_text(stamp, "source");
     if (out.engine.empty()) { refuse("stamp.engine is missing"); }
     if (const auto it = stamp.find("measured_on"); it != stamp.end()) {
         if (!it->is_array()) { refuse("stamp.measured_on must be a list of GPU classes"); }
+        // A GPU class key as the profiles' gpu_class names it: a chip, optionally its SM count.
+        static const std::regex gpu_class("[a-z]+[0-9]+(:[0-9]+sm)?");
         for (const auto& card : *it) {
-            if (!card.is_string() || card.get<std::string>().empty()) {
-                refuse("stamp.measured_on must be a list of GPU classes");
+            const auto name = card.is_string() ? ascii_lower(card.get<std::string>()) : "";
+            if (!std::regex_match(name, gpu_class)) {
+                refuse("stamp.measured_on: '" + (card.is_string() ? name : card.dump()) +
+                       "' is not a GPU class (ga102, gb203:84sm)");
             }
-            out.measured_on.push_back(card.get<std::string>());
+            out.measured_on.push_back(name);
         }
     }
     const auto factors = object.value("factors", Json::object());
-    if (!factors.is_object()) { refuse("factors must be an object of drafter kinds"); }
+    if (!factors.is_object()) { refuse("factors must be an object"); }
     for (const auto& [kind, values] : factors.items()) {
         if (!values.is_array() || values.size() != kContextClasses) {
             refuse("factors." + kind + " must hold 4 values (short, mid, long, huge)");
@@ -116,15 +124,6 @@ ClassFactor factor(const ContextFactors& factors, std::string_view kind, Context
                        std::string(kind));
     }
     return ClassFactor{value, {}};
-}
-
-ClassFactor factor(const ContextFactors& factors, Mode mode, ContextClass c,
-                   std::string_view engine) {
-    if (mode == Mode::None || mode == Mode::Ngram) {
-        return ClassFactor{std::nullopt,
-                           std::string("no context_classes factors for ") + mode_name(mode)};
-    }
-    return factor(factors, mode_name(mode), c, engine);
 }
 
 } // namespace ninferno::spec

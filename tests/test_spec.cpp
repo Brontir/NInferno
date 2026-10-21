@@ -963,8 +963,8 @@ int test_context_classes() {
     const auto one_card = factor(shipped, "dflash", ContextClass::Mid);
     failures += check(!one_card.value && one_card.reason.find("cards") != std::string::npos,
                       "one card: unknown, naming the cards (" + one_card.reason + ")");
-    failures += check(!factor(shipped, Mode::DFlash2, ContextClass::Long).value,
-                      "one card: unknown by mode too");
+    failures += check(!factor(shipped, "dflash2", ContextClass::Long).value,
+                      "one card: dflash2 unknown too");
 
     const auto synthetic = [](const char* measured_on, const char* engine) {
         return parse_context_factors(
@@ -977,46 +977,60 @@ int test_context_classes() {
     const auto mid = factor(two, "dflash", ContextClass::Mid);
     failures += check(mid.value && *mid.value == 0.9 && mid.reason.empty(), "two cards: mid 0.9");
     failures += check(factor(two, "dflash", ContextClass::Short).value == 1.0, "short is 1");
-    const auto huge = factor(two, Mode::Mtp, ContextClass::Huge);
-    failures += check(huge.value && *huge.value == 0.7, "two cards: mtp huge 0.7 by mode");
+    const auto huge = factor(two, "mtp", ContextClass::Huge);
+    failures += check(huge.value && *huge.value == 0.7, "two cards: mtp huge 0.7");
     const auto null_class = factor(two, "dflash", ContextClass::Huge);
     failures += check(!null_class.value && null_class.reason.find("huge") != std::string::npos,
                       "a null class is unknown, labelled (" + null_class.reason + ")");
     const auto no_kind = factor(two, "dflash2", ContextClass::Mid);
     failures += check(!no_kind.value && no_kind.reason.find("dflash2") != std::string::npos,
                       "a kind without factors is unknown");
-    failures += check(!factor(two, Mode::Ngram, ContextClass::Mid).value, "ngram has no factors");
+    failures += check(!factor(two, "gemma4_assistant", ContextClass::Mid).value,
+                      "gemma4_assistant does not borrow the mtp factors");
     const auto stale =
         factor(synthetic(R"(["ga102", "ad102"])", "ninferno-spec-0"), "dflash", ContextClass::Mid);
     failures += check(!stale.value && stale.reason.find("ninferno-spec-0") != std::string::npos,
                       "another engine version's stamp is unknown (" + stale.reason + ")");
-    failures += check(
-        !factor(synthetic(R"(["ga102", "ga102"])", kSpecEngineVersion), "dflash", ContextClass::Mid)
-             .value,
-        "the same card twice is one card");
+    failures += check(!factor(synthetic(R"(["ga102", "GA102", "ga102"])", kSpecEngineVersion),
+                              "dflash", ContextClass::Mid)
+                           .value,
+                      "the same card twice is one card");
     const auto absent = factor(ContextFactors{}, "dflash", ContextClass::Short);
     failures += check(!absent.value && !absent.reason.empty(), "absent context_classes: unknown");
     failures += check(!Registry::parse(R"({"schema": 1, "models": []})").context_classes().present,
                       "a registry without context_classes has none");
 
+    const auto cards = synthetic(R"(["GA102", "ga102", "gb203:84sm"])", kSpecEngineVersion);
+    failures +=
+        check(cards.measured_on == std::vector<std::string>{"ga102", "ga102", "gb203:84sm"} &&
+                  factor(cards, "dflash", ContextClass::Mid).value == 0.9,
+              "card names read in lower case, a duplicate counts once");
+
     // Refusals.
     const auto refuses = [](const char* object) {
         return rejects([&] { (void)parse_context_factors(Json::parse(object)); });
     };
-    for (
-        const char* bad : {
-            R"({"bounds": [1024, 1024, 24576], "stamp": {"engine": "e"}})",
-            R"({"bounds": [8192, 1024, 24576], "stamp": {"engine": "e"}})",
-            R"({"bounds": [1024, 8192], "stamp": {"engine": "e"}})",
-            R"({"bounds": [0, 8192, 24576], "stamp": {"engine": "e"}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0.8]}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0, null]}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 1.6, 0.8, null]}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [0.9, 0.9, 0.8, null]}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, "x", 0.8, null]}})",
-            R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": "ga102"}})",
-        }) {
+    const char* const refused[] = {
+        R"({"bounds": [1024, 1024, 24576], "stamp": {"engine": "e"}})",
+        R"({"bounds": [8192, 1024, 24576], "stamp": {"engine": "e"}})",
+        R"({"bounds": [1024, 8192], "stamp": {"engine": "e"}})",
+        R"({"bounds": [0, 8192, 24576], "stamp": {"engine": "e"}})",
+        R"({"bounds": [1024.5, 8192, 24576], "stamp": {"engine": "e"}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": "e"})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": [1, 0.9, 0.8, null]})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0.8]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 0.9, 0, null]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, 1.6, 0.8, null]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [0.9, 0.9, 0.8, null]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [null, 0.9, 0.8, null]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e"}, "factors": {"dflash": [1, "x", 0.8, null]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": "ga102"}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": ["RTX 3090"]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": ["ga102:sm"]}})",
+        R"({"bounds": [1024, 8192, 24576], "stamp": {"engine": "e", "measured_on": [""]}})",
+    };
+    for (const char* bad : refused) {
         failures += check(refuses(bad), std::string("context_classes refuses ") + bad);
     }
     failures += check(
