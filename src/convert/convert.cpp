@@ -1656,9 +1656,11 @@ ConvertResult convert(const ConvertOptions& options) {
             counted += (counted.empty() ? "" : ", ") + std::to_string(count) + " " + format;
         }
         if (counted.empty()) {
-            log("warning: --drafter-quant " + options.drafter_quant +
-                " changed nothing: no drafter projection is read from plain values (a published "
-                "encoding is kept as it is)");
+            if (!options.drafter_quant_declared) {
+                log("warning: --drafter-quant " + options.drafter_quant +
+                    " changed nothing: no drafter projection is read from plain values (a "
+                    "published encoding is kept as it is)");
+            }
         } else {
             log("drafter quantization " + options.drafter_quant + ": " + counted);
             drafter_quant = options.drafter_quant;

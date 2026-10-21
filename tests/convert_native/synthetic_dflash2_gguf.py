@@ -19,6 +19,8 @@ Exits 77 (skipped) without numpy, torch or gguf.
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -31,6 +33,7 @@ except ImportError:
     sys.exit(77)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch_server  # noqa: E402
 import synthetic_gguf as sg  # noqa: E402
 from synthetic_gguf import G, Hf, VOCAB, compare, kept_kquant_check, qwen_case, tokenizer_metadata  # noqa: E402
 
@@ -188,6 +191,69 @@ def main() -> int:
                 if sg.binding_parts(value, p + "context_" + role) != sg.binding_parts(value, p + role):
                     case.append(f"dflash2-q4_0: {p}context_{role} is not bound to {role}'s rows")
         print(f"dflash2-q4_0: {'ok' if not case else 'FAILED'}", flush=True)
+        errors += case
+
+        # A registry companion declared "quant": "q8" and published in Q4_0 (as the Qwen3.8 GGUF's
+        # DFlash2 is), fetched with its GGUF target: the declared mode cannot apply (a published
+        # encoding is kept) and that is expected, so no warning; --drafter-quant q8 given on the
+        # command line says it changed nothing.
+        work = root / "registry-q4_0"
+        # The target carries its tokenizer as GGUF metadata, as the drafter does (one fingerprint).
+        target, target_twin, _ = qwen_case(work / "target", False, None, 75, rebuilt=True)
+        twin_config = json.loads((target_twin / "config.json").read_text(encoding="utf-8"))
+        twin_config = twin_config.get("text_config", twin_config)
+        # A GGUF drafter records no target depth: the entry's geometry is what it is checked by.
+        geometry = {key: twin_config[key] for key in ("hidden_size", "num_hidden_layers", "vocab_size")}
+        drafter, _ = drafter_case(work, Q.Q4_0, 76)
+        commit = "c0ffee0123456789abcdef0123456789abcdef01"
+        hub = fetch_server.Hub()
+        hub.add_repo("org/qwen-tiny-GGUF", {"qwen-tiny-BF16.gguf": target.read_bytes()})
+        hub.add_repo("lab/qwen-tiny-DFlash2-GGUF", {"dflash2-qwen-tiny-Q4_0.gguf": drafter.read_bytes()})
+        registry = {
+            "schema": 1, "published": "test",
+            "kinds": {"dflash2": {"engines": ["qwen3_5"], "architectures": ["DFlash2DraftModel"]},
+                      "mtp": {"engines": ["qwen3_5"]}},
+            "models": [{"id": "qwen-tiny", "engine": "qwen3_5",
+                        "match": {"repos": ["org/qwen-tiny-GGUF"], "geometry": geometry},
+                        "drafters": [{"name": "dflash2", "kind": "dflash2",
+                                      "repo": "lab/qwen-tiny-DFlash2-GGUF", "revision": commit,
+                                      "gguf": "dflash2-qwen-tiny-Q4_0", "component": "dflash2",
+                                      "quant": "q8"}],
+                        "profiles": [{"gpu_class": "*",
+                                      "default": {"config": "dflash2:7", "drafter": "dflash2"}}]}],
+        }
+        registry_path = work / "registry.json"
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+        server, base = fetch_server.start(hub)
+        environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
+        environment.update({"HF_ENDPOINT": base, "NINFERNO_DRAFTER_REGISTRY": str(registry_path)})
+        case = []
+        try:
+            for tag, extra, warned in (("declared", [], False), ("flag", ["--drafter-quant", "q8"], True)):
+                result = subprocess.run([str(native), "--fetch", "org/qwen-tiny-GGUF", "--quant", "BF16",
+                                         "--cache", str(work / f"cache-{tag}"), "--with-drafters", *extra],
+                                        cwd=repository, capture_output=True, text=True, env=environment)
+                log = result.stdout + result.stderr
+                if result.returncode:
+                    case.append(f"registry-q4_0 {tag}: failed\n{log[-3000:]}")
+                    continue
+                if "with its companion drafters" not in log:
+                    case.append(f"registry-q4_0 {tag}: the companion was not converted in\n{log[-3000:]}")
+                if ("changed nothing" in log) != warned:
+                    lines = [line for line in log.splitlines() if "drafter" in line]
+                    case.append(f"registry-q4_0 {tag}: warning {'missing' if warned else 'shown'}: {lines}")
+                artifacts = list((work / f"cache-{tag}").rglob("*.ninferno"))
+                reports = [json.loads(Path(str(a) + ".conversion.json").read_text(encoding="utf-8"))
+                           for a in artifacts if Path(str(a) + ".conversion.json").exists()]
+                formats = {m["format"] for r in reports for m in r["methods"]
+                           for p in m["parameters"]
+                           if p in {f"dflash2/layers/0/attention/{r}" for r in ("query", "key", "value")}}
+                if formats != {"ggml_q4_0"} or any("drafter_quantization" in r["provenance"] for r in reports):
+                    case.append(f"registry-q4_0 {tag}: drafter formats {formats}, provenance "
+                                f"{[r['provenance'].get('drafter_quantization') for r in reports]}")
+        finally:
+            server.shutdown()
+        print(f"registry-q4_0: {'ok' if not case else 'FAILED'}", flush=True)
         errors += case
     for error in errors:
         print(error, file=sys.stderr)

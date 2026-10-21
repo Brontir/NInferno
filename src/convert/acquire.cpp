@@ -268,7 +268,8 @@ DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
     for (const auto& d : plan.drafters) {
         if (convert_options.drafter_quant.empty() && d.status == "fetched" &&
             !d.decl.component.empty() && !d.decl.quant.empty()) {
-            convert_options.drafter_quant = d.decl.quant;
+            convert_options.drafter_quant          = d.decl.quant;
+            convert_options.drafter_quant_declared = true;
         }
     }
     convert_options.components = components;
@@ -513,7 +514,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         for (const auto& [component, snapshot] : companions) {
             with.sources.emplace_back(component, snapshot);
         }
-        with.drafter_quant = quant.empty() ? declared_quant : quant;
+        with.drafter_quant          = quant.empty() ? declared_quant : quant;
+        with.drafter_quant_declared = quant.empty();
         say(options, "converting " + fetched.repo + " again with its companion drafters");
         remove_artifact(out.artifact);
         try {
