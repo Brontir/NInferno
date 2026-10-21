@@ -1707,6 +1707,8 @@ struct LoadSummary {
     std::string prefill_signature;
     std::string gpu_class;   // the device class the route data is keyed by, e.g. "gb202:170sm"
     std::string route_table; // what the per-GPU-class route table is: loaded, absent, or refused
+    // The device facts guessed or unreported, with the conservative choice taken (device_fact_notes).
+    std::vector<std::string> device_facts;
     // The load-time route tuners: one line per tuned MoE layer shape (ops::tune_moe) and per dense
     // problem the generic path's tuner timed during the warm-up.
     std::vector<std::string> moe_tune;

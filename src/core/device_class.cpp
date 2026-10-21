@@ -155,6 +155,7 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->features = common_features(device_features_for(prop.major, prop.minor), build_features());
     out->pci_device_id    = pci_product_id(prop, device);
     out->chip             = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
+    out->chip_from_pci    = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
     return out;
 }
@@ -269,7 +270,11 @@ std::string gpu_arch_id(int major, int minor) {
     return "sm" + std::to_string(major) + std::to_string(minor);
 }
 
-std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms) {
+namespace {
+
+// The chip whose PCI id block holds pci_device_id, for a GPU of that chip's architecture; null
+// for an unknown id.
+const char* pci_block_chip(std::uint32_t pci_device_id, int major, int minor) {
     // NVIDIA gives each chip blocks of PCI product ids. Verified on hardware: 0x2B85 (RTX 5090,
     // gb202) and 0x2C02 (RTX 5080, gb203); the other rows follow the published id lists.
     struct IdBlock {
@@ -297,6 +302,43 @@ std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms)
             }
         }
     }
+    return nullptr;
+}
+
+} // namespace
+
+bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor) {
+    return pci_block_chip(pci_device_id, major, minor) != nullptr;
+}
+
+std::vector<std::string> device_fact_notes(const DeviceClass& d) {
+    std::vector<std::string> notes;
+    if (!d.chip_from_pci) {
+        char id[16];
+        std::snprintf(id, sizeof(id), "0x%04X", static_cast<unsigned>(d.pci_device_id));
+        notes.push_back("chip " + d.chip + " from the SM count (" +
+                        (d.pci_device_id == 0 ? std::string("PCI id unreadable")
+                                              : std::string("PCI id ") + id + " in no chip block") +
+                        "): the smallest chip of " + gpu_arch_id(d.major, d.minor) +
+                        " holding " + std::to_string(d.sms) + " SMs");
+    }
+    std::string missing;
+    const auto add = [&](bool absent, const char* what) {
+        if (absent) missing += (missing.empty() ? "" : ", ") + std::string(what);
+    };
+    add(d.sm_clock_khz <= 0, "SM clock");
+    add(d.memory_clock_khz <= 0, "memory clock");
+    add(d.memory_bus_bits <= 0, "memory bus width");
+    if (!missing.empty()) {
+        notes.push_back(missing +
+                        " unreported (a virtualized or MIG GPU): no roofline, so the int8 "
+                        "cost-model routes are off and the 16-bit routes stand alone");
+    }
+    return notes;
+}
+
+std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms) {
+    if (const char* chip = pci_block_chip(pci_device_id, major, minor)) return chip;
     // Unknown id (or unreadable): the smallest chip of the architecture whose full SM count holds
     // the board's. Full-chip SM counts per architecture, ascending.
     for (const auto& c : kFullChips) {
@@ -484,6 +526,7 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.name          = "synthetic " + gpu_arch_id(major, minor);
     d.pci_device_id = pci_device_id;
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
+    d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
     d.features      = device_features_for(major, minor);
     d.features.mma_slow = chip_mma_slow(major, minor, d.chip);
     // The architecture's limits (CUDA programming guide, compute capability tables).

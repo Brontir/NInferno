@@ -302,6 +302,9 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     for (const auto& line : load.moe_tune) {
         impl_->logger->info("routes | {}", format_pretty_text(line));
     }
+    for (const auto& line : load.device_facts) {
+        impl_->logger->warn("device | {}", format_pretty_text(line));
+    }
     if (!load.drafter.empty()) { impl_->logger->info("drafter | {}", load.drafter); }
     impl_->logger->debug(
         "load detail | architecture {} | artifact read {} | H2D {} | staging peak {} | device "
