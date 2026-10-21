@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 109,
+  "version": 106,
   "published": "2026-10-21",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -174,7 +174,7 @@
           "gpu": "NVIDIA GeForce RTX 5080",
           "gpu_class": "gb203",
           "measured_on": "gemma4_26b_a4b_nvfp4.ninferno + gemma4_26b_assistant_q8_sl98304r2.ninferno, session sized to 16 GB, greedy, built-in corpus; RTX 5080 (native Linux driver 580)",
-          "measured_at": "2026-10-21",
+          "measured_at": "2026-09-26",
           "non_thinking": {
             "acceptance": 0.6193280977312391,
             "config": "mtp:8:2",
@@ -228,14 +228,7 @@
             "tok_s": 496.95355773230466,
             "tokens_per_round": 4.569844789356985
           },
-          "load": [
-            {
-              "depth": 2,
-              "lanes": 2
-            }
-          ],
-          "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:38:45Z",
-          "revision": "9faad8bb8ab0"
+          "revision": "e2cc93a25f5b"
         },
         {
           "applies_to": [
@@ -327,7 +320,7 @@
             "google/gemma-4-26B-A4B-it"
           ],
           "measured_on": "choices: the * fallback's (fallback for unmeasured GPUs: the choices measured on NVIDIA GeForce RTX 5090 (gb202), gemma4_26b_a4b_nvfp4_r0926.ninferno + gemma4_26b_assistant_q8 + gemma4_26b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus); load measured here",
-          "measured_at": "2026-10-21",
+          "measured_at": "2026-09-28",
           "source": "spec-tune 2026-09-26T14:26:15Z (ninferno-spec-1, 206 s)",
           "default": {
             "config": "mtp:8:2",
@@ -363,13 +356,13 @@
           },
           "load": [
             {
-              "depth": 2,
+              "depth": 3,
               "lanes": 2
             }
           ],
-          "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:38:45Z",
+          "load_measured_on": "gemma4_26b_qat_udq4kxl.ninferno + 26b_mtp_gguf.ninferno, RTX 5080, NVIDIA GeForce RTX 5080, C 2,3,4, temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T13:12:11Z (context 2048, prefill chunk 512, one 4-row engine per bound: C=2 plain 388.0, bound 2 610.0, 3 645.7, 4 641.4, 6 647.4, none 661.8; C=3 plain 480.4, 2 727.0, 3 764.9, 4 768.4, 6 756.5, none 769.5; C=4 plain 574.7, 2 840.0, 3 889.3, 4 859.1, 6 872.8, none 886.6)",
           "gpu": "NVIDIA GeForce RTX 5080",
-          "revision": "fc6efe07b907"
+          "revision": "7f679adb993c"
         },
         {
           "applies_to": [
@@ -388,7 +381,7 @@
           "gpu": "NVIDIA GeForce RTX 4090",
           "gpu_class": "ad102",
           "measured_on": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.ninferno + g26_mtp_Q4_0.ninferno (unsloth MTP Q4_0), RTX 4090, greedy, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_at": "2026-09-28",
           "non_thinking": {
             "acceptance": 0.6387714222123303,
             "config": "mtp:8:2",
@@ -449,7 +442,7 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:26:52Z",
-          "revision": "5ed33a352768"
+          "revision": "7c37bfceafac"
         },
         {
           "gpu_class": "*",
@@ -1310,7 +1303,7 @@
             "tokens_per_round": 2.7659472422062352
           },
           "gpu": "NVIDIA GeForce RTX 5070 Ti",
-          "gpu_class": "gb203",
+          "gpu_class": "gb203:70sm",
           "measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
           "measured_at": "2026-10-21",
           "non_thinking": {
@@ -1373,7 +1366,7 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:38:45Z",
-          "revision": "578be153dfdd"
+          "revision": "beae112a7cc5"
         },
         {
           "applies_to": [
@@ -2198,85 +2191,6 @@
           ],
           "load_measured_on": "Tesla V100-SXM2-32GB, gemma-4-31B-it UD-Q4_K_XL 8K, short greedy, fixed MTP depths 0..3 at C=4/8 (C4 depth 1 21.3 tok/s a request, 2 17.0, plain 19.8; C8 plain 14.1, 1 13.2, 2 7.8), 2026-10-14",
           "revision": "b90ad5529eaf"
-        },
-        {
-          "applies_to": [],
-          "default": {
-            "acceptance": 0.6089470061940813,
-            "config": "mtp:5",
-            "drafter": "assistant",
-            "floor_tokens_per_round": 1.6136477833349012,
-            "plain_tok_s": 38.79373569053289,
-            "speedup": 2.5868996857799345,
-            "tok_s": 100.35550266806936,
-            "tokens_per_round": 4.2291970802919705
-          },
-          "gpu": "NVIDIA GeForce RTX 3090",
-          "gpu_class": "ga102",
-          "measured_on": "gemma-4-31b-it (unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 3090, built-in corpus",
-          "measured_at": "2026-10-21",
-          "non_thinking": {
-            "acceptance": 0.560246962756423,
-            "config": "mtp:5",
-            "drafter": "assistant",
-            "floor_tokens_per_round": 1.6186583785272406,
-            "plain_tok_s": 38.79674177220433,
-            "speedup": 2.4776068801176168,
-            "tok_s": 96.12307434095999,
-            "tokens_per_round": 3.983032873806999
-          },
-          "portable": {
-            "default": {
-              "acceptance": 0.6089470061940813,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6136477833349012,
-              "plain_tok_s": 38.79373569053289,
-              "speedup": 2.5868996857799345,
-              "tok_s": 100.35550266806936,
-              "tokens_per_round": 4.2291970802919705
-            },
-            "non_thinking": {
-              "acceptance": 0.560246962756423,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6186583785272406,
-              "plain_tok_s": 38.79674177220433,
-              "speedup": 2.4776068801176168,
-              "tok_s": 96.12307434095999,
-              "tokens_per_round": 3.983032873806999
-            },
-            "thinking": {
-              "acceptance": 0.7179144385026738,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6024867118917219,
-              "plain_tok_s": 38.784720239905944,
-              "speedup": 2.981314933190923,
-              "tok_s": 115.62946563086383,
-              "tokens_per_round": 4.772833723653396
-            }
-          },
-          "source": "spec-tune 2026-10-20T23:23:50Z (ninferno-spec-1, 495 s)",
-          "thinking": {
-            "acceptance": 0.7179144385026738,
-            "config": "mtp:5",
-            "drafter": "assistant",
-            "floor_tokens_per_round": 1.6024867118917219,
-            "plain_tok_s": 38.784720239905944,
-            "speedup": 2.981314933190923,
-            "tok_s": 115.62946563086383,
-            "tokens_per_round": 4.772833723653396
-          },
-          "load": [
-            {
-              "depth": 3,
-              "lanes": 2
-            }
-          ],
-          "load_measured_on": "gemma-4-31b-it (unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 3090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 3090, C 2,4 (partial: C 8 not measured), temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:43:33Z",
-          "load_partial": true,
-          "revision": "3b48b9b8a28a"
         },
         {
           "applies_to": [
@@ -3556,71 +3470,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.0,
-            "config": "plain",
-            "drafter": "",
-            "floor_tokens_per_round": 0.0,
-            "plain_tok_s": 43.863012390763664,
-            "speedup": 1.0,
-            "tok_s": 43.863012390763664,
-            "tokens_per_round": 1.0
+            "acceptance": 0.4684250026803903,
+            "config": "dflash2:7",
+            "drafter": "dflash2",
+            "floor_tokens_per_round": 1.6814366217451102,
+            "plain_tok_s": 28.067773758081152,
+            "speedup": 2.507671023728485,
+            "tok_s": 70.38474295370688,
+            "tokens_per_round": 4.226735598227474
           },
           "gpu": "NVIDIA GeForce RTX 2080 Ti",
           "gpu_class": "tu102",
-          "measured_on": "qwen3.8-27b (unsloth/Qwen3.8-27B-GGUF --quant UD-IQ2_XXS --with-drafters artifact), NVIDIA GeForce RTX 2080 Ti, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_on": "q38_iq2xxs_dflash2.ninferno, context 8192, kv int8, NVIDIA GeForce RTX 2080 Ti, greedy, built-in corpus",
+          "measured_at": "2026-10-12",
           "non_thinking": {
-            "acceptance": 0.0,
-            "config": "plain",
-            "drafter": "",
-            "floor_tokens_per_round": 0.0,
-            "plain_tok_s": 43.85075227593166,
-            "speedup": 1.0,
-            "tok_s": 43.85075227593166,
-            "tokens_per_round": 1.0
+            "acceptance": 0.4368088467614534,
+            "config": "dflash2:7",
+            "drafter": "dflash2",
+            "floor_tokens_per_round": 1.675073404074519,
+            "plain_tok_s": 28.105982002291036,
+            "speedup": 2.4304298652503715,
+            "tok_s": 68.30961805055757,
+            "tokens_per_round": 4.008705114254624
           },
           "portable": {
             "default": {
-              "acceptance": 0.0,
-              "config": "plain",
-              "drafter": "",
-              "floor_tokens_per_round": 0.0,
-              "plain_tok_s": 43.863012390763664,
-              "speedup": 1.0,
-              "tok_s": 43.863012390763664,
-              "tokens_per_round": 1.0
-            },
-            "non_thinking": {
-              "acceptance": 0.0,
-              "config": "plain",
-              "drafter": "",
-              "floor_tokens_per_round": 0.0,
-              "plain_tok_s": 43.85075227593166,
-              "speedup": 1.0,
-              "tok_s": 43.85075227593166,
-              "tokens_per_round": 1.0
-            },
-            "thinking": {
-              "acceptance": 0.5484858795508677,
+              "acceptance": 0.4684250026803903,
               "config": "dflash2:7",
               "drafter": "dflash2",
-              "floor_tokens_per_round": 3.00236811541439,
-              "plain_tok_s": 43.8998339030632,
-              "speedup": 1.5875318938127807,
-              "tok_s": 69.69238645419644,
-              "tokens_per_round": 4.766355140186916
+              "floor_tokens_per_round": 1.6814366217451102,
+              "plain_tok_s": 28.067773758081152,
+              "speedup": 2.507671023728485,
+              "tok_s": 70.38474295370688,
+              "tokens_per_round": 4.226735598227474
+            },
+            "non_thinking": {
+              "acceptance": 0.4368088467614534,
+              "config": "dflash2:7",
+              "drafter": "dflash2",
+              "floor_tokens_per_round": 1.675073404074519,
+              "plain_tok_s": 28.105982002291036,
+              "speedup": 2.4304298652503715,
+              "tok_s": 68.30961805055757,
+              "tokens_per_round": 4.008705114254624
+            },
+            "thinking": {
+              "acceptance": 0.5352018685352019,
+              "config": "dflash2:7",
+              "drafter": "dflash2",
+              "floor_tokens_per_round": 1.692786946251409,
+              "plain_tok_s": 27.95376979307963,
+              "speedup": 2.7703753167513474,
+              "tok_s": 77.44243384489722,
+              "tokens_per_round": 4.68735632183908
             }
           },
-          "source": "spec-tune 2026-10-20T21:40:20Z (ninferno-spec-1, 609 s)",
+          "source": "spec-tune 2026-10-11T21:59:10Z (ninferno-spec-1, 702 s)",
           "thinking": {
-            "acceptance": 0.5484858795508677,
+            "acceptance": 0.5352018685352019,
             "config": "dflash2:7",
             "drafter": "dflash2",
-            "floor_tokens_per_round": 3.00236811541439,
-            "plain_tok_s": 43.8998339030632,
-            "speedup": 1.5875318938127807,
-            "tok_s": 69.69238645419644,
-            "tokens_per_round": 4.766355140186916
+            "floor_tokens_per_round": 1.692786946251409,
+            "plain_tok_s": 27.95376979307963,
+            "speedup": 2.7703753167513474,
+            "tok_s": 77.44243384489722,
+            "tokens_per_round": 4.68735632183908
           },
           "requires": [
             "dflash2"
@@ -3631,9 +3545,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "qwen3.8-27b (unsloth/Qwen3.8-27B-GGUF --quant UD-IQ2_XXS --with-drafters artifact), NVIDIA GeForce RTX 2080 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 2080 Ti, C 2 (partial: C 4 not measured), temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:18:30Z",
-          "load_partial": true,
-          "revision": "ba0952c2a6b1"
+          "load_measured_on": "q38_iq2xxs_dflash2.ninferno, context 8192, kv int8, NVIDIA GeForce RTX 2080 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 2080 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-12T00:02:41Z",
+          "revision": "8d233dc82b33"
         },
         {
           "applies_to": [],
@@ -5578,7 +5491,7 @@
             "unsloth/Muse-Glimmer-30B-GGUF"
           ],
           "measured_on": "Muse-Glimmer-30B-Q4_K_M.ninferno + muse_dflash.ninferno (dflash-Muse-Glimmer-30B-Q4_K_M), RTX 4090, ninferno-serve, context 4096, 20 requests, C=1: plain 51.3, K=2 81.6, K=3 89.2, K=4 94.7, K=5 97.4, K=7 99.5 tok/s; tokens per round from the server's accepted/drafted counts",
-          "measured_at": "2026-10-21",
+          "measured_at": "2026-09-28",
           "source": "ninferno-serve sweeps on the RTX 4090, not spec-tune (the drafter is a separate artifact)",
           "default": {
             "config": "dflash:7",
@@ -5621,7 +5534,7 @@
             }
           ],
           "load_measured_on": "muse-glimmer-30b (unsloth/Muse-Glimmer-30B-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:43:35Z",
-          "revision": "caee39a668ca"
+          "revision": "6c223b2f852d"
         },
         {
           "gpu_class": "gb202",
@@ -7044,7 +6957,7 @@
           "gpu": "NVIDIA GeForce RTX 4090",
           "gpu_class": "ad102",
           "measured_on": "nemo_q40.ninferno + separate MTP, context 8192, kv bf16, NVIDIA GeForce RTX 4090, greedy, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_at": "2026-10-12",
           "non_thinking": {
             "acceptance": 0.6548387096774193,
             "config": "mtp:3",
@@ -7109,7 +7022,7 @@
             }
           ],
           "load_measured_on": "nemotron-3.5-lightning-30b-a3b (unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:16:43Z",
-          "revision": "c97c67549837"
+          "revision": "80dedc6fa92f"
         },
         {
           "gpu_class": "gb203",

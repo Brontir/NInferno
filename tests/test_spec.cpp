@@ -1084,12 +1084,25 @@ int test_registry_and_corpus() {
         failures += check(on3090.overall.config.label() == "mtp:3" &&
                               on3090.load == std::vector<LoadBound>{{2, 3}},
                           "Nemotron 3.5 Lightning drafts mtp:3 on the RTX 3090");
-        // A GPU nobody measured (an RTX 3070) gets none: no "*" profile.
-        const GpuKey rtx3070{{"ga104:46sm", "ga104", "sm86", "*"}, 8ULL << 30};
-        failures += check(select_published(nemo->profiles, rtx3070,
-                                           "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
-                                           nullptr) == nullptr,
-                          "no Nemotron 3.5 Lightning profile for an unmeasured GPU");
+        // A GPU nobody measured, an RTX 3070 (its chain as ninferno::gpu_similarity_chain("ga104",
+        // 46, 8, 6) builds it), takes the RTX 3090's profile: no ga104, ga103 or ga106 profile and
+        // no "*" one. Its bounds are another card's, so they are capped to its 46 SMs: plain from
+        // five rows.
+        const GpuKey rtx3070{{"ga104:46sm", "ga104", "sm86", "ga103", "ga106", "ga102", "ga107",
+                              "ga100", "*", "ad106", "ad104", "ad103", "ad107", "ad102", "tu104",
+                              "tu106", "tu102"},
+                             8ULL << 30,
+                             false,
+                             3,
+                             46};
+        const auto* nemo3070 = select_published(
+            nemo->profiles, rtx3070, "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF", nullptr);
+        failures += check(nemo3070 != nullptr && nemo3070->value("gpu_class", "") == "ga102" &&
+                              profile_from_published(*nemo3070).overall.config.label() == "mtp:3" &&
+                              measured_elsewhere(rtx3070, *nemo3070) &&
+                              stand_in_load(profile_from_published(*nemo3070).load, rtx3070.sms) ==
+                                  std::vector<LoadBound>{{2, 3}, {5, 0}},
+                          "an RTX 3070 takes the RTX 3090's Nemotron 3.5 Lightning profile, capped");
         failures += check(nemo->vocab_fingerprint == "v1:9e123547b12f55ce" &&
                               nemo->geometry.hidden_size == 2688 &&
                               nemo->geometry.num_hidden_layers == 52 &&
@@ -1101,6 +1114,37 @@ int test_registry_and_corpus() {
     }
     failures += check(registry.by_lineage("google/gemma-4-26B-A4B-it") != nullptr,
                       "lineage lookup");
+    // gb203 boards tune apart: the RTX 5080 (84 SMs) keeps its own google/gemma-4-26B-A4B-it
+    // profile (two lanes three deep, measured at C 2,3,4), the RTX 5070 Ti (70 SMs) has a profile
+    // of its SM variant "gb203:70sm" (mtp:2, two deep from two lanes), and a 5080 running another
+    // repository does not take the 5070 Ti's. Chains as ninferno::gpu_similarity_chain builds them.
+    if (const auto* g26 = registry.by_repo("google/gemma-4-26B-A4B-it")) {
+        const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
+                              "*"},
+                             15ULL << 30, true, 3, 84};
+        const GpuKey rtx5070ti{{"gb203:70sm", "gb203", "sm120", "gb205", "gb206", "gb202",
+                                "gb207", "*"},
+                               15ULL << 30, true, 3, 70};
+        const auto* on5080 =
+            select_published(g26->profiles, rtx5080, "google/gemma-4-26B-A4B-it", nullptr);
+        const auto* on5070ti =
+            select_published(g26->profiles, rtx5070ti, "google/gemma-4-26B-A4B-it", nullptr);
+        const auto* gguf5080 =
+            select_published(g26->profiles, rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF", nullptr);
+        failures += check(on5080 != nullptr && on5080->value("gpu_class", "") == "gb203" &&
+                              profile_from_published(*on5080).load ==
+                                  std::vector<LoadBound>{{2, 3}},
+                          "Gemma 4 26B on the RTX 5080 keeps its own load table 2:3");
+        failures += check(on5070ti != nullptr && on5070ti->value("gpu_class", "") == "gb203:70sm" &&
+                              profile_from_published(*on5070ti).overall.config.label() == "mtp:2" &&
+                              profile_from_published(*on5070ti).load ==
+                                  std::vector<LoadBound>{{2, 2}},
+                          "Gemma 4 26B on the RTX 5070 Ti: its SM variant's profile, 2:2");
+        failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") != "gb203:70sm",
+                          "an RTX 5080 does not take the RTX 5070 Ti's Gemma 4 26B profile");
+    } else {
+        failures += check(false, "registry has google/gemma-4-26B-A4B-it");
+    }
     failures += check(registry.kind_for_architecture("DFlashDraftModel") == "dflash" &&
                           registry.supported("dflash2", "qwen3_5") &&
                           !registry.supported("eagle3", "gemma4"),
