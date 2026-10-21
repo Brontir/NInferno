@@ -115,9 +115,12 @@ std::string corpus_digest(const spec::Corpus& corpus) {
 //   (spin) unless --decode-wait says otherwise.
 // - --cuda-sync, and the route tables under test (--route-table FILE, --route-dir DIR): a lab
 //   tunes speculation against the tables it is about to publish.
+// - --drafter-registry FILE, the registry the served menus resolve their drafters through
+//   (spec::Registry::use_file, process-wide; recorded here only).
 struct TuneEngine {
     DecodePacingOptions pacing{.wait = DecodeWait::Spin};
     MaintainerOptions maintainer;
+    std::filesystem::path drafter_registry;
 
     void apply(EngineOptions& options) const {
         options.pacing     = pacing;
@@ -139,12 +142,16 @@ TuneEngine tune_engine(const std::map<std::string, std::string>& flags) {
     if (const auto it = flags.find("route-dir"); it != flags.end()) {
         engine.maintainer.route_dir = it->second;
     }
+    if (const auto it = flags.find("drafter-registry"); it != flags.end()) {
+        engine.drafter_registry = it->second;
+    }
     return engine;
 }
 
 // The tune engine's settings beside the wait, named only when given (an --out measured before
-// they existed still resumes): an explicit route table and a route directory by their content
-// (product/route_labels.h), so a resume refuses cells measured with other tables.
+// they existed still resumes): an explicit route table, a route directory and a drafter registry
+// by their content (product/route_labels.h; one that cannot be read is refused), so a resume
+// refuses cells measured with other tables or another registry.
 void name_tune_engine(nlohmann::json& settings, const TuneEngine& engine) {
     if (engine.pacing.cuda_sync != CudaSyncSchedule::Spin) {
         settings["cuda_sync"] = cuda_sync_schedule_name(engine.pacing.cuda_sync);
@@ -154,6 +161,9 @@ void name_tune_engine(nlohmann::json& settings, const TuneEngine& engine) {
     }
     if (!engine.maintainer.route_dir.empty()) {
         settings["route_dir"] = product::route_dir_label(engine.maintainer.route_dir);
+    }
+    if (!engine.drafter_registry.empty()) {
+        settings["drafter_registry"] = product::drafter_registry_label(engine.drafter_registry);
     }
 }
 
@@ -836,6 +846,10 @@ int run_spec_tune(int argc, char** argv) {
     }
     if (!engine.maintainer.route_dir.empty()) {
         profile.settings += ", route dir " + product::route_dir_label(engine.maintainer.route_dir);
+    }
+    if (!engine.drafter_registry.empty()) {
+        profile.settings +=
+            ", drafter registry " + product::drafter_registry_label(engine.drafter_registry);
     }
 
     std::map<std::string, std::vector<TokenId>> reference;

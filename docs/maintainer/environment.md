@@ -10,14 +10,21 @@ none of them changes what the engine computes.
 
 `ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
 `--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
-`ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table` and `--route-dir`, and
-records them in the profile's settings by content, never by a local path: a route table as the
-SHA-256 of its bytes, a route directory as the SHA-256 over its files' relative paths and digests,
-so `--resume` refuses cells measured with other tables. The family tools `ninferno-gemma4` and
-`ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`, `--dense-tune`, `--tune-cache`,
-`--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also `--drafter-registry`) and apply
-them to the process as an Engine does; they refuse `--moe-tune`, since neither times MoE schedules
-(only the Qwen 3.5 family's Engine load does). `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
+`ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table`, `--route-dir` and
+`--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
+`--resume` compares) by content, never by a local path: a route table or a drafter registry as
+the SHA-256 of its bytes, a route directory as the SHA-256 over the files the engine reads from it
+(every `*.json` table in it and `tuner/dense_tune.json`, symlinks followed), each by its relative
+path and digest, so `--resume` refuses cells measured with other tables. The family tools
+`ninferno-gemma4` and `ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`,
+`--dense-tune`, `--tune-cache`, `--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also
+`--drafter-registry`), check them before anything is converted or loaded, and apply them to the
+process as an Engine does: the dense tuner is on for the loaded model whatever `--dense-tune` says,
+so `off` reads the release's `routes/tuner/dense_tune.json` as `ninferno` and `ninferno-serve` do.
+They refuse `--moe-tune`: the MoE schedule tuner runs in an Engine's model load (every family's),
+which neither tool goes through. `ninferno-gemma4 spec-tune` names in its profile's settings the
+`--cuda-sync`, `--dense-tune`, `--route-table` and `--route-dir` it ran with, when not the
+release's. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.
 
 The maintainer options and `--cuda-sync` are process-wide. An Engine built while no other Engine
@@ -55,10 +62,10 @@ heuristic.
 
 | Option | Values | Effect |
 |---|---|---|
-| `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table for another GPU class, or a malformed one, fails startup. |
-| `--route-dir DIR` | directory | The directory of per-GPU-class route tables. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
+| `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table that cannot be read, a malformed one or one for another GPU class fails startup. |
+| `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that is a dangling symlink or cannot be read, fails startup. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
 | `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
-| `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner of the Engine's Qwen 3.5 family (the family tools refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
+| `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner an Engine runs at model load (the family tools, which load no model through an Engine, refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
 
 ### Speculation data
@@ -86,8 +93,8 @@ These variables used to steer a decision. No program reads them to decide anythi
 product binary (`ninferno` with `spec-tune` and `spec-reselect`, `ninferno-serve`,
 `ninferno-perplexity`, `ninferno-gemma4`, `ninferno-dense`, `ninferno-convert`) warns once at
 startup, after its arguments parse (`--help` and `--version` stay quiet), for each one still set,
-naming its replacement (`src/core/removed_environment.h`, the only place in `src/` that may quote
-these names; `ninferno_decision_fingerprint_test` fails otherwise).
+naming its replacement (`src/core/removed_environment.h`, the only place in `src/` and `apps/`
+that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise).
 
 | Variable | Replacement |
 |---|---|
@@ -117,7 +124,7 @@ Two variables steer choices outside the engine and its products, and stay variab
 ## Environment variables
 
 None of these changes a decision, and none enters the fingerprint. Each is read once and costs
-nothing when unset. A new variable read in `src/` fails `ninferno_decision_fingerprint_test`
+nothing when unset. A new variable read in `src/` or `apps/` fails `ninferno_decision_fingerprint_test`
 until it is listed in `src/runtime/engine/decision_fingerprint.cpp`, which lists only variables
 that steer nothing: a choice belongs in an option.
 

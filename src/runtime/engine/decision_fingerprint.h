@@ -134,7 +134,7 @@ struct HostFacts {
 
 // The environment variables the products read. None steers a decision (an option does:
 // docs/maintainer/deterministic-decisions.md); the inventory test fails on a variable read in
-// src/ that is not on this list.
+// src/ or apps/ that is not on this list.
 [[nodiscard]] std::span<const std::string_view> non_decision_environment_variables();
 
 // The taint of the other sections: "maintainer" (the maintainer options given, by name:

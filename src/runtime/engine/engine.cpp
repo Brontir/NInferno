@@ -11,6 +11,7 @@
 #include "models/qwen3_5/execution/prefill_cuts.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/route_table.h"
+#include "ops/route_options.h"
 #include "ops/generic/generic_gemm.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
@@ -52,14 +53,16 @@ using runtime::ProcessOptionsLease;
 // behaviour: the shipped route tables, no timing, no debug aid.
 void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     if (first) {
+        // A --route-dir that cannot be listed, or one of the files read from it that cannot be,
+        // is refused (ops/route_options.h): read as no table, it would run the heuristic.
+        if (!m.route_dir.empty()) { (void)ops::route_dir_files(m.route_dir); }
         // Every device back to the default lookup in --route-dir (an earlier engine's explicit
         // table dropped), before this engine's own table, if any, loads.
         ops::set_route_table_dir(m.route_dir);
     }
     if (!m.route_table.empty() &&
         (first || ops::route_table_status().path != m.route_table.string())) {
-        const ops::RouteTableStatus status = ops::load_route_table(m.route_table.string());
-        if (!status.loaded) { throw std::invalid_argument("--route-table: " + status.message); }
+        (void)ops::load_route_table_option(m.route_table);
     }
     if (!first) { return; }
     ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
