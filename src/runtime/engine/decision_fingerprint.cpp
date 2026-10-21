@@ -314,8 +314,6 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["kv_capacity.tokens"]    = number(o.kv_capacity.explicit_tokens);
     out["kv_capacity.headroom_bytes"] =
         number(static_cast<std::uint64_t>(o.kv_capacity.automatic_headroom_bytes));
-    out["kv_capacity.best_effort_headroom_bytes"] =
-        number(static_cast<std::uint64_t>(o.kv_capacity.best_effort_headroom_bytes));
     out["max_concurrency"]           = number(o.max_concurrency);
     out["concurrent_prefill"]        = flag(o.concurrent_prefill);
     out["prefill_chunk"]             = number(o.prefill_chunk);
@@ -404,15 +402,24 @@ DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memo
     for (const std::int32_t t : route_breakpoints) { breakpoints.push_back(number(t)); }
     out["route_breakpoints"] = joined(breakpoints);
     out["route_table"]       = std::string(route_table);
+    // The plan ladder's rung the plan runs at, and its sizes: the one startup observation that
+    // changes decisions, recorded as the declared rung it selected. Which rung the selection
+    // picked before the warm-up and the tier it admitted it at are observed (observed_of): two
+    // starts that serve the same rung decide alike.
+    const PlanSummary& plan     = memory.plan;
+    out["rung"]                 = number(plan.rung);
+    out["rungs"]                = number(plan.rungs);
+    out["max_context"]          = number(memory.max_context);
+    out["prefill_chunk"]        = number(memory.prefill_chunk);
+    out["kv_tokens"]            = number(memory.kv_capacity);
+    out["cached_device_states"] = number(memory.cached_device_states);
     return out;
 }
 
 DecisionSection observed_of(const MemorySummary& memory) {
     DecisionSection out;
-    out["max_context"]          = number(memory.max_context);
-    out["prefill_chunk"]        = number(memory.prefill_chunk);
-    out["kv_tokens"]            = number(memory.kv_capacity);
-    out["cached_device_states"] = number(memory.cached_device_states);
+    out["rung_selected"]        = number(memory.plan.selected_rung);
+    out["rung_reserve"]         = memory.plan.reserve;
     out["host_state_slots"]     = number(memory.host_state_capacity_slots);
     out["host_kv_bytes"]        = number(static_cast<std::uint64_t>(memory.host_kv_capacity_bytes));
     return out;

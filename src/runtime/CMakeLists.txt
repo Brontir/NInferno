@@ -5,6 +5,7 @@ add_library(ninferno_runtime_support STATIC
   engine/context_cache/context_cost_defaults.cpp
   engine/decision_fingerprint.cpp
   engine/kv_capacity.cpp
+  engine/plan_ladder.cpp
   engine/public_types.cpp
 )
 ninferno_internal_includes(ninferno_runtime_support)

@@ -1,4 +1,5 @@
 #include "serve/operational_log.h"
+#include "serve/plan_report.h"
 #include "serve/request_log.h"
 
 #include <nlohmann/json.hpp>
@@ -173,8 +174,33 @@ int main() {
               "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
+    // Schema 30 (29 is held by the GPU-identity change): the plan ladder's rung, as
+    // plan_summary_json writes it, in server_start and plan_level in request_start.
+    {
+        ninferno::MemorySummary laddered      = memory;
+        laddered.plan.rung                    = 3;
+        laddered.plan.rungs                   = 40;
+        laddered.plan.selected_rung           = 2;
+        laddered.plan.reserve                 = "kept";
+        laddered.plan.chosen.max_context      = 196608;
+        laddered.plan.chosen.step             = "context";
+        laddered.plan.reserve_limited_context = 262144;
+        const Json planned                    = Json::parse(format_server_start_json(
+            "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias",
+            load, laddered, environment, std::uint64_t{123456}));
+        const Json& plan                      = planned.at("plan");
+        failures += check(kRequestLogSchemaVersion == 30 && plan.at("rung") == 3 &&
+                              plan.at("rungs") == 40 && plan.at("selected_rung") == 2 &&
+                              plan.at("reserve") == "kept" &&
+                              plan.at("chosen").at("max_context") == 196608 &&
+                              plan.at("chosen").at("step") == "context" &&
+                              plan.at("reserve_limited_context") == 262144 &&
+                              plan.contains("next_shortfall_bytes") &&
+                              plan.contains("allowance_bytes") && !plan.contains("ladder"),
+                          "schema 30: the server_start plan summary");
+    }
     // Schema 28: the decode pacing and maintainer options the server was started with.
-    failures += check(kRequestLogSchemaVersion == 28 &&
+    failures += check(kRequestLogSchemaVersion >= 28 &&
                           server.at("engine").at("decode_pacing").at("steps") == "auto" &&
                           server.at("engine").at("decode_pacing").at("wait") == "auto" &&
                           server.at("engine").at("decode_pacing").at("cuda_sync") == "spin" &&
@@ -350,6 +376,14 @@ int main() {
     const Json started = Json::parse(format_request_start_json("serve-test", 2000, context));
     failures +=
         check(started.at("request").at("request_id") == 7, "request id missing from start record");
+    {
+        RequestLogContext laddered = context;
+        laddered.plan_level        = 12;
+        failures += check(Json::parse(format_request_start_json("serve-test", 2000, laddered))
+                                  .at("request")
+                                  .at("plan_level") == 12,
+                          "the plan ladder's rung is missing from the request record");
+    }
     failures += check(started.at("request").at("requested_output_tokens") == 4096,
                       "request output budget missing");
     failures += check(started.at("request").at("enable_thinking") == true,
@@ -883,6 +917,79 @@ int main() {
                               !render_kv_shortfall(explicit_pool, 8),
                           "a KV shortfall line for a full pool, an automatic context or an "
                           "explicit --kv-capacity");
+    }
+
+    // The plan lines: the rung on INFO, a warning only below what the options ask for.
+    {
+        ninferno::MemorySummary memory;
+        ninferno::PlanSummary& plan = memory.plan;
+        plan.rung                   = 17;
+        plan.rungs                  = 158;
+        plan.selected_rung          = 17;
+        plan.reserve                = "kept";
+        plan.chosen.max_context     = 142912;
+        plan.chosen.kv_tokens       = 142912;
+        plan.chosen.prefill_chunk   = 1024;
+        plan.chosen.step            = "context";
+        plan.free_bytes             = 5ULL << 30;
+        plan.weight_bytes           = 10ULL << 30;
+        plan.next_shortfall_bytes   = 100ULL << 20;
+        plan.top_shortfall_bytes    = 4ULL << 30;
+        plan.advice                 = {"0.10 GiB more free memory would serve rung 16"};
+        const auto automatic        = render_plan(memory, false, 1);
+        failures +=
+            check(automatic.size() == 1 && automatic[0].severity == OperationalSeverity::Info &&
+                      automatic[0].message.starts_with(
+                          "plan | rung 17 of 158: 142,912 tokens x 1 context (142,912 KV "
+                          "tokens), 0 cached states, chunk 1024 for 1 lane (step "
+                          "context, reserve kept) | free 5.00 GiB after 10.00 GiB of "
+                          "weights | 0.10 GiB more would serve rung 16, 4.00 GiB the top"),
+                  "the plan line of an automatic rung");
+        // An asked context below its top rung, a survival rung, the reserve not kept, a rung the
+        // warm-up moved: a warning with the advice.
+        const auto asked = render_plan(memory, true, 1);
+        failures +=
+            check(asked.size() == 2 && asked[1].severity == OperationalSeverity::Warning &&
+                      asked[1].message.find("0.10 GiB more free memory") != std::string::npos,
+                  "an asked context below its top rung does not warn");
+        ninferno::MemorySummary moved = memory;
+        moved.plan.selected_rung      = 16;
+        moved.plan.chosen.survival    = true;
+        moved.plan.reserve            = "soft";
+        moved.plan.reserve_bytes      = 4ULL << 30;
+        const auto warned             = render_plan(moved, false, 1);
+        failures += check(
+            warned.size() == 2 && warned[1].message.find("survival rung") != std::string::npos &&
+                warned[1].message.find("class reserve is not kept") != std::string::npos &&
+                warned[1].message.find("from rung 16 down to rung 17") != std::string::npos,
+            "a survival rung, a soft reserve or a warm-up move does not warn");
+        // The rung above fits without the desktop reserve: the INFO line says so instead of a
+        // shortfall, and a warning names the reserve and the override.
+        ninferno::MemorySummary limited      = memory;
+        limited.plan.reserve_bytes           = 1ULL << 30;
+        limited.plan.base_margin_bytes       = 32ULL << 20;
+        limited.plan.reserve_limited_context = 196608;
+        limited.plan.advice = {"the 1.00 GiB kept for the Windows desktop limits the context to "
+                               "142,912; --max-context 196,608 (or --kv-capacity 196,608) gives it "
+                               "up, and the desktop may stall when Windows pages the card out"};
+        const auto reserve_lines = render_plan(limited, false, 1);
+        failures += check(
+            reserve_lines.size() == 2 &&
+                reserve_lines[0].message.find("rung 16 fits but for the 1.00 GiB class reserve") !=
+                    std::string::npos &&
+                reserve_lines[0].message.find("more would serve") == std::string::npos &&
+                reserve_lines[1].severity == OperationalSeverity::Warning &&
+                reserve_lines[1].message.find("class reserve limits the plan; 196,608 tokens fit "
+                                              "without it") != std::string::npos &&
+                reserve_lines[1].message.find("--max-context 196,608") != std::string::npos,
+            "a plan the class reserve limits does not name the reserve and the override");
+        failures += check(render_plan(ninferno::MemorySummary{}, false, 1).empty(),
+                          "a plan line without a ladder");
+        const Json summary = plan_summary_json(plan, false);
+        failures +=
+            check(summary.at("rung") == 17 && summary.at("chosen").at("step") == "context" &&
+                      !summary.contains("ladder"),
+                  "the plan summary JSON");
     }
 
     if (failures == 0) { std::cout << "ok\n"; }

@@ -119,6 +119,27 @@ int main() {
         models.at("data").at(0).at("meta").at("decision_fingerprint") == "nf1-0123456789abcdef" &&
             models.at("data").at(0).at("meta").at("decision_manifest") == "nm1-fedcba9876543210",
         "/v1/models meta must carry the decision fingerprint and manifest");
+    // The plan ladder's rung: meta.plan_level and meta.plan, absent without a ladder.
+    ninferno::ModelMetadata planned = fingerprinted;
+    planned.plan.rung               = 17;
+    planned.plan.rungs              = 158;
+    planned.plan.selected_rung      = 17;
+    planned.plan.reserve            = "kept";
+    planned.plan.chosen.max_context = 142912;
+    planned.plan.chosen.kv_tokens   = 142912;
+    planned.plan.chosen.step        = "context";
+    planned.plan.free_bytes         = 5ULL << 30;
+    planned.plan.advice             = {"0.10 GiB more free memory would serve rung 16"};
+    const Json planned_models =
+        Json::parse(ninferno::serve::make_models_list("m", 0, 142912, planned));
+    const Json& plan_meta = planned_models.at("data").at(0).at("meta");
+    failures += check(plan_meta.at("plan_level") == 17 && plan_meta.at("plan").at("rungs") == 158 &&
+                          plan_meta.at("plan").at("max_context") == 142912 &&
+                          plan_meta.at("plan").at("reserve") == "kept" &&
+                          plan_meta.at("plan").at("free_bytes") == (5ULL << 30) &&
+                          plan_meta.at("plan").at("advice").size() == 1 &&
+                          !models.at("data").at(0).at("meta").contains("plan_level"),
+                      "/v1/models meta must carry the plan rung (and only with a ladder)");
     failures +=
         check(metrics.find("# TYPE llamacpp:prompt_tokens_total counter\n"
                            "llamacpp:prompt_tokens_total 7\n") != std::string::npos &&

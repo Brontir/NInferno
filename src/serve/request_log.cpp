@@ -1,4 +1,5 @@
 #include "serve/request_log.h"
+#include "serve/plan_report.h"
 #include "product/logging/pretty_format.h"
 #include "product/activation_options.h"
 #include "product/speculative_options.h"
@@ -213,6 +214,7 @@ Json request_json(const RequestLogContext& context) {
                  context.preserve_thinking ? Json(*context.preserve_thinking) : Json(nullptr)},
                 {"preserve_thinking_semantic_change", context.preserve_thinking_semantic_change},
                 {"sampling", sampler_json(context.sampling)},
+                {"plan_level", context.plan_level},
                 {"notes", context.notes}};
 }
 
@@ -475,6 +477,8 @@ std::string format_server_start_json(
         Json{{"schema", "ninferno-fingerprint/1"},   {"fingerprint", load.decision_fingerprint},
              {"manifest", load.decision_manifest},   {"taint", load.decision_taint},
              {"canonical", load.decision_canonical}, {"observed", load.decision_observed}};
+    // The plan ladder's rung the free memory picked (src/runtime/engine/plan_ladder.h).
+    record["plan"]                                   = plan_summary_json(memory.plan, false);
     const ninferno::ContextCacheOptions& cache       = engine_options.context_cache;
     const ninferno::ContextCostSummary& context_cost = load.context_cost;
     const std::uint64_t total_device_state_slots =

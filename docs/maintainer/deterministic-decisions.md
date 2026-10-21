@@ -18,8 +18,14 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
-- free memory sets the context, KV and drafter room directly; the plan levels below do not exist
-  yet;
+- the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
+  (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
+  its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took
+  more than its declared allowance (recorded as `selected_rung` in the plan summary, and as
+  `observed.rung_selected` in the fingerprint's manifest);
+- the dry run (`ninferno-serve --plan`) uploads the weights to size the rungs: the planner reads
+  the bound model, and no family plans from the artifact alone yet;
+- `ninferno-gemma4`'s session fit (a maintainer tool) still bisects the context on the free memory;
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
 - under `fast`, the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
@@ -62,12 +68,14 @@ This page states the rule and its target. The engine does not meet all of it yet
   speculative windows, route breakpoints, decode steps per round) and the violations of this page
   present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
-  startup sized from the free memory (context, chunk, KV tokens, cached states, Host tier) is
-  observed and enters only the manifest, so `nf1` is the same across identical starts on one
-  machine while `nm1` v1 still varies with the free memory until the plan levels exist. An input
+  startup sized from the Host memory (the Host tier), the rung the selection picked before the
+  kernel warm-up and the tier it admitted it at are observed and enter only the manifest; the
+  plan ladder's rung and its sizes (context, chunk, KV tokens, cached states) are the plan, so two
+  starts that serve the same rung have one `nf1`, and one `nm1` too when they also picked it
+  before the warm-up at the same tier and sized the same Host tier. An input
   that cannot be read makes the fingerprint `unreadable` without stopping the start. It does not
-  yet cover the reference facts no decision reads yet (TDP, VRAM, segment), plan levels, the
-  constants and the kernel hash, nor the
+  yet cover the reference facts no decision reads yet (TDP, VRAM, segment), the constants and the
+  kernel hash, nor the
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
 
@@ -159,8 +167,186 @@ Rules apply in this order:
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
   labelled *extrapolated*. Its speed estimate is *no estimate*.
 - PCIe is the highest generation the link supports, never the current one.
-- Free memory must be the only observation made while running. It selects one of at most four
-  declared plan levels, and the chosen level goes into the fingerprint.
+- Free memory must be the only observation made while running. It selects one rung of a declared
+  plan ladder ([Plan levels](#plan-levels)), and the chosen rung goes into the fingerprint.
+
+## Plan levels
+
+The startup memory plan (context, KV pool, cached Device states, prefill chunk) is one rung of a
+declared ladder (`src/runtime/engine/plan_ladder.h`). The ladder comes from the artifact (the
+model's own context), the options and the planner's bytes for each rung (the model's shapes, the
+KV and state codecs, the device's discrete facts). The free Device memory after the weights is the
+one observation: it picks the first rung that fits and sizes nothing itself. The same card class,
+options and artifact give the same ladder; two starts whose free memory picks the same rung make
+the same plan and have the same fingerprint.
+
+### The ladder
+
+N is the context ceiling (the model's own, under an automatic context's cap and an explicit
+`--kv-capacity`), C the concurrency, g = 2^(-1/16) and F = min(N, 8192). The **floor quality** is
+the poorest plan admitted with the class reserve kept: the context F (or the pinned one), chunk
+1024 (the configured chunk when narrower or pinned), and a cached Device state per lane without a
+Host tier, none with one. From the top:
+
+1. **top:** N tokens for every lane, a pool of C whole contexts, two cached states per lane, the
+   configured chunk;
+2. **extra states:** the second cached state of each lane gives way, one at a time, down to one per
+   lane, min(C, default) (an agent's turn closure goes before any KV);
+3. **pool:** the pool steps down by g from C contexts to one;
+4. **states,** with a Host tier only: the cached Device states step down to none (the Host tier
+   keeps the StateImages, so a Device state is worth less than a step of context);
+5. **context:** the context steps down by g from N to F, the pool one context;
+6. **chunk:** a configured chunk wider than 1024 halves down to it, at F;
+7. **survival,** below the floor quality and admitted without the class reserve: with a class
+   reserve, first the floor quality itself (the same content for less memory); then the chunk
+   halves down to 128, the remaining cached states go (down to 1 without a Host tier), and, with an
+   automatic context, the context steps on by g below F to min(N, 1024), and, without speculation,
+   one last rung holds one prompt token and one decode round. A survival rung keeps the axis it
+   stepped in its label (`survival chunk`, `survival states`, `survival context`).
+
+Every step lowers one axis and keeps the others, so the content (context, KV tokens, cached states,
+chunk) never grows down the ladder. With the selection's first fit, more free memory never selects
+less on any axis. The warm-up's check may then move a rung down by what the warm-up kept for good,
+which differs per rung, so the served content is monotone only as far as that is; what holds at
+every check is that a free size served is never followed by a larger one refused (the check falls
+back to the last rung on its held bytes, as the selection does). That holds while the probe's
+lasting graph memory does not grow with the probed rung's context; when it does, a refusal band of
+a few MiB can appear at the very bottom of the ladder: a startup refusal, never an out-of-memory. `tests/test_plan_ladder.cpp`
+sweeps the free memory in 2 MiB steps over pinned and automatic contexts, with and without a class
+reserve and a Host tier, and checks both, also with a warm-up that kept more than its allowance. Nothing
+poorer than the floor quality is admitted with the reserve kept, and nothing richer without it.
+Master's narrower chunk at a longer context than the floor (the chunk's context grid) is gone: it
+made a smaller plan serve more context than a larger one.
+
+Without a Host tier a cached state per lane stays down to the floor quality, as master fitted the
+context with one per lane; with one the Device states go first. `ninferno-serve` configures a Host
+tier by default on Linux, WSL 2 and native Windows: max(8, 2 x the private conversations)
+StateImages (18, 24 and 32 at `--max-concurrency` 1, 4 and 8) and 8 GiB of KV, scaled down to what
+the host can pin. It has none on a GPU sharing the host's memory (GB10, Jetson), with
+`--no-prefix-reuse` or `--host-state-slots 0`; the one-request CLI has no context cache. The ladder
+follows what is configured, not what the host can pin at the start: the fit to the host's free
+memory sizes the tier (observed) and never moves a rung, so the fingerprint does not follow host
+memory pressure.
+
+With `--max-context` (or an explicit `--kv-capacity`) the context is pinned: the ladder steps the
+pool and the states, and its survival range the chunk and the states (Qwen 27B at
+`--max-context 32768 --max-concurrency 4` on a 16 GB card with a display and 2.8 GiB free: chunk
+1024, a state per lane without a Host tier as master, none with one).
+
+Then every candidate no cheaper than a rung above it is dropped (`prune_plan_ladder`), so the bytes
+fall strictly down the ladder and a step that saves nothing is no rung. The survival range is
+pruned on its own: its first rung, the floor quality without the reserve, has the bytes of the rung
+above and needs less beside them. A step keeps about 95.7 % of the
+axis it moves (less the rounding to whole pages): a fixed grid of g is as deterministic as four levels and loses at most
+one step to master's continuous fit, where halving lost up to 50 %. The steps are integer
+arithmetic (`plan_scaled`), the same on every host.
+
+An explicit option pins its axis in every rung: `--max-context` the context (an explicit
+`--kv-capacity` too: it bounds one request), `--kv-capacity` the pool, `--device-state-slots` the
+states, `--prefill-chunk` the chunk. With every axis pinned the ladder has one rung. Pinned plans
+that fit no rung are a `CapacityError` (`ninferno-serve`'s `--spec auto` fallbacks recover by that
+type) that names the last rung's need and the free memory in GiB and what fits instead: the longest
+context at this concurrency and at each lower one, and the narrower chunk when `--prefill-chunk` was
+the reason.
+
+### The selection
+
+A rung needs its Program reservation (KV, states, workspace and the planner's CUDA-graph
+allowance), the Host tier's pinning (declared: 2 MiB per pinned GiB), the kernel warm-up's
+allowance and a margin:
+
+| Part | Value | Source |
+|---|---|---|
+| Weights | not in the need: the free memory is read after the target's and a separate drafter's weights are uploaded, and the plan reports their sum | the family load |
+| Base margin | 32 MiB (`--kv-auto-headroom-mib`), 0 with an explicit `--kv-capacity` | option |
+| Class reserve | under WDDM (native Windows, WSL 2) an 8th of the VRAM class, at most 4 GiB, on a card driving the display, a 32nd, at most 1 GiB, headless; an 8th, at least 4 GiB, on a GPU sharing the host's memory; else 0. The VRAM class is the total memory rounded down to 256 MiB | driver model, display, integrated: discrete facts |
+| Warm-up allowance | 64 MiB (kernel code and the per-thread stack, measured at 6-40 MiB on an RTX 5080), 0 when nothing is automatic | declared |
+
+- The class reserve covers the growth of what Windows already holds: the free memory is measured
+  with the desktop's current use taken, so the reserve is not a guess of that use.
+- The class reserve is given up in three cases only: a survival rung (below the floor quality), a
+  `warm_up` admission (nothing else fits), and the options that keep none (below). Down to the
+  floor quality it is kept, so a desktop on a small card gets the floor before the reserve is given
+  up (master gave it up for a longer context and let Windows page the pool out). Once it is given
+  up the plan does not drop to the bottom: the floor quality comes first (an 8 GB card with a
+  display and 1.0-1.3 GiB free: 8,192 tokens at chunk 1024), then the chunk, the states and
+  shorter contexts.
+- The reserve applies to an automatic pool only. An explicit `--kv-capacity` keeps none, and so
+  does an explicit `--max-context` at `--max-concurrency 1`, which makes the pool that one context
+  (an explicit `--kv-capacity`). When the rung above the chosen one fits without the reserve, the
+  startup warns and names the override: `the 1.00 GiB kept for the Windows desktop limits the
+  context to <k>; --max-context <n> (or --kv-capacity <n>) gives it up, and the desktop
+  may stall when Windows pages the card out` (at more lanes, `--max-context` with `--kv-capacity`).
+- The selection is one pass with one need per rung, so more free memory never picks a lower rung,
+  and never selects less.
+  When no rung fits with the allowance, the last rung is taken if it fits on the warm-up's
+  measurement alone (`reserve warm_up`): an asked plan the graph bound alone would refuse.
+- The rungs are not set at a budget's edge: they come from the model's context and the options,
+  never from the free memory, so the free memory always has the slack between the rung that fits
+  and the one above it.
+
+### The warm-up
+
+The kernel warm-up runs at the chosen rung, measures what it took for good (kernel code, stack,
+the probe's graphs, the Host tier's pinning) and checks the rung again on the free memory left, the
+allowance taken. The rung stays when it still fits. Otherwise the plan moves to the first lower rung
+that fits, recorded as `selected_rung` (the rung before the warm-up) beside `rung` in the plan
+summary (`meta.plan`, the server-start record). The re-measurement never moves the plan above the
+selection. When no rung from the chosen one down fits on the margins, the last rung is taken on its
+held bytes (`warm_up`), as the selection would have taken it with that free memory.
+
+The chosen rung keeps the tier it was admitted at. A `warm_up` rung was admitted on its held bytes
+(no graph allowance, no warm-up allowance, no class reserve), so the plan holds the graphs from the
+warm-up's first pass, as master did, and every check needs the held bytes beside the base margin:
+the prefill probe's 6-40 MiB never refuse it before a graph is measured (Gemma 4 31B IQ3_XXS + MTP
+at 4 x 4,096 on an RTX 5080; an explicit `--max-context` at C > 1 under WDDM with a display, where
+not even the survival rungs fit on the planner's graph bound). `plan_graphs_held` and `plan_warm_up_check` are
+the pure steps the Engine runs; `tests/test_plan_ladder.cpp` replays the selection and the first
+check, and the shortfall that moves a rung down.
+
+### What the user sees
+
+- The startup log: `plan | rung k of N: <context> tokens x <pool> contexts (<KV tokens>), <states>
+  cached states, chunk <c> for <C> lanes (step <axis>, reserve kept|soft|warm_up) | free <GiB>
+  after <GiB> of weights | <GiB> more would serve rung k-1, <GiB> the top | planned in <ms> ms`
+  (`rung k-1 fits but for the <GiB> class reserve` when the reserve alone keeps the rung above
+  out).
+- A warning when the rung is below what the options ask for: a pool below every lane's asked
+  `--max-context`, a survival rung, the class reserve not kept or limiting the plan, or a rung the
+  warm-up moved down.
+  It names the shortfall in GiB and the options that get more (`--max-concurrency`, a shorter
+  `--max-context`).
+- `/v1/models` `meta.plan_level` and `meta.plan` (the rung, the ladder's length, its sizes, the free
+  and weight bytes, the shortfalls and the advice); every request record has `plan_level`, and the
+  server-start record the whole plan summary.
+- `ninferno-serve --plan` (`--plan --json`) prints the ladder with every rung's bytes and need, the
+  rung the free memory picks now and the advice, then exits without serving. The weights are
+  uploaded to size the rungs (the planner reads the bound model) and released; no tuner, warm-up
+  or Program runs, so it takes the load's time (seconds from the page cache). A real start runs the
+  load-time route tuner before it reads the free memory, and the code of the kernels it launched
+  stays loaded, so `--plan` can read a little more free memory than the start; the start may then
+  land a rung lower, and its warm-up may move it down again, never up.
+
+### The fingerprint
+
+The plan section records `rung`, `rungs` and the rung's `max_context`, `prefill_chunk`, `kv_tokens`
+and `cached_device_states`. The rung the selection picked before the warm-up (`rung_selected`) and
+the tier it was admitted at (`rung_reserve`) are the warm-up's measurement, recorded in the observed
+section: they move `nm1` only, so a warm-up move that ends on the same rung keeps `nf1`. The free
+memory itself is not recorded: two starts whose free memory picks the same rung have the same `nf1`.
+
+### Against master's continuous fit
+
+`tests/test_plan_ladder.cpp` replays the plan-levels review's scenarios (cards of 8 to 80 GB,
+Linux headless or with a desktop, WSL with a display; Qwen 9B, 27B, 35B-A3B and gpt-oss) and four
+RTX 5070 Ti rows measured on 21.10, with the review's byte arithmetic, against an emulation of
+master's fit, the later reviews' rows where the reserve is given up and a 35B-A3B on a 32 GB card
+with a display. With a Host tier (the review's rows) the delivered context is within 3 % of
+master's or longer (no cached Device states give it more), the KV within 6 % at
+`--max-concurrency` 4 and 8; the one exception is an 8 GB card under WSL with a display and
+1.39 GiB free, where the 1 GiB reserve does not fit beside the floor quality: the ladder serves
+8,192 tokens at chunk 1024 without the reserve (a warning), where master served 50,816 with none
+left for Windows.
 
 ## Fingerprint
 

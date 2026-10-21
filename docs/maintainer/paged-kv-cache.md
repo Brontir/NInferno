@@ -136,22 +136,14 @@ where \(B(M)\) is the complete runtime Device reservation for that Main capacity
 - unified workspace;
 - CUDA Graph allowance.
 
-Automatic selects:
-
-\[
-M=
-\min\left(
-M_{max},
-M_{min}+
-\left\lfloor
-\frac{F-R-B_{min}}{B_{step}}
-\right\rfloor
-\right)
-\]
-
-and requires \(F\ge R+B_{min}\). When \(M_{min}=M_{max}\), that single point is taken directly. The target uses the same production layout builder
-to produce \(B_{min}\), \(B_{step}\), and the final layout, and validates the capacity curve; the resolver neither duplicates model dimension formulas nor guesses
-capacity by allocation probing.
+Automatic takes the pool of a rung of the declared plan ladder
+([plan levels](deterministic-decisions.md#plan-levels)): a rung fixes \(M\) (from \(M_{max}\), every
+lane's context, down by steps of \(2^{-1/16}\) to \(M_{min}\)), and the free Device memory \(F\)
+picks the first rung with \(B(M)+R\le F\), where \(R\) is the declared margin (driver headroom,
+class reserve, warm-up allowance). When \(M_{min}=M_{max}\), the pool axis has that single point. The
+target uses the same production layout builder to produce \(B_{min}\), \(B_{step}\), and the final
+layout, and validates the capacity curve; the resolver neither duplicates model dimension formulas nor
+guesses capacity by allocation probing.
 
 The final public Main KV capacity is \(M\,P\) token-equivalents. Page rounding only adds physical padding and
 does not enlarge the single-sequence logical ceiling \(S\).

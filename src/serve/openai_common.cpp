@@ -53,6 +53,31 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
         meta["decision_fingerprint"] = metadata.decision_fingerprint;
         meta["decision_manifest"]    = metadata.decision_manifest;
     }
+    // The plan ladder's rung the free memory picked at startup (ModelMetadata::plan): its index
+    // (1 is the top), the ladder's length and the rung's sizes.
+    if (metadata.plan.rung != 0) {
+        const ninferno::PlanSummary& plan = metadata.plan;
+        meta["plan_level"]                = plan.rung;
+        meta["plan"]                      = Json{{"rung", plan.rung},
+                                                 {"rungs", plan.rungs},
+                                                 {"selected_rung", plan.selected_rung},
+                                                 {"reserve", plan.reserve},
+                                                 {"step", plan.chosen.step},
+                                                 {"survival", plan.chosen.survival},
+                                                 {"max_context", plan.chosen.max_context},
+                                                 {"kv_tokens", plan.chosen.kv_tokens},
+                                                 {"cached_device_states", plan.chosen.cached_device_states},
+                                                 {"prefill_chunk", plan.chosen.prefill_chunk},
+                                                 {"bytes", plan.chosen.bytes},
+                                                 {"free_bytes", plan.free_bytes},
+                                                 {"weight_bytes", plan.weight_bytes},
+                                                 {"device_total_bytes", plan.device_total_bytes},
+                                                 {"top_shortfall_bytes", plan.top_shortfall_bytes},
+                                                 {"next_shortfall_bytes", plan.next_shortfall_bytes},
+                                                 {"reserve_limited_context", plan.reserve_limited_context},
+                                                 {"reserve_limited_kv_tokens", plan.reserve_limited_kv_tokens},
+                                                 {"advice", plan.advice}};
+    }
     // What the server runs since startup (GenerationService::startup_speculation).
     if (speculation != nullptr) {
         meta["speculation"] = Json{{"config", speculation->config},

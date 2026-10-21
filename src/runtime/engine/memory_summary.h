@@ -45,6 +45,7 @@ template <class Instance>
     out.stack_limit_source                = warm_up.stack_limit_source;
     out.host_pin_device_bytes             = warm_up.host_pin_device_bytes;
     out.graph_returned_bytes              = warm_up.graph_returned_bytes;
+    out.plan                              = instance.plan;
     return out;
 }
 

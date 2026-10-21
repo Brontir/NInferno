@@ -32,6 +32,7 @@ struct RequestLogContext {
     double acquisition_seconds = 0.0;
     ninferno::PromptPreparationStats preparation;
     std::vector<std::string> notes;
+    std::uint32_t plan_level = 0; // the plan ladder's rung the server runs (PlanSummary::rung)
 };
 
 struct RequestLogMetadata {

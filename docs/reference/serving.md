@@ -64,10 +64,10 @@ Refusals come before any weight is downloaded. Each says what to do instead:
 
 ### Automatic choices and the startup log
 
-- **Context.** Without `--max-context` the server serves the model's own context
-  (`max_position_embeddings`) when it fits the free GPU memory. Otherwise it serves the longest
-  whole number of 64-token KV pages (at least 1024 tokens) that fits. The KV capacity then takes the
-  rest (`auto`). A Qwen3.5 checkpoint whose `config.json` carries YaRN (`rope_type` `yarn`, as Qwen
+- **Context.** Without `--max-context` the free GPU memory picks the first rung that fits of a
+  declared [plan ladder](#automatic-context-selection): the model's own context
+  (`max_position_embeddings`) for every slot at the top, then steps of about 4.2 % each. The KV
+  capacity is the rung's (`auto`). A Qwen3.5 checkpoint whose `config.json` carries YaRN (`rope_type` `yarn`, as Qwen
   documents it for long contexts) keeps it through conversion: the model's context is then
   `original_max_position_embeddings` times `factor` (at most 1,048,576), and `--rope-yarn-factor`
   overrides the factor. Attention reads at most 1,048,576 keys, so a longer `--max-context` is
@@ -75,8 +75,8 @@ Refusals come before any weight is downloaded. Each says what to do instead:
 - **Host tier.** Without `--host-state-slots` and `--host-kv-mib`, the Host tier defaults are scaled
   down to half of what the host can pin; the state count is `max(8, 2 * private continuations)` (an endpoint
   and an edit point for each conversation).
-- **Log lines.** The startup log states each choice (`context | ...`, `capacity | ...`,
-  `context cache | ...`).
+- **Log lines.** The startup log states each choice (`context | ...`, `plan | rung k of N: ...`,
+  `capacity | ...`, `context cache | ...`).
 - **Sampling source.** Every generation response names where its default sampling comes from in
   `x-ninferno-sampling-defaults`: `generation_config.json`, `transformers defaults`, or the family's
   presets, plus server flags such as `--greedy`.
@@ -88,21 +88,23 @@ choose for this model (`kernel warm-up | ...`). CUDA loads a kernel's code into 
 first launch, and a kernel with a larger stack frame grows the local memory the driver keeps for
 every resident thread. Neither is given back.
 
-- A probe engine with the plan's concurrency, speculation, KV formats and prefill chunk takes one
-  request of every prefill width up to the chunk. It captures every decode graph class at the
-  fitted context. The fit is measured after it.
+- A probe engine with the plan rung's concurrency, speculation, KV formats and prefill chunk takes
+  one request of every prefill width up to the chunk. It captures every decode graph class at the
+  rung's context. The rung is checked again on the free memory left: it stays when it still fits,
+  else the plan moves to the first lower rung that does (never to a higher one).
 - The warm-up starts the CUDA stack limit from zero. It ends at the largest stack frame among the
   kernels the plan launched, instead of the driver's 1 KiB default for every resident thread.
 - The log line names the memory this keeps: kernel code, the stack, and the memory of the probe's
-  CUDA graphs. The driver keeps the graphs and the served graphs take them again, so the plan
-  reserves no separate graph allowance. The line also gives the limit, the driver's default, and the
+  CUDA graphs. The driver keeps the graphs and the served graphs take them again, so the check after
+  it reserves no separate graph allowance (the selection before it kept the planner's bound and a
+  declared 64 MiB for the kernel code and the stack). The line also gives the limit, the driver's default, and the
   warm-up step that raised it last.
 - Pinning the context cache's Host tier takes GPU memory too (the driver's page tables for the
   pinned bytes, about 2 MiB per GiB). The warm-up pins buffers of the Host tier's sizes once,
-  measures the cost, and the fit reserves it (`Host tier pinning takes ...`).
+  measures the cost, and the check reserves it (`Host tier pinning takes ...`).
 - The warm-up takes longer on larger models (one prefill of every width). Only an automatic choice
   runs it: with `--max-context`, `--kv-capacity`, `--prefill-chunk` and `--device-state-slots` all
-  given, nothing depends on the free memory.
+  given, the ladder has one rung, which fits or is refused.
 
 ## 2. Startup configuration
 
@@ -206,13 +208,9 @@ For `C=--max-concurrency` and `H=--device-state-slots`, total Device StateImage 
 
 - Omitted, `H` is automatic, at most `2C` (three states a request, so an agent's tool loop keeps its
   turn closure and its endpoint while other requests run).
-- Beside an explicit `--kv-capacity`, `H` is the most that fit.
-- With the automatic KV capacity at a given `--max-context`, the pool comes first, a whole slot
-  context at a time. `H` is the most that leave the pool as many whole contexts as the fewest
-  states would (one, or none when the Host tier keeps states). That is all of them when the pool
-  holds every slot's context.
-- An automatic context (no `--max-context`) is chosen before that with one cached state per slot,
-  fewer only below 8,192 tokens.
+- The plan ladder steps it: the second state of each slot gives way before any KV, the first after
+  the pool is down to one context and before the context shortens (down to one, or none when the
+  Host tier keeps states).
 - Host State and Host KV are independent startup-fixed pinned-memory capacities. Host KV is shared
   by Main and the selected Backend pool and is consumed in physical page extents.
 - `--no-prefix-reuse` selects root-only Engine mode. It cannot be combined with any of the six
@@ -509,6 +507,8 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `n_params` | total logical weight elements across the registered artifact tensors |
 | `size` | encoded weight payload bytes of the registered artifact |
 | `ftype` | encoded tensor formats of the artifact, joined with `+` when mixed |
+| `plan_level` | the plan ladder's rung the free memory picked at startup (1 is the top) |
+| `plan` | that rung: `rung`, `rungs`, `selected_rung` (before the kernel warm-up), `reserve` (`kept`, `soft`, `warm_up`), `step`, `survival`, `max_context`, `kv_tokens`, `cached_device_states`, `prefill_chunk`, `bytes`, `free_bytes`, `weight_bytes`, `device_total_bytes`, `top_shortfall_bytes`, `next_shortfall_bytes`, `reserve_limited_context` and `reserve_limited_kv_tokens` (the longest context, and its pool, that fits without the class reserve when the reserve alone limits the plan; 0 otherwise), `advice` ([automatic context selection](#automatic-context-selection)) |
 | `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
 | `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
 | `speculation` | what the server runs since startup: `config`, `selection`, `reason`, `fallback` ([per-request record](#per-request-record)) |
@@ -1524,6 +1524,8 @@ contract.
 | `--recipe NAME` | conversion recipe of a hub model or checkpoint | the official one |
 | `--quant LABEL` | the GGUF quantization of a hub model | NVFP4, MXFP4, Q8_0, BF16, ... in that order |
 | `--prepare-only` | fetch and convert, then exit | off |
+| `--plan` | print the plan ladder, the rung the free memory picks now and the advice, then exit without serving ([automatic context selection](#automatic-context-selection)) | off |
+| `--json` | with `--plan`: print it as JSON | off |
 | `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
@@ -1692,7 +1694,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v28 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v30 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1701,8 +1703,12 @@ Serve writes human-readable operational records to stderr as
 
 | Event | Contents |
 |---|---|
-| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; the decision fingerprint (`decision`: fingerprint, manifest, taint and canonical text); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
-| `request_start` | protocol, resolved sampler and seed, requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
+| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; the decision fingerprint (`decision`: fingerprint, manifest, taint and canonical text); the plan ladder's rung (`plan`: `rung`, `rungs`, `selected_rung`, `reserve`, `chosen` with the
+rung's `max_context`, `kv_tokens`, `cached_device_states`, `prefill_chunk`, `step`, `survival`,
+`bytes` and `needed_bytes`, the device, weight and free bytes, the margins `base_margin_bytes`,
+`reserve_bytes` and `allowance_bytes`, `top_shortfall_bytes`, `next_shortfall_bytes`,
+`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+| `request_start` | protocol, resolved sampler and seed, the plan ladder's rung (`plan_level`), requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |
 | `request_error` | the resolved request configuration and the generation, cancellation, or pre-outcome transport terminal message |
@@ -1875,58 +1881,128 @@ outside the GPU executor and do not delay formation of the next batch.
 
 ### Automatic context selection
 
-`--max-context` is each sequence's logical ceiling. Omitted, the Engine chooses it at startup from
-the free memory measured once:
+`--max-context` is each sequence's logical ceiling. Omitted, the Engine plans with one rung of a
+declared plan ladder ([plan levels](../maintainer/deterministic-decisions.md#plan-levels)). The
+ladder comes from the model's own context, the options and the planner's bytes for each rung; the
+free GPU memory after the weights picks the first rung that fits and sizes nothing itself. N is the
+model's own context (under an explicit `--kv-capacity`), C the concurrency, and every step keeps
+about 95.7 % (2^(-1/16), less the rounding to whole pages) of the axis it moves:
 
-1. The model's own position capacity, when a plan with it (and the default cached Device states)
-   fits the free GPU memory.
-2. Else the longest whole number of 64-token KV pages (at least 1024 tokens) that fits, by
-   bisection over the plans. A page is the KV's own grain: a context between two pages takes the
-   next page's memory.
-3. An explicit value above the model's own is refused.
-4. When that leaves less than 8192 tokens (or the model's own, when smaller), the choice gives up
-   cached Device states of the context cache for a longer context: down to one, or to none when the
-   Host tier keeps states (checkpoints are then captured to and restored from Host memory).
-5. When even that stays below 8192 tokens and `--prefill-chunk` is omitted, the same again with half
-   the chunk, down to 128. A narrower chunk takes less workspace and, on a model with sliding-window
-   layers (Gemma 4), a smaller StateImage per state (window + chunk - 1 rows per layer). The first
-   chunk that reaches the floor is kept, else the one with the longest context. The startup log
-   states the chunk.
+1. the top: N tokens for every slot, a pool of C whole contexts, two cached states per slot, the
+   configured chunk;
+2. the second cached state of each slot gives way, one at a time, down to one per slot;
+3. the pool steps down to one context;
+4. with a Host tier, the cached Device states step down to none (checkpoints are then captured to
+   and restored from Host memory); without one, one per slot stays down to 8,192 tokens;
+5. the context steps down to 8,192 tokens (or the model's own, when smaller);
+6. a configured `--prefill-chunk` wider than 1024 halves down to 1024 at 8,192 tokens. That is
+   the floor quality: 8,192 tokens (or the asked `--max-context`), chunk 1024, a cached state per
+   slot without a Host tier and none with one, the poorest plan served with the class reserve kept;
+7. survival rungs, below the floor quality and without the class reserve: on a card that has one,
+   first the floor quality itself, then the chunk halves down to 128 (a narrower chunk takes less
+   workspace and, on a model with sliding-window layers such as Gemma 4, a smaller StateImage per
+   state: window + chunk - 1 rows per layer), the remaining cached states go (down to one without
+   a Host tier), then, with an automatic context, shorter contexts down to 1,024 tokens, and
+   without speculation one last rung that holds one prompt token and one decode round. A survival
+   rung logs a warning and its label keeps its axis (`survival chunk`); a prompt longer than the
+   context is refused with the usual HTTP 400.
 
-Examples on a 16 GB card (RTX 5080):
+Every step lowers one axis and keeps the others, so more free memory never selects less context,
+pool, cached states or chunk (the warm-up may then move the rung down by what it kept, never
+refusing a start that less free memory would serve). `ninferno-serve` configures a Host tier by default on Linux, WSL 2
+and native Windows (max(8, 2 x the private conversations) StateImages: 18, 24 and 32 at
+`--max-concurrency` 1, 4 and 8, and 8 GiB of KV, scaled down to what the host can pin); not on a
+GPU sharing the host's memory (GB10, Jetson), with `--no-prefix-reuse` or `--host-state-slots 0`.
+The ladder follows the configured tier, not what the host can pin at the start.
 
-| Model | Result |
-|---|---|
-| Gemma 4 26B-A4B NVFP4 (14.3 GiB of weights) | 12,288 tokens without a drafter; 8,192 at chunk 256 with its MTP assistant (0.28 GiB); both with the Host tier keeping the checkpoints and no cached Device state; 14,336 with one cached Device state when the Host tier is off |
-| Gemma 4 31B UD-IQ3_XXS (11.0 GiB) | 27,648 tokens at chunk 1024 alone; 20,480 with its MTP drafter (0.51 GB) |
-| Gemma 4 31B UD-IQ3_XXS, `--max-concurrency 4`, no drafter | 6,144 at chunk 128; the log names 13,312 / 19,456 / 27,648 for 3 / 2 / 1 slots |
-| same, with the drafter | four slots do not fit; the refusal names 3 slots with 8,192, 2 with 11,264 and 1 with 20,480 |
+With `--max-context` the context is pinned: the pool and the states step, then the survival
+rungs halve the chunk and drop the states.
 
-- An explicit `--max-context` takes the widest chunk it fits with. When an explicit `--prefill-chunk`
-  fits no concurrency, the refusal names the widest narrower chunk (each half down to 128) that fits
-  and what it fits.
-- With `--max-concurrency` above 1 every slot keeps its own StateImage. When the automatic context
-  stays below the floor, the startup log names the lower concurrencies that fit longer. When nothing
-  fits, the refusal names them (and, for an explicit `--max-context`, the longest context that
-  fits).
+A rung no cheaper than one above it is no rung, so the bytes fall down the ladder. The same model,
+options and card type give the same ladder; two starts that pick the same rung make the same plan
+and have the same [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint)
+(its plan section records the rung).
+
+Beside a rung's bytes (KV, cached states, workspace, the CUDA Graph allowance, the Host tier's
+pinning) the selection keeps:
+
+- 32 MiB for the CUDA driver's own allocations (`--kv-auto-headroom-mib`; none with an explicit
+  `--kv-capacity`);
+- on a GPU Windows shares (native Windows, WSL 2), a class reserve for what Windows will add: an 8th
+  of the card, at most 4 GiB, when it drives the display, else a 32nd, at most 1 GiB; on a GPU
+  sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. It is given up only by a
+  survival rung (with a warning; the first is the floor quality itself), by a `warm_up` admission
+  when nothing else fits, and by the options that keep none: it applies to an automatic pool only,
+  so an explicit `--kv-capacity` keeps none, and so does an explicit `--max-context` with
+  `--max-concurrency 1`, which makes the pool that context. When the reserve
+  alone keeps the rung above out, a warning names it and the override (`the 1.00 GiB kept for the
+  Windows desktop limits the context to <k>; --max-context <n> (or --kv-capacity <n>)
+  gives it up, and the desktop may stall when Windows pages the card out`);
+- 64 MiB for the kernel warm-up's code and stack. The warm-up then checks the rung on the memory it
+  left and may only move the plan down (`selected_rung` in `meta.plan` records the rung before
+  it). A rung
+  admitted only on the warm-up's measurement (`reserve warm_up`: nothing fits with the margins) keeps
+  that admission: its graphs are measured, not bounded, and no reserve is added back.
+
+The startup line names the rung, its sizes and how much more free memory the rung above and the top
+would need:
+
+```text
+plan | rung 17 of 132: 142,912 tokens x 1 context (142,912 KV tokens), 0 cached states, chunk 1024 for 1 lane (step context, reserve kept) | free 5.21 GiB after 10.20 GiB of weights | 0.10 GiB more would serve rung 16, 4.07 GiB the top | planned in 180 ms; the rungs are declared, the free memory picks one
+```
+
+A warning follows when the rung is below what the options ask for (a pool below every slot's asked
+`--max-context`, a survival rung, the class reserve not kept or limiting the plan, a rung the
+warm-up moved down). It
+names the shortfall in GiB and what gets more (a lower `--max-concurrency`, which the log lists
+with the context it fits).
+
+- An explicit `--max-context`, `--kv-capacity`, `--device-state-slots` or `--prefill-chunk` pins its
+  axis in every rung; the others still step. When no rung fits, the refusal names the last rung's
+  need and the free memory in GiB, the longest context that fits at this concurrency and at each
+  lower one, and, for an explicit `--prefill-chunk` that fits nothing, the narrower chunk that does.
+- `ninferno-serve --plan` prints the ladder (every rung's bytes and need), the rung the free memory
+  picks now and the advice, then exits; `--plan --json` prints the same as JSON (`schema`
+  `ninferno-plan/1`: `plan.ladder`, `plan.rung`, `plan.free_bytes`, `plan.weight_bytes`,
+  `plan.advice`; `plain`, plain decode's ladder, when `--spec auto` would leave the asked
+  speculation: a start would try the profile's fit fallback, shallower drafts and the MTP head
+  first, which the dry run does not plan). It uploads the weights to size the rungs and releases
+  them; no tuner, warm-up or Program runs. A start runs the load-time route tuner before it reads
+  the free memory and keeps the code of the kernels it launched, so `--plan` can read a little more
+  free memory than the start, which may land a rung lower. When nothing fits, the advice is the
+  refusal alone, and the exit code is 2.
+
+Examples on a 16 GB card (RTX 5070 Ti, Linux, no display; the 21.10 stand logs, master's continuous
+fit against the ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
+
+| Model | Master | Ladder |
+|---|---|---|
+| Qwen3.8-27B UD-IQ3_XXS, C=1 (5.21 GiB free) | 144,448 tokens | 142,912 (rung 17), no cached Device state (the Host tier keeps them) |
+| same, C=4 | 126,720, 4 cached states | 131,072 (rung 57), none (the Host tier keeps them) |
+| Qwen3.6-35B-A3B UD-IQ3_XXS, C=1 (3.15 GiB) | 262,144 | 262,144 (rung 1) |
+| same, C=4 | 262,144, a pool of 270,336 | 262,144, a pool of 262,144 (rung 37), 4 cached states |
 
 ### KV capacity
 
 - `--kv-capacity` fixes the shared Main Text KV pool used by active requests and retained prefixes.
-- `auto` plans every runtime byte (KV, cached StateImages, workspace, the CUDA Graph allowance; a
-  drafter's weights are loaded before the free memory is measured). It leaves 32 MiB for the CUDA
+- `auto` takes the plan rung's pool (every runtime byte counted: KV, cached StateImages,
+  workspace, the CUDA Graph allowance; a drafter's weights are loaded before the free memory is
+  measured). It leaves 32 MiB for the CUDA
   driver's own allocations (streams, events, kernel code loaded on first launch), measured at 9-20
   MiB while starting and nothing after it; the `--kv-auto-headroom-mib` default is the table value
   above. Omitted, `--kv-capacity` is `auto` with an automatic context.
-- On a GPU Windows shares (WSL 2), `auto` also leaves Windows a 32nd of the card, at most 1 GiB, and
-  an 8th, at most 4 GiB, on the card that drives the display. The desktop's memory grows while
+- On a GPU Windows shares (native Windows under WDDM, WSL 2), `auto` also leaves Windows the class
+  reserve: a 32nd of the card, at most 1 GiB, and an 8th, at most 4 GiB, on the card that drives
+  the display; on a GPU sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. Only a
+  survival rung, a `warm_up` admission or an explicit `--kv-capacity` (or `--max-context` at one
+  slot) gives it up. The desktop's memory grows while
   ninferno runs, and a full card makes Windows page the pool out, with the desktop frozen meanwhile
   (an RTX 5090 left with 0.55 GiB took 1.8 s to give another process 3 GiB; with 5.5 GiB left, 51
   ms).
 - An explicit `--max-context` is each request's limit. With one slot the pool is exactly that many
-  tokens. With several it is `auto`, bounded by `--max-concurrency` x `--max-context` above (every
-  slot's full context) and one context below. When the full pool does not fit, the startup log says
-  how much it holds. A request then waits while the pool is full (8 slots of 4,096 tokens in a
+  tokens. With several it is `auto`: the ladder's pool rungs, from `--max-concurrency` x
+  `--max-context` (every slot's full context) down to one context. When the full pool does not fit,
+  the startup log says how much it holds. A request then waits while the pool is full (8 slots of 4,096 tokens in a
   4,096-token pool ran 7 requests at a time with 512-token outputs).
 - Capacity resolves once at startup. `/v1/models` reports the context as `max_model_len`.
 

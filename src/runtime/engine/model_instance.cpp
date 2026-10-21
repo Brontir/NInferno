@@ -1,5 +1,6 @@
 #include "runtime/engine/model_instance.h"
 #include "runtime/engine/family_registry.h"
+#include "runtime/engine/plan_ladder.h"
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
 #include "artifact/formats.h"
@@ -27,7 +28,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <compare>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -84,17 +87,13 @@ std::size_t current_stack_limit_bytes() {
 // The kernel warm-up's prompts repeat this text's tokens to each width.
 constexpr std::string_view kWarmUpText =
     "Before it measures the free memory, the engine runs every kernel its plan can choose. ";
-// Fits after the prefill probe before the fitted context and the Host tier's pinned sizes stop
-// moving (each probe Program and each pinning measurement only settles them); a bound this far
-// above three means a fault.
+// Checks after the prefill probe before the rung and the Host tier's pinned sizes stop moving
+// (each probe Program and each pinning measurement only settles them); a bound this far above
+// three means a fault.
 constexpr std::uint32_t kMaximumWarmUpPasses = 8;
-// The first step of the reserve a probe whose graphs did not fit adds to the fit (doubled per retry).
+// The first step of the reserve a probe whose graphs did not fit adds to the check (doubled per
+// retry).
 constexpr std::size_t kGraphShortfallStepBytes = std::size_t{128} << 20;
-// What a refusal made before the kernel warm-up keeps back for it when it names what fits instead:
-// the warm-up's lasting memory (kernel code, the per-thread stack, the decode graphs; 6-40 MiB
-// measured on an RTX 5080) is not yet in the free memory the advice is fitted to. An advised plan
-// fitted without it was refused 18 MiB short once warmed (Qwen3.6-35B IQ3_XXS at 4 x 16,960).
-constexpr std::size_t kAdviceWarmUpReserveBytes = 64ULL << 20;
 
 // One request of `prompt` through the Program's request path, as the Engine runs it: admission,
 // the prefill (with its speculative and sampling work), the first token and, with `decode_round`,
@@ -295,8 +294,8 @@ EngineOptions normalize_engine_options(EngineOptions options) {
         return options;
     }
 
-    // An unconfigured cached Device state count stays unset here: construct_model chooses it with
-    // the KV capacity from the free memory (resolve_runtime_capacity), and the Engine reports it.
+    // An unconfigured cached Device state count stays unset here: the plan ladder steps it
+    // (construct_or_plan, plan_ladder.h), and the Engine reports the rung's count.
     // Room for eight conversations beside the active ones: agents rotate more sessions than
     // requests run at once, and a descriptor costs a catalog entry and an address space, the KV
     // and states staying bounded by their own capacities (four rotating agents at C1 re-prefilled
@@ -482,8 +481,27 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                            family_loader(artifact_model_type(options.artifact_path)));
 }
 
-ConstructedModel construct_model(const EngineOptions& options, DeviceContext& device,
-                                 FamilyLoader load) {
+namespace {
+
+std::string gib_text(std::uint64_t bytes) {
+    // Hundredths of a GiB, rounded up: a shortfall is never shown smaller than it is.
+    const std::uint64_t hundredths = (bytes * 100ULL + (std::uint64_t{1} << 30) - 1ULL) >> 30;
+    const std::string cents        = std::to_string(hundredths % 100);
+    return std::to_string(hundredths / 100) + "." + (cents.size() < 2 ? "0" : "") + cents + " GiB";
+}
+
+std::string grouped_count(std::uint64_t value) {
+    std::string digits = std::to_string(value);
+    for (int at = static_cast<int>(digits.size()) - 3; at > 0; at -= 3) {
+        digits.insert(static_cast<std::size_t>(at), ",");
+    }
+    return digits;
+}
+
+// Builds the Engine's model, or with `dry_run` only its plan: the family load, the ladder and the
+// rung the free memory picks (no tuner, no kernel warm-up, no Program).
+ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& device,
+                                   FamilyLoader load, PlanSummary* dry_run) {
     validate_engine_options(options);
     const auto start    = Clock::now();
     FamilyLoad loaded   = load(options, device);
@@ -500,10 +518,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
          .sms               = static_cast<std::uint32_t>(device.props.multiProcessorCount)},
         options.context_cost.preset_path);
     EngineOptions resolved = options;
-    resolved.kv_capacity = with_unified_memory_headroom(
-        with_paravirtual_headroom(resolved.kv_capacity, paravirtualized_gpu(device.device),
-                                  drives_display(device.device), device.props.totalGlobalMem),
-        device.props.integrated != 0, device.props.totalGlobalMem);
     ContextResolution context{
         .automatic = options.max_context_automatic,
         .native    = static_cast<std::uint32_t>(std::min<std::uint64_t>(
@@ -525,11 +539,10 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                 std::min(resolved.max_context, options.kv_capacity.explicit_tokens);
         }
     }
-    const CachedStatePolicy cached_states{
-        .configured = options.context_cache.enabled ? options.context_cache.device_state_slots
-                                                    : std::optional<std::uint32_t>(0U),
-        .automatic_default = automatic_cached_device_states(options.max_concurrency),
-    };
+    // A configured cached Device state count (none with the context cache off) pins that axis.
+    const std::optional<std::uint32_t> configured_states =
+        options.context_cache.enabled ? options.context_cache.device_state_slots
+                                      : std::optional<std::uint32_t>(0U);
     // The options a candidate plan is built from: the resolved ones with its context, cached
     // Device states, concurrency and prefill chunk.
     const auto planned_at = [&](std::uint32_t max_context, std::uint32_t cached,
@@ -542,10 +555,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         planned.max_concurrency                  = concurrency;
         planned.prefill_chunk                    = chunk;
         return planned;
-    };
-    const auto planned_options = [&](std::uint32_t max_context, std::uint32_t cached) {
-        return planned_at(max_context, cached, resolved.max_concurrency, resolved.prefill_chunk,
-                          resolved.kv_capacity);
     };
     // An automatic Host tier is fitted to what the host can pin before anything is planned over it
     // (its KV pages widen the logical page tables).
@@ -579,312 +588,560 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
             host_tier.budget_bytes       = static_cast<std::size_t>(budget);
         }
     }
-    // The cached Device states an automatic count may go down to: none when the Host tier keeps
-    // StateImages (the context cache then captures checkpoints to Host memory and restores them
-    // from there), else one.
-    CachedStatePolicy sizing_states = cached_states;
-    sizing_states.automatic_minimum = cache.enabled && cache.host_state_slots != 0 ? 0U : 1U;
-    // The fit starts from these each time it is made (after the kernel warm-up, once more).
-    const EngineOptions unfitted             = resolved;
-    const ContextResolution unfitted_context = context;
-    // One planner per cached Device state count the resolution asks about; the chosen one plans.
-    std::map<std::uint32_t, models::qwen3_5::SequencePlanner> planners;
-    // Whether the driver holds the fitted plan's CUDA graph memory (the kernel warm-up below).
+    // The cached Device states the ladder steps down to: none when the Host tier keeps StateImages
+    // (the context cache then captures checkpoints to Host memory and restores them from there),
+    // else one.
+    // Whether a Host tier keeps StateImages is what the options and the platform configure (an
+    // automatic tier's default slots, off on a GPU sharing the host's memory), not what the host
+    // can pin now: the fit to MemAvailable sizes the tier (observed) and never moves the ladder,
+    // so the fingerprint does not follow host memory pressure. A host that can pin no StateImage
+    // then keeps no cached state beyond the active lanes on a rung without Device states, as
+    // --device-state-slots 0 --host-state-slots 0 would.
+    const bool host_states_configured =
+        cache.enabled &&
+        (host_tier.automatic ? host_tier.default_slots != 0 && device.props.integrated == 0
+                             : cache.host_state_slots != 0);
+    const std::uint32_t states_minimum = host_states_configured ? 0U : 1U;
+    // The ladder's rungs set these from here on.
+    const EngineOptions unfitted = resolved;
+    // Whether the driver holds the plan's CUDA graph memory (the kernel warm-up below).
     bool graph_memory_held = false;
-    const auto planner_for = [&](std::uint32_t count) -> models::qwen3_5::SequencePlanner& {
-        auto found = planners.find(count);
-        if (found == planners.end()) {
-            found = planners
-                        .emplace(count, models::qwen3_5::make_sequence_planner(
-                                            execution, device,
-                                            planned_options(resolved.max_context, count),
-                                            graph_memory_held))
-                        .first;
-        }
-        return found->second;
+    // The longest decode round a request asks for: the widest launch window and its target.
+    std::uint32_t window = resolved.speculative.draft_tokens;
+    for (const std::uint32_t k : resolved.speculative.request_draft_tokens) {
+        window = std::max(window, k);
+    }
+    const std::uint32_t round_tokens = window + 1U;
+    const bool kv_automatic          = resolved.kv_capacity.mode == KvCapacityMode::Automatic;
+    // Whether a kernel warm-up measures what the plan's kernels take before the plan is final.
+    const bool automatic_fit = context.automatic || resolved.prefill_chunk_automatic ||
+                               kv_automatic || !configured_states.has_value();
+
+    // The plan ladder (plan_ladder.h) of a concurrency: from the artifact (the context ceiling),
+    // the options (each explicit one pins its axis), the family's planner (each candidate's
+    // bytes) and nothing measured. `pins` false: every sizing axis but the chunk automatic (what
+    // a refusal's advice fits instead).
+    struct Ladder {
+        std::vector<PlanRung> rungs;
+        std::uint32_t concurrency = 1;
+        KvCapacityPolicy kv;
+        bool main = false; // the served ladder: an option its top rung cannot plan is refused
     };
-    // The fit: every choice below depends on the free Device memory and the plans only.
-    // `warmed`: the free memory is measured after the kernel warm-up and net of the Host tier's
-    // pinning (the fits after the warm-up); before it, a refusal's advice keeps both back.
-    const auto fit_plan = [&](const std::size_t free_bytes, bool warmed) -> KvCapacityResolution {
-        resolved = unfitted;
-        context  = unfitted_context;
-        planners.clear();
-        // The free memory the fits below are made against; a refusal's advice lowers it.
-        std::size_t fit_free = free_bytes;
-        // The prefill chunks a choice may take: the configured one, and when the Engine chooses it,
-        // each half of it down to the narrowest (a narrower chunk takes less workspace and, for a
-        // model with sliding rings, less StateImage per slot; it prefills more slowly).
-        std::vector<std::uint32_t> chunks{resolved.prefill_chunk};
-        if (resolved.prefill_chunk_automatic) {
-            for (std::uint32_t chunk = resolved.prefill_chunk / 2;
+
+    // A rung's planner (no device state is read). `held`: the driver holds the graphs' memory.
+    const auto planner_at = [&](const Ladder& ladder, const PlanRung& rung, bool held) {
+        return models::qwen3_5::make_sequence_planner(
+            execution, device,
+            planned_at(rung.max_context, rung.cached_states, ladder.concurrency, rung.prefill_chunk,
+                       ladder.kv),
+            held);
+    };
+    const auto pages_in = [](const Ladder& ladder, const PlanRung& rung,
+                             const SequenceCapacityCurve& curve) {
+        // An explicit --kv-capacity outside the plan's curve is refused by reservation_bytes,
+        // as before; an automatic pool's pages are the curve's by construction.
+        if (ladder.kv.mode == KvCapacityMode::Explicit) { return rung.kv_pages; }
+        return std::clamp(rung.kv_pages, curve.minimum_main_page_groups,
+                          curve.maximum_main_page_groups);
+    };
+
+    // Every rung cost computed once, by the shape it plans (the ladders share their rungs).
+    struct CostKey {
+        std::uint32_t context, pages, states, chunk, concurrency;
+        bool kv_explicit, held;
+        auto operator<=>(const CostKey&) const = default;
+    };
+
+    struct CachedCost {
+        std::optional<PlanRungCost> cost;
+        bool held_known = false; // cost->held_bytes planned (a second planner: only when read)
+    };
+
+    std::map<CostKey, CachedCost> rung_costs;
+    // `graphs_held`: the driver holds the graphs' memory (no allowance); `with_pin`: the Host
+    // tier's pinning is declared in the cost rather than measured; `top`: a shape the family
+    // refuses is the user's option, refused as before (a lower rung's own shape is skipped);
+    // `with_held`: plan held_bytes too (only a WarmUp admission reads it, of the last rung).
+    const auto rung_cost = [&](const Ladder& ladder, const PlanRung& rung, bool graphs_held,
+                               bool with_pin, bool top,
+                               bool with_held) -> std::optional<PlanRungCost> {
+        const CostKey key{rung.max_context,   rung.kv_pages,
+                          rung.cached_states, rung.prefill_chunk,
+                          ladder.concurrency, ladder.kv.mode == KvCapacityMode::Explicit,
+                          graphs_held};
+        auto found = rung_costs.find(key);
+        if (found == rung_costs.end()) {
+            std::optional<PlanRungCost> cost;
+            try {
+                const models::qwen3_5::SequencePlanner planner =
+                    planner_at(ladder, rung, graphs_held);
+                const SequenceCapacityCurve& curve = planner.capacity_curve();
+                const std::uint32_t pages          = pages_in(ladder, rung, curve);
+                PlanRungCost out;
+                out.bytes      = curve.reservation_bytes(pages);
+                out.held_bytes = graphs_held ? out.bytes : 0;
+                if (cache.enabled) {
+                    const std::uint64_t pinned =
+                        cache.host_kv_capacity_bytes +
+                        (cache.host_state_slots != 0
+                             ? static_cast<std::uint64_t>(planner.host_state_image_bytes()) *
+                                   cache.host_state_slots
+                             : 0ULL);
+                    out.pin_bytes = pinned >> 9; // 2 MiB of page tables per pinned GiB
+                }
+                cost = out;
+            } catch (const std::invalid_argument&) { // CapacityError among them
+                if (top) { throw; }
+            }
+            found =
+                rung_costs.emplace(key, CachedCost{.cost = cost, .held_known = graphs_held}).first;
+        }
+        if (with_held && found->second.cost && !found->second.held_known) {
+            PlanRungCost& cost = *found->second.cost;
+            try {
+                const models::qwen3_5::SequencePlanner held = planner_at(ladder, rung, true);
+                const SequenceCapacityCurve& curve          = held.capacity_curve();
+                cost.held_bytes = curve.reservation_bytes(pages_in(ladder, rung, curve));
+            } catch (const std::invalid_argument&) {
+                cost.held_bytes = cost.bytes; // never less than held: the graphs' bound
+            }
+            found->second.held_known = true;
+        }
+        std::optional<PlanRungCost> cost = found->second.cost;
+        if (cost && !with_pin) { cost->pin_bytes = 0; }
+        return cost;
+    };
+    const auto cost_of = [&](const Ladder& ladder, bool graphs_held, bool with_pin) {
+        return PlanRungCostFn([&, graphs_held, with_pin, ladder_ptr = &ladder](
+                                  std::size_t index) -> std::optional<PlanRungCost> {
+            return rung_cost(*ladder_ptr, ladder_ptr->rungs.at(index), graphs_held, with_pin,
+                             ladder_ptr->main && index == 0,
+                             index + 1U == ladder_ptr->rungs.size());
+        });
+    };
+    // What the selection keeps beside a rung (plan_ladder.h, PlanMargins). The class reserve of a
+    // GPU Windows shares and of one sharing the host's memory applies to an automatic pool only;
+    // an explicit --kv-capacity keeps none, as before.
+    const bool paravirtual            = paravirtualized_gpu(device.device);
+    const bool with_display           = drives_display(device.device);
+    const std::uint64_t class_reserve = plan_class_reserve(
+        device.props.totalGlobalMem, paravirtual, with_display, device.props.integrated != 0);
+    const PlanMargins margins{
+        .base      = kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes : 0,
+        .reserve   = kv_automatic ? class_reserve : 0,
+        .allowance = automatic_fit ? kPlanWarmUpAllowanceBytes : 0,
+    };
+    // The margins of an advice ladder (an automatic pool beside the asked or default headroom).
+    const PlanMargins advice_margins{
+        .base      = kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes
+                                  : kDefaultKvCapacityHeadroomBytes,
+        .reserve   = class_reserve,
+        .allowance = kPlanWarmUpAllowanceBytes,
+    };
+    const auto ladder_for = [&](std::uint32_t concurrency, bool pins, bool chunk_pinned) {
+        Ladder ladder{.concurrency = concurrency,
+                      .kv          = pins ? resolved.kv_capacity
+                                          : KvCapacityPolicy::automatic(
+                                       kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes
+                                                    : kDefaultKvCapacityHeadroomBytes),
+                      .main        = pins};
+        PlanLadderInputs inputs{
+            .context_ceiling  = unfitted.max_context,
+            .context_pinned   = pins && !context.automatic,
+            .concurrency      = concurrency,
+            .kv_tokens_pinned = pins && !kv_automatic ? std::optional<std::uint32_t>(
+                                                            resolved.kv_capacity.explicit_tokens)
+                                                      : std::nullopt,
+            .states_pinned    = configured_states,
+            .states_default   = automatic_cached_device_states(concurrency),
+            .states_minimum   = states_minimum,
+            .prefill_chunk    = unfitted.prefill_chunk,
+            .chunk_pinned     = chunk_pinned,
+            // A class reserve beside the pool (a discrete fact: the driver model, the display,
+            // an integrated GPU): the survival range then has its rungs without it.
+            .class_reserve = pins ? margins.reserve > margins.base
+                                  : advice_margins.reserve > advice_margins.base,
+            // The last-resort rung only without speculation: a drafter's plan that fits nothing
+            // longer is refused, and ninferno-serve's --spec auto tries the profile's fit fallback,
+            // shallower drafts and the MTP head, then plain decode, which hold more.
+            .last_resort_context =
+                resolved.speculative.backend == SpeculativeBackend::None
+                    ? std::max(kAutomaticContextGrain,
+                               (round_tokens + 2U + kAutomaticContextGrain - 1U) /
+                                   kAutomaticContextGrain * kAutomaticContextGrain)
+                    : 0U,
+        };
+        const std::vector<PlanRung> candidates = plan_ladder(inputs);
+        ladder.rungs = prune_plan_ladder(candidates, [&](std::size_t index) {
+            const std::optional<PlanRungCost> cost = rung_cost(
+                ladder, candidates[index], false, false, ladder.main && index == 0, false);
+            return cost ? std::optional<std::uint64_t>(cost->bytes) : std::nullopt;
+        });
+        return ladder;
+    };
+
+    // The planning's own time (the ladder's planners and the selection), for the log only: no
+    // decision reads it.
+    const auto ladder_started = Clock::now();
+    const Ladder served =
+        ladder_for(resolved.max_concurrency, true, !resolved.prefill_chunk_automatic);
+    Clock::duration planning_time = Clock::now() - ladder_started;
+    if (served.rungs.empty()) { throw std::logic_error("the plan ladder has no rung"); }
+    const auto apply_rung = [&](std::size_t index) {
+        const PlanRung& rung   = served.rungs.at(index);
+        resolved               = unfitted;
+        resolved.max_context   = rung.max_context;
+        resolved.prefill_chunk = rung.prefill_chunk;
+        context.tokens         = rung.max_context;
+    };
+    // The longest context a concurrency's automatic ladder (every axis but the chunk automatic)
+    // fits in `free_bytes`; nullopt: none.
+    const auto longest_context = [&](std::uint32_t concurrency, std::uint64_t free_bytes,
+                                     bool chunk_pinned) -> std::optional<std::uint32_t> {
+        const Ladder ladder                    = ladder_for(concurrency, false, chunk_pinned);
+        const std::optional<PlanSelection> fit = select_plan_rung(
+            ladder.rungs, cost_of(ladder, graph_memory_held, true), free_bytes, advice_margins);
+        if (!fit) { return std::nullopt; }
+        return ladder.rungs[fit->rung].max_context;
+    };
+    // Each lower concurrency that fits a longer automatic context than `served_context` (nullopt:
+    // nothing fits at the served concurrency), the highest first.
+    const auto lower_concurrency_fits = [&](std::optional<std::uint32_t> served_context,
+                                            std::uint64_t free_bytes, bool chunk_pinned) {
+        std::vector<ConcurrencyFit> out;
+        for (std::uint32_t concurrency = resolved.max_concurrency - 1U; concurrency >= 1U;
+             --concurrency) {
+            const std::optional<std::uint32_t> fit =
+                longest_context(concurrency, free_bytes, chunk_pinned);
+            if (fit && (!served_context || *fit > *served_context)) {
+                out.push_back({.max_concurrency = concurrency, .max_context = *fit});
+                served_context = fit;
+            }
+            if (served_context && *served_context >= unfitted.max_context) { break; }
+        }
+        return out;
+    };
+    // No rung fits: the refusal names the last rung's need, the free memory and what fits
+    // instead (a CapacityError: ninferno-serve's fallbacks recover by that type).
+    const auto refuse = [&](std::uint64_t free_bytes) {
+        const std::size_t last                = served.rungs.size() - 1U;
+        const std::optional<PlanRungCost> low = cost_of(served, graph_memory_held, true)(last);
+        const PlanReserve tier = margins.allowance != 0 ? PlanReserve::WarmUp : PlanReserve::Soft;
+        const std::uint64_t needed = low ? plan_needed_bytes(*low, margins, tier) : 0;
+        std::string message =
+            "no rung of the " + std::to_string(served.rungs.size()) +
+            "-rung plan ladder fits the " + gib_text(free_bytes) +
+            " of Device memory free after the weights (" + gib_text(summary.host_to_device_bytes) +
+            "): its last rung, " +
+            describe_plan_rung(served.rungs[last], resolved.max_concurrency) +
+            (low ? ", needs " + gib_text(needed) + ", " +
+                       gib_text(needed > free_bytes ? needed - free_bytes : 0) + " more"
+                 : std::string(", cannot be planned for this model")) +
+            ".";
+        // What fits instead: the longest context at this concurrency (when the context, the pool
+        // or the states were asked for) and at each lower one that fits longer.
+        const bool pinned = !context.automatic || !kv_automatic || configured_states.has_value();
+        const bool chunk_pinned = !resolved.prefill_chunk_automatic;
+        const auto what_fits    = [&](bool chunk_kept) {
+            std::vector<ConcurrencyFit> out;
+            if (pinned) {
+                if (const auto here =
+                        longest_context(resolved.max_concurrency, free_bytes, chunk_kept)) {
+                    out.push_back(
+                        {.max_concurrency = resolved.max_concurrency, .max_context = *here});
+                }
+            }
+            if (resolved.max_concurrency > 1) {
+                const std::vector<ConcurrencyFit> lower = lower_concurrency_fits(
+                    out.empty() ? std::nullopt
+                                : std::optional<std::uint32_t>(out.back().max_context),
+                    free_bytes, chunk_kept);
+                out.insert(out.end(), lower.begin(), lower.end());
+            }
+            return out;
+        };
+        std::vector<ConcurrencyFit> fits = what_fits(chunk_pinned);
+        std::vector<std::uint32_t> chunks{unfitted.prefill_chunk};
+        if (!chunk_pinned) {
+            for (std::uint32_t chunk = unfitted.prefill_chunk / 2;
                  chunk >= kNarrowestAutomaticPrefillChunk; chunk /= 2) {
                 if (chunk % kPrefillChunkQuantum == 0) { chunks.push_back(chunk); }
             }
         }
-        // Whether the plan at a max_context fits, for a concurrency, chunk, cached-state policy and
-        // KV capacity policy.
-        const auto fits_at = [&](std::uint32_t concurrency, std::uint32_t chunk,
-                                 const CachedStatePolicy& states, const KvCapacityPolicy& kv) {
-            return [&, concurrency, chunk, states, kv](std::uint32_t max_context) {
-                return try_resolve_runtime_capacity(
-                           kv, states,
-                           [&](std::uint32_t count) {
-                               return models::qwen3_5::make_sequence_planner(
-                                          execution, device,
-                                          planned_at(max_context, count, concurrency, chunk, kv),
-                                          graph_memory_held)
-                                   .capacity_curve();
-                           },
-                           fit_free)
-                    .has_value();
-            };
-        };
-        // An automatic context takes an automatic KV capacity: the resolved one when it is
-        // automatic, else (the context was asked for; the lower concurrencies a refusal names) the
-        // default one.
-        const KvCapacityPolicy automatic_kv =
-            resolved.kv_capacity.mode == KvCapacityMode::Automatic
-                ? resolved.kv_capacity
-                : with_unified_memory_headroom(
-                      with_paravirtual_headroom(KvCapacityPolicy::automatic(),
-                                                paravirtualized_gpu(device.device), drives_display(device.device),
-                                                device.props.totalGlobalMem),
-                      device.props.integrated != 0, device.props.totalGlobalMem);
-        // An automatic context leaves the best-effort headroom too (a GPU Windows shares): at the
-        // longest context the pool is its minimum and has no pages to give up for it, so the card
-        // filled and Windows paged it out (Qwen3.8-27B at its own 262,144 tokens: "free 0 B", a
-        // decode round of 53.7 s). Below the floor the context takes the headroom back.
-        const KvCapacityPolicy context_kv = [&] {
-            KvCapacityPolicy policy = automatic_kv;
-            policy.automatic_headroom_bytes += policy.best_effort_headroom_bytes;
-            policy.best_effort_headroom_bytes = 0;
-            return policy;
-        }();
-        const bool context_headroom =
-            context_kv.automatic_headroom_bytes != automatic_kv.automatic_headroom_bytes;
-        // The cached-state policies for a concurrency: the preferred count (configured, else one
-        // per slot), and the automatic one that may go down to the minimum.
-        const auto states_for = [&](std::uint32_t concurrency) {
-            CachedStatePolicy sizing    = sizing_states;
-            sizing.automatic_default    = concurrency;
-            CachedStatePolicy preferred = sizing;
-            preferred.configured        = cached_states.configured.value_or(concurrency);
-            return std::pair{preferred, sizing};
-        };
-        const std::uint32_t ceiling = resolved.max_context;
-        const std::uint32_t floor   = std::min(ceiling, kAutomaticContextFloor);
-        // The longest automatic context a concurrency fits: with the preferred cached states, then,
-        // below the floor, with fewer of them; at the widest chunk that reaches the floor, else at
-        // the chunk with the longest context.
-        struct ContextFit {
-            std::optional<std::uint32_t> context;
-            std::uint32_t chunk = 0;
-        };
-        const auto longest_context = [&](std::uint32_t concurrency) {
-            const auto [preferred, sizing] = states_for(concurrency);
-            ContextFit best{.context = std::nullopt, .chunk = chunks.back()};
-            for (const std::uint32_t chunk : chunks) {
-                std::optional<std::uint32_t> chosen = largest_fitting_context(
-                    ceiling, fits_at(concurrency, chunk, preferred, context_kv));
-                if (context_headroom && (!chosen || *chosen < floor)) {
-                    chosen = largest_fitting_context(
-                        ceiling, fits_at(concurrency, chunk, preferred, automatic_kv));
-                }
-                if (!cached_states.configured && (!chosen || *chosen < floor)) {
-                    const std::optional<std::uint32_t> fewer_states =
-                        largest_fitting_context(ceiling,
-                                                fits_at(concurrency, chunk, sizing, automatic_kv));
-                    if (fewer_states && (!chosen || *fewer_states > *chosen)) {
-                        chosen = fewer_states;
-                    }
-                }
-                if (chosen && (!best.context || *chosen > *best.context)) {
-                    best = {.context = chosen, .chunk = chunk};
-                }
-                if (best.context && *best.context >= floor) { break; }
-            }
-            return best;
-        };
-        // Each lower concurrency that fits a longer automatic context than `served` (nullopt:
-        // nothing fits at the served concurrency), the highest first.
-        const auto lower_concurrency_fits = [&](std::optional<std::uint32_t> served) {
-            std::vector<ConcurrencyFit> out;
-            for (std::uint32_t concurrency = resolved.max_concurrency - 1U; concurrency >= 1U;
-                 --concurrency) {
-                const ContextFit fit = longest_context(concurrency);
-                if (fit.context && (!served || *fit.context > *served)) {
-                    out.push_back({.max_concurrency = concurrency, .max_context = *fit.context});
-                    served = fit.context;
-                }
-                if (served && *served >= ceiling) { break; }
-            }
-            return out;
-        };
-        // With an automatic KV capacity, an automatic max_context is the longest candidate whose
-        // plan fits (longest_context); below the floor with more than one slot, the lower
-        // concurrencies that fit longer are recorded for the operator. An explicit max_context (or
-        // one bounded by an explicit KV capacity) takes the widest chunk it fits with. When nothing
-        // fits, the narrowest chunk and the shortest candidate are resolved below and refused with
-        // their numbers.
-        if (context.automatic && resolved.kv_capacity.mode == KvCapacityMode::Automatic) {
-            const ContextFit fit   = longest_context(resolved.max_concurrency);
-            resolved.prefill_chunk = fit.chunk;
-            resolved.max_context   = fit.context.value_or(std::min(ceiling, kAutomaticContextMinimum));
-            if (fit.context && *fit.context < floor && resolved.max_concurrency > 1) {
-                context.lower_concurrency_fits = lower_concurrency_fits(fit.context);
-            }
-        } else if (chunks.size() > 1) {
-            const auto [preferred, sizing] = states_for(resolved.max_concurrency);
-            resolved.prefill_chunk         = chunks.back();
-            for (const std::uint32_t chunk : chunks) {
-                if (fits_at(resolved.max_concurrency, chunk, preferred,
-                            resolved.kv_capacity)(resolved.max_context) ||
-                    (!cached_states.configured &&
-                     fits_at(resolved.max_concurrency, chunk, sizing,
-                             resolved.kv_capacity)(resolved.max_context))) {
-                    resolved.prefill_chunk = chunk;
-                    break;
-                }
+        std::uint32_t narrowed_from = 0;
+        if (fits.empty() && chunk_pinned) {
+            // An explicit --prefill-chunk nothing fits with: what the narrower chunks fit.
+            fits = what_fits(false);
+            if (!fits.empty()) {
+                narrowed_from = unfitted.prefill_chunk;
+                chunks        = {kNarrowestAutomaticPrefillChunk};
             }
         }
-        context.tokens = resolved.max_context;
-        std::optional<KvCapacityResolution> resolved_capacity;
-        try {
-            resolved_capacity = resolve_runtime_capacity(
-                resolved.kv_capacity, sizing_states,
-                [&](std::uint32_t count) { return planner_for(count).capacity_curve(); },
-                free_bytes);
-        } catch (const CapacityError& error) {
-            // An advised plan starts with the kernel warm-up and pins the Host tier, and both take
-            // Device memory past the fit (the page tables: 2 MiB per pinned GiB). Before the
-            // warm-up the advice is fitted to the free memory without them; after it, they are
-            // measured and already taken off.
-            if (!warmed) {
-                const ContextCacheOptions& tier = resolved.context_cache;
-                const std::size_t pinned =
-                    tier.enabled ? tier.host_kv_capacity_bytes +
-                                       (tier.host_state_slots != 0
-                                            ? planner_for(sizing_states.automatic_minimum)
-                                                      .host_state_image_bytes() *
-                                                  tier.host_state_slots
-                                            : 0)
-                                 : 0;
-                const std::size_t reserve = kAdviceWarmUpReserveBytes + (pinned >> 9);
-                fit_free                  = free_bytes > reserve ? free_bytes - reserve : 0;
-            }
-            // What fits instead: the longest context at this concurrency (when the context was not
-            // automatic) and at each lower one that fits longer.
-            const auto what_fits = [&] {
-                std::vector<ConcurrencyFit> out;
-                if (!context.automatic || resolved.kv_capacity.mode != KvCapacityMode::Automatic) {
-                    if (const auto here = longest_context(resolved.max_concurrency).context) {
-                        out.push_back(
-                            {.max_concurrency = resolved.max_concurrency, .max_context = *here});
-                    }
-                }
-                if (resolved.max_concurrency > 1) {
-                    const std::vector<ConcurrencyFit> lower = lower_concurrency_fits(
-                        out.empty() ? std::nullopt
-                                    : std::optional<std::uint32_t>(out.back().max_context));
-                    out.insert(out.end(), lower.begin(), lower.end());
-                }
-                return out;
+        const bool explicit_plan = !context.automatic && !resolved.prefill_chunk_automatic &&
+                                   !kv_automatic && configured_states.has_value();
+        const std::string instead = capacity_advice({
+            .fits                    = fits,
+            .chunks                  = chunks,
+            .narrowed_from           = narrowed_from,
+            .prefill_chunk_automatic = resolved.prefill_chunk_automatic,
+            .kv_capacity_explicit    = !kv_automatic,
+            .context_automatic       = context.automatic,
+            .ceiling                 = unfitted.max_context,
+            .max_concurrency         = resolved.max_concurrency,
+            .graph_allowance = explicit_plan && resolved.use_cuda_graph && !graph_memory_held,
+        });
+        throw_capacity_shortage(CapacityError(message), instead);
+    };
+    // The resolution of a rung (its curve at its pages), against the free memory it was picked
+    // in and the margin it keeps.
+    const auto resolution_of = [&](std::size_t index, std::uint64_t free_bytes,
+                                   PlanReserve reserve) {
+        const PlanRung& rung = served.rungs.at(index);
+        const models::qwen3_5::SequencePlanner planner =
+            planner_at(served, rung, graph_memory_held);
+        const SequenceCapacityCurve& curve = planner.capacity_curve();
+        const std::uint32_t pages          = pages_in(served, rung, curve);
+        const std::size_t reservation      = curve.reservation_bytes(pages);
+        return KvCapacityResolution{
+            .mode                                 = resolved.kv_capacity.mode,
+            .main_page_groups                     = pages,
+            .maximum_main_page_groups             = curve.maximum_main_page_groups,
+            .resolved_tokens                      = curve.resolved_tokens(pages),
+            .minimum_runtime_reservation_bytes    = curve.minimum_device_reservation_bytes,
+            .bytes_per_additional_main_page_group = curve.bytes_per_additional_main_page_group,
+            .runtime_reservation_bytes            = reservation,
+            .available_after_weights_bytes        = free_bytes,
+            .automatic_headroom_bytes             = reserve == PlanReserve::Kept
+                                                        ? std::max(margins.base, margins.reserve)
+                                                        : margins.base,
+            .planned_slack_bytes          = free_bytes > reservation ? free_bytes - reservation : 0,
+            .cached_device_states         = rung.cached_states,
+            .cached_device_states_default = configured_states.value_or(
+                automatic_cached_device_states(resolved.max_concurrency)),
+            .cached_device_states_automatic = !configured_states.has_value(),
+        };
+    };
+    // The rung summary the logs, /v1/models and the dry run report.
+    const auto rung_summary = [&](std::size_t index, const PlanRungCostFn& cost) {
+        const PlanRung& rung = served.rungs.at(index);
+        PlanRungSummary out{
+            .max_context          = rung.max_context,
+            .kv_tokens            = rung.kv_pages * kAutomaticContextGrain,
+            .cached_device_states = rung.cached_states,
+            .prefill_chunk        = rung.prefill_chunk,
+            // A survival rung keeps the axis it stepped ("survival chunk").
+            .step     = rung.survival && rung.step != PlanStep::Survival &&
+                            rung.step != PlanStep::LastResort
+                            ? "survival " + std::string(plan_step_name(rung.step))
+                            : std::string(plan_step_name(rung.step)),
+            .survival = rung.survival,
+        };
+        if (const std::optional<PlanRungCost> c = cost(index)) {
+            out.bytes = c->bytes;
+            // A survival rung gives the class reserve up (plan_ladder.h, select_plan_rung).
+            out.needed_bytes = plan_needed_bytes(
+                *c, margins, rung.survival ? PlanReserve::Soft : PlanReserve::Kept);
+        }
+        return out;
+    };
+    // `after_warm_up`: the free memory the warm-up's last check measured, when it moved the plan
+    // down; the shortfalls are then the measured ones (the graphs held, the pinning taken) and the
+    // class reserve is not blamed for the move.
+    const auto plan_summary = [&](PlanSelection chosen, std::size_t selected_index,
+                                  std::uint64_t free_bytes, bool with_ladder,
+                                  std::optional<std::uint64_t> after_warm_up) {
+        const PlanRungCostFn cost = cost_of(served, false, true);
+        const PlanRungCostFn measured_cost = after_warm_up ? cost_of(served, true, false) : cost;
+        const std::uint64_t measured_free  = after_warm_up.value_or(free_bytes);
+        PlanSummary out;
+        out.rung               = static_cast<std::uint32_t>(chosen.rung + 1U);
+        out.rungs              = static_cast<std::uint32_t>(served.rungs.size());
+        out.selected_rung      = static_cast<std::uint32_t>(selected_index + 1U);
+        out.reserve            = std::string(plan_reserve_name(chosen.reserve));
+        out.chosen             = rung_summary(chosen.rung, cost);
+        out.device_total_bytes = device.props.totalGlobalMem;
+        out.weight_bytes       = summary.host_to_device_bytes;
+        out.free_bytes         = free_bytes;
+        out.base_margin_bytes  = margins.base;
+        out.reserve_bytes      = margins.reserve;
+        out.allowance_bytes    = margins.allowance;
+        out.planning_milliseconds = static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(planning_time).count());
+        const auto shortfall = [&](std::size_t index) -> std::uint64_t {
+            const std::optional<PlanRungCost> c = measured_cost(index);
+            if (!c) { return 0; }
+            PlanMargins checked = margins;
+            if (after_warm_up) { checked.allowance = 0; } // what it was for is measured
+            const std::uint64_t needed = plan_needed_bytes(
+                *c, checked, served.rungs[index].survival ? PlanReserve::Soft : PlanReserve::Kept);
+            return needed > measured_free ? needed - measured_free : 0;
+        };
+        // The rungs above that fit without the class reserve (the floor admitted Soft and below
+        // never keep it): the first is the longest context the reserve alone holds back.
+        std::optional<std::size_t> reserve_limited;
+        if (chosen.rung > 0 && chosen.reserve == PlanReserve::Kept && !after_warm_up &&
+            margins.reserve > margins.base) {
+            const auto fits_soft = [&](std::size_t index) {
+                const std::optional<PlanRungCost> c = cost(index);
+                return c && plan_needed_bytes(*c, margins, PlanReserve::Soft) <= free_bytes;
             };
-            std::vector<ConcurrencyFit> fits = what_fits();
-            // An explicit --prefill-chunk nothing fits with: the widest of the chunks an automatic
-            // one narrows to (each half down to the narrowest) that fits, and what it fits.
-            std::uint32_t narrowed_from = 0;
-            if (fits.empty() && !resolved.prefill_chunk_automatic) {
-                const std::uint32_t asked = chunks.front();
-                for (std::uint32_t chunk = asked / 2; chunk >= kNarrowestAutomaticPrefillChunk;
-                     chunk /= 2) {
-                    if (chunk % kPrefillChunkQuantum != 0) { continue; }
-                    chunks = {chunk};
-                    fits   = what_fits();
-                    if (!fits.empty()) {
-                        narrowed_from = asked;
+            if (fits_soft(chosen.rung - 1U)) {
+                for (std::size_t index = 0; index < chosen.rung; ++index) {
+                    if (fits_soft(index)) {
+                        reserve_limited = index;
                         break;
                     }
                 }
-                if (fits.empty()) { chunks = {asked}; }
             }
-            // What the fits assume: the chunks the fit may take, and the automatic KV capacity the
-            // longest contexts are measured at (an explicit one is replaced). Every sizing choice
-            // explicit, no kernel warm-up measures the CUDA graphs' memory: the plan reserves a
-            // bound for it instead (SequencePlanner's graph allowance).
-            const bool explicit_plan = !context.automatic && !resolved.prefill_chunk_automatic &&
-                                       resolved.kv_capacity.mode != KvCapacityMode::Automatic &&
-                                       cached_states.configured.has_value();
-            const bool graph_allowance =
-                explicit_plan && resolved.use_cuda_graph && !graph_memory_held;
-            const std::string instead = capacity_advice({
-                .fits                    = fits,
-                .chunks                  = chunks,
-                .narrowed_from           = narrowed_from,
-                .prefill_chunk_automatic = resolved.prefill_chunk_automatic,
-                .kv_capacity_explicit    = resolved.kv_capacity.mode != KvCapacityMode::Automatic,
-                .context_automatic       = context.automatic,
-                .ceiling                 = ceiling,
-                .max_concurrency         = resolved.max_concurrency,
-                .graph_allowance         = graph_allowance,
-            });
-            throw_capacity_shortage(error, instead);
         }
-        return *resolved_capacity;
+        // What the class reserve is kept for, in the user's words, and what giving it up risks.
+        const bool shares_host        = device.props.integrated != 0;
+        const std::string reserve_for = shares_host    ? "the host (the GPU shares its memory)"
+                                        : with_display ? "the Windows desktop"
+                                                       : "Windows";
+        const std::string reserve_risk =
+            shares_host ? "the host may run short of memory"
+                        : "the desktop may stall when Windows pages the card out";
+        if (chosen.rung > 0) {
+            out.top_shortfall_bytes  = shortfall(0);
+            out.next_shortfall_bytes = shortfall(chosen.rung - 1U);
+        }
+        if (reserve_limited) {
+            const PlanRung& longer           = served.rungs[*reserve_limited];
+            out.reserve_limited_context      = longer.max_context;
+            out.reserve_limited_kv_tokens    = longer.kv_pages * kAutomaticContextGrain;
+            const std::string context_option = "--max-context " + grouped_count(longer.max_context);
+            const std::string kv_option =
+                "--kv-capacity " + grouped_count(out.reserve_limited_kv_tokens);
+            // At one lane an explicit --max-context makes the pool explicit (that context) and
+            // keeps no reserve; with more lanes the pool must be asked for too.
+            const std::string override_options = resolved.max_concurrency == 1
+                                                     ? context_option + " (or " + kv_option + ")"
+                                                     : context_option + " " + kv_option;
+            const PlanRung& served_rung        = served.rungs[chosen.rung];
+            const std::string limit =
+                longer.max_context != served_rung.max_context
+                    ? "the context to " + grouped_count(served_rung.max_context)
+                    : "the plan to rung " + std::to_string(chosen.rung + 1U) + " (" +
+                          describe_plan_rung(served_rung, resolved.max_concurrency) + ")";
+            out.advice.push_back("the " + gib_text(margins.reserve) + " kept for " + reserve_for +
+                                 " limits " + limit + "; " + override_options +
+                                 " gives it up, and " + reserve_risk);
+        } else if (chosen.rung > 0 && out.next_shortfall_bytes != 0) {
+            out.advice.push_back(
+                gib_text(out.next_shortfall_bytes) + " more free memory would serve rung " +
+                std::to_string(chosen.rung) + " (" +
+                describe_plan_rung(served.rungs[chosen.rung - 1U], resolved.max_concurrency) +
+                "), " + gib_text(out.top_shortfall_bytes) + " the top rung (" +
+                describe_plan_rung(served.rungs[0], resolved.max_concurrency) + ")");
+        }
+        if (chosen.reserve != PlanReserve::Kept && margins.reserve > margins.base) {
+            out.advice.push_back("the " + gib_text(margins.reserve) + " this GPU keeps for " +
+                                 reserve_for + " is not kept: " + reserve_risk +
+                                 "; a shorter --max-context or a lower --max-concurrency keeps it");
+        }
+        if (served.rungs[chosen.rung].survival &&
+            served.rungs[chosen.rung].max_context <
+                std::min(unfitted.max_context, kPlanContextFloor)) {
+            out.advice.push_back("the context of " +
+                                 grouped_count(served.rungs[chosen.rung].max_context) +
+                                 " tokens is below the " +
+                                 grouped_count(std::min(unfitted.max_context, kPlanContextFloor)) +
+                                 "-token floor: long prompts are refused with HTTP 400");
+        }
+        if (with_ladder) {
+            for (std::size_t index = 0; index < served.rungs.size(); ++index) {
+                out.ladder.push_back(rung_summary(index, cost));
+            }
+        }
+        return out;
     };
-    // The kernel warm-up, before the free memory an automatic fit depends on is measured for it.
-    // CUDA loads a kernel's code into Device memory at its first launch (lazy module loading), and
-    // the driver grows the local memory it keeps for every resident thread (cudaLimitStackSize) at
-    // the first launch of a kernel with a larger frame; neither is given back. The warm-up starts
-    // the stack limit from zero, so it ends at the largest frame of the plan's kernels. Which
-    // kernels run is what the routes choose for this model and plan, so construction runs them: a
-    // probe Program with the fitted concurrency, speculation, KV formats and prefill chunk takes
-    // one request of every prefill width 1..chunk through the request path (admission, the prefill
-    // with its speculative and sampling work, the first token and, once, a decode round), and a
-    // probe Program at the fitted context captures and launches every decode graph class of it. The
-    // fit is then made again from the free memory left, until the fitted context stops moving (a
-    // shorter context's graph classes are the longer one's, cut at the same ranges). The probes
-    // hold one request's KV and no cached states or Host tier, so they fit wherever the plan does.
-    // The driver keeps a destroyed graph's memory for the next graph, so once the probe
-    // built the fitted context's graph set, the served Program's identical set takes that memory
-    // again and the fit reserves no graph allowance for it.
-    const bool automatic_fit = unfitted_context.automatic || unfitted.prefill_chunk_automatic ||
-                               unfitted.kv_capacity.mode == KvCapacityMode::Automatic ||
-                               !cached_states.configured;
+
     // The warm-up below starts the per-thread stack from zero and measures what the plan's kernels
-    // raise it to. It is dropped before the first fit too: loading raised it (the driver's default
-    // times every resident thread, ~120 MiB on an RTX 5080 against the plan's 48 B per thread), and
-    // a fit that counted it as used would refuse an asked context the warm-up then finds room for.
-    // The load-time route tuner times on buffers of its own and frees them: before the stack limit
-    // and the free memory are read.
-    // Exact activations run the invariant routes, which the tuner does not touch: no family times
-    // them (only the Nemotron family skipped it; the others tuned for nothing).
-    if (options.activations != ActivationMode::Exact) {
+    // raise it to. It is dropped before the measurement too: loading raised it (the driver's
+    // default times every resident thread, ~120 MiB on an RTX 5080 against the plan's 48 B per
+    // thread), and a selection that counted it as used would pick a lower rung than the warm-up
+    // then finds room for. The load-time route tuner times on buffers of its own and frees them:
+    // before the stack limit and the free memory are read. Exact activations run the invariant
+    // routes, which the tuner does not touch; the dry run does not tune.
+    if (options.activations != ActivationMode::Exact && dry_run == nullptr) {
         summary.moe_tune = execution.tune_routes(device.stream);
     }
-    // The generic path's dense tuner times each dense problem at its first eager call (the warm-up's
-    // prefill), before a decode graph is captured with it (ops/generic/generic_tune.cpp).
-    ops::detail::generic::enable_dense_tune(true);
+    // The generic path's dense tuner times each dense problem at its first eager call (the
+    // warm-up's prefill), before a decode graph is captured with it (ops/generic/generic_tune.cpp).
+    if (dry_run == nullptr) { ops::detail::generic::enable_dense_tune(true); }
     const std::size_t stack_limit_at_load = current_stack_limit_bytes();
     if (automatic_fit) { CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 0)); }
+    // The one observation: the free Device memory after the weights (the target's and a separate
+    // drafter's, both uploaded by the family load) picks the first rung that fits.
     const std::size_t free_after_weights = current_free_device_bytes();
-    // Before the warm-up the fit reserves the graph allowance, a bound about twice the largest
-    // measured class. An automatic context shrinks under it and grows back once the warm-up
-    // measured the graphs; an asked context cannot shrink, so a refusal here would stand on the
-    // bound alone (Gemma 4 31B IQ3_XXS + MTP at 4 x 4,096 on an RTX 5080: 0.1 GiB short of the
-    // bound, while the automatic context reached the same 4,096 with the graphs measured). When
-    // the warm-up runs, such a plan is made without the allowance and the warm-up's probe measures
-    // the graphs: the fit after it decides, from the free memory the graphs left.
-    KvCapacityResolution resolution;
-    try {
-        resolution = fit_plan(free_after_weights, false);
-    } catch (const CapacityError&) {
-        if (!automatic_fit || !unfitted.use_cuda_graph || graph_memory_held) { throw; }
-        graph_memory_held = true;
-        resolution        = fit_plan(free_after_weights, false);
+    const auto select_started            = Clock::now();
+    const std::optional<PlanSelection> selected =
+        select_plan_rung(served.rungs, cost_of(served, false, true), free_after_weights, margins);
+    planning_time += Clock::now() - select_started;
+    if (dry_run != nullptr) {
+        if (!selected) {
+            *dry_run =
+                plan_summary({.rung = served.rungs.size() - 1U, .reserve = PlanReserve::WarmUp},
+                             served.rungs.size() - 1U, free_after_weights, true, std::nullopt);
+            dry_run->rung          = 0; // nothing fits
+            dry_run->selected_rung = 0;
+            dry_run->reserve.clear();
+            // The refusal alone: no reserve advice for a plan that is not served.
+            dry_run->advice.clear();
+            try {
+                refuse(free_after_weights);
+            } catch (const CapacityError& refusal) { dry_run->advice.push_back(refusal.what()); }
+        } else {
+            *dry_run =
+                plan_summary(*selected, selected->rung, free_after_weights, true, std::nullopt);
+            if (served.rungs[selected->rung].max_context <
+                    std::min(unfitted.max_context, kPlanContextFloor) &&
+                resolved.max_concurrency > 1 && context.automatic) {
+                for (const ConcurrencyFit& fit : lower_concurrency_fits(
+                         served.rungs[selected->rung].max_context, free_after_weights,
+                         !resolved.prefill_chunk_automatic)) {
+                    dry_run->advice.push_back("--max-concurrency " +
+                                              std::to_string(fit.max_concurrency) + " fits " +
+                                              grouped_count(fit.max_context) + " tokens");
+                }
+            }
+        }
+        if (automatic_fit) {
+            CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, stack_limit_at_load));
+        }
+        return {};
     }
+    if (!selected) { refuse(free_after_weights); }
+    PlanSelection chosen = *selected;
+    // A WarmUp admission was made on the held bytes: the plan holds the graphs from here on, and
+    // the warm-up's probe measures them (plan_ladder.h, plan_graphs_held). Otherwise every check
+    // before the probe keeps the planner's graph allowance.
+    graph_memory_held = plan_graphs_held(chosen, false);
+    apply_rung(chosen.rung);
+    KvCapacityResolution resolution =
+        resolution_of(chosen.rung, free_after_weights, chosen.reserve);
+    // The kernel warm-up, before the plan is final. CUDA loads a kernel's code into Device memory
+    // at its first launch (lazy module loading), and the driver grows the local memory it keeps for
+    // every resident thread (cudaLimitStackSize) at the first launch of a kernel with a larger
+    // frame; neither is given back. The warm-up starts the stack limit from zero, so it ends at
+    // the largest frame of the plan's kernels. Which kernels run is what the routes choose for this
+    // model and plan, so construction runs them: a probe Program with the rung's concurrency,
+    // speculation, KV formats and prefill chunk takes one request of every prefill width 1..chunk
+    // through the request path (admission, the prefill with its speculative and sampling work, the
+    // first token and, once, a decode round), and a probe Program at the rung's context captures
+    // and launches every decode graph class of it. The selection kept kPlanWarmUpAllowanceBytes and
+    // the planned graph allowance for this; the free memory left is then measured, and the rung
+    // stays when it still fits, else the plan moves to the first lower rung that does (never to a
+    // higher one: re-measuring cannot move the plan above the declared selection). The probes hold
+    // one request's KV and no cached states or Host tier, so they fit wherever the plan does. The
+    // driver keeps a destroyed graph's memory for the next graph, so once the probe built the
+    // rung's graph set, the served Program's identical set takes that memory again and the plan
+    // reserves no graph allowance for it.
     KernelWarmUpResolution warm_up;
+    // The free memory the warm-up's last check measured (the plan summary's shortfalls after a
+    // move).
+    std::uint64_t last_measured = free_after_weights;
     if (automatic_fit) {
         StartupPhaseScope warming(options.startup_observer, StartupPhase::KernelWarmUp);
         const auto warm_started            = Clock::now();
@@ -905,12 +1162,6 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
                 warm_up.stack_limit_source = std::move(step);
             }
         };
-        // The longest decode round a request asks for: the widest launch window and its target.
-        std::uint32_t window = resolved.speculative.draft_tokens;
-        for (const std::uint32_t k : resolved.speculative.request_draft_tokens) {
-            window = std::max(window, k);
-        }
-        const std::uint32_t round_tokens = window + 1U;
         std::size_t probe_buffer_bytes   = 0;
         const auto probe_program = [&](std::uint32_t max_context) {
             const std::uint32_t kv_tokens = std::max(
@@ -933,10 +1184,10 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
             const std::uint32_t probe_context =
                 std::min(resolved.max_context, resolved.prefill_chunk + round_tokens + 1U);
             if (probe_context <= round_tokens + 1U) {
-                // The memory fit left too short a context for the widest round: plain decode (or
-                // a shallower speculation) needs less, so this is a capacity refusal.
+                // The rung left too short a context for the widest round: plain decode (or a
+                // shallower speculation) needs less, so this is a capacity refusal.
                 throw CapacityError(
-                    "the fitted context of " + std::to_string(probe_context) +
+                    "the plan's context of " + std::to_string(probe_context) +
                     " tokens does not hold one prompt token and one decode round of " +
                     std::to_string(round_tokens) + " tokens");
             }
@@ -974,14 +1225,15 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         }
         // The context cache's Host tier is pinned host memory, and the driver maps every pinned
         // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
-        // after the fit, when the Program pins. The fit reserves what pinning the fitted plan's two
-        // Host tier buffers (its StateImages, its KV) takes, measured by pinning buffers of those
-        // sizes; a fit whose sizes differ from the measured ones is made again.
+        // after the plan, when the Program pins. The selection declared it; here it is measured by
+        // pinning buffers of the rung's two Host tier sizes (its StateImages, its KV), and a rung
+        // whose sizes differ from the measured ones is checked again.
         const auto host_tier_sizes = [&]() -> std::pair<std::size_t, std::size_t> {
             const ContextCacheOptions& tier = resolved.context_cache;
             const std::size_t states =
                 tier.enabled && tier.host_state_slots != 0
-                    ? planner_for(resolution.cached_device_states).host_state_image_bytes() *
+                    ? planner_at(served, served.rungs[chosen.rung], graph_memory_held)
+                              .host_state_image_bytes() *
                           tier.host_state_slots
                     : 0;
             return {states, tier.enabled ? tier.host_kv_capacity_bytes : 0};
@@ -999,32 +1251,42 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         std::uint32_t probed = 0;
         // The graph memory the last probe's destruction gave back beyond its buffers: a driver
         // that keeps it gives back none; WDDM (WSL 2) gave back all of it, and the served
-        // Program then took it again past the fit (Qwen3.8-27B DFlash2 C=4: 0.8 GiB, the card
+        // Program then took it again past the plan (Qwen3.8-27B DFlash2 C=4: 0.8 GiB, the card
         // filled to 200 MiB of a planned 1 GiB headroom).
         std::size_t returned_graph_bytes = 0;
-        // The graph memory a probe's capture needed beyond the fit's allowance. The allowance is a
-        // bound measured on 4090/5080-class cards; an RTX 2080 Ti's DFlash2 graphs at C=8 took
+        // The graph memory a probe's capture needed beyond the plan's allowance. The allowance is
+        // a bound measured on 4090/5080-class cards; an RTX 2080 Ti's DFlash2 graphs at C=8 took
         // more (Qwen3.8-27B IQ2_XXS, fp32 GDN state: 4 MiB left at the probe's instantiation, after
-        // the four-minute width loop). A probe that does not fit grows this reserve and the fit
-        // shrinks the automatic KV pool under it, so only the probe is repeated.
+        // the four-minute width loop). A probe that does not fit grows this reserve, and the check
+        // below moves the plan to a lower rung under it, so only the probe is repeated.
         std::size_t graph_shortfall_bytes = 0;
         for (std::uint32_t pass = 0;; ++pass) {
             if (pass > kMaximumWarmUpPasses) {
-                throw std::logic_error("the kernel warm-up's fitted context did not settle");
+                throw std::logic_error("the kernel warm-up's plan did not settle");
             }
             const std::size_t free_now = current_free_device_bytes();
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
                                       graph_shortfall_bytes;
-            resolution                 = fit_plan(free_now > taken ? free_now - taken : 0, true);
+            const std::uint64_t measured = free_now > taken ? free_now - taken : 0;
+            last_measured                = measured;
+            // The chosen rung keeps its admission tier (a WarmUp rung: its held bytes and the
+            // base margin), so a probe's 6-40 MiB never refuse it before a graph is measured.
+            const std::optional<PlanSelection> kept =
+                plan_warm_up_check(served.rungs, cost_of(served, graph_memory_held, false),
+                                   free_now, taken, margins, chosen);
+            if (!kept) { refuse(measured); }
+            chosen = *kept;
+            // A move to the last rung on its held bytes holds the graphs from here on.
+            graph_memory_held = plan_graphs_held(chosen, probed != 0);
+            apply_rung(chosen.rung);
+            resolution = resolution_of(chosen.rung, measured, chosen.reserve);
             if (const auto sizes = host_tier_sizes(); sizes != pinned_sizes) {
                 warm_up.host_pin_device_bytes = pinning_device_bytes(sizes);
                 pinned_sizes                  = sizes;
                 continue;
             }
             // A context no longer than the probed one is settled: its graph classes are the
-            // probed context's, cut at the same ranges, and take no more memory. Requiring the
-            // same context let free-memory noise of a page move it each pass (Nemotron 3 30B at
-            // C=4: 634,048 / 635,520 / 635,392 ... tokens, never settled).
+            // probed context's, cut at the same ranges, and take no more memory.
             if (probed != 0 && resolved.max_context <= probed) { break; }
             ++warm_up.graph_passes;
             const std::size_t free_before_probe = current_free_device_bytes();
@@ -1032,8 +1294,8 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
             try {
                 program = probe_program(resolved.max_context);
             } catch (const CapacityError&) {
-                // Only an automatic plan can shrink to make room; an asked one refuses as before.
-                if (unfitted.kv_capacity.mode != KvCapacityMode::Automatic) { throw; }
+                // Only a ladder with a lower rung can make room; the last rung refuses as before.
+                if (chosen.rung + 1U >= served.rungs.size()) { throw; }
                 device.synchronize();
                 graph_shortfall_bytes = graph_shortfall_bytes == 0 ? kGraphShortfallStepBytes
                                                                    : 2 * graph_shortfall_bytes;
@@ -1049,8 +1311,8 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
             const std::size_t free_after_probe = current_free_device_bytes();
             const std::size_t given_back =
                 free_after_probe > free_with_probe ? free_after_probe - free_with_probe : 0;
-            // Never more than the probe took; the largest of the probes', so the fit only
-            // shortens as the probes go.
+            // Never more than the probe took; the largest of the probes', so the plan only
+            // moves down as the probes go.
             const std::size_t returned = std::min(
                 given_back > probe_buffer_bytes ? given_back - probe_buffer_bytes : std::size_t{0},
                 free_before_probe > free_with_probe ? free_before_probe - free_with_probe
@@ -1059,8 +1321,8 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
             warm_up.graph_returned_bytes = returned_graph_bytes;
             probed = resolved.max_context;
             // The driver keeps the destroyed graphs' memory, and the served Program's graphs (this
-            // context's set) take it again: the fits from here on reserve no graph allowance.
-            graph_memory_held = true;
+            // context's set) take it again: the checks from here on reserve no graph allowance.
+            graph_memory_held = plan_graphs_held(chosen, true);
         }
         const std::size_t free_after = current_free_device_bytes();
         warm_up.lasting_bytes = free_before_warm > free_after ? free_before_warm - free_after : 0;
@@ -1068,11 +1330,25 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
         warm_up.seconds = std::chrono::duration<double>(Clock::now() - warm_started).count();
         warming.complete();
     }
-    auto sequence =
-        std::move(planner_for(resolution.cached_device_states)).finalize(resolution.main_page_groups);
+    // The lower concurrencies that fit a longer automatic context, for the operator, when the
+    // rung's context is below the floor.
+    if (context.automatic && kv_automatic && resolved.max_concurrency > 1 &&
+        resolved.max_context < std::min(unfitted.max_context, kPlanContextFloor)) {
+        context.lower_concurrency_fits = lower_concurrency_fits(
+            resolved.max_context, free_after_weights, !resolved.prefill_chunk_automatic);
+    }
+    PlanSummary plan = plan_summary(
+        chosen, selected->rung, free_after_weights, false,
+        chosen.rung != selected->rung ? std::optional<std::uint64_t>(last_measured) : std::nullopt);
+    for (const ConcurrencyFit& fit : context.lower_concurrency_fits) {
+        plan.advice.push_back("--max-concurrency " + std::to_string(fit.max_concurrency) +
+                              " fits " + grouped_count(fit.max_context) + " tokens");
+    }
+    auto sequence = planner_at(served, served.rungs[chosen.rung], graph_memory_held)
+                        .finalize(resolution.main_page_groups);
     if (sequence.device_reservation_bytes() != resolution.runtime_reservation_bytes ||
         sequence.kv_capacity() != resolution.resolved_tokens) {
-        throw std::logic_error("resolved KV capacity does not match the finalized Program plan");
+        throw std::logic_error("the plan's KV capacity does not match the finalized Program plan");
     }
     planning.complete();
     StartupPhaseScope frontend(options.startup_observer, StartupPhase::FrontendInitialize);
@@ -1087,6 +1363,7 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     instance->host_tier              = host_tier;
     instance->context                = context;
     instance->kernel_warm_up         = warm_up;
+    instance->plan                   = std::move(plan);
     StartupPhaseScope program(options.startup_observer, StartupPhase::ProgramInitialize);
     instance->program = models::qwen3_5::create_program(*instance->execution, std::move(sequence),
                                                         device, options.startup_observer);
@@ -1113,6 +1390,21 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     instance->decode_round_shape.weight_bytes = summary.metadata.weight_bytes;
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};
+}
+
+} // namespace
+
+ConstructedModel construct_model(const EngineOptions& options, DeviceContext& device,
+                                 FamilyLoader load) {
+    return construct_or_plan(options, device, load, nullptr);
+}
+
+PlanSummary plan_model(const EngineOptions& options, DeviceContext& device) {
+    validate_engine_options(options);
+    PlanSummary plan;
+    (void)construct_or_plan(options, device,
+                            family_loader(artifact_model_type(options.artifact_path)), &plan);
+    return plan;
 }
 
 } // namespace ninferno::runtime

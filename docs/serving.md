@@ -47,6 +47,9 @@ For a hub id:
 - `$HF_TOKEN` authorizes gated and private models. `HF_HUB_OFFLINE=1` uses the cache only.
 - The served model id is the hub id, without an `@revision`.
 - `--prepare-only` downloads and converts, then exits.
+- `--plan` prints the memory plan these options give on this GPU now (the plan ladder, every rung's
+  bytes, the rung that fits and what would get more), then exits; `--plan --json` prints it as
+  JSON for a UI's fit bar ([reference](reference/serving.md#automatic-context-selection)).
 - `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
@@ -78,7 +81,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--port N` | `8080` | listen port |
 | `--api-key KEY`, `--api-key-file PATH` | unset | require a bearer / `x-api-key` value |
 | `--model-id ID` | `metadata.name`, else the file name | public model alias; it does not change execution |
-| `--max-context N` | auto: model's own context if it fits, else the longest that fits | per-request context ceiling |
+| `--max-context N` | auto: the first rung of the plan ladder that fits (the model's own context at the top) | per-request context ceiling |
 | `--kv-capacity N\|auto` | `auto`; with `--max-context` and one request, that context | shared KV pool size |
 | `--max-concurrency N` | `1` | requests generated at once, `1..8` |
 | `--max-pending-requests N` | `16` | requests allowed to wait for admission |
@@ -239,10 +242,28 @@ Notes that often matter:
 
 ## Memory, context and concurrency
 
-- **Context.** Without `--max-context`, the server serves the model's own context if it fits free GPU
-  memory. Otherwise it serves the longest context that fits (in 64-token pages, at least 1024).
-  A prompt longer than the context returns HTTP 400 `context_length_exceeded`.
-- **KV pool.** `--kv-capacity auto` takes the memory that remains after weights, workspace and
+- **Plan.** Without `--max-context`, the free GPU memory picks the first rung that fits of a
+  declared plan ladder: the model's own context for every request at the top, then the second
+  cached state of each request, the KV pool, the cached Device states (with the Host tier, on by
+  default on Linux, WSL 2 and Windows; without it one per request stays down to 8,192 tokens), the
+  context (steps of about 4.2 % down to 8,192 tokens at chunk 1024), then survival rungs with a
+  warning and without the desktop reserve (8,192 tokens at chunk 1024, then narrower chunks, fewer
+  cached states, shorter contexts). More free memory never selects less. The same model, options and card
+  type always give the same ladder, so the same free memory gives the same plan. The startup log
+  names the rung (`plan | rung k of N: ...`) and how much more free memory the rung above would
+  need; `/v1/models` reports it as `meta.plan_level` and `meta.plan`, and `--plan` prints the whole
+  ladder without starting. A prompt longer than the context returns HTTP 400
+  `context_length_exceeded`.
+- **Desktop reserve.** On Windows (WDDM) and WSL 2 the plan keeps a reserve for what Windows adds
+  while the server runs: an 8th of the card, at most 4 GiB, when the card drives the display (a
+  32nd, at most 1 GiB, headless); on a GPU sharing the host's memory (GB10, Jetson) an 8th, at
+  least 4 GiB. It is given up only by a survival rung or a plan that fits nothing else, both with
+  a warning, and by the options that keep none: the reserve belongs to an automatic KV pool, so an
+  explicit `--kv-capacity` keeps none, and so does an explicit `--max-context` with
+  `--max-concurrency 1` (the pool is then that one context). When the reserve
+  alone limits the plan, the startup warns and names the option that gives it up, for example
+  `--max-context 50,816 (or --kv-capacity 50,816) gives it up, and the desktop may stall`.
+- **KV pool.** `--kv-capacity auto` takes the plan rung's pool, after weights, workspace and
   graphs. One shared pool serves all admitted requests. With an explicit `--max-context` and
   `--max-concurrency 1` the pool is that one context.
 - **Concurrency.** `--max-concurrency` (1..8) sets how many requests decode together. Up to

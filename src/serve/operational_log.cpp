@@ -1,4 +1,5 @@
 #include "serve/operational_log.h"
+#include "serve/plan_report.h"
 #include "serve/generation_service.h"
 
 #include "product/logging/pretty_format.h"
@@ -505,10 +506,14 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         } else {
             origin = "auto: the model's own " + native + " does not fit the " +
                      product::format_pretty_bytes(memory.available_after_weights_bytes) +
-                     " free after weights; the largest that does";
+                     " free after weights; the plan ladder's first rung that does";
         }
         logger_->info("context | {} tokens per request ({})",
                       product::format_pretty_count(memory.max_context), origin);
+        for (OperationalRecord& record :
+             render_plan(memory, !memory.max_context_automatic, engine.max_concurrency)) {
+            write(std::move(record));
+        }
         if (!memory.lower_concurrency_fits.empty()) {
             std::string fits;
             for (const ninferno::ConcurrencyFit& fit : memory.lower_concurrency_fits) {
@@ -516,14 +521,14 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                         std::to_string(fit.max_concurrency) + " fits " +
                         product::format_pretty_count(fit.max_context);
             }
-            logger_->warn("context | {} tokens at --max-concurrency {} is below the automatic "
-                          "context's floor (each slot keeps its own StateImage): {}",
-                          product::format_pretty_count(memory.max_context),
-                          engine.max_concurrency, fits);
+            logger_->warn("context | {} tokens at --max-concurrency {} is below the plan "
+                          "ladder's context floor (each slot keeps its own StateImage): {}",
+                          product::format_pretty_count(memory.max_context), engine.max_concurrency,
+                          fits);
         }
         if (engine.prefill_chunk != service.options().prefill_chunk) {
-            logger_->info("prefill | chunk {} tokens (auto: with {} the context does not fit or "
-                          "stays below its floor; a narrower chunk takes less workspace and "
+            logger_->info("prefill | chunk {} tokens (auto: the plan rung's; with {} no rung at "
+                          "this context fits, and a narrower chunk takes less workspace and "
                           "StateImage)",
                           product::format_pretty_count(engine.prefill_chunk),
                           product::format_pretty_count(service.options().prefill_chunk));

@@ -213,7 +213,7 @@ The Materializer establishes stable backing and uploads the raw bytes, producing
 forms const Parameters from it, and hands read-only resources such as the resolved tokenizer to the Frontend.
 
 The Planner and actual execution borrow the same Parameters. The Planner queries the requirements of each layer and the selected backends according to the startup scope,
-builds the capacity curve, resolves the KV capacity using the Device headroom remaining after weight residency, and then constructs the Program's final layout.
+builds the capacity curve of each rung of the declared plan ladder, takes the first rung the Device memory remaining after weight residency fits ([plan levels](deterministic-decisions.md#plan-levels)), and then constructs the Program's final layout.
 GenerationCore or CausalScoreCore uses it once instance preparation is complete.
 
 Model configuration, bindings, and weight addresses are fixed for the lifetime of the instance; each Program exclusively owns its mutable State/KV,
