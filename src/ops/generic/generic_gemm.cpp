@@ -2413,7 +2413,8 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
     };
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const auto s = rmma_schedule_info(i);
-        // Cluster schedules exist in the full (sm_12x) build only: rmma_schedule_launchable.
+        // Cluster schedules exist in the full (sm_12x) build only (rmma_schedule_launchable); a
+        // substituted board without clusters is refused by route_admits (route_requires).
         if (!rmma_schedule_launchable(i)) continue;
         if (emulated && s.n_tiles == 8) continue;
         const double threads = 32.0 * s.warps_m * s.warps_k;
