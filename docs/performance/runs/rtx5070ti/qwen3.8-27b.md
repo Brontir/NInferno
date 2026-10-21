@@ -22,7 +22,9 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
+| `unsloth/Qwen3.8-27B-GGUF` UD-IQ3_XXS | dflash2 ×7 | auto | exact | 517 | 109 | 106 | – | – | 2026-10-21 |
 | `unsloth/Qwen3.8-27B-GGUF` UD-IQ3_XXS | dflash2 ×7 | auto | fast | 2,051 | 122 | 120 | – | – | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-IQ3_XXS | mtp ×3 | auto | exact | – | – | – | – | 191 | 2026-10-21 |
 | `unsloth/Qwen3.8-27B-GGUF` UD-IQ3_XXS | mtp ×3 | auto | fast | – | – | – | 248 | – | 2026-10-19 |
 | `unsloth/Qwen3.8-27B-GGUF` UD-IQ3_XXS | off | auto | fast | 2,070 | 61.1 | 64.0 | 196 | 261 | 2026-10-19 |
 
@@ -32,7 +34,7 @@ What each `--activations` mode gives: its speed (the fastest setting measured in
 
 | Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from exact | Same top token | Measured |
 |---|---|---:|---:|---:|---:|---:|---|
-| UD-IQ3_XXS | exact | – | – | 4.4192 | reference |  | 2026-10-20 |
+| UD-IQ3_XXS | exact | 106 | 517 | 4.4192 | reference |  | 2026-10-20 |
 | UD-IQ3_XXS | fast = int8 | 120 | 2,070 | 4.4188 | 0.00198 | 98.38 % | 2026-10-20 |
 
 **fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` takes the same kernels and gives the same numbers.
@@ -48,8 +50,10 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
+--max-context 32768 --max-concurrency 1 --activations exact
 --max-context 32768 --max-concurrency 1 --spec none
 --max-context 32768 --max-concurrency 4 
 --max-context 32768 --max-concurrency 4 --spec none
+--max-context 32768 --max-concurrency 8 --activations exact
 --max-context 32768 --max-concurrency 8 --spec none
 ```
