@@ -270,12 +270,12 @@ int main() {
         off.observe(1, 0.1, 0.02, at(0.1));
         failures += check(off.steps() == 1, "--decode-steps 1 runs ahead");
         failures += check(!off.block(at(0.1)), "--decode-wait spin blocks");
-        failures += check(steps_refused("") && steps_refused("0") && steps_refused("33") &&
-                              steps_refused("4x") && steps_refused("-1") &&
-                              steps_refused("spin") && wait_refused("") &&
-                              wait_refused("sleep") && wait_refused("blocking") &&
-                              refused([] { (void)RoundPacing(33, Wait::Auto, 32, 32); }),
-                          "an invalid setting was accepted");
+        failures +=
+            check(steps_refused("") && steps_refused("0") && steps_refused("33") &&
+                      steps_refused("4x") && steps_refused("-1") && steps_refused("spin") &&
+                      wait_refused("") && wait_refused("sleep") && wait_refused("blocking") &&
+                      refused([] { (void)RoundPacing(33, Wait::Auto, 32, 32); }),
+                  "an invalid setting was accepted");
     }
 
     {
