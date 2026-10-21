@@ -444,7 +444,7 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 | `--kv-dtype`, `--max-context N`, `--prefill-chunk N` | `bf16`, `4096`, `1024` | The engine settings measured with. |
 | `--corpus FILE` | built in | Prompt corpus. |
 | `--decode-wait auto\|spin\|block` | `spin` | How the tune's engines wait for their rounds ([decode round pacing](#decode-round-pacing)). |
-| `--cuda-sync MODE`, `--route-table FILE`, `--route-dir DIR` | `spin`, the shipped tables | The CUDA synchronization schedule and the route tables the tune's engines run (a lab tunes against tables under test); recorded in the settings when given. |
+| `--cuda-sync MODE`, `--route-table FILE`, `--route-dir DIR`, `--drafter-registry FILE` | `spin`, the shipped tables, the compiled-in registry | The CUDA synchronization schedule, the route tables the tune's engines run (a lab tunes against tables under test) and the drafter registry; recorded in the settings when given, the files by content (one that cannot be read is refused). |
 | `--device N` | `0` | CUDA device. |
 | `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app); a named tune that does not serve (unreadable, or another artifact, GPU class or drafters) refuses start-up. |
 | `--profile PROFILE` | `<model>.ninferno.spec_profile.json` | With `--load`: the tune whose choices the load bounds are measured for. |

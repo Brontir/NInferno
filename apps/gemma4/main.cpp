@@ -88,6 +88,7 @@
 #include "spec/registry.h"
 #include "product/numeric_options.h"
 #include "product/tool_args.h"
+#include "product/route_labels.h"
 #include "product/tool_maintainer.h"
 
 #include <cuda_runtime.h>
@@ -602,6 +603,20 @@ int spec_tune(const Arguments& args, const Model& model, DeviceContext& device, 
     std::snprintf(settings, sizeof(settings), "context %d, chunk %d, greedy, %s activations",
                   base.max_context, base.prefill_chunk, args.flag("a16") ? "A16" : "artifact");
     profile.settings = settings;
+    // What else the cells ran under, named only when not the release's: the CUDA synchronization
+    // schedule, the dense tuner, and the route data by content (product/route_labels.h).
+    if (const std::string sync = args.text("cuda-sync", "spin"); sync != "spin") {
+        profile.settings += ", CUDA sync " + sync;
+    }
+    if (const std::string tune = args.text("dense-tune", "off"); tune != "off") {
+        profile.settings += ", dense tune " + tune;
+    }
+    if (args.flag("route-table")) {
+        profile.settings += ", route table " + product::route_table_label(args.text("route-table"));
+    }
+    if (args.flag("route-dir")) {
+        profile.settings += ", route dir " + product::route_dir_label(args.text("route-dir"));
+    }
 
     std::map<std::string, std::vector<std::int32_t>> reference; // plain output per prompt
     for (const auto& config : configs) {
@@ -829,9 +844,11 @@ int main(int argc, char** argv) {
         const auto args = parse(argc, argv);
         // A removed NINFERNO_* decision variable changes nothing: say so once.
         ninferno::warn_removed_environment("ninferno-gemma4");
-        // The maintainer options are refused or accepted before anything is converted or loaded.
+        // The maintainer options and --cuda-sync are refused or accepted before anything is
+        // converted or loaded.
         const MaintainerOptions maintainer =
             product::tool_maintainer_options(args, "ninferno-gemma4");
+        const CudaSyncSchedule cuda_sync = parse_cuda_sync_schedule(args.text("cuda-sync", "spin"));
         // --drafter-registry: a registry file in place of the compiled-in one (speculation
         // resolves its profile through it).
         if (args.flag("drafter-registry")) {
@@ -866,7 +883,7 @@ int main(int argc, char** argv) {
                                    : profile == ActivationProfile::A16Full ? "a16_full"
                                    : profile == ActivationProfile::A16   ? "a16"
                                                                          : "artifact";
-        DeviceContext device(0, parse_cuda_sync_schedule(args.text("cuda-sync", "spin")));
+        DeviceContext device(0, cuda_sync);
         product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
         auto model            = Model::load(artifact, device, profile);

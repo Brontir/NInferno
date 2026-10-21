@@ -60,6 +60,14 @@ ninferno_add_refusal_test(ninferno_dense_cuda_sync_test ninferno-dense
   "--cuda-sync must be spin, blocking, yield or auto" missing.ninferno score --cuda-sync busy)
 ninferno_add_refusal_test(ninferno_dense_dense_tune_test ninferno-dense
   "--dense-tune must be off, on or retune" missing.ninferno score --dense-tune yes)
+# Route data that cannot be read is refused before anything converts or loads, never run as no
+# table; --cuda-sync too (ninferno-gemma4 checks it before converting a checkpoint).
+ninferno_add_refusal_test(ninferno_dense_route_dir_test ninferno-dense
+  "--route-dir no-such-routes: " missing.ninferno score --route-dir no-such-routes)
+ninferno_add_refusal_test(ninferno_gemma4_route_table_test ninferno-gemma4
+  "--route-table no-such-table.json: " missing.ninferno score --route-table no-such-table.json)
+ninferno_add_refusal_test(ninferno_gemma4_cuda_sync_test ninferno-gemma4
+  "--cuda-sync must be spin, blocking, yield or auto" missing.ninferno score --cuda-sync busy)
 
 # A removed NINFERNO_* decision variable still set is named with its replacement, once, after the
 # arguments parse (the run then fails on the missing model).

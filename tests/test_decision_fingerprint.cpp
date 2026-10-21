@@ -680,26 +680,28 @@ int removed_environment() {
     return failures;
 }
 
-// Every NINFERNO_* name quoted in src/ is known to steer no decision (a decision is an option). A
-// new variable fails here until it is listed, and one that would steer a decision must be an
-// option instead.
+// Every NINFERNO_* name quoted in src/ or apps/ is known to steer no decision (a decision is an
+// option). A new variable fails here until it is listed, and one that would steer a decision must
+// be an option instead.
 int environment_inventory() {
     int failures                     = 0;
-    const std::filesystem::path root = std::filesystem::path(NINFERNO_SOURCE_DIR) / "src";
+    const std::filesystem::path root = NINFERNO_SOURCE_DIR;
     std::set<std::string> found;
-    std::map<std::string, std::set<std::string>> quoted_in; // name -> files, relative to src/
+    std::map<std::string, std::set<std::string>> quoted_in; // name -> files, relative to the tree
     const std::regex quoted("\"(NINFERNO_[A-Z0-9_]+)\"");
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-        if (!entry.is_regular_file()) { continue; }
-        const auto ext = entry.path().extension().string();
-        if (ext != ".cpp" && ext != ".h" && ext != ".cu" && ext != ".cuh") { continue; }
-        std::ifstream in(entry.path(), std::ios::binary);
-        const std::string text((std::istreambuf_iterator<char>(in)),
-                               std::istreambuf_iterator<char>());
-        for (std::sregex_iterator it(text.begin(), text.end(), quoted), end; it != end; ++it) {
-            found.insert((*it)[1].str());
-            quoted_in[(*it)[1].str()].insert(
-                std::filesystem::relative(entry.path(), root).generic_string());
+    for (const char* top : {"src", "apps"}) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root / top)) {
+            if (!entry.is_regular_file()) { continue; }
+            const auto ext = entry.path().extension().string();
+            if (ext != ".cpp" && ext != ".h" && ext != ".cu" && ext != ".cuh") { continue; }
+            std::ifstream in(entry.path(), std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            for (std::sregex_iterator it(text.begin(), text.end(), quoted), end; it != end; ++it) {
+                found.insert((*it)[1].str());
+                quoted_in[(*it)[1].str()].insert(
+                    std::filesystem::relative(entry.path(), root).generic_string());
+            }
         }
     }
     std::set<std::string> known;
@@ -715,19 +717,20 @@ int environment_inventory() {
         const auto files = quoted_in.find(std::string(removed.name));
         failures +=
             check(files != quoted_in.end() &&
-                      files->second == std::set<std::string>{"core/removed_environment.h"},
-                  std::string(removed.name) + " is quoted outside core/removed_environment.h");
+                      files->second == std::set<std::string>{"src/core/removed_environment.h"},
+                  std::string(removed.name) + " is quoted outside src/core/removed_environment.h");
     }
     for (const auto& name : found) {
-        failures += check(known.contains(name), name + " is read in src/ but is on neither list "
-                                                       "(runtime/engine/decision_fingerprint.cpp)");
+        failures +=
+            check(known.contains(name), name + " is read in src/ or apps/ but is on neither list "
+                                               "(runtime/engine/decision_fingerprint.cpp)");
     }
     for (const auto& name : known) {
         // <dump>_ROWS is built at run time from its dump's name (models/common/layer_dump.h).
         const bool rows = name.ends_with("_ROWS") &&
                           found.contains(name.substr(0, name.size() - std::string("_ROWS").size()));
-        failures +=
-            check(found.contains(name) || rows, name + " is listed but no longer read in src/");
+        failures += check(found.contains(name) || rows,
+                          name + " is listed but no longer read in src/ or apps/");
     }
     failures += check(found.size() > 15,
                       "the scan found the variables (" + std::to_string(found.size()) + ")");
