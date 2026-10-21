@@ -9,6 +9,7 @@
 #include "convert/relayout.h"
 #include "convert/safetensors.h"
 #include "core/command_line.h"
+#include "spec/registry.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -102,6 +103,8 @@ constexpr const char* kUsage =
     "the plan and downloads nothing; --attach-drafters adds them to an existing artifact.\n"
     "--drafter-artifact NAME=PATH attaches an already converted drafter instead of fetching it;\n"
     "a NAME the model does not declare adds it (e.g. a NemotronH MTP sidecar: mtp=PATH).\n"
+    "--drafter-registry FILE reads the drafter registry from FILE instead of the compiled-in\n"
+    "one (maintainers: a registry under test).\n"
     "--layout sets how the routed-expert banks of GGUF block formats are stored, losslessly\n"
     "either way: auto (the default) keeps a bank's published bytes in ggml_frag_v1, the order\n"
     "the MoE kernel reads them in, for the formats and shapes where that measured faster\n"
@@ -255,6 +258,8 @@ int main(int argc, char** argv) {
             } else if (flag == "--model") {
                 options.model = next();
                 have_model    = true;
+            } else if (flag == "--drafter-registry") {
+                ninferno::spec::Registry::use_file(next());
             } else if (flag == "--fetch") {
                 fetch_spec = next();
             } else if (flag == "--hub") {

@@ -3,6 +3,7 @@
 #include "core/cuda_error.h"
 #include "core/device_class.h"
 #include "core/tensor.h"
+#include "ninferno/option_enums.h"
 
 #include <cuda_runtime.h>
 
@@ -53,7 +54,8 @@ struct DeviceContext {
     cudaStream_t transfer_stream = nullptr;
     cudaDeviceProp props{};
 
-    explicit DeviceContext(int device_id = 0);
+    // `sync`: the CUDA synchronization schedule the device runs (EngineOptions::pacing).
+    explicit DeviceContext(int device_id = 0, CudaSyncSchedule sync = CudaSyncSchedule::Spin);
     ~DeviceContext();
 
     DeviceContext(const DeviceContext&)            = delete;

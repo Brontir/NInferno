@@ -1,6 +1,7 @@
 #include "serve/serve_options.h"
 #include "core/command_line.h"
 #include "product/activation_options.h"
+#include "product/engine_flags.h"
 #include "product/numeric_options.h"
 #include "product/sampling_options.h"
 #include "product/speculative_options.h"
@@ -64,7 +65,9 @@ std::string serve_usage_text(const char* argv0) {
            "[--no-auto-system-shared-prefix] [--cors] [--usage-chunk-choice] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
-           "       [--log-level trace|debug|info|warning|error|critical|off]\n"
+           "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
+           std::string(product::kEngineFlagsUsage) +
+           "       [--drafter-registry FILE]\n"
            "       serves OpenAI Responses/Chat Completions and Anthropic Messages endpoints\n"
            "       the model: a .ninferno artifact; a Hugging Face checkpoint directory or GGUF\n"
            "       model (converted once into <dir>/.ninferno-cache/); or a hub id "
@@ -482,6 +485,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                        options.sampling_overrides)) {
         } else if (arg == "--greedy") {
             options.greedy = true;
+        } else if (product::parse_engine_flag(
+                       arg, [&] { return require_value(arg.c_str()); }, options.pacing,
+                       options.maintainer)) {
+        } else if (arg == "--drafter-registry") {
+            options.drafter_registry = require_value("--drafter-registry");
         } else if (arg == "--recipe") {
             options.recipe = require_value("--recipe");
         } else if (arg == "--quant") {

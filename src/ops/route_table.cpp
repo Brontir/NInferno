@@ -521,7 +521,7 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
     return status;
 }
 
-// An explicit table (NINFERNO_ROUTE_TABLE, load_route_table) stands alone.
+// An explicit table (load_route_table: the engine's --route-table) stands alone.
 RouteTableStatus install_locked(DeviceTables& d, const std::string& path) {
     auto table       = parse_table(path);
     const auto chain = class_chain();
@@ -545,11 +545,7 @@ void ensure_default_locked(DeviceTables& d) {
                                (dir.empty() ? "" : " in " + dir) + "; routes are untuned";
     std::string attempted;
     try {
-        if (const char* env = std::getenv("NINFERNO_ROUTE_TABLE"); env != nullptr && *env) {
-            attempted         = env;
-            const auto status = install_locked(d, env);
-            if (!status.loaded) { d.default_status = status; }
-        } else if (!dir.empty()) {
+        if (!dir.empty()) {
             // The nearest measured board's table, its gaps filled from the next nearest.
             attempted   = dir;
             auto tables = tables_by_distance(dir);
@@ -604,9 +600,16 @@ std::string route_dir_beside(const std::string& exe) {
     return {};
 }
 
+namespace {
+std::mutex g_dir_mutex;
+std::string g_dir; // set_route_table_dir; empty: the shipped directory
+} // namespace
+
 std::string route_table_dir() {
-    if (const char* env = std::getenv("NINFERNO_ROUTE_DIR"); env != nullptr && *env)
-        return env;
+    {
+        std::lock_guard lock(g_dir_mutex);
+        if (!g_dir.empty()) return g_dir;
+    }
     // A binary copied off the machine that built it (a release, a copy on another machine) reads the
     // routes shipped beside it, not whatever the build's source tree holds now or nothing at all.
     static const std::string beside = [] {
@@ -615,6 +618,21 @@ std::string route_table_dir() {
     }();
     if (!beside.empty()) return beside;
     return NINFERNO_DEFAULT_ROUTE_DIR;
+}
+
+void set_route_table_dir(const std::string& dir) {
+    {
+        std::lock_guard lock(g_dir_mutex);
+        if (g_dir == dir) return;
+        g_dir = dir;
+    }
+    for (DeviceTables& d : g_devices) {
+        std::lock_guard lock(d.mutex);
+        d.default_attempted = false;
+        d.default_status    = {};
+        d.table.reset();
+        d.settled.store(false, std::memory_order_release);
+    }
 }
 
 RouteTableStatus load_route_table(const std::string& path) {

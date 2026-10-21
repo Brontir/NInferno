@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 
 namespace ninferno::spec {
@@ -138,12 +138,29 @@ Registry Registry::parse(const std::string& text) {
     return out;
 }
 
+namespace {
+
+std::mutex g_file_mutex;
+std::filesystem::path g_file; // Registry::use_file
+bool g_read = false;          // builtin() has answered
+
+} // namespace
+
+void Registry::use_file(const std::filesystem::path& path) {
+    std::lock_guard lock(g_file_mutex);
+    if (g_read && path != g_file) {
+        throw std::logic_error("the drafter registry was read before --drafter-registry " +
+                               path.string());
+    }
+    g_file = path;
+}
+
 const Registry& Registry::builtin() {
     static const Registry registry = [] {
-        const char* path       = std::getenv("NINFERNO_DRAFTER_REGISTRY");
-        const std::string text = path != nullptr && *path
-                                     ? read_file(path, "$NINFERNO_DRAFTER_REGISTRY")
-                                     : std::string(embedded::kDrafterRegistryJson);
+        std::lock_guard lock(g_file_mutex);
+        g_read                 = true;
+        const std::string text = !g_file.empty() ? read_file(g_file, "--drafter-registry")
+                                                 : std::string(embedded::kDrafterRegistryJson);
         Registry out           = parse(text);
         out.source_sha256_     = sha256_hex(text);
         return out;

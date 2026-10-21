@@ -200,7 +200,7 @@ void file_roundtrip(DeviceContext& device, const std::filesystem::path& path, bo
         require(elements == weight_element_count(view.shape),
                 "resolved view lost logical coverage");
     }
-    // Under NINFERNO_DEBUG_POISON the arena starts as poison: every byte outside the objects (the
+    // Under --debug-poison the arena starts as poison: every byte outside the objects (the
     // alignment gaps) must still hold it, which shows the poison was there for the upload to
     // overwrite - so the byte-exact comparison above also proves no object byte was left unwritten
     // (no NaN in parameters after load, whatever the buffer held).
@@ -360,13 +360,20 @@ int main(int argc, char** argv) {
         }
         CUDA_CHECK(result);
         DeviceContext device;
+        // --debug-poison BYTE before the file arguments: the weight arena starts as that poison.
+        if (argc >= 3 && std::string_view(argv[1]) == "--debug-poison") {
+            ninferno::set_debug_poison(ninferno::parse_debug_poison(argv[2]), {});
+            argc -= 2;
+            argv += 2;
+        }
         if (argc == 3 && (std::string_view(argv[1]) == "--artifact" ||
                           std::string_view(argv[1]) == "--writer-fixture")) {
             file_roundtrip(device, argv[2], std::string_view(argv[1]) == "--writer-fixture");
             return 0;
         }
         if (argc != 1) {
-            throw std::invalid_argument("expected [--artifact|--writer-fixture PATH]");
+            throw std::invalid_argument(
+                "expected [--debug-poison BYTE] [--artifact|--writer-fixture PATH]");
         }
         materialization(device);
         failure_and_host_only(device);

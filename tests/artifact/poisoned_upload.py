@@ -4,7 +4,7 @@
 
 Converts the synthetic Gemma 4 MoE checkpoints of tests/convert_native (compressed-tensors and
 Model Optimizer NVFP4: packed q/k/v, stacked gate_up planes with one divisor per expert,
-compensated downs, Q8 and BF16 objects) and materializes each with NINFERNO_DEBUG_POISON=1: the
+compensated downs, Q8 and BF16 objects) and materializes each with --debug-poison 1: the
 device arena is filled with 0xFF (NaN in every float format) before the upload. The test binary
 then requires every bound object's device bytes to equal the file's, every alignment gap between
 objects to still hold the poison (so the poison was there to be overwritten), and every logical
@@ -16,7 +16,6 @@ Exits 77 without torch (the synthetic checkpoints need it) or without a CUDA dev
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -61,9 +60,8 @@ def main() -> int:
                     words += scales.numel()
                     if not bool(torch.isfinite(values).all()) or not bool((divisors > 0).all()):
                         failures.append(f"{layout}: {oid} holds a non-finite value or divisor")
-            env = dict(os.environ, NINFERNO_DEBUG_POISON="1")
-            run = subprocess.run([str(test), "--artifact", str(out)], capture_output=True, text=True,
-                                 env=env)
+            run = subprocess.run([str(test), "--debug-poison", "1", "--artifact", str(out)],
+                                 capture_output=True, text=True)
             print(f"{layout}: {words} NVFP4 scale words decoded; {run.stdout.strip()}", flush=True)
             if run.returncode == 77:
                 return 77

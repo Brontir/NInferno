@@ -1,5 +1,6 @@
 #include "ninferno/engine.h"
 
+#include "core/debug_poison.h"
 #include "core/host_cpu_quota.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -7,6 +8,10 @@
 #include "core/nvtx.h"
 #include "core/sha256.h"
 #include "core/startup.h"
+#include "models/qwen3_5/execution/prefill_cuts.h"
+#include "ninferno/ops/moe.h"
+#include "ninferno/ops/route_table.h"
+#include "ops/generic/generic_gemm.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
 #include "ninferno/ops/moe.h"
@@ -38,9 +43,25 @@
 namespace ninferno {
 namespace {
 
+// The process-wide maintainer options (MaintainerOptions), on the device just bound: the route
+// table the routes are looked up in, the lab tuners' modes, the debug aids. The defaults leave the
+// release's behaviour: the shipped route tables, no timing, no debug aid.
+void apply_maintainer_options(const MaintainerOptions& m) {
+    ops::set_route_table_dir(m.route_dir.string());
+    if (!m.route_table.empty()) {
+        const ops::RouteTableStatus status = ops::load_route_table(m.route_table.string());
+        if (!status.loaded) { throw std::invalid_argument("--route-table: " + status.message); }
+    }
+    ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
+    ops::set_moe_tune(m.moe_tune, m.tune_cache);
+    models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
+    set_debug_poison(m.debug_poison, m.debug_poison_skip);
+}
+
 DeviceContext initialize_device(const EngineOptions& options) {
     StartupPhaseScope phase(options.startup_observer, StartupPhase::CudaInitialize);
-    DeviceContext device(options.device);
+    DeviceContext device(options.device, options.pacing.cuda_sync);
+    apply_maintainer_options(options.maintainer);
     phase.complete();
     return device;
 }

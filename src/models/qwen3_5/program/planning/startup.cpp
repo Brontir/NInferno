@@ -1036,6 +1036,7 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
     impl->ngram_draft_tokens      = inputs.ngram_draft_tokens;
     impl->ngram_min_match         = inputs.ngram_min_match;
     impl->kv_lease_window         = inputs.kv_lease_window;
+    impl->decode_pacing           = inputs.decode_pacing;
     impl->features            = inputs.features;
     impl->use_cuda_graph      = inputs.use_cuda_graph;
     impl->causal_scoring      = inputs.causal_scoring;
@@ -1201,6 +1202,7 @@ make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
         .ngram_draft_tokens  = options.speculative.ngram_draft_tokens,
         .ngram_min_match     = options.speculative.ngram_min_match,
         .kv_lease_window     = options.kv_lease_window,
+        .decode_pacing       = options.pacing,
         .features            = models::load_options(options),
         .use_cuda_graph      = options.use_cuda_graph,
         .causal_scoring      = options.purpose == EnginePurpose::CausalScoring,

@@ -678,7 +678,7 @@ public:
         return true;
     }
 
-    // Debug poison (NINFERNO_DEBUG_POISON): every Device slot returned to the free list is filled
+    // Debug poison (--debug-poison): every Device slot returned to the free list is filled
     // with value on stream, after all work already ordered there, and the fill completes before
     // the slot is reusable. An owner that reads a slot before resetting or copying into it then
     // reads poison, not the previous owner's state.
@@ -761,8 +761,7 @@ private:
                     throw std::runtime_error(cudaGetErrorString(synced));
                 }
             } catch (const std::exception& error) {
-                std::fprintf(stderr,
-                             "NINFERNO_DEBUG_POISON: poisoning StateImage slot %d failed: %s\n",
+                std::fprintf(stderr, "--debug-poison: poisoning StateImage slot %d failed: %s\n",
                              slot, error.what());
                 std::abort();
             }

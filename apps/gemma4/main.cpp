@@ -131,7 +131,7 @@ Arguments parse(int argc, char** argv) {
             "a16",         "a16-full",    "acceptance-floor",
             "applies-to",  "block",       "budget-seconds",
             "chunk",       "configs",     "consume-source",
-            "context",     "corpus",      "cuts",
+            "context",     "corpus",      "cuda-sync",   "cuts",
             "decode",      "dflash",      "draft",
             "draft-min",   "drafter",     "drafter-variant",
             "dump",        "dump-tokens", "gpu-class",
@@ -847,7 +847,7 @@ int main(int argc, char** argv) {
                                    : profile == ActivationProfile::A16Full ? "a16_full"
                                    : profile == ActivationProfile::A16   ? "a16"
                                                                          : "artifact";
-        DeviceContext device(0);
+        DeviceContext device(0, parse_cuda_sync_schedule(args.text("cuda-sync", "spin")));
         const auto load_start = std::chrono::steady_clock::now();
         auto model            = Model::load(artifact, device, profile);
         const double load_s   = ninferno::seconds_since(load_start);
@@ -1086,7 +1086,7 @@ int main(int argc, char** argv) {
             CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
             warm_mib = (double(free_before) - double(free_after)) / 1048576.0;
         }
-        // The CUDA synchronization schedule (NINFERNO_CUDA_SYNC) belongs to the measurement: the
+        // The CUDA synchronization schedule (--cuda-sync) belongs to the measurement: the
         // adaptive draft depth waits on the device once per round.
         std::printf("{\"load_seconds\":%.2f,\"weights_gib\":%.3f,\"session_gib\":%.3f,"
                     "\"kv_gib\":%.3f,\"kv_dtype\":\"%s\",\"free_gib\":%.3f,"

@@ -146,7 +146,7 @@ public:
 
     [[nodiscard]] std::uint64_t kv_bytes() const noexcept;
 
-    // Debug poisoning (NINFERNO_DEBUG_POISON): overwrites every key and value
+    // Debug poisoning (--debug-poison): overwrites every key and value
     // slot with the poison byte on the device stream, so a read of a slot the current sequence
     // has not written (outside the window, past the position, a ring slot of an earlier sequence)
     // turns into NaN instead of plausible stale data. No-op when poisoning is off.

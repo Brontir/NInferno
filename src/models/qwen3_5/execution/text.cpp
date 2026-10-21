@@ -1,4 +1,5 @@
 #include "models/qwen3_5/execution/text.h"
+#include "models/qwen3_5/execution/prefill_cuts.h"
 #include "models/qwen3_5/program/internal.h"
 #include "models/qwen3_5/execution/attention.h"
 #include "models/qwen3_5/execution/gdn.h"
@@ -147,16 +148,17 @@ private:
     T previous_;
 };
 
-// Debug aids for prefill chunk-invariance work. Both are read once from the environment and cost
-// nothing when unset.
+// Debug aids for prefill chunk-invariance work. Both cost nothing when unset.
 //
-// NINFERNO_QWEN_PREFILL_CUTS=p1,p2,... ends a prefill call at each of those absolute positions, the
-// way a restored or continued context meets the cache off the chunk grid.
+// The debug prefill cuts (set_debug_prefill_cuts: the engine's --debug-prefill-cuts p1,p2,...)
+// end a prefill call at each of those absolute positions, the way a restored or continued context
+// meets the cache off the chunk grid.
 //
-// NINFERNO_QWEN_DUMP=<dir> (with NINFERNO_QWEN_DUMP_ROWS=lo:hi, models/common/layer_dump.h) appends
-// the token columns of every prefill layer's intermediates whose absolute position lies in [lo,hi)
-// to <dir>/L<layer>.<kind>.bin. Eager passes only (a captured stream is skipped); it synchronizes
-// the device, so it localizes numerics and is never for timing.
+// NINFERNO_QWEN_DUMP=<dir> (with NINFERNO_QWEN_DUMP_ROWS=lo:hi, models/common/layer_dump.h), an
+// output-only diagnostic read once from the environment, appends the token columns of every
+// prefill layer's intermediates whose absolute position lies in [lo,hi) to
+// <dir>/L<layer>.<kind>.bin. Eager passes only (a captured stream is skipped); it synchronizes the
+// device, so it localizes numerics and is never for timing.
 const LayerDump* dump_config() {
     static const std::optional<LayerDump> config = read_layer_dump("NINFERNO_QWEN_DUMP");
     return config ? &*config : nullptr;
@@ -171,26 +173,10 @@ const std::string& dump_kinds() {
     return kinds;
 }
 
-const std::vector<long long>& prefill_cuts() {
-    static const std::vector<long long> cuts = [] {
-        std::vector<long long> out;
-        const char* text = std::getenv("NINFERNO_QWEN_PREFILL_CUTS");
-        if (text == nullptr) { return out; }
-        const char* p = text;
-        while (*p != 0) {
-            char* end         = nullptr;
-            const long long v = std::strtoll(p, &end, 10);
-            if (end == p) {
-                throw std::invalid_argument("NINFERNO_QWEN_PREFILL_CUTS must be p1,p2,...");
-            }
-            out.push_back(v);
-            p = *end == ',' ? end + 1 : end;
-        }
-        std::sort(out.begin(), out.end());
-        return out;
-    }();
-    return cuts;
-}
+// Ascending; set before any engine of the process prefills (Engine construction).
+std::vector<long long> g_prefill_cuts;
+
+const std::vector<long long>& prefill_cuts() { return g_prefill_cuts; }
 
 // Absolute position of the current prefill call's first column (-1 outside prefill) and the
 // layer being run, for the dump.
@@ -1571,6 +1557,19 @@ PrefillChunkResult TextContext::prefill_chunk(const qwen3_5::PreparedPromptData&
     const MultimodalPrefill multimodal{tokens, input.positions, &vision, begin, input.rope_delta};
     return prefill_impl(tokens.subspan(begin, nominal_length), nullptr, &multimodal, sink,
                         finalize_at_end);
+}
+
+void set_debug_prefill_cuts(const std::vector<std::uint64_t>& cuts) {
+    std::vector<long long> sorted;
+    sorted.reserve(cuts.size());
+    for (const std::uint64_t cut : cuts) {
+        if (cut > static_cast<std::uint64_t>(std::numeric_limits<long long>::max())) {
+            throw std::invalid_argument("--debug-prefill-cuts: a position is out of range");
+        }
+        sorted.push_back(static_cast<long long>(cut));
+    }
+    std::sort(sorted.begin(), sorted.end());
+    g_prefill_cuts = std::move(sorted);
 }
 
 } // namespace ninferno::models::qwen3_5::execution

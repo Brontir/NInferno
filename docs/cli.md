@@ -77,6 +77,15 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--rope-yarn-factor F` | `1` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. |
 | `--vision` | off | Enable image input (Qwen, Gemma 4) and video input (Qwen), and load the Vision GPU allocations. A GGUF needs its `mmproj` file beside it. |
 | `--no-cuda-graph` | graphs on | Disable CUDA Graph decode. |
+| `--decode-steps auto\|N` | `auto` | Ordinary decode steps per round ([decode round pacing](#decode-round-pacing)). |
+| `--decode-wait auto\|spin\|block` | `auto` | How the host waits for a round's end ([decode round pacing](#decode-round-pacing)). |
+| `--cuda-sync spin\|blocking\|yield\|auto` | `spin` | CUDA device synchronization schedule ([CUDA synchronization](#cuda-synchronization)). |
+
+Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--dense-tune off|on|retune`,
+`--moe-tune off|on|retune`, `--tune-cache DIR`, `--drafter-registry FILE`,
+`--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE` and `--debug-poison-skip SITE,...`
+([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
+them.
 
 ### Speculative decoding
 
@@ -344,8 +353,8 @@ top-k 50) where it names none.
 
 ## CUDA synchronization
 
-`NINFERNO_CUDA_SYNC` selects the CUDA device synchronization schedule at startup, for the CLI and
-the HTTP server.
+`--cuda-sync` selects the CUDA device synchronization schedule at startup, for the CLI and the
+HTTP server (`EngineOptions::pacing.cuda_sync`).
 
 | Value | Behavior |
 |---|---|
@@ -355,11 +364,11 @@ the HTTP server.
 | `auto` | CUDA's scheduling heuristic, not an automatic performance benchmark. |
 
 ```bash
-NINFERNO_CUDA_SYNC=blocking ./build/apps/ninferno models/qwen3_8_27b_nvfp4.ninferno --prompt "Hello"
+./build/apps/ninferno models/qwen3_8_27b_nvfp4.ninferno --cuda-sync blocking --prompt "Hello"
 ```
 
-The Engine-ready log reports the mode. An empty or unrecognized value, or a failure to apply the
-schedule, fails startup. The setting controls device scheduling (including stream
+The Engine-ready log reports the mode. An unrecognized value, or a failure to apply the schedule,
+fails startup. The setting controls device scheduling (including stream
 synchronization); it does not override individual CUDA event creation flags.
 
 ## Decode round pacing
@@ -377,12 +386,12 @@ Engines with CUDA Graphs pace their decode rounds (rows without constrained deco
   and its parents (cgroup `cpu.max`, or `cpu.cfs_quota_us` / `cpu.cfs_period_us` under cgroup v1,
   read once at startup; none on Windows). Four CPUs cover the threads the engine keeps busy while
   decoding, and a quota at or above the logical cores can never run out.
-  `NINFERNO_DECODE_STEPS=N` replaces that default. The count is never chosen from timings: it
+  `--decode-steps N` replaces that default. The count is never chosen from timings: it
   decides which requests share each step's batch. The startup log reports it
   (`decode | N step(s) per round | CPU quota ...`).
   - Nothing measures the host. On a contended host the rule does not see (other processes use the
     CPU without a quota, or a quota of 4 CPUs or more that a busy cgroup still runs out of), or
-    where 16 steps do not hide the stall, set `NINFERNO_DECODE_STEPS=N`: about 100 ms divided by
+    where 16 steps do not hide the stall, set `--decode-steps N`: about 100 ms divided by
     the step time, at most 32. Both thresholds await calibration on lab containers.
   - Tokens reach the stream in groups of that size. A request that stops mid-round has its
     remaining steps discarded.
@@ -408,14 +417,15 @@ count at concurrency 1. With several requests, they stay identical only where th
 same result at every batch size: a run-ahead round keeps its batch for all its steps, while one step
 per round admits and retires requests between steps.
 
-| Variable | Values | Default | Meaning |
+| Option | Values | Default | Meaning |
 |---|---|---|---|
-| `NINFERNO_DECODE_STEPS` | integer `1..32` | 16 under a CPU quota below min(4, cores) CPUs, else 1 | `N` runs N steps in every round that can. An engine that cannot run ahead says so once at startup and runs one step per round. `auto` warns and keeps the default. |
-| `NINFERNO_DECODE_WAIT` | `auto`, `spin`, `block` | `auto` | `auto` chooses as above while rounds lag. `spin` never blocks (the CUDA synchronization schedule alone). `block` blocks in every round. |
+| `--decode-steps` | `auto`, or integer `1..32` | `auto`: 16 under a CPU quota below min(4, cores) CPUs, else 1 | `N` runs N steps in every round that can; `1` disables run-ahead. An engine that cannot run ahead says so once at startup and runs one step per round. |
+| `--decode-wait` | `auto`, `spin`, `block` | `auto` | `auto` chooses as above while rounds lag. `spin` never blocks (the CUDA synchronization schedule alone). `block` blocks in every round. |
 
-Other values of either variable fail startup. `ninferno spec-tune` waits as a quiet host does
-(`spin`) unless `NINFERNO_DECODE_WAIT` is set, and records the wait in its settings
-(`--load --resume` takes only cells measured with the same wait).
+Both are `ninferno` and `ninferno-serve` options (`EngineOptions::pacing`); other values are
+refused. `ninferno spec-tune` waits as a quiet host does (`--decode-wait spin`) unless its own
+`--decode-wait` says otherwise, and records the wait in its settings (`--load --resume` takes only
+cells measured with the same wait).
 
 ## Measuring speculation profiles (maintainers)
 
@@ -430,7 +440,8 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 | `--budget-seconds S` | `900` | Stop starting new configurations after `S` seconds. |
 | `--repeat R` | `1` | Corpus passes per configuration. |
 | `--kv-dtype`, `--max-context N`, `--prefill-chunk N` | `bf16`, `4096`, `1024` | The engine settings measured with. |
-| `--corpus FILE` | built in (`NINFERNO_SPEC_CORPUS`) | Prompt corpus. |
+| `--corpus FILE` | built in | Prompt corpus. |
+| `--decode-wait auto\|spin\|block` | `spin` | How the tune's engines wait for their rounds ([decode round pacing](#decode-round-pacing)). |
 | `--device N` | `0` | CUDA device. |
 | `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app); a named tune that does not serve (unreadable, or another artifact, GPU class or drafters) refuses start-up. |
 | `--profile PROFILE` | `<model>.ninferno.spec_profile.json` | With `--load`: the tune whose choices the load bounds are measured for. |

@@ -357,6 +357,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.rope_yarn_factor         = options_.rope_yarn_factor;
     engine_options.enable_vision            = options_.enable_vision;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
+    engine_options.pacing                    = options_.pacing;
+    engine_options.maintainer                = options_.maintainer;
     engine_options.speculative              = options_.speculative;
     // A tune named by --spec-profile serves or the server does not start (whatever --spec says).
     product::require_named_tune(options_.artifact_path, options_.device, options_.spec_profile);

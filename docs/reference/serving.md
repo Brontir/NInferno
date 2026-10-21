@@ -106,8 +106,8 @@ every resident thread. Neither is given back.
 
 ## 2. Startup configuration
 
-See [CUDA synchronization](../cli.md#cuda-synchronization) for the shared `NINFERNO_CUDA_SYNC`
-setting.
+See [CUDA synchronization](../cli.md#cuda-synchronization) for the shared `--cuda-sync` option
+and [decode round pacing](../cli.md#decode-round-pacing) for `--decode-steps` and `--decode-wait`.
 
 ```bash
 ./build/apps/ninferno-serve models/qwen3_8_27b_nvfp4.ninferno \
@@ -1562,6 +1562,9 @@ contract.
 | `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
+| `--decode-steps auto\|N` | ordinary decode steps per round, `1..32` ([decode round pacing](../cli.md#decode-round-pacing)) | `auto` |
+| `--decode-wait auto\|spin\|block` | how the host waits for a round's end | `auto` |
+| `--cuda-sync spin\|blocking\|yield\|auto` | CUDA device synchronization schedule ([CUDA synchronization](../cli.md#cuda-synchronization)) | `spin` |
 | `--context-cost-presets FILE` | optional runtime context-cost preset registry | generic + compiled defaults |
 
 **`--kv-dtype`.** `auto` takes the model family's format:

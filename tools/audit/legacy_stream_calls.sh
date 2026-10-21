@@ -22,8 +22,8 @@ cd "$ROOT" || exit 2
 # file|expected count|why the calls cannot race
 ALLOW=$(cat <<'EOF'
 src/core/arena.cu|3|DeviceBuffer::fill/copy_from_host/copy_to_host: startup and test utilities; fill and copy_from_host settle the default stream before returning, the Engine runtime paths pass streams
-src/artifact/materializer.cpp|1|NINFERNO_DEBUG_POISON fill of the weight arena, followed by cudaDeviceSynchronize before the first upload
-src/core/paged_kv_cache.cpp|1|NINFERNO_DEBUG_POISON fill at pool construction, followed by cudaDeviceSynchronize
+src/artifact/materializer.cpp|1|--debug-poison fill of the weight arena, followed by cudaDeviceSynchronize before the first upload
+src/core/paged_kv_cache.cpp|1|--debug-poison fill at pool construction, followed by cudaDeviceSynchronize
 src/models/common/layer_dump.h|1|the debug layer dump (dense, Gemma 4, Qwen): D2H after cudaDeviceSynchronize
 src/models/gemma4/target.cu|1|NINFERNO_GEMMA4_DUMP: the first position of a dumped pass, after cudaStreamSynchronize
 src/models/dense/target.cu|1|NINFERNO_DENSE_DUMP: the first position of a dumped call (not under capture), after cudaStreamSynchronize

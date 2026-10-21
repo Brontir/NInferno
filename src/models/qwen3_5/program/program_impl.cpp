@@ -368,8 +368,7 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         static const HostCpuQuota cpu_quota = read_host_cpu_quota();
         static const bool quota_limits      = cpu_quota.limits_run_ahead(usable_logical_cores());
         const RoundPacing pacing(
-            std::getenv("NINFERNO_DECODE_STEPS"), std::getenv("NINFERNO_DECODE_WAIT"),
-            qwen3_5::kMaximumOrdinaryDecodeSteps,
+            plan.decode_pacing.steps, plan.decode_pacing.wait, qwen3_5::kMaximumOrdinaryDecodeSteps,
             runs_ahead ? std::min(qwen3_5::kMaximumOrdinaryDecodeSteps, uncommitted_row_limit + 1U)
                        : 1U,
             quota_limits);
@@ -383,15 +382,6 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
                               .verify_tokens_per_lane = speculative ? draft_window + 1U : 1U,
                               .cpu_quota_us           = cpu_quota.quota_us,
                               .cpu_period_us          = cpu_quota.period_us};
-        if (pacing.auto_ignored()) {
-            static std::once_flag warned;
-            std::call_once(warned, [&] {
-                std::fprintf(stderr,
-                             "warning: NINFERNO_DECODE_STEPS=auto is no longer a mode; ordinary "
-                             "decode runs its default of %u step(s) per round\n",
-                             decode_pacing.steps_per_round);
-            });
-        }
         // A step count this engine cannot run is reported once per process.
         const std::optional<std::uint32_t> fixed = pacing.fixed_steps();
         if (fixed && *fixed > 1 && (!paced || !runs_ahead)) {
@@ -400,11 +390,10 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
             if (!use_cuda_graph) { reason = "CUDA graphs are off"; }
             static std::once_flag reported;
             std::call_once(reported, [&] {
-                std::fprintf(
-                    stderr,
-                    "NINFERNO_DECODE_STEPS=%u is ignored: %s; ordinary decode runs one step "
-                    "per round\n",
-                    *fixed, reason);
+                std::fprintf(stderr,
+                             "--decode-steps %u is ignored: %s; ordinary decode runs one step "
+                             "per round\n",
+                             *fixed, reason);
             });
         }
     }

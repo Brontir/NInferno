@@ -5,6 +5,7 @@
 #include "serve/http_server.h"
 #include "serve/model_source.h"
 #include "serve/serve_options.h"
+#include "spec/registry.h"
 
 #include <cuda_runtime_api.h>
 #ifdef _WIN32
@@ -158,6 +159,9 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    if (!options.drafter_registry.empty()) {
+        ninferno::spec::Registry::use_file(options.drafter_registry);
+    }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-serve",

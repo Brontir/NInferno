@@ -608,18 +608,13 @@ bool mmq_verify_format(QType q) {
 }
 constexpr std::int32_t kMmqVerifyMinTokens = 9;
 bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
-    static const bool enabled = [] {
-        const char* v = std::getenv("NINFERNO_MMQ_VERIFY");
-        return v == nullptr || v[0] != '0';
-    }();
     // The measured band is 9..16 tokens of several sequences (a C4 verify). One sequence keeps its
     // register MMA at every width (ops::round_lanes): a C1 MTP round of 5..8 tokens and a C1 copy
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
     // with them off, 116.5 both ways), while the C4 verify gains (233.5 -> 249.3).
     return mmq_call(w, policy, rows, tokens) &&
-           (!bf16_mma_native() ||
-            (enabled && tokens >= kMmqVerifyMinTokens && ops::round_lanes() != 1 &&
-             mmq_verify_format(w.qtype)));
+           (!bf16_mma_native() || (tokens >= kMmqVerifyMinTokens && ops::round_lanes() != 1 &&
+                                   mmq_verify_format(w.qtype)));
 }
 
 std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {

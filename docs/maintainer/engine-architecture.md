@@ -534,7 +534,7 @@ The following constraints belong to the Engine architecture, while the concrete 
 - CUDA Graphs are built per legal exact-`B` topology; request identity and page IDs are stable input data, not graph keys;
 - ordinary decode runs no catalog scan, pressure search, or background replica scan;
 - ordinary decode runs one step per execution unit, or 16 when the process's CPU bandwidth quota is below min(4, logical cores) CPUs (machine facts read once at startup:
-  the tightest cgroup `cpu.max` or `cpu.cfs_quota_us` along the process's cgroup and its parents; a container's quota stalls the whole process until the next quota period); `NINFERNO_DECODE_STEPS=N` replaces
+  the tightest cgroup `cpu.max` or `cpu.cfs_quota_us` along the process's cgroup and its parents; a container's quota stalls the whole process until the next quota period); `--decode-steps N` replaces
   that default. The count never follows a timing, since it decides which requests share each step's batch (`round_pacing.h`); the startup log and the
   load summary report it. Several steps run back to back within one execution unit:
   later steps take the previous step's sampled result as input on the device. This applies only to models in which rows that were executed but not committed are invisible to later rows
@@ -544,7 +544,7 @@ The following constraints belong to the Engine architecture, while the concrete 
   do not run several steps back to back), the engine probes both spinning and blocking on the blocking-sync stop event (each for at least 1 second and
   8 rounds, at most 3 seconds; on the first lag it probes spin first, afterwards it probes the retained method first), and blocks for the following 30 seconds only if
   blocking yields at least 3% more steps per second (a speculative round counts as one step, regardless of the number of accepted drafts); if the rate of the retained
-  method changes by more than 50%, it re-probes immediately (`NINFERNO_DECODE_WAIT`). The round timer starts on an idle stream before the round's first
+  method changes by more than 50%, it re-probes immediately (`--decode-wait`). The round timer starts on an idle stream before the round's first
   launch (including the host preparation of a speculative launch), and lag counts only late wake-ups from the wait: blocking is usually better, because spinning exhausts the CPU quota; under extremely heavy load
   a blocked host may wake too late, and spinning is better;
 - the workspace is a backing planned uniformly at Program startup; the Vision, Text, and speculative schedules use its internal regions

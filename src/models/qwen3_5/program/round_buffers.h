@@ -30,7 +30,7 @@ struct RoundStateSpec {
 };
 
 // The most ordinary decode steps one round runs back to back (ProgramImpl::launch_ordinary).
-inline constexpr std::uint32_t kMaximumOrdinaryDecodeSteps = 32;
+inline constexpr std::uint32_t kMaximumOrdinaryDecodeSteps = kMaximumDecodeSteps;
 
 // Stable pinned/device transfer format for ordinary decode. The full fixed-size object is copied
 // once per step; only its exact-B prefixes are consumed by the model schedule.

@@ -12,11 +12,13 @@
 #include "core/tensor.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
+#include "ninferno/option_enums.h"
 
 #include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <initializer_list>
 #include <optional>
 #include <map>
@@ -641,6 +643,10 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream);
 [[nodiscard]] std::vector<std::string> dense_tune_report();
 // Off until enabled: the engine enables it for a loaded model, tests and benches keep the heuristic.
 void enable_dense_tune(bool on);
+// The tuner's mode (MaintainerOptions::dense_tune, TuneMode::Off by default: nothing is timed)
+// and where its file lives (MaintainerOptions::tune_cache: <dir>/dense_tune.json; empty:
+// NInferno's cache directory). The engine sets both at construction.
+void set_dense_tune(TuneMode mode, const std::filesystem::path& cache_dir);
 void clear_dense_tune();
 // The files the tuner's choices come from, for the decision fingerprint: "dense_tune.shipped",
 // the release's routes/tuner/dense_tune.json, and "dense_tune.user", the user's own cache, which

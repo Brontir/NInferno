@@ -151,8 +151,8 @@ DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& targe
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
-// A shortlist ranking by file name: $NINFERNO_RANKING_DIR/<name>, then tools/spec/rankings (and
-// tools/freq_corpus/fixtures/ranking) of `repository`, then of the tree this binary was built from.
+// A shortlist ranking by file name: tools/spec/rankings (and tools/freq_corpus/fixtures/ranking) of
+// `repository`, then the rankings installed beside this binary, then the tree it was built from.
 [[nodiscard]] std::optional<std::filesystem::path>
 resolve_ranking(const std::string& name, const std::filesystem::path& repository);
 

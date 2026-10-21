@@ -183,7 +183,7 @@ int main() {
     failures += expect_device_byte(slotted.layer_view(1).conv, 0, "zeroed all conv");
     failures += expect_device_byte(slotted.layer_view(1).recurrent, 0, "zeroed all recurrent");
 
-    // Debug poison (NINFERNO_DEBUG_POISON) fills exactly one slot, every layer, and nothing else.
+    // Debug poison (--debug-poison) fills exactly one slot, every layer, and nothing else.
     slotted.fill_slot(1, 0xFF, ctx.stream);
     ctx.synchronize();
     for (std::uint32_t layer = 0; layer < 2; ++layer) {

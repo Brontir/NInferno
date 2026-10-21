@@ -15,7 +15,7 @@
 // runs kQuotaSteps steps where the engine can run ahead, the later steps feeding on the sampled
 // tokens on the device so the GPU keeps running while the host is stopped; without one it runs one
 // step, which publishes each token as soon as it exists and runs nothing past a stop.
-// NINFERNO_DECODE_STEPS=N replaces that default. A round runs at most allowed_steps: 1 where rows
+// --decode-steps N replaces that default. A round runs at most allowed_steps: 1 where rows
 // past a stop could not stay invisible (recurrent state, a full sliding ring, a speculative
 // engine), the model's uncommitted-row headroom otherwise.
 //
@@ -41,7 +41,7 @@
 // tokens, per second. A round's device time does not depend on how many of its drafts are
 // accepted, while its tokens do, and acceptance follows the text, not the wait.
 
-#include "core/parse.h"
+#include "ninferno/option_enums.h"
 
 #include <algorithm>
 #include <array>
@@ -84,11 +84,9 @@ public:
     static constexpr double kShift              = 0.5;
     static constexpr double kGapSeconds         = 1.0;
 
-    enum class Wait : std::uint8_t {
-        Auto,  // spin, or block while the host stalls where the probe found that faster
-        Spin,  // wait in the CUDA synchronization schedule only
-        Block, // block on every round's end
-    };
+    // Auto: spin, or block while the host stalls where the probe found that faster; Spin: wait in
+    // the CUDA synchronization schedule only; Block: block on every round's end.
+    using Wait = DecodeWait;
 
     // Steps per round under a limiting CPU quota: a 16-step round of a 5-30 ms step lasts
     // 80-480 ms, about one CFS period (100 ms) or more, so a stopped host finds the GPU still
@@ -106,43 +104,26 @@ public:
         return quota_limits ? std::clamp(kQuotaSteps, 1U, std::max(allowed_steps, 1U)) : 1U;
     }
 
-    // `steps_setting` is NINFERNO_DECODE_STEPS: null (or "auto", which warns: auto_ignored())
-    // runs default_steps(); an integer N in [1, maximum_steps] runs N steps in every round that
-    // can. `cpu_quota`: the process's CPU quota limits the host (HostCpuQuota::limits_run_ahead).
-    // `wait_setting` is NINFERNO_DECODE_WAIT: null or "auto", "spin" or "block". A round runs at
-    // most `allowed_steps` steps (1 where rows past a stop could not stay invisible).
-    RoundPacing(const char* steps_setting, const char* wait_setting, std::uint32_t maximum_steps,
+    // `steps_setting` is --decode-steps (DecodePacingOptions::steps): 0 (auto) runs
+    // default_steps(); N in [1, maximum_steps] runs N steps in every round that can.
+    // `wait_setting` is --decode-wait. `cpu_quota`: the process's CPU quota
+    // limits the host (HostCpuQuota::limits_run_ahead).
+    // A round runs at most `allowed_steps` steps (1 where rows past a stop could not stay
+    // invisible).
+    RoundPacing(std::uint32_t steps_setting, Wait wait_setting, std::uint32_t maximum_steps,
                 std::uint32_t allowed_steps, bool cpu_quota = false)
         : allowed_steps_(std::clamp(allowed_steps, 1U, std::max(maximum_steps, 1U))),
-          default_steps_(default_steps(cpu_quota, allowed_steps_)) {
+          default_steps_(default_steps(cpu_quota, allowed_steps_)), wait_(wait_setting) {
         if (maximum_steps == 0) { throw std::invalid_argument("a decode round runs a step"); }
-        if (steps_setting != nullptr && std::string_view(steps_setting) == "auto") {
-            auto_ignored_ = true;
-        } else if (steps_setting != nullptr) {
-            const auto value = parse_exact<std::uint32_t>(steps_setting);
-            if (!value || *value == 0 || *value > maximum_steps) {
-                throw std::invalid_argument("NINFERNO_DECODE_STEPS must be an integer in [1, " +
-                                            std::to_string(maximum_steps) + "]");
-            }
-            fixed_steps_ = *value;
+        if (steps_setting > maximum_steps) {
+            throw std::invalid_argument("--decode-steps must be auto or an integer in [1, " +
+                                        std::to_string(maximum_steps) + "]");
         }
-        if (wait_setting != nullptr) {
-            const std::string_view wait(wait_setting);
-            if (wait == "spin") {
-                wait_ = Wait::Spin;
-            } else if (wait == "block") {
-                wait_ = Wait::Block;
-            } else if (wait != "auto") {
-                throw std::invalid_argument("NINFERNO_DECODE_WAIT must be auto, spin or block");
-            }
-        }
+        if (steps_setting != 0) { fixed_steps_ = steps_setting; }
     }
 
-    // NINFERNO_DECODE_STEPS as an integer, if it gave one.
+    // --decode-steps as an integer, if it gave one.
     [[nodiscard]] std::optional<std::uint32_t> fixed_steps() const noexcept { return fixed_steps_; }
-
-    // NINFERNO_DECODE_STEPS=auto was given: the former adaptive mode, now the default.
-    [[nodiscard]] bool auto_ignored() const noexcept { return auto_ignored_; }
 
     // The steps every round asks for, a function of the setting and the allowed steps alone;
     // launch_ordinary may run fewer (a row's remaining limit).
@@ -273,8 +254,7 @@ private:
     std::uint32_t allowed_steps_ = 1;
     std::uint32_t default_steps_ = 1;
     std::optional<std::uint32_t> fixed_steps_;
-    bool auto_ignored_ = false;
-    Wait wait_         = Wait::Auto;
+    Wait wait_ = Wait::Auto;
     std::optional<Clock::time_point> last_lag_;
     std::optional<Clock::time_point> hold_until_;
     // The wait probe while the host stalls: steps, finish-to-finish wall seconds and rounds of

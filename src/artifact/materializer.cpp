@@ -212,7 +212,7 @@ MaterializedArtifact materialize(const Reader& reader, MaterializationPlan&& pla
             // drafter (whose weights share this arena) instead of the server failing to start.
             throw CapacityError(device_shortage(plan, error.what()));
         }
-        // Debug poison (NINFERNO_DEBUG_POISON): the weight arena starts as poison, so
+        // Debug poison (--debug-poison): the weight arena starts as poison, so
         // a parameter byte the upload never wrote reads as NaN instead of the allocator's zeros.
         // cudaMemset runs on the legacy default stream, which does not order against the
         // non-blocking transfer stream the uploads below use: without the synchronize, the fill

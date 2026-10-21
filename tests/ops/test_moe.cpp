@@ -1267,14 +1267,15 @@ const char* qname(QType q) {
 
 // The load-time tuner (ops::tune_moe): its plans are in place after it runs and moe() takes them
 // (moe()'s bytes are its selected plan's), the cache gives the same plans back to a process that
-// forgot them without timing again, and NINFERNO_MOE_TUNE=off, like the default, tunes nothing.
+// forgot them without timing again, and TuneMode::Off, the default, tunes nothing.
 int check_tuner() {
     namespace mo = ops::detail::moe;
     int failures   = 0;
-    const auto path = std::filesystem::temp_directory_path() / "ninferno_test_moe_tune.json";
-    std::filesystem::remove(path);
-    ::setenv("NINFERNO_MOE_TUNE_CACHE", path.c_str(), 1);
-    ::setenv("NINFERNO_MOE_TUNE", "on", 1);
+    const auto dir  = std::filesystem::temp_directory_path() / "ninferno_test_moe_tune";
+    const auto path = dir / "moe_tune.json";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    ops::set_moe_tune(TuneMode::On, dir);
     Case c;
     c.label   = "tuner q4_k E32 k4";
     c.experts = 32; c.top_k = 4; c.hidden = 512; c.inter = 256; c.shared_inter = 0;
@@ -1316,13 +1317,10 @@ int check_tuner() {
         }
     }
     mo::clear_tuned_plans();
-    ::setenv("NINFERNO_MOE_TUNE", "off", 1);
+    ops::set_moe_tune(TuneMode::Off, {});
     const auto off = ops::tune_moe(l.weights, c.config, kWidths, nullptr);
-    if (off.ran) { fail("NINFERNO_MOE_TUNE=off tuned"); }
-    ::unsetenv("NINFERNO_MOE_TUNE");
-    if (ops::tune_moe(l.weights, c.config, kWidths, nullptr).ran) { fail("the default tuned"); }
-    ::unsetenv("NINFERNO_MOE_TUNE_CACHE");
-    std::filesystem::remove(path);
+    if (off.ran) { fail("TuneMode::Off tuned"); }
+    std::filesystem::remove_all(dir);
     mo::clear_tuned_plans();
     std::cout << "tuner: " << first.summary << '\n';
     return failures;

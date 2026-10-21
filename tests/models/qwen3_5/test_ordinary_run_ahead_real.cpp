@@ -1,8 +1,9 @@
 // Ordinary decode run-ahead through the Engine (ninferno-serve's path) on real artifacts whose
 // executed but uncommitted rows stay invisible (Gemma 4, dense decoders with sliding rings). An
-// engine that runs eight steps per round (NINFERNO_DECODE_STEPS=8) emits exactly the tokens, finish
-// reasons and stop strings of one that runs one step per round (NINFERNO_DECODE_STEPS=1), under
-// --activations exact (whose kernels give the same result at every batch size), for:
+// engine that runs eight steps per round (--decode-steps 8, DecodePacingOptions::steps) emits
+// exactly the tokens, finish reasons and stop strings of one that runs one step per round
+// (--decode-steps 1), under --activations exact (whose kernels give the same result at every batch
+// size), for:
 // - a stop token in the middle of a round (the path an end-of-sequence token takes);
 // - a stop string whose text spans two rounds;
 // - output limits at a round's end and inside a round;
@@ -144,9 +145,10 @@ public:
 
 // Every case in one engine; `plan` is filled from the outputs where it is empty (the one-step
 // engine) and read otherwise.
-std::map<std::string, Outcome> run(const std::string& artifact, const char* steps, Plan& plan) {
-    ::setenv("NINFERNO_DECODE_STEPS", steps, 1);
-    Engine engine(engine_options(artifact));
+std::map<std::string, Outcome> run(const std::string& artifact, std::uint32_t steps, Plan& plan) {
+    EngineOptions options = engine_options(artifact);
+    options.pacing.steps  = steps;
+    Engine engine(options);
     std::map<std::string, Outcome> out;
     const std::vector<TokenId> prose = engine.tokenize_text(std::string(kProse) + kQuestion);
     const std::vector<TokenId> code  = engine.tokenize_text(kCode);
@@ -315,8 +317,8 @@ int main() {
         for (const std::string& artifact : split(artifacts)) {
             const std::string model = artifact.substr(artifact.find_last_of('/') + 1);
             Plan plan;
-            const auto one   = run(artifact, "1", plan);
-            const auto eight = run(artifact, "8", plan);
+            const auto one   = run(artifact, 1, plan);
+            const auto eight = run(artifact, 8, plan);
             check(plan.stop_token && plan.stop_string && plan.long_stop_token,
                   model + ": no stop token or stop string was found where the rounds put them");
             check(one.count("stop_token") &&

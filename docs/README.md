@@ -50,6 +50,6 @@ reference; the others own narrower contracts:
 | [ReplaySSM GDN](maintainer/replayssm-gdn.md) | raw transition records and commitment of the verified state prefix |
 | [Op development](maintainer/op-development.md) | semantic boundaries, source ownership, numerical qualification and performance evidence |
 | [Operational logging](maintainer/logging.md) | log ownership, presentation, severity and data policy |
-| [Environment variables](maintainer/environment.md) | tuning caches, route tables, numerics dumps and fault injection for development |
+| [Maintainer options and environment variables](maintainer/environment.md) | route tables, lab tuners and debug options; the output-only variables for numerics dumps and fault injection |
 | [Linear benchmark](maintainer/linear-benchmark.md) | pure Linear measurement, metrics and suites |
 | [Linear tuning and reports](maintainer/linear-tuning.md) | tuning ranges, priority points, dispatch trade-offs and report format |

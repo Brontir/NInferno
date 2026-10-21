@@ -1,7 +1,7 @@
 #pragma once
 
 // The official drafter registry: a curated JSON the project publishes (src/spec/data/
-// drafter_registry.json is compiled in; $NINFERNO_DRAFTER_REGISTRY names a newer copy on disk). It
+// drafter_registry.json is compiled in; --drafter-registry FILE names a newer copy on disk). It
 // maps model ids (a base model, its quantized variants and known fine-tunes) to the drafters
 // NInferno verified for them and to the speculation profiles measured per GPU class. Lookup is
 // deterministic: an exact repository id, then the base-model lineage the checkpoint itself
@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -93,8 +94,12 @@ struct KindInfo {
 class Registry {
 public:
     [[nodiscard]] static Registry parse(const std::string& text);
-    // The compiled-in registry, or the file at $NINFERNO_DRAFTER_REGISTRY.
+    // The compiled-in registry, or the file use_file() named.
     [[nodiscard]] static const Registry& builtin();
+    // The products' --drafter-registry FILE: builtin() reads this file instead of the compiled-in
+    // registry. Called before the first builtin(); a later call naming another file throws
+    // std::logic_error (the registry already answered from the other one).
+    static void use_file(const std::filesystem::path& path);
 
     [[nodiscard]] const std::vector<ModelEntry>& models() const noexcept { return models_; }
     [[nodiscard]] const std::vector<KindInfo>& kinds() const noexcept { return kinds_; }

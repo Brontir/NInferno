@@ -64,7 +64,8 @@
 // NINFERNO_DET_PROMPTS (how many of the 8 prompts, 8; the batch phase needs at least 2).
 // NINFERNO_DET_CONTEXT (each generation row's context, 12288); NINFERNO_DET_CHUNK_LENGTHS (the
 // chunks phase's prompt lengths); NINFERNO_DET_DRAFTER (the drafter artifact of a family that ships
-// it apart, e.g. Gemma 4's MTP assistant).
+// it apart, e.g. Gemma 4's MTP assistant); NINFERNO_DET_POISON (a byte 1..255: each generation
+// Engine runs with MaintainerOptions::debug_poison, --debug-poison, set to it).
 #include "ninferno/engine.h"
 
 #include <cuda_runtime_api.h>
@@ -266,6 +267,13 @@ ninferno::EngineOptions generation_options(const std::string& artifact, std::uin
     if (kv == "bf16") { options.kv_cache = ninferno::KvCacheStorage::BFloat16; }
     if (kv == "k8v4") { options.kv_cache = ninferno::KvCacheStorage::Fp8KeyNvfp4Value; }
     if (env_string("NINFERNO_DET_GRAPHS") == "0") { options.use_cuda_graph = false; }
+    if (const std::string poison = env_string("NINFERNO_DET_POISON"); !poison.empty()) {
+        const unsigned long byte = std::stoul(poison, nullptr, 0);
+        if (byte == 0 || byte > 0xFF) {
+            throw std::invalid_argument("NINFERNO_DET_POISON must be a byte in 1..255");
+        }
+        options.maintainer.debug_poison = static_cast<std::uint8_t>(byte);
+    }
     if (speculate) {
         const std::string spec            = env_string("NINFERNO_DET_SPEC");
         options.speculative.backend       = spec == "dflash" ? ninferno::SpeculativeBackend::DFlash
@@ -419,7 +427,7 @@ void phase_batch(Probe& probe, Report& report) {
                         result.finish_reason, result.reused_prompt_tokens,
                         result.speculative.rounds};
                 // Dumped and compared across processes (NINFERNO_DET_DUMP / _COMPARE): the same
-                // batches on the same binary are B, e.g. with and without NINFERNO_DEBUG_POISON.
+                // batches on the same binary are B, e.g. with and without NINFERNO_DET_POISON.
                 probe.references["batch C=" + std::to_string(c) + (seeded ? " seeded" : " greedy") +
                                  " p" + std::to_string(which[i])] = got;
                 compare(report, "batch",

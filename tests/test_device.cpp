@@ -360,20 +360,24 @@ int check_cuda_error_context() {
 
 } // namespace
 
+// ninferno_device_test [MODE FLAGS]: the context runs --cuda-sync MODE, and CUDA reports FLAGS
+// (default: spin). ninferno_device_test --invalid-sync TEXT: the schedule TEXT is refused, naming
+// the option, before CUDA is initialized.
 int main(int argc, char** argv) {
-    if (argc == 2 && std::string_view(argv[1]) == "--invalid-sync") {
+    if (argc >= 2 && std::string_view(argv[1]) == "--invalid-sync") {
         try {
-            ninferno::DeviceContext ctx(0);
+            (void)ninferno::parse_cuda_sync_schedule(argc == 3 ? argv[2] : "");
         } catch (const std::invalid_argument& error) {
-            return std::string_view(error.what()).find("NINFERNO_CUDA_SYNC") !=
-                           std::string_view::npos
+            return std::string_view(error.what()).find("--cuda-sync") != std::string_view::npos
                        ? 0
                        : fail("invalid sync setting has no configuration diagnostic");
         }
-        return fail("invalid sync setting did not fail before CUDA initialization");
+        return fail("invalid sync setting was not refused");
     }
+    const ninferno::CudaSyncSchedule schedule =
+        argc == 3 ? ninferno::parse_cuda_sync_schedule(argv[1]) : ninferno::CudaSyncSchedule::Spin;
     const unsigned int expected_flags =
-        argc == 2 ? static_cast<unsigned int>(std::stoul(argv[1])) : cudaDeviceScheduleSpin;
+        argc == 3 ? static_cast<unsigned int>(std::stoul(argv[2])) : cudaDeviceScheduleSpin;
     int count                   = 0;
     const cudaError_t count_err = cudaGetDeviceCount(&count);
     if (cuda_unavailable(count_err)) {
@@ -392,7 +396,7 @@ int main(int argc, char** argv) {
     int failures = 0;
     failures += check_cuda_error_context();
 
-    ninferno::DeviceContext ctx(0);
+    ninferno::DeviceContext ctx(0, schedule);
     unsigned int actual_flags = 0;
     CUDA_CHECK(cudaGetDeviceFlags(&actual_flags));
     if ((actual_flags & cudaDeviceScheduleMask) != expected_flags) {

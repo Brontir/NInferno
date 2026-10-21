@@ -2,6 +2,7 @@
 #include "core/command_line.h"
 #include "ninferno/types.h"
 #include "product/activation_options.h"
+#include "product/engine_flags.h"
 #include "product/numeric_options.h"
 #include "product/sampling_options.h"
 #include "product/speculative_options.h"
@@ -53,7 +54,9 @@ std::string usage_text(const char* argv0) {
            "       [--raw-output] [--print-token-ids] [--no-thinking] [--thinking-budget N]\n"
            "       [--reasoning-effort none|minimal|low|medium|high|xhigh|max] [--vision]\n"
            "       [--no-cuda-graph]\n"
-           "       [--log-level trace|debug|info|warning|error|critical|off]\n"
+           "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
+           std::string(product::kEngineFlagsUsage) +
+           "       [--drafter-registry FILE]\n"
            "\n"
            "Streams answer content to stdout and reasoning plus diagnostics to stderr.\n"
            "Structured message content accepts text, image/image_url, and video/video_url parts;\n"
@@ -183,6 +186,10 @@ Options parse_options(int argc, char** argv) {
                        arg, [&] { return value(arg); }, options.sampling)) {
         } else if (arg == "--greedy") {
             options.greedy = true;
+        } else if (product::parse_engine_flag(
+                       arg, [&] { return value(arg); }, options.pacing, options.maintainer)) {
+        } else if (arg == "--drafter-registry") {
+            options.drafter_registry = value(arg);
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(value(arg));
         } else {

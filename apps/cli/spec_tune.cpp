@@ -107,22 +107,16 @@ std::string corpus_digest(const spec::Corpus& corpus) {
     return ninferno::sha256_hex(bytes);
 }
 
-// The artifact's id, or its path's text when it has none readable (a drafter directory).
-// How the tune's engines wait for their decode rounds. Each round of a stalling host chooses
-// between spinning and blocking by a probe (NINFERNO_DECODE_WAIT=auto, round_pacing.h), so a busy
-// host would change what a tune measures and how; it waits as a quiet host does (spin) unless
-// NINFERNO_DECODE_WAIT is set. Called before the first engine is built.
-std::string pin_decode_wait() {
-    const char* set = std::getenv("NINFERNO_DECODE_WAIT");
-    if (set != nullptr && *set != '\0') { return set; }
-#ifdef _WIN32
-    _putenv_s("NINFERNO_DECODE_WAIT", "spin");
-#else
-    ::setenv("NINFERNO_DECODE_WAIT", "spin", 1);
-#endif
-    return "spin";
+// How the tune's engines wait for their decode rounds (--decode-wait, DecodePacingOptions::wait).
+// Each round of a stalling host chooses between spinning and blocking by a probe (auto,
+// round_pacing.h), so a busy host would change what a tune measures and how; the tune waits as a
+// quiet host does (spin) unless --decode-wait says otherwise.
+DecodeWait tune_decode_wait(const std::map<std::string, std::string>& flags) {
+    const auto it = flags.find("decode-wait");
+    return it == flags.end() ? DecodeWait::Spin : parse_decode_wait(it->second);
 }
 
+// The artifact's id, or its path's text when it has none readable (a drafter directory).
 std::string artifact_id_or_path(const std::filesystem::path& artifact) {
     try {
         return spec::artifact_id_hex(artifact);
@@ -170,7 +164,8 @@ std::string artifact_id_or_path(const std::filesystem::path& artifact) {
 // server runs the width the bounds were measured at; without it every launch drafts at the
 // Engine's default and the table names none.
 int run_spec_tune_load(const std::string& artifact, const std::map<std::string, std::string>& flags,
-                       const std::string& decode_wait) {
+                       DecodeWait wait) {
+    const std::string decode_wait = decode_wait_name(wait);
     const auto text = [&](const std::string& key, std::string fallback) {
         const auto it = flags.find(key);
         return it == flags.end() ? fallback : it->second;
@@ -337,6 +332,7 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
 
         EngineOptions options;
         options.artifact_path                        = artifact;
+        options.pacing.wait                          = wait;
         options.device                               = device;
         options.max_context                          = max_context;
         options.max_concurrency                      = widest;
@@ -688,11 +684,12 @@ int run_spec_tune(int argc, char** argv) {
         flags[key.substr(2)] = argv[++i];
     }
     static const std::set<std::string, std::less<>> kKnown = {
-        "applies-to",    "budget-seconds", "configs",     "corpus",   "device",
-        "draft-width",   "gpu-class",      "kv-dtype",    "load",     "load-depths",
-        "max-context",   "max-tokens",     "measured-on", "min-gain", "out",
-        "prefill-chunk", "profile",        "publish",     "repeat",   "requires", "resume",
-        "temperature",   "thinking",       "tolerance",   "top-p"};
+        "applies-to",  "budget-seconds", "configs",    "corpus",      "decode-wait",
+        "device",      "draft-width",    "gpu-class",  "kv-dtype",    "load",
+        "load-depths", "max-context",    "max-tokens", "measured-on", "min-gain",
+        "out",         "prefill-chunk",  "profile",    "publish",     "repeat",
+        "requires",    "resume",         "temperature", "thinking",   "tolerance",
+        "top-p"};
     for (const auto& [key, value] : flags) {
         if (!kKnown.contains(key)) {
             throw std::invalid_argument("spec-tune: unknown flag --" + key);
@@ -702,8 +699,9 @@ int run_spec_tune(int argc, char** argv) {
         const auto it = flags.find(key);
         return it == flags.end() ? fallback : it->second;
     };
-    const std::string decode_wait = pin_decode_wait();
-    if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, decode_wait); }
+    const DecodeWait wait         = tune_decode_wait(flags);
+    const std::string decode_wait = decode_wait_name(wait);
+    if (flags.contains("load")) { return run_spec_tune_load(artifact, flags, wait); }
     const auto started = std::chrono::steady_clock::now();
     const int device   = parse_nonnegative_int(text("device", "0").c_str(), "device");
     std::optional<spec::Corpus> own;
@@ -791,6 +789,7 @@ int run_spec_tune(int argc, char** argv) {
         }
         EngineOptions options;
         options.artifact_path  = artifact;
+        options.pacing.wait    = wait;
         options.device         = device;
         options.max_context    = max_context;
         options.kv_capacity    = KvCapacityPolicy::explicit_capacity(max_context);

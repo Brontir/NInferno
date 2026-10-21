@@ -12,24 +12,23 @@ namespace ninferno {
 namespace {
 
 struct SyncSchedule {
+    CudaSyncSchedule schedule;
     std::string_view name;
     unsigned int flags;
 };
 
 constexpr SyncSchedule kSyncSchedules[] = {
-    {"spin", cudaDeviceScheduleSpin},
-    {"blocking", cudaDeviceScheduleBlockingSync},
-    {"yield", cudaDeviceScheduleYield},
-    {"auto", cudaDeviceScheduleAuto},
+    {CudaSyncSchedule::Spin, "spin", cudaDeviceScheduleSpin},
+    {CudaSyncSchedule::Blocking, "blocking", cudaDeviceScheduleBlockingSync},
+    {CudaSyncSchedule::Yield, "yield", cudaDeviceScheduleYield},
+    {CudaSyncSchedule::Auto, "auto", cudaDeviceScheduleAuto},
 };
 
-unsigned int sync_schedule_from_environment() {
-    const char* value = std::getenv("NINFERNO_CUDA_SYNC");
-    if (value == nullptr) { return cudaDeviceScheduleSpin; }
-    for (const auto& schedule : kSyncSchedules) {
-        if (schedule.name == value) { return schedule.flags; }
+unsigned int sync_schedule_flags(CudaSyncSchedule schedule) {
+    for (const auto& entry : kSyncSchedules) {
+        if (entry.schedule == schedule) { return entry.flags; }
     }
-    throw std::invalid_argument("NINFERNO_CUDA_SYNC must be spin, blocking, yield, or auto");
+    throw std::invalid_argument("unknown CUDA synchronization schedule");
 }
 
 void destroy_stream(cudaStream_t& stream) noexcept {
@@ -65,8 +64,8 @@ void rethrow_with_context(const std::string& context) {
     }
 }
 
-DeviceContext::DeviceContext(int device_id) : device(device_id) {
-    const unsigned int sync_flags = sync_schedule_from_environment();
+DeviceContext::DeviceContext(int device_id, CudaSyncSchedule sync) : device(device_id) {
+    const unsigned int sync_flags = sync_schedule_flags(sync);
     int count       = 0;
     cudaError_t err = cudaGetDeviceCount(&count);
     if (err != cudaSuccess) {
