@@ -17,7 +17,9 @@ namespace {
 // spec-tune floors of src/spec/data/drafter_registry.json at 3db81deeb. In sample the fit errs by
 // 9.8 % rms in x3_fit.py over the 116, and 9.23 % in test_spec over the 87 it prices (Ada and
 // Blackwell; these constants rounded, the clocks and bandwidths of the reference table); held out
-// it errs by 21 % rms with a card left out of the fit and 18 % with a model left out. Refit them
+// (re-run 21.10; x3_fit.py's M3 never had knee or beta) it errs over the 87 priced floors by
+// 20.5 % rms with a card left out of the fit and 17.4 % with a model left out (21.0 %, 18.2 % over
+// all 116). Refit them
 // with the script when the registry gains floors. knee and beta come from one card's measured
 // grid per generation (27B Q4_G64, 8K, several rows) and stay here as its record: round_cost_of
 // leaves them out (a lab constant needs two cards), which only the floors deeper than the knee
@@ -56,22 +58,26 @@ struct DrafterKind {
     double cost; // per pass, over the drafter's size relative to the target's active weights
     bool pass_per_draft;
 };
+
 constexpr DrafterKind kDrafterKinds[] = {
+    // Cards behind each cost (two or more that differ, by the lab rule): mtp 4, gemma4_assistant
+    // 9, nemotron_h_mtp 3 (RTX 3090, 4090, 5090), dflash 10, dflash2 11.
     {"mtp", 0.7232, true},    {"gemma4_assistant", 67.09, true}, {"nemotron_h_mtp", 1.429, true},
     {"dflash", 283.1, false}, {"dflash2", 329.2, false},
 };
 
 // The generation x family pairs the fit stands behind: measured on two or more cards, and held out
 // within kClassMargin (10 %) both with a card left out and with a model left out (x3_fit.py's
-// pred_m3_loc and pred_m3_lom in points.csv, rms by cc and engine). Only sm120 dense passes (7.1 %,
-// 6.8 %); sm89 dense (11.0 % card-out), sm120 gemma4 (11.3 %, 16.1 %), sm89 qwen3_5 (12.2 %,
-// 25.5 %), sm89 gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one
-// card each. The sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b
-// (an MoE, the registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So
-// the key is what the points cover: the generation, the family, the target's shape as far as the
-// facts tell it (its routed experts, 32, and hidden size, 2880: gpt-oss-20b), the weight format and
-// the drafter kind. A dense target, another MoE, another weight format (BF16, NVFP4, Q8, Q4_0, a
-// GGUF k-quant) or another drafter on sm120 dense stays unsure.
+// pred_m3_loc and pred_m3_lom in points.csv, rms by cc and engine; re-run 21.10 without knee or
+// beta, the same). Only sm120 dense passes (7.1 %, 6.8 %; its worst single point 10.4 % card-out);
+// sm89 dense (11.0 % card-out), sm120 gemma4 (11.3 %, 16.1 %), sm89 qwen3_5 (12.2 %, 25.5 %), sm89
+// gemma4 (16.1 %), sm120 qwen3_5 (31.5 %) miss it, and the nemotron_h pairs have one card each. The
+// sm120 dense points are all one target, quantization and drafter kind: gpt-oss-20b (an MoE, the
+// registry's "dense" engine), MXFP4, DFlash, on the RTX 5060 Ti, 5070 Ti and 5090. So the key is
+// what the points cover: the generation, the family, the target's shape as far as the facts tell it
+// (its routed experts, 32, and hidden size, 2880: gpt-oss-20b), the weight format and the drafter
+// kind. A dense target, another MoE, another weight format (BF16, NVFP4, Q8, Q4_0, a GGUF k-quant)
+// or another drafter on sm120 dense stays unsure.
 struct Tested {
     int cc;
     std::string_view family;

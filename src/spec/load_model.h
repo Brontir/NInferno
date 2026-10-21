@@ -16,8 +16,9 @@
 // round_cost_of prices a card and a model from facts alone (the chip's rates, the artifact's shape,
 // quantization and experts, the drafter's kind), never a timing. At one row t(1, k) / t0 is the
 // registry's floor (spec-tune's seconds per round over seconds per plain token); the constants are
-// fitted on those floors (audit1018/x3): in sample 9.8 % rms over the 116 in x3_fit.py, 9.23 %
-// over the 87 priced ones in test_spec; 21 % with a card held out, 18 % with a model held out.
+// fitted on those floors (audit1018/x3): in sample 9.8 % rms over the 116 in x3_fit.py, 9.2 % over
+// the 87 priced ones (Ada, Blackwell); held out over those 87, 20.5 % with a card left out and
+// 17.4 % with a model left out (21.0 %, 18.2 % over all 116).
 //
 // One row only: the floors are measured at C1, so round_cost_of's constants (alpha, delta, the MoE
 // term) are fitted at rows = 1 (RoundCost::fitted_rows); beta and the knee come from one card's
@@ -25,11 +26,11 @@
 // only past depth 7 on Ada, 11 on Blackwell) and modeled_load decodes plainly past the fitted rows.
 // A multi-row use waits for a multi-row fit.
 //
-// Clocks: the clock and bandwidth are GpuKey's, the reference (boost) clock and memory rate of the
-// PCI facts table's row (DeviceClass::facts, source Verified), a chip fact; the driver's live
-// clocks are never read. A device whose facts are not the table's verified row (an unlisted id on
-// the driver's clocks, a laptop, a MIG slice: GpuKey::facts_extrapolated) is priced but never
-// reliable.
+// Clocks: the clock and bandwidth are GpuKey's, from DeviceClass::facts. For a listed board that is
+// the PCI facts table's reference (boost) clock and memory rate, a chip fact. An unknown PCI id and
+// a laptop row without the bottom of its boost range take the driver's clock (on the 2^(1/16)
+// grid); such a device, like any whose facts are not the table's verified row (a MIG slice:
+// GpuKey::facts_extrapolated), is priced but never trusted: unsure.
 //
 // The i-th draft of a round is accepted, given the earlier ones, with probability a d^(i-1): the
 // acceptance falls along the block (RTX 4090 grid: DFlash2 a 0.75, d 0.97; MTP a 0.77, d 0.91 give
