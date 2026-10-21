@@ -145,7 +145,10 @@ bool device_supported() {
     // The device class the selection is for: a selector test's substitute (ScopedDeviceClass)
     // decides as that card would, not as the GPU the test happens to run on.
     try {
-        return device_class().compute_capability() >= 75;
+        // TU116 / TU117 run its int8 mma.sync without tensor cores (mma_slow): the vector kernel
+        // takes their verify widths, as on Volta.
+        const auto& d = device_class();
+        return d.compute_capability() >= 75 && !d.features.mma_slow;
     } catch (const std::exception&) {
         return false;
     }

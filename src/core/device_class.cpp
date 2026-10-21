@@ -155,10 +155,15 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->features = common_features(device_features_for(prop.major, prop.minor), build_features());
     out->pci_device_id    = pci_product_id(prop, device);
     out->chip             = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
+    out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
     return out;
 }
 
 } // namespace
+
+bool chip_mma_slow(int major, int minor, std::string_view chip) noexcept {
+    return major == 7 && minor == 5 && (chip == "tu116" || chip == "tu117");
+}
 
 DeviceFeatures device_features_for(int major, int minor) noexcept {
     switch (major) {
@@ -234,7 +239,8 @@ DeviceFeatures common_features(const DeviceFeatures& a, const DeviceFeatures& b)
             .mma_mxf4nvf4    = a.mma_mxf4nvf4 && b.mma_mxf4nvf4,
             .tma             = a.tma && b.tma,
             .pdl             = a.pdl && b.pdl,
-            .clusters        = a.clusters && b.clusters};
+            .clusters        = a.clusters && b.clusters,
+            .mma_slow        = a.mma_slow || b.mma_slow};
 }
 
 DeviceFeatures build_features() noexcept {
@@ -300,7 +306,8 @@ std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms)
 }
 
 Board board_of(const DeviceClass& d) noexcept {
-    return {d.major, d.minor, d.sms, static_cast<double>(d.l2_bytes) / (1 << 20), d.dram_gbps()};
+    return {d.major, d.minor, d.sms, static_cast<double>(d.l2_bytes) / (1 << 20), d.dram_gbps(),
+            d.features.mma_slow};
 }
 
 namespace {
@@ -308,7 +315,8 @@ namespace {
 double board_distance_of(const Board& a, const Board& b, bool hmma_rate) noexcept {
     const DeviceFeatures fa = device_features_for(a.major, a.minor);
     const DeviceFeatures fb = device_features_for(b.major, b.minor);
-    if (!has_features(fa, fb) || !has_features(fb, fa) || a.sms <= 0 || b.sms <= 0 ||
+    if (!has_features(fa, fb) || !has_features(fb, fa) || a.mma_slow != b.mma_slow || a.sms <= 0 ||
+        b.sms <= 0 ||
         (hmma_rate && generation_row(a.major, a.minor).fp32acc_full_rate !=
                           generation_row(b.major, b.minor).fp32acc_full_rate)) {
         return std::numeric_limits<double>::infinity();
@@ -367,9 +375,15 @@ std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, in
 
 std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
                                            std::string_view own_chip) {
+    // A chip without tensor cores (mma_slow) and one with them are other kinds: measured data of
+    // one does not carry to the other.
+    const bool slow = chip_mma_slow(major, minor, own_chip);
     std::vector<const FullChip*> chips;
     for (const auto& c : kFullChips) {
-        if (c.major == major && c.minor == minor && own_chip != c.chip) { chips.push_back(&c); }
+        if (c.major == major && c.minor == minor && own_chip != c.chip &&
+            chip_mma_slow(c.major, c.minor, c.chip) == slow) {
+            chips.push_back(&c);
+        }
     }
     const double board  = std::log2(static_cast<double>(std::max(sms, 1)));
     const auto distance = [board](const FullChip* c) {
@@ -471,6 +485,7 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.pci_device_id = pci_device_id;
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
     d.features      = device_features_for(major, minor);
+    d.features.mma_slow = chip_mma_slow(major, minor, d.chip);
     // The architecture's limits (CUDA programming guide, compute capability tables).
     const int cc           = major * 10 + minor;
     d.smem_per_block_optin = cc == 75                  ? 64 * 1024

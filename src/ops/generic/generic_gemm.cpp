@@ -521,8 +521,9 @@ bool vec_admits(const Weight& w, LinearPolicy policy) {
 // emulated tiles 1.0..2.6 ms a call, 67 % of the run).
 std::int32_t vec_max_tokens() {
     try {
-        return device_class().features.mma_tensor ? ggml_mmq::kVecMaxColumns
-                                                  : 2 * ggml_mmq::kVecMaxColumns;
+        const auto& f = device_class().features;
+        return f.mma_tensor && !f.mma_slow ? ggml_mmq::kVecMaxColumns
+                                           : 2 * ggml_mmq::kVecMaxColumns;
     } catch (const std::exception&) { return ggml_mmq::kVecMaxColumns; }
 }
 
@@ -1733,7 +1734,9 @@ namespace {
 bool qx_prefill_a8_pays() {
     try {
         const auto& d = device_class();
-        return d.features.mma_tensor && !generation_row(d.major, d.minor).fp32acc_full_rate;
+        // Not on a chip whose mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq.
+        return d.features.mma_tensor && !d.features.mma_slow &&
+               !generation_row(d.major, d.minor).fp32acc_full_rate;
     } catch (const std::exception&) {
         return false;
     }
