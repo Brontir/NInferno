@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 69,
+  "version": 75,
   "published": "2026-10-20",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -5529,6 +5529,240 @@
           ],
           "load_measured_on": "gpt-oss-20b-MXFP4.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 5060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-12T00:15:18Z",
           "revision": "b8a6a121b446"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.6134371957156767,
+            "config": "dflash:3",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.4217587016671716,
+            "plain_tok_s": 100.64594386577063,
+            "speedup": 1.1550118908242661,
+            "tok_s": 116.24726192819669,
+            "tokens_per_round": 2.827852998065764
+          },
+          "gpu": "Tesla V100-SXM2-32GB",
+          "gpu_class": "gv100",
+          "measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), Tesla V100-SXM2-32GB, built-in corpus",
+          "measured_at": "2026-10-20",
+          "non_thinking": {
+            "acceptance": 0.5727576335877863,
+            "config": "dflash:3",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.419581492492843,
+            "plain_tok_s": 100.65831730482508,
+            "speedup": 1.1201223356750774,
+            "tok_s": 112.74962948460372,
+            "tokens_per_round": 2.7052556818181817
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.6134371957156767,
+              "config": "dflash:3",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.4217587016671716,
+              "plain_tok_s": 100.64594386577063,
+              "speedup": 1.1550118908242661,
+              "tok_s": 116.24726192819669,
+              "tokens_per_round": 2.827852998065764
+            },
+            "non_thinking": {
+              "acceptance": 0.5727576335877863,
+              "config": "dflash:3",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.419581492492843,
+              "plain_tok_s": 100.65831730482508,
+              "speedup": 1.1201223356750774,
+              "tok_s": 112.74962948460372,
+              "tokens_per_round": 2.7052556818181817
+            },
+            "thinking": {
+              "acceptance": 0.7,
+              "config": "dflash:3",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.4261432243316152,
+              "plain_tok_s": 100.60884179396152,
+              "speedup": 1.274001081185392,
+              "tok_s": 128.17577322231702,
+              "tokens_per_round": 3.0893939393939394
+            }
+          },
+          "source": "spec-tune 2026-10-20T16:05:18Z (ninferno-spec-1, 301 s)",
+          "thinking": {
+            "acceptance": 0.7,
+            "config": "dflash:3",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.4261432243316152,
+            "plain_tok_s": 100.60884179396152,
+            "speedup": 1.274001081185392,
+            "tok_s": 128.17577322231702,
+            "tokens_per_round": 3.0893939393939394
+          },
+          "load": [
+            {
+              "depth": 0,
+              "lanes": 2
+            }
+          ],
+          "load_measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), context 8192, kv fp8, Tesla V100-SXM2-32GB, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T16:21:33Z",
+          "revision": "758eb388b8a8"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.36788974719101125,
+            "config": "dflash:7",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.5392188942954586,
+            "plain_tok_s": 60.64659817810052,
+            "speedup": 1.361825793001303,
+            "tok_s": 82.5901016567231,
+            "tokens_per_round": 3.5277442702050665
+          },
+          "gpu": "NVIDIA L4",
+          "gpu_class": "ad104",
+          "measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), NVIDIA L4, built-in corpus",
+          "measured_at": "2026-10-20",
+          "non_thinking": {
+            "acceptance": 0.3309118236472946,
+            "config": "dflash:7",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.5312437173877567,
+            "plain_tok_s": 60.70081370185053,
+            "speedup": 1.291824590700392,
+            "tok_s": 78.4148038155738,
+            "tokens_per_round": 3.263924592973436
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.4700943179204049,
+              "config": "dflash:5",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.419413297460959,
+              "plain_tok_s": 60.64659817810052,
+              "speedup": 1.350160090564823,
+              "tok_s": 81.88261648859263,
+              "tokens_per_round": 3.323479249573621
+            },
+            "non_thinking": {
+              "acceptance": 0.42741268001986427,
+              "config": "dflash:5",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.4195826815409727,
+              "plain_tok_s": 60.70081370185053,
+              "speedup": 1.2874542641512023,
+              "tok_s": 78.14952143789519,
+              "tokens_per_round": 3.1077551020408163
+            },
+            "thinking": {
+              "acceptance": 0.454518779342723,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.556696976151541,
+              "plain_tok_s": 60.48453113151158,
+              "speedup": 1.6250600636164587,
+              "tok_s": 98.29099600838589,
+              "tokens_per_round": 4.154786150712831
+            }
+          },
+          "source": "spec-tune 2026-10-20T14:55:54Z (ninferno-spec-1, 374 s)",
+          "thinking": {
+            "acceptance": 0.454518779342723,
+            "config": "dflash:7",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.556696976151541,
+            "plain_tok_s": 60.48453113151158,
+            "speedup": 1.6250600636164587,
+            "tok_s": 98.29099600838589,
+            "tokens_per_round": 4.154786150712831
+          },
+          "load": [
+            {
+              "depth": 3,
+              "lanes": 2
+            }
+          ],
+          "load_measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), context 8192, kv fp8, NVIDIA L4, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T15:16:41Z",
+          "revision": "6f95eb14b1b3"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.3746889441877,
+            "config": "dflash:7",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.452538594645619,
+            "plain_tok_s": 191.95205521661086,
+            "speedup": 1.4247020393021268,
+            "tok_s": 273.47448451533995,
+            "tokens_per_round": 3.584917228694053
+          },
+          "gpu": "NVIDIA GeForce RTX 5070 Ti",
+          "gpu_class": "gb203",
+          "measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
+          "measured_at": "2026-10-20",
+          "non_thinking": {
+            "acceptance": 0.4291168658698539,
+            "config": "dflash:5",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.325338832163244,
+            "plain_tok_s": 192.03872940471373,
+            "speedup": 1.3418243378555121,
+            "tok_s": 257.68224092609387,
+            "tokens_per_round": 3.1136549468520034
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.47140880793175005,
+              "config": "dflash:5",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.3286601986793145,
+              "plain_tok_s": 191.95205521661086,
+              "speedup": 1.4050200536771797,
+              "tok_s": 269.69648692388756,
+              "tokens_per_round": 3.327262379055208
+            },
+            "non_thinking": {
+              "acceptance": 0.4291168658698539,
+              "config": "dflash:5",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.325338832163244,
+              "plain_tok_s": 192.03872940471373,
+              "speedup": 1.3418243378555121,
+              "tok_s": 257.68224092609387,
+              "tokens_per_round": 3.1136549468520034
+            },
+            "thinking": {
+              "acceptance": 0.4900559353635799,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.4568164410629296,
+              "plain_tok_s": 191.69250144878515,
+              "speedup": 1.793397114475695,
+              "tok_s": 343.7807789648793,
+              "tokens_per_round": 4.406047516198704
+            }
+          },
+          "source": "spec-tune 2026-10-20T14:49:53Z (ninferno-spec-1, 116 s)",
+          "thinking": {
+            "acceptance": 0.4900559353635799,
+            "config": "dflash:7",
+            "drafter": "dflash",
+            "floor_tokens_per_round": 2.4568164410629296,
+            "plain_tok_s": 191.69250144878515,
+            "speedup": 1.793397114475695,
+            "tok_s": 343.7807789648793,
+            "tokens_per_round": 4.406047516198704
+          },
+          "load": [
+            {
+              "depth": 3,
+              "lanes": 2
+            }
+          ],
+          "load_measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), context 8192, kv fp8, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T14:59:10Z",
+          "revision": "6b6eb908e34a"
         }
       ]
     },

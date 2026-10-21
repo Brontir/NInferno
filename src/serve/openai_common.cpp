@@ -32,18 +32,26 @@ namespace {
 // training context. ftype is the registered weights profile (the NInferno quantization name).
 Json make_model_object_json(const std::string& model_id, std::int64_t created,
                             std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata) {
+    Json meta{{"n_vocab", metadata.vocab_size},
+              {"n_ctx", max_model_len},
+              {"n_ctx_train", metadata.native_context},
+              {"n_embd", metadata.embedding_size},
+              {"n_params", metadata.parameters},
+              {"size", metadata.weight_bytes},
+              {"ftype", metadata.weights_id}};
+    if (!metadata.published_activations.empty()) {
+        Json published = Json::object();
+        for (const auto& [bits, count] : metadata.published_activations) {
+            published[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
+        }
+        meta["published_activations"] = published;
+    }
     return Json{{"id", model_id},
                 {"object", "model"},
                 {"created", created},
                 {"owned_by", "ninferno"},
                 {"max_model_len", max_model_len},
-                {"meta", Json{{"n_vocab", metadata.vocab_size},
-                              {"n_ctx", max_model_len},
-                              {"n_ctx_train", metadata.native_context},
-                              {"n_embd", metadata.embedding_size},
-                              {"n_params", metadata.parameters},
-                              {"size", metadata.weight_bytes},
-                              {"ftype", metadata.weights_id}}}};
+                {"meta", std::move(meta)}};
 }
 
 } // namespace

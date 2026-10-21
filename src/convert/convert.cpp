@@ -1,4 +1,5 @@
 #include "convert/convert.h"
+#include "core/ascii.h"
 
 #include "convert/files.h"
 #include "core/clock.h"
@@ -767,6 +768,204 @@ private:
     bool workers_done_       = false;
 };
 
+// The activation width (bits) a publisher validated its quantized matrices with: ModelOpt's
+// hf_quant_config.json (one quant_algo, or one per layer under MIXED_PRECISION: W4A16_NVFP4 16,
+// FP8 8, NVFP4 4) or a compressed-tensors config whose groups agree on input_activations (none:
+// 16). `source` empty: the checkpoint says nothing.
+struct PublishedActivations {
+    std::string source;
+    int all = 0;                       // every layer; 0: per layer only
+    std::map<std::string, int> layers; // module name -> bits
+};
+
+int activation_bits(const std::string& algorithm) {
+    const auto name = ascii_lower(algorithm);
+    // Weight-only schemes (W4A16_NVFP4, FP8_PB_WO, INT8_WO, INT4_AWQ) keep 16-bit activations.
+    if (name.find("a16") != std::string::npos || name.ends_with("_wo")) { return 16; }
+    if (name.find("a8") != std::string::npos || name.starts_with("fp8") ||
+        name.starts_with("int8") || name.starts_with("mxfp8")) {
+        return 8;
+    }
+    if (name.starts_with("int4")) { return 16; }
+    // ModelOpt's MXFP4 quantizes activations as the weights (W4A4), as NVFP4 does.
+    if (name.starts_with("nvfp4") || name.starts_with("mxfp4") ||
+        name.find("a4") != std::string::npos) {
+        return 4;
+    }
+    return 0;
+}
+
+PublishedActivations published_activations(const Checkpoint& base) {
+    PublishedActivations out;
+    // The checkpoint's directory: --model or --source may name one .safetensors file or its index.
+    const std::filesystem::path& root = base.root();
+    // ModelOpt's description: one quant_algo, or per module (a module may name a whole bank,
+    // model.language_model.layers.N.mlp.experts).
+    const auto modelopt = [&](const OJson& body, const char* source) {
+        // A description of the KV cache alone says nothing of the weights' activations.
+        if (!body.contains("quant_algo") && !body.contains("quantized_layers")) { return; }
+        out.source = source;
+        if (body.contains("quant_algo") && body.at("quant_algo").is_string()) {
+            out.all = activation_bits(body.at("quant_algo").get<std::string>());
+        }
+        if (body.contains("quantized_layers") && body.at("quantized_layers").is_object()) {
+            for (const auto& [name, layer] : body.at("quantized_layers").items()) {
+                if (layer.is_object() && layer.contains("quant_algo") &&
+                    layer.at("quant_algo").is_string()) {
+                    out.layers[name] = activation_bits(layer.at("quant_algo").get<std::string>());
+                }
+            }
+        }
+    };
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(root / "hf_quant_config.json", ec)) {
+        try {
+            std::ifstream file(root / "hf_quant_config.json");
+            const auto json = OJson::parse(file);
+            modelopt(json.contains("quantization") ? json.at("quantization") : json,
+                     "hf_quant_config.json");
+        } catch (const std::exception&) { out = {}; }
+        // An unreadable or silent file leaves config.json's quantization_config to answer.
+        if (!out.source.empty()) { return out; }
+    }
+    const auto& config = base.config();
+    if (!config.contains("quantization_config")) { return out; }
+    const auto& quantization = config.at("quantization_config");
+    if (quantization.is_object() && quantization.contains("quant_algo")) {
+        modelopt(quantization, "quantization_config");
+        return out;
+    }
+    if (!quantization.is_object() || !quantization.contains("config_groups") ||
+        !quantization.at("config_groups").is_object()) {
+        return out;
+    }
+    std::set<int> widths;
+    for (const auto& [name, group] : quantization.at("config_groups").items()) {
+        const bool given = group.is_object() && group.contains("input_activations") &&
+                           group.at("input_activations").is_object() &&
+                           group.at("input_activations").contains("num_bits") &&
+                           group.at("input_activations").at("num_bits").is_number_integer();
+        widths.insert(given ? group.at("input_activations").at("num_bits").get<int>() : 16);
+    }
+    if (widths.size() == 1) {
+        out.source = "compressed-tensors";
+        out.all    = *widths.begin();
+    }
+    return out;
+}
+
+// The published activation widths of the matrices kept as published, and how many of them the
+// recorded policy lets run below that width (fast mode): provenance["published_activations"].
+// Each matrix answers to the description of the checkpoint it is imported from: an NVFP4
+// recipe's --source quantized=PATH, not the unquantized --model. A matrix whose checkpoint
+// describes nothing is not counted; "source" names every description read, in first-use order.
+std::optional<OJson> published_activation_summary(const SourceInputs& sources, const Model& model,
+                                                  const Recipe& recipe) {
+    const auto opened = sources.opened();
+    std::map<const Checkpoint*, PublishedActivations> described; // each checkpoint read once
+    std::vector<std::string> named;
+    std::map<int, std::uint64_t> counts;
+    std::uint64_t below = 0, below_int8 = 0;
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const auto& parameter = model.parameters[i];
+        const auto& selection = recipe.selections[i];
+        if (selection.method != Method::ImportEncoded || !selection.source ||
+            recipe.policies[i].empty()) {
+            continue;
+        }
+        std::vector<const TensorInfo*> tensors;
+        selection.source->tensors(sources.base(), tensors);
+        if (parameter.probe_leaf.empty() && tensors.empty()) { continue; }
+        // The opened checkpoint holding the tensors the matrix reads (the base if none does).
+        const Checkpoint* origin = nullptr;
+        for (const auto* tensor : tensors) {
+            for (const auto* checkpoint : opened) {
+                const auto it = checkpoint->tensors().find(tensor->name);
+                if (it != checkpoint->tensors().end() && &it->second == tensor) {
+                    origin = checkpoint;
+                    break;
+                }
+            }
+            if (origin) { break; }
+        }
+        if (!origin) { origin = &sources.base(); }
+        auto entry = described.find(origin);
+        if (entry == described.end()) {
+            entry = described.emplace(origin, published_activations(*origin)).first;
+        }
+        const auto& published = entry->second;
+        if (published.source.empty()) { continue; }
+        if (std::find(named.begin(), named.end(), published.source) == named.end()) {
+            named.push_back(published.source);
+        }
+        // The longest named module holding the matrix, by the recipe's leaf or the tensors' own
+        // names, under either text root (a leaf may name model.layers.N where the checkpoint says
+        // model.language_model.layers.N).
+        std::vector<std::string> leaves;
+        if (!parameter.probe_leaf.empty()) { leaves.push_back(parameter.probe_leaf); }
+        for (const auto* tensor : tensors) {
+            if (std::find(leaves.begin(), leaves.end(), tensor->name) == leaves.end()) {
+                leaves.push_back(tensor->name);
+            }
+        }
+        int bits   = published.all;
+        bool found = false;
+        for (const auto& leaf : leaves) {
+            std::vector<std::string> names{leaf};
+            for (const auto& [from, to] :
+                 {std::pair<std::string, std::string>{"model.language_model.", "model."},
+                  {"model.", "model.language_model."}}) {
+                if (leaf.starts_with(from)) {
+                    names.push_back(to + leaf.substr(from.size()));
+                } else if (!leaf.starts_with("model.")) {
+                    names.push_back(from + leaf);
+                }
+            }
+            for (auto name : names) {
+                while (!name.empty() && !found) {
+                    if (const auto it = published.layers.find(name); it != published.layers.end()) {
+                        bits  = it->second;
+                        found = true;
+                    } else {
+                        const auto dot = name.rfind('.');
+                        name = dot == std::string::npos ? std::string() : name.substr(0, dot);
+                    }
+                }
+                if (found) { break; }
+            }
+            if (found) { break; }
+        }
+        ++counts[bits]; // 0: the publisher's description names no width for this matrix
+        const auto width = [](ActivationPolicy policy) {
+            return policy == ActivationPolicy::AllowA4   ? 4
+                   : policy == ActivationPolicy::AllowA8 ? 8
+                                                         : 16;
+        };
+        const auto policy = recipe.policies[i].front();
+        // --activations int8 lets every A16Only use run A8 but a head's or embedding's: the
+        // engine's own test of the name (qwen3_5::Model::input).
+        const bool fixed = parameter.name.find("head") != std::string::npos ||
+                           parameter.name.find("embed") != std::string::npos;
+        const auto int8 = policy == ActivationPolicy::A16Only && !fixed ? ActivationPolicy::AllowA8
+                                                                       : policy;
+        if (bits > 0) {
+            below += width(policy) < bits ? 1 : 0;
+            below_int8 += width(int8) < bits ? 1 : 0;
+        }
+    }
+    if (counts.empty()) { return std::nullopt; }
+    std::string source;
+    for (const auto& name : named) { source += (source.empty() ? "" : ", ") + name; }
+    OJson out     = OJson::object();
+    out["source"] = source;
+    for (const auto& [bits, count] : counts) {
+        out[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
+    }
+    out["below"]      = below;
+    out["below_int8"] = below_int8;
+    return out;
+}
+
 void write_report(const std::string& report_path, const OJson& report) {
     const auto temporary = report_path + ".tmp";
     std::remove(temporary.c_str()); // a leftover of an interrupted run
@@ -1477,6 +1676,25 @@ ConvertResult convert(const ConvertOptions& options) {
     provenance["sources"]   = sources.provenance();
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
     if (options.proposal) { provenance["ranking"] = ranking_text; }
+    if (const auto published = published_activation_summary(sources, model, recipe)) {
+        provenance["published_activations"] = *published;
+        std::string widths;
+        for (const char* bits : {"16", "8", "4"}) {
+            if (published->contains(bits)) {
+                widths += (widths.empty() ? "" : ", ") + std::string(bits) + "-bit on " +
+                          std::to_string(published->at(bits).get<std::uint64_t>());
+            }
+        }
+        if (published->contains("unknown")) {
+            widths += (widths.empty() ? "" : ", ") + std::string("unnamed on ") +
+                      std::to_string(published->at("unknown").get<std::uint64_t>());
+        }
+        log("published activations (" + published->at("source").get<std::string>() + "): " +
+            widths + " kept matrices; fast mode allows " +
+            std::to_string(published->at("below").get<std::uint64_t>()) +
+            " of them fewer bits, int8 mode " +
+            std::to_string(published->value("below_int8", std::uint64_t{0})));
+    }
     ConvertResult result;
     result.model_seconds = seconds_since(begin);
 
