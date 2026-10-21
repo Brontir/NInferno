@@ -386,7 +386,9 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     // 1. A maintainer's own tune, only when named (--spec-profile): one left beside the artifact is
     //    not read, so a machine's own measurement never steers what it runs by itself.
     const auto& tuned_path = local_profile;
-    if (tuned_path.empty() && std::filesystem::exists(default_profile_path(artifact))) {
+    // Status that cannot be read (a looping symlink, no permission) only drops the note.
+    std::error_code beside_error;
+    if (tuned_path.empty() && std::filesystem::exists(default_profile_path(artifact), beside_error)) {
         out.notes.push_back(default_profile_path(artifact).string() +
                             " is not read: a local tune applies only when named "
                             "(--spec-profile " +

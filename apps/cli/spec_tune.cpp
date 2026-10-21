@@ -218,10 +218,11 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
     // spec-tune wrote beside the artifact when it would serve (a stale one is passed over with a
     // note), else the published profile.
     std::filesystem::path tuned;
+    std::error_code beside_error; // unreadable status: the published profile runs
     if (flags.contains("profile")) {
         tuned = flags.at("profile");
     } else if (const auto beside = spec::default_profile_path(artifact);
-               std::filesystem::exists(beside)) {
+               std::filesystem::exists(beside, beside_error)) {
         if (const auto why = product::tune_refusal(artifact, device, beside); why.empty()) {
             tuned = beside;
         } else {
