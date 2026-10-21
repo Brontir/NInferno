@@ -15,7 +15,15 @@
 //   seven times the routed bytes one lane reads, while a prefill chunk reads every expert once.
 // - Each lane's attention reads its whole context once per round, without the reuse a prefill
 //   chunk's queries share: one context token costs kDecodeAttentionPairs prefill attention pairs.
-// - Each lane's token adds one prompt token of compute, and a round pays one call overhead.
+// - Each lane's token adds one prompt token of compute.
+// - A step pays the larger of the call's fixed cost and its weight read, never both: the prefill
+//   fit's per-call cost (chunk_ns) is mostly the one read of the weights a call makes, so adding
+//   the read on top of it counted the weights twice.
+// - A round runs steps_per_round steps (round_pacing.h: 16 under a CPU quota, else 1, or
+//   --decode-steps), each reading the weights again; a speculative round runs one verify step of
+//   verify_tokens_per_lane tokens per lane (the largest draft window plus the bonus token), which
+//   reads the weights once and computes and attends for every token. A step's growth of the
+//   contexts within a round is not priced.
 //
 // The ratios are estimates to refit on lab cards; a wrong ratio only moves the split of GPU time
 // between prefill and decode, never a request's output. Arithmetic is integer and saturating.
@@ -36,6 +44,10 @@ struct DecodeRoundShape {
     std::uint64_t routed_expert_bytes = 0; // of them, the routed-expert objects (0: dense)
     std::uint32_t experts             = 0; // routed experts of a MoE layer
     std::uint32_t experts_per_token   = 0; // routed experts each token selects
+    // The round's shape (Program::decode_pacing): steps an ordinary round runs, and tokens each
+    // lane verifies in a speculative round (1: not speculative).
+    std::uint32_t steps_per_round        = 1;
+    std::uint32_t verify_tokens_per_lane = 1;
 };
 
 struct InterleavePricing {
@@ -105,8 +117,11 @@ inline constexpr std::uint64_t kSaturated = std::numeric_limits<std::uint64_t>::
 decode_round_ns(const ContextPrefillCost& prefill, const DecodeRoundShape& shape,
                 std::span<const std::uint64_t> lane_contexts) noexcept {
     using namespace interleave_detail;
-    const auto lanes = static_cast<std::uint32_t>(lane_contexts.size());
-    if (lanes == 0) { return 0; }
+    if (lane_contexts.empty()) { return 0; }
+    const std::uint64_t per_lane = std::max(shape.verify_tokens_per_lane, 1U);
+    // Tokens one step computes; the expert fraction saturates long before 2^32 tokens.
+    const auto lanes = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(mul(lane_contexts.size(), per_lane), 0xffff'ffffULL));
     const std::uint64_t routed = std::min(shape.routed_expert_bytes, shape.weight_bytes);
     const std::uint64_t dense  = shape.weight_bytes - routed;
     const bool moe             = routed != 0 && shape.experts != 0 && shape.experts_per_token != 0;
@@ -126,14 +141,14 @@ decode_round_ns(const ContextPrefillCost& prefill, const DecodeRoundShape& shape
     // touched / active in Q16 (touched >= active).
     const std::uint64_t ratio_q16 =
         active == 0 ? (1ULL << 16U) : mul(touched, 1ULL << 16U) / active;
-    std::uint64_t result = prefill.chunk_ns;
-    result               = add(result, mul(one_read_ns, ratio_q16) >> 16U);
-    result               = add(result, q32_times(prefill.token_ns_q32, lanes));
-    std::uint64_t pairs  = 0;
+    std::uint64_t step  = std::max(prefill.chunk_ns, mul(one_read_ns, ratio_q16) >> 16U);
+    step                = add(step, q32_times(prefill.token_ns_q32, lanes));
+    std::uint64_t pairs = 0;
     for (const std::uint64_t context : lane_contexts) {
-        pairs = add(pairs, mul(context, InterleavePricing::kDecodeAttentionPairs));
+        pairs = add(pairs, mul(mul(context, InterleavePricing::kDecodeAttentionPairs), per_lane));
     }
-    return add(result, q32_times(prefill.attention_pair_ns_q32, pairs));
+    step = add(step, q32_times(prefill.attention_pair_ns_q32, pairs));
+    return mul(step, std::max(shape.steps_per_round, 1U));
 }
 
 } // namespace ninferno::runtime

@@ -376,6 +376,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
             round_timer.emplace(device, device.stream, /*blocking_stop=*/true);
         }
         decode_pacing = DecodePacingFacts{.steps_per_round = paced ? pacing.steps() : 1U,
+                                          .verify_tokens_per_lane =
+                                              speculative ? draft_window + 1U : 1U,
                                           .cpu_quota_us    = cpu_quota.quota_us,
                                           .cpu_period_us   = cpu_quota.period_us};
         if (pacing.auto_ignored()) {

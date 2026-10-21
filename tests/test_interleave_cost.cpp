@@ -62,6 +62,30 @@ int main() {
     std::array<std::uint64_t, 8> long_lanes{};
     long_lanes.fill(65'536);
     check(decode_round_ns(prefill, moe, long_lanes) > moe_8, "context did not cost attention");
+    // A run-ahead round (16 steps under a CPU quota) reads the weights in every step: it costs
+    // its steps times one step, so a chunk owes it a sixteenth as many rounds.
+    DecodeRoundShape moe_16 = moe;
+    moe_16.steps_per_round  = 16;
+    check(decode_round_ns(prefill, moe_16, lanes) == 16 * moe_8,
+          "a 16-step round was priced as one step");
+    // A speculative round verifies depth + 1 tokens per lane in one step: one weight read (of the
+    // experts all its tokens touch), every token's compute and attention.
+    DecodeRoundShape verify       = moe;
+    verify.verify_tokens_per_lane = 4;
+    const std::uint64_t verify_8  = decode_round_ns(prefill, verify, lanes);
+    check(verify_8 > moe_8 && verify_8 < 4 * moe_8,
+          "a verify round of four tokens per lane was not priced between one and four steps");
+    DecodeRoundShape dense_verify       = dense;
+    dense_verify.verify_tokens_per_lane = 4;
+    check(decode_round_ns(prefill, dense_verify, lanes) < 2 * dense_8,
+          "a dense verify round read its weights once per token");
+    // The call's fixed cost and the weight read are one cost: a call floor larger than the read
+    // replaces it rather than adding to it.
+    ContextPrefillCost slow_call = prefill;
+    slow_call.chunk_ns           = 100'000'000;
+    check(decode_round_ns(slow_call, dense, solo) - dense_1 ==
+              slow_call.chunk_ns - (166'000ULL * InterleavePricing::kWeightReadPromptTokens),
+          "the call's fixed cost and the weight read were both counted");
 
     // A 24K-token prompt in 2048-token chunks beside seven decoding lanes (C = 8). The chunk cost
     // grows with its start position (attention pairs).
@@ -114,6 +138,28 @@ int main() {
           "prices are not pure functions of their inputs");
     check(fair_decode_credit(1'000, 3, 0) == 0 && fair_decode_credit(1'000, 0, 1) == 0,
           "no decoders or no prefill owed decode");
+
+    // Under --concurrent-prefill a 16-step round pays its 16 steps of credit: the decode owed per
+    // chunk is the same equal share, served in a sixteenth as many rounds.
+    {
+        const std::uint64_t chunk_ns =
+            prefill_unit_ns(model, make_prefill_work(0, 2048, 0, 0, 2048));
+        std::array<std::uint64_t, kD> contexts{};
+        contexts.fill(4096);
+        const auto rounds_for = [&](const DecodeRoundShape& shape) {
+            std::uint64_t credit = fair_decode_credit(chunk_ns, kD, 1);
+            std::uint32_t rounds = 0;
+            while (credit > 0) {
+                credit -= std::min(credit, decode_round_ns(prefill, shape, contexts));
+                ++rounds;
+            }
+            return rounds;
+        };
+        const std::uint32_t one_step = rounds_for(moe);
+        const std::uint32_t sixteen  = rounds_for(moe_16);
+        check(sixteen >= 1 && sixteen <= one_step / 16 + 1,
+              "16-step rounds were owed as many rounds as one-step rounds");
+    }
 
     std::cout << (failures ? "FAIL" : "OK") << " interleave_cost\n";
     return failures ? 1 : 0;

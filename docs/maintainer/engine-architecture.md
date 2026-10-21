@@ -364,10 +364,11 @@ The Scheduler guarantees:
 - existing decode work is not starved by consecutive prefills; under `--concurrent-prefill` every active request gets an
   equal share of predicted GPU time (`interleave_cost.h`): a prefill unit, priced by the context machine cost model from
   its own work (calls, tokens, attention pairs from its start position, the images it encoded), owes the D decoding lanes
-  D/`prefilling` of its price, and each decode round pays its own price from its shape: one call, one read of the weights
-  its tokens touch (32 prompt tokens' worth for the active weights; a MoE round of L lanes touches an expected
-  1 − (1 − k/E)^L of each layer's routed experts), one prompt token of compute a lane, and 16 prefill attention pairs per
-  context token of every lane. The interleaving, and so each round's batch, is priced, never timed. At concurrency 8 a
+  D/`prefilling` of its price, and each decode round pays its own price from its shape: per step the larger of the call's
+  fixed cost and one read of the weights its tokens touch (32 prompt tokens' worth for the active weights; a MoE step of
+  L lanes touches an expected 1 − (1 − k/E)^L of each layer's routed experts), one prompt token of compute per token, and
+  16 prefill attention pairs per context token of every token; times the round's steps (16 under a CPU quota, or
+  `--decode-steps`). A speculative round is one step of depth + 1 tokens per lane. The interleaving, and so each round's batch, is priced, never timed. At concurrency 8 a
   long prompt's predicted time to first token is about eight times its prefill time, as under the former timed share;
 - a decode round contains all and only the currently decode-ready requests;
 - the batch uses the exact `B` and is not padded with inactive lanes up to `max_concurrency`.

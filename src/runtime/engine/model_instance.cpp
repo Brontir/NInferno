@@ -1092,6 +1092,8 @@ ConstructedModel construct_model(const EngineOptions& options, DeviceContext& de
     summary.decode_steps_per_round                  = pacing.steps_per_round;
     summary.cpu_quota_us                            = pacing.cpu_quota_us;
     summary.cpu_quota_period_us                     = pacing.cpu_period_us;
+    instance->decode_round_shape.steps_per_round        = pacing.steps_per_round;
+    instance->decode_round_shape.verify_tokens_per_lane = pacing.verify_tokens_per_lane;
     for (auto& line : ops::detail::generic::dense_tune_report()) {
         summary.moe_tune.push_back(std::move(line));
     }
