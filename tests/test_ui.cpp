@@ -957,7 +957,11 @@ void test_http() {
             }
             // The other parameters stay, re-encoded and in the order sent; every key goes, a
             // repeated one too. A name without a value comes back as name= (httplib's parse).
-            res = raw.Get("/api/x?a=1&" + key + "&b=two%20words&" + key + "&flag", far);
+            // The second key is spelled k%65y: an identical raw pair would be merged by httplib's
+            // query parse before the handler sees it.
+            res = raw.Get("/api/x?a=1&" + key + "&b=two%20words&k%65y=" + keyed_options.access.key +
+                              "&flag",
+                          far);
             const std::string kept = res ? res->get_header_value("Location") : "";
             check(res && res->status == 303 && kept == "/api/x?a=1&b=two%20words&flag=",
                   "key: other parameters kept, every key dropped (Location " + kept + ")");
