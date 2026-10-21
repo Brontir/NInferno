@@ -988,12 +988,10 @@ int main(int argc, char** argv) {
         if ((args.command == "generate" || args.command == "batch") && !args.flag("drafter") &&
             !args.flag("dflash")) {
             std::optional<std::string> fingerprint;
-            if (std::filesystem::exists(spec::manifest_path(artifact)) ||
-                args.flag("spec-profile")) {
-                // The artifact tokenizer's fingerprint: the thinking marker's id.
-                if (const auto tokenizer = spec::artifact_tokenizer_json(artifact)) {
-                    fingerprint = spec::vocab_fingerprint(*tokenizer).value;
-                }
+            // The artifact tokenizer's fingerprint: the thinking marker's id. Read whatever names
+            // the profile (a sidecar, --spec-profile, or the registry by the artifact's shape).
+            if (const auto tokenizer = spec::artifact_tokenizer_json(artifact)) {
+                fingerprint = spec::vocab_fingerprint(*tokenizer).value;
             }
             // The plan of one prompt: its thinking marker, then the profile's default for it.
             std::map<int, StartPlan> plans;
