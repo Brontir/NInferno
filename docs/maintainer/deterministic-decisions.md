@@ -20,7 +20,12 @@ This page states the rule and its target. The engine does not meet all of it yet
 - no CI property checks invariance yet;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the TU116/117
-  `mma_slow` exception is still read from `chip_mma_slow`, not from the table's fact;
+  `mma_slow` exception is read from `chip_mma_slow` and the table's fact together (the GTX boards
+  on TU106 have only the latter);
+- a laptop row takes the top of its published clock range and is labelled extrapolated, so a
+  low-power laptop is priced like the fastest one of its name (optimistic, against principle 7);
+- the decision fingerprint still hashes the driver's clocks, not the reference facts the
+  decisions read: it is sufficient but over-sensitive (an overclocked board fingerprints apart);
 - the speed labels and the kernel hash on constants do not exist yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free

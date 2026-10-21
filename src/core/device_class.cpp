@@ -158,6 +158,8 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->chip_from_pci    = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
     out->facts            = machine_facts_of(*out);
+    // The table also marks the GTX boards built on TU106 (chip_mma_slow knows only TU116/117).
+    out->features.mma_slow = out->features.mma_slow || out->facts.mma_slow;
     return out;
 }
 
