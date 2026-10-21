@@ -1158,6 +1158,8 @@ public:
     // Projection work each pressure assessment reports beyond its outcomes: the planner charges
     // it to the search budget (one work unit, about 1 us nominal, each).
     std::uint32_t pressure_assessment_work               = 0;
+    // Sleeps in every pressure assessment: a slow host, which must not change any plan.
+    std::uint32_t pressure_assessment_delay_us           = 0;
     std::uint64_t pressure_checkpoint_recovery_ns        = 100;
     bool require_evictions                               = false;
     bool abort_start                                     = false;
@@ -1532,6 +1534,10 @@ FakePressurePlanningSession::guidance_for(const Target& target) {
 
 FakeAssessedPressureTarget FakePressurePlanningSession::assess(FakePressureTargetHandle handle) {
     require(valid(handle) && !scratch_live_, "fake pressure assessment is stale");
+    if (program_->pressure_assessment_delay_us != 0) {
+        std::this_thread::sleep_for(
+            std::chrono::microseconds(program_->pressure_assessment_delay_us));
+    }
     ++program_->pressure_target_assessments;
     const Target& target = targets_[handle.index];
     populate_options(target.candidate_index);
@@ -2246,7 +2252,7 @@ void test_equal_lower_bound_does_not_short_circuit_tie_break() {
         };
     };
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                               pressure_inputs, logical_goal, Planner::Clock::now());
+                               pressure_inputs, logical_goal);
 
     require(result && result->candidate == PlanningCandidateId{.value = 1} &&
                 program.pressure_planning_sessions == 1,
@@ -2290,9 +2296,8 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
     auto prefill_expensive                 = test_cost_model();
     prefill_expensive.prefill.token_ns_q32 = 100U * ninferno::runtime::kContextCostQ32One;
     Planner first_planner;
-    const auto first =
-        first_planner.plan(program, FakePreparedPrompt{}, prefill_expensive, candidates, 0,
-                           pressure_inputs, logical_goal, Planner::Clock::now());
+    const auto first = first_planner.plan(program, FakePreparedPrompt{}, prefill_expensive,
+                                          candidates, 0, pressure_inputs, logical_goal);
 
     auto transfer_expensive                 = test_cost_model();
     transfer_expensive.prefill.token_ns_q32 = ninferno::runtime::kContextCostQ32One;
@@ -2300,9 +2305,8 @@ void test_machine_cost_changes_selection_without_changing_physical_assessment() 
         direction.ns_per_byte_q32 = 100U * ninferno::runtime::kContextCostQ32One;
     }
     Planner second_planner;
-    const auto second =
-        second_planner.plan(program, FakePreparedPrompt{}, transfer_expensive, candidates, 0,
-                            pressure_inputs, logical_goal, Planner::Clock::now());
+    const auto second = second_planner.plan(program, FakePreparedPrompt{}, transfer_expensive,
+                                            candidates, 0, pressure_inputs, logical_goal);
 
     require(first && first->candidate == PlanningCandidateId{.value = 1} && second &&
                 second->candidate == PlanningCandidateId{.value = 0} &&
@@ -2412,7 +2416,7 @@ void test_candidate_search_prefers_deep_reuse_without_eviction() {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                               pressure_inputs, logical_goal, Planner::Clock::now());
+                               pressure_inputs, logical_goal);
 
     require(result && result->plan && result->candidate == PlanningCandidateId{.value = 1},
             "shallow Root pressure path starved the cheaper reuse candidate");
@@ -2478,7 +2482,7 @@ void test_feasible_identity_expands_when_pressure_can_remove_copy() {
         return Planner::LogicalGoal{.publication_slot = 0};
     };
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                               pressure_inputs, logical_goal, Planner::Clock::now());
+                               pressure_inputs, logical_goal);
 
     require(result && result->diagnostics.predicted_now_ns == 100'000'000 &&
                 result->diagnostics.selected_degradation_units == 1 &&
@@ -2516,7 +2520,7 @@ void test_dominating_identity_does_not_build_pressure_graph() {
 
     Planner planner;
     auto result = planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                               pressure_inputs, logical_goal, Planner::Clock::now());
+                               pressure_inputs, logical_goal);
     require(result &&
                 result->diagnostics.stop_reason ==
                     ninferno::MaterializationStopReason::NoPressure &&
@@ -3001,6 +3005,42 @@ void test_guided_pressure_reaches_deep_retention_before_maximal_fallback() {
     }
     require(program.pressure_target_assessments <= 8,
             "guided pressure search returned to eager breadth-first assessment");
+}
+
+// The search counts work, never time: a host whose assessments take 2 ms each walks the same
+// targets and adopts the same plan as a fast one.
+void test_slow_host_plans_like_a_fast_one() {
+    struct Outcome {
+        std::vector<std::uint64_t> started_actions;
+        std::uint64_t assessments = 0;
+    };
+
+    const auto plan_on = [](std::uint32_t assessment_delay_us) {
+        constexpr std::size_t owner_count = 7;
+        FakeManager manager               = make_manager(1, owner_count + 1U);
+        FakeProgram program;
+        for (std::size_t index = 0; index < owner_count; ++index) {
+            const std::uint32_t content = static_cast<std::uint32_t>(70U + index);
+            const ActiveRequest active =
+                start_active(manager, program, content, make_base(content), index + 1U);
+            (void)finish_active(manager, program, active);
+        }
+        program.required_pressure_actions     = 3;
+        program.private_pressure_alternatives = 4;
+        program.pressure_assessment_work      = 2'000;
+        program.pressure_assessment_delay_us  = assessment_delay_us;
+        auto inspection = manager.inspect(program, FakePreparedPrompt{90}, make_base(90), 20);
+        require(inspection.choice.has_value(), "slow-host pressure search found no plan");
+        program.abort_start = true;
+        (void)manager.reserve_materialization(program, std::move(*inspection.choice),
+                                              FakePreparedPrompt{90}, {});
+        return Outcome{.started_actions = program.started_action_ids,
+                       .assessments     = program.pressure_target_assessments};
+    };
+    const Outcome fast = plan_on(0);
+    const Outcome slow = plan_on(2'000);
+    require(fast.started_actions == slow.started_actions && fast.assessments == slow.assessments,
+            "a slower host searched a different number of targets or chose another plan");
 }
 
 void test_combined_target_reprices_cancelled_pressure_copy() {
@@ -3795,9 +3835,8 @@ void test_complete_search_against_small_exhaustive_oracle() {
                 Planner planner;
                 auto allowance  = ninferno::runtime::PlanningAllowance::boundary(0);
                 allowance.limit = ninferno::runtime::PlanningWork::kInitialGrant;
-                auto result =
-                    planner.plan(program, FakePreparedPrompt{}, test_cost_model(), candidates, 0,
-                                 inputs, goal, Planner::Clock::now(), allowance);
+                auto result     = planner.plan(program, FakePreparedPrompt{}, test_cost_model(),
+                                               candidates, 0, inputs, goal, allowance);
                 require(result && result->plan,
                         "exhaustive-oracle problem lost its feasible fallback");
                 if (result->diagnostics.predicted_total_ns != oracle) {
@@ -3895,6 +3934,7 @@ int main() {
              test_materialization_result_is_adopted_by_owner_identity);
     run_test("guided deep retention",
              test_guided_pressure_reaches_deep_retention_before_maximal_fallback);
+    run_test("slow host plans like a fast one", test_slow_host_plans_like_a_fast_one);
     run_test("combined target exact repricing",
              test_combined_target_reprices_cancelled_pressure_copy);
     run_test("in-progress and capture", test_in_progress_adoption_and_private_capture);

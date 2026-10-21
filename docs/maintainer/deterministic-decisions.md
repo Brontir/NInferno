@@ -10,6 +10,9 @@ This page states the rule and its target. The engine does not meet all of it yet
 - a constrained row's measured mask time decides whether its masks are filled before launch and
   whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
   wait cannot change bytes or batches;
+- a token mask the device does not see released within its wall-clock wait bound ends the request,
+  and the host-expert workers spin or sleep by idle time (latency only);
+- `tools/audit/decision_inputs.sh` checks the decision files it lists, not what they include;
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;
@@ -94,7 +97,13 @@ What the design guarantees once complete:
      schedule.
    - **S, byte-neutral choices.** These may read any canonical fact.
 3. **No timings, clocks or hidden state in decisions.** That rules out a cache left by an earlier
-   run, an environment variable that changes a choice, and a budget in milliseconds.
+   run, an environment variable that changes a choice, and a budget in milliseconds. The monitor is
+   write-only: timings, step latencies, throughput and NVML readings (clocks, temperature, power)
+   may be logged and exported, never read back by a decision. Counts that follow from the request
+   schedule (drafts accepted, rounds run, requests runnable) are not observations of the machine.
+   A planner reports the points of its search to a caller that times them, and reads nothing back.
+   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers out of the decision
+   files (see [Runtime observations](#runtime-observations)).
 4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
@@ -195,6 +204,27 @@ option change moves the fingerprint only, a plan change both, an observed size t
   their band.
 - Promises of a confidence level that two lab cards per generation cannot support, such as "at
   least 90 %" or n/(n+1).
+
+## Runtime observations
+
+Where the engine observes the machine while it runs, and whether a decision reads it. Classes: (a)
+logged or exported only; (b) moves only scheduling or latency, not the bytes of a fixed schedule
+(S tier); (c) changes routes, bytes or depth.
+
+| Observation | Where | Class |
+|---|---|---|
+| Context-cache planning search | `context_cache/materialization_planner.h`, `capture_planner.h` | counted work units, no clock; the ResourceManager times the reported points (a) |
+| Concurrent-prefill interleave | `engine_core.h`, `interleave_cost.h` | priced by shape, no clock |
+| Decode run-ahead | `round_pacing.h` | from the CPU-quota fact, no clock |
+| Decode wait, spin or block | `round_pacing.h` | (b), measured host lag |
+| Host-expert worker spin or sleep | `ops/host_experts/host_experts.cpp`, `host_pool.cpp` | (b), idle time |
+| Grammar compile timeout | `structured/constraint.cpp` | (b), fails a request, no bytes |
+| Mask fill order, constrained DFlash drafting | `structured/request_constraint.cpp` → `qwen3_5/program/decode.cpp` | (c), open |
+| Device mask-release wait bound | `ops/kernel/sampling_device.cuh` | (c), open: ends a request |
+| Load-time MoE and dense tuners | `ops/moe/moe_tune.cpp`, `ops/generic/generic_tune.cpp` | (c), opt-in by environment, off by default |
+| Free memory after warm-up | `runtime/engine/model_instance.cpp` | (c), open (gaps above) |
+| Acceptance watchdog | `spec/watchdog.h` | counts of the request's own drafts, not a timing |
+| Planning, transfer, phase and request timings; CUDA event profiling; NVML in the UI | `resource_manager.h`, `runtime/contract/timing.h`, `engine_core.h`, `speculation/decoder.cu`, `serve/`, `ui/gpu_stats.cpp` | (a) |
 
 ## Review checklist
 

@@ -31,3 +31,8 @@ add_test(NAME ninferno_registry_add_test
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
 set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# Determinism, no GPU: decision code reads no clock, event timer or NVML (the monitor is
+# write-only; docs/maintainer/deterministic-decisions.md, principle 3).
+add_test(NAME ninferno_decision_inputs_test
+  COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
