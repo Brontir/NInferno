@@ -1318,7 +1318,9 @@ int test_registry_and_corpus() {
 
 int test_resolve() {
     int failures = 0;
-    const GpuKey rtx5090{{"gb202:170sm", "gb202", "sm120", "*"}, 32ULL << 30};
+    // The device's own keys are id, chip and architecture: a "*" profile is measured elsewhere.
+    GpuKey rtx5090{{"gb202:170sm", "gb202", "sm120", "*"}, 32ULL << 30};
+    rtx5090.own_keys = 3;
     const GpuKey pro6000{{"gb202:188sm", "gb202", "sm120", "*"}, 96ULL << 30};
     namespace fs = std::filesystem;
     const auto dir =
