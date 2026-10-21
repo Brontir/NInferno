@@ -64,9 +64,11 @@ void table_well_formed() {
         const bool gtx_on_tu106 = r.chip == "tu106" && r.name.find("GTX") != std::string::npos;
         const bool slow_chip    = chip_mma_slow(r.major, r.minor, r.chip);
         expect(r.mma_slow == (slow_chip || gtx_on_tu106), where + ": mma_slow");
-        const MachineFacts f = machine_facts(DriverReport{r.pci_device_id, r.major, r.minor});
-        expect(board_mma_slow(f, r.major, r.minor, chip) == r.mma_slow,
-               where + ": board_mma_slow is the row's");
+        // The whole device path (gpu_chip, machine_facts with the row's architecture and SMs,
+        // board_mma_slow) lands on the row's fact, and on the chip's where the id is unknown.
+        const DeviceClass d = synthetic_device_class(r.pci_device_id, r.major, r.minor, r.sms,
+                                                     std::size_t{4} << 20, std::size_t{8} << 30);
+        expect(d.features.mma_slow == r.mma_slow, where + ": the device class takes the row's");
         // A laptop row carries the bottom of its published boost range (the clock it is priced
         // at); no other row does (the parser refuses one).
         expect((r.form == FormFactor::Laptop) == (r.boost_min_mhz > 0),

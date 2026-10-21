@@ -533,20 +533,14 @@ std::vector<std::string> DeviceClass::class_chain() const {
     return gpu_class_chain(chip, sms, arch());
 }
 
-namespace {
-// The board's own mma_slow: the features' (board_mma_slow, as the query sets it), or
-// board_mma_slow of the class's facts and chip, for a class a test assembled by hand.
-bool own_mma_slow(const DeviceClass& d) {
-    return d.features.mma_slow || board_mma_slow(d.facts, d.major, d.minor, d.chip);
-}
-} // namespace
-
+// The board's own mma_slow is features.mma_slow alone: the query and synthetic_device_class set
+// it from board_mma_slow, its one source.
 std::vector<std::string> DeviceClass::similar_chips() const {
-    return gpu_similar_chips(major, minor, sms, chip, own_mma_slow(*this));
+    return gpu_similar_chips(major, minor, sms, chip, features.mma_slow);
 }
 
 std::vector<std::string> DeviceClass::similarity_chain() const {
-    return gpu_similarity_chain(chip, sms, major, minor, own_mma_slow(*this));
+    return gpu_similarity_chain(chip, sms, major, minor, features.mma_slow);
 }
 
 const DeviceClass& device_class(int device) {
