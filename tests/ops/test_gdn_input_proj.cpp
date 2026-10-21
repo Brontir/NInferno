@@ -2,6 +2,7 @@
 #include "core/device.h"
 #include "core/decode_graph.h"
 #include "ninferno/ops/gdn_input_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include "ops/input_projection_test_common.h"
 
@@ -24,6 +25,9 @@ constexpr ReductionCriterion kGdnInputProjA16Tolerance{3.0e-3, 4.0e-3, 3.5e-3};
 constexpr ReductionCriterion kFp8GdnInputProjA16Tolerance{1.0 / 256.0, 1.0 / 256.0, 2.0 / 256.0};
 constexpr ReductionCriterion kFp8GdnInputProjA8Tolerance{0.04, 1.0 / 256.0, 0.06};
 constexpr ReductionCriterion kGdnInputProjA4Tolerance{0.16, 4.0e-3, 0.16};
+// NVFP4 AllowA8 from 17 tokens (the generic W4A8, int8 x per 32 values): the A8 allowance of the
+// attention input projection's and Linear's.
+constexpr ReductionCriterion kGdnInputProjA8Tolerance{0.04, 4.0e-3, 0.06};
 constexpr std::int32_t kA8SampleRows = 31;
 
 int verify_output_range(std::string_view label, const GuardedBf16Tensor& output,
@@ -270,6 +274,9 @@ int verify_output_range_sampled(std::string_view label, const GuardedBf16Tensor&
 }
 
 int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearPolicy policy) {
+    // AllowA8 takes the generic W4A8 from 17 tokens inside a prefill only (the workspace query
+    // reserves its planes either way, and this case checks the query against the high-water).
+    const ops::ScopedPrefillRoutes profile(policy == ops::LinearPolicy::AllowA8);
     constexpr std::int32_t kHidden      = 5120;
     constexpr std::int32_t kQkvRows     = 10240;
     constexpr std::int32_t kZRows       = 6144;
@@ -288,10 +295,17 @@ int run_nvfp4_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearP
     ops::gdn_input_proj(x, parent.view(), qkv_output, z_output, policy, workspace, nullptr);
     cuda_synchronize();
 
-    const bool a4                       = policy == ops::LinearPolicy::AllowA4;
-    const ReductionCriterion& criterion = a4 ? kGdnInputProjA4Tolerance : kGdnInputProjA16Tolerance;
-    const std::string suffix =
-        std::string(" NVFP4 ") + (a4 ? "A4" : "A16") + " T=" + std::to_string(tokens);
+    const bool a4 = policy == ops::LinearPolicy::AllowA4;
+    // AllowA8 from 17 tokens: the generic W4A8 (int8 x per 32 values) writes both parts.
+    const bool a8                       = policy == ops::LinearPolicy::AllowA8 && tokens >= 17;
+    const ReductionCriterion& criterion = a4   ? kGdnInputProjA4Tolerance
+                                          : a8 ? kGdnInputProjA8Tolerance
+                                               : kGdnInputProjA16Tolerance;
+    const std::string suffix            = std::string(" NVFP4 ") +
+                               (a4   ? "A4"
+                                : a8 ? "A8"
+                                     : "A16") +
+                               " T=" + std::to_string(tokens);
     int failures = qkv.verify_guards("gdn qkv" + suffix);
     failures += z.verify_guards("gdn z" + suffix);
     failures += qkv.verify_fully_written("gdn qkv" + suffix);
@@ -327,6 +341,8 @@ int run_nvfp4() {
     int failures = 0;
     failures += run_nvfp4_case(parent, 1, ops::LinearPolicy::A16Only);
     failures += run_nvfp4_case(parent, 4, ops::LinearPolicy::AllowA8);
+    failures += run_nvfp4_case(parent, 17, ops::LinearPolicy::AllowA8);
+    failures += run_nvfp4_case(parent, 33, ops::LinearPolicy::AllowA8);
     failures += run_nvfp4_case(parent, 1, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_case(parent, 2, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_case(parent, 17, ops::LinearPolicy::AllowA4);

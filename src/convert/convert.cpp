@@ -922,12 +922,12 @@ std::optional<OJson> published_activation_summary(const SourceInputs& sources, c
                                                          : 16;
         };
         const auto policy = recipe.policies[i].front();
-        // --activations int8 lets every A16Only use run A8 but a head's or embedding's: the
+        // --activations int8 runs every use at A8 but an A16Only head's or embedding's: the
         // engine's own test of the name (qwen3_5::Model::input).
         const bool fixed = parameter.name.find("head") != std::string::npos ||
                            parameter.name.find("embed") != std::string::npos;
-        const auto int8 = policy == ActivationPolicy::A16Only && !fixed ? ActivationPolicy::AllowA8
-                                                                       : policy;
+        const auto int8 = policy == ActivationPolicy::A16Only && fixed ? policy
+                                                                      : ActivationPolicy::AllowA8;
         if (bits > 0) {
             below += width(policy) < bits ? 1 : 0;
             below_int8 += width(int8) < bits ? 1 : 0;

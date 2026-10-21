@@ -20,11 +20,14 @@ Model::~Model() = default;
 ops::WeightInput Model::input(WeightUseId id) const {
     const auto& parameter = weight(id.parameter);
     const auto& use       = parameter.uses.at(id.use_index);
-    // --activations int8 leaves heads and embeddings as recorded (logits keep BF16 activations).
+    // --activations int8 leaves a head or embedding recorded A16Only at BF16 activations (the
+    // logits); one recorded for four bits is held at eight like every other linear.
     const bool head = parameter.name.find("head") != std::string::npos ||
                       parameter.name.find("embed") != std::string::npos;
-    const auto mode = head && options_.activations == ActivationMode::Int8 ? ActivationMode::Fast
-                                                                            : options_.activations;
+    const auto mode = head && options_.activations == ActivationMode::Int8 &&
+                              use.policy == ops::LinearPolicy::A16Only
+                          ? ActivationMode::Fast
+                          : options_.activations;
     return {parameter.view, effective_policy(use.policy, mode), use.activation_input_divisor};
 }
 

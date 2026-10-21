@@ -12,6 +12,10 @@ static_assert(effective_policy(ops::LinearPolicy::AllowA8, ActivationMode::Exact
               ops::LinearPolicy::A16Only);
 static_assert(effective_policy(ops::LinearPolicy::AllowA4, ActivationMode::Fast) ==
               ops::LinearPolicy::AllowA4);
+static_assert(effective_policy(ops::LinearPolicy::A16Only, ActivationMode::Int8) ==
+              ops::LinearPolicy::AllowA8);
+static_assert(effective_policy(ops::LinearPolicy::AllowA4, ActivationMode::Int8) ==
+              ops::LinearPolicy::AllowA8);
 
 WeightUsePolicy read_weight_use(artifact::Binder& binder, const std::string& name,
                                 std::string_view input) {

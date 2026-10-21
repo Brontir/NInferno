@@ -1,5 +1,6 @@
 // Generic W4A8 for the ggml 32-value block formats: Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL,
-// and MXFP4 (32-value blocks with an E8M0 exponent); NVFP4 on a build without FP4 tensor cores.
+// and MXFP4 (32-value blocks with an E8M0 exponent); NVFP4 (doubled E2M1 codes) where W4A4 does
+// not take the weight.
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_w4a8.cuh"
 
@@ -26,11 +27,10 @@ bool launch_w4a8_ggml32(int schedule, WeightCodec codec, Epilogue epilogue, cons
     case WeightCodec::Mxfp4:
         w4a8_launch_codec<W4a8Mxfp4>(schedule, epilogue, args, act, stream);
         return true;
-#ifdef NINFERNO_WITHOUT_NVFP4
+    // Every build: on sm_120a the prefill of a weight W4A4 does not take (allows_w4a8).
     case WeightCodec::Nvfp4:
         w4a8_launch_codec<W4a8Nvfp4>(schedule, epilogue, args, act, stream);
         return true;
-#endif
     default:
         return false;
     }

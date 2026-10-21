@@ -27,7 +27,10 @@ namespace ninferno::ops {
 
 /**
  * Policy-bearing capacity query. Q4/Q8 use A16 under every policy. NVFP4 uses A16 under
- * A16Only/AllowA8 through T=16; AllowA4 accepts every positive T. Row-scaled FP8 accepts all
+ * A16Only and AllowA8 at every positive T (AllowA8 past T=16: the A16 projection's gate/up
+ * plane), except an AllowA8 call of 17 tokens or more inside a prefill, which takes the generic
+ * int8 W4A8 (its planes are reserved whether or not a prefill runs); AllowA4 accepts every
+ * positive T. Row-scaled FP8 accepts all
  * policies, with A8 permitted by AllowA8/AllowA4.
  * A permissive policy covers whichever qualified route the private resolver selects across the
  * requested interval.
@@ -69,9 +72,10 @@ linear_swiglu_workspace_capacity_bytes(QType qtype, std::int32_t gate_up_rows,
  *
  * Workspace:
  *   Caller-owned transient storage reported by linear_swiglu_workspace_capacity_bytes(),
- *   scoped to the call. Q8, NVFP4 A16, and row-scaled FP8 A16 require zero bytes; A4/A8 routes use
- *   caller-owned activation storage and may use private projection storage. There is no persistent
- *   state side effect.
+ *   scoped to the call. Q8, NVFP4 A16 (AllowA8 through T=16), and row-scaled FP8 A16 require
+ *   zero bytes (NVFP4 AllowA8 A16 past T=16 holds its gate/up plane; an NVFP4 AllowA8 prefill
+ *   call of 17 tokens or more its int8 W4A8 planes); A4/A8 routes use caller-owned activation
+ *   storage and may use private projection storage. There is no persistent state side effect.
  */
 void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, LinearPolicy policy,
                    WorkspaceArena& ws, cudaStream_t stream);

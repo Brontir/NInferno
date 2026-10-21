@@ -55,10 +55,12 @@ namespace ninferno::ops {
  *
  * Compute policy:
  *   All policies permit the A16 implementations of Q4, Q5, Q8 and BF16. NVFP4 uses A16 for
- *   A16Only/AllowA8 and may use A4 under AllowA4. FP8 may use A8 under AllowA8/AllowA4.
- *   Each registration owns its production plan. A permissive policy
- *   allows the private resolver to select either qualified
- *   arithmetic profile; it does not itself prescribe a kernel.
+ *   A16Only and for AllowA8 (A8 without A4) except a call of 17 tokens or more inside a prefill
+ *   (ops::prefill_routes_active), which takes the generic int8 W4A8 (decode and speculative
+ *   verify of any width keep A16); it may use A4 under AllowA4. FP8 may use A8 under
+ *   AllowA8/AllowA4. Each registration owns its production plan. A permissive policy allows the
+ *   private resolver to select either qualified arithmetic profile; it does not itself prescribe
+ *   a kernel.
  *
  * Effects:
  *   Updates the full residual tensor in place; x/weight must not alias residual.

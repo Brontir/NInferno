@@ -1564,9 +1564,15 @@ not take at startup.
 - `fast`: on wide calls NVFP4 activations in four bits and, for integer weights recorded `AllowA8`
   (GGUF Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/Q4_K/Q5_K/Q6_K, u4; not the output head), int8
   activations. The answer can depend on the load.
-- `int8` (Qwen; other families refuse it at startup): also gives int8 activations to the sites the
-  artifact kept BF16 (heads and
-  embeddings excepted), which may move quality.
+- `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
+  int8 activations where its route has them and none takes four, whatever the artifact recorded:
+  the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
+  recorded for 4 bits (routed and shared experts included) alike, which may move quality. NVFP4
+  weights take them on prefill calls of 17 tokens or more on every GPU but Volta (V100 multiplies
+  NVFP4 with BF16 activations on its tiled route); on RTX 50 (FP4 tensor cores) decode stays BF16,
+  and so does speculative verify on the layers with native NVFP4 kernels (generic-path shapes take
+  int8 from 17 tokens), while GPUs without FP4 tensor cores use int8 there too. Qwen 3.5/3.6 MoE
+  NVFP4 experts held at eight bits run the generic MoE.
 
 ### Context cache
 

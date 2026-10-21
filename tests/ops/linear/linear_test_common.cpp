@@ -341,9 +341,13 @@ int run_shape(std::string_view label, ActivationCompute activation_compute,
         const ops::ScopedPrefillRoutes prefill(weight.qtype == QType::Q8_G32_FP16 &&
                                                invocation.t >=
                                                    ops::detail::generic::kQ8PrefillA8Tokens);
+        // So does an NVFP4 call of 17 tokens or more whose policy allows A8 but not its W4A4
+        // (owned_prefill_w4a8): the generic W4A8 takes it on every build.
         const ActivationCompute expected =
             activation_compute == ActivationCompute::A16 &&
-                    ops::detail::generic::q8_prefill_a8(weight, invocation.policy, invocation.t)
+                    (ops::detail::generic::q8_prefill_a8(weight, invocation.policy, invocation.t) ||
+                     ops::detail::generic::owned_prefill_w4a8(weight, invocation.policy,
+                                                              invocation.t))
                 ? ActivationCompute::A8
                 : activation_compute;
         GuardedOutput output(checked_elements(shape.n, invocation.t, "guarded output"));

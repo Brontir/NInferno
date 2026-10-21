@@ -265,7 +265,7 @@ struct I8ScheduleInfo {
 // Whether a weight format has a W4A8 codec: a scale (and min) per 32 values (Q6_K, Q3_K, Q2_K,
 // IQ2_XS, IQ2_S: per 16) over integer codes that fit int8 (ggml Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/
 // Q4_K/Q5_K/Q6_K/Q3_K/Q2_K, MXFP4, u4_g128_zp, q8_g32, and the signed grid values of IQ3_XXS/
-// IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S).
+// IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S), and NVFP4 (doubled E2M1 codes) on every build.
 [[nodiscard]] bool w4a8_supports(QType qtype);
 // K the W4A8 tiles take for this format (generic_gemm.cpp).
 [[nodiscard]] bool w4a8_k_admits(QType qtype, std::int32_t k);
@@ -355,6 +355,20 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 // table.
 [[nodiscard]] bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens);
 
+// A call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill (prefill_routes_active)
+// of an NVFP4 weight that the generic W4A8 takes: its policy allows A8 and, where the build has
+// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy). The native NVFP4 plans of sm_120a compute A16
+// and A4 only, so the wrappers hand such a call of a registered shape to the generic path, as
+// q8_prefill_a8 hands a Q8 one: a W4A16 checkpoint under --activations int8 prefills on int8
+// activations on every card. Outside a prefill (decode, speculative verify of any width, the
+// drafters' rounds, Gemma 4's speed-profile prefill) the plans' routes stay.
+[[nodiscard]] bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy,
+                                      std::int32_t tokens);
+// The policy half of it, without the weight (workspace queries, and allows_w4a8 for NVFP4): an
+// NVFP4 problem whose policy allows A8 and, where this build has the W4A4 kernels, not A4. An
+// AllowA4 weight stays off W4A8 whatever its divisor (A16 where W4A4 cannot run, as before).
+[[nodiscard]] bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy);
+
 // A Q8_G32_FP16 call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill
 // (prefill_routes_active) whose policy allows A8 takes
 // the generic path's int8 tiers instead of the shape tables, whose Q8 kernels read A16 at every
@@ -419,10 +433,11 @@ struct Problem {
     Epilogue epilogue;
 };
 
-// The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no call
-// takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
-// kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the same
-// widths run the plan outside a prefill.
+// The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
+// call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
+// kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
+// same widths run the plan outside a prefill. NVFP4 under nvfp4_prefill_a8_policy: the W4A8 planes
+// of its calls from 17 tokens (owned_prefill_w4a8; the query cannot know whether a prefill runs).
 [[nodiscard]] std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,
                                                      std::int32_t max_tokens);
 

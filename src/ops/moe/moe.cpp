@@ -550,9 +550,16 @@ bool w4a8_frag_admits(QType qtype) {
     return qtype == QType::GGML_Q4_0 || qtype == QType::GGML_Q4_K;
 }
 
+// NVFP4 banks take it under a policy that allows A8 and, where the build has the W4A4 kernels
+// (sm_120a), not A4 (generic::nvfp4_prefill_a8_policy): an A4 expert policy (either bank recorded
+// for A4, moe_policy) keeps both banks on the A16 register MMA there as before, and a W4A16
+// checkpoint under --activations int8 prefills its experts on int8 activations as on the builds
+// without those kernels.
 bool w4a8_banks_admit(const MoeWeights& w) {
-    const auto bank = [](const Weight& b) {
+    const auto bank = [&w](const Weight& b) {
         return generic::w4a8_supports(b.qtype) && b.k % 32 == 0 &&
+               (b.qtype != QType::NVFP4 ||
+                generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) &&
                (!is_frag(b) || (ggml_frag_format(b.qtype) && w4a8_frag_admits(b.qtype)));
     };
     return allows_a8(w.expert_policy) && bank(w.gate_up) && bank(w.down);
@@ -600,14 +607,24 @@ void launch_w4a8(generic::WeightCodec codec, bool frag, Stage stage, const GemmA
     fail("no grouped W4A8 tile for this expert format");
 }
 
+// The policy one shared-expert projection runs under. AllowA4 (a projection of the pair recorded
+// for A4, moe_policy) runs as the AllowA8 it collapsed to before: on the generic path no W4A4, and
+// where the build has the W4A4 kernels no W4A8 for NVFP4 either, so an NVFP4 projection runs A16
+// there (the routes AllowA8 gave it; the dense tuner keys it a16) and every other one AllowA8.
+LinearPolicy shared_projection_policy(const MoeWeights& w, const Weight& m) {
+    if (!allows_a4(w.shared_policy)) { return w.shared_policy; }
+    return m.qtype == QType::NVFP4 && generic::w4a4_schedule_count() > 0 ? LinearPolicy::A16Only
+                                                                         : LinearPolicy::AllowA8;
+}
+
 // The activation planes an A8 shared expert's projections take on the generic path (where they
 // run, whatever the Linear tables own: a Q8 shape with its own kernels has no A8 there).
 std::size_t shared_planes_bytes(const MoeWeights& w, std::int32_t min_tokens,
                                 std::int32_t max_tokens) {
     const auto bytes = [&](const Weight& m) {
         return generic::workspace_capacity_bytes(
-            {m.qtype, w.shared_policy, m.n, m.k, generic::Epilogue::Store}, &m, min_tokens,
-            max_tokens);
+            {m.qtype, shared_projection_policy(w, m), m.n, m.k, generic::Epilogue::Store}, &m,
+            min_tokens, max_tokens);
     };
     return std::max(bytes(w.shared_gate_up), bytes(w.shared_down));
 }
@@ -891,10 +908,16 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     // A wide call outside the prefill profile takes the grouped W4A8 on the plan's own register-MMA
     // schedules where the banks admit it, as the prefill profile does from T=17: the int8 tier is
     // 2-4x BF16 on every card (ad102 op bench, Gemma 4 26B Q4_0 experts: T=64 947 -> 771 us,
-    // T=8192 7776 -> 6054 us), and Gemma 4 prefills in the speed profile.
+    // T=8192 7776 -> 6054 us), and Gemma 4 prefills in the speed profile. Not NVFP4 banks where the
+    // build has the W4A4 kernels: there the grouped W4A8 is the int8 prefill of a W4A16 checkpoint
+    // (prefill profile only, as owned_prefill_w4a8 for the dense projections), and a wide verify
+    // keeps its A16 plan.
+    const bool nvfp4_native =
+        generic::w4a4_schedule_count() > 0 &&
+        (weights.gate_up.qtype == QType::NVFP4 || weights.down.qtype == QType::NVFP4);
     const auto speed_w4a8 = [&](MoePlan p) {
-        p.w4a8 = !prefill && tokens >= kMoeW4a8SpeedMinTokens && !p.a16 && p.gate_up_r8 < 0 &&
-                 p.down_r8 < 0 && p.job_columns % kMoeW4a8BlockM == 0 &&
+        p.w4a8 = !prefill && !nvfp4_native && tokens >= kMoeW4a8SpeedMinTokens && !p.a16 &&
+                 p.gate_up_r8 < 0 && p.down_r8 < 0 && p.job_columns % kMoeW4a8BlockM == 0 &&
                  w4a8_banks_admit(weights);
         return p;
     };
@@ -1069,12 +1092,14 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         if (!g.shared) return;
         Tensor mid  = ws.shared_mid;
         Tensor sout = ws.shared_out;
+        const LinearPolicy gate_up_policy = shared_projection_policy(w, w.shared_gate_up);
         if (c.activation == MoeActivation::Relu2) {
-            generic::linear_relu2(x, w.shared_gate_up, mid, w.shared_policy, arena, s);
+            generic::linear_relu2(x, w.shared_gate_up, mid, gate_up_policy, arena, s);
         } else {
-            generic::linear_swiglu(x, w.shared_gate_up, mid, w.shared_policy, arena, s);
+            generic::linear_swiglu(x, w.shared_gate_up, mid, gate_up_policy, arena, s);
         }
-        generic::linear(mid, w.shared_down, sout, w.shared_policy, arena, s);
+        generic::linear(mid, w.shared_down, sout, shared_projection_policy(w, w.shared_down), arena,
+                        s);
         if (g.shared_gate) {
             Tensor gate = ws.shared_gate;
             generic::linear(x, w.shared_gate, gate, LinearPolicy::A16Only, arena, s);
@@ -1415,9 +1440,13 @@ void moe_host_experts(const Tensor& x, const MoeWeights& w, const MoeWeights& ho
     detail::moe::run(x, w, c, epilogue, out, workspace, stream, plan, &host_w, &host);
 }
 
+LinearPolicy moe_policy(LinearPolicy gate_up, LinearPolicy down) {
+    if (!allows_a8(gate_up) || !allows_a8(down)) { return LinearPolicy::A16Only; }
+    return allows_a4(gate_up) || allows_a4(down) ? LinearPolicy::AllowA4 : LinearPolicy::AllowA8;
+}
+
 LinearPolicy shared_moe_policy(LinearPolicy gate_up, LinearPolicy down) {
-    return allows_a8(gate_up) && allows_a8(down) ? LinearPolicy::AllowA8
-                                                       : LinearPolicy::A16Only;
+    return moe_policy(gate_up, down);
 }
 
 } // namespace ninferno::ops

@@ -2,6 +2,7 @@
 
 #include "core/weight_view.h"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -85,7 +86,14 @@ public:
                 model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                 model_.input(moe.shared.gate), model_.input(moe.shared.up),
                 model_.input(moe.shared.down));
-            if (top_k == 8 && ops::sparse_moe_admits(generic)) {
+            // --activations int8 holds the experts at eight bits; SparseMoe NVFP4 encodes its
+            // prefill in four (it requires AllowA4), so an expert input allowed only A8 takes the
+            // generic MoE, whose NVFP4 banks have a W4A8 prefill.
+            const bool a8_held = generic.gate_up.qtype == QType::NVFP4 &&
+                                 std::any_of(gate_up.begin(), gate_up.end(), [](const auto& in) {
+                                     return in.policy == ops::LinearPolicy::AllowA8;
+                                 });
+            if (top_k == 8 && !a8_held && ops::sparse_moe_admits(generic)) {
                 return ops::prepare_sparse_moe_weights(
                     model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                     model_.input(moe.shared.gate), model_.input(moe.shared.up),
