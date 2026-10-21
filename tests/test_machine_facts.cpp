@@ -7,6 +7,7 @@
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -30,7 +31,8 @@ void expect(bool ok, const std::string& what) {
 }
 
 bool same(const MachineFacts& a, const MachineFacts& b) {
-    return a.source == b.source && a.sku == b.sku && a.segment == b.segment && a.form == b.form &&
+    return a.source == b.source && a.driver_read == b.driver_read && a.sku == b.sku &&
+           a.segment == b.segment && a.form == b.form &&
            a.reference_clock_khz == b.reference_clock_khz &&
            a.memory_bus_bits == b.memory_bus_bits && a.memory_clock_khz == b.memory_clock_khz &&
            a.tdp_w == b.tdp_w && a.vram_gib == b.vram_gib && a.pcie_gen == b.pcie_gen &&
@@ -159,7 +161,8 @@ void laptops_conservative() {
                                       DriverReport{0x2717, 8, 9, 76, 0, 0, 0}}) {
         const MachineFacts f = machine_facts(report);
         expect(f.source == FactSource::Extrapolated && f.form == FormFactor::Laptop &&
-                   f.reference_clock_khz == 1455000 && f.memory_clock_khz == 9000000,
+                   f.reference_clock_khz == 1455000 && f.memory_clock_khz == 9000000 &&
+                   !f.driver_read,
                "RTX 4090 Laptop GPU: the bottom of 1455-2040 MHz, whatever the driver says");
     }
     expect(
@@ -180,6 +183,8 @@ void laptops_conservative() {
            "no bottom given: a lower driver clock, on the grid");
     expect(clock(2400000) == 2040000, "no bottom given: never above the row's top");
     expect(clock(0) == 2040000, "no bottom given, no driver clock: the row's top");
+    expect(machine_facts(DriverReport{0x2717, 8, 9, 76, 1500000, 9001000, 256}, table).driver_read,
+           "no bottom given: the driver's clock was read");
     std::printf(
         "laptop 4090: %s\n",
         describe(machine_facts(DriverReport{0x2717, 8, 9, 76, 2040000, 9001000, 256})).c_str());
@@ -260,6 +265,21 @@ void device_class_wiring() {
     expect(d.facts.source == FactSource::Verified && std::abs(d.dram_gbps() - 1792) < 1e-9,
            "machine_facts_of: the 5090's row");
     expect(board_of(d).dram_gbps == d.dram_gbps(), "the board distance reads the facts");
+    // A GTX 1660 SUPER on TU106: no tensor cores by the table's fact though its chip has them. The
+    // synthetic class takes the fact as the query does, and borrows only from chips without
+    // tensor cores (TU116, TU117), never from TU102/TU104.
+    const DeviceClass gtx =
+        synthetic_device_class(0x1F09, 7, 5, 22, std::size_t{1} << 20, std::size_t{6} << 30);
+    expect(gtx.chip == "tu106" && gtx.features.mma_slow, "GTX on TU106: mma_slow");
+    expect(gtx.similar_chips() == std::vector<std::string>{"tu116", "tu117"},
+           "GTX on TU106: similar to TU116/TU117 only");
+    expect(gpu_similar_chips(7, 5, 36, "tu106") == std::vector<std::string>{"tu104", "tu102"},
+           "an RTX board on TU106: similar to TU104/TU102");
+    const auto chain = gtx.similarity_chain();
+    for (const char* tensor : {"tu102", "tu104"}) {
+        expect(std::find(chain.begin(), chain.end(), tensor) == chain.end(),
+               std::string("GTX on TU106: ") + tensor + " not in its similarity chain");
+    }
 }
 
 void malformed_tables_refused() {

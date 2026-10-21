@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -50,9 +51,10 @@ struct DeviceFeatures {
     bool tma          = false; // cp.async.bulk with mbarrier transaction counts
     bool pdl          = false; // griddepcontrol (programmatic dependent launch)
     bool clusters     = false; // thread-block clusters and distributed shared memory (sm_90 on)
-    bool mma_slow     = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
-                               // run it on their FP16 units; known by the chip (PCI ID, else the
-                               // SM-count fallback of gpu_chip), not by the compute capability
+    bool mma_slow = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
+                           // run it on their FP16 units; known by the chip (PCI ID, else the
+                           // SM-count fallback of gpu_chip), not by the compute capability, OR
+                           // the PCI-ID table's fact (the GTX 16 boards on TU106)
 };
 
 // Whether a chip of this compute capability has mma.sync but no tensor cores (TU116, TU117).
@@ -205,9 +207,13 @@ template <class Measured, std::size_t Extent>
 // distance of the chip's full SM count from `sms` on a log scale, so a 46-SM board is nearer a
 // 60-SM chip than a 144-SM one, and ties go to the larger chip. After them the chips of a sibling
 // architecture (the same major and the same feature row: sm_80 and sm_86, sm_121 and sm_120), in
-// the same order; an architecture of other instructions is never similar.
+// the same order; an architecture of other instructions is never similar. A board without tensor
+// cores (mma_slow) and one with them are never similar: `mma_slow` is the board's own (the
+// device's DeviceFeatures::mma_slow, which the PCI-ID table extends to the GTX boards of TU106),
+// chip_mma_slow(own_chip) when not given.
 [[nodiscard]] std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
-                                                         std::string_view own_chip);
+                                                         std::string_view own_chip,
+                                                         std::optional<bool> mma_slow = {});
 
 // The class chain widened by similarity: id, chip, arch (gpu_class_chain without "*"), the similar
 // chips of the architecture, "*", then the chips of every other architecture, nearest first by
@@ -215,8 +221,10 @@ template <class Measured, std::size_t Extent>
 // card walks it and takes the first key that has an entry: a card's own measurement, its
 // architecture's, a sibling chip's, the curated fallback, and only then the most similar card
 // measured at all.
+// `mma_slow` is the board's own, as gpu_similar_chips takes it.
 [[nodiscard]] std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms,
-                                                            int major, int minor);
+                                                            int major, int minor,
+                                                            std::optional<bool> mma_slow = {});
 
 // id, chip, arch, "*", without repeats (the chip is the arch when it is unknown).
 [[nodiscard]] std::vector<std::string> gpu_class_chain(std::string_view chip, int sms,

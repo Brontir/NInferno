@@ -38,8 +38,11 @@ A laptop has no reference board: one name spans the OEMs' power limits (an RTX 4
 runs 80 to 150 W, 1455 to 2040 MHz). Under principle 7 (the unknown is conservative) its facts take
 the **bottom** of the published boost range, `boost_min_mhz`, whatever the driver reports, so a
 low-power laptop is never priced like the fastest one of its name; the source is *extrapolated*. A
-laptop row without `boost_min_mhz` takes the lower of `boost_mhz` and the driver's clock on the
-2^(1/16) grid (the row's top without a driver clock). Every laptop row in the table has it.
+laptop that runs below its published range (a battery mode, an OEM limit under NVIDIA's floor,
+thermal throttling) is still priced at the bottom of the range: the bottom bounds the SKU as
+published, not every machine. A laptop row without `boost_min_mhz` takes the lower of `boost_mhz`
+and the driver's clock on the 2^(1/16) grid (the row's top without a driver clock). Every laptop
+row in the table has it.
 
 ## How facts are derived
 
@@ -59,8 +62,10 @@ laptop row without `boost_min_mhz` takes the lower of `boost_mhz` and the driver
 and the speculation load model (`GpuKey`) read `DeviceClass::facts`. Nothing reads
 `DeviceClass::sm_clock_khz`, `memory_clock_khz` or `memory_bus_bits` for a decision. The decision
 fingerprint records the facts (`facts.machine.*`: source, reference and memory clock, bus width,
-share, `mma_slow`); the driver's values enter it (`facts.driver.*`) only when the facts are not the
-verified table's, and are observed (the manifest's `observed.driver.*`) otherwise.
+share, `mma_slow`); the driver's values enter it (`facts.driver.*`) only when they fed a fact
+(`MachineFacts::driver_read`: an unknown id, a laptop row without `boost_min_mhz`), and are observed
+(the manifest's `observed.driver.*`) otherwise: a verified board, a MIG slice and a laptop priced at
+its range's bottom fingerprint alike whatever their driver reports.
 
 ## Adding a SKU
 

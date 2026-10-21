@@ -102,6 +102,10 @@ struct MachineFacts {
     // The fraction of the board this device is: its SMs over the row's when fewer (a MIG slice);
     // the bandwidth it sees scales with it. 1 otherwise.
     double share = 1.0;
+    // Whether a driver value fed a fact: an unknown id (its clocks on the grid), or a laptop row
+    // without the bottom of its range (its clock bounded by the driver's). The decision
+    // fingerprint hashes the driver's values only then.
+    bool driver_read = false;
 
     // Whether the cost model has a roofline: a clock, a bus width and a memory clock.
     [[nodiscard]] bool has_roofline() const noexcept {

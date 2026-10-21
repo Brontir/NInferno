@@ -6,7 +6,7 @@
 //
 // The inputs are seven sections of key -> value text:
 //   facts    the device's facts (DeviceClass, minus its name and ordinal; of its clocks the
-//            machine facts the decisions read, and the driver's only off the verified table), the
+//            machine facts the decisions read, and the driver's only where they fed a fact), the
 //            build's feature row and the driver version;
 //   build    the release, its commit, the architecture it compiled for, PTX, NVFP4, the CUDA
 //            runtime it was built against;
@@ -24,8 +24,8 @@
 //            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
 //   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
-//            cached states, Host tier), and the driver's clocks of a board the verified table
-//            describes, which no decision reads. Until the plan levels of
+//            cached states, Host tier), and the driver's clocks where they fed no fact
+//            (MachineFacts::driver_read), so no decision reads them. Until the plan levels of
 //            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
 //            two identical starts, so they enter the manifest only.
 //
@@ -93,7 +93,8 @@ struct HostFacts {
 // unknown), so that a few MiB the kernel keeps do not move it.
 // Of the clocks, "machine.*" are the facts the decisions read (DeviceClass::facts: source,
 // reference and memory clock, bus width, share, mma_slow); "driver.*" (the driver's clocks and
-// bus width) enter only when the facts are not the verified table's, which they then feed.
+// bus width) enter only when they fed a fact (MachineFacts::driver_read: an unknown id, a laptop
+// row without the bottom of its range).
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
                                        int driver_version, const HostFacts& host);
 
@@ -121,8 +122,9 @@ struct HostFacts {
 // kv_tokens, cached_device_states, host_state_slots, host_kv_bytes.
 [[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
-// The device's observed values: the driver's clocks and bus width ("driver.*") when the verified
-// table supplies the facts, so no decision reads them; empty otherwise (facts_of holds them).
+// The device's observed values: the driver's clocks and bus width ("driver.*") when they fed no
+// fact (!MachineFacts::driver_read), so no decision reads them; empty otherwise (facts_of holds
+// them).
 [[nodiscard]] DecisionSection observed_of(const DeviceClass& device);
 
 // The environment variables that steer a decision (a tuner, a route table, a decode schedule,

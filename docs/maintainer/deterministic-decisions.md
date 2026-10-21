@@ -19,9 +19,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
-  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the TU116/117
-  `mma_slow` exception is read from `chip_mma_slow` and the table's fact together (the GTX boards
-  on TU106 have only the latter);
+  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the `mma_slow`
+  exception is `chip_mma_slow` (TU116/117) OR the table's fact (also the GTX boards on TU106), in
+  the device query, `synthetic_device_class` and the similar-chip filter: two sources of one fact
+  rather than the table alone;
 - the speed labels and the kernel hash on constants do not exist yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
@@ -30,8 +31,9 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
   `src/runtime/engine/decision_fingerprint.h`): it hashes the device facts (of the clocks, the
   reference facts the decisions read: source, reference and memory clock, bus width, share and
-  `mma_slow`; the driver's clocks only when the facts are not the verified table's, which they then
-  feed, and as observed otherwise, so an overclocked board fingerprints as a stock one), the host's
+  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id or a laptop row without
+  the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
+  stock one and two laptops of one name from two OEMs alike), the host's
   logical CPU count and RAM class, the build (the git commit is read at every
   build, not at configure), the requested options, the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, a separate drafter by

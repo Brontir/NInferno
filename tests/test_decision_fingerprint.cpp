@@ -484,9 +484,29 @@ int machine_facts_decide() {
     const rt::DecisionInputs mig = inputs(slice);
     failures += check(!mig.taint.contains("clocks"),
                       "a MIG A100 slice with zero driver clocks is not tainted");
+    failures += check(!mig.facts.contains("driver.sm_clock_khz") &&
+                          mig.observed.contains("driver.sm_clock_khz"),
+                      "a MIG slice reads no driver clock: observed, not a fact");
     failures += check(mig.facts.at("machine.source") == "extrapolated" &&
                           mig.facts.at("machine.share") != inputs(stock).facts.at("machine.share"),
                       "a MIG slice: extrapolated, with its share");
+
+    // Two laptops of one name from two OEMs (80 W and 150 W): priced at the bottom of the range,
+    // one fingerprint whatever their drivers report.
+    ninferno::DeviceClass laptop = stock;
+    laptop.sms                   = 76;
+    laptop.pci_device_id         = 0x2717;
+    laptop.chip                  = "ad103";
+    laptop.memory_bus_bits       = 256;
+    laptop.memory_clock_khz      = 9001000;
+    laptop.sm_clock_khz          = 2040000;
+    ninferno::DeviceClass thin   = laptop;
+    thin.sm_clock_khz            = 1455000;
+    failures += check(rt::decision_fingerprint(inputs(laptop)).value ==
+                          rt::decision_fingerprint(inputs(thin)).value,
+                      "a 0x2717 laptop's nf1 does not follow sm_clock_khz");
+    failures += check(inputs(laptop).facts.at("machine.reference_clock_khz") == "1455000",
+                      "the laptop's clock is its range's bottom");
 
     ninferno::DeviceClass blind = slice;
     blind.pci_device_id         = 0;

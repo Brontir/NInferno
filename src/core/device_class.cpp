@@ -403,8 +403,8 @@ std::string gpu_class_id(std::string_view chip, int sms) {
     return std::string(chip) + ":" + std::to_string(sms) + "sm";
 }
 
-std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, int major,
-                                              int minor) {
+std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, int major, int minor,
+                                              std::optional<bool> mma_slow) {
     std::vector<std::string> chain = gpu_class_chain(chip, sms, gpu_arch_id(major, minor));
     chain.pop_back(); // "*" goes after the architecture's own chips
     const auto add = [&](std::string key) {
@@ -412,7 +412,9 @@ std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, in
             chain.push_back(std::move(key));
         }
     };
-    for (auto& similar : gpu_similar_chips(major, minor, sms, chip)) { add(std::move(similar)); }
+    for (auto& similar : gpu_similar_chips(major, minor, sms, chip, mma_slow)) {
+        add(std::move(similar));
+    }
     add("*");
     // The other architectures, nearest compute capability first.
     std::vector<std::pair<int, int>> archs;
@@ -435,11 +437,12 @@ std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, in
     return chain;
 }
 
-std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
-                                           std::string_view own_chip) {
-    // A chip without tensor cores (mma_slow) and one with them are other kinds: measured data of
-    // one does not carry to the other.
-    const bool slow = chip_mma_slow(major, minor, own_chip);
+std::vector<std::string> gpu_similar_chips(int major, int minor, int sms, std::string_view own_chip,
+                                           std::optional<bool> mma_slow) {
+    // A board without tensor cores (mma_slow) and one with them are other kinds: measured data of
+    // one does not carry to the other. The board's own fact, where given: a GTX board on TU106
+    // has none, though its chip does.
+    const bool slow = mma_slow.value_or(chip_mma_slow(major, minor, own_chip));
     std::vector<const FullChip*> chips;
     for (const auto& c : kFullChips) {
         if (c.major == major && c.minor == minor && own_chip != c.chip &&
@@ -496,12 +499,20 @@ std::vector<std::string> DeviceClass::class_chain() const {
     return gpu_class_chain(chip, sms, arch());
 }
 
+namespace {
+// The board's own mma_slow: the features' (the chip's or the table's, as the query sets it), the
+// chip's and the table's facts, for a class a test assembled by hand.
+bool own_mma_slow(const DeviceClass& d) {
+    return d.features.mma_slow || d.facts.mma_slow || chip_mma_slow(d.major, d.minor, d.chip);
+}
+} // namespace
+
 std::vector<std::string> DeviceClass::similar_chips() const {
-    return gpu_similar_chips(major, minor, sms, chip);
+    return gpu_similar_chips(major, minor, sms, chip, own_mma_slow(*this));
 }
 
 std::vector<std::string> DeviceClass::similarity_chain() const {
-    return gpu_similarity_chain(chip, sms, major, minor);
+    return gpu_similarity_chain(chip, sms, major, minor, own_mma_slow(*this));
 }
 
 const DeviceClass& device_class(int device) {
@@ -548,7 +559,9 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
     d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
     d.features      = device_features_for(major, minor);
-    d.features.mma_slow = chip_mma_slow(major, minor, d.chip);
+    // The chip's mma_slow or the table's (the GTX boards of TU106), as the query sets it; `facts`
+    // itself stays empty until a test asks for it.
+    d.features.mma_slow = chip_mma_slow(major, minor, d.chip) || machine_facts_of(d).mma_slow;
     // The architecture's limits (CUDA programming guide, compute capability tables).
     const int cc           = major * 10 + minor;
     d.smem_per_block_optin = cc == 75                  ? 64 * 1024

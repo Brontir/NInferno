@@ -211,10 +211,13 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
             f.source = FactSource::Extrapolated;
             if (row->boost_min_mhz > 0) {
                 f.reference_clock_khz = row->boost_min_mhz * 1000;
-            } else if (driver.sm_clock_khz > 0) {
-                const int snapped =
-                    static_cast<int>(std::llround(snap_to_fact_grid(driver.sm_clock_khz)));
-                f.reference_clock_khz = std::min(f.reference_clock_khz, snapped);
+            } else {
+                f.driver_read = true;
+                if (driver.sm_clock_khz > 0) {
+                    const int snapped =
+                        static_cast<int>(std::llround(snap_to_fact_grid(driver.sm_clock_khz)));
+                    f.reference_clock_khz = std::min(f.reference_clock_khz, snapped);
+                }
             }
         }
         if (driver.sms > 0 && driver.sms != row->sms) {
@@ -230,6 +233,7 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
     f.memory_clock_khz =
         static_cast<int>(std::llround(snap_to_fact_grid(std::max(driver.memory_clock_khz, 0))));
     f.memory_bus_bits = std::max(driver.memory_bus_bits, 0);
+    f.driver_read     = true;
     f.source = f.reference_clock_khz > 0 || f.memory_clock_khz > 0 ? FactSource::Extrapolated
                                                                    : FactSource::None;
     return f;

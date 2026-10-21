@@ -243,9 +243,10 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["machine.memory_bus_bits"]     = number(m.memory_bus_bits);
     out["machine.share"]               = bits(m.share);
     out["machine.mma_slow"]            = flag(m.mma_slow);
-    // Off the verified table the driver's values feed the facts (an unknown id snaps them, a
-    // laptop without its range's bottom bounds its clock by them): they are inputs then.
-    if (m.source != FactSource::Verified) { driver_into(out, d); }
+    // The driver's values are inputs only where they fed a fact (MachineFacts::driver_read: an
+    // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them);
+    // a verified board, a MIG slice or a laptop priced at its range's bottom never reads them.
+    if (m.driver_read) { driver_into(out, d); }
     out["driver_version"] = number(driver_version);
     features_into(out, "feature.", d.features);
     features_into(out, "build_feature.", build);
@@ -385,7 +386,7 @@ DecisionSection observed_of(const MemorySummary& memory) {
 
 DecisionSection observed_of(const DeviceClass& device) {
     DecisionSection out;
-    if (device.facts.source == FactSource::Verified) { driver_into(out, device); }
+    if (!device.facts.driver_read) { driver_into(out, device); }
     return out;
 }
 
