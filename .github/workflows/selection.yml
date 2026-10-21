@@ -60,6 +60,9 @@ jobs:
         arch: ["120a", "89"] # the full and the base route sets
     container:
       image: nvidia/cuda:13.2.1-devel-ubuntu24.04
+    defaults:
+      run:
+        shell: bash # a container job runs `sh` otherwise
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
@@ -94,11 +97,12 @@ jobs:
             -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
       - name: Build the cpu-labelled tests
         timeout-minutes: 290
+        # The executables of the cpu-labelled CTest tests (the others are Python scripts); a test
+        # added to the label without its target here fails the next step: its executable is
+        # missing.
         run: |
-          targets=$(ctest --test-dir build -L cpu -N -V | sed -n 's/^.*Test command: \([^ ]*\).*$/\1/p' \
-            | xargs -n1 basename | grep '^ninferno_' | sort -u)
-          echo "targets: $targets"
-          cmake --build build -j "$(nproc)" --target $targets
+          cmake --build build -j "$(nproc)" --target ninferno_route_classes_test \
+            ninferno_selector_golden_test ninferno_selector_properties_test
       - name: Run the cpu-labelled tests
         run: ctest --test-dir build -L cpu --output-on-failure
       - name: ccache statistics
