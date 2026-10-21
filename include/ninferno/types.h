@@ -122,7 +122,8 @@ parse_kv_cache_storage(std::string_view text) noexcept {
     return std::nullopt;
 }
 
-// How quantized linears treat their activations (--activations exact|fast).
+// How quantized linears treat their activations (--activations exact|fast|int8): the user's
+// choice of 16, automatic (down to 4) or 8 bits.
 // - Exact: BF16 activations on every quantized linear at every width. A request's tokens do not
 //   depend on its batch neighbours, where its prompt is cut, the prefix cache or speculation
 //   (greedy agrees up to BF16 logit ties). A model whose kernels have no BF16-activation route
@@ -132,9 +133,10 @@ parse_kv_cache_storage(std::string_view text) noexcept {
 enum class ActivationMode : std::uint8_t {
     Fast,
     Exact,
-    // Fast, and sites the artifact recorded as A16Only take int8 activations too (except heads
-    // and embeddings): for published artifacts whose converter kept every site BF16-activated.
-    // May move quality, so never the default.
+    // Eight bits: every quantized linear is allowed int8 activations where its route has them
+    // and none takes four, whatever the artifact recorded (a head or embedding recorded A16Only
+    // keeps BF16). A W4A16 NVFP4 checkpoint thus runs W4A8 where Fast runs W4A4. May move
+    // quality, so never the default.
     Int8,
 };
 

@@ -20,13 +20,12 @@ struct WeightUsePolicy {
 };
 
 // The policy a linear runs under: the recorded one under ActivationMode::Fast; under Exact every
-// quantized linear keeps BF16 activations at every width (ninferno/types.h).
+// quantized linear keeps BF16 activations at every width; under Int8 every one is allowed eight
+// bits and none four (ninferno/types.h).
 [[nodiscard]] constexpr ops::LinearPolicy effective_policy(ops::LinearPolicy recorded,
                                                           ActivationMode mode) noexcept {
     if (mode == ActivationMode::Exact) { return ops::LinearPolicy::A16Only; }
-    if (mode == ActivationMode::Int8 && recorded == ops::LinearPolicy::A16Only) {
-        return ops::LinearPolicy::AllowA8;
-    }
+    if (mode == ActivationMode::Int8) { return ops::LinearPolicy::AllowA8; }
     return recorded;
 }
 

@@ -106,8 +106,8 @@ def published_activation_summary(model, recipe) -> dict | None:
     Each matrix answers to the description of the checkpoint it is imported from (an NVFP4
     recipe's quantized source, not the unquantized --model); one whose checkpoint describes nothing
     is not counted. below: matrices the recorded policy lets run below that width (fast mode);
-    below_int8: the same under --activations int8, which runs every A16Only use but a head's or
-    embedding's as A8.
+    below_int8: the same under --activations int8, which runs every use as A8 but an A16Only
+    head's or embedding's.
     """
     width = {"AllowA4": 4, "AllowA8": 8}
     described: dict[int, tuple[str, int, dict[str, int]]] = {}
@@ -138,7 +138,7 @@ def published_activation_summary(model, recipe) -> dict | None:
         counts[bits] = counts.get(bits, 0) + 1  # 0: the description names no width for it
         policy = recipe.policies[(name, parameter.inputs[0])]
         fixed = "head" in name or "embed" in name
-        int8 = "AllowA8" if policy == "A16Only" and not fixed else policy
+        int8 = policy if policy == "A16Only" and fixed else "AllowA8"
         if bits > 0:
             below += width.get(policy, 16) < bits
             below_int8 += width.get(int8, 16) < bits
