@@ -202,8 +202,6 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno-convert");
     ninferno::convert::ConvertOptions options;
     options.components_auto = true; // until --components names them
     ninferno::convert::FetchOptions fetch;
@@ -387,6 +385,8 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("unrecognized argument " + flag);
             }
         }
+        // A removed NINFERNO_* decision variable changes nothing: say so once.
+        ninferno::warn_removed_environment("ninferno-convert");
         // The proposal head's settings without the head would do nothing.
         if (!options.proposal) {
             for (const auto& flag : given) {

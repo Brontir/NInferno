@@ -25,6 +25,7 @@
 #include <iterator>
 #include <optional>
 #include <regex>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -221,7 +222,7 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.maintainer.dense_tune = ninferno::TuneMode::Retune; }},
         {"maintainer.moe_tune",
          [](EngineOptions& o) { o.maintainer.moe_tune = ninferno::TuneMode::On; }},
-        {"maintainer.tune_cache", [](EngineOptions& o) { o.maintainer.tune_cache = "cache"; }},
+        // maintainer.tune_cache reaches it only while a tuner is on (maintainer_options()).
         {"maintainer.debug_prefill_cuts",
          [](EngineOptions& o) { o.maintainer.debug_prefill_cuts = {700}; }},
         {"maintainer.debug_poison", [](EngineOptions& o) { o.maintainer.debug_poison = 0xFF; }},
@@ -430,7 +431,15 @@ int maintainer_options() {
     cache_only.maintainer.tune_cache = "cache";
     failures += check(!taints(cache_only).contains("maintainer"),
                       "--tune-cache with both tuners off is taint");
+    failures += check(rt::options_of(cache_only, "id", "sig", "") ==
+                          rt::options_of(release, "id", "sig", ""),
+                      "--tune-cache with both tuners off enters the fingerprint");
     cache_only.maintainer.dense_tune = ninferno::TuneMode::On;
+    ninferno::EngineOptions tuner_only;
+    tuner_only.maintainer.dense_tune = ninferno::TuneMode::On;
+    failures += check(rt::options_of(cache_only, "id", "sig", "") !=
+                          rt::options_of(tuner_only, "id", "sig", ""),
+                      "--tune-cache with a tuner on does not enter the fingerprint");
     failures += check(taints(cache_only).at("maintainer") == "dense_tune,tune_cache",
                       "--tune-cache with a tuner on is not taint");
     // A drafter registry file in place of the compiled-in one is taint, the compiled-in one not.
@@ -678,6 +687,7 @@ int environment_inventory() {
     int failures                     = 0;
     const std::filesystem::path root = std::filesystem::path(NINFERNO_SOURCE_DIR) / "src";
     std::set<std::string> found;
+    std::map<std::string, std::set<std::string>> quoted_in; // name -> files, relative to src/
     const std::regex quoted("\"(NINFERNO_[A-Z0-9_]+)\"");
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
         if (!entry.is_regular_file()) { continue; }
@@ -688,6 +698,8 @@ int environment_inventory() {
                                std::istreambuf_iterator<char>());
         for (std::sregex_iterator it(text.begin(), text.end(), quoted), end; it != end; ++it) {
             found.insert((*it)[1].str());
+            quoted_in[(*it)[1].str()].insert(
+                std::filesystem::relative(entry.path(), root).generic_string());
         }
     }
     std::set<std::string> known;
@@ -699,6 +711,12 @@ int environment_inventory() {
     for (const auto& removed : ninferno::kRemovedEnvironmentVariables) {
         failures += check(known.emplace(removed.name).second,
                           std::string(removed.name) + " is on one list only");
+        // Quoted nowhere else: a removed name read anywhere would steer something again.
+        const auto files = quoted_in.find(std::string(removed.name));
+        failures +=
+            check(files != quoted_in.end() &&
+                      files->second == std::set<std::string>{"core/removed_environment.h"},
+                  std::string(removed.name) + " is quoted outside core/removed_environment.h");
     }
     for (const auto& name : found) {
         failures += check(known.contains(name), name + " is read in src/ but is on neither list "

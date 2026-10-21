@@ -58,8 +58,9 @@
 // prefill profile on every prefill call; its tokens equal the Engine's byte for byte. Every result
 // is one JSON object on stdout.
 // Maintainer options (docs/maintainer/environment.md): --cuda-sync, --route-table FILE,
-// --route-dir DIR, --dense-tune/--moe-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE and
-// --debug-poison-skip SITES, applied to the process as an Engine applies them.
+// --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE,
+// --debug-poison-skip SITES and --drafter-registry FILE, applied to the process as an Engine
+// applies them; --moe-tune is refused (no MoE schedule tuner runs here).
 //
 // <artifact>, --drafter and --dflash also accept a Hugging Face checkpoint directory. It is
 // converted once, in-process, with the official recipe for its architecture, into
@@ -142,6 +143,7 @@ Arguments parse(int argc, char** argv) {
             "decode",      "dflash",      "draft",
             "draft-min",   "drafter",     "drafter-variant",
             "dump",        "dump-tokens", "gpu-class",
+            "drafter-registry",
             "kv-dtype",    "list",        "measured-on", "moe-tune",
             "no-warm-up",  "no-watchdog", "out",
             "prefill-split",
@@ -823,10 +825,18 @@ StartPlan drafter_plan(const Arguments& args, bool mtp, bool dflash, std::int32_
 } // namespace
 
 int main(int argc, char** argv) {
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno-gemma4");
     try {
         const auto args = parse(argc, argv);
+        // A removed NINFERNO_* decision variable changes nothing: say so once.
+        ninferno::warn_removed_environment("ninferno-gemma4");
+        // The maintainer options are refused or accepted before anything is converted or loaded.
+        const MaintainerOptions maintainer =
+            product::tool_maintainer_options(args, "ninferno-gemma4");
+        // --drafter-registry: a registry file in place of the compiled-in one (speculation
+        // resolves its profile through it).
+        if (args.flag("drafter-registry")) {
+            spec::Registry::use_file(args.text("drafter-registry"));
+        }
         // Checkpoint directories are converted before the device is touched.
         const bool consume  = args.flag("consume-source");
         const auto artifact = artifact_path(args.artifact, consume);
@@ -856,7 +866,6 @@ int main(int argc, char** argv) {
                                    : profile == ActivationProfile::A16Full ? "a16_full"
                                    : profile == ActivationProfile::A16   ? "a16"
                                                                          : "artifact";
-        const MaintainerOptions maintainer = product::tool_maintainer_options(args);
         DeviceContext device(0, parse_cuda_sync_schedule(args.text("cuda-sync", "spin")));
         product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();

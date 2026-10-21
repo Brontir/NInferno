@@ -371,7 +371,9 @@ DecisionSection options_of(const EngineOptions& o, std::string_view artifact_id,
     out["maintainer.route_dir"]            = given(m.route_dir);
     out["maintainer.dense_tune"]           = tune_mode_name(m.dense_tune);
     out["maintainer.moe_tune"]             = tune_mode_name(m.moe_tune);
-    out["maintainer.tune_cache"]           = given(m.tune_cache);
+    // --tune-cache is read only while a tuner is on: alone it decides nothing and is not hashed.
+    const bool tuner_on          = m.dense_tune != TuneMode::Off || m.moe_tune != TuneMode::Off;
+    out["maintainer.tune_cache"] = given(tuner_on ? m.tune_cache : std::filesystem::path());
     std::vector<std::string> cuts;
     for (const std::uint64_t cut : m.debug_prefill_cuts) { cuts.push_back(number(cut)); }
     out["maintainer.debug_prefill_cuts"] = joined(cuts);
@@ -428,11 +430,7 @@ DecisionSection taint_of(const DecisionInputs& in) {
         return it == section.end() ? std::string() : it->second;
     };
     std::vector<std::string> maintainer;
-    // --tune-cache is read only while a tuner is on: alone it changes nothing.
-    const bool tuner_on = value(in.options, "maintainer.dense_tune") != "off" ||
-                          value(in.options, "maintainer.moe_tune") != "off";
     for (const auto& [key, release] : kMaintainerDefaults) {
-        if (key == "tune_cache" && !tuner_on) { continue; }
         const auto it = in.options.find("maintainer." + std::string(key));
         if (it != in.options.end() && it->second != release) { maintainer.emplace_back(key); }
     }

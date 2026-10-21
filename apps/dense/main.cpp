@@ -31,9 +31,10 @@
 // attention envelope of its own frontier, as ninferno-serve --no-cuda-graph decodes), --kv-dtype
 // bf16|fp8 (keys and values in BF16, the default, or FP8 E4M3 with a scale per row: half the KV
 // bytes). Every result is one JSON object on stdout.
-// Maintainer options (docs/maintainer/environment.md): --route-table FILE,
-// --route-dir DIR, --dense-tune/--moe-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE and
-// --debug-poison-skip SITES, applied to the process as an Engine applies them.
+// Maintainer options (docs/maintainer/environment.md): --cuda-sync spin|blocking|yield|auto,
+// --route-table FILE, --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR,
+// --debug-poison BYTE and --debug-poison-skip SITES, applied to the process as an Engine applies
+// them; --moe-tune is refused (no MoE schedule tuner runs here). Any other option is refused.
 //
 // <artifact> may also be a Hugging Face checkpoint directory: it is converted once, in-process,
 // with the official recipe for its architecture into <dir>/.ninferno-cache/<recipe>.ninferno, and
@@ -43,6 +44,7 @@
 #include "convert/cache.h"
 #include "core/clock.h"
 #include "core/device.h"
+#include "ninferno/option_enums.h"
 #include "models/dense/frontend.h"
 #include "models/dense/session.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -62,6 +64,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -84,10 +87,21 @@ Arguments parse(int argc, char** argv) {
                                     "<bench|score|generate|chat|logits|spec> [--key value ...]");
     }
     Arguments out{argv[1], argv[2], {}};
+    // Every option some command reads; anything else is refused, not ignored.
+    static const std::set<std::string> known = {
+        "a16",       "activations",  "chunk",        "context",
+        "cuda-sync", "cuts",         "debug-poison", "debug-poison-skip",
+        "decode",    "dense-tune",   "dflash",       "draft-tokens",
+        "dump",      "eager-decode", "kv-dtype",     "min-draft-tokens",
+        "moe-tune",  "ngram",        "out",          "prompt",
+        "repeat",    "route-dir",    "route-table",  "seed",
+        "system",    "temperature",  "tokens",       "top-k",
+        "top-p",     "tune-cache",   "window"};
     for (int i = 3; i < argc; ++i) {
         std::string key = argv[i];
         if (key.rfind("--", 0) != 0) { throw std::invalid_argument("unexpected " + key); }
         key = key.substr(2);
+        if (!known.contains(key)) { throw std::invalid_argument("unknown option --" + key); }
         if (key == "a16" || key == "eager-decode" || key == "ngram") {
             out.options[key] = "1";
         } else {
@@ -109,18 +123,21 @@ void write_all(const std::string& path, const std::vector<T>& values) {
 } // namespace
 
 int main(int argc, char** argv) {
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno-dense");
     try {
         const auto args   = parse(argc, argv);
+        // A removed NINFERNO_* decision variable changes nothing: say so once.
+        ninferno::warn_removed_environment("ninferno-dense");
+        // The maintainer options are refused or accepted before anything is converted or loaded.
+        const MaintainerOptions maintainer =
+            product::tool_maintainer_options(args, "ninferno-dense");
+        const CudaSyncSchedule cuda_sync = parse_cuda_sync_schedule(args.text("cuda-sync", "spin"));
         const auto cached = convert::cached_artifact(args.artifact, {}, {}, false);
         if (cached.converted) {
             std::fprintf(stderr, "ninferno-dense: converted %s with %s to %s in %.1f s\n",
                          args.artifact.c_str(), cached.recipe.c_str(), cached.path.c_str(),
                          cached.seconds);
         }
-        const MaintainerOptions maintainer = product::tool_maintainer_options(args);
-        DeviceContext device(0);
+        DeviceContext device(0, cuda_sync);
         product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
         const bool exact = product::parse_activation_mode(args.text("activations", "fast")) ==

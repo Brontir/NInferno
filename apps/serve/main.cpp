@@ -140,8 +140,6 @@ int print_version() {
 
 int main(int argc, char** argv) {
     std::set_terminate(log_terminate);
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno-serve");
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.
     timeBeginPeriod(1);
@@ -162,6 +160,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-serve");
     if (!options.drafter_registry.empty()) {
         ninferno::spec::Registry::use_file(options.drafter_registry);
     }

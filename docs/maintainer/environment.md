@@ -11,11 +11,13 @@ none of them changes what the engine computes.
 `ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
 `--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
 `ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table` and `--route-dir`, and
-records an explicit route table in the profile's settings by its content (`sha256:...`) and a route
-directory as `set`, never by a local path. The family tools `ninferno-gemma4` and `ninferno-dense`
-take `--route-table`, `--route-dir`, `--dense-tune`, `--moe-tune`, `--tune-cache`, `--debug-poison`
-and `--debug-poison-skip` (`ninferno-gemma4` also `--cuda-sync`) and apply them to the process as an
-Engine does. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
+records them in the profile's settings by content, never by a local path: a route table as the
+SHA-256 of its bytes, a route directory as the SHA-256 over its files' relative paths and digests,
+so `--resume` refuses cells measured with other tables. The family tools `ninferno-gemma4` and
+`ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`, `--dense-tune`, `--tune-cache`,
+`--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also `--drafter-registry`) and apply
+them to the process as an Engine does; they refuse `--moe-tune`, since neither times MoE schedules
+(only the Qwen 3.5 family's Engine load does). `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.
 
 The maintainer options and `--cuda-sync` are process-wide. An Engine built while no other Engine
@@ -28,8 +30,8 @@ since it would change their decisions.
 The [decision fingerprint](deterministic-decisions.md#fingerprint) hashes all of them with the
 other options (`options.pacing.*`, `options.maintainer.*`; an option naming a file or directory
 enters as `set`, the files themselves by content among the sources), and a maintainer option
-given is taint (`taint.maintainer`, by name). `--tune-cache` is taint only while a tuner is on (it is
-read only then), and a `--drafter-registry` file in place of the compiled-in registry is taint too
+given is taint (`taint.maintainer`, by name). `--tune-cache` enters the fingerprint and is taint only
+while a tuner is on (it is read only then), and a `--drafter-registry` file in place of the compiled-in registry is taint too
 (`drafter_registry`). The request log's `server_start` record carries them (`engine.decode_pacing`,
 `engine.maintainer` with `drafter_registry`; `--decode-steps` as `auto` or its integer).
 
@@ -56,14 +58,14 @@ heuristic.
 | `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table for another GPU class, or a malformed one, fails startup. |
 | `--route-dir DIR` | directory | The directory of per-GPU-class route tables. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
 | `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
-| `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner, with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
+| `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner of the Engine's Qwen 3.5 family (the family tools refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
 
 ### Speculation data
 
 | Option | Takes it | Effect |
 |---|---|---|
-| `--drafter-registry FILE` | `ninferno`, `ninferno-serve`, `ninferno-convert`, `ninferno spec-tune`, `ninferno spec-reselect` | A drafter registry JSON to use instead of the compiled-in one. |
+| `--drafter-registry FILE` | `ninferno`, `ninferno-serve`, `ninferno-convert`, `ninferno spec-tune`, `ninferno spec-reselect`, `ninferno-gemma4` | A drafter registry JSON to use instead of the compiled-in one. |
 | `--corpus FILE` | `ninferno spec-tune`, `ninferno-gemma4` | The prompt corpus to measure on, instead of the compiled-in one. |
 
 The token-frequency rankings a drafter conversion names are found in `tools/spec/rankings` of the
@@ -83,7 +85,9 @@ from; `ninferno-convert --ranking FILE` names the target's own.
 These variables used to steer a decision. No program reads them to decide anything any more; every
 product binary (`ninferno` with `spec-tune` and `spec-reselect`, `ninferno-serve`,
 `ninferno-perplexity`, `ninferno-gemma4`, `ninferno-dense`, `ninferno-convert`) warns once at
-startup for each one still set, naming its replacement (`src/core/removed_environment.h`).
+startup, after its arguments parse (`--help` and `--version` stay quiet), for each one still set,
+naming its replacement (`src/core/removed_environment.h`, the only place in `src/` that may quote
+these names; `ninferno_decision_fingerprint_test` fails otherwise).
 
 | Variable | Replacement |
 |---|---|

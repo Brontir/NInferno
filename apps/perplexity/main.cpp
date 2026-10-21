@@ -625,8 +625,6 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno-perplexity");
     Options options;
     try {
         options = parse_options(argc, argv);
@@ -639,6 +637,8 @@ int main(int argc, char** argv) {
         std::cout << usage_text();
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno-perplexity");
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-perplexity",

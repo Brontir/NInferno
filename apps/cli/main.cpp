@@ -228,9 +228,8 @@ int main(int argc, char** argv) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
     }
-    // A removed NINFERNO_* decision variable changes nothing: say so once.
-    ninferno::warn_removed_environment("ninferno");
     if (argc >= 2 && std::string_view(argv[1]) == "spec-tune") {
+        ninferno::warn_removed_environment("ninferno spec-tune");
         try {
             return ninferno::cli::run_spec_tune(argc, argv);
         } catch (const std::exception& error) {
@@ -239,6 +238,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc >= 2 && std::string_view(argv[1]) == "spec-reselect") {
+        ninferno::warn_removed_environment("ninferno spec-reselect");
         try {
             return ninferno::cli::run_spec_reselect(argc, argv);
         } catch (const std::exception& error) {
@@ -258,6 +258,8 @@ int main(int argc, char** argv) {
         std::cout << ninferno::cli::usage_text(argv[0]);
         return 0;
     }
+    // A removed NINFERNO_* decision variable changes nothing: say so once.
+    ninferno::warn_removed_environment("ninferno");
 
     if (!cli.drafter_registry.empty()) { ninferno::spec::Registry::use_file(cli.drafter_registry); }
 

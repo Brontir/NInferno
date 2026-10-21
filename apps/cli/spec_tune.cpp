@@ -29,6 +29,7 @@
 #include "product/speculation/speculation.h"
 #include "product/speculative_options.h"
 #include "product/numeric_options.h"
+#include "product/route_labels.h"
 
 #include <cuda_runtime.h>
 
@@ -141,23 +142,19 @@ TuneEngine tune_engine(const std::map<std::string, std::string>& flags) {
     return engine;
 }
 
-// How a profile names an explicit route table: by its content ("sha256:<hex>"), never by a path
-// local to the machine that measured it.
-std::string route_table_label(const std::filesystem::path& table) {
-    const auto digest = file_sha256_hex(table);
-    return digest ? "sha256:" + *digest : std::string("unreadable");
-}
-
 // The tune engine's settings beside the wait, named only when given (an --out measured before
-// they existed still resumes): an explicit route table by its content, a route directory as "set".
+// they existed still resumes): an explicit route table and a route directory by their content
+// (product/route_labels.h), so a resume refuses cells measured with other tables.
 void name_tune_engine(nlohmann::json& settings, const TuneEngine& engine) {
     if (engine.pacing.cuda_sync != CudaSyncSchedule::Spin) {
         settings["cuda_sync"] = cuda_sync_schedule_name(engine.pacing.cuda_sync);
     }
     if (!engine.maintainer.route_table.empty()) {
-        settings["route_table"] = route_table_label(engine.maintainer.route_table);
+        settings["route_table"] = product::route_table_label(engine.maintainer.route_table);
     }
-    if (!engine.maintainer.route_dir.empty()) { settings["route_dir"] = "set"; }
+    if (!engine.maintainer.route_dir.empty()) {
+        settings["route_dir"] = product::route_dir_label(engine.maintainer.route_dir);
+    }
 }
 
 // The artifact's id, or its path's text when it has none readable (a drafter directory).
@@ -834,9 +831,12 @@ int run_spec_tune(int argc, char** argv) {
             std::string(", CUDA sync ") + cuda_sync_schedule_name(engine.pacing.cuda_sync);
     }
     if (!engine.maintainer.route_table.empty()) {
-        profile.settings += ", route table " + route_table_label(engine.maintainer.route_table);
+        profile.settings +=
+            ", route table " + product::route_table_label(engine.maintainer.route_table);
     }
-    if (!engine.maintainer.route_dir.empty()) { profile.settings += ", route dir set"; }
+    if (!engine.maintainer.route_dir.empty()) {
+        profile.settings += ", route dir " + product::route_dir_label(engine.maintainer.route_dir);
+    }
 
     std::map<std::string, std::vector<TokenId>> reference;
     for (const auto& config : configs) {
