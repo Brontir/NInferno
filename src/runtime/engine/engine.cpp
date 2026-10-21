@@ -125,6 +125,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.plan  = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table);
     in.taint    = runtime::taint_of(in);
     in.observed = runtime::observed_of(memory);
+    in.observed.merge(runtime::observed_of(device_class(resolved.device)));
     const runtime::DecisionFingerprint fingerprint = runtime::decision_fingerprint(in);
     load.decision_fingerprint                      = fingerprint.value;
     load.decision_manifest                         = fingerprint.manifest;

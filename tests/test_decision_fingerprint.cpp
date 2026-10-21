@@ -58,6 +58,7 @@ ninferno::DeviceClass sample_device() {
     d.memory_clock_khz        = 14001000;
     d.sm_clock_khz            = 2407000;
     d.features                = ninferno::device_features_for(12, 0);
+    d.facts                   = ninferno::machine_facts_of(d); // the table's row: verified
     return d;
 }
 
@@ -78,6 +79,7 @@ rt::DecisionInputs sample_inputs() {
     in.plan  = rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab");
     in.taint = rt::taint_of(in);
     in.observed = rt::observed_of(ninferno::MemorySummary{});
+    in.observed.merge(rt::observed_of(sample_device()));
     return in;
 }
 
@@ -297,12 +299,40 @@ int facts_reach_their_section() {
         {"max_threads_per_sm", [](DeviceClass& d) { d.max_threads_per_sm = 1; }},
         {"max_blocks_per_sm", [](DeviceClass& d) { d.max_blocks_per_sm = 1; }},
         {"registers_per_sm", [](DeviceClass& d) { d.registers_per_sm = 1; }},
+        {"features", [](DeviceClass& d) { d.features.tma = !d.features.tma; }},
+        {"facts.source",
+         [](DeviceClass& d) { d.facts.source = ninferno::FactSource::Extrapolated; }},
+        {"facts.reference_clock_khz", [](DeviceClass& d) { d.facts.reference_clock_khz = 1; }},
+        {"facts.memory_clock_khz", [](DeviceClass& d) { d.facts.memory_clock_khz = 1; }},
+        {"facts.memory_bus_bits", [](DeviceClass& d) { d.facts.memory_bus_bits = 1; }},
+        {"facts.share", [](DeviceClass& d) { d.facts.share = 0.5; }},
+        {"facts.mma_slow", [](DeviceClass& d) { d.facts.mma_slow = true; }},
+    };
+    int failures = each_field_reaches("facts", sample_device(), collect, edits);
+    // Off the verified table the driver's values feed the facts, and are inputs.
+    DeviceClass unknown   = sample_device();
+    unknown.pci_device_id = 0;
+    unknown.facts         = ninferno::machine_facts_of(unknown);
+    std::vector<std::pair<const char*, std::function<void(DeviceClass&)>>> driver{
         {"memory_bus_bits", [](DeviceClass& d) { d.memory_bus_bits = 1; }},
         {"memory_clock_khz", [](DeviceClass& d) { d.memory_clock_khz = 1; }},
         {"sm_clock_khz", [](DeviceClass& d) { d.sm_clock_khz = 1; }},
-        {"features", [](DeviceClass& d) { d.features.tma = !d.features.tma; }},
     };
-    int failures = each_field_reaches("facts", sample_device(), collect, edits);
+    failures += check(unknown.facts.source == ninferno::FactSource::Extrapolated,
+                      "facts: an unknown id is extrapolated");
+    failures += each_field_reaches("facts (unknown id)", unknown, collect, driver);
+    // On the verified table they are observed: the manifest's, not the fingerprint's.
+    for (const auto& [field, edit] : driver) {
+        DeviceClass changed = sample_device();
+        edit(changed);
+        failures += check(collect(changed) == collect(sample_device()) &&
+                              rt::observed_of(changed) != rt::observed_of(sample_device()),
+                          std::string("facts: a verified board's driver ") + field +
+                              " is observed, not a fact");
+    }
+    failures += check(rt::observed_of(unknown).empty() &&
+                          rt::observed_of(sample_device()).size() == driver.size(),
+                      "observed: the driver's values only on the verified table");
     failures += check(rt::facts_of(sample_device(), {}, 13020, kHost) != collect(sample_device()),
                       "facts: build features reach the section");
     failures += check(rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 12080,
@@ -384,7 +414,7 @@ int taint() {
     rt::DecisionInputs in = sample_inputs();
     in.env.clear();
     failures += check(rt::taint_of(in).empty(), "a clean input has no taint");
-    in.facts["sm_clock_khz"]                  = "0";
+    in.facts["machine.reference_clock_khz"]   = "0";
     in.options["speculative.calibrate_floor"] = "1";
     in.sources["dense_tune.user"]             = "absent";
     in.sources["route_table.lenders"]         = "gb206 ab";
@@ -403,6 +433,85 @@ int taint() {
     in.sources["route_table.class"] = "sm120";
     failures += check(!rt::taint_of(in).contains("foreign_route_table"),
                       "the architecture's own table is not foreign");
+    return failures;
+}
+
+// The fingerprint follows the facts the decisions read: an overclocked RTX 4090 and a stock one
+// are one fingerprint, a MIG slice of an A100 whose driver reports no clocks is not tainted, and
+// an unknown id without clocks (no roofline) is.
+int machine_facts_decide() {
+    int failures      = 0;
+    const auto inputs = [](ninferno::DeviceClass d) {
+        d.facts               = ninferno::machine_facts_of(d);
+        rt::DecisionInputs in = sample_inputs();
+        in.env.clear();
+        in.facts = rt::facts_of(d, ninferno::device_features_for(d.major, d.minor), 13020, kHost);
+        in.taint = rt::taint_of(in);
+        in.observed = rt::observed_of(ninferno::MemorySummary{});
+        in.observed.merge(rt::observed_of(d));
+        return in;
+    };
+    ninferno::DeviceClass stock       = sample_device();
+    stock.major                       = 8;
+    stock.minor                       = 9;
+    stock.sms                         = 128;
+    stock.pci_device_id               = 0x2684;
+    stock.chip                        = "ad102";
+    stock.memory_bus_bits             = 384;
+    stock.memory_clock_khz            = 10501000;
+    stock.sm_clock_khz                = 2520000;
+    ninferno::DeviceClass overclocked = stock;
+    overclocked.sm_clock_khz          = 2610000;
+    overclocked.memory_clock_khz      = 10751000;
+    const auto a                      = rt::decision_fingerprint(inputs(stock));
+    const auto b                      = rt::decision_fingerprint(inputs(overclocked));
+    failures += check(a.value == b.value, "an overclocked RTX 4090 fingerprints as a stock one");
+    failures += check(a.manifest != b.manifest, "the overclock is observed in the manifest");
+    failures += check(inputs(stock).facts.at("machine.source") == "verified" &&
+                          inputs(stock).facts.at("machine.reference_clock_khz") == "2520000" &&
+                          !inputs(stock).facts.contains("driver.sm_clock_khz"),
+                      "a verified board: the table's clock, not the driver's");
+
+    ninferno::DeviceClass slice  = sample_device();
+    slice.major                  = 8;
+    slice.minor                  = 0;
+    slice.sms                    = 14;
+    slice.pci_device_id          = 0x20B0;
+    slice.chip                   = "ga100";
+    slice.memory_bus_bits        = 0;
+    slice.memory_clock_khz       = 0;
+    slice.sm_clock_khz           = 0;
+    const rt::DecisionInputs mig = inputs(slice);
+    failures += check(!mig.taint.contains("clocks"),
+                      "a MIG A100 slice with zero driver clocks is not tainted");
+    failures += check(!mig.facts.contains("driver.sm_clock_khz") &&
+                          mig.observed.contains("driver.sm_clock_khz"),
+                      "a MIG slice reads no driver clock: observed, not a fact");
+    failures += check(mig.facts.at("machine.source") == "extrapolated" &&
+                          mig.facts.at("machine.share") != inputs(stock).facts.at("machine.share"),
+                      "a MIG slice: extrapolated, with its share");
+
+    // Two laptops of one name from two OEMs (80 W and 150 W): priced at the bottom of the range,
+    // one fingerprint whatever their drivers report.
+    ninferno::DeviceClass laptop = stock;
+    laptop.sms                   = 76;
+    laptop.pci_device_id         = 0x2717;
+    laptop.chip                  = "ad103";
+    laptop.memory_bus_bits       = 256;
+    laptop.memory_clock_khz      = 9001000;
+    laptop.sm_clock_khz          = 2040000;
+    ninferno::DeviceClass thin   = laptop;
+    thin.sm_clock_khz            = 1455000;
+    failures += check(rt::decision_fingerprint(inputs(laptop)).value ==
+                          rt::decision_fingerprint(inputs(thin)).value,
+                      "a 0x2717 laptop's nf1 does not follow sm_clock_khz");
+    failures += check(inputs(laptop).facts.at("machine.reference_clock_khz") == "1455000",
+                      "the laptop's clock is its range's bottom");
+
+    ninferno::DeviceClass blind = slice;
+    blind.pci_device_id         = 0;
+    failures += check(inputs(blind).taint.contains("clocks"),
+                      "an unknown id without clocks has no roofline: tainted");
     return failures;
 }
 
@@ -642,6 +751,7 @@ int main() {
     failures += options_reach_their_section();
     failures += plan_reaches_its_section();
     failures += facts_reach_their_section();
+    failures += machine_facts_decide();
     failures += environment();
     failures += taint();
     failures += sha256_vectors();

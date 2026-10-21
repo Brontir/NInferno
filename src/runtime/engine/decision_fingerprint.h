@@ -5,8 +5,9 @@
 // to have been asked the same thing on the same kind of machine.
 //
 // The inputs are seven sections of key -> value text:
-//   facts    the device's facts (DeviceClass, minus its name and ordinal), the build's feature row
-//            and the driver version;
+//   facts    the device's facts (DeviceClass, minus its name and ordinal; of its clocks the
+//            machine facts the decisions read, and the driver's only where they fed a fact), the
+//            build's feature row and the driver version;
 //   build    the release, its commit, the architecture it compiled for, PTX, NVFP4, the CUDA
 //            runtime it was built against;
 //   options  the options as the caller asked for them (before normalize_engine_options), the
@@ -19,11 +20,12 @@
 //   plan     what startup resolved without reading the free memory: KV and state storage,
 //            speculative graph windows, route breakpoints and table;
 //   taint    the pillar violations present (an environment knob, the user's tune cache, floor
-//            calibration, clocks of 0, borrowed or foreign route data, a local spec-tune, a
+//            calibration, no roofline, borrowed or foreign route data, a local spec-tune, a
 //            --spec auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
 //   observed what startup sized from the free Device and Host memory (context, chunk, KV tokens,
-//            cached states, Host tier). Until the plan levels of
+//            cached states, Host tier), and the driver's clocks where they fed no fact
+//            (MachineFacts::driver_read), so no decision reads them. Until the plan levels of
 //            docs/maintainer/deterministic-decisions.md exist these are raw sizes that move between
 //            two identical starts, so they enter the manifest only.
 //
@@ -89,6 +91,10 @@ struct HostFacts {
 // (cudaDriverGetVersion; 0 when unknown) and the host's: "host.cpu_cores" and
 // "host.ram_gib_class", the largest power of two of GiB at or below the RAM (0 below 1 GiB or
 // unknown), so that a few MiB the kernel keeps do not move it.
+// Of the clocks, "machine.*" are the facts the decisions read (DeviceClass::facts: source,
+// reference and memory clock, bus width, share, mma_slow); "driver.*" (the driver's clocks and
+// bus width) enter only when they fed a fact (MachineFacts::driver_read: an unknown id, a laptop
+// row without the bottom of its range).
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
                                        int driver_version, const HostFacts& host);
 
@@ -116,6 +122,11 @@ struct HostFacts {
 // kv_tokens, cached_device_states, host_state_slots, host_kv_bytes.
 [[nodiscard]] DecisionSection observed_of(const MemorySummary& memory);
 
+// The device's observed values: the driver's clocks and bus width ("driver.*") when they fed no
+// fact (!MachineFacts::driver_read), so no decision reads them; empty otherwise (facts_of holds
+// them).
+[[nodiscard]] DecisionSection observed_of(const DeviceClass& device);
+
 // The environment variables that steer a decision (a tuner, a route table, a decode schedule,
 // a debug mode), and those the inventory test knows to steer none.
 [[nodiscard]] std::span<const std::string_view> decision_environment_variables();
@@ -127,10 +138,10 @@ struct HostFacts {
 env_of(const std::function<std::optional<std::string>(const char*)>& lookup);
 
 // The taint of the other sections: "env" (the decision variables set), "user_tune_cache" (which
-// tuners: "dense", "moe"), "calibrate_floor", "clocks" (a driver clock of 0), "borrowed_routes"
-// (route entries lent by another chip's table), "foreign_route_table" (a table keyed by a class not
-// in the device's own chain), "local_spec_tune", "spec_fit_fallback" (the --spec auto fallback a
-// capacity refusal forced, sources.spec_fit_fallback).
+// tuners: "dense", "moe"), "calibrate_floor", "clocks" (no roofline: a machine clock or bus width
+// of 0), "borrowed_routes" (route entries lent by another chip's table), "foreign_route_table" (a
+// table keyed by a class not in the device's own chain), "local_spec_tune", "spec_fit_fallback"
+// (the --spec auto fallback a capacity refusal forced, sources.spec_fit_fallback).
 [[nodiscard]] DecisionSection taint_of(const DecisionInputs& inputs);
 
 } // namespace ninferno::runtime

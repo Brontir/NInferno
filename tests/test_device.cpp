@@ -217,6 +217,49 @@ int check_feature_table() {
                                clock[0].find("SM clock, memory clock") != std::string::npos,
                            "degraded device facts are labelled, a known board has none");
     }
+    {
+        // The labels agree with the machine facts (as the query derives them): a listed board
+        // whose driver reports no clocks has the table's roofline, not "the cost model is off";
+        // a MIG slice and a laptop are labelled extrapolated; a chip without a block but a row in
+        // the table names the row.
+        const auto with_facts = [](ninferno::DeviceClass d) {
+            d.facts = ninferno::machine_facts_of(d);
+            return d;
+        };
+        const auto joined = [](const std::vector<std::string>& notes) {
+            std::string all;
+            for (const auto& n : notes) all += n + "\n";
+            return all;
+        };
+        const auto slice = joined(ninferno::device_fact_notes(with_facts(
+            ninferno::synthetic_device_class(0x20B0, 8, 0, 14, 40u << 20, 10ull << 30))));
+        failures += expect(
+            slice.find("reference table's facts stand in") != std::string::npos &&
+                slice.find("are off") == std::string::npos &&
+                slice.find("a slice of 14 SMs") != std::string::npos,
+            "MIG A100 slice, no clocks: the table's facts, labelled extrapolated:\n" + slice);
+        auto laptop_class =
+            ninferno::synthetic_device_class(0x2717, 8, 9, 76, 64u << 20, 16ull << 30);
+        laptop_class.sm_clock_khz = laptop_class.memory_clock_khz = laptop_class.memory_bus_bits =
+            1;
+        const auto laptop = joined(ninferno::device_fact_notes(with_facts(laptop_class)));
+        failures += expect(laptop.find("a laptop: priced at the bottom") != std::string::npos,
+                           "a laptop's facts are labelled extrapolated:\n" + laptop);
+        auto h100_class =
+            ninferno::synthetic_device_class(0x2330, 9, 0, 132, 50u << 20, 80ull << 30);
+        h100_class.sm_clock_khz = h100_class.memory_clock_khz = h100_class.memory_bus_bits = 1;
+        const auto h100 = joined(ninferno::device_fact_notes(with_facts(h100_class)));
+        failures +=
+            expect(h100.find("chip unknown") != std::string::npos &&
+                       h100.find("reference table's H100 SXM5 80GB (gh100)") != std::string::npos &&
+                       h100.find("extrapolated") == std::string::npos,
+                   "H100: chip keyed by sm90, facts verified from its row:\n" + h100);
+        auto full = with_facts(
+            ninferno::synthetic_device_class(0x2B85, 12, 0, 170, 96u << 20, 32ull << 30));
+        full.sm_clock_khz = full.memory_clock_khz = full.memory_bus_bits = 1;
+        failures += expect(ninferno::device_fact_notes(full).empty(),
+                           "a verified board with clocks has no note");
+    }
     const auto blackwell = ninferno::device_features_for(12, 0);
     const auto spark     = ninferno::device_features_for(12, 1);
     const auto hopper    = ninferno::device_features_for(9, 0);

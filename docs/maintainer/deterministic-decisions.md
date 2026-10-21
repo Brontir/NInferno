@@ -12,20 +12,28 @@ This page states the rule and its target. The engine does not meet all of it yet
 - MMQ prefill bytes depend on where a chunk is cut;
 - free memory sets the context, KV and drafter room directly; the plan levels below do not exist
   yet;
-- the cost model reads driver clocks: they are 0 on MIG/WSL, overclocks leak into it, and without
-  NVML the chip is guessed from its SM count;
+- without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
+  speed estimates where it should have *no estimate*;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
-- the TU116/117 exception, the PCI-ID reference table, the speed labels and the kernel hash on
-  constants do not exist yet;
+- the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
+  FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`), and the `mma_slow`
+  exception is `chip_mma_slow` (TU116/117) OR the table's fact (also the GTX boards on TU106), in
+  the device query, `synthetic_device_class` and the similar-chip filter: two sources of one fact
+  rather than the table alone;
+- the speed labels and the kernel hash on constants do not exist yet;
 - under `--spec auto`, a capacity refusal makes the server retry with snapped load bounds, the
   profile's fit fallback, shallower drafts, the model's MTP head or plain decode, so the free
   memory picks the speculation; the fingerprint only records it, as the taint
   `spec_fit_fallback=<steps>`;
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
-  `src/runtime/engine/decision_fingerprint.h`): it hashes the driver's device facts, the host's
+  `src/runtime/engine/decision_fingerprint.h`): it hashes the device facts (of the clocks, the
+  reference facts the decisions read: source, reference and memory clock, bus width, share and
+  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id or a laptop row without
+  the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
+  stock one and two laptops of one name from two OEMs alike), the host's
   logical CPU count and RAM class, the build (the git commit is read at every
   build, not at configure), the requested options, the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, a separate drafter by
@@ -37,9 +45,14 @@ This page states the rule and its target. The engine does not meet all of it yet
   observed and enters only the manifest, so `nf1` is the same across identical starts on one
   machine while `nm1` v1 still varies with the free memory until the plan levels exist. An input
   that cannot be read makes the fingerprint `unreadable` without stopping the start. It does not
-  yet cover the PCI-ID reference facts, plan levels, the constants and the kernel hash, nor the
+  yet cover the reference facts no decision reads yet (TDP, VRAM, segment), plan levels, the
+  constants and the kernel hash, nor the
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
+
+The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model, the
+board distance and the speculation load model read its facts (`DeviceClass::facts`), not the
+driver's clocks.
 
 Each gap is closed in its own change, which updates this list.
 

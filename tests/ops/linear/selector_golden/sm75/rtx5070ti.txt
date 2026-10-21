@@ -9246,7 +9246,8 @@ q3k p1 swiglu 128x2048 prefill T=2048 w4a8.64x64 ws=5242880
 q3k p1 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q3k p1 swiglu 128x2048 invariant T=12..2048 rmma.m1.n4.w1x8 ws=0
 q3k p0 store 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q3k p0 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q3k p0 store 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+q3k p0 store 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 q3k p0 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q3k p0 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q3k p0 store 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -9256,7 +9257,8 @@ q3k p0 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 q3k p0 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q3k p0 store 1024x4096 invariant T=12..2048 rmma.m1.n4.w1x8 ws=0
 q3k p0 add 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q3k p0 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q3k p0 add 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+q3k p0 add 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 q3k p0 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q3k p0 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q3k p0 add 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -9280,7 +9282,8 @@ q3k p1 store 1024x4096 speed T=2 ggml_vec ws=9216
 q3k p1 store 1024x4096 speed T=3 ggml_vec ws=13824
 q3k p1 store 1024x4096 speed T=4 ggml_vec ws=18432
 q3k p1 store 1024x4096 speed T=5..16 rmma.m1.n1.w1x16 ws=0
-q3k p1 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q3k p1 store 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+q3k p1 store 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 q3k p1 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q3k p1 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q3k p1 store 1024x4096 speed T=96..128 rmma.m1.n4.w1x4 ws=0
@@ -9307,7 +9310,8 @@ q3k p1 add 1024x4096 speed T=2 ggml_vec ws=9216
 q3k p1 add 1024x4096 speed T=3 ggml_vec ws=13824
 q3k p1 add 1024x4096 speed T=4 ggml_vec ws=18432
 q3k p1 add 1024x4096 speed T=5..16 rmma.m1.n1.w1x16 ws=0
-q3k p1 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q3k p1 add 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+q3k p1 add 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 q3k p1 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q3k p1 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q3k p1 add 1024x4096 speed T=96..128 rmma.m1.n4.w1x4 ws=0
@@ -12418,7 +12422,8 @@ iq3s p1 swiglu 128x2048 prefill T=2048 w4a8.32x128 ws=5242880
 iq3s p1 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 iq3s p1 swiglu 128x2048 invariant T=12..2048 rmma.m1.n4.w1x8 ws=0
 iq3s p0 store 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-iq3s p0 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+iq3s p0 store 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+iq3s p0 store 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 iq3s p0 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 iq3s p0 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 iq3s p0 store 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -12428,7 +12433,8 @@ iq3s p0 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 iq3s p0 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 iq3s p0 store 1024x4096 invariant T=12..2048 rmma.m1.n4.w1x8 ws=0
 iq3s p0 add 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-iq3s p0 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+iq3s p0 add 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+iq3s p0 add 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 iq3s p0 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 iq3s p0 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 iq3s p0 add 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -12453,7 +12459,8 @@ iq3s p1 store 1024x4096 speed T=3 ggml_vec ws=13824
 iq3s p1 store 1024x4096 speed T=4 ggml_vec ws=18432
 iq3s p1 store 1024x4096 speed T=5..8 rmma.m1.n1.w1x16 ws=0
 iq3s p1 store 1024x4096 speed T=12..16 ggml_mmq ws=0
-iq3s p1 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+iq3s p1 store 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+iq3s p1 store 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 iq3s p1 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 iq3s p1 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 iq3s p1 store 1024x4096 speed T=96..128 rmma.m1.n4.w1x4 ws=0
@@ -12481,7 +12488,8 @@ iq3s p1 add 1024x4096 speed T=3 ggml_vec ws=13824
 iq3s p1 add 1024x4096 speed T=4 ggml_vec ws=18432
 iq3s p1 add 1024x4096 speed T=5..8 rmma.m1.n1.w1x16 ws=0
 iq3s p1 add 1024x4096 speed T=12..16 ggml_mmq ws=0
-iq3s p1 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+iq3s p1 add 1024x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
+iq3s p1 add 1024x4096 speed T=32 rmma.m1.n4.w1x8 ws=0
 iq3s p1 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 iq3s p1 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 iq3s p1 add 1024x4096 speed T=96..128 rmma.m1.n4.w1x4 ws=0

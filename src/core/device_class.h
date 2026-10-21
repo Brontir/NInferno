@@ -25,9 +25,12 @@
 // driver and 31.84 GiB under WDDM. A choice that depends on memory reads global_bytes (or free
 // memory) and compares ranges.
 
+#include "core/machine_facts.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -48,9 +51,10 @@ struct DeviceFeatures {
     bool tma          = false; // cp.async.bulk with mbarrier transaction counts
     bool pdl          = false; // griddepcontrol (programmatic dependent launch)
     bool clusters     = false; // thread-block clusters and distributed shared memory (sm_90 on)
-    bool mma_slow     = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
-                               // run it on their FP16 units; known by the chip (PCI ID, else the
-                               // SM-count fallback of gpu_chip), not by the compute capability
+    bool mma_slow = false; // mma.sync without tensor cores: TU116 / TU117 (GTX 16xx, T400..T1200)
+                           // run it on their FP16 units; known by the chip (PCI ID, else the
+                           // SM-count fallback of gpu_chip), not by the compute capability, OR
+                           // the PCI-ID table's fact (the GTX 16 boards on TU106)
 };
 
 // Whether a chip of this compute capability has mma.sync but no tensor cores (TU116, TU117).
@@ -93,10 +97,17 @@ struct DeviceClass {
     int max_blocks_per_sm               = 0;
     int registers_per_sm                = 0;
     std::size_t persisting_l2_max_bytes = 0;
+    // What the driver reports: informational, and the input of `facts`. No decision reads these
+    // (docs/maintainer/deterministic-decisions.md): they are 0 on MIG and some WSL drivers and
+    // carry a board's factory overclock.
     int memory_bus_bits                 = 0;
     int memory_clock_khz                = 0;
     int sm_clock_khz                    = 0;
     DeviceFeatures features;
+    // The board's canonical facts (core/machine_facts.h): the PCI-ID table's row, else the driver
+    // values above on the 2^(1/16) grid. What the cost model, the board distance and the
+    // speculation load model read.
+    MachineFacts facts;
 
     // "<chip>:<sms>sm", for example "gb202:170sm" (RTX 5090) and "gb203:84sm" (RTX 5080).
     [[nodiscard]] std::string id() const;
@@ -117,11 +128,16 @@ struct DeviceClass {
     [[nodiscard]] std::int64_t wave(std::int64_t ctas_per_sm = 1) const noexcept {
         return static_cast<std::int64_t>(sms) * ctas_per_sm;
     }
-    // Nominal DRAM bandwidth in GB/s: two transfers per memory clock across the bus.
-    [[nodiscard]] double dram_gbps() const noexcept {
-        return 2.0 * memory_clock_khz * 1.0e3 * (memory_bus_bits / 8) / 1.0e9;
-    }
+    // Nominal DRAM bandwidth in GB/s from the facts (MachineFacts::dram_gbps); 0 when unknown.
+    [[nodiscard]] double dram_gbps() const noexcept { return facts.dram_gbps(); }
 };
+
+// The driver's values of `d` as machine_facts() takes them.
+[[nodiscard]] DriverReport driver_report_of(const DeviceClass& d) noexcept;
+
+// machine_facts(driver_report_of(d)): what the query stores in DeviceClass::facts. A test that
+// sets a substitute's driver clocks calls it after them.
+[[nodiscard]] MachineFacts machine_facts_of(const DeviceClass& d);
 
 // A board as per-card measured data sees it: its instruction set and the quantities a kernel's
 // best launch shape scales with. Data measured on one card (a route table, an R8 decode table, a
@@ -179,9 +195,12 @@ template <class Measured, std::size_t Extent>
 [[nodiscard]] bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor);
 
 // The facts this class lacks or guessed, each with the conservative choice taken in its place:
-// the chip from the SM count (no PCI id, or one no block lists) and the clocks or bus width a
-// virtualized or MIG GPU leaves unreported (no roofline: the A16 routes stand alone). Empty for
-// a fully known GPU. Logged at startup, so a degraded fact is never silent.
+// the chip from the SM count (no PCI id, or one no block lists; the board's clocks may still be
+// the PCI-ID table's), the clocks or bus width a virtualized or MIG GPU leaves unreported (the
+// table's facts stand in for a listed board; otherwise no roofline: the A16 routes stand alone),
+// and facts the table only approximates (MachineFacts::source extrapolated: an unlisted id, a
+// laptop, a MIG slice). Empty for a fully known GPU. Logged at startup, so a degraded fact is
+// never silent.
 [[nodiscard]] std::vector<std::string> device_fact_notes(const DeviceClass& d);
 
 // "<chip>:<sms>sm".
@@ -191,9 +210,13 @@ template <class Measured, std::size_t Extent>
 // distance of the chip's full SM count from `sms` on a log scale, so a 46-SM board is nearer a
 // 60-SM chip than a 144-SM one, and ties go to the larger chip. After them the chips of a sibling
 // architecture (the same major and the same feature row: sm_80 and sm_86, sm_121 and sm_120), in
-// the same order; an architecture of other instructions is never similar.
+// the same order; an architecture of other instructions is never similar. A board without tensor
+// cores (mma_slow) and one with them are never similar: `mma_slow` is the board's own (the
+// device's DeviceFeatures::mma_slow, which the PCI-ID table extends to the GTX boards of TU106),
+// chip_mma_slow(own_chip) when not given.
 [[nodiscard]] std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
-                                                         std::string_view own_chip);
+                                                         std::string_view own_chip,
+                                                         std::optional<bool> mma_slow = {});
 
 // The class chain widened by similarity: id, chip, arch (gpu_class_chain without "*"), the similar
 // chips of the architecture, "*", then the chips of every other architecture, nearest first by
@@ -201,8 +224,10 @@ template <class Measured, std::size_t Extent>
 // card walks it and takes the first key that has an entry: a card's own measurement, its
 // architecture's, a sibling chip's, the curated fallback, and only then the most similar card
 // measured at all.
+// `mma_slow` is the board's own, as gpu_similar_chips takes it.
 [[nodiscard]] std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms,
-                                                            int major, int minor);
+                                                            int major, int minor,
+                                                            std::optional<bool> mma_slow = {});
 
 // id, chip, arch, "*", without repeats (the chip is the arch when it is unknown).
 [[nodiscard]] std::vector<std::string> gpu_class_chain(std::string_view chip, int sms,
@@ -215,7 +240,8 @@ template <class Measured, std::size_t Extent>
 
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
-// limits of the architecture. For host tests of the heuristics and route tables that read a
+// limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
+// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
 // class, on GPUs this machine lacks.
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,

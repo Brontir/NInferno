@@ -27,8 +27,8 @@ inline GpuIdentity gpu_identity(int device) {
         // most similar measured card's choices (DeviceClass::similarity_chain).
         return {d.name, d.id(), d.chip,
                 GpuKey{d.similarity_chain(), d.global_bytes, d.features.mma_mxf4nvf4,
-                       d.class_chain().size() - 1, d.sms, d.compute_capability(), d.sm_clock_khz,
-                       d.dram_gbps()}};
+                       d.class_chain().size() - 1, d.sms, d.compute_capability(),
+                       d.facts.reference_clock_khz, d.dram_gbps()}};
     } catch (const std::exception&) {
         return {"unknown", "unknown", "unknown", GpuKey{{"*"}, 0, false}};
     }

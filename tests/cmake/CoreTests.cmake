@@ -34,6 +34,11 @@ ninferno_add_test(ninferno_device_image_negative_test
   LIBRARIES ninferno_core)
 set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# The PCI-ID reference table of board facts and machine_facts() (core/machine_facts.h). No GPU.
+ninferno_add_test(ninferno_machine_facts_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
+  LIBRARIES ninferno_core)
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 

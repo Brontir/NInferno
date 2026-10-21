@@ -157,6 +157,9 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->chip             = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
     out->chip_from_pci    = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->features.mma_slow = chip_mma_slow(prop.major, prop.minor, out->chip);
+    out->facts            = machine_facts_of(*out);
+    // The table also marks the GTX boards built on TU106 (chip_mma_slow knows only TU116/117).
+    out->features.mma_slow = out->features.mma_slow || out->facts.mma_slow;
     return out;
 }
 
@@ -319,12 +322,20 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         const std::string why = d.pci_device_id == 0 ? std::string("PCI id unreadable")
                                                      : std::string("PCI id ") + id + " in no chip block";
         const std::string arch = gpu_arch_id(d.major, d.minor);
-        notes.push_back(d.chip == arch
-                            ? "chip unknown (" + why + "; no chip of " + arch +
-                                  " in the table): per-chip data is keyed by the architecture " + arch
-                            : "chip " + d.chip + " from the SM count (" + why +
-                                  "): the smallest chip of " + arch + " holding " +
-                                  std::to_string(d.sms) + " SMs");
+        // The PCI-ID reference table may still know the board (H100: its chip has no block): its
+        // facts are the table's, only the per-chip keys are guessed.
+        const GpuFactsRow* row = d.facts.sku.empty() ? nullptr : find_gpu_facts(d.pci_device_id);
+        const std::string board =
+            row != nullptr ? "; the board's clocks and bandwidth are the reference table's " +
+                                 row->name + " (" + row->chip + ")"
+                           : std::string();
+        notes.push_back(d.chip == arch ? "chip unknown (" + why + "; no chip of " + arch +
+                                             " in the chip blocks): per-chip data is keyed by the "
+                                             "architecture " +
+                                             arch + board
+                                       : "chip " + d.chip + " from the SM count (" + why +
+                                             "): the smallest chip of " + arch + " holding " +
+                                             std::to_string(d.sms) + " SMs" + board);
     }
     std::string missing;
     const auto add = [&](bool absent, const char* what) {
@@ -333,11 +344,34 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
     add(d.sm_clock_khz <= 0, "SM clock");
     add(d.memory_clock_khz <= 0, "memory clock");
     add(d.memory_bus_bits <= 0, "memory bus width");
-    if (!missing.empty()) {
+    const MachineFacts& f = d.facts;
+    if (!missing.empty() && f.has_roofline()) {
+        // A board the PCI-ID table knows: its row stands in, and no decision reads the driver's.
+        notes.push_back(missing +
+                        " unreported (a virtualized or MIG GPU, for example): the "
+                        "PCI-ID reference table's facts stand in (" +
+                        describe(f) + ")");
+    } else if (!missing.empty()) {
         notes.push_back(missing +
                         " unreported (a virtualized or MIG GPU, for example): the route cost model "
                         "and the speculative load model are off, routes come from the fixed rules, "
                         "and measured tables are matched to this board without its bandwidth");
+    }
+    // Facts that only approximate this device (MachineFacts::source extrapolated), with the
+    // conservative choice taken.
+    if (f.source == FactSource::Extrapolated) {
+        std::string why;
+        if (f.sku.empty()) {
+            why = "PCI id not in the reference table: the driver's clocks on the 2^(1/16) grid";
+        } else if (f.form == FormFactor::Laptop) {
+            why = f.sku + ", a laptop: priced at the bottom of its published boost range";
+        } else if (f.share < 1.0) {
+            why = f.sku + ", a slice of " + std::to_string(d.sms) +
+                  " SMs (MIG): its share of the board's bandwidth";
+        } else {
+            why = f.sku + " reporting " + std::to_string(d.sms) + " SMs, not the row's";
+        }
+        notes.push_back("device facts extrapolated (" + why + "): " + describe(f));
     }
     return notes;
 }
@@ -351,6 +385,18 @@ std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms)
     }
     return gpu_arch_id(major, minor);
 }
+
+DriverReport driver_report_of(const DeviceClass& d) noexcept {
+    return {.pci_device_id    = d.pci_device_id,
+            .major            = d.major,
+            .minor            = d.minor,
+            .sms              = d.sms,
+            .sm_clock_khz     = d.sm_clock_khz,
+            .memory_clock_khz = d.memory_clock_khz,
+            .memory_bus_bits  = d.memory_bus_bits};
+}
+
+MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
 
 Board board_of(const DeviceClass& d) noexcept {
     return {d.major, d.minor, d.sms, static_cast<double>(d.l2_bytes) / (1 << 20), d.dram_gbps(),
@@ -388,8 +434,8 @@ std::string gpu_class_id(std::string_view chip, int sms) {
     return std::string(chip) + ":" + std::to_string(sms) + "sm";
 }
 
-std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, int major,
-                                              int minor) {
+std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, int major, int minor,
+                                              std::optional<bool> mma_slow) {
     std::vector<std::string> chain = gpu_class_chain(chip, sms, gpu_arch_id(major, minor));
     chain.pop_back(); // "*" goes after the architecture's own chips
     const auto add = [&](std::string key) {
@@ -397,7 +443,9 @@ std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, in
             chain.push_back(std::move(key));
         }
     };
-    for (auto& similar : gpu_similar_chips(major, minor, sms, chip)) { add(std::move(similar)); }
+    for (auto& similar : gpu_similar_chips(major, minor, sms, chip, mma_slow)) {
+        add(std::move(similar));
+    }
     add("*");
     // The other architectures, nearest compute capability first.
     std::vector<std::pair<int, int>> archs;
@@ -420,11 +468,12 @@ std::vector<std::string> gpu_similarity_chain(std::string_view chip, int sms, in
     return chain;
 }
 
-std::vector<std::string> gpu_similar_chips(int major, int minor, int sms,
-                                           std::string_view own_chip) {
-    // A chip without tensor cores (mma_slow) and one with them are other kinds: measured data of
-    // one does not carry to the other.
-    const bool slow = chip_mma_slow(major, minor, own_chip);
+std::vector<std::string> gpu_similar_chips(int major, int minor, int sms, std::string_view own_chip,
+                                           std::optional<bool> mma_slow) {
+    // A board without tensor cores (mma_slow) and one with them are other kinds: measured data of
+    // one does not carry to the other. The board's own fact, where given: a GTX board on TU106
+    // has none, though its chip does.
+    const bool slow = mma_slow.value_or(chip_mma_slow(major, minor, own_chip));
     std::vector<const FullChip*> chips;
     for (const auto& c : kFullChips) {
         if (c.major == major && c.minor == minor && own_chip != c.chip &&
@@ -481,12 +530,20 @@ std::vector<std::string> DeviceClass::class_chain() const {
     return gpu_class_chain(chip, sms, arch());
 }
 
+namespace {
+// The board's own mma_slow: the features' (the chip's or the table's, as the query sets it), the
+// chip's and the table's facts, for a class a test assembled by hand.
+bool own_mma_slow(const DeviceClass& d) {
+    return d.features.mma_slow || d.facts.mma_slow || chip_mma_slow(d.major, d.minor, d.chip);
+}
+} // namespace
+
 std::vector<std::string> DeviceClass::similar_chips() const {
-    return gpu_similar_chips(major, minor, sms, chip);
+    return gpu_similar_chips(major, minor, sms, chip, own_mma_slow(*this));
 }
 
 std::vector<std::string> DeviceClass::similarity_chain() const {
-    return gpu_similarity_chain(chip, sms, major, minor);
+    return gpu_similarity_chain(chip, sms, major, minor, own_mma_slow(*this));
 }
 
 const DeviceClass& device_class(int device) {
@@ -533,7 +590,9 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
     d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
     d.features      = device_features_for(major, minor);
-    d.features.mma_slow = chip_mma_slow(major, minor, d.chip);
+    // The chip's mma_slow or the table's (the GTX boards of TU106), as the query sets it; `facts`
+    // itself stays empty until a test asks for it.
+    d.features.mma_slow = chip_mma_slow(major, minor, d.chip) || machine_facts_of(d).mma_slow;
     // The architecture's limits (CUDA programming guide, compute capability tables).
     const int cc           = major * 10 + minor;
     d.smem_per_block_optin = cc == 75                  ? 64 * 1024
