@@ -598,6 +598,8 @@ ScopedDeviceClass::ScopedDeviceClass(DeviceClass substitute)
 
 ScopedDeviceClass::~ScopedDeviceClass() { t_substitute = previous_; }
 
+const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
+
 DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor, int sms,
                                    std::size_t l2_bytes, std::size_t global_bytes) {
     DeviceClass d;

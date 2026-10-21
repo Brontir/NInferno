@@ -36,7 +36,14 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
-- no CI property checks invariance yet;
+- CI checks properties of the generic projection selector only (`ctest -L cpu`, the `selection`
+  workflow: determinism, no environment or clock input, capability safety, one summation order
+  under the exact and prefill profiles, per-board digests). Its known violations are listed in
+  `tests/ops/linear/selector_properties_known.txt`: `NINFERNO_ROUTE_DIR`, `NINFERNO_ROUTE_TABLE`
+  and `NINFERNO_MMQ_VERIFY` move routes; driver clocks move the speed and prefill profiles; ggml's
+  matrix kernel serves prefill widths although its stream-k is not token-invariant. The shape
+  tables, MoE, attention and speculation choices have no property check, and the rules' remaining
+  environment, timer and file reads are listed in `tools/audit/selection_static_allow.txt`;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;

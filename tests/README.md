@@ -25,6 +25,12 @@ cmake --build build --parallel --target ninferno_sampling_test
 ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 ```
 
+The checks that need no GPU (the selector properties and digests over substituted boards, its golden
+files, route classes, the source scan of the selection rules) carry the label `cpu`; the
+`selection` workflow builds them in a CUDA container and runs `ctest --test-dir build -L cpu`.
+`ninferno_selector_properties_test --only <board>` runs one board; `--update` rewrites
+`ops/linear/selector_digest/<route set>.txt` after a change that means to move routes.
+
 ## Build options
 
 | Option | Default | Meaning |

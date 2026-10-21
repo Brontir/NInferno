@@ -263,6 +263,11 @@ template <class Measured, std::size_t Extent>
                                                  int sms, std::size_t l2_bytes,
                                                  std::size_t global_bytes);
 
+// The class a ScopedDeviceClass substitutes on this thread; null outside one. The per-device
+// caches (core/per_device.h) key on its ordinal, so a substituted board's choices need no device
+// and are the same on a machine without a GPU.
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+
 // While alive, device_class() (the current device's form) answers `substitute` on this thread;
 // device_class(int) still queries the ordinal. For tests: a consumer that cached what it read of
 // the real class keeps it, so a test runs one substitute per process.

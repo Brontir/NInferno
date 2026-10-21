@@ -7,6 +7,7 @@
 // an over-48-KiB kernel without its opt-in and fails with an invalid argument).
 
 #include "core/device.h"
+#include "core/device_class.h"
 
 #include <cuda_runtime.h>
 
@@ -19,8 +20,12 @@ namespace ninferno {
 
 inline constexpr int kMaxDevices = 64;
 
-// The calling thread's current CUDA device.
+// The calling thread's current CUDA device: the substituted class's ordinal inside a
+// ScopedDeviceClass (core/device_class.h), which asks the runtime nothing.
 inline int current_device_ordinal() {
+    if (const DeviceClass* substitute = substituted_device_class()) {
+        return substitute->device >= 0 && substitute->device < kMaxDevices ? substitute->device : 0;
+    }
     int device = 0;
     CUDA_CHECK(cudaGetDevice(&device));
     if (device < 0 || device >= kMaxDevices) {
