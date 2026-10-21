@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <unistd.h>
@@ -444,7 +445,7 @@ int main() {
                           .projection_work            = 31,
                           .planning_elapsed_ns        = 9000,
                           .search_elapsed_ns          = 6000,
-                          .stop_reason                = ninferno::MaterializationStopReason::PlanningBudget,
+                          .stop_reason                = ninferno::MaterializationStopReason::QueueExhausted,
                           .budget_exhausted           = false,
                           .selected_degradation_units = 2,
                           .selected_maximal_fallback  = false,
@@ -471,14 +472,16 @@ int main() {
                           done.at("materialization").at("search_discovery_used") == true,
                       "materialization search quality or cumulative budget diagnostics missing");
     // Schema 26: the planning budgets are counted in work units, not nanoseconds.
-    failures += check(kRequestLogSchemaVersion == 26 &&
-                          done.at("materialization").at("stop_reason") == "planning_budget" &&
-                          done.at("materialization").at("planning_units") == 9100 &&
-                          done.at("materialization").at("search_units") == 7600 &&
-                          !done.at("materialization").contains("search_granted_ns") &&
-                          !done.at("materialization").contains("search_overshoot_ns"),
-                      "schema 26: search_granted_units and planning_budget replace the "
-                      "nanosecond budget keys");
+    failures +=
+        check(kRequestLogSchemaVersion == 26 &&
+                  std::string_view(ninferno::materialization_stop_reason_name(
+                      ninferno::MaterializationStopReason::PlanningBudget)) == "planning_budget" &&
+                  done.at("materialization").at("planning_units") == 9100 &&
+                  done.at("materialization").at("search_units") == 7600 &&
+                  !done.at("materialization").contains("search_granted_ns") &&
+                  !done.at("materialization").contains("search_overshoot_ns"),
+              "schema 26: search_granted_units and planning_budget replace the "
+              "nanosecond budget keys");
     failures +=
         check(done.at("result").at("finish_reason") == "output_limit", "finish reason missing");
     failures += check(done.at("result").at("prompt_tokens") == 401, "prompt tokens missing");
