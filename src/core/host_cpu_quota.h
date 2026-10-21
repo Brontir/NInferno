@@ -132,7 +132,8 @@ namespace detail {
 // ("0::PATH"): cpu.max under /sys/fs/cgroup; a container whose namespace hides the host's path
 // sees its own cgroup at the mount's root, which the walk reaches as the last ancestor. cgroup v1
 // (the line whose controllers include "cpu"): cpu.cfs_quota_us and cpu.cfs_period_us along the
-// same walk under the cpu controller's mount.
+// same walk under the cpu controller's mount. A hybrid host lists both; the cpu controller is then
+// on v1, so a v1 cpu line wins.
 template <class Reader>
 [[nodiscard]] HostCpuQuota read_cgroup_cpu_quota(std::string_view proc_self_cgroup, Reader&& read) {
     std::optional<std::string> v2;
@@ -150,7 +151,7 @@ template <class Reader>
         if (controllers.find(",cpu,") != std::string::npos) { v1 = line.substr(second + 1); }
     }
     HostCpuQuota tightest;
-    if (v2) {
+    if (v2 && !v1) {
         for (const std::string& suffix : detail::cgroup_lineage(*v2)) {
             if (const auto text = read("/sys/fs/cgroup" + suffix + "/cpu.max")) {
                 tightest = tighter_cpu_quota(tightest, parse_cgroup_v2_cpu_max(*text));
