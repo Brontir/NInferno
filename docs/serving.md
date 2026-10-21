@@ -100,7 +100,8 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--temperature`, `--top-p`, `--top-k`, `--min-p`, `--seed`, `--greedy` | unset | process-level sampling overrides ([presets](cli.md#sampling-presets)); `--greedy` forces argmax |
 
 All other options (media, Host cache, response store, penalties, limits, decode pacing with
-`--decode-steps`, `--decode-wait` and `--cuda-sync`) are in the [option tables](reference/serving.md#11-server-options). The maintainer options (`--route-table`,
+`--decode-steps`, `--decode-wait` and `--cuda-sync`) are in the
+[option tables](reference/serving.md#11-server-options). The maintainer options (`--route-table`,
 `--route-dir`, `--dense-tune`, `--moe-tune`, `--tune-cache`, `--drafter-registry`, `--debug-*`)
 are in [maintainer options](maintainer/environment.md); no environment variable changes what the
 server decides.
