@@ -40,15 +40,9 @@ struct Fp8TmaSplitKPlan {
     }
 };
 
-// The resident grid a final wave is measured against: one CTA per SM of this device; 0 (no split)
-// where the device cannot be asked.
-inline int fp8_tma_split_wave_ctas() {
-    try {
-        return std::max(0, device_class().sms);
-    } catch (const std::exception&) {
-        return 0;
-    }
-}
+// The resident grid a final wave is measured against: one CTA per SM of this device (every split
+// schedule is compiled for one: MinBlocksPerSm 1).
+inline int fp8_tma_split_wave_ctas() { return std::max(0, device_class().sms); }
 
 // The partials a split schedule's caller provides: one wave of split CTAs on this device.
 template <class Schedule>

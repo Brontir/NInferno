@@ -32,30 +32,39 @@ constexpr SplitTail fp8_split_tail(int tiles, int k, int sms, int block_k, int m
     return plan;
 }
 
-// Whether a grid of `row_tiles` row tiles by whole `tile_tokens`-token columns fills whole waves:
-// a wave holds c = floor(sms / row_tiles) columns, its idle SMs (sms - c x row_tiles) are at most
-// a sixteenth of it, and T is a whole number of c-column waves. Gemma 4's Q8 5376x16384 at its
-// 256-token tile (42 row tiles of 128): the tile won by 2.6-5.7 % on whole waves of the RTX 5090
-// (c = 4, 168 of 170 SMs busy: T a multiple of 1024) and lost 20-30 % elsewhere (768, 1536), so
-// a wave more than a sixteenth idle (6 %) gives the gain back.
-constexpr bool fills_whole_waves(std::int32_t tokens, int sms, int row_tiles, int tile_tokens) {
-    if (sms <= 0 || row_tiles <= 0 || tile_tokens <= 0 || tokens <= 0) return false;
-    const int columns = sms / row_tiles;
+// Whether a grid of `row_tiles` row tiles by whole `tile_tokens`-token columns fills whole waves
+// of `ctas_per_sm` resident CTAs an SM (the wave: sms x ctas_per_sm slots): a wave holds
+// c = floor(wave / row_tiles) columns, its idle slots (wave - c x row_tiles) are at most a
+// sixteenth of it, and T is a whole number of c-column waves. Gemma 4's Q8 5376x16384 at its
+// 256-token tile (42 row tiles of 128, one CTA an SM): the tile won by 2.6-5.7 % on whole waves of
+// the RTX 5090 (c = 4, 168 of 170 SMs busy: T a multiple of 1024) and lost 20-30 % elsewhere (768,
+// 1536). The sixteenth is extrapolated, not measured: the 5090's data admits any bound from 1.2 %
+// (its own idle share) to 26 % (T = 1792, 0.74 of a wave); until other boards are measured the
+// bound is a declared estimate (docs/maintainer/deterministic-decisions.md).
+constexpr bool fills_whole_waves(std::int32_t tokens, int sms, int row_tiles, int tile_tokens,
+                                 int ctas_per_sm = 1) {
+    if (sms <= 0 || ctas_per_sm <= 0 || row_tiles <= 0 || tile_tokens <= 0 || tokens <= 0)
+        return false;
+    const int wave    = sms * ctas_per_sm;
+    const int columns = wave / row_tiles;
     if (columns == 0) return false;
-    const int idle = sms - columns * row_tiles;
-    if (16 * idle > sms) return false;
+    const int idle = wave - columns * row_tiles;
+    if (16 * idle > wave) return false;
     return tokens % (static_cast<std::int32_t>(columns) * tile_tokens) == 0;
 }
 
-// Whether a grid of `row_tiles` row tiles by ceil(T / tile_tokens) token tiles passes one CTA per
-// SM. Gemma 4's NVFP4 2048x5376 A4 prefill: the TMA route's grid is only 16 row tiles wide and
-// stays under one wave, so it loses to the 128-token MMA tile until that tile's grid (16 row
-// tiles) passes the SMs (RTX 5090: T > 1280).
-constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int tile_tokens) {
-    if (sms <= 0 || row_tiles <= 0 || tile_tokens <= 0 || tokens <= 0) return false;
+// Whether a grid of `row_tiles` row tiles by ceil(T / tile_tokens) token tiles passes one wave of
+// `ctas_per_sm` resident CTAs an SM. Gemma 4's NVFP4 2048x5376 A4 prefill: the TMA route's grid is
+// only 16 row tiles wide and stays under one wave, so it loses to the 128-token MMA tile (one CTA
+// an SM) until that tile's grid passes the SMs (RTX 5090: T > 1280). Measured on the 5090 alone;
+// on other boards the crossing is extrapolated until measured.
+constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int tile_tokens,
+                                int ctas_per_sm = 1) {
+    if (sms <= 0 || ctas_per_sm <= 0 || row_tiles <= 0 || tile_tokens <= 0 || tokens <= 0)
+        return false;
     const std::int64_t token_tiles =
         (static_cast<std::int64_t>(tokens) + tile_tokens - 1) / tile_tokens;
-    return token_tiles * row_tiles > static_cast<std::int64_t>(sms);
+    return token_tiles * row_tiles > static_cast<std::int64_t>(sms) * ctas_per_sm;
 }
 
 } // namespace ninferno::ops::detail::sm_rules

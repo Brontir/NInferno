@@ -159,6 +159,13 @@ int main() {
     expect(same(sm_rules::fp8_split_tail(171, 5120, 0, kBlockK, kMaxParts), {171, 0, 0}),
            "0 SMs: no split");
     expect(!new_q8_t256(1024, 0) && !new_nvfp4_tma(4096, 0), "0 SMs: no wave rule fires");
+    // Resident CTAs an SM widen the wave: 85 SMs at two CTAs an SM is the 5090's 170-slot wave.
+    expect(sm_rules::fills_whole_waves(1024, 85, 42, 256, 2) &&
+               !sm_rules::fills_whole_waves(512, 85, 42, 256, 2),
+           "85 SMs x 2 CTAs: q8 tile at multiples of 1024");
+    expect(!sm_rules::grid_passes_wave(1280, 85, 16, 128, 2) &&
+               sm_rules::grid_passes_wave(1281, 85, 16, 128, 2),
+           "85 SMs x 2 CTAs: TMA from 1281");
 
     if (failures != 0) {
         std::fprintf(stderr, "%d failures\n", failures);

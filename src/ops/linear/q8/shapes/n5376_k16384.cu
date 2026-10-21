@@ -12,13 +12,7 @@ using Geometry = Q8N5376K16384;
 using Access   = Q8ScaleAccess;
 using Stage    = Q8ActivationStage;
 
-int sm_count() {
-    try {
-        return device_class().sms;
-    } catch (const std::exception&) {
-        return 0;
-    }
-}
+int sm_count() { return device_class().sms; }
 } // namespace
 
 Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
@@ -56,8 +50,9 @@ Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
     if (tokens <= 256) return launch_q8_a16_mma_r64_t128;
     if (tokens <= 384) return launch_q8_a16_mma_r64_t96;
     // The 256-token tile where its 42 row tiles by T/256 columns fill whole waves of the device's
-    // SMs (sm_rules::fills_whole_waves; on the RTX 5090's 170 SMs: T a multiple of 1024).
-    if (sm_rules::fills_whole_waves(tokens, sm_count(), 5376 / 128, 256))
+    // SMs (sm_rules::fills_whole_waves; on the RTX 5090's 170 SMs: T a multiple of 1024). The tile
+    // holds one CTA an SM (MmaR128x64T256: 92 KiB of shared memory, launch bound one an SM).
+    if (sm_rules::fills_whole_waves(tokens, sm_count(), 5376 / 128, 256, 1))
         return launch_q8_a16_mma_r128x64_t256;
     return launch_q8_a16_mma_r64x32_t128;
 }

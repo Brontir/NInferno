@@ -31,13 +31,7 @@ Nvfp4Launch select_a16(std::int32_t tokens) {
     throw std::logic_error("nvfp4 A16 chunk exceeds shape capacity");
 }
 
-int sm_count() {
-    try {
-        return device_class().sms;
-    } catch (const std::exception&) {
-        return 0;
-    }
-}
+int sm_count() { return device_class().sms; }
 
 // The TMA grid is only 16 row tiles wide, so it stays under one wave and loses to the 128-token
 // MMA tile until that tile's grid (16 row tiles by T/128) passes one CTA per SM
@@ -46,7 +40,7 @@ Nvfp4A4Route select_a4(std::int32_t tokens) {
     if (tokens <= 128) return nvfp4_a4_mma_route<Geometry, T16R64>();
     if (tokens <= 320) return nvfp4_a4_mma_route<Geometry, T32R128>();
     if (tokens <= 640) return nvfp4_a4_mma_route<Geometry, T64R128>();
-    if (!sm_rules::grid_passes_wave(tokens, sm_count(), 2048 / 128, 128))
+    if (!sm_rules::grid_passes_wave(tokens, sm_count(), 2048 / 128, 128, 1))
         return nvfp4_a4_mma_route<Geometry, T128R128Pipelined>();
     return nvfp4_a4_tma_route<Nvfp4GeometryId::N2048K5376>();
 }

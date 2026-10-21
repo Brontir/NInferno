@@ -1407,10 +1407,10 @@ struct Nvfp4ScheduleTag {
 // The small-T shared-expert tiles below. The shared expert is dense, so its grid is the output rows
 // over the tile width: at one token the schedules above leave 8 CTAs for gate/up and 16 for down,
 // fewer than the SMs of any sm_120 board of the PCI-ID table (30 the fewest), and on the RTX 5090
-// the pair measures 162 GB/s where the routed pair reaches 597. A narrower tile multiplies the CTA count without
-// changing the bytes a CTA reads, and BlockM 16 stops staging 64 token rows when one exists.
-// gate/up reaches 32 because `Nvfp4SharedGateUpRows` is not contiguous and stages scales per
-// (row, k64); down stays at 64, the narrowest the contiguous scale path allows.
+// the pair measures 162 GB/s where the routed pair reaches 597. A narrower tile multiplies the CTA
+// count without changing the bytes a CTA reads, and BlockM 16 stops staging 64 token rows when one
+// exists. gate/up reaches 32 because `Nvfp4SharedGateUpRows` is not contiguous and stages scales
+// per (row, k64); down stays at 64, the narrowest the contiguous scale path allows.
 using Nvfp4SharedGateUpSmallTSchedule = Nvfp4A4MmaSchedule<16, 32, 128, 1, 4, 6, 4>;
 // Four stages, not six: this geometry has 512 input rows over a 128-deep tile, so there are
 // only four k-tiles to prefetch, and the extra two stages would buy nothing and cost 11.5 KiB
