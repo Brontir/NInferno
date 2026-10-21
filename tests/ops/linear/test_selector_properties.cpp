@@ -81,15 +81,18 @@ constexpr EnvVar kEnvVars[] = {
     {"NINFERNO_DECODE_STEPS", "3"},
     {"NINFERNO_DECODE_WAIT", "1"},
     {"NINFERNO_DENSE_DUMP", "{tmp}/dense_dump"},
+    {"NINFERNO_DENSE_DUMP_ROWS", "4"},
     {"NINFERNO_DENSE_TUNE", "on"},
     {"NINFERNO_DENSE_TUNE_CACHE", "{tmp}/cache/ninferno/dense_tune.json"},
     {"NINFERNO_DRAFTER_REGISTRY", "{tmp}/registry.json"},
     {"NINFERNO_GEMMA4_DUMP", "{tmp}/gemma4_dump"},
+    {"NINFERNO_GEMMA4_DUMP_ROWS", "4"},
     {"NINFERNO_MMQ_VERIFY", "0"},
     {"NINFERNO_MOE_TUNE", "on"},
     {"NINFERNO_MOE_TUNE_CACHE", "{tmp}/moe_tune.json"},
     {"NINFERNO_PDFIUM", "{tmp}/libpdfium.so"},
     {"NINFERNO_QWEN_DUMP", "{tmp}/qwen_dump"},
+    {"NINFERNO_QWEN_DUMP_ROWS", "4"},
     {"NINFERNO_QWEN_DUMP_KINDS", "all"},
     {"NINFERNO_QWEN_PREFILL_CUTS", "64"},
     {"NINFERNO_RANKING_DIR", "{tmp}"},
@@ -265,6 +268,12 @@ int run_child(const TestBoard& b, std::string_view clock, bool repeat) {
     }
     const ScopedDeviceClass scoped(d);
     Violations v;
+    // The substituted class carries only what this build compiled, as the device query does
+    // (common_features with build_features): a board newer than the build must not offer the
+    // selector a kernel family the build lacks (an sm_75 build once offered the I8 tiles).
+    if (!has_features(build_features(), device_class().features)) {
+        v.add("P3", "model", "the substituted class has a feature this build lacks");
+    }
     SafetyCheck safety(&v);
     const Choices first    = evaluate(b.name, &safety);
     const std::string text = render(first);
