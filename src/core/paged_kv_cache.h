@@ -29,12 +29,6 @@ inline constexpr std::int32_t kPagedKVPageSize = 64;
     return paged_kv_pages(capacity);
 }
 
-// The keys of one block-table row (block_tables [pages per row, rows]): every call of a session
-// reads rows of this width (CausalKvPartition::aligned_to_row).
-inline int paged_kv_row_keys(const Tensor& block_tables) {
-    return static_cast<int>(block_tables.ne[0]) * kPagedKVPageSize;
-}
-
 /** Non-owning, single-sequence view consumed by growing-cache Ops. */
 struct PagedKVLayerView {
     Tensor k_pages;

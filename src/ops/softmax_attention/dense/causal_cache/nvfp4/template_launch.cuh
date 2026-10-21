@@ -19,7 +19,7 @@ void launch_nvfp4_kv_grouped_mma(const CausalAttentionOperands& p, Nvfp4KvCacheV
         Masked != (cache.valid_columns != nullptr) || partition.capacity < 1 ||
         partition.target > CausalKvPartition::kMaxSplits || partition.target < 1 ||
         partition.key_shift < 6 || partition.key_shift > 14 ||
-        partition.capacity != partition.active(p.visible_capacity) || !partial.acc ||
+        partition.capacity != partition.capacity_for(p.visible_capacity) || !partial.acc ||
         !partial.maximum || !partial.sum)
         throw std::invalid_argument("NVFP4 grouped attention: invalid schedule/partials");
     if constexpr (Input::writes_cache)

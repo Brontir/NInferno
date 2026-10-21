@@ -88,7 +88,9 @@ __launch_bounds__(Schedule::kThreads) __global__
         partial_l += partial_stat_row;
     }
 
-    const int window             = positions[live_columns - 1] + 1;
+    // Aligned: each column merges the splits its own position runs (Bf16KvPartition::aligned_row),
+    // as a decode of that column alone does. Otherwise the call's window sets the partition.
+    const int window = partition.aligned ? positions[token] + 1 : positions[live_columns - 1] + 1;
     const int active_split_count = partition.live(window).splits;
 
     __shared__ float weights[Schedule::kThreads], warp_sums[Schedule::kWarps], scalars[2];

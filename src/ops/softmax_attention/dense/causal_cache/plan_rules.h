@@ -24,10 +24,19 @@ inline void require_causal_plan_inputs(const char* dtype, int heads, int kv_head
 }
 
 static_assert(CausalKvPartition::kAlignedSplits <= CausalKvPartition::kMaxSplits);
-static_assert(CausalKvPartition::kAlignedMaxRowKeys == kCausalAttentionMaximumVisibleKeys);
-// The launches take key_shift 6..14.
-static_assert(CausalKvPartition::aligned_key_shift(CausalKvPartition::kAlignedMaxRowKeys) <= 14);
-static_assert(CausalKvPartition::aligned_key_shift(1 << 18) == 12); // rows up to 256K: unchanged
+static_assert(CausalKvPartition::kAlignedMaxVisibleKeys == kCausalAttentionMaximumVisibleKeys);
+// The aligned shifts run 6..14: 64 keys up to 4096 visible, 16384 at the longest call.
+static_assert(CausalKvPartition::aligned_key_shift(4096) == 6);
+static_assert(CausalKvPartition::aligned_key_shift(4097) == 7);
+static_assert(CausalKvPartition::aligned_key_shift(1 << 18) == 12);
+static_assert(CausalKvPartition::aligned_key_shift(CausalKvPartition::kAlignedMaxVisibleKeys) == 14);
+// A launch's partials hold at most kAlignedSplits per column, whatever the visible keys.
+static_assert(CausalKvPartition::aligned_capacity(kCausalAttentionMaximumVisibleKeys) ==
+              CausalKvPartition::kAlignedSplits);
+// A token tile's rows may split finer than the CTA's split (CausalKvPartition::aligned_row); the
+// kernels close such a row's split on a key tile boundary, so every key tile (32 or 64 keys)
+// divides the smallest aligned split.
+static_assert((1 << CausalKvPartition::kAlignedMinKeyShift) % 64 == 0);
 
 // The widths whose grouped partials a workspace for calls of [min_width, max_width] columns holds:
 // under the invariant route profile those of its launches (causal_launch_columns), with the chunk

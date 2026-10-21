@@ -64,7 +64,9 @@ __launch_bounds__(256) __global__
         if (batch >= batch_size) return;
     }
     if constexpr (MultiBatch) positions += static_cast<std::int64_t>(batch) * tokens;
-    const int window  = positions[tokens - 1] + 1;
+    // Aligned: each column merges the splits its own position runs (CausalKvPartition::aligned_row),
+    // as a decode of that column alone does. Otherwise the call's window sets the partition.
+    const int window  = partition.aligned ? positions[token] + 1 : positions[tokens - 1] + 1;
     int output_column = token;
     if constexpr (MultiBatch) output_column += batch * tokens;
     if constexpr (Masked) {

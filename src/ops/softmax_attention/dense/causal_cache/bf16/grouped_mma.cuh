@@ -123,7 +123,9 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     const int last_token = min(live, div_up(row_begin + M, G::GroupSize)) - 1;
     const int end        = min(stop, positions[last_token] + 1);
     if (start >= end) {
-        neutral();
+        // Aligned: no row of the tile reaches this split's keys, so none of its own splits lies
+        // here (a row merges only the splits its own position runs, CausalAlignedRow).
+        if (!partition.aligned) neutral();
         return;
     }
     for (int i = tid; i < M * (D / 8); i += S::kThreads) {
@@ -155,8 +157,44 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     const int tokens[2] = {rows[0] / G::GroupSize, rows[1] / G::GroupSize};
     const int qabs[2]   = {tokens[0] < live ? positions[tokens[0]] : -1,
                          tokens[1] < live ? positions[tokens[1]] : -1};
+    // Aligned (the invariant route profile): a row runs its own splits, those of a decode of the
+    // row alone (Bf16KvPartition::aligned_row). This CTA's split spans 2^tile_shift keys; a row
+    // whose own splits are finer stores one at each of their boundaries inside it and starts the
+    // next from a fresh state, exactly as the CTA of that split alone would.
+    [[maybe_unused]] const int tile_shift = CausalKvPartition::aligned_key_shift(window);
+    const CausalAlignedRow own[2] = {partition.aligned_row(qabs[0]),
+                                     partition.aligned_row(qabs[1])};
     int page_window = -Storage::kPageWindow;
     for (int k0 = start; k0 < end; k0 += N) {
+        if constexpr (S::kWarpsKV == 1) {
+            // Every lane joins the sum reduction; a closing row is uniform over its four lanes.
+            if (partition.aligned && k0 > start &&
+                (k0 & ((1 << CausalKvPartition::kAlignedMinKeyShift) - 1)) == 0) {
+                const float closed_sum[2] = {warp_sum<4>(state[0].sum, 0xffffffffu),
+                                             warp_sum<4>(state[1].sum, 0xffffffffu)};
+#pragma unroll
+                for (int j = 0; j < 2; ++j) {
+                    if (!own[j].closes(k0, tile_shift)) continue;
+                    const int closed = own[j].split_of(k0) - 1;
+                    if (own[j].stores(closed)) {
+                        const int h = head * G::GroupSize + rows[j] % G::GroupSize;
+#pragma unroll
+                        for (int n = 0; n < PVNt; ++n)
+                            bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j],
+                                                        n * 8 + 2 * lid, width, closed,
+                                                        acc[n][2 * j], acc[n][2 * j + 1],
+                                                        state[j].maximum * scale_log2,
+                                                        closed_sum[j]);
+                    }
+                    state[j] = Bf16KvSoftmaxRow();
+#pragma unroll
+                    for (int n = 0; n < PVNt; ++n) {
+                        acc[n][2 * j]     = 0.0f;
+                        acc[n][2 * j + 1] = 0.0f;
+                    }
+                }
+            }
+        }
         const int logical_page = k0 >> kPagedKVPageShift;
         if (logical_page >= page_window + Storage::kPageWindow) {
             page_window = logical_page;
@@ -310,14 +348,18 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
             }
         }
     }
+    // Aligned: a row's split holding the last key tile (its CTA split for a row as coarse as it).
+    const int last_k0 = start + (end - start - 1) / N * N;
 #pragma unroll
     for (int j = 0; j < 2; ++j) {
-        if (tokens[j] < width) {
+        const int row_split = partition.aligned ? own[j].split_of(last_k0) : split;
+        if (partition.aligned ? own[j].stores(row_split) : tokens[j] < width) {
             const int h = head * G::GroupSize + rows[j] % G::GroupSize;
 #pragma unroll
             for (int n = 0; n < PVNt; ++n)
                 bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j], n * 8 + 2 * lid, width,
-                                            split, acc[n][2 * j], acc[n][2 * j + 1], m[j], sums[j]);
+                                            row_split, acc[n][2 * j], acc[n][2 * j + 1], m[j],
+                                            sums[j]);
         }
     }
 }

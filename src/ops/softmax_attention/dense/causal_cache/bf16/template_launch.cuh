@@ -43,7 +43,7 @@ void launch_bf16_kv_grouped_mma(const CausalAttentionOperands& p, Bf16KvCacheVie
     validate_bf16_kv_operands<G>(p, cache);
     if ((S::kFixedWidth && p.width != S::kFixedWidth) || partition.capacity < 1 ||
         partition.capacity > 256 || partition.normal_target < 1 || partition.long_target < 1 ||
-        partition.key_rows != S::kKeyRows ||
+        partition.key_rows != S::kKeyRows || (partition.aligned && S::kWarpsKV != 1) ||
         partition.live(p.visible_capacity).splits > partition.capacity || !partials.acc ||
         !partials.maximum || !partials.sum || MultiBatch != (p.batch > 1) ||
         Masked != (cache.valid_columns != nullptr))

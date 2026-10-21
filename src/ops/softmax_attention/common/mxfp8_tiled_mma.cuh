@@ -58,8 +58,8 @@ __global__ __maxnreg__(Schedule::kMaxRegisters) void mxfp8_kv_tiled_mma_kernel(
     const int active_splits = partition.active(visible);
     if (split >= active_splits) return;
     const int logical_tiles    = div_up(visible, Bc);
-    const int first_owned_tile = partition.first_tile(split, logical_tiles, active_splits, Bc);
-    const int end_owned_tile   = partition.first_tile(split + 1, logical_tiles, active_splits, Bc);
+    const int first_owned_tile = partition.first_tile(split, logical_tiles, active_splits, Bc, visible);
+    const int end_owned_tile   = partition.first_tile(split + 1, logical_tiles, active_splits, Bc, visible);
     const int base_pos              = positions[0];
     const std::int32_t* block_table = metadata.block_table();
     const int tile_rows             = min(Br, tokens - q0);

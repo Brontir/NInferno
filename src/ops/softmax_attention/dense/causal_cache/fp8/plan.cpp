@@ -12,7 +12,7 @@ constexpr int kGroupedPrefillMaxWidth = 80;
 } // namespace
 
 Fp8KvCausalPlan make_fp8_kv_causal_plan(int heads, int kv_heads, int width, int batch,
-                                        CausalAttentionExecutionEnvelope envelope, int row_keys,
+                                        CausalAttentionExecutionEnvelope envelope,
                                         int multiprocessor_count) {
     require_causal_plan_inputs("FP8", heads, kv_heads, width, batch, envelope);
     if (multiprocessor_count <= 0) throw std::invalid_argument("FP8 attention: invalid SM count");
@@ -29,7 +29,7 @@ Fp8KvCausalPlan make_fp8_kv_causal_plan(int heads, int kv_heads, int width, int 
                 width,
                 batch,
                 envelope,
-                CausalKvPartition::aligned_to_row(row_keys, envelope.max_visible_keys),
+                CausalKvPartition::aligned_to_positions(envelope.max_visible_keys),
                 launch_columns};
     const auto family = width <= grouped_limit             ? Fp8KvFamily::Grouped
                         : width <= kGroupedPrefillMaxWidth ? Fp8KvFamily::ParallelGrouped
@@ -62,7 +62,7 @@ std::size_t fp8_kv_workspace_bytes(int heads, int kv_heads, int batch, int min_w
     const auto widths =
         causal_grouped_workspace_widths(min_width, max_width, kGroupedPrefillMaxWidth, invariant);
     for (int width = widths.first; width <= widths.last; ++width) {
-        const auto plan = make_fp8_kv_causal_plan(heads, kv_heads, width, batch, envelope, 0,
+        const auto plan = make_fp8_kv_causal_plan(heads, kv_heads, width, batch, envelope,
                                                   multiprocessor_count);
         if (plan.family == Fp8KvFamily::Tiled) continue;
         const int splits = plan.partition.capacity;
