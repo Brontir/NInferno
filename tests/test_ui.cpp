@@ -141,7 +141,7 @@ void test_access() {
     }
     check(cookie_value("xninferno_ui_key=k1", "ninferno_ui_key").empty(), "cookie name exact");
     AccessPolicy keyed{.listen = "0.0.0.0", .port = 8090, .key = key};
-    const std::string cookie = "ninferno_ui_key=" + key, bearer = "Bearer " + key;
+    const std::string cookie = "ninferno_ui_key_8090=" + key, bearer = "Bearer " + key;
     const auto keyed_check = [&](std::string_view peer, std::string_view host, bool proxied,
                                  std::string_view c, std::string_view a, std::string_view q) {
         return check_key(keyed, peer, host, proxied, c, a, q);
@@ -158,6 +158,10 @@ void test_access() {
     check(keyed_check("10.0.0.2", "box:8090", false, "", "", "") == KeyCheck::refused,
           "other machine refused");
     check(keyed_check("10.0.0.2", "box:8090", false, cookie, "", "") == KeyCheck::pass, "cookie");
+    check(keyed_check("10.0.0.2", "box:8090", false, "ninferno_ui_key=" + key, "", "") ==
+              KeyCheck::refused,
+          "another port's or an unported cookie is not this UI's");
+    check(key_cookie(8091) == "ninferno_ui_key_8091", "cookie named by port");
     check(keyed_check("10.0.0.2", "box:8090", false, "", bearer, "") == KeyCheck::pass, "bearer");
     check(keyed_check("10.0.0.2", "box:8090", false, "", "BEARER " + key, "") == KeyCheck::pass,
           "bearer: the scheme in any case");
@@ -165,7 +169,7 @@ void test_access() {
           "bearer: several spaces before the credential");
     check(keyed_check("10.0.0.2", "box:8090", false, "", "", key) == KeyCheck::pass_set_cookie,
           "?key= sets it");
-    check(keyed_check("10.0.0.2", "box:8090", false, "ninferno_ui_key=x", "Bearer x", "x") ==
+    check(keyed_check("10.0.0.2", "box:8090", false, "ninferno_ui_key_8090=x", "Bearer x", "x") ==
               KeyCheck::refused,
           "wrong key refused");
     check(keyed_check("", "box:8090", false, "", "", "") == KeyCheck::refused,

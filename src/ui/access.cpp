@@ -75,12 +75,14 @@ bool origin_allowed(std::string_view origin, std::string_view host_header) {
     return ascii_lower(authority) == ascii_lower(host_header);
 }
 
+std::string key_cookie(int port) { return std::string(kKeyCookie) + "_" + std::to_string(port); }
+
 std::string origin_refusal(std::string_view origin, std::string_view host_header, bool proxied) {
     std::string reply = "cross-origin request refused";
     if (proxied && (origin.starts_with("http://") || origin.starts_with("https://"))) {
         reply += ": Origin " + std::string(origin) + " is not Host " + std::string(host_header) +
-                 "; the proxy must forward the browser's Host header (nginx: proxy_set_header "
-                 "Host $host)";
+                 "; the proxy must forward the browser's Host header with its port (nginx: "
+                 "proxy_set_header Host $http_host)";
     }
     return reply;
 }
@@ -121,7 +123,9 @@ KeyCheck check_key(const AccessPolicy& policy, std::string_view remote_addr,
         is_loopback_host(host_of_authority(host_header))) {
         return KeyCheck::pass;
     }
-    if (same_secret(cookie_value(cookie_header, kKeyCookie), policy.key)) { return KeyCheck::pass; }
+    if (same_secret(cookie_value(cookie_header, key_cookie(policy.port)), policy.key)) {
+        return KeyCheck::pass;
+    }
     constexpr std::string_view bearer = "bearer "; // the scheme's name is case-insensitive
     if (ascii_lower(authorization.substr(0, bearer.size())) == bearer) {
         auto credential = authorization.substr(bearer.size());

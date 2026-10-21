@@ -49,6 +49,10 @@ struct AccessPolicy {
 
 inline constexpr std::string_view kKeyCookie = "ninferno_ui_key";
 
+// The key cookie of the UI on `port`: ninferno_ui_key_PORT. Cookies are not scoped by port, so UIs
+// on one host with different keys (--access-key-file, NINFERNO_UI_KEY) keep one cookie each.
+[[nodiscard]] std::string key_cookie(int port);
+
 enum class KeyCheck { pass, pass_set_cookie, refused };
 
 // Whether a request from `remote_addr` comes from this machine (`proxied`: it carries a proxy's

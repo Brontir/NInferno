@@ -1451,7 +1451,7 @@ void App::install(httplib::Server& server) {
         case KeyCheck::pass: break;
         case KeyCheck::pass_set_cookie:
             res.set_header("Set-Cookie",
-                           std::string(kKeyCookie) + "=" + policy.key + "; Path=/; HttpOnly; SameSite=Lax" +
+                           key_cookie(policy.port) + "=" + policy.key + "; Path=/; HttpOnly; SameSite=Lax" +
                                (forwarded_https(req.get_header_value("X-Forwarded-Proto"),
                                                 req.get_header_value("Forwarded"))
                                     ? "; Secure"
