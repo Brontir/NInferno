@@ -612,8 +612,11 @@ int profile_arch(const Json& published) {
 
 bool cross_generation(const GpuKey& gpu, const Json& published) {
     if (published.value("gpu_class", std::string()) == "*") { return false; }
-    const int donor = profile_arch(published);
-    const int own   = gpu.compute_capability;
+    return other_generation(gpu, profile_arch(published));
+}
+
+bool other_generation(const GpuKey& gpu, int donor) {
+    const int own = gpu.compute_capability;
     // Unknown on either side: nothing says the verify cost carries over.
     if (donor <= 0 || own <= 0 || gpu.sms <= 0) { return true; }
     if (donor / 10 != own / 10) { return true; }

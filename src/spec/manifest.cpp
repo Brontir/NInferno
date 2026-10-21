@@ -321,6 +321,44 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
     }
 }
 
+std::vector<LoadBound> builtin_default_load(Mode mode) {
+    if (mode == Mode::Mtp) { return {{.lanes = 8, .depth = 2}}; }
+    if (mode == Mode::DFlash2) { return {{.lanes = 2, .depth = 3}}; }
+    return {};
+}
+
+void apply_builtin_load(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes) {
+    profile.load      = builtin_default_load(profile.overall.config.mode);
+    const auto capped = stand_in_load(profile.load, gpu.sms);
+    if (capped != profile.load) {
+        notes.push_back("load bounds " + load_label(profile.load) + " -> " + load_label(capped) +
+                        ": the built-in default's, plain from " +
+                        std::to_string(capped.back().lanes) + " rows on this GPU's " +
+                        std::to_string(gpu.sms) + " multiprocessors");
+        profile.load = capped;
+    }
+    bool donor = false;
+    for (const int arch : kBuiltinLoadArchs) { donor = donor || !other_generation(gpu, arch); }
+    if (donor) { return; }
+    const std::string device = gpu.compute_capability > 0
+                                   ? "sm" + std::to_string(gpu.compute_capability)
+                                   : std::string("this GPU");
+    apply_load_ceiling(profile, gpu, resolved, notes,
+                       "the built-in default was measured on another generation (sm86, sm89, "
+                       "sm120; " +
+                           device + "): load capped by the cost model");
+}
+
+std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved) {
+    if (resolved.load_ceiling.empty()) { return std::nullopt; }
+    return resolved.load_ceiling + (resolved.load_capped ? " lowered" : " kept");
+}
+
+void clear_load_ceiling(std::map<std::string, std::string>& sources) {
+    sources.erase(kLoadCeilingSource);
+}
+
 void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
                         std::vector<std::string>& notes, const std::string& whose) {
     std::vector<std::int32_t> depths;

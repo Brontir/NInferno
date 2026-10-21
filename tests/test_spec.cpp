@@ -2698,6 +2698,67 @@ int test_cross_generation() {
                                     : " stand-in decodes plainly from two rows"));
     }
     fs::remove_all(dir);
+
+    // The built-in drafter's default: its table within the donor generations (Ampere/Ada,
+    // Blackwell) under the SM cap, on any other under the load model's ceiling.
+    const auto builtin = [](const char* config, int cc, int sms, ResolvedSpeculation& r) {
+        Profile p;
+        p.overall.config = SpecConfig::parse(config);
+        GpuKey k;
+        k.compute_capability = cc;
+        k.sms                = sms;
+        std::vector<std::string> notes;
+        apply_builtin_load(p, k, r, notes);
+        return p.load;
+    };
+    ResolvedSpeculation on_volta, on_ada, on_ampere, on_blackwell, on_hopper, on_unknown_gpu;
+    const auto volta = builtin("mtp:3", 70, 80, on_volta);
+    failures += check(load_label(volta) == "2:0" && on_volta.load_capped &&
+                          on_volta.load_ceiling == "2:0 (modeled_load: sm70: one lab card)",
+                      "the built-in MTP 3 default on a V100: plain from two rows (C>=2)");
+    const auto ada = builtin("mtp:3", 89, 128, on_ada);
+    failures += check(bound_at(ada, 8) && bound_at(ada, 8)->depth == 2 && !bound_at(ada, 7) &&
+                          load_label(ada) == "8:2,13:0" && on_ada.load_ceiling.empty(),
+                      "the built-in MTP 3 default on an RTX 4090 keeps 8:2 (SM cap at 13)");
+    failures += check(load_label(builtin("mtp:3", 86, 82, on_ampere)) == "8:2,9:0" &&
+                          on_ampere.load_ceiling.empty(),
+                      "the built-in MTP 3 default on an RTX 3090 keeps 8:2 (SM cap at 9)");
+    failures += check(load_label(builtin("dflash2:7", 120, 170, on_blackwell)) == "2:3,17:0" &&
+                          on_blackwell.load_ceiling.empty(),
+                      "the built-in DFlash2 7 default on an RTX 5090 keeps 2:3");
+    failures += check(load_label(builtin("dflash2:7", 90, 132, on_hopper)) == "2:0" &&
+                          on_hopper.load_capped &&
+                          load_label(builtin("mtp:3", 0, 0, on_unknown_gpu)) == "2:0",
+                      "the built-in defaults on Hopper and an unknown GPU: plain from two rows");
+    // The fingerprint's source: "lowered", or "kept" where the ceiling did not lower the table;
+    // an explicit --spec-load clears it.
+    failures += check(load_ceiling_source(on_volta) ==
+                              std::optional<std::string>("2:0 (modeled_load: sm70: one lab card) "
+                                                         "lowered") &&
+                          !load_ceiling_source(on_ada),
+                      "load_ceiling_source: the ceiling, lowered");
+    {
+        Profile p;
+        p.overall.config = SpecConfig::parse("mtp:3");
+        p.load           = {{2, 0}};
+        GpuKey k;
+        k.compute_capability = 70;
+        k.sms                = 80;
+        ResolvedSpeculation r;
+        std::vector<std::string> notes;
+        apply_load_ceiling(p, k, r, notes, "a test");
+        failures +=
+            check(load_ceiling_source(r) == std::optional<std::string>(
+                                                "2:0 (modeled_load: sm70: one lab card) kept") &&
+                      notes.empty(),
+                  "load_ceiling_source: the ceiling, kept (it lowered nothing)");
+        std::map<std::string, std::string> sources{{kLoadCeilingSource, *load_ceiling_source(r)},
+                                                   {"speculation.profile", "built-in default"}};
+        clear_load_ceiling(sources);
+        failures +=
+            check(!sources.contains(kLoadCeilingSource) && sources.contains("speculation.profile"),
+                  "an explicit --spec-load clears the ceiling's source");
+    }
     return failures;
 }
 

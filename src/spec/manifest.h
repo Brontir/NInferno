@@ -142,6 +142,32 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
 // resolved.load_ceiling and load_capped record it (a note when it lowers the table). The ceiling
 // reads facts only, so such a stand-in decodes plainly from two rows wherever the model has no
 // multi-row price (every GPU today), and one request keeps the profile's own pick.
+// The built-in drafter's default load tables (a model with a drafter but no profile for this GPU,
+// and the MTP head fallback), measured on a few cards:
+//   MTP 3: 8:2, two drafts from eight rows: Qwen3.6 35B on the RTX 5090 at C=8 (both orders)
+//     1250-1258 tok/s at depth 2 against 1131-1158 at depth 3; as the head fallback, Qwen3.8 27B
+//     at C=8 1.56x plain on the RTX 4090 and 1.49x on the RTX 3090, at C=4 1.26x on the RTX
+//     5070 Ti.
+//   DFlash2 7: 2:3, three drafts from two rows: Qwen3.8 27B Q3 on the RTX 4080 SUPER, C=4 depth 3
+//     214-218 tok/s against plain 153, C=2 164-173 against depth 7 149-158.
+//   DFlash 7: none.
+[[nodiscard]] std::vector<LoadBound> builtin_default_load(Mode mode);
+// The architectures those cards are of (Ampere and Ada, one generation for other_generation:
+// sm80, sm86, sm89; Blackwell: sm120). A device of another generation (Volta, Turing, Hopper,
+// unknown) runs the default's table under the load model's ceiling.
+inline constexpr int kBuiltinLoadArchs[] = {86, 89, 120};
+// The built-in default's table for `profile` (its overall choice's mode) on `gpu`: within the
+// donor generations stand_in_load's SM cap; from another generation also the load model's
+// ceiling (apply_load_ceiling, recorded in `resolved`).
+void apply_builtin_load(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes);
+// The decision fingerprint's source for the ceiling (key kLoadCeilingSource): "<ceiling> lowered"
+// or "<ceiling> kept" (it did not lower the table); nullopt when none applied.
+inline constexpr const char* kLoadCeilingSource = "speculation.load_ceiling";
+[[nodiscard]] std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved);
+// An explicit --spec-load replaces the table the ceiling capped: its source leaves `sources`.
+void clear_load_ceiling(std::map<std::string, std::string>& sources);
+
 void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
                         std::vector<std::string>& notes, const std::string& whose);
 

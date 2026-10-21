@@ -3,6 +3,7 @@
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
 #include "serve/translate.h"
+#include "spec/manifest.h"
 
 #include <algorithm>
 #include <chrono>
@@ -426,7 +427,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             speculative.load = product::engine_load(*options_.speculation_load,
                                                     product::speculative_window(speculative));
             // The given bounds replace the table the load model's ceiling capped.
-            speculative.decision_sources.erase("speculation.load_ceiling");
+            spec::clear_load_ceiling(speculative.decision_sources);
         }
         if (!served_speculation_) { return; }
         if (options_.speculation_load) { served_speculation_->load_ceiling.clear(); }

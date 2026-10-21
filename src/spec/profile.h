@@ -293,6 +293,9 @@ struct GpuKey {
 // stand_in_load caps nothing). The "*" profile does not: it keeps stand_in_load's cap. Such a
 // stand-in's table also runs under the load model's ceiling (apply_load_ceiling).
 [[nodiscard]] bool cross_generation(const GpuKey& gpu, const nlohmann::json& published);
+// The same rule for a donor architecture `donor_arch` (86: sm86; 0 or less: unknown, another
+// generation): cross_generation's test without the "*" case.
+[[nodiscard]] bool other_generation(const GpuKey& gpu, int donor_arch);
 // The bound `load` puts on a step of `rows` rows: its entry of the most lanes at or below `rows`
 // (an entry of fewer than two lanes read as two: one request is never bounded); nullopt when none
 // applies (unbounded).
