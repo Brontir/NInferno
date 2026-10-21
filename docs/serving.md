@@ -99,7 +99,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |
 | `--log-level LEVEL` | `info` | stderr verbosity (`trace` ... `off`) |
-| `--device N` | first GPU by PCI bus id | CUDA device index |
+| `--device N\|pci:BUSID\|GPU-UUID` | `0` | the GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. |
 | `--temperature`, `--top-p`, `--top-k`, `--min-p`, `--seed`, `--greedy` | unset | process-level sampling overrides ([presets](cli.md#sampling-presets)); `--greedy` forces argmax |
 
 All other options (media, Host cache, response store, penalties, limits, decode pacing with
@@ -114,7 +114,7 @@ server decides.
 | Path | API | Notes |
 |---|---|---|
 | `GET /health` | server | `200 {"status":"ok"}` with the load gauges; `503` when unavailable, draining or stalled; no authentication |
-| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
+| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint), with the board it runs on beside it (`meta.device_pci_bus_id`, `meta.device_uuid`); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
 | `GET /props` | llama.cpp | the model alias, context, vocabulary and slots llama.cpp's web UI reads |
 | `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill, and `ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1` |
 | `POST /v1/chat/completions` | OpenAI Chat | streaming, tools, images, `timings` extension |

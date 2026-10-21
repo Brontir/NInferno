@@ -512,6 +512,7 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
 | `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
 | `speculation` | what the server runs since startup: `config`, `selection`, `reason`, `fallback` ([per-request record](#per-request-record)) |
+| `device_pci_bus_id`, `device_uuid` | the board the engine runs on (`0000:01:00.0`, `GPU-…`), beside the fingerprint and not part of it |
 
 `GET /v1/models/{id}` returns the same object for the single configured alias and `404` for any
 other id.
@@ -1529,7 +1530,7 @@ contract.
 | `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
-| `--device N` | CUDA device index | the first GPU by PCI bus id |
+| `--device N\|pci:BUSID\|GPU-UUID` | the GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. | `0` |
 
 ### Network and access
 

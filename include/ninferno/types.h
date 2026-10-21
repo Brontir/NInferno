@@ -1765,6 +1765,11 @@ struct ModelMetadata {
     // The plan ladder's rung the free memory picked at startup (MemorySummary::plan, without the
     // ladder), for /v1/models meta.plan_level and meta.plan.
     PlanSummary plan;
+    // The board the engine runs on, printed beside the fingerprint and never hashed into it (two
+    // boards of one chip type share a fingerprint): its PCI bus id ("0000:01:00.0") and UUID
+    // ("GPU-..."); empty when CUDA could not say.
+    std::string device_pci_bus_id;
+    std::string device_uuid;
 };
 
 struct LoadSummary {

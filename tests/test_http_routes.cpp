@@ -105,6 +105,8 @@ int main() {
     ninferno::ModelMetadata fingerprinted;
     fingerprinted.decision_fingerprint = "nf1-0123456789abcdef";
     fingerprinted.decision_manifest    = "nm1-fedcba9876543210";
+    fingerprinted.device_pci_bus_id    = "0000:01:00.0";
+    fingerprinted.device_uuid          = "GPU-00112233-4455-6677-8899-aabbccddeeff";
     const std::string metrics = ninferno::serve::make_prometheus_metrics(stats, 3, fingerprinted);
     failures += check(
         metrics.find("# TYPE ninferno_decision_fingerprint_info gauge\n"
@@ -140,6 +142,11 @@ int main() {
                           plan_meta.at("plan").at("advice").size() == 1 &&
                           !models.at("data").at(0).at("meta").contains("plan_level"),
                       "/v1/models meta must carry the plan rung (and only with a ladder)");
+    failures +=
+        check(models.at("data").at(0).at("meta").at("device_pci_bus_id") == "0000:01:00.0" &&
+                  models.at("data").at(0).at("meta").at("device_uuid") ==
+                      "GPU-00112233-4455-6677-8899-aabbccddeeff",
+              "/v1/models meta must name the board beside the fingerprint");
     failures +=
         check(metrics.find("# TYPE llamacpp:prompt_tokens_total counter\n"
                            "llamacpp:prompt_tokens_total 7\n") != std::string::npos &&
