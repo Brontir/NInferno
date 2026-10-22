@@ -17,9 +17,10 @@ same driver, CUDA and power limit); an auto row whose plain rows all differ is l
 build/env", not judged. Of the matching plain rows the newest is the twin. When an auto key
 was measured more than once, the newest row of each side is used.
 
-What the decision served is the server's own report (`served_speculation.config`, which
-tools/bench/perf_matrix.py records from /v1/models: "plain" or the drafter and depth), whatever
-the row's `--spec` label says; a row from before that field falls back to its `spec` label.
+What the decision served is the server's own report of the measured requests
+(`served_speculation.config`, which tools/bench/perf_matrix.py takes from every response: the
+drafter and depth most speculating requests ran, or "plain" when none did), whatever the row's
+`--spec` label says; a row from before that field falls back to its `spec` label.
 
 A cell FAILS when all of these hold:
   * the decision speculates (it served a drafter, not plain decoding);
@@ -33,8 +34,9 @@ Losing cells that miss one of these are counted as plain-served, overlapping, st
 plain. Auto rows without a plain twin, or without one of their build/env, are listed on stderr.
 
 With --release the evidence must be current: a losing cell that is stale or has a stale plain
-twin, and an auto row without a plain twin of its build and environment, block too (re-measure
-them); without it they are reported, as in a lab run.
+twin, a passing cell whose auto or plain row is older than the decision code (a stale pass), and an
+auto row without a plain twin of its build and environment, block too (re-measure them); without
+it they are reported, as in a lab run.
 
 There is no exemption list and nothing is written back. Exit code 1 when a cell fails (or, with
 --release, is blocked) or nothing pairs; 2 on a missing or malformed bench file, a shallow clone or
@@ -256,8 +258,8 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.98, newer=None) -> 
 
     cells, unpaired, unmatched = [], [], []
     counts = {"paired": 0, "unpaired_auto": 0, "unmatched_build_env": 0, "unpaired_plain": 0,
-              "pass": 0, "losses": 0, "plain_served": 0, "overlap": 0, "stale": 0,
-              "stale_plain": 0, "fail": 0}
+              "pass": 0, "stale_pass": 0, "losses": 0, "plain_served": 0, "overlap": 0,
+              "stale": 0, "stale_plain": 0, "fail": 0}
     for key, auto in autos.items():
         candidates = plains.get(key)
         if not candidates:
@@ -279,7 +281,12 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.98, newer=None) -> 
         counts["paired"] += 1
         ratio = auto["value"] / plain["value"] if plain["value"] else float("inf")
         if ratio >= threshold:
-            counts["pass"] += 1
+            # A pass on rows older than the decision code certifies nothing current: counted
+            # apart, and with --release it blocks like a stale loss.
+            if is_fresh(auto) and is_fresh(plain):
+                counts["pass"] += 1
+            else:
+                counts["stale_pass"] += 1
             continue
         counts["losses"] += 1
         (alo, ahi), (plo, phi) = interval(auto), interval(plain)
@@ -336,9 +343,9 @@ def render(result: dict, since: str, show_all: bool) -> str:
              f"{s['explicit_spec']}, forced spec {s['forced_spec']}, superseded "
              f"{s['superseded']}); paired {c['paired']}, unpaired auto {c['unpaired_auto']}, "
              f"unmatched build/env {c['unmatched_build_env']}, unpaired plain {c['unpaired_plain']}",
-             f"pass {c['pass']}; losses {c['losses']}: plain-served {c['plain_served']}, overlap "
-             f"{c['overlap']}, stale {c['stale']}, stale plain {c['stale_plain']}, FAIL "
-             f"{c['fail']}"]
+             f"pass {c['pass']}, stale pass {c['stale_pass']}; losses {c['losses']}: "
+             f"plain-served {c['plain_served']}, overlap {c['overlap']}, stale {c['stale']}, "
+             f"stale plain {c['stale_plain']}, FAIL {c['fail']}"]
     if s.get("commit_unknown"):
         lines.append(f"{s['commit_unknown']} judged rows name a commit this clone lacks: "
                      "judged by date")
@@ -413,8 +420,9 @@ def main(argv=None) -> int:
     counts = result["counts"]
     # A release needs current evidence: what is stale or unpaired says nothing about today's
     # decision, so it blocks until re-measured.
-    result["release_blocked"] = (counts["stale"] + counts["stale_plain"] + counts["unpaired_auto"]
-                                 + counts["unmatched_build_env"]) if a.release else 0
+    blocking = (counts["stale"] + counts["stale_plain"] + counts["stale_pass"]
+                + counts["unpaired_auto"] + counts["unmatched_build_env"])
+    result["release_blocked"] = blocking if a.release else 0
     if a.json:
         print(json.dumps(result, indent=1))
     else:
@@ -436,7 +444,8 @@ def main(argv=None) -> int:
         return 1
     if result["release_blocked"]:
         print(f"spec_gate: RELEASE BLOCKED: {result['release_blocked']} cells need fresh rows "
-              f"(stale {counts['stale']}, stale plain {counts['stale_plain']}, unpaired auto "
+              f"(stale {counts['stale']}, stale plain {counts['stale_plain']}, stale pass "
+              f"{counts['stale_pass']}, unpaired auto "
               f"{counts['unpaired_auto']}, unmatched build/env {counts['unmatched_build_env']})",
               file=sys.stderr)
     return 1 if result["counts"]["fail"] or result["release_blocked"] else 0

@@ -262,6 +262,25 @@ class SpecGateTest(unittest.TestCase):
         self.assertEqual(run_main(["--since-date", NEW], unpaired)[0], 0)
         self.assertEqual(run_main(["--since-date", NEW, "--release"], unpaired)[0], 1)
 
+    def test_release_blocks_a_stale_pass(self):
+        # A pass measured before the decision code (either side) certifies nothing current: a lab
+        # run counts it apart and passes, a release blocks until re-measured.
+        for auto_date, plain_date in ((OLD, NEW), (NEW, OLD)):
+            rows = (row(101, [100, 102], date=auto_date), row(100, [99, 101], auto=False,
+                                                              date=plain_date))
+            r = self.judge(*rows)
+            self.assertEqual((r["counts"]["pass"], r["counts"]["stale_pass"]), (0, 1))
+            code, out, _ = run_main(["--since-date", SINCE.isoformat(), "--json"], rows)
+            self.assertEqual((code, json.loads(out)["release_blocked"]), (0, 0))
+            code, out, err = run_main(["--since-date", SINCE.isoformat(), "--json", "--release"],
+                                      rows)
+            self.assertEqual((code, json.loads(out)["release_blocked"]), (1, 1))
+            self.assertIn("stale pass 1", err)
+        fresh = (row(101, [100, 102]), row(100, [99, 101], auto=False))
+        r = self.judge(*fresh)
+        self.assertEqual((r["counts"]["pass"], r["counts"]["stale_pass"]), (1, 0))
+        self.assertEqual(run_main(["--since-date", SINCE.isoformat(), "--release"], fresh)[0], 0)
+
     def test_missing_or_malformed_bench_exits_2(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(spec_gate.main(["--bench", "/nonexistent/bench.jsonl",

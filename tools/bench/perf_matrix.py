@@ -71,12 +71,15 @@ class Server:
         meta = model.get("meta") or {}
         self.fingerprint = {key: meta[key] for key in ("decision_fingerprint", "decision_manifest")
                             if key in meta}
-        # The speculation the server runs since startup ("plain" or a drafter and depth, how it
-        # was selected and any fallback), whatever --spec labels the row: tools/spec_gate.py
-        # judges what was served.
+        # The speculation the server started with ("plain" or a drafter and depth, how it was
+        # selected and any fallback). A request can run another (a menu entry, a context or load
+        # fallback, the watchdog), so the rows carry what their measured requests ran
+        # (take_speculation); tools/spec_gate.py judges that.
         served = meta.get("speculation") or {}
-        self.served_speculation = {key: served[key] for key in ("config", "selection", "fallback")
-                                   if key in served}
+        self.startup_speculation = {key: served[key] for key in ("config", "selection", "fallback")
+                                    if key in served}
+        self._speculation = {}
+        self._speculation_lock = threading.Lock()
 
     def chat(self, prompt, max_tokens, top_p=None):
         body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
@@ -87,14 +90,45 @@ class Server:
                                          {"Content-Type": "application/json"})
         start = time.time()
         with urllib.request.urlopen(request, timeout=3600) as r:
-            usage = json.load(r).get("usage") or {}
-        return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), time.time() - start
+            out = json.load(r)
+        elapsed = time.time() - start
+        usage = out.get("usage") or {}
+        # The speculation this request ran: NInferno reports it in the response's timings when the
+        # request drafted (a request that ran plain reports none).
+        spec = (out.get("timings") or {}).get("speculation") or {}
+        config = spec.get("config") or None
+        with self._speculation_lock:
+            self._speculation[config] = self._speculation.get(config, 0) + 1
+        return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), elapsed
+
+    def take_speculation(self):
+        """What the requests since the last call ran, as a row's `served_speculation`: `config` is
+        the drafter and depth most of the drafting requests ran ("plain" when none drafted),
+        `requests` counts each configuration, and the startup selection and fallback stay beside
+        them. When no request reported its speculation (another engine, or a build from before
+        the report), the startup report stands for all of them, as before; None without one."""
+        with self._speculation_lock:
+            counts, self._speculation = self._speculation, {}
+        reported = {config: n for config, n in counts.items() if config is not None}
+        if not reported:
+            return dict(self.startup_speculation) or None
+        # A build that reports drafting requests leaves the plain ones without a report.
+        requests = dict(reported)
+        if None in counts:
+            requests["plain"] = requests.get("plain", 0) + counts[None]
+        drafted = {config: n for config, n in requests.items() if config != "plain"}
+        config = max(sorted(drafted), key=lambda c: drafted[c]) if drafted else "plain"
+        out = {"config": config, "requests": dict(sorted(requests.items()))}
+        out.update({key: self.startup_speculation[key] for key in ("selection", "fallback")
+                    if key in self.startup_speculation})
+        return out
 
 
 def long_context(server, chars, prompts, out_tokens):
     user = json.loads(HAYSTACK.read_text(encoding="utf-8"))[-1]["content"]
     blob = user.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
     server.chat("Say hello in one short sentence.", 16)  # warm-up
+    server.take_speculation()
     prefill, decode, lengths = [], [], []
     for i in range(prompts):
         offset = (i * 7919 * 13) % max(1, len(blob) - chars)
@@ -111,6 +145,7 @@ def long_context(server, chars, prompts, out_tokens):
 
 def short_chat(server, concurrency, out_tokens):
     server.chat("Say hello.", 16)  # warm-up
+    server.take_speculation()
     done, lock = [], threading.Lock()
 
     def worker(prompts):
@@ -179,20 +214,24 @@ def main():
     results = []
     if not args.skip_long:
         r = long_context(server, args.chars, args.prompts, args.out_tokens)
+        long_speculation = server.take_speculation()
         print(f"long24k_fr2026_6p prompt_tokens~{r['prompt_len']} prefill={r['prefill'][0]:.0f} "
               f"({r['prefill'][1][0]:.0f}..{r['prefill'][1][1]:.0f}) decode={r['decode'][0]:.2f} "
               f"({r['decode'][1][0]:.2f}..{r['decode'][1][1]:.2f})", flush=True)
         for metric in ("prefill", "decode"):
             results.append({"metric": metric, "prompt_len": r["prompt_len"], "prompt_set": "long24k_fr2026_6p",
                             "concurrency": 1, "repeats": args.prompts, "value": round(r[metric][0], 2),
-                            "spread": [round(x, 2) for x in r[metric][1]]})
+                            "spread": [round(x, 2) for x in r[metric][1]],
+                            "served_speculation": long_speculation})
     if not args.skip_chat:
         for c in (int(x) for x in args.concurrency.split(",")):
             value = short_chat(server, c, args.out_tokens)
+            chat_speculation = server.take_speculation()
             print(f"short_chat_20req C={c} aggregate={value:.1f}", flush=True)
             results.append({"metric": "decode_aggregate", "prompt_len": None,
                             "prompt_set": "short_chat_20req", "concurrency": c, "repeats": 1,
-                            "value": round(value, 2), "spread": None})
+                            "value": round(value, 2), "spread": None,
+                            "served_speculation": chat_speculation})
     if args.jsonl:
         common = {"machine": machine(args.device), "model": args.model, "recipe": args.recipe,
                   "spec": args.spec, "draft_tokens": args.draft_tokens, "kv": args.kv,
@@ -209,10 +248,10 @@ def main():
         if args.engine != "ninferno":
             common["engine"] = args.engine
         common.update(server.fingerprint)
-        if server.served_speculation:
-            common["served_speculation"] = server.served_speculation
         with args.jsonl.open("a", encoding="utf-8") as f:
             for row in results:
+                # A row carries its own requests' speculation; none from an engine reporting none.
+                row = {k: v for k, v in row.items() if k != "served_speculation" or v}
                 f.write(json.dumps({**common, **row}) + "\n")
     return 0
 
