@@ -34,4 +34,11 @@ std::string context_cost_presets_source(const std::filesystem::path& presets) no
     } catch (...) { return "unreadable"; }
 }
 
+std::string chat_template_source(const std::filesystem::path& chat_template) noexcept {
+    try {
+        if (chat_template.empty()) { return "artifact"; }
+        return named_file_sha256(chat_template).value_or("unreadable");
+    } catch (...) { return "unreadable"; }
+}
+
 } // namespace ninferno::runtime
