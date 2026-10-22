@@ -22,7 +22,8 @@ struct Bf16KvCausalPlan {
 // The invariant route profile aligns the splits to each token's own position
 // (CausalKvPartition::aligned_to_positions), never to the call's KV row.
 Bf16KvCausalPlan make_bf16_kv_causal_plan(int query_heads, int kv_heads, int width, int batch,
-                                          CausalAttentionExecutionEnvelope envelope, int multiprocessor_count);
+                                          CausalAttentionExecutionEnvelope envelope,
+                                          int multiprocessor_count);
 std::size_t bf16_kv_workspace_bytes(int query_heads, int kv_heads, int batch, int min_width,
                                     int max_width, CausalAttentionExecutionEnvelope envelope, int multiprocessor_count);
 

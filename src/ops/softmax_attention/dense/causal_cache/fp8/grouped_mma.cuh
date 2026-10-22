@@ -588,7 +588,6 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
         store_partials(own0.stores(split0), split0, own1.stores(split1), split1, m0, l0, m1, l1,
                        acc);
     } else {
-
         if (warp < RowTiles && lid == 0) {
             const int row0 = warp * 16 + gid;
             const int row1 = row0 + 8;

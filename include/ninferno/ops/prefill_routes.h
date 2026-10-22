@@ -54,7 +54,12 @@ private:
  *     verify run) instead of the 16-token chunked scan, so a prompt cut or a cache restore at any
  *     position, a KV-lease re-prefill and the decode steps give a token and the state the same
  *     bytes.
- * It changes routes only; a family whose ops do not read it gives no such guarantee.
+ * It changes routes only; a family whose ops do not read it gives no such guarantee. One that runs
+ * inside the profile and does not read it: the DFlash drafter's attention over its own context
+ * (context_softmax_attention, dense/context/launch.cu) takes its split count and key block from
+ * the session's capacity (envelope.max_context), so a session sized from free memory can draft
+ * other tokens and accept a different number of them; under greedy decoding the target's verify
+ * still decides every emitted token, so the emitted bytes do not change.
  */
 [[nodiscard]] bool invariant_routes_active() noexcept;
 

@@ -19,7 +19,8 @@ struct K8V4KvCausalPlan {
 // The invariant route profile aligns the splits to each token's own position
 // (CausalKvPartition::aligned_to_positions), never to the call's KV row.
 K8V4KvCausalPlan make_k8v4_kv_causal_plan(int heads, int kv_heads, int width, int batch,
-                                          CausalAttentionExecutionEnvelope envelope, int multiprocessor_count);
+                                          CausalAttentionExecutionEnvelope envelope,
+                                          int multiprocessor_count);
 std::size_t k8v4_kv_workspace_bytes(int heads, int kv_heads, int batch, int min_width,
                                     int max_width, CausalAttentionExecutionEnvelope envelope, int multiprocessor_count);
 

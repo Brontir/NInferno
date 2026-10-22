@@ -34,7 +34,8 @@ static_assert(CausalKvPartition::aligned_key_shift(32769) == 10);
 // values it streams (4 bytes a dimension).
 static_assert(6 * 32 * 10 <= (1 << CausalKvPartition::kAlignedMinKeyShift) * 4);
 static_assert(CausalKvPartition::aligned_key_shift(1 << 18) == 12);
-static_assert(CausalKvPartition::aligned_key_shift(CausalKvPartition::kAlignedMaxVisibleKeys) == 14);
+static_assert(
+    CausalKvPartition::aligned_key_shift(CausalKvPartition::kAlignedMaxVisibleKeys) == 14);
 // A launch's partials hold at most kAlignedSplits per column, whatever the visible keys.
 static_assert(CausalKvPartition::aligned_capacity(kCausalAttentionMaximumVisibleKeys) ==
               CausalKvPartition::kAlignedSplits);

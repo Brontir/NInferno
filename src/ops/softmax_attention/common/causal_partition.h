@@ -64,13 +64,12 @@ struct CausalKvPartition {
         return count < target ? count : target;
     }
 
-    // The first of `tiles` key tiles of `tile_keys` keys that split `split` of `splits` owns at
-    // key_shift; split + 1 gives the end of its range. (An aligned partition's kernels take
-    // aligned_first_tile.)
-    __host__ __device__ int first_tile(int split, int tiles, int splits, int tile_keys) const {
-        if (!aligned) return split * tiles / splits;
-        const int tile = (split << key_shift) / tile_keys;
-        return tile < tiles ? tile : tiles;
+    // The first of `tiles` key tiles of `tile_keys` keys that split `split` of `splits` owns (not
+    // aligned: every launch of an aligned partition takes an Aligned instance, which uses
+    // aligned_first_tile, and the other instances refuse it on the host); split + 1 gives the end
+    // of its range.
+    __host__ __device__ int first_tile(int split, int tiles, int splits, int) const {
+        return split * tiles / splits;
     }
 
     // log2 of the keys an aligned split owns for `visible` keys: 9..14, 9 up to 32768 keys, then

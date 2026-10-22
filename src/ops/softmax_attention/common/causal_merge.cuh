@@ -66,7 +66,8 @@ __launch_bounds__(256) __global__
     }
     if constexpr (MultiBatch) positions += static_cast<std::int64_t>(batch) * tokens;
     // Aligned: each column merges the splits its own position runs
-    // (CausalKvPartition::aligned_row), as a decode of that column alone does. Otherwise the call's window sets the partition.
+    // (CausalKvPartition::aligned_row), as a decode of that column alone does. Otherwise the
+    // call's window sets the partition.
     const int window  = Aligned ? positions[token] + 1 : positions[tokens - 1] + 1;
     int output_column = token;
     if constexpr (MultiBatch) output_column += batch * tokens;
@@ -139,7 +140,8 @@ void launch_causal_natural_merge(const CausalAttentionOperands& p,
         if (partition.aligned) return launch.template operator()<true>();
     } else {
         if (partition.aligned)
-            throw std::invalid_argument("causal merge: aligned splits at a site that never takes them");
+            throw std::invalid_argument(
+                "causal merge: aligned splits at a site that never takes them");
     }
     launch.template operator()<false>();
 }

@@ -2906,7 +2906,8 @@ int verify_aligned_position_partition() {
             expect(false, "capacity " + std::to_string(capacity) + " is not the most splits " +
                               std::to_string(most) + where);
         const auto row = CausalKvPartition::aligned_row(visible - 1);
-        if (row.shift != shift || row.splits != splits) expect(false, "aligned_row differs" + where);
+        if (row.shift != shift || row.splits != splits)
+            expect(false, "aligned_row differs" + where);
         const auto live = ops::detail::Bf16KvPartition::aligned_live(visible);
         if (live.splits != splits || live.keys_per_split != (1 << shift))
             expect(false, "the BF16 live partition differs" + where);
@@ -3098,13 +3099,13 @@ int verify_shape_prefix(const std::string& label, const std::vector<std::uint16_
 // (Qwen3.8 IQ3 greedy alone and beside another request parted under exact with speculation
 // before the splits were aligned to the key positions), nor the KV row a session sized from free
 // memory: its splits follow its own position. The contexts put the calls on both sides of the
-// 32768-key shift boundary (a call from 32767 straddles it, so its rows close finer splits inside
-// a CTA) and past it.
+// 32768- and 65536-key shift boundaries (calls from 32767 and 65500 straddle them, so their rows
+// close finer splits inside a CTA) and past them (40000, 70000 keys).
 int run_shape_invariance_cases(KvCacheStorage storage) {
     const ops::ScopedInvariantRoutes invariant;
     int failures = 0;
     for (const auto& geometry : {kGeometries[0], kGeometries[1]})
-        for (const int context : {300, 2900, 12000, 32767, 40000}) {
+        for (const int context : {300, 2900, 12000, 32767, 40000, 65500, 70000}) {
             const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
             const std::string name     = std::string("shape invariance ") + geometry.name + " " +
                                      cache_name(storage) + " ctx=" + std::to_string(context) + " ";
@@ -3126,10 +3127,13 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
                                             output({.width = 9, .valid = 9, .prefix = 291}), wide,
                                             291 * q_column);
             for (const auto [width, batch] : {std::pair{8, 1}, std::pair{4, 2}, std::pair{8, 2},
-                                              std::pair{16, 1}, std::pair{8, 8}})
+                                              std::pair{16, 1}, std::pair{8, 8}}) {
+                // Eight rows past 40K keys take gigabytes of host fixtures; two cover the batch.
+                if (batch > 2 && context > 40000) continue;
                 failures += verify_shape_prefix(
                     name + "W=4 B=1 vs W=" + std::to_string(width) + " B=" + std::to_string(batch),
                     output({.width = width, .batch = batch, .valid = 4}), alone);
+            }
             const auto cached = shaped_cached_output(geometry, storage, context, 300);
             for (const int width : {1, 4, 130})
                 failures += verify_shape_prefix(
