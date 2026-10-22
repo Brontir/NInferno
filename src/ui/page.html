@@ -148,6 +148,9 @@ pre.log{margin:0;background:var(--soft);border-top:1px solid var(--line);padding
 .sup-full,.sup-pill-full{background:var(--ok-soft);color:var(--ok)}.sup-drafter,.sup-pill-drafter{background:var(--warn-soft);color:var(--warn)}
 .sup-none,.sup-pill-none{background:var(--bad-soft);color:var(--bad)}.sup-unknown,.sup-pill-unknown{background:var(--soft);color:var(--muted)}
 .kvsel button:disabled{opacity:.35}
+.acttable{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:2px 12px;font-size:12px;margin:4px 0 2px}
+.actwarn{color:var(--warn)}
+.actrow{display:contents}.actrow.head span{color:var(--muted)}.actrow.on span:first-child{color:var(--accent);font-weight:600}.actrow.off span{opacity:.55}
 .langpick{position:relative}
 #lang{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--mono)}
 .flag{display:inline-flex;width:20px;height:14px;border-radius:2px;overflow:hidden;box-shadow:0 0 0 1px var(--line);flex:none}
@@ -258,7 +261,7 @@ a.btnlink:hover{background:var(--soft)}
 const T = {
   en:{tabModels:"My models",tabFind:"Find",tabDownloads:"Downloads",myModels:"My models",arch:"Arch",params:"Params",publisher:"Publisher",model:"Model",
     quant:"Quant",size:"Size",modified:"Modified",run:"Run",chat:"Chat",stop:"Stop",log:"Log",del:"Delete",delq:"Delete?",yes:"Yes",no:"No",
-    calibrate:"Calibrate speculation",original:"original",delOriginals:"Delete originals",originalsKept:"originals kept",
+    original:"original",delOriginals:"Delete originals",originalsKept:"originals kept",
     noModels:"Nothing downloaded yet. Find a model in “Find”.",running:"running",ready:"ready",starting:"starting",
     search:"Search Hugging Face (org/name works too)",picks:"Our picks",hub:"Hugging Face",pickOne:"Pick a model on the left",
     context:"Context",parallel:"Parallel requests",gpu:"GPU",recommended:"Recommended",download:"Download",fitsFull:"fits",fitsTight:"tight",fitsNo:"does not fit",
@@ -273,13 +276,13 @@ const T = {
     capFull:"{n} at the model's full context ({ctx}) at once\nand {rest} of cache left over",
     capShort:"One request with up to {ctx} tokens\nless than the model's own {native}: the weights leave no more room",
     ctxTip:"How long one conversation may grow: prompt, history and answer together",
-    parTip:"How many requests the server answers at the same time\neach takes its own cache; the total speed grows slower than the count",
-    accel:"Generation speed-up",accelAuto:"Auto (recommended)",accelOff:"Off",accelManual:"Manual",accelTip:"A small drafter guesses tokens ahead and the model checks them in one step: the answer is the same, only faster. Auto runs what was measured fastest for this model and GPU",accelByTask:"by task",famCode:"code",famMath:"math",famProse:"prose",famThinking:"reasoning",accelWeighted:"weighted",passSampled:"at the model's temperature",passGreedy:"greedy",accelWeightedTip:"Mean gain over the task mix: code 25 %, math 20 %, prose 30 %, reasoning 25 %; sampled at the model's temperature",accelGoals:"What to expect",goalOne:"one request",goalLoad:"{n} requests at once",goalLong:"long context (~{depth})",goalOffBetter:"plain decoding is faster here",autoPlainNote:"Auto starts without speed-up here: {n} at once at ~{depth} of context measured faster without it (speed-up ×{k})",accelDrafters:"Drafters for this model",drKind:"drafter",drWhere:"where",drEngine:"NInferno",drPrecision:"drafter precision",drResult:"result",drYes:"runs",drNo:"not yet",drNoTip:"NInferno does not run this kind of drafter yet",drOwn:"model's own",drOfficial:"official",drCommunity:"community",drOurs:"★ measured by us",drOthers:"≈ others measured",drNone:"not measured",drInCkpt:"inside the model: nothing to download",drOnDownload:"converted when downloaded",precTitle:"Drafter precision",precText:"The drafter only proposes tokens and the model checks every one, so its precision changes speed, never the answer. A lower-precision drafter costs less per round and guesses nearly as often: gpt-oss-20b on an RTX 4090 at temperature 1: bf16 ×1.19, q8 ×1.29, q4 ×1.36. NInferno takes the precision measured fastest for the model; without a measurement, q4 beside a model of 8 bits or fewer and bf16 beside an exact one",manualPick:"run with",manualNote:"runs as chosen even where auto would turn it off",
+    parTip:"How many requests the server answers at the same time, 1 to 8 (the server's limit)\neach takes its own cache; the total speed grows slower than the count",
+    accel:"Generation speed-up",accelAuto:"Auto (recommended)",accelOff:"Off",accelManual:"Manual",accelTip:"A small drafter guesses tokens ahead and the model checks them in one step: the answer is the same, only faster. Auto runs what was measured fastest for this model and GPU",accelByTask:"by task",famCode:"code",famMath:"math",famProse:"prose",famThinking:"reasoning",accelWeighted:"weighted",passSampled:"at the model's temperature",passGreedy:"greedy",accelWeightedTip:"Mean gain over the task mix: code 25 %, math 20 %, prose 30 %, reasoning 25 %; sampled at the model's temperature",accelGoals:"What to expect",goalOne:"one request",goalLoad:"{n} requests at once",goalLong:"long context (~{depth})",goalOffBetter:"plain decoding is faster here",autoPlainNote:"Auto starts without speed-up here: {n} at once at ~{depth} of context measured faster without it (speed-up ×{k})",accelDrafters:"Drafters for this model",drKind:"drafter",drWhere:"where",drEngine:"NInferno",drPrecision:"drafter precision",drResult:"result",drYes:"runs",drNo:"not yet",drNoTip:"NInferno does not run this kind of drafter yet",drOwn:"model's own",drOfficial:"official",drCommunity:"community",drOurs:"★ measured by us",drOthers:"≈ others measured",drNone:"not measured",drInCkpt:"inside the model: nothing to download",drOnDownload:"converted when downloaded",precTitle:"Drafter precision",precText:"The drafter only proposes tokens and the model checks every one, so its precision changes speed, never the answer. A lower-precision drafter costs less per round and guesses nearly as often: gpt-oss-20b on an RTX 4090 at temperature 1: bf16 ×1.19, q8 ×1.29, q4 ×1.36. NInferno takes the precision measured fastest for the model; without a measurement, q4 beside a model of 8 bits or fewer and bf16 beside a 16-bit one",manualPick:"run with",manualNote:"runs as chosen even where auto would turn it off",
     specTip:"A small drafter guesses several tokens ahead and the model checks them in one step: the same answer, faster\n×N is the gain measured on this GPU class",
     kvType:"KV cache",kvTip:"How the context cache is stored\nfewer bytes hold more context and more requests, at a small cost in accuracy on long texts",
     kv_bf16:"BF16: 2 bytes, exact",kv_int8:"INT8: half the memory, nearly exact",kv_fp8:"FP8: half the memory, RTX 40/50",
     kv_nvfp4:"NVFP4: a quarter of the memory, loses more on long contexts",kv_k8v4:"Keys FP8, values NVFP4: about 40 % of BF16",
-    kvNeeds256:"not for this model: compact KV takes 256-wide heads",kvNeedsFp8:"needs an RTX 40 or 50 (FP8)",
+    kvNeeds256:"not for this model: compact KV takes 256-wide heads",kvNeedsFp8:"needs compute capability 8.9 or newer (FP8): RTX 40/50, L4/L40, H100",
     memTip:"Memory the launch takes: weights, drafter, KV cache, recurrent states, buffers and CUDA",
     bits:"Bits",ctxAll:"Context, total",gen:"Generation",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Decode",decode1:"Decode, 1 request",decodeAll:"Decode, total",
     decodeAllTip:"All parallel requests together\nnot N times one request: they share the card's bandwidth, and a MoE reads more experts for more requests; scaled by our measurements",
@@ -295,7 +298,7 @@ const T = {
     s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this architecture yet",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Fits {ctx} × {par} with {free} to spare",recWhyRule:"The most precise quantization that fits and decodes within 10 % of the fastest one of 4 bits or more",recWhySlower:"{name} is more precise but {p} % slower than the fastest of 4 bits or more",recWhyNoFit:"{name} is more precise but does not fit at {ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",recWhyLow:"Only quantizations below 4 bits fit: answers are noticeably worse",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
   ru:{tabModels:"Мои модели",tabFind:"Найти",tabDownloads:"Загрузки",myModels:"Мои модели",arch:"Архитектура",params:"Параметры",publisher:"Автор",model:"Модель",
     quant:"Квант",size:"Размер",modified:"Изменена",run:"Запустить",chat:"Чат",stop:"Стоп",log:"Лог",del:"Удалить",delq:"Удалить?",yes:"Да",no:"Нет",
-    calibrate:"Калибровать спекуляцию",original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
+    original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
     noModels:"Пока ничего не скачано. Найдите модель во вкладке «Найти».",running:"работает",ready:"готова",starting:"запускается",
     search:"Поиск по Hugging Face (можно org/name)",picks:"Наша подборка",hub:"Hugging Face",pickOne:"Выберите модель слева",
     context:"Контекст",parallel:"Параллельных запросов",gpu:"Видеокарта",recommended:"Рекомендуем",download:"Скачать",fitsFull:"влезает",fitsTight:"впритык",fitsNo:"не влезает",
@@ -310,13 +313,13 @@ const T = {
     capFull:"{n} с полным контекстом модели ({ctx}) одновременно\nи ещё {rest} кеша сверху",
     capShort:"Один запрос с контекстом до {ctx} токенов\nменьше, чем умеет модель ({native}): больше не даёт память после весов",
     ctxTip:"Насколько может вырасти один диалог: промпт, история и ответ вместе",
-    parTip:"Сколько запросов сервер обслуживает одновременно\nу каждого свой кеш; суммарная скорость растёт медленнее числа запросов",
-    accel:"Ускорение генерации",accelAuto:"Авто (рекомендуем)",accelOff:"Выкл",accelManual:"Вручную",accelTip:"Маленький черновик угадывает токены вперёд, модель проверяет их за один шаг: ответ тот же, только быстрее. Авто запускает то, что замерено самым быстрым для этой модели и карты",accelByTask:"по задачам",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"рассуждения",accelWeighted:"взвешенно",passSampled:"при температуре модели",passGreedy:"жадно",accelWeightedTip:"Средний выигрыш по смеси задач: код 25 %, математика 20 %, проза 30 %, рассуждения 25 %; при выборке с температурой модели",accelGoals:"Чего ждать",goalOne:"один запрос",goalLoad:"{n} запросов сразу",goalLong:"длинный контекст (~{depth})",goalOffBetter:"здесь быстрее без ускорения",autoPlainNote:"Авто запустит без ускорения: {n} сразу и ~{depth} контекста — без него замерено быстрее (ускорение ×{k})",accelDrafters:"Черновики для этой модели",drKind:"черновик",drWhere:"где",drEngine:"NInferno",drPrecision:"точность черновика",drResult:"результат",drYes:"работает",drNo:"пока нет",drNoTip:"NInferno пока не запускает черновики этого вида",drOwn:"своя у модели",drOfficial:"официальный",drCommunity:"сообщество",drOurs:"★ наш замер",drOthers:"≈ замеры других",drNone:"не замерено",drInCkpt:"внутри модели: качать нечего",drOnDownload:"конвертируется при скачивании",precTitle:"Точность черновика",precText:"Черновик только предлагает токены, а модель проверяет каждый, поэтому его точность меняет скорость, но не ответ. Черновик пониже точностью дешевле на раунд и угадывает почти так же: gpt-oss-20b на RTX 4090 при температуре 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno берёт точность, замеренную самой быстрой для модели; без замера — q4 к модели в 8 бит и меньше и bf16 к точной",manualPick:"запускать с",manualNote:"работает как выбрано, даже там, где авто выключило бы ускорение",
+    parTip:"Сколько запросов сервер обслуживает одновременно, от 1 до 8 (предел сервера)\nу каждого свой кеш; суммарная скорость растёт медленнее числа запросов",
+    accel:"Ускорение генерации",accelAuto:"Авто (рекомендуем)",accelOff:"Выкл",accelManual:"Вручную",accelTip:"Маленький черновик угадывает токены вперёд, модель проверяет их за один шаг: ответ тот же, только быстрее. Авто запускает то, что замерено самым быстрым для этой модели и карты",accelByTask:"по задачам",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"рассуждения",accelWeighted:"взвешенно",passSampled:"при температуре модели",passGreedy:"жадно",accelWeightedTip:"Средний выигрыш по смеси задач: код 25 %, математика 20 %, проза 30 %, рассуждения 25 %; при выборке с температурой модели",accelGoals:"Чего ждать",goalOne:"один запрос",goalLoad:"{n} запросов сразу",goalLong:"длинный контекст (~{depth})",goalOffBetter:"здесь быстрее без ускорения",autoPlainNote:"Авто запустит без ускорения: {n} сразу и ~{depth} контекста — без него замерено быстрее (ускорение ×{k})",accelDrafters:"Черновики для этой модели",drKind:"черновик",drWhere:"где",drEngine:"NInferno",drPrecision:"точность черновика",drResult:"результат",drYes:"работает",drNo:"пока нет",drNoTip:"NInferno пока не запускает черновики этого вида",drOwn:"своя у модели",drOfficial:"официальный",drCommunity:"сообщество",drOurs:"★ наш замер",drOthers:"≈ замеры других",drNone:"не замерено",drInCkpt:"внутри модели: качать нечего",drOnDownload:"конвертируется при скачивании",precTitle:"Точность черновика",precText:"Черновик только предлагает токены, а модель проверяет каждый, поэтому его точность меняет скорость, но не ответ. Черновик пониже точностью дешевле на раунд и угадывает почти так же: gpt-oss-20b на RTX 4090 при температуре 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno берёт точность, замеренную самой быстрой для модели; без замера — q4 к модели в 8 бит и меньше и bf16 к 16-битной",manualPick:"запускать с",manualNote:"работает как выбрано, даже там, где авто выключило бы ускорение",
     specTip:"Маленькая модель-черновик угадывает несколько токенов вперёд, основная проверяет их за один шаг: ответ тот же, быстрее\n×N — выигрыш, измеренный на картах этого класса",
     kvType:"KV-кеш",kvTip:"Как хранится кеш контекста\nменьше байт — больше контекста и потоков, ценой небольшой точности на длинных текстах",
     kv_bf16:"BF16: 2 байта, без потерь",kv_int8:"INT8: вдвое меньше памяти, почти без потерь",kv_fp8:"FP8: вдвое меньше памяти, RTX 40/50",
     kv_nvfp4:"NVFP4: вчетверо меньше памяти, на длинном контексте потери заметнее",kv_k8v4:"Ключи FP8, значения NVFP4: около 40 % от BF16",
-    kvNeeds256:"не для этой модели: компактный KV только для голов размера 256",kvNeedsFp8:"нужна RTX 40 или 50 (FP8)",
+    kvNeeds256:"не для этой модели: компактный KV только для голов размера 256",kvNeedsFp8:"нужна compute capability 8.9 или новее (FP8): RTX 40/50, L4/L40, H100",
     memTip:"Сколько видеопамяти займёт запуск: веса, черновик, KV-кеш, состояния, буферы и CUDA",
     bits:"Бит",ctxAll:"Контекст, всего",gen:"Генерация",prompt:"Промпт",perSec:"ток/с",prefill:"Префилл",decode:"Декод",decode1:"Декод, 1 поток",decodeAll:"Декод, всего",
     decodeAllTip:"Все параллельные запросы вместе\nне N × один запрос: запросы делят полосу памяти карты, а MoE на большем числе запросов читает больше экспертов; масштаб — по нашим замерам",
@@ -358,7 +361,7 @@ Object.assign(T.ru, {
 T.uk = {sup_format:"Не підтримується формат ваг\nархітектура наша, але ваги {lib} рушій не читає",supShort_format:"формат не підтримується",
   tabModels:"Мої моделі",tabFind:"Знайти",tabDownloads:"Завантаження",myModels:"Мої моделі",arch:"Архітектура",params:"Параметри",publisher:"Автор",model:"Модель",
   quant:"Квант",size:"Розмір",modified:"Змінено",run:"Запустити",chat:"Чат",stop:"Стоп",log:"Лог",del:"Видалити",delq:"Видалити?",yes:"Так",no:"Ні",
-  calibrate:"Калібрувати спекуляцію",original:"оригінал",delOriginals:"Видалити оригінали",originalsKept:"оригінали зберігаються",
+  original:"оригінал",delOriginals:"Видалити оригінали",originalsKept:"оригінали зберігаються",
   noModels:"Ще нічого не завантажено. Знайдіть модель у вкладці «Знайти».",running:"працює",ready:"готова",starting:"запускається",
   pickOne:"Виберіть модель ліворуч",context:"Контекст",parallel:"Паралельних запитів",gpu:"Відеокарта",recommended:"Рекомендуємо",download:"Завантажити",
   fitsFull:"вміщується",fitsTight:"впритул",fitsNo:"не вміщується",over8:"> 8 біт",drafter:"чернетка",kvUnknown:"вартість контексту невідома: враховано лише ваги",
@@ -371,13 +374,13 @@ T.uk = {sup_format:"Не підтримується формат ваг\nарх�
   capFull:"{n} з повним контекстом моделі ({ctx}) одночасно\nі ще {rest} кешу зверху",
   capShort:"Один запит з контекстом до {ctx} токенів\nменше, ніж уміє модель ({native}): більше не дає пам'ять після ваг",
   ctxTip:"Наскільки може вирости одна розмова: промпт, історія і відповідь разом",
-  parTip:"Скільки запитів сервер обслуговує одночасно\nу кожного свій кеш; сумарна швидкість росте повільніше за кількість запитів",
-  accel:"Прискорення генерації",accelAuto:"Авто (рекомендуємо)",accelOff:"Вимк",accelManual:"Вручну",accelTip:"Маленька чернетка вгадує токени наперед, модель перевіряє їх за один крок: відповідь та сама, лише швидше. Авто запускає те, що виміряно найшвидшим для цієї моделі й карти",accelByTask:"за задачами",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"міркування",accelWeighted:"зважено",passSampled:"за температури моделі",passGreedy:"жадібно",accelWeightedTip:"Середній виграш за сумішшю задач: код 25 %, математика 20 %, проза 30 %, міркування 25 %; під час вибірки з температурою моделі",accelGoals:"Чого чекати",goalOne:"один запит",goalLoad:"{n} запитів одразу",goalLong:"довгий контекст (~{depth})",goalOffBetter:"тут швидше без прискорення",autoPlainNote:"Авто запустить без прискорення: {n} одразу і ~{depth} контексту — без нього виміряно швидше (прискорення ×{k})",accelDrafters:"Чернетки для цієї моделі",drKind:"чернетка",drWhere:"де",drEngine:"NInferno",drPrecision:"точність чернетки",drResult:"результат",drYes:"працює",drNo:"поки ні",drNoTip:"NInferno поки не запускає чернетки цього виду",drOwn:"власна у моделі",drOfficial:"офіційна",drCommunity:"спільнота",drOurs:"★ наш вимір",drOthers:"≈ виміри інших",drNone:"не виміряно",drInCkpt:"усередині моделі: нічого завантажувати",drOnDownload:"конвертується під час завантаження",precTitle:"Точність чернетки",precText:"Чернетка лише пропонує токени, а модель перевіряє кожен, тож її точність змінює швидкість, але не відповідь. Чернетка нижчої точності дешевша за раунд і вгадує майже так само: gpt-oss-20b на RTX 4090 при температурі 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno бере точність, виміряну найшвидшою для моделі; без виміру — q4 до моделі у 8 біт і менше та bf16 до точної",manualPick:"запускати з",manualNote:"працює як обрано, навіть там, де авто вимкнуло б прискорення",
+  parTip:"Скільки запитів сервер обслуговує одночасно, від 1 до 8 (межа сервера)\nу кожного свій кеш; сумарна швидкість росте повільніше за кількість запитів",
+  accel:"Прискорення генерації",accelAuto:"Авто (рекомендуємо)",accelOff:"Вимк",accelManual:"Вручну",accelTip:"Маленька чернетка вгадує токени наперед, модель перевіряє їх за один крок: відповідь та сама, лише швидше. Авто запускає те, що виміряно найшвидшим для цієї моделі й карти",accelByTask:"за задачами",famCode:"код",famMath:"математика",famProse:"проза",famThinking:"міркування",accelWeighted:"зважено",passSampled:"за температури моделі",passGreedy:"жадібно",accelWeightedTip:"Середній виграш за сумішшю задач: код 25 %, математика 20 %, проза 30 %, міркування 25 %; під час вибірки з температурою моделі",accelGoals:"Чого чекати",goalOne:"один запит",goalLoad:"{n} запитів одразу",goalLong:"довгий контекст (~{depth})",goalOffBetter:"тут швидше без прискорення",autoPlainNote:"Авто запустить без прискорення: {n} одразу і ~{depth} контексту — без нього виміряно швидше (прискорення ×{k})",accelDrafters:"Чернетки для цієї моделі",drKind:"чернетка",drWhere:"де",drEngine:"NInferno",drPrecision:"точність чернетки",drResult:"результат",drYes:"працює",drNo:"поки ні",drNoTip:"NInferno поки не запускає чернетки цього виду",drOwn:"власна у моделі",drOfficial:"офіційна",drCommunity:"спільнота",drOurs:"★ наш вимір",drOthers:"≈ виміри інших",drNone:"не виміряно",drInCkpt:"усередині моделі: нічого завантажувати",drOnDownload:"конвертується під час завантаження",precTitle:"Точність чернетки",precText:"Чернетка лише пропонує токени, а модель перевіряє кожен, тож її точність змінює швидкість, але не відповідь. Чернетка нижчої точності дешевша за раунд і вгадує майже так само: gpt-oss-20b на RTX 4090 при температурі 1 — bf16 ×1,19, q8 ×1,29, q4 ×1,36. NInferno бере точність, виміряну найшвидшою для моделі; без виміру — q4 до моделі у 8 біт і менше та bf16 до 16-бітної",manualPick:"запускати з",manualNote:"працює як обрано, навіть там, де авто вимкнуло б прискорення",
   specTip:"Маленька модель-чернетка вгадує кілька токенів наперед, основна перевіряє їх за один крок: та сама відповідь, швидше\n×N — виграш, виміряний на картах цього класу",
   kvType:"KV-кеш",kvTip:"Як зберігається кеш контексту\nменше байтів — більше контексту й потоків, ціною невеликої точності на довгих текстах",
   kv_bf16:"BF16: 2 байти, без втрат",kv_int8:"INT8: удвічі менше пам'яті, майже без втрат",kv_fp8:"FP8: удвічі менше пам'яті, RTX 40/50",
   kv_nvfp4:"NVFP4: учетверо менше пам'яті, на довгому контексті втрати помітніші",kv_k8v4:"Ключі FP8, значення NVFP4: близько 40 % від BF16",
-  kvNeeds256:"не для цієї моделі: компактний KV лише для голів розміру 256",kvNeedsFp8:"потрібна RTX 40 або 50 (FP8)",kvUnknownHead:"розмір голови моделі невідомий: лише BF16",
+  kvNeeds256:"не для цієї моделі: компактний KV лише для голів розміру 256",kvNeedsFp8:"потрібна compute capability 8.9 або новіша (FP8): RTX 40/50, L4/L40, H100",kvUnknownHead:"розмір голови моделі невідомий: лише BF16",
   memTip:"Скільки відеопам'яті займе запуск: ваги, чернетка, KV-кеш, стани, буфери і CUDA",
   bits:"Біт",prefill:"Префіл",decode:"Декод",perSec:"ток/с",
   decodeAllTip:"Усі паралельні запити разом\nне N × один запит: запити ділять смугу пам'яті карти, а MoE на більшій кількості запитів читає більше експертів; масштаб — за нашими замірами",
@@ -413,6 +416,101 @@ T.uk = {sup_format:"Не підтримується формат ваг\nарх�
   selected:"Вибрано",unsupportedRun:"Цю архітектуру рушій не запускає",launching:"Запуск…",maxCtx:"макс",visionProj:"проєктор зображень",
   hubTip:"Де шукати й звідки завантажувати",searchHub:"Пошук у {hub} (можна org/name)",
   chatTitle:"Чат",closeChat:"Закрити чат",newTab:"Відкрити в новій вкладці",language:"Мова",memDetail:"ваги {w} + KV {kv} + інше {o}"};
+// The activation precision control (--activations auto|16|8|4), in English, Russian and Ukrainian;
+// the other languages fall back to English.
+Object.assign(T.en, {
+  act:"Activation precision",actAuto:"Auto",actBits:"{n} bit",
+  actTip:"How precisely the intermediate values are computed when they meet the compressed weights\nAuto: what was recorded in the model when it was converted. 16: 16-bit everywhere (BF16; f16 on RTX 20 and V100), the same answer whatever the load. 8 and 4: faster than 16 on long prompts, may lower quality a little; on GGUF models 8 is the same as Auto. The KV cache is its own choice (KV cache)",
+  act_auto:"Auto: what was recorded in the model when it was converted (4 bit on calibrated NVFP4 weights on RTX 50, sm_120/121; 8 bit on long prompts for GGUF and other integer formats)",
+  act_16:"16 bit: every intermediate value 16-bit (BF16; f16 on RTX 20 and V100); the answer does not depend on the load or on how the prompt is cut",
+  act_8:"8 bit: 8-bit values (int8, FP8 E4M3 or MXFP8, by the weights' format) wherever a kernel has them; the output layer stays 16-bit",
+  act_4:"4 bit: FP4 on calibrated NVFP4 weights (RTX 50, sm_120/121), 8 bit elsewhere",
+  act4Card:"this build runs 4-bit activations only on RTX 50 (sm_120/121)",
+  act4Weights:"these weights have no 4-bit route: 4 bit needs calibrated NVFP4 weights",
+  act8Float:"these weights (BF16, F16, ternary) have no 8-bit route: the weights are the reason, not the GPU",
+  act8Fp8:"FP8 weights take 8-bit activations only from compute capability 8.9: RTX 40/50, L4/L40 or H100",
+  actMode:"Mode",actQuality:"Quality relative to 16 bit",actSource:"Source",actRef:"reference",noEstimate:"no estimate",
+  actVerified:"verified · {gpu} · {run}",actPpl:"perplexity {ppl}",
+  actKld:"KL divergence of the next-word distribution {kld} (p99 {p99}); the top word matches in {top1} %",
+  actGrade0:"as 16 bit",actGrade1:"almost as 16 bit",actGrade2:"a little below 16 bit",actGrade3:"noticeably below 16 bit",
+  actTop1:"{grade}: the next word matches in {top1} %",
+  actFaster:"Auto is slower than {n} on this model and GPU: {n} computes more matrices with narrower activations here",actSame:"= Auto (same kernels)",actSameNums:"same kernels as Auto",
+  actSameTip:"On this model and GPU this mode runs the same kernels as Auto: the same speed and the same answers",
+  actPending:"checked after download",
+  actPendingTip:"Whether the server takes this mode is known once the model is converted on this machine; until then the page guesses from the name",
+  actChecking:"checking the modes…",actCheckFail:"the server's check failed: {e}",
+  actNoData:"The lab has no measurement of the precision modes for this card and quantization.",
+  actNote:"Numbers come only from lab measurements of this exact card (by its PCI id) and quantization. Quality: how often the next word matches the 16-bit computation (KL divergence in the tooltip). The server writes what each mode resolved to in the log (activations | ...) and refuses a mode no matrix can take.",
+  actCount:"{bits}-bit {n}",actMatrices:"matrices: {list}",actExperts:"the expert matrices are an estimate until the model loads",
+  actWider:"kept wider:",
+  actKvHint:"The KV cache stays {bits}-bit; pick KV BF16 (16-bit) for full precision",
+  actCtxLess:"At 16 bit less context fits in memory: {n} instead of {m} per request (the model's state takes twice the bytes)",
+  actRunning:"Activation precision: {req}",kvFamily:"the model's own",
+  runWith:"Starts with what you chose for this model: {what}",
+  runAuto:"Starts with Auto: precision Auto, the model's own KV cache, automatic context, 1 request. Open the model in Find to choose others",
+});
+Object.assign(T.ru, {
+  act:"Точность вычислений",actAuto:"Авто",actBits:"{n} бит",
+  actTip:"С какой точностью считаются промежуточные значения при умножении на сжатые веса\nАвто — то, что записано в модели при конвертации. 16 — везде 16 бит (BF16; на RTX 20 и V100 — f16), ответ не зависит от нагрузки. 8 и 4 — быстрее 16 на длинных запросах, но могут немного снизить качество; на моделях GGUF 8 — то же, что Авто. KV-кеш выбирается отдельно (KV-кеш)",
+  act_auto:"Авто: то, что записано в модели при конвертации (4 бита на откалиброванных весах NVFP4 на RTX 50, sm_120/121; 8 бит на длинных запросах у GGUF и других целочисленных форматов)",
+  act_16:"16 бит: все промежуточные значения 16-битные (BF16; на RTX 20 и V100 — f16); ответ не зависит от нагрузки и от того, как разрезан запрос",
+  act_8:"8 бит: 8-битные значения (int8, FP8 E4M3 или MXFP8 — по формату весов) везде, где у ядра есть такой путь; выходной слой остаётся 16-битным",
+  act_4:"4 бита: FP4 на откалиброванных весах NVFP4 (RTX 50, sm_120/121), в остальных местах 8 бит",
+  act4Card:"эта сборка считает с 4 битами только на RTX 50 (sm_120/121)",
+  act4Weights:"у этих весов нет 4-битного пути: нужны откалиброванные веса NVFP4",
+  act8Float:"у этих весов (BF16, F16, тернарные) нет 8-битного пути: дело в весах, а не в видеокарте",
+  act8Fp8:"веса FP8 считаются с 8 битами только начиная с compute capability 8.9: RTX 40/50, L4/L40 или H100",
+  actMode:"Режим",actQuality:"Качество относительно 16 бит",actSource:"Источник",actRef:"эталон",noEstimate:"нет оценки",
+  actVerified:"проверено · {gpu} · {run}",actPpl:"перплексия {ppl}",
+  actKld:"KL-дивергенция распределения следующего слова {kld} (p99 {p99}); самое вероятное слово совпадает в {top1} %",
+  actGrade0:"как 16 бит",actGrade1:"почти как 16 бит",actGrade2:"чуть хуже 16 бит",actGrade3:"заметно хуже 16 бит",
+  actTop1:"{grade}: следующее слово совпадает в {top1} %",
+  actFaster:"Здесь Авто медленнее режима {n}: в режиме {n} больше слоёв считается с меньшей точностью вычислений и быстрее",actSame:"= Авто (те же ядра)",actSameNums:"те же ядра, что Авто",
+  actSameTip:"На этой модели и карте режим запускает те же ядра, что Авто: та же скорость и те же ответы",
+  actPending:"проверится после загрузки",
+  actPendingTip:"Примет ли сервер этот режим, станет известно, когда модель будет сконвертирована на этом компьютере; до тех пор страница судит по названию",
+  actChecking:"проверяю режимы…",actCheckFail:"проверка на сервере не удалась: {e}",
+  actNoData:"Замеров режимов точности для этой карты и этого кванта в лаборатории нет.",
+  actNote:"Числа — только из лабораторных замеров ровно этой карты (по PCI id) и этого кванта. Качество — как часто следующее слово совпадает с 16-битным расчётом (KL-дивергенция — в подсказке). Сервер пишет в журнал, во что превратился режим (activations | ...), и отказывается от режима, который не может взять ни одна матрица.",
+  actCount:"{bits} бит: {n}",actMatrices:"матрицы: {list}",actExperts:"число матриц экспертов уточнится при загрузке",
+  actWider:"оставлены шире:",
+  actKvHint:"KV-кеш остаётся {bits}-битным; для полной точности выберите KV BF16 (16 бит)",
+  actCtxLess:"При 16 битах в память помещается меньше контекста: {n} вместо {m} на запрос (состояние модели занимает вдвое больше)",
+  actRunning:"Точность вычислений: {req}",kvFamily:"как у модели",
+  runWith:"Запустится с тем, что выбрано для этой модели: {what}",
+  runAuto:"Запустится с Авто: точность Авто, KV-кеш модели, контекст автоматически, 1 запрос. Чтобы выбрать другое, откройте модель во вкладке «Найти»",
+});
+Object.assign(T.uk, {
+  act:"Точність обчислень",actAuto:"Авто",actBits:"{n} біт",
+  actTip:"З якою точністю рахуються проміжні значення під час множення на стиснуті ваги\nАвто — те, що записано в моделі під час конвертації. 16 — скрізь 16 біт (BF16; на RTX 20 і V100 — f16), відповідь не залежить від навантаження. 8 і 4 — швидші за 16 на довгих запитах, але можуть трохи знизити якість; на моделях GGUF 8 — те саме, що Авто. KV-кеш обирається окремо (KV-кеш)",
+  act_auto:"Авто: те, що записано в моделі під час конвертації (4 біти на відкаліброваних вагах NVFP4 на RTX 50, sm_120/121; 8 біт на довгих запитах у GGUF та інших цілочисельних форматів)",
+  act_16:"16 біт: усі проміжні значення 16-бітні (BF16; на RTX 20 і V100 — f16); відповідь не залежить від навантаження і від того, як розрізано запит",
+  act_8:"8 біт: 8-бітні значення (int8, FP8 E4M3 або MXFP8 — за форматом ваг) скрізь, де ядро має такий шлях; вихідний шар лишається 16-бітним",
+  act_4:"4 біти: FP4 на відкаліброваних вагах NVFP4 (RTX 50, sm_120/121), деінде 8 біт",
+  act4Card:"ця збірка рахує з 4 бітами лише на RTX 50 (sm_120/121)",
+  act4Weights:"ці ваги не мають 4-бітного шляху: потрібні відкалібровані ваги NVFP4",
+  act8Float:"ці ваги (BF16, F16, тернарні) не мають 8-бітного шляху: причина у вагах, а не у відеокарті",
+  act8Fp8:"ваги FP8 рахуються з 8 бітами лише від compute capability 8.9: RTX 40/50, L4/L40 або H100",
+  actMode:"Режим",actQuality:"Якість щодо 16 біт",actSource:"Джерело",actRef:"еталон",noEstimate:"немає оцінки",
+  actVerified:"перевірено · {gpu} · {run}",actPpl:"перплексія {ppl}",
+  actKld:"KL-дивергенція розподілу наступного слова {kld} (p99 {p99}); найімовірніше слово збігається в {top1} %",
+  actGrade0:"як 16 біт",actGrade1:"майже як 16 біт",actGrade2:"трохи гірше за 16 біт",actGrade3:"помітно гірше за 16 біт",
+  actTop1:"{grade}: наступне слово збігається в {top1} %",
+  actFaster:"Тут Авто повільніший за режим {n}: у режимі {n} більше шарів рахується з меншою точністю обчислень і швидше",actSame:"= Авто (ті самі ядра)",actSameNums:"ті самі ядра, що Авто",
+  actSameTip:"На цій моделі й карті режим запускає ті самі ядра, що Авто: та сама швидкість і ті самі відповіді",
+  actPending:"перевіриться після завантаження",
+  actPendingTip:"Чи прийме сервер цей режим, стане відомо, коли модель буде сконвертовано на цьому комп'ютері; доти сторінка судить за назвою",
+  actChecking:"перевіряю режими…",actCheckFail:"перевірка на сервері не вдалася: {e}",
+  actNoData:"Вимірів режимів точності для цієї карти й цього кванта в лабораторії немає.",
+  actNote:"Числа — лише з лабораторних вимірів саме цієї карти (за PCI id) і цього кванта. Якість — як часто наступне слово збігається з 16-бітним розрахунком (KL-дивергенція — у підказці). Сервер пише в журнал, у що перетворився режим (activations | ...), і відмовляється від режиму, який не може взяти жодна матриця.",
+  actCount:"{bits} біт: {n}",actMatrices:"матриці: {list}",actExperts:"кількість матриць експертів уточниться під час завантаження",
+  actWider:"залишено ширшими:",
+  actKvHint:"KV-кеш лишається {bits}-бітним; для повної точності оберіть KV BF16 (16 біт)",
+  actCtxLess:"При 16 бітах у пам'ять уміщується менше контексту: {n} замість {m} на запит (стан моделі займає вдвічі більше)",
+  actRunning:"Точність обчислень: {req}",kvFamily:"як у моделі",
+  runWith:"Запуститься з тим, що обрано для цієї моделі: {what}",
+  runAuto:"Запуститься з Авто: точність Авто, KV-кеш моделі, контекст автоматично, 1 запит. Щоб обрати інше, відкрийте модель у вкладці «Знайти»",
+});
 // The other languages: the words on buttons, tabs, columns and controls; tooltips in English.
 T.de = {tabModels:"Meine Modelle",tabFind:"Suchen",tabDownloads:"Downloads",myModels:"Meine Modelle",arch:"Architektur",params:"Parameter",publisher:"Herausgeber",model:"Modell",
   quant:"Quant",size:"Größe",modified:"Geändert",run:"Starten",chat:"Chat",stop:"Stopp",log:"Log",del:"Löschen",delq:"Löschen?",yes:"Ja",no:"Nein",
@@ -502,7 +600,7 @@ Object.assign(T.uk, {search:"Пошук на Hugging Face (можна org/name)"
   onlyFull:"Лише з повною підтримкою"});
 // The longer strings (tooltips, the recommendation's reasons) of the seven languages beyond English,
 // Russian and Ukrainian.
-Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",delOriginals:"Originale löschen",originalsKept:"Originale behalten",
+Object.assign(T.de, {original:"Original",delOriginals:"Originale löschen",originalsKept:"Originale behalten",
   search:"Hugging Face durchsuchen (auch org/name)",picks:"Unsere Auswahl",hub:"Hugging Face",over8:"> 8 Bit",drafter:"Entwurfsmodell",
   kvUnknown:"Kontextkosten unbekannt: nur die Gewichte gezählt",need:"braucht",of:"von",measured:"Tok/s auf dieser Karte (unsere Prüfstände)",llama:"llama.cpp",
   downloads:"Downloads",likes:"Likes",localonly:"nur localhost",exposed:"im Netz offen, mit Schlüssel",nogpu:"keine NVIDIA-GPU sichtbar",vision:"versteht Bilder",
@@ -561,7 +659,7 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   sup_checking:"Modelldatei wird geprüft…",basisHub:"Architektur laut Hub ({src})",basisOwn:"Architektur aus der Modelldatei gelesen: {file}",
   srcGguf:"der Kopf einer GGUF-Datei",srcConfig:"config.json",srcTag:"das model_type-Tag des Repositorys",memDetail:"Gewichte {w} + KV {kv} + Sonstiges {o}"});
 
-Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",delOriginals:"Supprimer les originaux",originalsKept:"originaux conservés",
+Object.assign(T.fr, {original:"original",delOriginals:"Supprimer les originaux",originalsKept:"originaux conservés",
   search:"Chercher sur Hugging Face (org/nom aussi)",picks:"Notre sélection",hub:"Hugging Face",over8:"> 8 bits",drafter:"brouillon",
   kvUnknown:"coût du contexte inconnu : seuls les poids sont comptés",need:"demande",of:"sur",measured:"tok/s sur cette carte (nos bancs)",llama:"llama.cpp",
   downloads:"téléchargements",likes:"j'aime",localonly:"localhost uniquement",exposed:"ouvert au réseau, avec clé",nogpu:"aucun GPU NVIDIA visible",vision:"accepte des images",
@@ -620,7 +718,7 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   sup_checking:"Vérification du fichier du modèle…",basisHub:"Architecture selon le hub ({src})",basisOwn:"Architecture lue dans le fichier du modèle : {file}",
   srcGguf:"l'en-tête d'un fichier GGUF",srcConfig:"config.json",srcTag:"l'étiquette model_type du dépôt",memDetail:"poids {w} + KV {kv} + autre {o}"});
 
-Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",delOriginals:"Borrar originales",originalsKept:"originales conservados",
+Object.assign(T.es, {original:"original",delOriginals:"Borrar originales",originalsKept:"originales conservados",
   search:"Buscar en Hugging Face (también org/nombre)",picks:"Nuestra selección",hub:"Hugging Face",over8:"> 8 bits",drafter:"borrador",
   kvUnknown:"coste del contexto desconocido: solo se cuentan los pesos",need:"necesita",of:"de",measured:"tok/s en esta tarjeta (nuestros bancos)",llama:"llama.cpp",
   downloads:"descargas",likes:"me gusta",localonly:"solo localhost",exposed:"abierto a la red, con clave",nogpu:"no se ve ninguna GPU NVIDIA",vision:"acepta imágenes",
@@ -679,7 +777,7 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   sup_checking:"Comprobando el archivo del modelo…",basisHub:"Arquitectura según el hub ({src})",basisOwn:"Arquitectura leída del archivo del modelo: {file}",
   srcGguf:"la cabecera de un archivo GGUF",srcConfig:"config.json",srcTag:"la etiqueta model_type del repositorio",memDetail:"pesos {w} + KV {kv} + otros {o}"});
 
-Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",delOriginals:"Elimina originali",originalsKept:"originali conservati",
+Object.assign(T.it, {original:"originale",delOriginals:"Elimina originali",originalsKept:"originali conservati",
   search:"Cerca su Hugging Face (anche org/nome)",picks:"La nostra selezione",hub:"Hugging Face",over8:"> 8 bit",drafter:"bozza",
   kvUnknown:"costo del contesto sconosciuto: contati solo i pesi",need:"richiede",of:"di",measured:"tok/s su questa scheda (i nostri banchi)",llama:"llama.cpp",
   downloads:"download",likes:"mi piace",localonly:"solo localhost",exposed:"aperto alla rete, con chiave",nogpu:"nessuna GPU NVIDIA visibile",vision:"accetta immagini",
@@ -738,7 +836,7 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   sup_checking:"Verifica del file del modello…",basisHub:"Architettura secondo l'hub ({src})",basisOwn:"Architettura letta dal file del modello: {file}",
   srcGguf:"l'intestazione di un file GGUF",srcConfig:"config.json",srcTag:"il tag model_type del repository",memDetail:"pesi {w} + KV {kv} + altro {o}"});
 
-Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOriginals:"Usuń oryginały",originalsKept:"oryginały zachowane",
+Object.assign(T.pl, {original:"oryginał",delOriginals:"Usuń oryginały",originalsKept:"oryginały zachowane",
   search:"Szukaj w Hugging Face (także org/nazwa)",picks:"Nasz wybór",hub:"Hugging Face",over8:"> 8 bitów",drafter:"model szkicu",
   kvUnknown:"koszt kontekstu nieznany: liczone tylko wagi",need:"wymaga",of:"z",measured:"tok/s na tej karcie (nasze stanowiska)",llama:"llama.cpp",
   downloads:"pobrania",likes:"polubienia",localonly:"tylko localhost",exposed:"otwarte w sieci, z kluczem",nogpu:"nie widać GPU NVIDIA",vision:"przyjmuje obrazy",
@@ -797,7 +895,7 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   sup_checking:"Sprawdzanie pliku modelu…",basisHub:"Architektura według huba ({src})",basisOwn:"Architektura odczytana z pliku modelu: {file}",
   srcGguf:"nagłówek jednego pliku GGUF",srcConfig:"config.json",srcTag:"tag model_type repozytorium",memDetail:"wagi {w} + KV {kv} + inne {o}"});
 
-Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOriginals:"删除原始文件",originalsKept:"保留原始文件",
+Object.assign(T.zh, {original:"原始",delOriginals:"删除原始文件",originalsKept:"保留原始文件",
   search:"搜索 Hugging Face（也可输入 org/name）",picks:"我们的推荐",hub:"Hugging Face",over8:"> 8 位",drafter:"草稿模型",
   kvUnknown:"上下文开销未知：仅计算权重",need:"需要",of:"/",measured:"本卡上的 tok/s（我们的测试台）",llama:"llama.cpp",
   downloads:"下载",likes:"点赞",localonly:"仅本机",exposed:"对网络开放，需密钥",nogpu:"未检测到 NVIDIA GPU",vision:"支持图像",
@@ -856,7 +954,7 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   sup_checking:"正在检查模型文件…",basisHub:"hub 给出的架构（{src}）",basisOwn:"从模型文件读取的架构：{file}",
   srcGguf:"一个 GGUF 文件的头部",srcConfig:"config.json",srcTag:"仓库的 model_type 标签",memDetail:"权重 {w} + KV {kv} + 其他 {o}"});
 
-Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジナル",delOriginals:"オリジナルを削除",originalsKept:"オリジナルを保持",
+Object.assign(T.ja, {original:"オリジナル",delOriginals:"オリジナルを削除",originalsKept:"オリジナルを保持",
   search:"Hugging Face を検索（org/name も可）",picks:"おすすめ",hub:"Hugging Face",over8:"> 8 ビット",drafter:"ドラフトモデル",
   kvUnknown:"コンテキストのコストは不明：重みのみを計上",need:"必要",of:"/",measured:"このカードでの tok/s（当社のテスト環境）",llama:"llama.cpp",
   downloads:"ダウンロード",likes:"いいね",localonly:"localhost のみ",exposed:"ネットワークに公開、キー必須",nogpu:"NVIDIA GPU が見つかりません",vision:"画像に対応",
@@ -1135,7 +1233,7 @@ async function refreshState() {
     const runs = serving.filter(p => p.gpu === g.index).map(p => {
       const st = p.state === "ready" ? `<span class="pill ok">${t("ready")}</span>` : `<span class="pill warn">${p.percent >= 0 ? p.percent + "%" : t("starting")}</span>`;
       const fb = p.speculation_fallback ? `<span class="pill warn" title="${esc(p.speculation_fallback)}">${t("specFallback")}</span>` : "";
-      return `<div class="run"><span class="nm" title="${esc(p.model + (p.speculation ? "\n" + t("speculation") + ": " + p.speculation : ""))}">${esc(shortName(p.model))}</span>${st}${fb}
+      return `<div class="run"><span class="nm" title="${esc(p.model + (p.speculation ? "\n" + t("speculation") + ": " + p.speculation : ""))}">${esc(shortName(p.model))}</span>${st}${fb}${actPill(p)}
         ${p.state === "ready" ? `<button class="primary" data-chat="${p.id}">${t("chat")}</button>` : ""}
         <button class="ghost" data-log="${p.id}">${t("log")}</button><button class="ghost danger" data-stop="${p.id}">■</button></div>`;
     }).join("");
@@ -1148,6 +1246,17 @@ async function refreshState() {
   }).join("");
   renderDownloads();
   if (logId) refreshLog();
+}
+// The precision a running model resolved (its /v1/models meta): "8 → 8-bit 560 · 16-bit 48 ⚠", the
+// matrices left wider and the server's notes in the tooltip.
+function actPill(p) {
+  const a = p.activations;
+  if (!a || !a.requested) return "";
+  const kept = a.kept_wider || [], notes = a.notes || [], counts = actCounts(a.resolved);
+  const tip = [fill(t("actRunning"), {req: actName(a.requested)}), counts, ...(kept.length ? [t("actWider"), ...kept] : []), ...notes,
+               p.kv_cache ? t("kvType") + ": " + p.kv_cache.toUpperCase() : ""].filter(Boolean).join("\n");
+  const warn = kept.length || notes.length;
+  return `<span class="pill ${warn ? "warn" : ""}" data-tip="${esc(tip)}">${esc(a.requested === "auto" ? t("actAuto") : a.requested)}${counts ? " → " + esc(counts) : ""}${warn ? " ⚠" : ""}</span>`;
 }
 function shortName(m) {
   const base = m.split("/").pop();
@@ -1177,6 +1286,11 @@ function setTab(name) {
 
 // ---- my models ------------------------------------------------------------------------------
 let mine = [];
+// What "Run" starts a listed model with: the drawer's choice for it, else Auto and the defaults.
+function runTip(m) {
+  const c = chosen[choiceKey(m.repo, m.quant)];
+  return c ? fill(t("runWith"), {what: choiceText(c)}) : t("runAuto");
+}
 const confirming = new Set();
 async function refreshMine() {
   let j;
@@ -1203,8 +1317,7 @@ async function refreshMine() {
       <td>${m.quant ? `<span class="chip">${esc(m.quant)}</span>` : ""}</td>
       <td class="num">${m.size_gib.toFixed(1)} GiB</td>
       <td class="muted">${esc(ago(m.modified))}</td>
-      <td><div class="acts">${m.running ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
-        <button class="ghost" data-tune="${i}" title="${t("calibrate")}">⚙</button>${del}</div></td></tr>`;
+      <td><div class="acts">${m.running ? "" : `<span data-tip="${esc(runTip(m))}"><button class="primary" data-run="${i}">${t("run")}</button></span>`}${del}</div></td></tr>`;
   }).join("");
 }
 
@@ -1416,9 +1529,189 @@ const KV = {bf16: 2, int8: 264 / 256, fp8: 258 / 256, nvfp4: 144 / 256, k8v4: 40
 // The KV storage: the one the user picked, else the server's default for the model's family
 // (ninferno-serve, product::default_kv_storage: int8 for Qwen 3.5's, BF16 for the others).
 let kvType = "bf16", kvChosen = false;
+// --activations: the narrowest activation width the quantized weights may compute with (auto, 16, 8
+// or 4), sent to the launch. The KV cache stays its own choice (kvType) under every mode.
+const ACT = ["auto", "16", "8", "4"];
+let actMode = "auto";
+// What the weights are, as far as the listing says: NVFP4, MXFP4, FP8, a float GGUF (BF16/F16/F32),
+// a ternary one (TQ1_0/TQ2_0), another GGUF (integer blocks), or other (safetensors converted by a
+// recipe: the server decides).
+function weightKind(q, repo) {
+  const name = ((q && q.quant) || "") + " " + (repo || "");
+  if (/nvfp4/i.test(name)) return "nvfp4";
+  if (q && q.format === "gguf") {
+    if (/^(bf16|f16|f32)$/i.test(q.quant || "")) return "float";
+    if (/^tq[12]_0$/i.test(q.quant || "")) return "ternary";
+    return "int";
+  }
+  if (/mxfp4/i.test(name)) return "mxfp4";
+  if (/fp8/i.test(name)) return "fp8";
+  return "other";
+}
+// The server's own answer for the selected model on this GPU (/api/precision: ninferno-serve's
+// resolver of every mode, CPU only), by "gpu|model|quant": {state: loading|done|failed, data, error}.
+const preflights = {};
+function preflightTarget(q) {
+  if (!selected || !q) return null;
+  const here = localFor(selected.repo, q.quant);
+  const model = here ? here.artifact : selected.repo, quant = here ? "" : q.quant || "";
+  return {model, quant, key: JSON.stringify([gpu, model, quant])};
+}
+function preflightKey(q) { const x = preflightTarget(q); return x ? x.key : ""; }
+function preflightOf(q) {
+  const target = preflightTarget(q);
+  if (!target) return null;
+  const {model, quant, key} = target;
+  if (!preflights[key]) {
+    const entry = preflights[key] = {state: "loading"};
+    api(`/api/precision?gpu=${gpu}&model=${encodeURIComponent(model)}&quant=${encodeURIComponent(quant)}`)
+      .then(j => { entry.state = "done"; entry.data = j; }, e => { entry.state = "failed"; entry.error = e.message; })
+      .then(() => { if (preflightKey(quantSel) === key) renderBody(); });
+  }
+  return preflights[key];
+}
+// One mode as far as anyone knows here:
+//   why        the reason it does not run ("" when it does);
+//   pending    the server checks it only after the download (the page guessed from the name);
+//   same       it runs the same kernels as Auto;
+//   resolved   {"4","8","16"} matrix counts, kept (matrices left wider), notes (the server's).
+// From the server's check where the model is converted here; before that, from the weights' kind:
+// a GGUF integer, MXFP4 or FP8 model runs 8 as Auto does (the converter already lets those take 8
+// bits), and the cases the name cannot settle (FP8 on 8, NVFP4 calibration on 4, a recipe's
+// output) are marked pending.
+function actInfo(mode, q) {
+  const p = preflightOf(q), checked = p && p.state === "done" && p.data.status === "checked" ? p.data : null;
+  const row = checked && (checked.modes || []).find(x => x.mode === mode);
+  if (row) {
+    return {why: row.refused ? row.refusal || t("noEstimate") : "", pending: false, same: !!row.same_as_auto,
+            resolved: row.resolved || null, kept: row.kept_wider || [], notes: row.notes || [],
+            faster: row.faster_than_auto || "", experts: !!checked.experts_settle_at_load};
+  }
+  const g = gpuOf(), cc = g ? parseFloat(g.cc) : 0, kind = weightKind(q, selected && selected.repo);
+  const out = {why: "", pending: false, same: false, resolved: null, kept: [], notes: [], faster: "", experts: false};
+  // Nothing picked yet (the listing is being read): only what the card alone rules out.
+  if (mode === "auto" || mode === "16" || (!q && mode !== "4")) return out;
+  if (!q) { if (g && cc < 12) out.why = t("act4Card"); return out; }
+  if (mode === "4") {
+    if (g && cc < 12) out.why = t("act4Card");
+    else if (kind !== "nvfp4") out.why = t("act4Weights");
+    else out.pending = true; // calibrated NVFP4 only (and then 4 is Auto): the header says
+    return out;
+  }
+  if (kind === "float" || kind === "ternary") out.why = t("act8Float");
+  else if (kind === "fp8" && g && cc < 8.9) out.why = t("act8Fp8");
+  else {
+    out.same = kind === "int" || kind === "mxfp4" || kind === "fp8";
+    // FP8 has 8-bit kernels for some shapes only; a recipe may keep BF16 weights.
+    out.pending = kind === "fp8" || kind === "other";
+  }
+  return out;
+}
+function actWhyNot(mode, q) { return actInfo(mode, q).why; }
+function actNow(q) { return actWhyNot(actMode, q) ? "auto" : actMode; }
+const actName = m => m === "auto" ? t("actAuto") : fill(t("actBits"), {n: m});
+// "8-bit 560 · 16-bit 48": the matrices of each width, widest last; "" when none are counted.
+function actCounts(resolved) {
+  if (!resolved) return "";
+  return ["4", "8", "16"].filter(b => resolved[b] > 0).map(b => fill(t("actCount"), {bits: b, n: resolved[b]})).join(" · ");
+}
+// The lab's row of one mode for this card and quantization (catalog precision, generated from the
+// measured data): the card by its PCI device id, never by name; null when the lab has none.
+function actRow(mode, q) {
+  const cat = selected && selected.catalog, g = gpuOf();
+  if (!cat || !cat.precision || !g || !g.pci_device_id || !q) return null;
+  const id = parseInt(g.pci_device_id, 16);
+  return cat.precision.find(r => r.mode === mode && r.quant === q.quant &&
+                            (r.pci || []).some(x => parseInt(x, 16) === id)) || null;
+}
+function actTipOf(m, q) {
+  const a = actInfo(m, q), lines = [t("act_" + m)];
+  if (a.why) lines.push(a.why);
+  if (a.same && m !== "auto") lines.push(t("actSameTip"));
+  if (a.pending) lines.push(t("actPendingTip"));
+  const counts = actCounts(a.resolved);
+  if (counts) lines.push(fill(t("actMatrices"), {list: counts}) + (a.experts ? " (" + t("actExperts") + ")" : ""));
+  if (a.kept.length) lines.push(t("actWider"), ...a.kept);
+  lines.push(...a.notes);
+  return lines.join("\n");
+}
+function renderAct(q) {
+  const el = $("actsel");
+  if (!el) return;
+  el.innerHTML = ACT.map(m => {
+    const a = actInfo(m, q);
+    const mark = a.same && m !== "auto" ? ` <small>= ${esc(t("actAuto"))}</small>` : a.pending ? " <small>?</small>" : "";
+    return `<span data-tip="${esc(actTipOf(m, q))}"><button data-act="${m}" class="${m === actNow(q) ? "on" : ""}" ${a.why ? "disabled" : ""}>${m === "auto" ? esc(t("actAuto")) : m}${mark}</button></span>`;
+  }).join("");
+}
+// Quality as a plain grade from the top-1 agreement; the KL divergence goes in the tooltip.
+function actQuality(r) {
+  if (!r || r.kld == null) return null;
+  const top1 = r.top1 != null ? r.top1 : null;
+  const grade = top1 == null ? null : top1 >= 0.99 ? "actGrade0" : top1 >= 0.95 ? "actGrade1" : top1 >= 0.9 ? "actGrade2" : "actGrade3";
+  const tip = fill(t("actKld"), {kld: r.kld.toPrecision(2), p99: r.p99_kld != null ? r.p99_kld.toPrecision(2) : "—", top1: top1 != null ? (top1 * 100).toFixed(1) : "—"}) +
+              (r.perplexity ? "\n" + fill(t("actPpl"), {ppl: r.perplexity.toFixed(3)}) : "");
+  const text = grade ? fill(t("actTop1"), {grade: t(grade), top1: (top1 * 100).toFixed(0)}) : "KLD " + r.kld.toPrecision(2);
+  return `<span data-tip="${esc(tip)}">${esc(text)}</span>`;
+}
+// Speed and quality of every mode, from a lab row of this card and quantization only; a mode that
+// runs the same kernels as Auto shows Auto's row, said so. Nothing known: one line, no table.
+function actTable(q) {
+  const none = `<span class="muted">${esc(t("noEstimate"))}</span>`;
+  const p = preflightOf(q);
+  const autoRow = actRow("auto", q);
+  let known = false;
+  const rows = ACT.map(m => {
+    const a = actInfo(m, q), own = actRow(m, q), same = a.same && m !== "auto";
+    const r = same && autoRow ? autoRow : own;
+    if (r && !a.why) known = true;
+    const quality = m === "16" ? `<span class="muted">${esc(t("actRef"))}</span>${r && r.perplexity ? ` · ${esc(fill(t("actPpl"), {ppl: r.perplexity.toFixed(3)}))}` : ""}`
+      : actQuality(r) || none;
+    const speed = (v, spec) => v ? `≈ ${rate(v)}${spec && spec !== "none" ? ` <small class="muted">${esc(spec)}</small>` : ""}` : none;
+    const source = a.why ? esc(a.why)
+      : [same ? esc(t("actSame")) : "", a.pending ? esc(t("actPending")) : "",
+         r ? esc(fill(t("actVerified"), {gpu: r.gpu, run: r.run})) + (same && r === autoRow ? " · " + esc(t("actSameNums")) : "") : same ? "" : esc(t("noEstimate"))]
+        .filter(Boolean).join(" · ");
+    return `<div class="actrow ${m === actNow(q) ? "on" : ""} ${a.why ? "off" : ""}" data-tip="${esc(actTipOf(m, q))}"><span class="mono">${esc(actName(m))}</span>
+      <span>${quality}</span><span class="num">${speed(r && !a.why && r.decode, r && r.decode_spec)}</span><span class="num">${speed(r && !a.why && r.prefill, r && r.prefill_spec)}</span>
+      <span class="muted">${source}</span></div>`;
+  }).join("");
+  let html = "";
+  if (p && p.state === "loading") html += `<div class="note">${esc(t("actChecking"))}</div>`;
+  if (p && p.state === "failed") html += `<div class="note err">${esc(fill(t("actCheckFail"), {e: p.error}))}</div>`;
+  // What the server says beside the counts: Auto slower than 8 here (faster_than_auto, the one to
+  // act on: a warning of its own in the page's words), a mode that equals Auto.
+  const faster = actInfo("auto", q).faster;
+  if (faster) html += `<div class="note actwarn">⚠ ${esc(fill(t("actFaster"), {n: faster}))}</div>`;
+  const notes = [...new Set(ACT.flatMap(m => actInfo(m, q).notes))];
+  if (notes.length) html += notes.map(n => `<div class="note">${esc(n)}</div>`).join("");
+  html += actKvHint(q) + actCtxHint(q);
+  if (!known) return html + `<div class="note">${esc(t("actNoData"))}</div>`;
+  return html + `<div class="acttable"><div class="actrow head"><span>${t("actMode")}</span><span>${t("actQuality")}</span><span class="num">${t("decode1")}</span><span class="num">${t("prefill")}</span><span>${t("actSource")}</span></div>${rows}</div><div class="note">${esc(t("actNote"))}</div>`;
+}
+// 16 bits change the activations only: a KV cache the user (or the family's default) keeps
+// narrower stays so, which the page says next to the control.
+const KV_BITS = {int8: "8", fp8: "8", nvfp4: "4", k8v4: "8/4"};
+function actKvHint(q) {
+  if (actNow(q) !== "16" || !selected) return "";
+  const kv = kvNow(), eff = kvWhyNot(kv, selected.kv) ? "bf16" : kv;
+  return KV_BITS[eff] ? `<div class="note actwarn">${esc(fill(t("actKvHint"), {bits: KV_BITS[eff]}))}</div>` : "";
+}
+// Under 16 the recurrent state of Qwen 3.5 is fp32 (f16 under the other modes): less context fits.
+function actCtxHint(q) {
+  if (actNow(q) !== "16" || !selected) return "";
+  const n = ctxCap(q, selected.kv, parallel, "16"), m = ctxCap(q, selected.kv, parallel, "auto");
+  return n < m && capLabel(n) !== capLabel(m)
+    ? `<div class="note actwarn">${esc(fill(t("actCtxLess"), {n: capLabel(n), m: capLabel(m)}))}</div>` : "";
+}
+// The KV the server picks when none is named (family_registry.cpp automatic_kv_cache): int8 for
+// Qwen 3.5/3.6, BF16 for Nemotron-H, FP8 rows for Gemma 4 and the dense decoders on a card with
+// FP8 (cc >= 8.9), BF16 below. A type this page cannot size keeps BF16 here.
 function kvDefault(kv) {
   const arch = (kv && kv.architecture || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  return arch.startsWith("qwen35") && !kvWhyNot("int8", kv) ? "int8" : "bf16";
+  if (arch.startsWith("qwen35")) return !kvWhyNot("int8", kv) ? "int8" : "bf16";
+  if (arch.startsWith("nemotron")) return "bf16";
+  return !kvWhyNot("fp8", kv) ? "fp8" : "bf16";
 }
 function kvNow() { return kvChosen ? kvType : kvDefault(selected && selected.kv); }
 function kvWhyNot(type, kv) {
@@ -1431,13 +1724,16 @@ function kvWhyNot(type, kv) {
 }
 function kvScale(kv) { const k = kvNow(); return (kvWhyNot(k, kv) ? KV.bf16 : KV[k]) / KV.bf16; }
 function specOf() { const sp = selected && selected.spec; return useSpec && sp && sp.known && sp.config !== "plain" && !(specMode === "auto" && autoVerdict()?.plain) ? sp : null; }
-function memOf(q, kv, streams) {
+// The recurrent state follows the precision as the server's automatic state does: fp32 under 16,
+// the family's own under the other modes (f16 for Qwen 3.5; catalog.h KvModel).
+function memOf(q, kv, streams, mode = actMode) {
   const k = kv && kv.known ? kv : null, sp = specOf(), seqs = streams + 1;
+  const state = k ? (mode === "16" || k.state_bytes_auto == null ? k.state_bytes : k.state_bytes_auto) || 0 : 0;
   const ring = (w, bytes) => w > 0 ? (w + CHUNK) * bytes : 0;
   const parts = {
     weights: q.bytes,
     drafter: sp ? sp.drafter_bytes + seqs * ring(sp.drafter_window, sp.drafter_window_bytes_per_token) : 0,
-    states: k ? seqs * ((k.state_bytes || 0) + ring(k.window, k.window_bytes_per_token)) : 0,
+    states: k ? seqs * (state + ring(k.window, k.window_bytes_per_token)) : 0,
     workspace: (k ? k.workspace_bytes || 0 : 0) + RUNTIME,
   };
   const perTok = (k ? k.full_bytes_per_token * kvScale(k) : 0) + (sp ? sp.drafter_kv_bytes_per_token || 0 : 0);
@@ -1474,11 +1770,11 @@ function nativeCtx() {
   return kv && kv.native_context > 0 ? kv.native_context : h && h.context > 0 ? h.context : 262144;
 }
 // Context each of `streams` requests can hold beside the weights (fitOf's budget), up to the model's own.
-function ctxCap(q, kv, streams) {
+function ctxCap(q, kv, streams, mode = actMode) {
   const native = nativeCtx();
   const avail = availBytes();
   if (!avail) return native;
-  const m = memOf(q, kv, streams), pool = avail - m.fixed;
+  const m = memOf(q, kv, streams, mode), pool = avail - m.fixed;
   if (pool <= 0) return 0;
   if (!(m.perTok > 0)) return native;
   return Math.min(native, Math.floor(pool / (streams * m.perTok)));
@@ -1740,7 +2036,8 @@ function sliderAt(c) {
   return hi > lo ? Math.round((Math.log(c) - lo) / (hi - lo) * SLIDER) : SLIDER;
 }
 const PRESETS = [8192, 32768, 131072, 262144, 1048576];
-const MAX_PAR = 16;
+// ninferno-serve's --max-concurrency takes 1 to 8 (kMaximumConcurrency); the launch refuses more.
+const MAX_PAR = 8;
 // The header and the controls are drawn once per model; the controls redraw only the body, so a
 // slider keeps the pointer while it is dragged.
 function renderDetail() {
@@ -1768,7 +2065,8 @@ function renderDetail() {
       <input type="range" id="ctx" min="0" max="${SLIDER}" step="1" value="${sliderAt(ctxValue)}" aria-label="${esc(t("context"))}"></div>
     <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip"))}</span><output id="parout"></output></div>
       <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}"></div>
-    <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div>
+    <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div></div>
+    <div class="ctl"><div class="row"><span>${t("act")}${info(t("actTip"))}</span><span class="kvsel" id="actsel"></span></div>
 </div></div>
     ${accelBlock(sel)}
     <div id="dbody"></div>`;
@@ -1808,6 +2106,7 @@ function renderBody() {
   }
   if (+$("par").value !== parallel) $("par").value = parallel;
   renderKv();
+  renderAct(sel.quants && sel.quants.includes(quantSel) ? quantSel : null);
   let html = "";
   if (sel.error) html += `<p class="err">${esc(sel.error)}</p>`;
   else if (!sel.quants) html += `<p class="muted"><span class="sup spin">…</span> ${t("readingRepo")} <span id="readsec"></span></p>`;
@@ -1834,6 +2133,8 @@ function renderBody() {
     } else {
       html += `<div class="pick none"><ul class="why">${r.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
     }
+    if (q) { html += actTable(q); chosen[choiceKey(sel.repo, q.quant)] = drawerChoice(q); }
+    renderAct(q);
     const ex = extrapolated(parallel) ? " ~" : "";
     const head = `<div class="q head"><span></span><span>${t("quant")}${info(t("quantTip"))}</span><span>${t("bits")}</span><span class="num">${t("size")}${info(t("sizeTip"))}</span>
       <span class="num">${t("ctxReq")}${info(t("ctxReqTip"))}</span>
@@ -2044,12 +2345,28 @@ function renderDownloads() {
 }
 
 // ---- actions ----------------------------------------------------------------------------------
-async function launch(model, quant, button) {
+// What the drawer's controls ask for the selected quantization; remembered per model (repo and
+// quantization) as the drawer shows it, so "Run" in My models starts it the same way.
+function drawerChoice(q) {
+  return {precision: actNow(q), kv_dtype: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "",
+          max_context: ctxValue, max_concurrency: parallel,
+          spec: specMode === "off" || (specMode === "auto" && autoVerdict()?.plain) ? "none" : specMode};
+}
+const chosen = {};
+const choiceKey = (repo, quant) => repo ? repo + "|" + (quant || "") : "";
+function choiceText(c) {
+  return [actName(c.precision || "auto"), "KV " + (c.kv_dtype ? c.kv_dtype.toUpperCase() : t("kvFamily")),
+          (c.max_context ? ctxLabel(c.max_context) : "auto") + " × " + (c.max_concurrency || 1),
+          c.spec && c.spec !== "auto" ? t("speculation") + ": " + c.spec : ""].filter(Boolean).join(" · ");
+}
+// `opts`: what the launch asks for (precision: --activations auto|16|8|4, kv_dtype, max_context,
+// max_concurrency, spec); a field left out is ninferno-serve's default.
+async function launch(model, quant, button, opts = {}) {
   if (button) { button.disabled = true; button.textContent = t("launching"); }
   try {
-    const j = await api("/api/launch", {model, quant, gpu, max_context: ctxValue, max_concurrency: parallel,
+    const j = await api("/api/launch", {model, quant, gpu, max_context: opts.max_context || 0, max_concurrency: opts.max_concurrency || 0,
       hub: selected && model === selected.repo ? selected.hubName : "",
-      spec: specMode === "off" || (specMode === "auto" && autoVerdict()?.plain) ? "none" : specMode, kv_dtype: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : ""});
+      spec: opts.spec || "", kv_dtype: opts.kv_dtype || "", precision: opts.precision || ""});
     openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);
   } catch (e) {
     showError(e.message);
@@ -2061,7 +2378,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.tab) setTab(d.tab);
@@ -2072,8 +2389,7 @@ document.addEventListener("click", async ev => {
   else if (d.log) { const p = S.processes.find(x => x.id === +d.log); openLog(+d.log, p ? shortName(p.model) : ""); }
   else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
   else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }
-  else if (d.run !== undefined) { const m = mine[+d.run]; launch(m.artifact, "", el); }
-  else if (d.tune !== undefined) { try { const j = await api("/api/tune", {artifact: mine[+d.tune].artifact, gpu}); openLog(j.id, t("calibrate")); } catch (e) { showError(e.message); } }
+  else if (d.run !== undefined) { const m = mine[+d.run]; launch(m.artifact, "", el, chosen[choiceKey(m.repo, m.quant)] || {}); }
   else if (d.del !== undefined) { confirming.add(mine[+d.del].artifact); refreshMine(); }
   else if (d.delno !== undefined) { confirming.delete(mine[+d.delno].artifact); refreshMine(); }
   else if (d.delyes !== undefined) {
@@ -2097,9 +2413,10 @@ document.addEventListener("click", async ev => {
   else if (d.hub) openRepo(d.hub, found.hub.find(h => h.id === d.hub));
   else if (d.repo) { selected.repo = d.repo; loadRepo(); }
   else if (d.kv) { kvType = d.kv; kvChosen = true; renderBody(); }
+  else if (d.act) { actMode = d.act; renderBody(); }
   else if (d.qi !== undefined) { const q = selected.quants[+d.qi]; if (!q.drafter && q.supported) { quantSel = q; renderBody(); } }
   else if (d.get !== undefined) prepare(selected.repo, quantSel.quant);
-  else if (d.go !== undefined) { const here = localFor(selected.repo, quantSel.quant); launch(here ? here.artifact : selected.repo, here ? "" : quantSel.quant, el); }
+  else if (d.go !== undefined) { const here = localFor(selected.repo, quantSel.quant); launch(here ? here.artifact : selected.repo, here ? "" : quantSel.quant, el, drawerChoice(quantSel)); }
 });
 
 // One tooltip for every [data-tip]: its first line bold, the rest as written.

@@ -17,6 +17,22 @@
 namespace ninferno::runtime {
 namespace {
 
+// --activations as the model's load profile: 16 keeps BF16 activations on every quantized linear, 8
+// and 4 allow eight and four bits everywhere.
+models::dense::ActivationProfile dense_profile(ActivationMode mode) {
+    switch (mode) {
+    case ActivationMode::Auto:
+        return models::dense::ActivationProfile::Artifact;
+    case ActivationMode::Bits16:
+        return models::dense::ActivationProfile::A16;
+    case ActivationMode::Bits8:
+        return models::dense::ActivationProfile::A8;
+    case ActivationMode::Bits4:
+        return models::dense::ActivationProfile::A4;
+    }
+    return models::dense::ActivationProfile::A16;
+}
+
 // The loaded decoder, its DFlash drafter (an artifact of its own) and the frontend resources its
 // tokenizer and chat template were built from.
 class DenseLoadedModel final : public LoadedModel {
@@ -44,13 +60,10 @@ FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device) {
     }
     {
         StartupPhaseScope binding(options.startup_observer, StartupPhase::TargetPlan);
-        // --activations exact: BF16 activations on every projection, and (below) the invariant
+        // --activations 16: BF16 activations on every projection, and (below) the invariant
         // route profile on every call.
-        loaded->model =
-            models::dense::Model::load(options.artifact_path, device,
-                                       options.activations == ActivationMode::Exact
-                                           ? models::dense::ActivationProfile::A16
-                                           : models::dense::ActivationProfile::Artifact);
+        loaded->model = models::dense::Model::load(options.artifact_path, device,
+                                                   dense_profile(options.activations));
         if (options.speculative.backend == SpeculativeBackend::DFlash) {
             if (options.speculative.drafter.empty()) {
                 throw std::invalid_argument(

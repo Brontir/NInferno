@@ -75,7 +75,7 @@ inline constexpr std::string_view kKvCacheStorageNames = "bf16|int8|fp8|nvfp4|k8
 }
 
 // How the linear-attention layers keep their recurrent state between calls (--state-dtype).
-// - FP32: --activations exact, and the families without an automatic choice.
+// - FP32: --activations 16, and the families without an automatic choice.
 // - BF16: half the bytes of every state slot and cached state image (Qwen 3.5 GDN layers). The
 //   recurrence still runs in FP32 registers and rounds only the state it stores, so the rounding
 //   does not feed back within a call; across calls it does, which is why it is opt-in.
@@ -124,26 +124,69 @@ parse_kv_cache_storage(std::string_view text) noexcept {
     return std::nullopt;
 }
 
-// How quantized linears treat their activations (--activations exact|fast|int8): the user's
-// choice of 16, automatic (down to 4) or 8 bits.
-// - Exact: BF16 activations on every quantized linear at every width. A request's tokens do not
-//   depend on its batch neighbours, where its prompt is cut, the prefix cache or speculation
-//   (greedy agrees up to BF16 logit ties). A model whose kernels have no BF16-activation route
-//   refuses to load under Exact rather than run another one.
-// - Fast: each weight's recorded policy with the width-dependent routes: wide calls may encode
-//   activations in four (NVFP4) or eight bits, so the answer can depend on the load.
+// How quantized linears treat their activations (--activations auto|16|8|4): the user's choice
+// of the narrowest activation width a quantized linear may compute with. A B1 (byte-class)
+// decision (docs/maintainer/deterministic-decisions.md): it reads the option, the artifact (each
+// matrix's format, recorded policy and calibration) and discrete device facts (the instruction
+// set), nothing else. The KV cache is a separate choice (--kv-dtype) under every mode.
+// - Auto: each weight's recorded policy with the width-dependent routes: wide calls may encode
+//   activations in four (calibrated NVFP4 on sm_120a) or eight bits, so the answer can depend on
+//   the load.
+// - Bits16: BF16 activations on every quantized linear at every width, under the invariant
+//   summation profile. A request's tokens do not depend on its batch neighbours, where its prompt
+//   is cut, the prefix cache or speculation (greedy agrees up to BF16 logit ties). A model whose
+//   kernels have no BF16-activation route refuses to load rather than run another one.
+// - Bits8: every quantized linear is allowed int8 activations where its route has them and none
+//   takes four, whatever the artifact recorded (a head or embedding recorded A16Only keeps BF16).
+//   A W4A16 NVFP4 checkpoint thus runs W4A8 where Auto runs W4A4.
+// - Bits4: every quantized linear is allowed four-bit activations where its route has them
+//   (NVFP4 with a calibrated activation divisor on an sm_120a build), else eight where it has
+//   those; a head or embedding recorded A16Only keeps BF16.
+// Bits8 and Bits4 may move quality, so neither is the default. A request no matrix can take
+// (8 on BF16 weights, 4 without calibrated NVFP4 on sm_120a) refuses to start; one that only some
+// matrices can take starts with a warning naming those left wider (resolve_activation_precision).
 enum class ActivationMode : std::uint8_t {
-    Fast,
-    Exact,
-    // Eight bits: every quantized linear is allowed int8 activations where its route has them
-    // and none takes four, whatever the artifact recorded (a head or embedding recorded A16Only
-    // keeps BF16). A W4A16 NVFP4 checkpoint thus runs W4A8 where Fast runs W4A4. May move
-    // quality, so never the default.
-    Int8,
+    Auto,
+    Bits16,
+    Bits8,
+    Bits4,
 };
 
 // The one place the default is chosen.
-inline constexpr ActivationMode kDefaultActivationMode = ActivationMode::Fast;
+inline constexpr ActivationMode kDefaultActivationMode = ActivationMode::Auto;
+
+// What --activations resolved to at startup over the target's matrices: how many compute with
+// which activation width under the mode on this device (the narrowest width any call of theirs
+// takes: the linear path's route, or the expert Op's for a MoE bank), and the groups of matrices
+// a request of 8 or 4 could not take to its width.
+struct ActivationPrecision {
+    ActivationMode requested = kDefaultActivationMode;
+    std::uint64_t bits4      = 0;
+    std::uint64_t bits8      = 0;
+    std::uint64_t bits16     = 0;
+    // One line per (format, width, reason) group left wider than requested:
+    // "<count> <format> matrices at <bits>-bit: <reason> (e.g. <name>)".
+    std::vector<std::string> kept_wider;
+    // The in-artifact drafter's matrices (Qwen MTP, DFlash, DFlash2 and the proposal head), which
+    // follow the mode as the target's do; all 0 for a model without one. A separate drafter
+    // artifact runs BF16 activations whatever the mode (a note says so).
+    std::uint64_t drafter_bits4  = 0;
+    std::uint64_t drafter_bits8  = 0;
+    std::uint64_t drafter_bits16 = 0;
+    // Facts about the choice the server prints and serves (meta.activations.notes): Auto slower
+    // than 8 here, a separate drafter at 16, KV kept 8-bit under 16.
+    std::vector<std::string> notes;
+    // A hash of every matrix's policy as the routes read it and its width: two modes with the
+    // same value run the same kernels ("= auto"). An NVFP4 expert under 4 never hashes as under
+    // Auto (which expert Op takes it is the load's choice), and after the load the experts' widths
+    // are the loaded mode's.
+    std::uint64_t policy_hash = 0;
+    // The mode's own policies equal Auto's (same kernels): set by the resolution for 8 and 4.
+    bool same_as_auto = false;
+    // Under Auto: "8" when --activations 8 computes some matrices narrower than Auto does here
+    // (Auto is then slower than 8), else "".
+    std::string faster_than_auto;
+};
 
 enum class EnginePurpose : std::uint8_t {
     Generation,
@@ -488,7 +531,7 @@ struct EngineOptions {
     // --state-dtype f32|bf16|f16 (RecurrentStateStorage): the Qwen 3.5 GDN layers' recurrent state.
     // The other families keep FP32 and refuse BF16.
     RecurrentStateStorage recurrent_state = RecurrentStateStorage::FP32;
-    // true: recurrent_state is ignored; FP32 under --activations exact, else the family's choice
+    // true: recurrent_state is ignored; FP32 under --activations 16, else the family's choice
     // (FamilyEntry::recurrent_state: FP16 for Qwen 3.5). Engine::options() reports the choice.
     bool recurrent_state_automatic = false;
     // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (E4M3
@@ -1754,8 +1797,15 @@ struct ModelMetadata {
     // The activation widths the checkpoint's publisher validated its kept matrices with (bits ->
     // matrices, 0: named nowhere; empty: not said) and how many the fast mode runs below that width.
     std::map<int, std::uint64_t> published_activations;
-    std::uint64_t below_published_activations      = 0; // under --activations fast
-    std::uint64_t below_published_activations_int8 = 0; // under --activations int8
+    std::uint64_t below_published_activations      = 0; // under --activations auto
+    std::uint64_t below_published_activations_int8 = 0; // under --activations 8 (or 4)
+    // What --activations asked for and resolved to (resolve_activation_precision), and the KV
+    // cache storage it runs beside (--kv-dtype, a separate choice): /v1/models meta.activations.
+    ActivationPrecision activations;
+    std::string kv_cache;
+    // The sampling presets a request that names none runs with: the model's under the server's
+    // sampling flags (set by the server; /v1/models meta.sampling). Unset outside a server.
+    std::optional<ModelSamplingDefaults> sampling;
     // The decision fingerprint (LoadSummary::decision_fingerprint) and its plan manifest.
     std::string decision_fingerprint;
     std::string decision_manifest;

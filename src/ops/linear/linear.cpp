@@ -201,7 +201,7 @@ bool dispatch_linear(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy
     }
     if (invariant_routes_active()) {
         throw std::invalid_argument(
-            "linear: the invariant route profile (--activations exact) runs on the generic path, "
+            "linear: the invariant route profile (--activations 16) runs on the generic path, "
             "which cannot read this weight's format or layout");
     }
     switch (w.qtype) {

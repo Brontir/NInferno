@@ -30,7 +30,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `make_bench_corpus.py` | Bake the token-id corpus used by `ninferno_bench`. |
 | `build_text_examples.py` | Build the long-context and long-decode CLI examples ([examples/cli](../../examples/cli/README.md)) from recent public-domain text and new problems. |
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
-| `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `16` on the fixed corpus, appended as `docs/performance/` rows. |
 
 ## Published performance numbers
 

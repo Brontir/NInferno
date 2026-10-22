@@ -472,7 +472,7 @@ def cases(archs: dict[str, Arch]) -> list[Case]:
         # under --activations exact 4.0e-3 and 1.7e-3, within the floor.
         Case("qwen-dense-q456", qd, "qwen3_6_27b", "base", limits=(8e-2, 1.2e-2)),
         Case("qwen-dense-q456-exact", qd, "qwen3_6_27b", "base",
-             options={"activations": "exact"}),
+             options={"activations": "16"}),
         Case("qwen-dense-nvfp4", qd, "qwen3_6_27b_nvfp4", "base", {"quantized": "nvfp4"},
              strict_sabotage=False),
         Case("qwen-dense-nvfp4-a16", qd, "qwen3_6_27b_nvfp4", "base", {"quantized": "nvfp4"},

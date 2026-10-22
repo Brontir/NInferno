@@ -39,11 +39,6 @@ void check(bool ok, const std::string& what) {
     }
 }
 
-// Paths built with std::filesystem (/ is \ between the parts on Windows), compared as paths.
-bool same_path(const std::string& got, const std::string& want) {
-    return std::filesystem::path(got) == std::filesystem::path(want);
-}
-
 using namespace ninferno::ui;
 
 void test_access() {
@@ -217,7 +212,7 @@ void test_launch() {
     request.port                        = 8101;
     request.max_context                 = 32768;
     request.spec                        = "mtp";
-    request.precision                   = "exact";
+    request.precision                   = "16";
     const auto spec                     = make_launch(options, request);
     const std::vector<std::string> want = {"/opt/ninferno/bin/ninferno-serve",
                                            "unsloth/Qwen3.5-9B-GGUF",
@@ -229,10 +224,8 @@ void test_launch() {
                                            "8101",
                                            "--max-context",
                                            "32768",
-                                           "--kv-dtype",
-                                           "bf16",
                                            "--activations",
-                                           "exact",
+                                           "16",
                                            "--spec",
                                            "mtp"};
     check(spec.argv == want, "launch argv");
@@ -251,58 +244,36 @@ void test_launch() {
               "a launch without a named speculation runs --spec auto");
     }
 
-    // A stale tune beside a model started by its artifact path is not named (the server would
-    // refuse it): a note in the log says why.
+    // A tune calibrated on this machine beside a model started by its artifact path is never
+    // named (no hidden state: the published profile runs); a note in the log says it is there
+    // and how to name it.
     {
         namespace fs     = std::filesystem;
-        const TempDir scratch("ninferno_ui_stale_tune");
+        const TempDir scratch("ninferno_ui_local_tune");
         const auto& dir  = scratch.path();
         const auto model = dir / "m.ninferno";
         std::ofstream(model) << "not an artifact";
-        std::ofstream(fs::path(model) += ".spec_profile.json") << "{}";
-        LaunchRequest local = request;
-        local.model         = ninferno::utf8_path(model);
-        local.prepare_only  = false;
-        const auto stale    = make_launch(options, local);
-        check(std::find(stale.argv.begin(), stale.argv.end(), "--spec-profile") ==
-                      stale.argv.end() &&
-                  stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
-              "a stale tune beside the model is a note, not --spec-profile");
-    }
-
-    // A tune beside the model is named only for the GPU class it was made on, as the server keys
-    // it ("<chip>:<sms>sm"); without the SM count the chip decides; an unknown GPU or chip passes
-    // it over (the published profile runs rather than a refused start).
-    {
-        namespace fs   = std::filesystem;
-        const TempDir scratch("ninferno_ui_tune_gpu");
-        const auto& dir = scratch.path();
         const auto tune = dir / "m.ninferno.spec_profile.json";
         ninferno::spec::Profile tuned;
         tuned.key.artifact_id = "aaaa";
         tuned.key.gpu         = "gb202:170sm";
         ninferno::spec::write_profile(tune, tuned);
-        GpuStat rtx5090;
-        rtx5090.index         = 1;
-        rtx5090.cc_major      = 12;
-        rtx5090.cc_minor      = 0;
-        rtx5090.pci_device_id = 0x2B85;
-        rtx5090.sms           = 170;
-        check(tune_refusal_on(tune, "aaaa", &rtx5090).empty(), "a tune made on this GPU's class");
-        check(!tune_refusal_on(tune, "bbbb", &rtx5090).empty(), "a tune of another artifact");
-        GpuStat other = rtx5090;
-        other.sms     = 188;
-        check(tune_refusal_on(tune, "aaaa", &other).find("another") != std::string::npos,
-              "a tune of another SM count of the chip is passed over");
-        other.pci_device_id = 0x2C02; // RTX 5080: gb203
-        other.sms           = 0;
-        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
-              "without the SM count, a tune of another chip is passed over");
-        other.pci_device_id = 0x2B85;
-        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
-              "without the SM count, even a tune of the same chip is passed over");
-        check(tune_refusal_on(tune, "aaaa", nullptr).find("unknown") != std::string::npos,
-              "an unknown GPU passes the tune over");
+        LaunchRequest local = request;
+        local.model         = ninferno::utf8_path(model);
+        local.prepare_only  = false;
+        const auto launched = make_launch(options, local);
+        check(std::find(launched.argv.begin(), launched.argv.end(), "--spec-profile") ==
+                      launched.argv.end() &&
+                  launched.notes.size() == 1 &&
+                  launched.notes[0].find("is not used") != std::string::npos &&
+                  launched.notes[0].find("--spec-profile " + ninferno::utf8_path(tune)) !=
+                      std::string::npos,
+              "a tune beside the model is a note naming it, never --spec-profile");
+        fs::remove(tune);
+        check(make_launch(options, local).notes.empty(), "no tune beside the model: no note");
+    }
+
+    {
         // The GPU a launch runs on: by NVML's index; none named, the only one, else none.
         std::vector<GpuStat> stats(2);
         stats[0].index = 0;
@@ -312,6 +283,28 @@ void test_launch() {
         check(launch_gpu(stats, -1) == nullptr, "several GPUs and none named: none known");
         stats.resize(1);
         check(launch_gpu(stats, -1) == &stats[0], "one GPU and none named: that one");
+    }
+
+    // Precision is --activations alone: the KV cache stays the family's default unless named,
+    // under every precision, as on the command line.
+    for (const char* precision : {"auto", "16", "8", "4"}) {
+        LaunchRequest named = request;
+        named.precision     = precision;
+        const auto argv     = make_launch(options, named).argv;
+        const auto at       = std::find(argv.begin(), argv.end(), "--activations");
+        check(at != argv.end() && at + 1 != argv.end() && *(at + 1) == precision &&
+                  std::find(argv.begin(), argv.end(), "--kv-dtype") == argv.end(),
+              std::string("precision ") + precision + " is --activations alone");
+    }
+    {
+        LaunchRequest unnamed = request;
+        unnamed.precision     = "";
+        unnamed.kv_dtype      = "fp8";
+        const auto argv       = make_launch(options, unnamed).argv;
+        const auto kv         = std::find(argv.begin(), argv.end(), "--kv-dtype");
+        check(std::find(argv.begin(), argv.end(), "--activations") == argv.end() &&
+                  kv != argv.end() && kv + 1 != argv.end() && *(kv + 1) == "fp8",
+              "no precision: server default; KV as named");
     }
 
     request.prepare_only = true;
@@ -324,28 +317,6 @@ void test_launch() {
             check(false, what);
         } catch (const std::invalid_argument&) {}
     };
-    // Calibration: the engine family picks the binary beside ninferno-serve.
-    {
-        const TempDir scratch("ninferno_ui_test");
-        const auto artifact = scratch.path() / "ninferno_ui_test.ninferno";
-        std::ofstream(artifact) << "x";
-        const auto qwen = make_tune(
-            options, {.artifact = ninferno::utf8_path(artifact), .engine = "qwen3_5", .gpu = 0});
-        check(qwen.argv.size() >= 3 && same_path(qwen.argv[0], "/opt/ninferno/bin/ninferno") &&
-                  qwen.argv[1] == "spec-tune" && qwen.argv[2] == ninferno::utf8_path(artifact) &&
-                  qwen.kind == "tune",
-              "tune: ninferno spec-tune");
-        const auto gemma = make_tune(
-            options, {.artifact = ninferno::utf8_path(artifact), .engine = "gemma4", .gpu = 0});
-        check(same_path(gemma.argv[0], "/opt/ninferno/bin/ninferno-gemma4") &&
-                  gemma.argv[2] == "spec-tune",
-              "tune: ninferno-gemma4 <artifact> spec-tune");
-        try {
-            (void)make_tune(options, {.artifact = "/etc/passwd", .engine = "", .gpu = 0});
-            check(false, "tune: a non-artifact accepted");
-        } catch (const std::invalid_argument&) {}
-    }
-
     LaunchRequest bad = request;
     bad.model         = "--help";
     refused(bad, "option injection as model");
@@ -359,9 +330,59 @@ void test_launch() {
     bad      = request;
     bad.spec = "eagle9";
     refused(bad, "bad spec");
-    bad           = request;
-    bad.precision = "fp2";
-    refused(bad, "bad precision");
+    // The old names run as the new ones, with a deprecation note in the log; anything else is
+    // refused.
+    for (const auto& [old, now] :
+         std::map<std::string, std::string>{{"exact", "16"}, {"fast", "auto"}, {"int8", "8"}}) {
+        LaunchRequest aliased = request;
+        aliased.prepare_only  = false;
+        aliased.precision     = old;
+        const auto launched   = make_launch(options, aliased);
+        const auto at = std::find(launched.argv.begin(), launched.argv.end(), "--activations");
+        check(at != launched.argv.end() && at + 1 != launched.argv.end() && *(at + 1) == now &&
+                  !launched.notes.empty() &&
+                  launched.notes[0] == "precision '" + old + "' is deprecated: use '" + now + "'",
+              "precision " + old + " runs as " + now + " with a deprecation note");
+    }
+    for (const char* precision : {"fp2", "balanced", "compact", "16bit", "Auto"}) {
+        bad           = request;
+        bad.precision = precision;
+        refused(bad, "bad precision");
+    }
+
+    // The preflight /api/precision runs: an argv (no shell), a converted model only.
+    {
+        const auto argv = precision_preflight_argv(options, "/m/a.ninferno", "12.0");
+        check(argv == std::vector<std::string>{"/opt/ninferno/bin/ninferno-serve", "/m/a.ninferno",
+                                               "--activations-preflight", "12.0"},
+              "preflight argv");
+        check(precision_preflight_argv(options, "/m/a.ninferno", "7.5", 0x2182).back() ==
+                  "7.5:0x2182",
+              "preflight argv names the board by its PCI id");
+        const auto refuses = [&](const std::string& artifact, const std::string& cc,
+                                 const std::string& what) {
+            try {
+                (void)precision_preflight_argv(options, artifact, cc);
+                check(false, what);
+            } catch (const std::invalid_argument&) {}
+        };
+        refuses("--help.ninferno", "12.0", "preflight: an option as the model");
+        refuses("org/model", "12.0", "preflight: a hub id is no converted model");
+        refuses("/m/a\n.ninferno", "12.0", "preflight: a control character");
+        refuses("/m/a.ninferno", "12", "preflight: a capability without its minor");
+        refuses("/m/a.ninferno", "12.0;x", "preflight: a capability with other characters");
+        const auto answer = parse_precision_preflight(
+            {"a log line", R"({"status":"checked","modes":[{"mode":"auto","refused":false}]})"});
+        check(answer.value("status", std::string()) == "checked" && answer["modes"].size() == 1,
+              "preflight answer: the JSON line among others");
+        try {
+            (void)parse_precision_preflight({"ninferno-serve: no such file"});
+            check(false, "preflight without an answer throws");
+        } catch (const std::runtime_error& error) {
+            check(std::string(error.what()).find("no such file") != std::string::npos,
+                  "preflight without an answer says what the server printed");
+        }
+    }
 }
 
 void test_catalog() {
@@ -510,6 +531,20 @@ void test_catalog() {
               props["modalities"]["vision"] == true && props["role"] == "model" &&
               props["model_path"] == "qwen3.5-4b",
           "chat props");
+    // Sampling: what the server applies (meta.sampling's thinking preset), never llama-server's
+    // 0.8 / 40 / 0.95 / 0.05; nothing when the server did not say.
+    check(!props["default_generation_settings"]["params"].contains("temperature") &&
+              !props["default_generation_settings"]["params"].contains("min_p"),
+          "chat props: no sampling advertised without the server's");
+    const auto sampled = chat_model_of(
+        R"({"data":[{"id":"q","max_model_len":4096,"meta":{"sampling":{"source":"generation_config.json",)"
+        R"("thinking":{"temperature":0.6,"top_k":20,"top_p":0.95,"min_p":0,"presence_penalty":0,)"
+        R"("frequency_penalty":0},"non_thinking":{"temperature":0.7,"top_k":20,"top_p":0.8,"min_p":0,)"
+        R"("presence_penalty":1.5,"frequency_penalty":0}}}}]})");
+    const auto params = chat_props(sampled)["default_generation_settings"]["params"];
+    check(params["temperature"] == 0.6 && params["top_k"] == 20 && params["top_p"] == 0.95 &&
+              params["min_p"] == 0 && params["presence_penalty"] == 0,
+          "chat props: the server's applied preset");
     check(!artifact_has_vision("/no/such.ninferno"), "an unreadable artifact takes no images");
 
     // The browser: WSL hands the page to Windows, a Linux desktop to xdg-open, no display opens none.
@@ -766,6 +801,10 @@ void test_catalog() {
                   h.state_bytes == 30 * (4096.0 * 128 * 4 + 3 * (4096 + 2 * 16 * 128) * 2) &&
                   h.workspace_bytes == 1024.0 * (12 * 2048 + 3 * (8 * 512 + 512)) * 2,
               "GGUF memory: a hybrid's KV layers, recurrent states and workspace");
+        // Under auto, 8 and 4 Qwen 3.5's automatic state is f16 (half the fp32 one --activations
+        // 16 takes); the convolution stays bf16 under both.
+        check(h.state_bytes_auto == 30 * (4096.0 * 128 * 2 + 3 * (4096 + 2 * 16 * 128) * 2),
+              "GGUF memory: Qwen 3.5's recurrent state is f16 outside --activations 16");
         // NemotronH: attention, Mamba2 and MoE layers apart (6 + 24 + 23 of 53), not every layer
         // with experts.
         std::vector<int> kv_heads(53, 0), ffn(53, 0);
@@ -795,10 +834,11 @@ void test_catalog() {
                               {"nemotron_h_moe.ssm.group_count", 8},
                               {"nemotron_h_moe.ssm.inner_size", 4096},
                               {"nemotron_h_moe.ssm.time_step_rank", 64}});
-        check(nh.full_layers == 6 && nh.params > 28e9 && nh.params < 34e9 &&
-                  nh.active_params > 2.5e9 && nh.active_params < 4.5e9 &&
-                  nh.state_bytes > 24 * 2.0 * 1024 * 1024,
-              "GGUF shape: NemotronH counts each layer by its kind");
+        check(
+            nh.full_layers == 6 && nh.params > 28e9 && nh.params < 34e9 &&
+                nh.active_params > 2.5e9 && nh.active_params < 4.5e9 &&
+                nh.state_bytes > 24 * 2.0 * 1024 * 1024 && nh.state_bytes_auto == nh.state_bytes,
+            "GGUF shape: NemotronH counts each layer by its kind; its state is fp32 in every mode");
     }
 
     // Parallel requests reach ninferno-serve as --max-concurrency.
@@ -813,12 +853,15 @@ void test_catalog() {
         const auto at        = std::find(argv.begin(), argv.end(), "--max-concurrency");
         check(at != argv.end() && at + 1 != argv.end() && *(at + 1) == "4",
               "--max-concurrency passed");
-        conc.max_concurrency = 65;
+        conc.max_concurrency = 8;
+        (void)make_launch(launch_options, conc);
+        // ninferno-serve takes 1 to 8: a 9 would start a server that refuses its options.
+        conc.max_concurrency = 9;
         bool refused         = false;
         try {
             (void)make_launch(launch_options, conc);
         } catch (const std::invalid_argument&) { refused = true; }
-        check(refused, "max_concurrency above 64 refused");
+        check(refused, "max_concurrency above 8 refused");
     }
 
     // A small card: does not fit, not recommended.
@@ -959,7 +1002,7 @@ void test_http() {
     check(res && res->status == 415, "form POST refused");
     res = client.Post("/api/launch", "{\"model\":\"--help\"}", "application/json");
     check(res && res->status == 400, "bad model refused");
-    res = client.Post("/api/tune", "{", "application/json");
+    res = client.Post("/api/launch", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");
     for (const char* query : {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx"}) {
@@ -984,6 +1027,64 @@ void test_http() {
 
     server.stop();
     thread.join();
+
+#ifndef _WIN32
+    // /api/precision: the preflight of a converted model this page lists, run once per model and
+    // compute capability; "pending" for a hub model not converted here; nothing else is read.
+    {
+        namespace fs     = std::filesystem;
+        const TempDir scratch("ninferno_ui_precision");
+        const auto& cache = scratch.path();
+        const auto converted = cache / "models--org--m" / "ninferno" / "c0";
+        fs::create_directories(converted);
+        const auto model = converted / "m.ninferno";
+        std::ofstream(model) << "x";
+        const auto serve = cache / "fake-serve";
+        const auto calls = cache / "calls";
+        std::ofstream(serve) << "#!/bin/sh\necho \"$@\" >> '" << calls.string()
+                             << "'\necho 'a log line'\n"
+                                "printf '{\"model\":\"%s\",\"cc\":\"%s\",\"status\":\"checked\","
+                                "\"modes\":[{\"mode\":\"auto\",\"refused\":false}]}\\n' \"$1\" "
+                                "\"$3\"\n";
+        fs::permissions(serve, fs::perms::owner_all);
+        UiOptions preflight_options    = options;
+        preflight_options.hub_cache    = cache;
+        preflight_options.serve_binary = serve;
+        App preflight_app(preflight_options, std::make_unique<NoGpu>());
+        httplib::Server preflight_server;
+        preflight_app.install(preflight_server);
+        const int preflight_port = preflight_server.bind_to_any_port("127.0.0.1");
+        std::thread preflight_thread([&] { preflight_server.listen_after_bind(); });
+        preflight_server.wait_until_ready();
+        httplib::Client local("127.0.0.1", preflight_port);
+        // The path is plain (letters, digits, / - _ .): no escaping needed in the query.
+        const std::string query = "/api/precision?gpu=0&model=" + model.string();
+        for (int i = 0; i < 2; ++i) {
+            res             = local.Get(query);
+            const auto body = nlohmann::json::parse(res ? res->body : "", nullptr, false);
+            check(res && res->status == 200 && body.is_object() &&
+                      body.value("status", std::string()) == "checked" &&
+                      body.value("cc", std::string()) == "8.9" && body["modes"].size() == 1,
+                  "the preflight's answer for a converted model, on the GPU's capability");
+        }
+        std::ifstream in(calls);
+        const std::string logged((std::istreambuf_iterator<char>(in)),
+                                 std::istreambuf_iterator<char>());
+        check(std::count(logged.begin(), logged.end(), '\n') == 1 &&
+                  logged.find("--activations-preflight 8.9") != std::string::npos,
+              "the preflight runs once per model and capability");
+        res = local.Get("/api/precision?gpu=0&model=org/other&quant=Q4_K_M");
+        check(res && res->status == 200 &&
+                  nlohmann::json::parse(res->body).value("status", std::string()) == "pending",
+              "a hub model not converted here is pending");
+        res = local.Get("/api/precision?gpu=0&model=%2Fetc%2Fx.ninferno");
+        check(res && res->status == 400, "a path outside the listed models is refused");
+        res = local.Get("/api/precision?gpu=7&model=" + model.string());
+        check(res && res->status == 400, "an unknown GPU is refused");
+        preflight_server.stop();
+        preflight_thread.join();
+    }
+#endif
 
     // The access key, through the handler: a request marked as proxied is not this machine's.
     {

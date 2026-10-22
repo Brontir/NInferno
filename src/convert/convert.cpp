@@ -20,6 +20,7 @@
 #include "convert/numerics.h"
 #include "convert/planner.h"
 #include "convert/writer.h"
+#include "models/common/matrix_role.h"
 #include "core/ggml_frag.h"
 
 #include "core/host_memory.h"
@@ -925,10 +926,9 @@ std::optional<OJson> published_activation_summary(const SourceInputs& sources, c
                                                          : 16;
         };
         const auto policy = recipe.policies[i].front();
-        // --activations int8 runs every use at A8 but an A16Only head's or embedding's: the
-        // engine's own test of the name (qwen3_5::Model::input).
-        const bool fixed = parameter.name.find("head") != std::string::npos ||
-                           parameter.name.find("embed") != std::string::npos;
+        // --activations 8 runs every use at A8 but an A16Only head's or embedding's: the
+        // engine's own test of the role (models/common/matrix_role.h).
+        const bool fixed = models::logits_or_embedding(parameter.name);
         const auto int8 = policy == ActivationPolicy::A16Only && fixed ? policy
                                                                       : ActivationPolicy::AllowA8;
         if (bits > 0) {

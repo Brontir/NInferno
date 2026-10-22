@@ -186,6 +186,12 @@ class SpecGateTest(unittest.TestCase):
         self.assertEqual(r["counts"]["paired"], 1)
         r = self.judge(row(80, activations="exact"), row(100, auto=False))
         self.assertEqual(r["counts"]["paired"], 0)
+        # The current names and the older ones are one mode: 16 = exact, auto = fast, 8 = int8.
+        r = self.judge(row(80, activations="16"),
+                       row(100, auto=False, extra="--activations exact"))
+        self.assertEqual(r["counts"]["paired"], 1)
+        r = self.judge(row(80, extra="--activations auto"), row(100, auto=False, activations="fast"))
+        self.assertEqual(r["counts"]["paired"], 1)
 
     def test_per_run_and_derived_fields_are_not_the_key(self):
         auto = row(80, decision_fingerprint="fp-auto", decision_manifest={"spec": "dflash:7"},

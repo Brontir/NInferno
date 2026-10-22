@@ -15,10 +15,10 @@ using models::loading::Pending;
 
 class Prepare : public models::loading::Prepare {
 public:
-    // Every profile but Artifact keeps the dense projections' activations in BF16; the expert
+    // The dense projections run under the profile's mode (activation_mode_of); the native expert
     // bank's prefill route reads recorded_input() whatever the profile.
     Prepare(const Demands& demands, const ArtifactBacking& backing, ActivationProfile profile)
-        : models::loading::Prepare(demands, backing, profile == ActivationProfile::Artifact) {}
+        : models::loading::Prepare(demands, backing, activation_mode_of(profile)) {}
 };
 
 } // namespace ninferno::models::gemma4::loading

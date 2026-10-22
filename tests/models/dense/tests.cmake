@@ -38,3 +38,11 @@ ninferno_add_test(ninferno_dense_dflash_real_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dflash_real.cpp"
   LIBRARIES ninferno_engine)
 set_tests_properties(ninferno_dense_dflash_real_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# --activations auto|16|8|4 through the Engine on real artifacts of any family (dense, Gemma 4,
+# Nemotron-H, Qwen): every mode starts and answers, or 8/4 is refused by the startup resolution
+# only. NINFERNO_TEST_PRECISION_ARTIFACTS lists them (';'). GPU + artifacts.
+ninferno_add_test(ninferno_engine_precision_real_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_engine_precision_real.cpp"
+  LIBRARIES ninferno_engine)
+set_tests_properties(ninferno_engine_precision_real_test PROPERTIES SKIP_RETURN_CODE 77)

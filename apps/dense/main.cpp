@@ -140,8 +140,8 @@ int main(int argc, char** argv) {
         DeviceContext device(0, cuda_sync);
         product::apply_tool_maintainer_options(maintainer);
         const auto load_start = std::chrono::steady_clock::now();
-        const bool exact = product::parse_activation_mode(args.text("activations", "fast")) ==
-                           ActivationMode::Exact;
+        const bool exact      = product::parse_activation_mode(args.text("activations", "auto")) ==
+                           ActivationMode::Bits16;
         // For the rest of the run: this thread's ops resolve their routes under it.
         const ops::ScopedInvariantRoutes invariant_routes(exact);
         const auto profile    = exact || args.flag("a16") ? ActivationProfile::A16

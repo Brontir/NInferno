@@ -22,7 +22,7 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.5-9B-GGUF` Q4_K_M | off | auto | fast | 5,700 | 80.5 | 85.4 | 276 | 373 | 2026-10-19 |
+| `unsloth/Qwen3.5-9B-GGUF` Q4_K_M | off | auto | auto | 5,700 | 80.5 | 85.4 | 276 | 373 | 2026-10-19 |
 
 ## Measurement
 

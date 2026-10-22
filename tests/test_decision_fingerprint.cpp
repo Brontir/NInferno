@@ -78,7 +78,7 @@ rt::DecisionInputs sample_inputs() {
     in.sources = {{"route_table", "gb202.json sha256:ab"}, {"route_table.class", "gb202"}};
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
     in.plan =
-        rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
+        rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1, {});
     in.taint = rt::taint_of(in);
     in.observed = rt::observed_of(ninferno::MemorySummary{});
     in.observed.merge(rt::observed_of(sample_device()));
@@ -150,7 +150,7 @@ int options_reach_their_section() {
     using ninferno::EngineOptions;
     const auto collect = [](const EngineOptions& o) { return rt::options_of(o, "id", "sig", ""); };
     std::vector<std::pair<const char*, std::function<void(EngineOptions&)>>> edits{
-        {"activations", [](EngineOptions& o) { o.activations = ninferno::ActivationMode::Exact; }},
+        {"activations", [](EngineOptions& o) { o.activations = ninferno::ActivationMode::Bits16; }},
         {"purpose", [](EngineOptions& o) { o.purpose = ninferno::EnginePurpose::CausalScoring; }},
         {"max_context", [](EngineOptions& o) { o.max_context = 4096; }},
         {"max_context_automatic", [](EngineOptions& o) { o.max_context_automatic = true; }},
@@ -284,7 +284,7 @@ int plan_reaches_its_section() {
     using ninferno::MemorySummary;
     const std::array<std::int32_t, 2> breakpoints{17, 64};
     const auto collect = [&](const MemorySummary& m) {
-        return rt::plan_of(ninferno::EngineOptions{}, m, breakpoints, "ab", 1);
+        return rt::plan_of(ninferno::EngineOptions{}, m, breakpoints, "ab", 1, {});
     };
     std::vector<std::pair<const char*, std::function<void(MemorySummary&)>>> edits{
         {"kv_cache", [](MemorySummary& m) { m.kv_cache = ninferno::KvCacheStorage::Nvfp4Group16; }},
@@ -332,22 +332,37 @@ int plan_reaches_its_section() {
     }
     ninferno::EngineOptions resolved;
     resolved.recurrent_state = ninferno::RecurrentStateStorage::BF16;
-    failures += check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab", 1) !=
+    failures += check(rt::plan_of(resolved, MemorySummary{}, breakpoints, "ab", 1, {}) !=
                           collect(MemorySummary{}),
                       "plan: recurrent_state reaches the section");
     const std::array<std::int32_t, 2> other{17, 128};
-    failures += check(rt::plan_of({}, MemorySummary{}, other, "ab", 1) != collect(MemorySummary{}),
+    failures += check(rt::plan_of({}, MemorySummary{}, other, "ab", 1, {}) != collect(MemorySummary{}),
                       "plan: route breakpoints reach the section");
     failures +=
-        check(rt::plan_of({}, MemorySummary{}, breakpoints, "cd", 1) != collect(MemorySummary{}),
+        check(rt::plan_of({}, MemorySummary{}, breakpoints, "cd", 1, {}) != collect(MemorySummary{}),
               "plan: the route table reaches the section");
     // The decode round's step count (16 under a CPU quota, 1 without, or --decode-steps) decides
     // which requests share a step's batch.
-    const auto sixteen = rt::plan_of({}, MemorySummary{}, breakpoints, "ab", 16);
+    const auto sixteen = rt::plan_of({}, MemorySummary{}, breakpoints, "ab", 16, {});
     failures +=
         check(sixteen != collect(MemorySummary{}) && sixteen.at("decode.steps_per_round") == "16" &&
                   collect(MemorySummary{}).at("decode.steps_per_round") == "1",
               "plan: decode.steps_per_round reaches the section");
+    // What --activations resolved to moves the plan, so the fingerprint and the manifest: two
+    // starts whose matrices take other widths are not the same decisions.
+    {
+        const ninferno::ActivationPrecision eight{
+            .requested = ninferno::ActivationMode::Bits8, .bits8 = 608, .bits16 = 1};
+        const auto narrowed = rt::plan_of({}, MemorySummary{}, breakpoints, "ab", 1, eight);
+        failures += check(narrowed != collect(MemorySummary{}) &&
+                              narrowed.at("activations.resolved") == "4:0,8:608,16:1",
+                          "plan: activations.resolved reaches the section");
+        rt::DecisionInputs a = sample_inputs(), b = sample_inputs();
+        b.plan               = rt::plan_of({}, MemorySummary{}, {}, "ab", 1, eight);
+        a.plan               = rt::plan_of({}, MemorySummary{}, {}, "ab", 1, {});
+        failures += check(rt::decision_fingerprint(a).value != rt::decision_fingerprint(b).value,
+                          "activations.resolved moves nf1");
+    }
     return failures;
 }
 

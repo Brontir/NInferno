@@ -1,5 +1,7 @@
 #include "models/common/loading.h"
 
+#include "models/common/activation_census.h"
+
 #include "artifact/views.h"
 #include "core/weight.h"
 
@@ -64,7 +66,8 @@ ops::WeightInput Prepare::input(Id id) const {
     if (!use) {
         throw std::invalid_argument(items_.at(id).reference.name + " has no mathematical use");
     }
-    const auto policy = recorded_ ? use->policy : ops::LinearPolicy::A16Only;
+    const auto policy = effective_policy(
+        matrix_use(items_.at(id).reference.name, views_.at(id), *use), activations_);
     return {views_.at(id), policy, use->activation_input_divisor};
 }
 
@@ -116,6 +119,24 @@ std::optional<Projection> Prepare::packed(std::span<const Id> ids) const {
     }
     const auto prepared = ops::prepare_linear_weight(rows);
     return Projection{prepared.weight, prepared.policy};
+}
+
+void generic_moe(ops::MoeWeights& weights, const Prepare& prepare, std::span<const Id> experts,
+                 std::span<const Id> shared_gate_up, std::span<const Id> shared_down) {
+    if (prepare.activations() == ActivationMode::Bits4) {
+        const auto eight = [](ops::LinearPolicy p) {
+            return ops::allows_a4(p) ? ops::LinearPolicy::AllowA8 : p;
+        };
+        weights.expert_policy = eight(weights.expert_policy);
+        weights.shared_policy = eight(weights.shared_policy);
+    }
+    const auto names = [&](std::span<const Id> ids) {
+        std::vector<std::string> out;
+        out.reserve(ids.size());
+        for (const Id id : ids) { out.push_back(prepare.name(id)); }
+        return out;
+    };
+    census_generic_moe(weights, names(experts), names(shared_gate_up), names(shared_down));
 }
 
 } // namespace ninferno::models::loading

@@ -14,10 +14,6 @@ void refuse_qwen_only_options(const EngineOptions& options, std::string_view fam
         throw std::invalid_argument("--rope-yarn-factor is for Qwen 3.5/3.6 models; " +
                                     std::string(family) + " keeps its checkpoint's RoPE");
     }
-    if (options.activations == ActivationMode::Int8) {
-        throw std::invalid_argument("--activations int8 is for Qwen 3.5/3.6 models; " +
-                                    std::string(family) + " runs fast or exact");
-    }
     // Only the Qwen Gated DeltaNet state has a narrower storage; Nemotron-H keeps its Mamba2
     // state in FP32 and the attention-only families have none.
     if (options.recurrent_state != RecurrentStateStorage::FP32) {

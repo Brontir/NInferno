@@ -1,4 +1,8 @@
 #include "runtime/engine/model_instance.h"
+
+#include "runtime/engine/activation_precision.h"
+#include "core/generation.h"
+#include "models/common/activation_census.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/plan_ladder.h"
 #include "runtime/engine/warmup_widths.h"
@@ -222,11 +226,11 @@ void validate_engine_options(const EngineOptions& options) {
         throw std::invalid_argument("Engine media_preprocess_threads must be in [0,64]");
     }
     if (options.recurrent_state != RecurrentStateStorage::FP32 &&
-        options.activations == ActivationMode::Exact) {
+        options.activations == ActivationMode::Bits16) {
         throw std::invalid_argument(
             "--state-dtype bf16|f16 rounds the recurrent state wherever a call stores it, so an "
             "answer depends on where the prompt is cut and how speculation groups the tokens, and "
-            "--activations exact asks for bytes that do not: drop one of the two");
+            "--activations 16 asks for bytes that do not: drop one of the two");
     }
 }
 
@@ -241,7 +245,7 @@ EngineOptions admit_engine_options(EngineOptions options) {
 EngineOptions normalize_engine_options(EngineOptions options) {
     if (options.recurrent_state_automatic) {
         options.recurrent_state =
-            options.activations == ActivationMode::Exact
+            options.activations == ActivationMode::Bits16
                 ? RecurrentStateStorage::FP32
                 : automatic_recurrent_state(artifact_model_type(options.artifact_path));
         options.recurrent_state_automatic = false;
@@ -433,11 +437,15 @@ namespace {
 // `artifact_id`: the artifact's id (hex), `source_identity` its source identity
 // (artifact/source_identity.h; "none:<artifact id>" when it has none), and
 // `routed_expert_bytes`: the bytes of its routed-expert objects (artifact/routed_experts.h; the
-// decode-round price's MoE share), from the same read.
+// decode-round price's MoE share), from the same read. `activations`: --activations resolved
+// over the same directory after the load, the expert Ops' widths from `census`
+// (activation_precision.h).
 ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const LoadSummary& summary,
                              const models::qwen3_5::detail::ModelTraits& traits,
                              std::string& artifact_id, std::string& source_identity,
-                             std::uint64_t& routed_expert_bytes) {
+                             std::uint64_t& routed_expert_bytes, ActivationMode activations,
+                             const ops::ActivationDevice& device,
+                             const models::ActivationCensus& census) {
     ModelMetadata metadata;
     metadata.model_id       = summary.model_name;
     metadata.vocab_size     = static_cast<std::uint64_t>(traits.public_tokens);
@@ -479,7 +487,16 @@ ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const L
             }
         }
     }
+    metadata.activations = resolve_activation_precision(reader.directory(), activations, device,
+                                                        &census, /*refuse=*/false);
     return metadata;
+}
+
+// The device facts --activations reads (ops::ActivationDevice) of the load's device.
+ops::ActivationDevice activation_device_of(int ordinal) {
+    const auto& d = device_class(ordinal);
+    return {.features          = d.features,
+            .fp32acc_full_rate = generation_row(d.major, d.minor).fp32acc_full_rate};
 }
 
 } // namespace
@@ -512,7 +529,18 @@ std::string grouped_count(std::uint64_t value) {
 ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& device,
                                    FamilyLoader load, PlanSummary* dry_run) {
     validate_engine_options(options);
-    const auto start    = Clock::now();
+    const auto start = Clock::now();
+    // --activations resolved before the weights load (B1: the option, the artifact and the
+    // device's facts): a request of 8 or 4 no matrix can take is refused here. Auto and 16 are
+    // never refused, so they read nothing before the load; every mode is resolved again after it,
+    // with what the loaders handed to the expert Ops (the census).
+    const ops::ActivationDevice activation_device = activation_device_of(device.device);
+    if (options.activations == ActivationMode::Bits8 ||
+        options.activations == ActivationMode::Bits4) {
+        (void)resolve_activation_precision(artifact::Reader(options.artifact_path).directory(),
+                                           options.activations, activation_device);
+    }
+    models::ActivationCensus census;
     FamilyLoad loaded   = load(options, device);
     LoadSummary summary = std::move(loaded.summary);
     if (!loaded.execution || !loaded.make_frontend) {
@@ -1071,9 +1099,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // default times every resident thread, ~120 MiB on an RTX 5080 against the plan's 48 B per
     // thread), and a selection that counted it as used would pick a lower rung than the warm-up
     // then finds room for. The load-time route tuner times on buffers of its own and frees them:
-    // before the stack limit and the free memory are read. Exact activations run the invariant
+    // before the stack limit and the free memory are read. --activations 16 runs the invariant
     // routes, which the tuner does not touch; the dry run does not tune.
-    if (options.activations != ActivationMode::Exact && dry_run == nullptr) {
+    if (options.activations != ActivationMode::Bits16 && dry_run == nullptr) {
         summary.moe_tune = execution.tune_routes(device.stream);
     }
     // The generic path's dense tuner times each dense problem at its first eager call (the
@@ -1395,8 +1423,22 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     summary.context_cost = std::move(context_cost.summary);
     summary.metadata = model_metadata(options.artifact_path, summary, instance->execution->traits(),
                                       summary.artifact_id, summary.source_identity,
-                                      instance->decode_round_shape.routed_expert_bytes);
+                                      instance->decode_round_shape.routed_expert_bytes,
+                                      options.activations, activation_device, census);
     instance->decode_round_shape.weight_bytes = summary.metadata.weight_bytes;
+    summary.metadata.kv_cache = std::string(kv_cache_storage_name(resolved.kv_cache));
+    auto& notes               = summary.metadata.activations.notes;
+    if (!options.speculative.drafter.empty()) {
+        notes.push_back("the drafter artifact " + options.speculative.drafter.filename().string() +
+                        " computes with 16-bit activations whatever --activations is; a drafter "
+                        "the model carries (Qwen MTP, DFlash) follows the mode");
+    }
+    if (options.activations == ActivationMode::Bits16 &&
+        resolved.kv_cache != KvCacheStorage::BFloat16) {
+        notes.push_back("the KV cache stays " +
+                        std::string(kv_cache_storage_name(resolved.kv_cache)) +
+                        " (--kv-dtype is its own choice); --kv-dtype bf16 for full precision");
+    }
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};
 }

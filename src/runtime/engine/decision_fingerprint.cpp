@@ -100,12 +100,14 @@ std::string joined(const std::vector<std::string>& items) {
 
 std::string_view activation_name(ActivationMode mode) {
     switch (mode) {
-    case ActivationMode::Fast:
-        return "fast";
-    case ActivationMode::Exact:
-        return "exact";
-    case ActivationMode::Int8:
-        return "int8";
+    case ActivationMode::Auto:
+        return "auto";
+    case ActivationMode::Bits16:
+        return "16";
+    case ActivationMode::Bits8:
+        return "8";
+    case ActivationMode::Bits4:
+        return "4";
     }
     return "invalid";
 }
@@ -389,9 +391,14 @@ DecisionSection options_of(const EngineOptions& o, std::string_view source_ident
 
 DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                         std::span<const std::int32_t> route_breakpoints,
-                        std::string_view route_table, std::uint32_t decode_steps_per_round) {
+                        std::string_view route_table, std::uint32_t decode_steps_per_round,
+                        const ActivationPrecision& activations) {
     DecisionSection out;
     out["decode.steps_per_round"] = number(decode_steps_per_round);
+    // What --activations resolved to (resolve_activation_precision): matrices per narrowest width.
+    out["activations.resolved"] = "4:" + number(activations.bits4) +
+                                  ",8:" + number(activations.bits8) +
+                                  ",16:" + number(activations.bits16);
     out["kv_cache"]         = std::string(kv_cache_storage_name(memory.kv_cache));
     out["recurrent_state"]  = std::string(recurrent_state_storage_name(resolved.recurrent_state));
     std::vector<std::string> windows;

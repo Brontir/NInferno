@@ -26,7 +26,7 @@ namespace ninferno::models::dense {
 // The execution of `model` on `device`, over a public token domain of `public_tokens` ids (the
 // tokenizer's, at most the embedding rows). With a `drafter` (a DFlash artifact paired with this
 // target) it also runs the DFlash speculative backend. Both must outlive it.
-// Under ActivationMode::Exact every prefill, decode and capture runs under the invariant route
+// Under ActivationMode::Bits16 every prefill, decode and capture runs under the invariant route
 // profile (ninferno/ops/prefill_routes.h), so a token's bytes do not depend on its batch neighbours
 // or on where its prompt was cut; load the model with ActivationProfile::A16 to go with it.
 [[nodiscard]] std::unique_ptr<const qwen3_5::detail::ModelExecution>

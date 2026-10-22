@@ -33,9 +33,29 @@ using models::ArtifactBacking;
 //   the 26B-A4B expert bank keeps its recorded W4A4 prefill route, so on that model this profile
 //   is mixed.
 // - `A16Full` is `A16` plus W4A16 experts: no activation is encoded to four bits anywhere.
+// - `A8` allows eight-bit activations on every projection and expert (--activations 8): calibrated
+//   NVFP4 experts take the generic MoE's W4A8 prefill instead of the native four-bit Gemma4Moe.
+// - `A4` allows four bits everywhere (--activations 4); experts as under `Artifact`.
+// A head recorded BF16 keeps it under `A8` and `A4` (models::effective_policy).
 // On a model without an expert bank `A16Full` equals `A16`. Decode and verify widths (T <= 16)
 // already run the expert bank in BF16 under every profile.
-enum class ActivationProfile : std::uint8_t { Artifact, A16, A16Full };
+enum class ActivationProfile : std::uint8_t { Artifact, A16, A16Full, A8, A4 };
+
+// The --activations mode a profile prepares its dense projections under.
+[[nodiscard]] constexpr ActivationMode activation_mode_of(ActivationProfile profile) noexcept {
+    switch (profile) {
+    case ActivationProfile::Artifact:
+        return ActivationMode::Auto;
+    case ActivationProfile::A16:
+    case ActivationProfile::A16Full:
+        return ActivationMode::Bits16;
+    case ActivationProfile::A8:
+        return ActivationMode::Bits8;
+    case ActivationProfile::A4:
+        return ActivationMode::Bits4;
+    }
+    return ActivationMode::Bits16;
+}
 
 class Model {
 public:

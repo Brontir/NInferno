@@ -1664,6 +1664,12 @@ int test_context_classes() {
         failures += check(class_of(tokens) == want,
                           "class_of(" + std::to_string(tokens) + ") is " + class_name(want));
     }
+    // --activations maps onto the registry's byte-class names, which stay as measured.
+    failures +=
+        check(std::string(ninferno::spec::byte_class_activations(true, true)) == "exact" &&
+                  std::string(ninferno::spec::byte_class_activations(false, true)) == "fast-a4" &&
+                  std::string(ninferno::spec::byte_class_activations(false, false)) == "fast-a8",
+              "16 is exact, a load with four-bit matrices fast-a4, any other fast-a8");
     failures += check(
         ninferno::gpu_chip_arch("ga102") == "sm86" && ninferno::gpu_chip_arch("GB203:84sm") == "" &&
             ninferno::gpu_chip_arch("gb203:84sm") == "sm120" &&

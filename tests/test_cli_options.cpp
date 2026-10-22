@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -98,18 +99,37 @@ int main() {
     failures += check(!automatic.spec_explicit && automatic.acceptance_floor &&
                           *automatic.acceptance_floor == 1.5F,
                       "--spec auto and --acceptance-floor");
-    failures += check(
-        parse({"ninferno-cli", "model.ninferno", "--prompt", "hello"}).activations ==
-                ninferno::kDefaultActivationMode &&
-            parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--activations", "exact"})
-                    .activations == ninferno::ActivationMode::Exact &&
-            parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--activations", "fast"})
-                    .activations == ninferno::ActivationMode::Fast,
-        "--activations exact|fast");
+    failures += check(parse({"ninferno-cli", "model.ninferno", "--prompt", "hello"}).activations ==
+                          ninferno::kDefaultActivationMode,
+                      "--activations default");
+    // auto|16|8|4, and the deprecated exact|fast|int8 as 16, auto and 8.
+    for (const auto& [spelling, mode] :
+         std::initializer_list<std::pair<const char*, ninferno::ActivationMode>>{
+             {"auto", ninferno::ActivationMode::Auto},
+             {"16", ninferno::ActivationMode::Bits16},
+             {"8", ninferno::ActivationMode::Bits8},
+             {"4", ninferno::ActivationMode::Bits4},
+             {"exact", ninferno::ActivationMode::Bits16},
+             {"fast", ninferno::ActivationMode::Auto},
+             {"int8", ninferno::ActivationMode::Bits8}}) {
+        failures += check(parse({"ninferno-cli", "model.ninferno", "--prompt", "hello",
+                                 "--activations", spelling})
+                                  .activations == mode,
+                          "--activations auto|16|8|4|exact|fast|int8");
+    }
+    failures += check(ninferno::cli::usage_text("ninferno").find("--activations auto|16|8|4") !=
+                              std::string::npos &&
+                          ninferno::cli::usage_text("ninferno").find("Deprecated: exact, fast") !=
+                              std::string::npos,
+                      "CLI help: --activations auto|16|8|4 and its deprecated names");
     failures += check(rejects([] {
                           (void)parse({"ninferno-cli", "model.ninferno", "--prompt", "hello",
                                        "--activations", "a16"});
-                      }),
+                      }) &&
+                          rejects([] {
+                              (void)parse({"ninferno-cli", "model.ninferno", "--prompt", "hello",
+                                           "--activations", "2"});
+                          }),
                       "--activations accepted an unknown mode");
     const ninferno::cli::Options nvfp4 =
         parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--kv-dtype", "nvfp4"});

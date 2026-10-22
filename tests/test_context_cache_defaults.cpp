@@ -116,9 +116,9 @@ int main() {
                 return true;
             } catch (const std::invalid_argument&) { return false; }
         };
-        failures += check(!accepted(ninferno::ActivationMode::Exact),
+        failures += check(!accepted(ninferno::ActivationMode::Bits16),
                           "--activations exact accepted a BF16 recurrent state");
-        failures += check(accepted(ninferno::ActivationMode::Fast),
+        failures += check(accepted(ninferno::ActivationMode::Auto),
                           "the fast profile refused a BF16 recurrent state");
     }
 

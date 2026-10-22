@@ -400,6 +400,28 @@ inline constexpr std::int32_t kQ8PrefillA8Tokens = 17;
 // (the official Qwen3.8-27B artifact does; ninfer-all computes those weights on int8 activations
 // regardless). Never under the invariant route profile (--activations exact).
 [[nodiscard]] LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy);
+
+// The same rule from the device's facts (prefill_a8_policy and --activations' startup resolution,
+// ops/linear/activation_width.h, read this one): int8 activations pay at prefill on a chip with
+// tensor-core mma.sync (not emulated: mma_slow) whose FP32-accumulate HMMA runs below full rate
+// (GenerationRow::fp32acc_full_rate); the raise is for Q4/Q5/Q6 G64 A16Only weights and never
+// under the invariant route profile.
+[[nodiscard]] constexpr bool qx_prefill_a8_pays_on(const DeviceFeatures& features,
+                                                   bool fp32acc_full_rate) noexcept {
+    return features.mma_tensor && !features.mma_slow && !fp32acc_full_rate;
+}
+
+[[nodiscard]] constexpr bool qx_prefill_format(QType qtype) noexcept {
+    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
+           qtype == QType::Q6_G64_FP16;
+}
+
+[[nodiscard]] constexpr LinearPolicy prefill_a8_policy_on(QType qtype, LinearPolicy policy,
+                                                          bool pays, bool invariant) noexcept {
+    return policy == LinearPolicy::A16Only && qx_prefill_format(qtype) && pays && !invariant
+               ? LinearPolicy::AllowA8
+               : policy;
+}
 [[nodiscard]] bool q8_prefill_a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens);
 [[nodiscard]] bool q8_prefill_a8_fused(const Weight& weight, LinearPolicy policy,
                                        std::int32_t tokens);

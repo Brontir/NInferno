@@ -7,7 +7,7 @@
 //   config = parse_...(open_text_component(reader, "family ..."));  // then pairing checks
 //   loading::Demands demands(reader);                               // bind every parameter
 //   backing = demands.materialize(device);                          // upload, bind the views
-//   const loading::Prepare prepare(demands, *backing, recorded);    // Op-ready parameters
+//   const loading::Prepare prepare(demands, *backing, activations); // Op-ready parameters
 //
 // A family differs only in the config it parses, its pairing checks, and the parameters it
 // demands and prepares.
@@ -22,6 +22,7 @@
 #include "core/weight_view.h"
 #include "models/common/weight_use.h"
 #include "ninferno/ops/linear.h"
+#include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
 
 #include <cstddef>
@@ -95,12 +96,18 @@ using Projection = ops::SingleProjectionWeight;
 
 class Prepare {
 public:
-    // `recorded`: every projection keeps the activation policy its Use recorded (W4A4 where the
-    // checkpoint was calibrated for it); otherwise every activation stays BF16.
-    Prepare(const Demands& demands, const ArtifactBacking& backing, bool recorded)
-        : items_(demands.items()), views_(backing.views), recorded_(recorded) {}
+    // `activations`: the policy every projection runs under (effective_policy): Auto keeps the
+    // one its Use recorded (W4A4 where the checkpoint was calibrated for it), Bits16 keeps every
+    // activation BF16, Bits8 and Bits4 allow eight and four bits (a recorded-BF16 head keeps it).
+    Prepare(const Demands& demands, const ArtifactBacking& backing, ActivationMode activations)
+        : items_(demands.items()), views_(backing.views), activations_(activations) {}
 
     const WeightView& view(Id id) const { return views_.at(id); }
+
+    // The parameter's artifact name.
+    const std::string& name(Id id) const { return items_.at(id).reference.name; }
+
+    ActivationMode activations() const noexcept { return activations_; }
 
     ops::WeightInput input(Id id) const;
 
@@ -119,7 +126,7 @@ public:
 private:
     const std::vector<Pending>& items_;
     const std::deque<WeightView>& views_;
-    bool recorded_;
+    ActivationMode activations_;
 };
 
 // The policy of a MoE's routed experts: A8 (the R8 route of codebook banks at decode) only where
@@ -129,6 +136,15 @@ private:
 inline ops::LinearPolicy expert_policy(const Projection& gate_up, const Projection& down) {
     return ops::moe_policy(gate_up.policy, down.policy);
 }
+
+// A layer the generic MoE Op runs, as --activations prepares it: under Bits4 an expert or shared
+// policy that allows A4 reads as AllowA8, since the Op has no four-bit route and its NVFP4 banks
+// would otherwise stay on BF16 where the build has the W4A4 kernels (moe_policy); eight bits are
+// the narrowest it has. The layer's widths then go to this thread's activation census
+// (activation_census.h): `experts` both banks' matrices, `shared_gate_up` and `shared_down` the
+// shared expert's.
+void generic_moe(ops::MoeWeights& weights, const Prepare& prepare, std::span<const Id> experts,
+                 std::span<const Id> shared_gate_up, std::span<const Id> shared_down);
 
 } // namespace loading
 } // namespace ninferno::models

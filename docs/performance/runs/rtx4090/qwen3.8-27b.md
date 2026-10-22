@@ -22,22 +22,22 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | exact | 789 | 117 | 111 | – | – | 2026-10-21 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | fast | 3,345 | 127 | 122 | 277 | – | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | exact | – | – | – | – | 251 | 2026-10-21 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | fast | – | – | – | – | 366 | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | fast | 3,376 | 48.7 | 50.5 | 156 | 234 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | 16 | 789 | 117 | 111 | – | – | 2026-10-21 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×7 | auto | auto | 3,345 | 127 | 122 | 277 | – | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | 16 | – | – | – | – | 251 | 2026-10-21 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | mtp ×3 | auto | auto | – | – | – | – | 366 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | auto | 3,376 | 48.7 | 50.5 | 156 | 234 | 2026-10-19 |
 
 ## Quality
 
-What each `--activations` mode gives: its speed (the fastest setting measured in it), perplexity (lower is better) on `ninferno-ppl-1m-v1/quick`, and how far it moves the next-token distribution from `exact`: mean KL divergence and the share of positions with the same top token.
+What each `--activations` mode gives: its speed (the fastest setting measured in it), perplexity (lower is better) on `ninferno-ppl-1m-v1/quick`, and how far it moves the next-token distribution from `16`: mean KL divergence and the share of positions with the same top token.
 
-| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from exact | Same top token | Measured |
+| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from 16 | Same top token | Measured |
 |---|---|---:|---:|---:|---:|---:|---|
-| UD-Q4_K_XL | exact | 111 | 789 | 4.2663 | reference |  | 2026-10-20 |
-| UD-Q4_K_XL | fast = int8 | 122 | 3,376 | 4.2675 | 0.00256 | 98.02 % | 2026-10-20 |
+| UD-Q4_K_XL | 16 | 111 | 789 | 4.2663 | reference |  | 2026-10-20 |
+| UD-Q4_K_XL | auto = 8 | 122 | 3,376 | 4.2675 | 0.00256 | 98.02 % | 2026-10-20 |
 
-**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` takes the same kernels and gives the same numbers.
+**auto = 8**: on these weights `auto` already runs 8-bit activations, so `8` takes the same kernels and gives the same numbers.
 
 
 ## Measurement
@@ -50,11 +50,11 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --activations exact
+--max-context 32768 --max-concurrency 1 --activations 16
 --max-context 32768 --max-concurrency 1 --spec none
 --max-context 32768 --max-concurrency 4 
 --max-context 32768 --max-concurrency 4 --spec none
 --max-context 32768 --max-concurrency 8 
---max-context 32768 --max-concurrency 8 --activations exact
+--max-context 32768 --max-concurrency 8 --activations 16
 --max-context 32768 --max-concurrency 8 --spec none
 ```

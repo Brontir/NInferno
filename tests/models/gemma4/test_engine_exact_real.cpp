@@ -25,8 +25,8 @@ int main() {
         return 77;
     }
     try {
-        const Run exact = engine_run(artifact, ninferno::ActivationMode::Exact);
-        const Run fast  = engine_run(artifact, ninferno::ActivationMode::Fast);
+        const Run exact = engine_run(artifact, ninferno::ActivationMode::Bits16);
+        const Run fast  = engine_run(artifact, ninferno::ActivationMode::Auto);
         std::vector<std::int32_t> session_tokens;
         {
             ninferno::DeviceContext device(0);
@@ -41,7 +41,7 @@ int main() {
             session_tokens = session.decode(static_cast<std::int32_t>(kDecode));
         }
         compare("gemma4", exact, fast, session_tokens);
-        const Run fp8 = engine_run(artifact, ninferno::ActivationMode::Exact,
+        const Run fp8 = engine_run(artifact, ninferno::ActivationMode::Bits16,
                                    ninferno::KvCacheStorage::Fp8E4M3Row256,
                                    ninferno::KvCacheStorage::Fp8E4M3Row256);
         std::vector<std::int32_t> session_fp8;

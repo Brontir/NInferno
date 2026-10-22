@@ -868,11 +868,11 @@ int main(int argc, char** argv) {
         if (args.flag("a16") && args.flag("a16-full")) {
             throw std::invalid_argument("--a16 and --a16-full are exclusive");
         }
-        const bool exact = product::parse_activation_mode(args.text("activations", "fast")) ==
-                           ActivationMode::Exact;
+        const bool exact = product::parse_activation_mode(args.text("activations", "auto")) ==
+                           ActivationMode::Bits16;
         if (exact && (args.flag("a16") || args.flag("a16-full"))) {
-            throw std::invalid_argument(
-                "--activations exact sets its own profile; --a16 and --a16-full are fast-mode studies");
+            throw std::invalid_argument("--activations 16 sets its own profile; --a16 and "
+                                        "--a16-full are studies of the other modes");
         }
         // For the rest of the run: this thread's ops resolve their routes under it.
         const ops::ScopedInvariantRoutes invariant_routes(exact);

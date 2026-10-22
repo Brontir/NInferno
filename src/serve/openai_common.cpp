@@ -2,6 +2,8 @@
 #include "serve/generation_service.h"
 #include "serve/request_validation.h"
 
+#include "product/activation_options.h"
+
 #include "ninferno/types.h"
 
 #include <nlohmann/json.hpp>
@@ -47,6 +49,41 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
             published[bits == 0 ? std::string("unknown") : std::to_string(bits)] = count;
         }
         meta["published_activations"] = published;
+    }
+    // What --activations asked for and resolved to, and the KV storage beside it (a separate
+    // choice, --kv-dtype): matrices per narrowest activation width they admit on this device.
+    {
+        Json activations{
+            {"requested", product::activation_mode_name(metadata.activations.requested)},
+            {"resolved",
+             {{"4", metadata.activations.bits4},
+              {"8", metadata.activations.bits8},
+              {"16", metadata.activations.bits16}}},
+            {"kept_wider", metadata.activations.kept_wider},
+            {"notes", metadata.activations.notes},
+            {"same_as_auto", metadata.activations.same_as_auto},
+            {"faster_than_auto", metadata.activations.faster_than_auto}};
+        const auto& a = metadata.activations;
+        if (a.drafter_bits4 + a.drafter_bits8 + a.drafter_bits16 > 0) {
+            activations["drafter"] = {
+                {"4", a.drafter_bits4}, {"8", a.drafter_bits8}, {"16", a.drafter_bits16}};
+        }
+        meta["activations"] = std::move(activations);
+        if (!metadata.kv_cache.empty()) { meta["kv_cache"] = metadata.kv_cache; }
+    }
+    // The presets a request that names no sampling field runs with, per thinking mode.
+    if (metadata.sampling) {
+        const auto preset = [](const ninferno::SamplingPreset& p) {
+            return Json{{"temperature", p.temperature},
+                        {"top_k", p.top_k},
+                        {"top_p", p.top_p},
+                        {"min_p", p.min_p},
+                        {"presence_penalty", p.presence_penalty},
+                        {"frequency_penalty", p.frequency_penalty}};
+        };
+        meta["sampling"] = Json{{"source", metadata.sampling->source},
+                                {"thinking", preset(metadata.sampling->thinking)},
+                                {"non_thinking", preset(metadata.sampling->non_thinking)}};
     }
     // The decision fingerprint the engine printed at startup (LoadSummary::decision_fingerprint).
     if (!metadata.decision_fingerprint.empty()) {

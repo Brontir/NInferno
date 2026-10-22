@@ -1,7 +1,7 @@
 // Activation routes of the fused NVFP4 plans on the Qwen3.5-27B shapes: the attention and GDN
 // input projections (with the GDN conv snapshot schedules), LinearAdd and LinearSwiGLU.
 //
-// - The A16Only policy (ActivationMode::Exact, ninferno/types.h) is served at every width, prefill
+// - The A16Only policy (ActivationMode::Bits16, ninferno/types.h) is served at every width, prefill
 //   chunks included, by the token-invariant A16 routes (nvfp4_a16_exact.cuh): never a W4A4 route
 //   and never a refusal. SwiGLU applies SiLU in that route's epilogue (no workspace); the GDN conv
 //   takes the projection's BF16 plane at every width, then convolves.

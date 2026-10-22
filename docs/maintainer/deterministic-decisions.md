@@ -6,7 +6,7 @@ reach the runtime only as facts or as constants.
 
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
-- under `exact`, the DFlash drafter's attention over its context (`context_softmax_attention`)
+- under `--activations 16`, the DFlash drafter's attention over its context (`context_softmax_attention`)
   still takes its split count from the free-memory-sized context, so the drafts and how many are
   accepted can follow free memory; under greedy decoding the emitted bytes do not (the target's
   verify decides them). The target's causal attention splits follow each token's position only;
@@ -31,11 +31,11 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `ninferno-gemma4`'s session fit (a maintainer tool) still bisects the context on the free memory;
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
-- under `fast`, the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
+- under `auto` (and `8`, `4`), the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
   start, so after a call that starts off that grid (a turn's rewrite frontier, a private endpoint
   restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
   prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
-  the run it replaces; `exact` runs the scan token by token and is free of this;
+  the run it replaces; `16` runs the scan token by token and is free of this;
 - launch counts stand as constants, the same on every board but not yet fitted on two lab cards
   or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
   decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
@@ -59,7 +59,7 @@ This page states the rule and its target. The engine does not meet all of it yet
   and spread gates): the nearest measured board, not a rule over facts;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
-- the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
+- the batch dependence of `auto` bytes at T ≤ 16 is not documented yet;
 - no CI property checks invariance yet;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
@@ -90,8 +90,8 @@ This page states the rule and its target. The engine does not meet all of it yet
   among them; no environment variable decides), the route table, dense- and MoE-tune files,
   context-cost presets, speculation profile and drafter registry by content, the artifact and a
   separate drafter by their source identity (their artifact ids are observed), the plan startup resolved without the free memory (KV and state storage,
-  speculative windows, route breakpoints, decode steps per round) and the violations of this page
-  present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
+  activation precision per width, speculative windows, route breakpoints, decode steps per
+  round) and the violations of this page present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
   127 GiB; 0 below 1 GiB or unknown), so the few hundred MiB a kernel keeps do not move it. What
   startup sized from the Host memory (the Host tier), the rung the selection picked before the
   kernel warm-up and the tier it admitted it at are observed and enter only the manifest; the
@@ -127,11 +127,20 @@ What the design guarantees once complete:
    into three tiers:
    - **B1, the byte class.** Activation precision, summation class, KV codec, decode/verify parity,
      placement and plan level. It reads only discrete device facts, the artifact and the options.
-     `--activations exact` must read nothing else, so that its bytes are the same across a
+     `--activations 16` must read nothing else, so that its bytes are the same across a
      generation.
-   - **B2, routes and depth under `fast`.** It may also read canonical continuous facts from the
-     PCI-ID reference table. Its bytes are the same for the same chip type and the same request
-     schedule.
+     Activation precision is the user's choice (`--activations auto|16|8|4`); startup resolves it
+     per matrix from the option, the artifact's formats, recorded policies and calibration, and
+     the device's discrete facts (`runtime/engine/activation_precision.h`), refuses a width no
+     matrix can take before the load and names the matrices a partial one leaves wider. The
+     counts come from the functions the routes select by (one source: the linear path's
+     admission and int8 prefill rule, the MoE Op's expert width), and after the load from what
+     the loaders handed to the expert Ops (`models/common/activation_census.h`), so the log says
+     what runs. `ninferno-serve --activations-preflight` runs the same resolution for all four
+     modes without a GPU, which the desktop UI asks before it offers a mode.
+   - **B2, routes and depth under `auto`, `8` and `4`.** It may also read canonical continuous
+     facts from the PCI-ID reference table. Its bytes are the same for the same chip type and the
+     same request schedule.
    - **S, byte-neutral choices.** These may read any canonical fact.
 3. **No timings, clocks or hidden state in decisions.** That rules out a cache left by an earlier
    run, an environment variable that changes a choice, and a budget in milliseconds. The monitor is
@@ -154,7 +163,7 @@ What the design guarantees once complete:
      codec, decode/verify parity, placement and plan level);
    - the sampling settings and the draft depth;
    - the corpus, by hash;
-   - under `fast`, the lane count, because the bytes at T ≤ 16 depend on the batch.
+   - under `auto`, `8` or `4`, the lane count, because the bytes at T ≤ 16 depend on the batch.
 
    Every card runs the same request schedule. The cards must come from two generations, or
    take different routes, so that their agreement means something. The constant records the
@@ -450,8 +459,8 @@ option change moves the fingerprint only, a plan change both, an observed size t
 ## What will be promised
 
 - Same fingerprint: same decisions.
-- `--activations exact`: the same bytes on every card of a generation.
-- `fast`: the same bytes for the same request schedule on the same chip type. At T ≤ 16 the bytes
+- `--activations 16`: the same bytes on every card of a generation.
+- `auto`, `8`, `4`: the same bytes for the same request schedule on the same chip type. At T ≤ 16 the bytes
   may depend on the batch's composition, and this is documented.
 - Speed: a forecast with one of these labels:
   - *verified*: a lab card;
@@ -471,7 +480,7 @@ option change moves the fingerprint only, a plan change both, an observed size t
 - Memory type (HBM/GDDR) as an input to a decision.
 - An MMQ gate on `!fp32acc_full_rate`: it only works on wrong rates.
 - A decision tree per generation: it overfits.
-- Batch-invariant `fast` by default: its cost is too high.
+- Batch-invariant `auto` by default: its cost is too high.
 - A per-site profile (`--site-profile`). It is deferred until more than 10 % of covered cards leave
   their band.
 - Promises of a confidence level that two lab cards per generation cannot support, such as "at

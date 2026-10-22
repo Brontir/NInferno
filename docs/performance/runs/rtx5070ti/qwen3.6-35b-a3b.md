@@ -22,21 +22,21 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | dflash ×7 | auto | exact | 3,579 | 351 | 344 | – | – | 2026-10-21 |
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | dflash ×7 | auto | fast | 7,224 | 361 | 365 | 739 | – | 2026-10-19 |
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | off | auto | exact | – | – | – | – | 702 | 2026-10-21 |
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | off | auto | fast | 7,355 | 248 | 266 | 604 | 755 | 2026-10-19 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | dflash ×7 | auto | 16 | 3,579 | 351 | 344 | – | – | 2026-10-21 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | dflash ×7 | auto | auto | 7,224 | 361 | 365 | 739 | – | 2026-10-19 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | off | auto | 16 | – | – | – | – | 702 | 2026-10-21 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-IQ3_XXS | off | auto | auto | 7,355 | 248 | 266 | 604 | 755 | 2026-10-19 |
 
 ## Quality
 
-What each `--activations` mode gives: its speed (the fastest setting measured in it), perplexity (lower is better) on `ninferno-ppl-1m-v1/quick`, and how far it moves the next-token distribution from `exact`: mean KL divergence and the share of positions with the same top token.
+What each `--activations` mode gives: its speed (the fastest setting measured in it), perplexity (lower is better) on `ninferno-ppl-1m-v1/quick`, and how far it moves the next-token distribution from `16`: mean KL divergence and the share of positions with the same top token.
 
-| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from exact | Same top token | Measured |
+| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from 16 | Same top token | Measured |
 |---|---|---:|---:|---:|---:|---:|---|
-| UD-IQ3_XXS | exact | 344 | 3,579 | 4.4973 | reference |  | 2026-10-20 |
-| UD-IQ3_XXS | fast = int8 | 365 | 7,355 | 4.4966 | 0.00611 | 97.09 % | 2026-10-20 |
+| UD-IQ3_XXS | 16 | 344 | 3,579 | 4.4973 | reference |  | 2026-10-20 |
+| UD-IQ3_XXS | auto = 8 | 365 | 7,355 | 4.4966 | 0.00611 | 97.09 % | 2026-10-20 |
 
-**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` takes the same kernels and gives the same numbers.
+**auto = 8**: on these weights `auto` already runs 8-bit activations, so `8` takes the same kernels and gives the same numbers.
 
 
 ## Measurement
@@ -49,10 +49,10 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --activations exact
+--max-context 32768 --max-concurrency 1 --activations 16
 --max-context 32768 --max-concurrency 1 --spec none
 --max-context 32768 --max-concurrency 4 
 --max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 --activations exact
+--max-context 32768 --max-concurrency 8 --activations 16
 --max-context 32768 --max-concurrency 8 --spec none
 ```

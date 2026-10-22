@@ -47,6 +47,24 @@ std::string sampling_defaults_header(const ninferno::ModelSamplingDefaults& defa
     return out;
 }
 
+// The presets a request that names no sampling field runs with: the model's, with the server's
+// sampling flags over them and --greedy's temperature 0 (resolve_sampling_overrides).
+ninferno::ModelSamplingDefaults applied_sampling(ninferno::ModelSamplingDefaults defaults,
+                                                 const ServeOptions& options) {
+    const auto& o = options.sampling_overrides;
+    for (ninferno::SamplingPreset* p : {&defaults.thinking, &defaults.non_thinking}) {
+        if (o.temperature) { p->temperature = *o.temperature; }
+        if (o.top_k) { p->top_k = *o.top_k; }
+        if (o.top_p) { p->top_p = *o.top_p; }
+        if (o.min_p) { p->min_p = *o.min_p; }
+        if (o.presence_penalty) { p->presence_penalty = *o.presence_penalty; }
+        if (o.frequency_penalty) { p->frequency_penalty = *o.frequency_penalty; }
+        if (options.greedy) { p->temperature = 0.0F; }
+    }
+    defaults.source = sampling_defaults_header(defaults, options);
+    return defaults;
+}
+
 bool is_generation_path(std::string_view request_path) {
     const std::string_view path = api_endpoint(request_path);
     return path == "/chat/completions" || path == "/responses" || path == "/messages";
@@ -699,6 +717,7 @@ void HttpServer::attach(GenerationService& service) {
     model_created_                   = unix_time_now();
     sampling_defaults_header_ = sampling_defaults_header(service.sampling_defaults(), options_);
     model_metadata_                = service.model_metadata();
+    model_metadata_.sampling       = applied_sampling(service.sampling_defaults(), options_);
     startup_speculation_           = service.startup_speculation();
     service_                       = &service;
     // An automatic max_context is what the Engine chose (/v1/models reports it).

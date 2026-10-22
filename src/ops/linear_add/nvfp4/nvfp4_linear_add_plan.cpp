@@ -17,7 +17,7 @@ enum class Nvfp4LinearAddRoute : std::uint8_t {
     A4,
 };
 
-// A16Only is the exact contract (ActivationMode::Exact): one token-invariant A16 route at every
+// A16Only is the exact contract (ActivationMode::Bits16): one token-invariant A16 route at every
 // width. AllowA8 has no 8-bit form here and keeps the tuned A16 routes, but for a prefill call of
 // 17 tokens or more, which the wrapper hands to the generic W4A8 (generic::owned_prefill_w4a8).
 

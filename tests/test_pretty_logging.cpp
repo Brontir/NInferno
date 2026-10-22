@@ -146,8 +146,10 @@ int main() {
         startup_output = capture.finish();
     }
     failures += check(
-        line_count(startup_output) == 5 &&
+        line_count(startup_output) == 6 &&
             startup_output.find("starting engine") != std::string::npos &&
+            // What --activations resolved to is part of every start.
+            startup_output.find("activations | auto -> ") != std::string::npos &&
             startup_output.find("loading weights | 16.0 GiB") != std::string::npos &&
             startup_output.find("weights ready | 16.0 GiB | 2.0s | 8.00 GiB/s") !=
                 std::string::npos &&

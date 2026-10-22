@@ -21,12 +21,14 @@
 #include "core/units.h"
 #include "ui/chat_ui.h"
 #include "ui/embedded_page.h"
+#include "ninferno/types.h"
 
 #include <httplib.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <regex>
 #include <ctime>
@@ -366,25 +368,6 @@ std::pair<std::string, std::string> split_model_tag(const std::string& model) {
     return {model.substr(0, colon), model.substr(colon + 1)};
 }
 
-std::string tune_refusal_on(const fs::path& tune, const std::string& artifact_id,
-                            const GpuStat* gpu) {
-    // The tune itself first: unreadable, another artifact, or a drafter replaced since.
-    if (auto why = spec::tune_refusal(tune, artifact_id); !why.empty()) { return why; }
-    if (gpu == nullptr || gpu->cc_major <= 0) {
-        return tune.string() + ": the GPU it would run on is unknown here";
-    }
-    // The server keys a tune by "<chip>:<sms>sm": boards of one chip differ in SM count (RTX 5090
-    // and RTX PRO 6000, RTX 4090 and L40), so without the count (NVML gave none, or a MIG slice)
-    // the class is unknown here.
-    if (gpu->sms <= 0) {
-        return tune.string() + ": the SM count of GPU " + std::to_string(gpu->index) +
-               " is unknown here";
-    }
-    const std::string chip = gpu_chip(gpu->pci_device_id, gpu->cc_major, gpu->cc_minor, gpu->sms);
-    // The class the server keys a tune by (device_class's id(), its similarity chain's front).
-    return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
-}
-
 const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
     if (gpu < 0) { return stats.size() == 1 ? &stats.front() : nullptr; }
     for (const auto& stat : stats) {
@@ -393,7 +376,52 @@ const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
     return nullptr;
 }
 
-LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, const GpuStat* gpu) {
+std::vector<std::string> precision_preflight_argv(const UiOptions& options,
+                                                  const std::string& artifact,
+                                                  const std::string& cc,
+                                                  std::uint32_t pci_device_id) {
+    if (artifact.empty() || artifact.front() == '-' ||
+        fs::path(artifact).extension() != ".ninferno") {
+        throw std::invalid_argument("the preflight reads a converted .ninferno model");
+    }
+    for (const unsigned char c : artifact) {
+        if (c < 0x20 || c == 0x7f) {
+            throw std::invalid_argument("a model path cannot hold control characters");
+        }
+    }
+    // MAJOR.MINOR as NVML gives it: digits and one dot, nothing the server could read otherwise.
+    const auto dot    = cc.find('.');
+    const bool digits = dot != std::string::npos && dot > 0 && dot + 1 < cc.size() &&
+                        std::all_of(cc.begin(), cc.end(),
+                                    [](char c) { return c == '.' || (c >= '0' && c <= '9'); }) &&
+                        cc.find('.', dot + 1) == std::string::npos;
+    if (!digits) { throw std::invalid_argument("bad compute capability: " + cc); }
+    std::string card = cc;
+    if (pci_device_id != 0 && pci_device_id <= 0xffff) {
+        char id[8];
+        std::snprintf(id, sizeof id, "0x%04x", pci_device_id);
+        card += std::string(":") + id;
+    }
+    return {options.serve_binary.string(), artifact, "--activations-preflight", card};
+}
+
+Json parse_precision_preflight(const std::vector<std::string>& lines) {
+    for (auto it = lines.rbegin(); it != lines.rend(); ++it) {
+        if (it->empty() || it->front() != '{') { continue; }
+        Json answer = Json::parse(*it, nullptr, false);
+        if (answer.is_object() && answer.contains("modes") && answer["modes"].is_array()) {
+            return answer;
+        }
+    }
+    std::string tail;
+    for (std::size_t i = lines.size() > 3 ? lines.size() - 3 : 0; i < lines.size(); ++i) {
+        tail += (tail.empty() ? "" : " | ") + lines[i];
+    }
+    throw std::runtime_error("ninferno-serve --activations-preflight gave no answer" +
+                             (tail.empty() ? std::string() : ": " + tail));
+}
+
+LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
     if (model.front() == '-') { throw std::invalid_argument("a model name cannot start with '-'"); }
@@ -409,9 +437,19 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         throw std::invalid_argument("bad quantization: " + quant);
     }
     static const std::set<std::string> specs = {"", "auto", "none", "mtp", "dflash", "dflash2"};
-    static const std::set<std::string> precisions = {"", "exact", "balanced", "compact"};
+    static const std::set<std::string> precisions = {"", "auto", "16", "8", "4"};
+    // The old names, as ninferno-serve still parses them: a script written for them keeps
+    // working, and the log says what to write instead.
+    static const std::map<std::string, std::string> deprecated = {
+        {"exact", "16"}, {"fast", "auto"}, {"int8", "8"}};
     if (!specs.count(request.spec)) { throw std::invalid_argument("bad spec: " + request.spec); }
-    if (!precisions.count(request.precision)) {
+    std::string precision = request.precision;
+    std::vector<std::string> notes;
+    if (const auto old = deprecated.find(precision); old != deprecated.end()) {
+        notes.push_back("precision '" + old->first + "' is deprecated: use '" + old->second + "'");
+        precision = old->second;
+    }
+    if (!precisions.count(precision)) {
         throw std::invalid_argument("bad precision: " + request.precision);
     }
     static const std::set<std::string> kv_dtypes = {"", "bf16", "int8", "fp8", "nvfp4", "k8v4"};
@@ -422,8 +460,12 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         throw std::invalid_argument("bad hub: " + request.hub);
     }
     if (request.max_context < 0) { throw std::invalid_argument("bad max_context"); }
-    if (request.max_concurrency < 0 || request.max_concurrency > 64) {
-        throw std::invalid_argument("bad max_concurrency");
+    // ninferno-serve's own bounds (--max-concurrency in [1,8]): a value past them would start a
+    // server that refuses its options at once.
+    if (request.max_concurrency < 0 ||
+        request.max_concurrency > static_cast<int>(ninferno::kMaximumConcurrency)) {
+        throw std::invalid_argument("bad max_concurrency: ninferno-serve takes 1 to " +
+                                    std::to_string(ninferno::kMaximumConcurrency));
     }
 
     LaunchSpec spec;
@@ -453,44 +495,31 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
             spec.argv.push_back("--max-context");
             spec.argv.push_back(std::to_string(request.max_context));
         }
-        // Precision: exact is ninferno-serve's --activations exact with a BF16 KV cache (the
-        // output does not depend on the load); balanced and compact keep its defaults, which already
-        // store the cache in the family's smallest measured format (--kv-dtype auto).
-        const bool exact = request.precision == "exact";
-        if (!request.kv_dtype.empty() || exact) {
+        // The KV cache is its own choice under every precision (ninferno-serve's --kv-dtype;
+        // unnamed, the family's default), so --activations 16 changes the activations only, as
+        // on the command line.
+        if (!request.kv_dtype.empty()) {
             spec.argv.push_back("--kv-dtype");
-            spec.argv.push_back(request.kv_dtype.empty() ? "bf16" : request.kv_dtype);
+            spec.argv.push_back(request.kv_dtype);
         }
-        if (exact) {
+        if (!precision.empty()) {
             spec.argv.push_back("--activations");
-            spec.argv.push_back("exact");
+            spec.argv.push_back(precision);
         }
-        // Speculation is the product's measured choice unless the request names one (ninferno-serve
-        // alone decodes plainly without --spec).
+        // Speculation: the model's measured profile unless the request names one (--spec auto,
+        // which ninferno-serve also runs when no speculation flag is given).
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
-        // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
-        // by its artifact path: named, since the server reads none by itself, and only when it
-        // would serve (a named tune that does not refuses to start): a stale one is passed over
-        // with a note in the log. Checked against the GPU the request runs on (tune_refusal_on):
-        // one not known well enough here passes the tune over too.
+        // A speculation tune calibrated on this machine (ninferno spec-tune, or an older page's
+        // calibration) lies beside the model: never named here, so no state left by an earlier
+        // run picks the speculation; the log says it is there and how to use it.
         std::error_code ec;
         const fs::path tune = spec::default_profile_path(model);
         if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
-            std::string why;
-            try {
-                why = tune_refusal_on(tune, spec::artifact_id_hex(model), gpu);
-            } catch (const std::exception& e) {
-                why = std::string("the model's id is unreadable: ") + e.what();
-            }
-            if (why.empty()) {
-                spec.argv.push_back("--spec-profile");
-                spec.argv.push_back(tune.string());
-            } else {
-                spec.notes.push_back("the tune beside the model is passed over (" + why +
-                                     "); the published profile runs: calibrate again if "
-                                     "it is stale");
-            }
+            spec.notes.push_back("a speculation tune calibrated on this machine lies beside the "
+                                 "model and is not used: the published profile runs; "
+                                 "`ninferno-serve --spec-profile " +
+                                 tune.string() + "` names it");
         }
     }
     if (request.gpu >= 0) {
@@ -498,32 +527,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         spec.env["CUDA_VISIBLE_DEVICES"] = std::to_string(request.gpu);
     }
     if (!options.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = options.hub_cache.string(); }
-    return spec;
-}
-
-LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request) {
-    std::error_code ec;
-    if (request.artifact.empty() || request.artifact.front() == '-' ||
-        fs::path(request.artifact).extension() != ".ninferno" ||
-        !fs::is_regular_file(request.artifact, ec)) {
-        throw std::invalid_argument("not a .ninferno artifact: " + request.artifact);
-    }
-    const fs::path bin = options.serve_binary.parent_path();
-    LaunchSpec spec;
-    spec.kind  = "tune";
-    spec.model = fs::path(request.artifact).filename().string();
-    spec.gpu   = request.gpu;
-    if (request.engine == "gemma4") {
-        spec.argv = {(bin / "ninferno-gemma4").string(), request.artifact, "spec-tune",
-                     "--budget-seconds", "120"};
-    } else {
-        spec.argv = {(bin / "ninferno").string(), "spec-tune", request.artifact, "--budget-seconds",
-                     "120"};
-    }
-    if (request.gpu >= 0) {
-        spec.env["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID";
-        spec.env["CUDA_VISIBLE_DEVICES"] = std::to_string(request.gpu);
-    }
+    spec.notes.insert(spec.notes.begin(), notes.begin(), notes.end());
     return spec;
 }
 
@@ -1029,7 +1033,16 @@ Json App::state_json() {
     Json gpus = Json::array();
     for (const auto& stat : gpus_->snapshot()) { gpus.push_back(stat.to_json()); }
     Json processes = Json::array();
-    for (const auto& info : processes_.list()) { processes.push_back(info.to_json()); }
+    {
+        std::lock_guard lock(served_mutex_);
+        for (const auto& info : processes_.list()) {
+            auto json = info.to_json();
+            if (const auto it = served_meta_.find(info.id); it != served_meta_.end()) {
+                json.update(it->second);
+            }
+            processes.push_back(std::move(json));
+        }
+    }
     return {{"gpus", gpus},
             {"gpu_error", gpus_->error()},
             {"processes", processes},
@@ -1037,6 +1050,102 @@ Json App::state_json() {
             {"chat_ui", !options_.chat_ui.empty()},
             {"update", update_json()},
             {"exposed", !is_loopback_host(host_of_authority(options_.access.listen))}};
+}
+
+Json App::precision_json(const std::string& model, const std::string& quant, int gpu) {
+    const auto stats = gpus_->snapshot();
+    const GpuStat* g = launch_gpu(stats, gpu);
+    if (g == nullptr || g->cc_major <= 0) {
+        throw std::invalid_argument("the compute capability of GPU " + std::to_string(gpu) +
+                                    " is unknown here");
+    }
+    const std::string cc = std::to_string(g->cc_major) + "." + std::to_string(g->cc_minor);
+    // The converted model: a path as the page lists it, else this hub model's conversion here.
+    fs::path artifact;
+    const auto [repo, tag] = split_model_tag(model);
+    if (convert::is_repository_spec(repo)) {
+        artifact = local_artifact(repo, quant.empty() ? tag : quant);
+    } else {
+        // Only a model this page lists (the hub cache's conversions, --models-dir).
+        // Lexically (no "..": the path stays under the listed directory), not canonically: a
+        // model in --models-dir may be a link to a file elsewhere, as the listing shows it.
+        artifact = fs::path(model).lexically_normal();
+        if (!artifact.is_absolute() ||
+            !deletable_artifact(artifact, hub_root(), options_.model_dirs)) {
+            throw std::invalid_argument("not a converted model this page lists: " + model);
+        }
+    }
+    std::error_code ec;
+    if (artifact.empty() || artifact.extension() != ".ninferno" ||
+        !fs::is_regular_file(artifact, ec)) {
+        // What the server answers for a model not converted here, without starting it.
+        return {{"model", model},
+                {"cc", cc},
+                {"status", "pending"},
+                {"pending", "not converted on this machine yet: the server checks the modes after "
+                            "the download and conversion"},
+                {"modes", Json::array()}};
+    }
+    const auto stamp      = fs::last_write_time(artifact, ec).time_since_epoch().count();
+    const std::string key = artifact.string() + "|" + std::to_string(stamp) + "|" + cc + "|" +
+                            std::to_string(g->pci_device_id);
+    {
+        std::lock_guard lock(preflight_mutex_);
+        if (const auto it = preflight_cache_.find(key); it != preflight_cache_.end()) {
+            return it->second;
+        }
+    }
+    LaunchSpec spec;
+    spec.kind  = "preflight";
+    spec.model = artifact.string();
+    spec.argv  = precision_preflight_argv(options_, artifact.string(), cc, g->pci_device_id);
+    preflights_.forget_ended(std::chrono::seconds(60));
+    const auto id = preflights_.start(std::move(spec));
+    // CPU only, milliseconds of work over the artifact's header; 20 s covers a cold disk.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    ProcessInfo info;
+    while (preflights_.find(id, info) && info.state != "exited" && info.state != "failed") {
+        if (std::chrono::steady_clock::now() > deadline) {
+            preflights_.stop(id, std::chrono::seconds(1));
+            throw std::runtime_error("ninferno-serve --activations-preflight took over 20 s");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    const auto lines = preflights_.log(id);
+    if (info.state == "failed") {
+        std::string tail;
+        for (std::size_t i = lines.size() > 3 ? lines.size() - 3 : 0; i < lines.size(); ++i) {
+            tail += (tail.empty() ? "" : " | ") + lines[i];
+        }
+        throw std::runtime_error("ninferno-serve --activations-preflight failed (exit " +
+                                 std::to_string(info.exit_code) + "): " + tail);
+    }
+    Json answer = parse_precision_preflight(lines);
+    std::lock_guard lock(preflight_mutex_);
+    preflight_cache_[key] = answer;
+    return answer;
+}
+
+void App::read_served_meta(const ProcessInfo& info) {
+    {
+        std::lock_guard lock(served_mutex_);
+        if (served_meta_.contains(info.id)) { return; }
+    }
+    const auto body = serve_models_body(info.spec.port);
+    if (body.empty()) { return; } // asked again on the next round
+    const Json models = Json::parse(body, nullptr, false);
+    Json meta         = Json::object();
+    if (models.is_object() && models.contains("data") && models["data"].is_array() &&
+        !models["data"].empty() && models["data"][0].is_object()) {
+        meta = models["data"][0].value("meta", Json::object());
+    }
+    Json out = Json::object();
+    if (meta.is_object()) {
+        if (meta.contains("activations")) { out["activations"] = meta["activations"]; }
+        if (meta.contains("kv_cache")) { out["kv_cache"] = meta["kv_cache"]; }
+    }
+    std::lock_guard lock(served_mutex_);
+    served_meta_[info.id] = std::move(out);
 }
 
 Json App::catalog_json(int gpu) {
@@ -1164,9 +1273,7 @@ Json App::local_json() {
                        {"size_gib", gib2(fs::file_size(path, ec))},
                        {"modified", iso_time(fs::last_write_time(path, ec))},
                        {"original_gib", gib2(original)},
-                       {"running", running.contains(path.string())},
-                       // Calibrated on this machine (spec-tune wrote it), else a registry profile.
-                       {"own_profile", fs::exists(spec::default_profile_path(path), ec)}});
+                       {"running", running.contains(path.string())}});
     };
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
     if (fs::is_directory(root, ec)) {
@@ -1459,7 +1566,11 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
 
 void App::watch_health() {
     while (!stopping_) {
-        for (const auto& info : processes_.list()) {
+        const auto listed = processes_.list();
+        for (const auto& info : listed) {
+            if (info.spec.kind == "serve" && info.state == "ready" && info.spec.port > 0) {
+                read_served_meta(info);
+            }
             if (info.spec.kind != "serve" || info.state != "starting" || info.spec.port <= 0) {
                 continue;
             }
@@ -1472,6 +1583,14 @@ void App::watch_health() {
         }
         remove_converted_originals();
         processes_.forget_ended(std::chrono::hours(6));
+        {
+            // The rows of processes no longer listed.
+            std::set<std::uint64_t> ids;
+            for (const auto& info : listed) { ids.insert(info.id); }
+            std::lock_guard lock(served_mutex_);
+            std::erase_if(served_meta_,
+                          [&](const auto& entry) { return !ids.contains(entry.first); });
+        }
         for (int i = 0; i < 10 && !stopping_; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -1622,6 +1741,14 @@ void App::install(httplib::Server& server) {
             reply_json(res, arch_json(repo, hub));
         } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
     });
+    server.Get("/api/precision", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            reply_json(res, precision_json(req.get_param_value("model"),
+                                           req.get_param_value("quant"), int_param(req, "gpu", 0)));
+        } catch (const std::invalid_argument& error) {
+            reply_error(res, 400, error.what());
+        } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
+    });
     server.Get("/api/local", [this](const httplib::Request&, httplib::Response& res) {
         reply_json(res, local_json());
     });
@@ -1658,9 +1785,7 @@ void App::install(httplib::Server& server) {
                             }
                         }
                         request.port     = processes_.free_port();
-                        const auto stats = gpus_->snapshot();
-                        const auto id    = processes_.start(
-                            make_launch(options_, request, launch_gpu(stats, request.gpu)));
+                        const auto id    = processes_.start(make_launch(options_, request));
                         reply_json(res, {{"id", id}, {"port", request.port}});
                     } catch (const std::invalid_argument& error) {
                         reply_error(res, 400, error.what());
@@ -1668,24 +1793,6 @@ void App::install(httplib::Server& server) {
                         reply_error(res, 400, std::string("bad request body: ") + error.what());
                     } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
                 });
-    // Speculation tuned on this GPU at the user's request: spec-tune's quick pass writes
-    // <artifact>.spec_profile.json, which this UI names (--spec-profile) when it starts the model
-    // again, in place of a profile borrowed from a similar chip.
-    server.Post("/api/tune", [this](const httplib::Request& req, httplib::Response& res) {
-        try {
-            const Json body = Json::parse(req.body);
-            TuneRequest request;
-            request.artifact = body.value("artifact", std::string());
-            request.gpu      = body.value("gpu", 0);
-            request.engine   = convert::describe_artifact(request.artifact, "").engine;
-            const auto id    = processes_.start(make_tune(options_, request));
-            reply_json(res, {{"id", id}});
-        } catch (const std::invalid_argument& error) {
-            reply_error(res, 400, error.what());
-        } catch (const Json::exception& error) {
-            reply_error(res, 400, std::string("bad request body: ") + error.what());
-        } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
-    });
     server.Post("/api/prepare",
                 [this, parse_request](const httplib::Request& req, httplib::Response& res) {
                     try {

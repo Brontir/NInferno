@@ -63,8 +63,24 @@ struct Weights {
 };
 
 // Which activation policy the projections run: each Use's recorded one (W4A4 where an NVFP4
-// checkpoint was calibrated for it) or BF16 activations everywhere.
-enum class ActivationProfile : std::uint8_t { Artifact, A16 };
+// checkpoint was calibrated for it), BF16 activations everywhere, or eight or four bits allowed
+// everywhere (--activations 8|4; a head recorded BF16 keeps it, models::effective_policy).
+enum class ActivationProfile : std::uint8_t { Artifact, A16, A8, A4 };
+
+// The --activations mode a profile prepares its projections under.
+[[nodiscard]] constexpr ActivationMode activation_mode_of(ActivationProfile profile) noexcept {
+    switch (profile) {
+    case ActivationProfile::Artifact:
+        return ActivationMode::Auto;
+    case ActivationProfile::A16:
+        return ActivationMode::Bits16;
+    case ActivationProfile::A8:
+        return ActivationMode::Bits8;
+    case ActivationProfile::A4:
+        return ActivationMode::Bits4;
+    }
+    return ActivationMode::Bits16;
+}
 
 class Model {
 public:

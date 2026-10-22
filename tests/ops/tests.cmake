@@ -102,7 +102,7 @@ ninferno_add_op_test(ninferno_shape_routes_test
   LIBRARIES ninferno_ops)
 
 # Fused NVFP4 plans (attention/GDN input, GDN conv, LinearAdd, SwiGLU): A16 at every width under
-# the A16Only policy (ActivationMode::Exact), and the route probe's forced routes. A build without
+# the A16Only policy (ActivationMode::Bits16, --activations 16), and the route probe's forced routes. A build without
 # the NVFP4 family (sm_89, sm_86) has none of these plans.
 if(NINFERNO_WITH_NVFP4)
   ninferno_add_op_test(ninferno_nvfp4_fused_activation_routes_test

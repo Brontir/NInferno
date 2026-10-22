@@ -2,6 +2,7 @@
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/update/update_check.h"
+#include "serve/activation_preflight.h"
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
 #include "serve/model_source.h"
@@ -165,6 +166,18 @@ int main(int argc, char** argv) {
     ninferno::warn_removed_environment("ninferno-serve");
     if (!options.drafter_registry.empty()) {
         ninferno::spec::Registry::use_file(options.drafter_registry);
+    }
+    if (!options.activations_preflight.empty()) {
+        try {
+            std::cout << ninferno::serve::activation_preflight(options.model_source,
+                                                               options.activations_preflight)
+                             .dump()
+                      << std::endl;
+            return 0;
+        } catch (const std::exception& exception) {
+            std::cerr << "ninferno-serve: " << exception.what() << '\n';
+            return 1;
+        }
     }
 
     ninferno::product::LoggingRuntime logging(

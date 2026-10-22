@@ -23,8 +23,8 @@ int main() {
         return 77;
     }
     try {
-        const Run exact = engine_run(artifact, ninferno::ActivationMode::Exact);
-        const Run fast  = engine_run(artifact, ninferno::ActivationMode::Fast);
+        const Run exact = engine_run(artifact, ninferno::ActivationMode::Bits16);
+        const Run fast  = engine_run(artifact, ninferno::ActivationMode::Auto);
         std::vector<std::int32_t> session_tokens;
         {
             ninferno::DeviceContext device(0);

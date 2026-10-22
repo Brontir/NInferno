@@ -195,7 +195,7 @@ void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, L
     }
     if (!registered && invariant_routes_active()) {
         throw std::invalid_argument(
-            "linear_swiglu: the invariant route profile (--activations exact) runs on the generic "
+            "linear_swiglu: the invariant route profile (--activations 16) runs on the generic "
             "path, which cannot read this weight's format or layout");
     }
     const bool large_shape = x.ne[0] == 5120 && out.ne[0] == 17408 && gate_up_weight.n == 34816 &&

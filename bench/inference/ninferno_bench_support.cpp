@@ -300,7 +300,7 @@ std::string usage_text(std::string_view program) {
         << "  --prefill-chunk <tokens>    multiple of " << kPrefillChunkAlignment
         << " (default: " << kDefaultPrefillChunk << ")\n"
         << "  --kv-dtype <bf16|int8|fp8|nvfp4|k8v4>  KV cache storage (default: bf16)\n"
-        << "  --activations <exact|fast>  quantized-linear activations (default: "
+        << "  --activations <auto|16|8|4>  quantized-linear activations (default: "
         << product::activation_mode_name(kDefaultActivationMode) << ")\n"
         << "  --spec <mtp|dflash|dflash2> speculative backend (default: none)\n"
         << "  --draft-tokens <n>         MTP 1..5; DFlash/DFlash2 1..15\n"

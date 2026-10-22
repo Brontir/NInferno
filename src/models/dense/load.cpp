@@ -148,7 +148,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
 
     model->backing_ = demands.materialize(device);
     auto& backing   = *model->backing_;
-    const loading::Prepare prepare(demands, backing, profile == ActivationProfile::Artifact);
+    const loading::Prepare prepare(demands, backing, activation_mode_of(profile));
     auto& w           = model->weights_;
     w.token_embedding = native_weight(prepare.view(embedding));
     w.output_head     = prepare.projection(head);
@@ -248,6 +248,12 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                     w.shared_policy = ops::shared_moe_policy(shared_up.policy, shared_down.policy);
                 }
                 if (m.shared_gate) { w.shared_gate = prepare.projection(*m.shared_gate).weight; }
+                std::vector<Id> experts(m.gate_up);
+                experts.insert(experts.end(), m.down.begin(), m.down.end());
+                std::vector<Id> shared_gate_up, shared_down;
+                if (m.shared_gate_up) { shared_gate_up.push_back(*m.shared_gate_up); }
+                if (m.shared_down) { shared_down.push_back(*m.shared_down); }
+                loading::generic_moe(w, prepare, experts, shared_gate_up, shared_down);
                 layer.moe = w;
             } else {
                 const std::array gate_up{l.gate, l.up};

@@ -512,6 +512,10 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
 | `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
 | `speculation` | what the server runs since startup: `config`, `selection`, `reason`, `fallback` ([per-request record](#per-request-record)) |
+| `published_activations` | the activation widths (`16`, `8`, `4`, `unknown`) the checkpoint's publisher validated, as kept-matrix counts, when it says |
+| `activations` | `requested`: the `--activations` mode (`auto`, `16`, `8`, `4`); `resolved`: `{"4": N, "8": M, "16": K}`, the target's matrices by the narrowest activation width they admit on this GPU under it; `kept_wider`: one line per group of matrices a request of `8` or `4` left wider; `notes`: the startup notes (auto slower than 8 here, the same kernels as auto, a separate drafter at 16 bits, the KV kept 8-bit under 16); `same_as_auto`: `8` or `4` runs `auto`'s kernels; `drafter`: `{"4", "8", "16"}` of a drafter the model carries, when it has one ([`--activations`](#memory-context-and-concurrency)) |
+| `kv_cache` | the KV-cache storage (`--kv-dtype`, chosen apart from the activations) |
+| `sampling` | the presets a request that names no sampling field runs with: `source`, and `thinking` and `non_thinking`, each `{temperature, top_k, top_p, min_p, presence_penalty, frequency_penalty}`: the model's presets with the server's sampling flags and `--greedy` applied |
 
 `GET /v1/models/{id}` returns the same object for the single configured alias and `404` for any
 other id.
@@ -563,7 +567,7 @@ llama.cpp-style base URLs.
   server's `--default-max-tokens`, as when the field is absent.
 - `temperature`, `top_p`, presence/frequency penalties, and integer `seed`; a negative seed (`-1`)
   is a fresh one, as when the field is absent (`--seed` when set). A seed repeats a
-  sampled answer under `--activations exact`. Under `fast`, a prompt prefix taken from the cache, or
+  sampled answer under `--activations 16`. Under `auto`, a prompt prefix taken from the cache, or
   batch neighbours, can change the last bits of the logits and so a later draw (Nemotron 3.5: 1 of
   48 repeats; none with `--no-prefix-reuse`).
 - The compatible `top_k` (`0..64`) and `min_p` (`0..1`) sampler extensions.
@@ -1560,8 +1564,8 @@ contract.
 | `--concurrent-prefill` | admit waiting requests while others prefill: the prefilling requests take chunks in turn (a later request's first token comes sooner, an earlier long prompt's later); output unchanged | off |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below | `auto` |
 | `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8` | `bf16` |
-| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds only what it stores. Omitted, these families take `f16` under `--activations fast` (the startup's capacity line says "state f16") and `f32` under `--activations exact`. The rounding carries from call to call, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
-| `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
+| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds only what it stores. Omitted, these families take `f16` under `--activations auto`, `8` and `4` (the startup's capacity line says "state f16") and `f32` under `--activations 16`. The rounding carries from call to call, so `--activations 16` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
+| `--activations auto\|16\|8\|4` | activation precision; see below (`exact`, `fast`, `int8`: deprecated names of `16`, `auto`, `8`) | `auto` |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--decode-steps auto\|N` | ordinary decode steps per round, `1..32` ([decode round pacing](../cli.md#decode-round-pacing)) | `auto` |
@@ -1581,25 +1585,54 @@ contract.
 `int8`, `nvfp4` and `k8v4` are Qwen 3.5/3.6/3.8 formats. Other families refuse the formats they do
 not take at startup.
 
-**`--activations`.**
+**`--activations`.** The narrowest activation width a quantized linear may compute with; the KV
+cache is a separate choice (`--kv-dtype`) under every mode.
 
-- `exact`: BF16 activations on every quantized linear, so an answer does not depend on batch
-  neighbours, prompt cuts, the prefix cache or speculation. It is slower, most at high concurrency
-  and in NVFP4 prefill. Under `exact`, attention splits the KV cache by its row (the
-  `--max-context`), so the guarantee holds within one server: another `--max-context` can change
-  the last bits. A model with no BF16-activation route for a layer refuses `exact` at startup.
-- `fast`: on wide calls NVFP4 activations in four bits and, for integer weights recorded `AllowA8`
+- `auto` (default): each matrix's recorded policy. On wide calls NVFP4 activations in four bits
+  (calibrated NVFP4 on an sm_120a build) and, for integer weights recorded `AllowA8`
   (GGUF Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/Q4_K/Q5_K/Q6_K, u4; not the output head), int8
-  activations. The answer can depend on the load.
-- `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
-  int8 activations where its route has them and none takes four, whatever the artifact recorded:
-  the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
-  recorded for 4 bits (routed and shared experts included) alike, which may move quality. NVFP4
-  weights take them on prefill calls of 17 tokens or more on every GPU but Volta (V100 multiplies
-  NVFP4 with BF16 activations on its tiled route); on RTX 50 (FP4 tensor cores) decode stays BF16,
-  and so does speculative verify on the layers with native NVFP4 kernels (generic-path shapes take
-  int8 from 17 tokens), while GPUs without FP4 tensor cores use int8 there too. Qwen 3.5/3.6 MoE
-  NVFP4 experts held at eight bits run the generic MoE.
+  activations; the official recipe's Q4/Q5/Q6 G64 matrices recorded 16-bit prefill on int8 where
+  it pays (not on A100, H100, B200). For a GGUF model the recorded policy is the converter's choice.
+  The answer can depend on the load.
+- `16`: 16-bit activations on every quantized linear (BF16; f16 on RTX 20, FP32 FMAs on V100), so an answer does not depend on batch
+  neighbours, prompt cuts, the prefix cache or speculation. It is slower, most at high concurrency
+  and in NVFP4 prefill. Under `16`, attention splits the KV cache by its row (the
+  `--max-context`), so the guarantee holds within one server: another `--max-context` can change
+  the last bits. Calibrated NVFP4 MoE experts run the generic MoE (Qwen 3.5/3.6) or the native
+  Gemma 4 MoE's BF16 route. It does not pin the KV cache: add `--kv-dtype bf16` for a lossless one
+  (the startup log notes an 8-bit KV under `16`).
+- `8`: every quantized linear may take int8 activations where its route has them and none takes
+  four, whatever the artifact recorded: the sites it kept BF16 (heads and embeddings recorded BF16
+  excepted) and the NVFP4 weights recorded for 4 bits (routed and shared experts included) alike,
+  which may move quality. NVFP4 weights take them on prefill calls of 17 tokens or more on every
+  GPU but Volta (V100 multiplies NVFP4 with BF16 activations on its tiled route); on RTX 50 (FP4
+  tensor cores) decode stays BF16, and so does speculative verify on the layers with native NVFP4
+  kernels (generic-path shapes take int8 from 17 tokens), while GPUs without FP4 tensor cores use
+  int8 there too. Calibrated NVFP4 experts (Qwen 3.5/3.6 MoE, Gemma 4 26B-A4B) held at eight bits
+  run the generic MoE. Every family.
+- `4`: as `8`, and NVFP4 matrices with a calibrated activation divisor may take FP4 activations
+  on an sm_120a build (RTX 50, sm_120/121). The generic MoE has no four-bit expert route, so its
+  experts take eight bits; the fused NVFP4 expert kernels (Qwen 3.5/3.6, Gemma 4) take four.
+  Every family.
+
+The mode resolves over the model's matrices (B1: the option, the artifact, the GPU's facts and
+what the loaders handed to the expert Ops): `8` or `4` before the weights load, to refuse a mode
+no matrix can take, and every mode after it, for the counts. The startup line `activations |
+<mode> -> 4-bit on N, 8-bit on M, 16-bit on K matrices (the narrowest width each computes with) |
+KV <storage> (--kv-dtype, separate)` counts the target's matrices by the narrowest width a call of
+each computes with: a linear's route on this GPU (the int8 prefill of 16-bit-recorded G64
+matrices where it pays included), a MoE expert's Op (the generic MoE's W4A8/MXFP8/R8, a fused
+kernel's own width). A drafter the model carries follows the mode and gets its own line
+(`activations | drafter in the model (follows the mode): ...`); a separate drafter artifact runs
+16-bit activations. `8` or `4` that no matrix can take is refused with the reason (the weights or
+the GPU); one that only some can take starts and warns once per group of matrices left wider
+(`activations | WARNING --activations 4 leaves <n> <format> matrices at <bits>-bit: <reason>
+(e.g. <name>)`). Notes follow as warnings: `auto` slower than `8` here, `8`/`4` resolving to
+`auto`'s kernels, a separate drafter at 16 bits, the KV cache kept 8-bit under `16`. `/v1/models`
+reports the same as `meta.activations` and the fingerprint's plan carries the counts
+(`activations.resolved`). `--activations-preflight MAJOR.MINOR` prints all four modes'
+resolutions as JSON for a GPU of that compute capability, before any load and without a GPU
+(the routed experts' counts settle at the load).
 
 ### Context cache
 

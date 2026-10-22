@@ -124,12 +124,14 @@ struct HostFacts {
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary (with the plan ladder's rung, MemorySummary::plan),
 // `route_breakpoints` ops::route_table_breakpoints(17), `route_table` the effective route table's
-// content (its hash and its lenders'; empty: none) and `decode_steps_per_round` the steps an
-// ordinary decode round runs (LoadSummary).
+// content (its hash and its lenders'; empty: none), `decode_steps_per_round` the steps an
+// ordinary decode round runs (LoadSummary) and `activations` what --activations resolved to
+// (ModelMetadata::activations).
 [[nodiscard]] DecisionSection plan_of(const EngineOptions& resolved, const MemorySummary& memory,
                                       std::span<const std::int32_t> route_breakpoints,
                                       std::string_view route_table,
-                                      std::uint32_t decode_steps_per_round);
+                                      std::uint32_t decode_steps_per_round,
+                                      const ActivationPrecision& activations);
 
 // What startup observed beside the plan (the observed section): the rung the selection picked
 // before the kernel warm-up and the tier it admitted the rung at (rung_selected, rung_reserve: the

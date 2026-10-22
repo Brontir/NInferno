@@ -110,7 +110,7 @@ EngineOptions engine_options(const std::string& artifact) {
     options.kv_capacity     = KvCapacityPolicy::explicit_capacity(2 * kContext);
     options.prefill_chunk   = 512;
     options.max_concurrency = 2;
-    options.activations     = ActivationMode::Exact;
+    options.activations     = ActivationMode::Bits16;
     // An explicit plan: the Device checkpoints are the prefix cache's.
     options.context_cache.device_state_slots     = 2;
     options.context_cache.host_state_slots       = 0;

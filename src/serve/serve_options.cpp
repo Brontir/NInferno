@@ -32,7 +32,8 @@ using product::parse_u64;
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
-           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] [--with-drafters] "
+           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] "
+           "[--activations-preflight CC] [--with-drafters] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
@@ -51,7 +52,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype auto|bf16|int8|fp8|nvfp4|k8v4] [--sliding-kv-dtype bf16|fp8] "
            "[--state-dtype f32|bf16|f16] "
-           "[--activations exact|fast|int8] [--rope-yarn-factor F] "
+           "[--activations auto|16|8|4] [--rope-yarn-factor F] "
            "[--spec none|mtp|dflash|dflash2 --draft-tokens N] "
            "[--ngram-draft-tokens N [--ngram-min-match M]] "
            "[--drafter DRAFTER.ninferno] [--draft-width block|drafts] "
@@ -85,6 +86,10 @@ std::string serve_usage_text(const char* argv0) {
            "       the rung the free GPU memory picks now and what would get more, then exits\n"
            "       without serving (the weights are loaded to size the rungs, then released);\n"
            "       --json prints it as JSON.\n"
+           "       --activations-preflight MAJOR.MINOR[:0xPCIID] prints, as JSON, what each\n"
+           "       --activations mode resolves to on a GPU of that compute capability and\n"
+           "       board, then exits (no GPU, no download: a model not converted yet is\n"
+           "       \"pending\").\n"
            "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
            "       download); a checkpoint's are attached without it.\n"
            "       --default-max-tokens defaults to " +
@@ -167,12 +172,8 @@ std::string serve_usage_text(const char* argv0) {
            "       strict parsers that reject choices:[] accept the terminal usage record\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
-           "       --greedy forces temperature 0 (exact argmax).\n"
-           "       --activations exact keeps BF16 activations on every quantized linear: an\n"
-           "       answer does not depend on batch neighbours, prompt cuts, the prefix cache or\n"
-           "       speculation; fast encodes NVFP4 activations in four bits on wide calls; int8\n"
-           "       (Qwen) also gives int8 activations to the sites the artifact kept BF16 (heads\n"
-           "       and embeddings excepted), which may move quality.\n"
+           "       --greedy forces temperature 0 (exact argmax).\n" +
+           std::string(product::kActivationHelp) +
            "       --spec auto (the default without --spec, --draft-tokens, --drafter or\n"
            "       --lm-head-draft; --spec none decodes plain) runs the speculation the model\n"
            "       came with for this GPU (its tuned profile): one drafter at the profile's\n"
@@ -404,7 +405,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (!storage) { throw std::invalid_argument("--state-dtype must be f32, bf16 or f16"); }
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
-            options.activations = product::parse_activation_mode(require_value("--activations"));
+            options.activations =
+                product::parse_activation_option(require_value("--activations"), "ninferno-serve");
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor =
                 parse_float_in(require_value("--rope-yarn-factor"), "rope-yarn-factor", 1.0F, 64.0F);
@@ -512,6 +514,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_only = true;
         } else if (arg == "--json") {
             options.plan_json = true;
+        } else if (arg == "--activations-preflight") {
+            options.activations_preflight = require_value("--activations-preflight");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
         } else if (arg == "--log-level") {

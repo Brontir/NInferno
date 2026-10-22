@@ -46,7 +46,7 @@ Run `./build/apps/ninferno-perplexity --help` for the complete command surface. 
 | `--stride N` | `2048` | Targets scored per window, `1..context-1` (`--context` is at least 2). |
 | `--device N` | `0` | CUDA device index. |
 | `--kv-dtype bf16\|int8\|fp8\|nvfp4\|k8v4` | `fp8` | Main KV representation. |
-| `--activations exact\|fast\|int8` | `fast` | Activation precision (as the server's `--activations`). |
+| `--activations auto\|16\|8\|4` | `auto` | Activation precision (as the server's `--activations`). |
 | `--state-dtype f32\|bf16\|f16` | `f32` | Recurrent-state storage (the values of the server's `--state-dtype`; no automatic choice here). |
 | `--step-tokens N` | `0` (prefill chunks) | Run the scored targets `N` tokens per call, as decode (`1`) or a speculative round (`N`) runs them. |
 | `--rope-yarn-factor F` | `1` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. |

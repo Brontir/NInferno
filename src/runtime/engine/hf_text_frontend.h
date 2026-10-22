@@ -22,9 +22,9 @@ struct HfTextFiles {
 [[nodiscard]] HfTextFiles read_hf_text_files(const std::filesystem::path& artifact);
 
 // Refuses the options only the Qwen 3.5 family implements, before the weights load, so a family
-// that would ignore one says so instead: --rope-yarn-factor (the checkpoint's own RoPE stays),
-// --activations int8 (it would run as fast) and --state-dtype bf16|f16 (it keeps no Gated
-// DeltaNet state). `family` names the model in the error.
+// that would ignore one says so instead: --rope-yarn-factor (the checkpoint's own RoPE stays) and
+// --state-dtype bf16|f16 (it keeps no Gated DeltaNet state). `family` names the model in the
+// error. --activations is every family's (resolve_activation_precision).
 void refuse_qwen_only_options(const EngineOptions& options, std::string_view family);
 
 // Builds the HF tokenizer over `files`, checks that its public vocabulary is a contiguous domain

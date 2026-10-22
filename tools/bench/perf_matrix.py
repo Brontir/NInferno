@@ -155,7 +155,8 @@ def main():
     rows.add_argument("--spec", default="none", help="none, mtp, dflash or dflash2")
     rows.add_argument("--draft-tokens", type=int)
     rows.add_argument("--kv", default="auto", help="the server's --kv-dtype")
-    rows.add_argument("--activations", default="fast", help="the server's --activations mode")
+    rows.add_argument("--activations", default="auto", choices=("auto", "16", "8", "4"),
+                      help="the server's --activations mode")
     rows.add_argument("--flags", default="", help="the server flags, as on the pair's page")
     rows.add_argument("--version", help="the NInferno release or public commit (with --engine, that engine's build)")
     rows.add_argument("--commit", help="the NInferno git commit the server was built from (default: "

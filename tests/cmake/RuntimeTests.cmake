@@ -57,3 +57,10 @@ ninferno_add_test(ninferno_decision_fingerprint_test NEEDS_SOURCE_DIR
 ninferno_add_test(ninferno_process_options_lease_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
   LIBRARIES ninferno_runtime_support)
+
+# --activations auto|16|8|4: the policy per mode, the narrowest width per format and device
+# features, the startup resolution over a built directory (counts, warnings, refusals) and the
+# families' load profiles. CPU.
+ninferno_add_test(ninferno_activation_precision_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_activation_precision.cpp"
+  LIBRARIES ninferno_engine ninferno_model_common ninferno_artifact ninferno_ops ninferno_core)

@@ -326,7 +326,7 @@ std::unique_ptr<DFlashDrafter> DFlashDrafter::load(const std::filesystem::path& 
     }
     drafter->backing_ = demands.materialize(device);
     // Every activation BF16: the drafter runs one narrow block per round.
-    const Prepare prepare(demands, *drafter->backing_, /*recorded=*/false);
+    const Prepare prepare(demands, *drafter->backing_, ActivationMode::Bits16);
     auto& w              = drafter->weights_;
     w.feature_projection = prepare.projection(features);
     w.context_kv         = prepare.packed(context);

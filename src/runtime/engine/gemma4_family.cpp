@@ -13,6 +13,22 @@
 namespace ninferno::runtime {
 namespace {
 
+// --activations as the model's load profile: 16 keeps BF16 activations on every quantized linear
+// (MoE experts included), 8 and 4 allow eight and four bits everywhere.
+models::gemma4::ActivationProfile gemma4_profile(ActivationMode mode) {
+    switch (mode) {
+    case ActivationMode::Auto:
+        return models::gemma4::ActivationProfile::Artifact;
+    case ActivationMode::Bits16:
+        return models::gemma4::ActivationProfile::A16Full;
+    case ActivationMode::Bits8:
+        return models::gemma4::ActivationProfile::A8;
+    case ActivationMode::Bits4:
+        return models::gemma4::ActivationProfile::A4;
+    }
+    return models::gemma4::ActivationProfile::A16Full;
+}
+
 // The loaded target and the frontend resources its tokenizer and chat template were built from.
 class Gemma4LoadedModel final : public LoadedModel {
 public:
@@ -39,13 +55,10 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
     }
     {
         StartupPhaseScope binding(options.startup_observer, StartupPhase::TargetPlan);
-        // --activations exact: BF16 activations on every quantized linear, MoE experts included.
+        // --activations 16: BF16 activations on every quantized linear, MoE experts included.
         loaded->model =
             models::gemma4::Model::load(options.artifact_path, device,
-                                        options.activations == ActivationMode::Exact
-                                            ? models::gemma4::ActivationProfile::A16Full
-                                            : models::gemma4::ActivationProfile::Artifact,
-                                        options.enable_vision);
+                                        gemma4_profile(options.activations), options.enable_vision);
         if (options.speculative.backend == SpeculativeBackend::Mtp) {
             if (options.speculative.drafter.empty()) {
                 throw std::invalid_argument(

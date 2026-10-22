@@ -32,7 +32,7 @@ private:
 };
 
 /**
- * Invariant route profile (ActivationMode::Exact, ninferno/types.h).
+ * Invariant route profile (ActivationMode::Bits16, ninferno/types.h).
  *
  * Inside a ScopedInvariantRoutes a token's bytes do not depend on the call that carries it at any
  * width: not on how many batch rows share a decode step, nor on where a prompt was cut (a prefix

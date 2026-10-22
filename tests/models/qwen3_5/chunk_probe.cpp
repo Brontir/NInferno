@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         activations =
-            m == "exact" ? ninferno::ActivationMode::Exact : ninferno::ActivationMode::Fast;
+            m == "exact" ? ninferno::ActivationMode::Bits16 : ninferno::ActivationMode::Auto;
     }
     std::vector<std::uint64_t> cuts;
     if (const char* text = std::getenv("NINFERNO_PROBE_PREFILL_CUTS")) {

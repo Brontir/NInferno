@@ -393,8 +393,8 @@ prepare_sparse_moe_weights(const WeightInput& router, const WeightInput& shared_
                     std::all_of(expert_down.begin(), expert_down.end(), permits) &&
                     permits(shared_gate) && permits(shared_up) && permits(shared_down),
                 "SparseMoe NVFP4 requires AllowA4 on every expert input: its prefill route "
-                "encodes activations in four bits and has no BF16-activation form "
-                "(--activations exact is unavailable for this model)");
+                "encodes activations in four bits and has no BF16-activation form (a "
+                "loader hands a wider input to the generic MoE instead)");
     }
     return {router_bank.weight, gate_up_bank.weight, down_bank.weight, shared.weight, down.weight};
 }

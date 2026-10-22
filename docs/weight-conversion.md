@@ -458,7 +458,7 @@ Q3_K, Q2_K, IQ2_XS and IQ2_S: per 16 values) records `AllowA8` (`kept_block_poli
 
 The output head keeps the recipe's policy. The W4A8 route computes these on int8 tensor cores
 against activations quantized to int8 with one scale per 32 values, on calls of 17 tokens or more.
-The R8 route (dp4a) serves decode widths for the formats that have one. `--activations exact` keeps
+The R8 route (dp4a) serves decode widths for the formats that have one. `--activations 16` keeps
 BF16 activations for them. Other kept encodings keep the recipe's policy or record their own (FP8:
 `AllowA8`; NVFP4 with a divisor: `AllowA4`). A kept NVFP4 or FP8 output head keeps BF16 activations
 (`A16Only`), so its logits take one route at every token count; a kept integer head keeps its own

@@ -5,7 +5,7 @@
         --recipe "org/repo --quant LABEL" --jsonl docs/performance/data/bench.jsonl
 
 Runs ninferno-perplexity on the fixed corpus (eval/corpora/perplexity-1m, --quick by default) once per
---activations mode. The first mode (exact by default) is the reference: it records its top-K tokens
+--activations mode. The first mode (16 by default) is the reference: it records its top-K tokens
 per position, and every other mode is scored against them. Rows appended per mode:
 
 - metric "perplexity": the overall perplexity of that mode;
@@ -49,7 +49,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--artifact", type=Path, required=True, help="the converted .ninferno file")
     ap.add_argument("--perplexity", type=Path, default=ROOT / "build/apps/ninferno-perplexity")
-    ap.add_argument("--modes", default="exact,fast,int8", help="--activations modes; the first is the reference")
+    ap.add_argument("--modes", default="16,auto,8,4", help="--activations modes; the first is the reference")
     ap.add_argument("--corpus", type=Path, default=ROOT / "eval/corpora/perplexity-1m/manifest.json")
     ap.add_argument("--full", dest="quick", action="store_false", help="every corpus stream, not one per domain")
     ap.add_argument("--context", type=int, default=4096)

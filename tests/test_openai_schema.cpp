@@ -1435,6 +1435,45 @@ int test_common_objects() {
                       "model lookup exposes the llama.cpp-compatible model meta");
     failures += check(!list_meta.contains("speculation"),
                       "models list without a service says nothing of speculation");
+    // What --activations asked for and resolved to, the KV storage beside it, and the sampling
+    // presets a request without sampling fields runs with.
+    {
+        ninferno::ModelMetadata resolved = metadata;
+        resolved.activations             = {.requested      = ninferno::ActivationMode::Bits4,
+                                            .bits4          = 312,
+                                            .bits8          = 48,
+                                            .bits16         = 6,
+                                            .kept_wider     = {"48 q4_k matrices at 8-bit: reason (e.g. x)"},
+                                            .drafter_bits4  = 12,
+                                            .drafter_bits16 = 1,
+                                            .notes          = {"a note"}};
+        resolved.kv_cache                = "int8-group64";
+        ninferno::ModelSamplingDefaults sampling;
+        sampling.source               = "generation_config.json";
+        sampling.thinking.temperature = 0.6F;
+        sampling.thinking.top_k       = 20;
+        resolved.sampling             = sampling;
+        const Json meta =
+            Json::parse(make_models_list("qwen", 7, 240000, resolved))["data"][0]["meta"];
+        failures += check(meta["activations"]["requested"] == "4" &&
+                              meta["activations"]["resolved"]["4"] == 312 &&
+                              meta["activations"]["resolved"]["8"] == 48 &&
+                              meta["activations"]["resolved"]["16"] == 6 &&
+                              meta["activations"]["kept_wider"].size() == 1 &&
+                              meta["activations"]["notes"].size() == 1 &&
+                              meta["activations"]["same_as_auto"] == false &&
+                              meta["activations"]["drafter"]["4"] == 12 &&
+                              meta["activations"]["drafter"]["16"] == 1 &&
+                              meta["kv_cache"] == "int8-group64",
+                          "models meta carries the requested and resolved activation precision");
+        failures += check(meta["sampling"]["source"] == "generation_config.json" &&
+                              meta["sampling"]["thinking"]["top_k"] == 20 &&
+                              meta["sampling"]["non_thinking"].contains("min_p"),
+                          "models meta carries the applied sampling presets");
+        failures += check(list_meta["activations"]["requested"] == "auto" &&
+                              !list_meta.contains("sampling"),
+                          "models meta without a resolution reports the default mode");
+    }
     const StartupSpeculation startup{.config    = "plain",
                                      .selection = "startup",
                                      .reason    = "nothing fits",

@@ -70,6 +70,12 @@ inline constexpr double kContextTolerance = 0.05;
 [[nodiscard]] ContextClass class_of(std::int64_t prompt_tokens) noexcept;
 [[nodiscard]] const char* class_name(ContextClass c) noexcept; // short, mid, long, huge
 
+// The byte class's "activations" of a load, in the registry's names (kept as measured): "exact"
+// under --activations 16 (BF16 activations under the invariant summation profile), else
+// "fast-a4" when some matrix computes with four-bit activations (ActivationPrecision::bits4),
+// else "fast-a8". Auto, 8 and 4 are all "fast": their bytes depend on the batch.
+[[nodiscard]] const char* byte_class_activations(bool sixteen, bool four_bit) noexcept;
+
 // What an acceptance factor is measured for, and what a lookup asks for.
 struct AcceptanceKey {
     std::string model;          // registry model id

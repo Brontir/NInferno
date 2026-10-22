@@ -41,7 +41,7 @@ std::string usage_text(const char* argv0) {
            "       [--device N]\n"
            "       [--kv-dtype auto|bf16|int8|fp8|nvfp4|k8v4] [--sliding-kv-dtype bf16|fp8]\n"
            "       [--state-dtype f32|bf16|f16]\n"
-           "       [--activations exact|fast|int8] [--rope-yarn-factor F]\n"
+           "       [--activations auto|16|8|4] [--rope-yarn-factor F]\n"
            "       [--spec auto|none|mtp|dflash|dflash2 "
            "--draft-tokens N]\n"
            "       [--ngram-draft-tokens N [--ngram-min-match M]]  copy rounds beside MTP\n"
@@ -79,7 +79,8 @@ std::string usage_text(const char* argv0) {
            "at most 4 GiB, on a card driving the display; ninferno-serve --plan prints the "
            "ladder).\n"
            "Sampling defaults come from the loaded model and thinking mode; flags override "
-           "individual fields.\n";
+           "individual fields.\n" +
+           std::string(product::kActivationHelp);
 }
 
 Options parse_options(int argc, char** argv) {
@@ -130,7 +131,7 @@ Options parse_options(int argc, char** argv) {
             if (!storage) { throw std::invalid_argument("--state-dtype must be f32, bf16 or f16"); }
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
-            options.activations = product::parse_activation_mode(value(arg));
+            options.activations = product::parse_activation_option(value(arg), "ninferno");
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor = parse_float_in(value(arg), "rope-yarn-factor", 1.0F, 64.0F);
         } else if (arg == "--spec") {

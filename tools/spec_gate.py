@@ -78,8 +78,12 @@ SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
 # hash the resolved speculation, so an auto row and its plain twin always differ), dates, run ids
 # or host names, is not part of the key). Besides these, the key holds the card (GPU name, SM and
 # memory in whole GB, not the driver, CUDA or power limit), the engine (missing = "ninferno"), the
-# activation precision (field, else flag, else "fast"), the output tokens per request (missing =
+# activation precision (field, else flag, else "auto"; the older names exact, fast and int8 read as
+# 16, auto and 8), the output tokens per request (missing =
 # perf_matrix's default) and the non-speculation flags.
+# --activations as the bench rows spell it: the older names read as the current ones.
+MODE_NAMES = {"exact": "16", "fast": "auto", "int8": "8"}
+
 KEY_FIELDS = ("model", "recipe", "kv", "sampling", "metric", "prompt_set", "prompt_len",
               "concurrency", "unit", "context", "stride", "corpus")
 
@@ -142,9 +146,10 @@ def pair_key(row: dict) -> str:
                    None if vram is None else round(float(vram))]
     key["engine"] = row.get("engine") or "ninferno"
     key["out_tokens"] = row.get("out_tokens") or DEFAULT_OUT_TOKENS
-    key["activations"] = row.get("activations") or flag_value(row, "--activations") or "fast"
-    # --activations is folded into key["activations"] above (an explicit `--activations fast` is
-    # the default; a field and a flag naming the same mode are the same cell).
+    mode = str(row.get("activations") or flag_value(row, "--activations") or "auto")
+    key["activations"] = MODE_NAMES.get(mode, mode)
+    # --activations is folded into key["activations"] above (an explicit `--activations auto` is
+    # the default, as `fast` was; a field and a flag naming the same mode are the same cell).
     key["flags"] = tuple(w for w in parse_flags(row.get("flags"))[1]
                          if w.split("=", 1)[0] != "--activations")
     return json.dumps(key, sort_keys=True, default=str)

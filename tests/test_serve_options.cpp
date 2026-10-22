@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <initializer_list>
 #include <utility>
 #include <vector>
 
@@ -146,18 +147,26 @@ int main() {
 
     failures += check(defaults.activations == ninferno::kDefaultActivationMode,
                       "serve activations default is not the product default");
-    failures += check(
-        parse({"ninferno-serve", "model.ninferno", "--activations", "exact"}).activations ==
-                ninferno::ActivationMode::Exact &&
-            parse({"ninferno-serve", "model.ninferno", "--activations", "fast"}).activations ==
-                ninferno::ActivationMode::Fast,
-        "--activations exact|fast");
+    for (const auto& [spelling, mode] :
+         std::initializer_list<std::pair<const char*, ninferno::ActivationMode>>{
+             {"auto", ninferno::ActivationMode::Auto},
+             {"16", ninferno::ActivationMode::Bits16},
+             {"8", ninferno::ActivationMode::Bits8},
+             {"4", ninferno::ActivationMode::Bits4},
+             {"exact", ninferno::ActivationMode::Bits16},
+             {"fast", ninferno::ActivationMode::Auto},
+             {"int8", ninferno::ActivationMode::Bits8}}) {
+        failures += check(
+            parse({"ninferno-serve", "model.ninferno", "--activations", spelling}).activations ==
+                mode,
+            "--activations auto|16|8|4|exact|fast|int8");
+    }
     bool unknown_activations_rejected = false;
     try {
         (void)parse({"ninferno-serve", "model.ninferno", "--activations", "a4"});
     } catch (const std::invalid_argument&) { unknown_activations_rejected = true; }
     failures += check(unknown_activations_rejected, "--activations accepted an unknown mode");
-    failures += check(serve_usage_text("ninferno-serve").find("--activations exact|fast") !=
+    failures += check(serve_usage_text("ninferno-serve").find("--activations auto|16|8|4") !=
                           std::string::npos,
                       "serve help omits --activations");
 

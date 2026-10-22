@@ -19,7 +19,7 @@ enum class Nvfp4GdnInputRoute : std::uint8_t {
     W4A8, // AllowA8 from 17 tokens: the generic path's int8 W4A8 (generic::owned_prefill_w4a8)
 };
 
-// A16Only is the exact contract (ActivationMode::Exact): one token-invariant A16 route at every
+// A16Only is the exact contract (ActivationMode::Bits16): one token-invariant A16 route at every
 // width. AllowA8 has no 8-bit form among these kernels: it keeps the tuned A16 routes below 17
 // tokens and outside a prefill (decode, any verify), and a prefill call from 17 takes the generic
 // W4A8, both parts in one call (the dispatch asks generic::owned_prefill_w4a8; the workspace
