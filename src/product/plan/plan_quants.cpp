@@ -152,11 +152,17 @@ PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& 
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
-    return runtime::QuantAsk{
-        .automatic   = inputs.options.max_context_automatic,
-        .context     = inputs.options.max_context_automatic ? 0U : inputs.options.max_context,
-        .concurrency = std::max(1U, inputs.options.max_concurrency),
-        .native      = native_context};
+    // An automatic context under --max-context-cap: the targets never pass the cap.
+    const bool automatic = inputs.options.max_context_automatic;
+    std::uint32_t native = native_context;
+    if (automatic && inputs.options.max_context != 0) {
+        native =
+            native == 0 ? inputs.options.max_context : std::min(native, inputs.options.max_context);
+    }
+    return runtime::QuantAsk{.automatic   = automatic,
+                             .context     = automatic ? 0U : inputs.options.max_context,
+                             .concurrency = std::max(1U, inputs.options.max_concurrency),
+                             .native      = native};
 }
 
 std::uint32_t card_gb(const runtime::PlanDeviceFacts& device) noexcept {
@@ -308,12 +314,19 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
         std::to_string(streams) + (streams == 1 ? " stream" : " streams");
     const std::string where = "this " + inputs.device.name + " (" + class_text(inputs.device) + ")";
     const bool automatic    = inputs.options.max_context_automatic;
+    // "auto context", "auto context (at most 49,152)" under --max-context-cap, or the pinned one.
+    const std::string context_words =
+        !automatic ? grouped(inputs.options.max_context)
+        : inputs.options.max_context != 0
+            ? "auto context (at most " + grouped(inputs.options.max_context) + ")"
+            : std::string("auto context");
     QuantPlan& mutable_plan = plan;
     Json& params            = mutable_plan.rule_params;
     params                  = {{"concurrency", streams},
                                {"card_gb", card_gb(inputs.device)},
                                {"automatic", automatic},
-                               {"context", automatic ? 0U : inputs.options.max_context}};
+                               {"context", automatic ? 0U : inputs.options.max_context},
+                               {"context_cap", automatic ? inputs.options.max_context : 0U}};
     if (plan.pick) {
         const QuantRow& row         = plan.rows[plan.pick->index];
         const runtime::QuantPick& k = *plan.pick;
@@ -327,8 +340,7 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
         params["below_floor"]       = k.below_floor;
         params["low_quality"]       = k.low_quality;
         std::string line = row.listing.quant + ": the largest that fits on " + where + " at " +
-                           (automatic ? "auto context" : grouped(inputs.options.max_context)) +
-                           " × " + stream_text;
+                           context_words + " × " + stream_text;
         switch (k.tier) {
         case runtime::QuantPickTier::Own:
         case runtime::QuantPickTier::OwnStepped:
@@ -367,9 +379,7 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
             smallest = &row;
         }
     }
-    const std::string ask =
-        (automatic ? std::string("auto context") : grouped(inputs.options.max_context)) + " × " +
-        stream_text;
+    const std::string ask = context_words + " × " + stream_text;
     if (smallest == nullptr) {
         mutable_plan.rule_code = "none_served";
         return "no quantization of this repository is served here (" + ask + ")";

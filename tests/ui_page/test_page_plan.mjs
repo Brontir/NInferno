@@ -372,9 +372,13 @@ for (const b of H.SPEC_BASES) {
 ok(T.en.specAutoRuns === "Auto runs this" && T.ru.specAutoRuns === "Запустится в Авто", "the served-kind badge words");
 
 // My models → Run: the model's own saved settings, with defaults.
-eq(H.launchSettingsOf(null), {ctx: 0, par: 1, kv: "", spec: "auto"}, "defaults");
-eq(H.launchSettingsOf({ctx: 49152, par: 4, kv: "fp8", spec: "none"}), {ctx: 49152, par: 4, kv: "fp8", spec: "none"}, "saved");
-eq(H.launchSettingsOf({ctx: -1, par: 99, kv: 5, spec: ""}), {ctx: 0, par: 8, kv: "", spec: "auto"}, "bad saved values");
+eq(H.launchSettingsOf(null), {ctx: 0, cap: 0, par: 1, kv: "", spec: "auto"}, "defaults");
+eq(H.launchSettingsOf({ctx: 49152, par: 4, kv: "fp8", spec: "none"}), {ctx: 49152, cap: 0, par: 4, kv: "fp8", spec: "none"}, "saved");
+eq(H.launchSettingsOf({ctx: -1, par: 99, kv: 5, spec: ""}), {ctx: 0, cap: 0, par: 8, kv: "", spec: "auto"}, "bad saved values");
+// A saved Auto x 4 launch runs again with its planned context as the ceiling (max_context_cap),
+// never as a pool the streams silently share; a typed context wins over a stale cap.
+eq(H.launchSettingsOf({ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto"}), {ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto"}, "saved Auto x 4 keeps its cap");
+eq(H.launchSettingsOf({ctx: 65536, cap: 49152, par: 4}), {ctx: 65536, cap: 0, par: 4, kv: "", spec: "auto"}, "a typed context drops the cap");
 
 // The page no longer decides speculation itself (P7): no autoVerdict, no spec=none from it.
 ok(!/autoVerdict/.test(html), "autoVerdict is gone");

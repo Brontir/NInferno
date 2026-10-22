@@ -503,7 +503,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                                          options_.per_request_speculation,
                                                          options_.spec_profile)) {
             fallback->fit_fallback =
-                product::fit_refusal(refused_label, engine_options.max_context, why);
+                product::fit_refusal(refused_label, engine_options.max_context, why,
+                                     engine_options.max_context_automatic);
             engine_options.speculative =
                 product::with_given_settings(fallback->engine, options_.speculative);
             mark_fit_fallback(engine_options.speculative, "profile_fit_fallback");
@@ -537,7 +538,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 engine_.reset();
                 auto served         = candidate;
                 served.fit_fallback =
-                    product::fit_refusal(refused_label, engine_options.max_context, first_refusal);
+                    product::fit_refusal(refused_label, engine_options.max_context, first_refusal,
+                                         engine_options.max_context_automatic);
                 engine_options.speculative =
                     product::with_given_settings(served.engine, options_.speculative);
                 mark_fit_fallback(engine_options.speculative, fallback);

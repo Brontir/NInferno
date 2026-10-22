@@ -765,13 +765,16 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     // its own tensors, so the listed file sizes stand for the rest.
     const double splits      = number(head.metadata, "split.count");
     const bool whole         = splits <= 1 && !head.tensors.empty();
-    g.tied                   = !head.tensors.empty() && !has_output;
+    // Tied embeddings only from a whole tensor table: a split part may hold output.weight in a
+    // later file (unknown: the parameter count is left out, the label's bits rank it).
+    g.tied                   = whole && !has_output;
     auto out                 = finish(g, whole ? tensor_bytes : file_bytes,
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.kquant         = kquant;
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.base_model     = base_model_of(head.metadata);
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
+    if (!whole && !has_output) { out.model.params = 0; }
     return out;
 }
 

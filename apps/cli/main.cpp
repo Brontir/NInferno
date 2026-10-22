@@ -400,7 +400,8 @@ int main(int argc, char** argv) {
                 namespace product = ninferno::product;
                 const std::string reason =
                     product::fit_refusal(product::speculation_label(engine_options.speculative),
-                                         engine_options.max_context, refused.what());
+                                         engine_options.max_context, refused.what(),
+                                         engine_options.max_context_automatic);
                 std::optional<ninferno::Engine> built;
                 // Builds the Engine with `speculative` (the given settings kept): true when it
                 // fits.

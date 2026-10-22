@@ -2071,7 +2071,8 @@ without `--quant` plans every listed quantization at the asked context and `--ma
 idle card of the device, and the rule picks one. What "fits" means:
 
 - **Own**: every stream holds the target context of its own. The target is an asked
-  `--max-context`, or under an automatic context min(the model's own, 32,768): "own" is the longest
+  `--max-context`, or under an automatic context min(the model's own, 32,768), and never more than
+  `--max-context-cap` (the rule's line then says "auto context (at most N)"): "own" is the longest
   context each stream gets, probed at pinned contexts 8K .. the model's own.
 - **Shared**: it fits only as one pool the streams share (a rung with fewer whole contexts than
   streams). This is said in plain words, never shown as "× streams".

@@ -221,8 +221,25 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         planned.speculative       = speculative;
         runtime::PlanModelFacts m = facts.model;
         // A separate drafter (an artifact of its own: Gemma 4's assistant, gpt-oss's DFlash) is
-        // uploaded beside the target.
-        if (speculative.backend != SpeculativeBackend::None && !speculative.drafter.empty()) {
+        // uploaded beside the target: one named by the options, or, before a conversion names its
+        // path (an explicit --spec with --with-drafters), one the drafter plan attaches for this
+        // backend.
+        const auto drafts_for = [](const std::string& kind) {
+            if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
+                return SpeculativeBackend::Mtp;
+            }
+            if (kind == "dflash") { return SpeculativeBackend::DFlash; }
+            if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
+            return SpeculativeBackend::None;
+        };
+        const bool attached =
+            subject != nullptr &&
+            std::any_of(subject->attached_drafters.begin(), subject->attached_drafters.end(),
+                        [&](const spec::DrafterDecl& d) {
+                            return d.component.empty() && drafts_for(d.kind) == speculative.backend;
+                        });
+        if (speculative.backend != SpeculativeBackend::None &&
+            (!speculative.drafter.empty() || attached)) {
             m.drafter_bytes = drafter_bytes;
         }
         return runtime::dry_run_plan(m, device, planned);
