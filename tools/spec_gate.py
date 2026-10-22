@@ -34,9 +34,10 @@ Losing cells that miss one of these are counted as plain-served, overlapping, st
 plain. Auto rows without a plain twin, or without one of their build/env, are listed on stderr.
 
 With --release the evidence must be current: a losing cell that is stale or has a stale plain
-twin, a passing cell whose auto or plain row is older than the decision code (a stale pass), and an
-auto row without a plain twin of its build and environment, block too (re-measure them); without
-it they are reported, as in a lab run.
+twin, a passing cell or an excused loss (plain-served, overlapping) whose auto or plain row is older
+than the decision code (a stale pass, a stale exemption), and an auto row without a plain twin of
+its build and environment, block too (re-measure them); without it they are reported, as in a lab
+run.
 
 There is no exemption list and nothing is written back. Exit code 1 when a cell fails (or, with
 --release, is blocked) or nothing pairs; 2 on a missing or malformed bench file, a shallow clone or
@@ -259,7 +260,7 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.98, newer=None) -> 
     cells, unpaired, unmatched = [], [], []
     counts = {"paired": 0, "unpaired_auto": 0, "unmatched_build_env": 0, "unpaired_plain": 0,
               "pass": 0, "stale_pass": 0, "losses": 0, "plain_served": 0, "overlap": 0,
-              "stale": 0, "stale_plain": 0, "fail": 0}
+              "stale_exempt": 0, "stale": 0, "stale_plain": 0, "fail": 0}
     for key, auto in autos.items():
         candidates = plains.get(key)
         if not candidates:
@@ -290,17 +291,22 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.98, newer=None) -> 
             continue
         counts["losses"] += 1
         (alo, ahi), (plo, phi) = interval(auto), interval(plain)
+        auto_fresh, plain_fresh = is_fresh(auto), is_fresh(plain)
         if served_config(auto) == "none":
             verdict = "plain_served"
         elif ahi >= plo and phi >= alo:
             verdict = "overlap"
-        elif not is_fresh(auto):
+        elif not auto_fresh:
             verdict = "stale"
-        elif not is_fresh(plain):
+        elif not plain_fresh:
             verdict = "stale_plain"
         else:
             verdict = "fail"
         counts[verdict] += 1
+        # An exemption (plain served, overlapping spreads) on a row older than the decision code
+        # says nothing about today's decision either: counted, and with --release it blocks.
+        if verdict in ("plain_served", "overlap") and not (auto_fresh and plain_fresh):
+            counts["stale_exempt"] += 1
         cells.append({"cell": cell_name(auto), "served": served_config(auto),
                       "draft_tokens": auto.get("draft_tokens"), "auto": auto["value"],
                       "plain": plain["value"], "ratio": round(ratio, 3),
@@ -344,7 +350,8 @@ def render(result: dict, since: str, show_all: bool) -> str:
              f"{s['superseded']}); paired {c['paired']}, unpaired auto {c['unpaired_auto']}, "
              f"unmatched build/env {c['unmatched_build_env']}, unpaired plain {c['unpaired_plain']}",
              f"pass {c['pass']}, stale pass {c['stale_pass']}; losses {c['losses']}: "
-             f"plain-served {c['plain_served']}, overlap {c['overlap']}, stale {c['stale']}, "
+             f"plain-served {c['plain_served']}, overlap {c['overlap']} (on stale rows "
+             f"{c['stale_exempt']}), stale {c['stale']}, "
              f"stale plain {c['stale_plain']}, FAIL {c['fail']}"]
     if s.get("commit_unknown"):
         lines.append(f"{s['commit_unknown']} judged rows name a commit this clone lacks: "
@@ -421,7 +428,7 @@ def main(argv=None) -> int:
     # A release needs current evidence: what is stale or unpaired says nothing about today's
     # decision, so it blocks until re-measured.
     blocking = (counts["stale"] + counts["stale_plain"] + counts["stale_pass"]
-                + counts["unpaired_auto"] + counts["unmatched_build_env"])
+                + counts["stale_exempt"] + counts["unpaired_auto"] + counts["unmatched_build_env"])
     result["release_blocked"] = blocking if a.release else 0
     if a.json:
         print(json.dumps(result, indent=1))
@@ -445,7 +452,7 @@ def main(argv=None) -> int:
     if result["release_blocked"]:
         print(f"spec_gate: RELEASE BLOCKED: {result['release_blocked']} cells need fresh rows "
               f"(stale {counts['stale']}, stale plain {counts['stale_plain']}, stale pass "
-              f"{counts['stale_pass']}, unpaired auto "
+              f"{counts['stale_pass']}, stale exemption {counts['stale_exempt']}, unpaired auto "
               f"{counts['unpaired_auto']}, unmatched build/env {counts['unmatched_build_env']})",
               file=sys.stderr)
     return 1 if result["counts"]["fail"] or result["release_blocked"] else 0
