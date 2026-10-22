@@ -683,6 +683,14 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         logger_->info("speculation | serves {} ({}) | fallback {} | {}", startup.config,
                       startup.selection, startup.fallback, startup.reason);
     }
+    // --spec-class-depth, --spec auto or an explicit --spec: the bounds the started Engine runs,
+    // clamped to its window (product::clamp_class_override).
+    if (const auto& asked = service.options().class_depth) {
+        logger_->info(
+            "speculation | class bounds {} (--spec-class-depth {}, clamped to the window)",
+            spec::class_depths_label(service.engine_options().speculative.class_depth),
+            spec::class_depths_label(*asked));
+    }
 
     if (cache.enabled) {
         std::string cached = std::to_string(*cache.device_state_slots);

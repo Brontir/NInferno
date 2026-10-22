@@ -677,6 +677,10 @@ int main() {
             const auto deeper = ninferno::product::clamp_class_override(asked, 7);
             failures += check(deeper == std::array<std::uint32_t, 4>{none, 5, 3, 0},
                               "at window 7 a bound of 7 bounds nothing");
+            // The model's MTP head at depth 3 (the last fallback before plain).
+            failures += check(ninferno::product::clamp_class_override(asked, 3) ==
+                                  std::array<std::uint32_t, 4>{none, none, none, 0},
+                              "at the head's window 3: none,none,none,0");
         }
         // A plain menu: nothing.
         ninferno::product::ServedSpeculation plain;

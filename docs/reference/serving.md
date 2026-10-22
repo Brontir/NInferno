@@ -355,7 +355,8 @@ Huge (the rest).
   `load_plain` request, keeps its checkpoints from before the switch but not its endpoint: its
   drafter state stops at the switch, and a continuation from that endpoint would draft from it.
 - **Override.** `--spec-class-depth S,M,L,H` (each a depth or `none`; `none` alone: no bound)
-  replaces the bounds, for an explicit `--spec` too; the startup log names it. It applies to every
+  replaces the bounds, for an explicit `--spec` too; the startup log names the bounds the started
+  Engine runs, clamped (`speculation | class bounds ...`). It applies to every
   candidate startup tries (the fit fallback, shallower depths, the model's MTP head), each clamped
   to that candidate's window: a bound at or past the window bounds nothing, so the override only
   lowers. The report shows the depth the engine runs, the smaller of the served depth and the

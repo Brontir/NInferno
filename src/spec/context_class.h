@@ -22,7 +22,9 @@
 //                 "drafter_source": a separate drafter's source identity | "component:<name>"
 //                                   (a component of the target: the target's identity and the
 //                                   name),
-//                 "byte_class": {"activations": "exact" | "fast-a8" | "fast-a4", "kv": ...,
+//                 "byte_class": {"activations": "exact" | "fast-a8" | "fast-a4" (A4 allowed and
+//                                runnable under the chip-fact route table in force: a table that
+//                                splits decode W4A4 by chip must re-key such entries), "kv": ...,
 //                                "summation": ..., "parity": ...},
 //                 "sampling": "t0" | ..., "depth": K, "lanes": C, "corpus": "sha256:<64 hex>" |
 //                 label, "schedule": the request schedule every card ran, "tolerance": 0.05,
