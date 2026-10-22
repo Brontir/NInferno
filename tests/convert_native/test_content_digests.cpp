@@ -17,6 +17,7 @@
 #include "artifact/reader.h"
 #include "artifact/source_identity.h"
 #include "convert/convert.h"
+#include "convert/fetch.h"
 #include "convert/pyjson.h"
 #include "convert/relayout.h"
 #include "convert/writer.h"
@@ -195,8 +196,38 @@ std::string artifact_id(const fs::path& path) {
     return out;
 }
 
-int convert_test(const fs::path& dir) {
+// A local GGUF renamed: its inputs are its content alone, so only the quant label its name carries
+// (convert.cpp: gguf_quant_label of the file name) can move the identity.
+int gguf_rename_test() {
     int failures = 0;
+    failures += check(cv::gguf_quant_label("Qwen3.8-27B-UD-IQ3_XXS.gguf") == "UD-IQ3_XXS" &&
+                          cv::gguf_quant_label("renamed-copy-UD-IQ3_XXS.gguf") == "UD-IQ3_XXS" &&
+                          cv::gguf_quant_label("model.gguf").empty(),
+                      "the quant label comes from the GGUF's file name");
+    art::Directory d;
+    d.objects.push_back(art::TensorObject{"w", {4, 256}, "ggml_q4_k", "ggml_blocks_v1", 0, 576, 1});
+    d.provenance  = art::Json::parse(R"({"converter": "ninferno-v3", "recipe": "qwen3_5_bf16",
+        "inputs": [{"role": "base", "files": [{"sha256": ")" +
+                                     std::string(64, 'a') + R"("}]}],
+        "content_sha256": {"w": ")" +
+                                     std::string(64, 'b') + R"("}})");
+    const auto as = [&](const std::string& file) {
+        auto x = d;
+        if (const auto quant = cv::gguf_quant_label(file); !quant.empty()) {
+            x.provenance["quant"] = quant;
+        }
+        return art::source_identity(x);
+    };
+    failures += check(as("Qwen3.8-27B-UD-IQ3_XXS.gguf") &&
+                          as("Qwen3.8-27B-UD-IQ3_XXS.gguf") == as("renamed-copy-UD-IQ3_XXS.gguf"),
+                      "a renamed GGUF that keeps its quant label: the same identity");
+    failures += check(as("model.gguf") != as("Qwen3.8-27B-UD-IQ3_XXS.gguf"),
+                      "a name without the label: an empty quant, another identity (the safe side)");
+    return failures;
+}
+
+int convert_test(const fs::path& dir) {
+    int failures = gguf_rename_test();
     write_checkpoint(dir / "ckpt", 7);
     const auto a = dir / "a.ninferno";
     (void)convert(dir / "ckpt", a, false); // direct output; a direct-write failure throws

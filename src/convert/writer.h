@@ -79,8 +79,8 @@ class ArtifactWriter;
 // The content digests of the directory's objects (artifact/source_identity.h): the SHA-256 of each
 // object's payload bytes, read back from `writer`, as {object id: 64 lowercase hex} in the order
 // of `objects` (the directory's "objects": id, offset, bytes), hashed on `threads` threads (0:
-// the hardware's). The placeholders are the same map of 64 zeros, so a directory laid out with
-// them keeps its length when the digests replace them.
+// the hardware's, at most 16, as ConvertOptions::threads). The placeholders are the same map of 64
+// zeros, so a directory laid out with them keeps its length when the digests replace them.
 [[nodiscard]] OJson content_digests(const ArtifactWriter& writer, const OJson& objects,
                                     unsigned threads);
 [[nodiscard]] OJson content_digest_placeholders(const OJson& objects);

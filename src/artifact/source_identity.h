@@ -19,7 +19,9 @@
 //              no side file enters either (what a config, tokenizer or template gives the
 //              artifact is in its bytes and structure, which the content digests and
 //              "structure" cover),
-//    "quant": the provenance's "quant" (a GGUF's quantization label, from its file name) or "",
+//    "quant": the provenance's "quant" (a GGUF's quantization label, read from its file name, so
+//             a rename that changes the label moves the identity; one that keeps it does not;
+//             an unknown label, "", is the safe side) or "",
 //    "converter": the provenance's "converter" (the converter format version, "ninferno-v3"),
 //    "recipe": the provenance's "recipe" (an official name), or for a custom recipe file of the
 //              Python converter {"sha256": its content, "function": the function it names},
@@ -63,7 +65,8 @@ inline constexpr std::string_view kSourceIdentitySchema = "ninferno-source/1";
 
 // The SHA-256 (hex) of the directory's structure as compact JSON with sorted keys: every
 // component (config, target, resources by object id, proposal), binding (parts by object id and
-// range) and use (parameter, input, activation policy, auxiliary bindings), and the metadata.
+// range) and use (parameter, input, activation policy, auxiliary bindings), and the metadata
+// but its "name" (--name: a label, not bytes).
 [[nodiscard]] std::string structure_sha256(const Directory& directory);
 
 // The record the identity hashes; nullopt when the provenance records no "inputs" (or no

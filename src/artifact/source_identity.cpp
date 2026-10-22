@@ -66,10 +66,14 @@ std::string structure_sha256(const Directory& directory) {
                                                    : Json(nullptr)},
                             {"auxiliaries", std::move(auxiliaries)}});
     }
+    // The public instance name (--name) is a label, not bytes: the same conversion under another
+    // name keeps its identity.
+    Json metadata = directory.metadata.is_object() ? directory.metadata : Json::object();
+    metadata.erase("name");
     const Json all = {{"components", std::move(components)},
                       {"bindings", std::move(bindings)},
                       {"uses", std::move(uses)},
-                      {"metadata", directory.metadata}};
+                      {"metadata", metadata}};
     return sha256_hex(all.dump());
 }
 

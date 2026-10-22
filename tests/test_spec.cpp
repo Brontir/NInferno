@@ -1571,7 +1571,7 @@ int test_source_identity() {
         {"the recipe", [](art::Directory& x) { x.provenance["recipe"] = "dense_bf16"; }},
         {"a byte-changing choice",
          [](art::Directory& x) { x.provenance["drafter_quantization"] = "q4"; }},
-        {"the metadata", [](art::Directory& x) { x.metadata["name"] = "renamed"; }},
+        {"the metadata", [](art::Directory& x) { x.metadata["license"] = "other"; }},
         {"a component's config",
          [](art::Directory& x) { x.components["text"].config["hidden_size"] = 8; }},
         {"an override's code",
@@ -1645,6 +1645,10 @@ int test_source_identity() {
     elsewhere.provenance["sources"]["base"]["path"] = "relative/m.gguf";
     failures += check(art::source_identity(elsewhere) == id,
                       "the same ranking and sources at other paths: the same identity");
+    auto named             = d;
+    named.metadata["name"] = "my-instance";
+    failures += check(art::source_identity(named) == id,
+                      "the public instance name (--name) leaves the identity");
     return failures;
 }
 

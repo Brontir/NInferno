@@ -145,23 +145,27 @@ What the design guarantees once complete:
    bytes (schema `ninferno-source/1`, compact JSON with sorted keys):
    - the inputs, which the converter records in the provenance (`"inputs"`): every checkpoint the
      conversion opened, by role (sorted by role), with the weight files it read, each by the
-     `sha256` of its content alone (sorted). No path, repository or file name enters, so the same
-     files typed as a relative or an absolute path, in another directory or under another name
-     give the same inputs, and no side file enters: what a config, tokenizer or template gives the
+     `sha256` of its content alone (sorted). No path, repository or file name enters the inputs,
+     so the same files typed as a relative or an absolute path, in another directory or under
+     another name give the same inputs (a GGUF's name still reaches the identity through its
+     quant label, below), and no side file enters: what a config, tokenizer or template gives the
      artifact is in its bytes and structure, which the content digests and the structure hash
      cover, and a file beside the weights that the conversion does not read cannot move it. An
      LFS snapshot file takes its blob name, the sha256 the fetch verified at download; any other
      file is hashed when it is converted (a source-consuming conversion keeps the inputs beside
      its journal, written durably before its first punch, so a resumed run never hashes a file it
      punched, and refuses to resume a journal without them);
-   - the quant (a GGUF's label, from its file name);
+   - the quant: a GGUF's label, read from its file name (`...-UD-IQ3_XXS.gguf`), so renaming
+     the file moves the identity only when the label changes; a name without a label gives an
+     empty quant, another identity, the safe side;
    - the converter format version (`"converter"`, `ninferno-v3`) and the recipe (an official
      name, or a custom recipe file by its sha256 and function name);
    - the byte-changing choices the provenance records (drafter quantization, vocabulary, GGUF
      mapper, a proposal head's token ranking by its file's sha256, `--round-tiny-scales`,
      `--maintainer-quantize`, and the Python converter's
      `--override` by its file's sha256 and function name). No path enters;
-   - the structure: the SHA-256 of the directory's components, bindings, uses and metadata;
+   - the structure: the SHA-256 of the directory's components, bindings, uses and metadata (but
+     the public instance name, `--name`: a label, not bytes);
    - the tensor index: every object's id, format, layout, shape, size and divisor count (every
      resource's encoding and size) and its **content digest**, the SHA-256 of its payload bytes.
      The converter computes the digests once every byte is written, reading the output back, and

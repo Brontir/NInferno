@@ -615,7 +615,7 @@ OJson content_digests(const ArtifactWriter& writer, const OJson& objects, unsign
             next = count;
         }
     };
-    if (threads == 0) { threads = std::max(1U, std::thread::hardware_concurrency()); }
+    if (threads == 0) { threads = std::clamp(std::thread::hardware_concurrency(), 1U, 16U); }
     threads =
         static_cast<unsigned>(std::min<std::size_t>(threads, std::max<std::size_t>(count, 1)));
     std::vector<std::thread> pool;
