@@ -152,6 +152,15 @@ class SpecGateTest(unittest.TestCase):
                             "driver": "590.1", "cuda": "13.1", "power_limit_w": 400.0})
         self.assertEqual(self.judge(auto, plain)["counts"]["paired"], 1)
 
+    def test_per_run_and_derived_fields_are_not_the_key(self):
+        auto = row(80, decision_fingerprint="fp-auto", decision_manifest={"spec": "dflash:7"},
+                   run_id="r1", hostname="a", started="2026-10-21T09:00:00Z", repeats=6,
+                   commit="abcdef1", version="abcdef1", meta={"plan_level": 2})
+        plain = row(100, auto=False, decision_fingerprint="fp-plain",
+                    decision_manifest={"spec": "none"}, run_id="r2", hostname="b",
+                    started="2026-10-21T09:30:00Z", repeats=1, commit="1234567", version="0.1.0")
+        self.assertEqual(self.judge(auto, plain)["counts"]["paired"], 1)
+
     def test_spec_auto_is_auto_and_forced_rows_are_excluded(self):
         plain = row(100, auto=False)
         r = self.judge(row(80, extra="--spec auto"), plain)

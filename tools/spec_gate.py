@@ -51,6 +51,13 @@ DECISION_FILES = (
     "src/models/qwen3_5/program/prefill.cpp",                # the request's depth at admission
     "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
     "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
+    "src/models/gemma4/session.h",                           # Gemma 4 depth adaptation
+    "src/serve/serve_options.cpp",                           # no --spec -> --spec auto
+    "src/runtime/engine/model_instance.cpp",                 # capacity refusal of a drafter's plan
+    "src/runtime/engine/plan_ladder.cpp",                    # the memory plan rungs it picks from
+    "src/runtime/engine/plan_ladder.h",
+    "src/runtime/engine/kv_capacity.h",                      # the contexts a rung holds
+    "src/models/qwen3_5/program/graphs.cpp",                 # the shortage auto answers shallower
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -58,12 +65,14 @@ DEFAULT_BENCH = REPO / "docs" / "performance" / "data" / "bench.jsonl"
 DECODE_METRICS = ("decode", "decode_aggregate")
 # Flags that choose the speculation; everything else in `flags` is part of the pairing key.
 SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
-# Row fields that are not the measured cell: the measurement itself, the speculation, and the
-# build (`version`, the decision fingerprint; the staleness test covers the build). `machine` is
-# reduced to the card (GPU name, SM, memory in whole GB): driver, CUDA and power limit are not the
-# cell. A row without `engine` is NInferno's.
-NOT_KEY = {"spec", "draft_tokens", "flags", "value", "spread", "date", "repeats", "commit",
-           "version", "warmup", "machine", "decision_fingerprint", "decision_manifest"}
+# The row fields that make the measured cell (an allow-list: anything else a row carries, such as
+# the measurement, the speculation served, the build, the decision fingerprint and manifest (they
+# hash the resolved speculation, so an auto row and its plain twin always differ), dates, run ids
+# or host names, is not part of the key). Besides these, the key holds the card (GPU name, SM and
+# memory in whole GB, not the driver, CUDA or power limit), the engine (missing = "ninferno"), the
+# activation precision (field, else flag, else "fast") and the non-speculation flags.
+KEY_FIELDS = ("model", "recipe", "kv", "sampling", "metric", "prompt_set", "prompt_len",
+              "concurrency", "unit", "context", "stride", "corpus")
 
 
 def parse_flags(flags: str | None) -> tuple[str | None, tuple[str, ...]]:
@@ -117,7 +126,7 @@ def row_commit(row: dict) -> str | None:
 
 
 def pair_key(row: dict) -> str:
-    key = {k: v for k, v in row.items() if k not in NOT_KEY}
+    key = {k: row.get(k) for k in KEY_FIELDS}
     machine = row.get("machine") or {}
     vram = machine.get("vram_gb")  # one name can come in two memory sizes (4060 Ti 8 / 16 GB)
     key["card"] = [machine.get("gpu_name"), str(machine.get("sm")),
