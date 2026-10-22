@@ -21,6 +21,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
+- under `fast`, the causal attention over BF16, FP8, K8V4 and NVFP4 keys and values (and over INT8
+  on Volta) takes its kernel and its key splits by the prefill call's width, so a token's bytes
+  follow the chunk size and the cache frontier; INT8 (the Qwen default) takes the tiled prompt
+  kernel at every width from 17 columns;
 - the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
   (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
   its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took

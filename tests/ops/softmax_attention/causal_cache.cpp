@@ -3166,11 +3166,53 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
     return failures;
 }
 
+// Under the prefill route profile (--activations fast) a prefill call of 17 columns or more over
+// INT8 keys and values takes one kernel at every width (int8/plan.cpp): a token's bytes do not
+// follow the call's width or where its prompt was cut, on either side of the 256-column width
+// that once parted the grouped and tiled families. Volta keeps the width rule.
+int run_prefill_shape_invariance_cases(KvCacheStorage storage) {
+    if (storage != KvCacheStorage::Int8Group64 || NINFERNO_BUILD_ARCH < 75) return 0;
+    const ops::ScopedPrefillRoutes prefill;
+    int failures = 0;
+    for (const auto& geometry : {kGeometries[0], kGeometries[1], kGeometries[3]})
+        for (const int context : {300, 2900, 12000, 40000}) {
+            const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
+            const std::string name = std::string("prefill width ") + geometry.name + " " +
+                                     cache_name(storage) + " ctx=" + std::to_string(context) + " ";
+            const auto output      = [&](ShapedCall shape) {
+                return shaped_request_output(geometry, storage, context, shape);
+            };
+            const auto wide = output({.width = 300, .valid = 300});
+            for (const int width : {17, 64, 130, 257})
+                failures += verify_shape_prefix(name + "W=" + std::to_string(width) + " vs W=300",
+                                                output({.width = width, .valid = width}), wide);
+            // Prompt cuts: 256 columns appended by one call and the last 44 by another, and one
+            // leaving the narrowest prefill call.
+            failures += verify_shape_prefix(name + "cut at 256 vs W=300",
+                                            output({.width = 44, .valid = 44, .prefix = 256}), wide,
+                                            256 * q_column);
+            failures += verify_shape_prefix(name + "cut at 283 vs W=300",
+                                            output({.width = 17, .valid = 17, .prefix = 283}), wide,
+                                            283 * q_column);
+            const auto cached = shaped_cached_output(geometry, storage, context, 300);
+            for (const int width : {17, 130})
+                failures += verify_shape_prefix(
+                    name + "cached W=" + std::to_string(width) + " vs W=300",
+                    shaped_cached_output(geometry, storage, context, width), cached);
+        }
+    return failures;
+}
+
 int run_storage_cases(DeviceExecutionView execution, KvCacheStorage storage) {
     int failures = verify_workspace_capacity_contract(execution, storage);
     {
         // The invariant route profile's partitions and chunked launches size their own partials.
         const ops::ScopedInvariantRoutes invariant;
+        failures += verify_workspace_capacity_contract(execution, storage);
+    }
+    {
+        // So do the prefill route profile's (an INT8 prefill call of 17 columns or more is tiled).
+        const ops::ScopedPrefillRoutes prefill;
         failures += verify_workspace_capacity_contract(execution, storage);
     }
     if (storage == KvCacheStorage::Nvfp4Group16) {
@@ -3212,6 +3254,7 @@ int run_storage_cases(DeviceExecutionView execution, KvCacheStorage storage) {
             failures += run_numerical_profile_cases({execution.stream, sms}, storage);
     failures += run_small_prefill_cases(execution, storage);
     failures += run_shape_invariance_cases(storage);
+    failures += run_prefill_shape_invariance_cases(storage);
     return failures;
 }
 

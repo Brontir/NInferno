@@ -9,6 +9,18 @@
 namespace ninferno::ops::detail {
 namespace {
 constexpr int kGroupedPrefillMaxWidth = 256;
+// Under the prefill route profile a call of 17 columns or more (the decode and verify routes end
+// at 16, as the projections' do) takes the tiled family at every width: the prompt kernel
+// (int8/prompt_fast.cuh, sm_80 on) and Turing's tiled MMA give a column the same bytes whatever
+// the call's width or first column, while the grouped families split its keys by the call's tiles.
+// A prompt cut or a cache frontier then leaves a token's bytes as they are. Volta keeps the width
+// rule: its split-D kernel takes calls wider than 256 columns only (volta_splitd.h).
+constexpr int kPrefillTiledMinWidth = 17;
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+constexpr bool kPrefillTiledAtEveryWidth = false;
+#else
+constexpr bool kPrefillTiledAtEveryWidth = true;
+#endif
 } // namespace
 
 Int8KvCausalPlan make_int8_kv_causal_plan(int heads, int kv_heads, int width, int batch,
@@ -31,9 +43,11 @@ Int8KvCausalPlan make_int8_kv_causal_plan(int heads, int kv_heads, int width, in
                 envelope,
                 CausalKvPartition::aligned_to_positions(envelope.max_visible_keys),
                 launch_columns};
-    const auto family = width <= grouped_limit             ? Int8KvFamily::Grouped
-                        : width <= kGroupedPrefillMaxWidth ? Int8KvFamily::ParallelGrouped
-                                                           : Int8KvFamily::Tiled;
+    const bool prefill_tiled =
+        kPrefillTiledAtEveryWidth && prefill_routes_active() && width >= kPrefillTiledMinWidth;
+    const auto family = width > kGroupedPrefillMaxWidth || prefill_tiled ? Int8KvFamily::Tiled
+                        : width <= grouped_limit ? Int8KvFamily::Grouped
+                                                 : Int8KvFamily::ParallelGrouped;
     const int tiles =
         family == Int8KvFamily::ParallelGrouped ? (width + grouped_limit - 1) / grouped_limit : 1;
     const int independent_tiles = batch * kv_heads * tiles;

@@ -18,6 +18,9 @@ namespace ninferno::models::qwen3_5::runtime_support {
 //     take the prefill routes and cut the scan into the same absolute chunks (see
 //     execution::prefill_call_end).
 // A capture or restore frontier anywhere else changes the bytes of the tokens after it.
+// Under --activations fast the attention keeps the grid point neutral over INT8 keys and values
+// (the default) from Turing on; over the other KV storages, and on Volta, it still takes its
+// kernel by the call's width (ninferno/ops/prefill_routes.h).
 inline constexpr std::uint32_t kNeutralGridTokens = 64;
 inline constexpr std::uint32_t kNeutralMinTokens  = 17;
 
