@@ -13,7 +13,11 @@
 //                          of that repository is left)
 //   POST /api/delete_original {repo}: a converted hub model's downloaded original
 //   GET  /api/log?id&n     the last lines of a process's output
-//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?} -> ninferno-serve
+//   GET  /api/precision?model&quant&gpu  what each --activations mode resolves to for that model
+//                          on that GPU: ninferno-serve --activations-preflight on the converted
+//                          model (CPU only), else "pending" until it is downloaded and converted
+//   POST /api/launch       {model, quant?, gpu, max_context?, max_concurrency?, spec?, precision?,
+//                          kv_dtype?} -> ninferno-serve
 //   POST /api/prepare      {model, quant?} -> download and convert only (--prepare-only)
 //   POST /api/stop         {id}
 //   POST /api/update       {action: install | restart}: install the newest release (the updater
@@ -86,41 +90,40 @@ struct LaunchRequest {
     int gpu          = 0;
     int port         = 0;
     long max_context = 0;  // 0: automatic
-    int max_concurrency = 0;  // requests at once; 0: ninferno-serve's default
-    std::string spec;      // "" or auto | none | mtp | dflash | dflash2
-    std::string precision; // "" or exact | balanced | fast
+    int max_concurrency =
+        0;            // requests at once, 1..kMaximumConcurrency; 0: ninferno-serve's default
+    std::string spec; // "" or auto | none | mtp | dflash | dflash2
+    // "" (ninferno-serve's default, auto) or auto | 16 | 8 | 4: serve's --activations. The KV
+    // cache is its own choice (kv_dtype) under every precision. The old names exact, fast and
+    // int8 are taken as 16, auto and 8 with a note in the log that they are deprecated.
+    std::string precision;
     std::string kv_dtype;  // "" or bf16 | int8 | fp8 | nvfp4 | k8v4 (serve's --kv-dtype)
     std::string hub;       // "" (Hugging Face) or modelscope: where a hub id is fetched
     bool prepare_only = false;
 };
 
-// Throws std::invalid_argument on a value outside the allowed set. `gpu`: what NVML says of the GPU
-// the request runs on (nullptr: unknown), which a tune beside the model must have been made for.
-[[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
-                                     const GpuStat* gpu = nullptr);
-
-// Why the tune at `tune` (of the artifact `artifact_id`) would not serve on `gpu`; empty: it
-// serves. The GPU class the server keys a tune by ("gb202:170sm", spec::gpu_identity) from the PCI
-// id, the compute capability and the SM count. An unknown GPU, or one without an SM count (boards
-// of one chip differ in it; a MIG slice reports none), refuses: the published profile runs rather
-// than a tune the server may refuse to start with.
-[[nodiscard]] std::string tune_refusal_on(const std::filesystem::path& tune,
-                                          const std::string& artifact_id, const GpuStat* gpu);
+// Throws std::invalid_argument on a value outside the allowed set. A speculation tune calibrated
+// on this machine beside the model is never named (no hidden state: the published profile runs);
+// a note in the log says it is there and how to name it on the command line.
+[[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request);
 
 // The GPU a launch on `gpu` runs on (CUDA_VISIBLE_DEVICES in PCI order: NVML's index); none named
 // (gpu < 0): the only GPU there is, else none (nullptr: unknown).
 [[nodiscard]] const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu);
 
-// Speculation calibration of a converted model on one GPU (spec-tune --quick): the Qwen/dense
-// engines through `ninferno spec-tune`, Gemma 4 through `ninferno-gemma4 ... spec-tune`.
-struct TuneRequest {
-    std::string artifact;
-    std::string engine; // convert::describe_artifact's: gemma4 | qwen3_5 | ""
-    int gpu = 0;
-};
-
-// Throws std::invalid_argument when `artifact` is not an existing .ninferno file.
-[[nodiscard]] LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request);
+// The command /api/precision runs: ninferno-serve's resolver of every --activations mode for the
+// converted model `artifact` on a GPU of compute capability `cc` ("12.0") and, when known, PCI
+// product id `pci_device_id` (passed as "12.0:0x2b85": the board's row says what the capability
+// cannot, such as no tensor cores on a GTX 16), on the CPU, nothing loaded or downloaded. An argv,
+// never a shell line. Throws std::invalid_argument for a path that is not a .ninferno file or
+// could be read as an option.
+[[nodiscard]] std::vector<std::string> precision_preflight_argv(const UiOptions& options,
+                                                                const std::string& artifact,
+                                                                const std::string& cc,
+                                                                std::uint32_t pci_device_id = 0);
+// The preflight's answer from its output lines: the last line that is a JSON object with "modes".
+// Throws std::runtime_error when there is none (the lines' tail says why).
+[[nodiscard]] nlohmann::json parse_precision_preflight(const std::vector<std::string>& lines);
 
 // "org/name:Q4_K_M" -> ("org/name", "Q4_K_M"); a path or a name without a tag is returned whole.
 [[nodiscard]] std::pair<std::string, std::string> split_model_tag(const std::string& model);
@@ -183,6 +186,13 @@ private:
     std::uint64_t install_update();
     void restart();
     nlohmann::json state_json();
+    // /api/precision: the preflight of `model` (a converted model's path, or a hub id and quant
+    // whose converted model is looked up here) on GPU `gpu`; "pending" while none is converted.
+    // Cached per (path, modification time, compute capability).
+    nlohmann::json precision_json(const std::string& model, const std::string& quant, int gpu);
+    // A running serve process's /v1/models meta (activations as resolved, KV cache), read once it
+    // is ready: shown on its row.
+    void read_served_meta(const ProcessInfo& info);
     nlohmann::json catalog_json(int gpu);
     nlohmann::json quants_json(const std::string& repo, int gpu,
                                const std::string& hub = "huggingface");
@@ -214,6 +224,12 @@ private:
     UiOptions options_;
     std::unique_ptr<GpuSource> gpus_;
     ProcessPool processes_;
+    // The preflights /api/precision runs: apart from processes_, so they never show as models.
+    ProcessPool preflights_{256};
+    std::mutex preflight_mutex_;
+    std::map<std::string, nlohmann::json> preflight_cache_; // "path|mtime|cc" -> answer
+    std::mutex served_mutex_;
+    std::map<std::uint64_t, nlohmann::json> served_meta_; // process id -> {activations, kv_cache}
     std::unique_ptr<httplib::Server> server_;
     mutable std::mutex sizes_mutex_;
     SizeTable sizes_;

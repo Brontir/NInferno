@@ -23,7 +23,7 @@ inline constexpr std::uint32_t kMaximumMtpDraftTokens = 15;
 // The execution of `model` on `device`, over a public token domain of `public_tokens` ids (the
 // tokenizer's, at most the embedding rows). With a `drafter` (Google's MTP assistant for this
 // target) it also runs the MTP speculative backend. Both must outlive it.
-// Under ActivationMode::Exact every prefill, decode, verify and capture runs under the invariant
+// Under ActivationMode::Bits16 every prefill, decode, verify and capture runs under the invariant
 // route profile (ninferno/ops/prefill_routes.h), a prefill under the prefill profile too; load the
 // model with ActivationProfile::A16Full to go with it.
 [[nodiscard]] std::unique_ptr<const qwen3_5::detail::ModelExecution>

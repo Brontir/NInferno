@@ -13,7 +13,8 @@ Three levels, each one deeper than the last:
 Inputs (docs/performance/data/):
   bench.jsonl   one measurement per line: machine {gpu_name, sm, vram_gb, power_limit_w, driver,
                 cuda}, model (Hugging Face id or name), recipe ("org/repo --quant LABEL"), spec,
-                draft_tokens, kv, activations (--activations, default "fast"), metric, prompt_len, prompt_set, concurrency, context, repeats,
+                draft_tokens, kv, activations (--activations auto|16|8|4, default "auto"; the older spellings
+                exact, fast and int8 read as 16, auto and 8), metric, prompt_len, prompt_set, concurrency, context, repeats,
                 value, spread, unit, date, version, flags, engine (default "ninferno"), out_tokens
                 (completion tokens per request, default 512), commit
                 (the NInferno git commit of the build, when known; tools/spec_gate.py reads it)
@@ -40,6 +41,8 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# --activations as the bench rows spell it: the older names read as the current ones.
+MODE_NAMES = {"exact": "16", "fast": "auto", "int8": "8", "auto": "auto", "16": "16", "8": "8", "4": "4"}
 DATA = ROOT / "docs" / "performance" / "data"
 OUT = ROOT / "docs" / "performance"
 README = ROOT / "README.md"
@@ -87,7 +90,12 @@ def load():
             r.setdefault("engine", OURS)
             r.setdefault("spec", "none")
             r.setdefault("kv", "auto")
-            r.setdefault("activations", "fast")
+            r["activations"] = MODE_NAMES.get(str(r.get("activations", "auto")), r.get("activations"))
+            if "reference" in r:
+                r["reference"] = MODE_NAMES.get(str(r["reference"]), r["reference"])
+            if r.get("flags"):  # the recorded command line, in today's spelling of the mode
+                r["flags"] = re.sub(r"--activations (exact|fast|int8)\b",
+                                    lambda m: "--activations " + MODE_NAMES[m.group(1)], r["flags"])
             r.setdefault("concurrency", 1)
             rows.append(r)
     return gpus, models, rows, problems
@@ -179,7 +187,7 @@ def command(r, concurrency):
         parts.append(f"--spec {r['spec']} --draft-tokens {r['draft_tokens']}")
     if r.get("kv") not in ("auto", None):
         parts.append(f"--kv-dtype {r['kv']}")
-    if r.get("activations", "fast") != "fast":
+    if r.get("activations", "auto") != "auto":
         parts.append(f"--activations {r['activations']}")
     if concurrency > 1:
         parts.append(f"--max-concurrency {concurrency}")
@@ -278,7 +286,7 @@ def cell(settings, url):
             continue
         users = f" at {rec['concurrency']} streams" if name == "all streams" else ""
         spec = "no speculation" if s[1] == "off" else s[1]
-        mode = "" if s[3] == "fast" else f", --activations {s[3]}"
+        mode = "" if s[3] == "auto" else f", --activations {s[3]}"
         title = f"{name}: {fmt(rec['value'])} tok/s{users}, {quant(s[0])}, {spec}{mode}, measured {day(rec)}"
         number = fmt(rec["value"]) + (f"<sup>{rec['concurrency']}</sup>" if name == "all streams" else "")
         parts.append(f"[{number}]({url}{hint(title)})")
@@ -477,15 +485,15 @@ def page_run(g, m, gpus, models, speed, refs, quality):
         ppl = [r for r in q if r["metric"] in ("perplexity", "kld")]
         if ppl:
             # One row per weights and --activations mode: its perplexity, how far its token
-            # distributions move from the reference mode's (exact), and llama.cpp's perplexity
+            # distributions move from the reference mode's (16), and llama.cpp's perplexity
             # on the same file where measured.
             by = defaultdict(dict)
             for r in ppl:
                 kind = r["metric"] if r["engine"] == OURS else r["engine"]
-                by[(quant(r["recipe"]), r.get("activations", "fast"))][kind] = r
+                by[(quant(r["recipe"]), r.get("activations", "auto"))][kind] = r
             with_ref = any("llama.cpp" in d for d in by.values())
-            refs_of = sorted({r.get("reference", "exact") for r in ppl if r["metric"] == "kld"})
-            ref_name = refs_of[0] if refs_of else "exact"
+            refs_of = sorted({r.get("reference", "16") for r in ppl if r["metric"] == "kld"})
+            ref_name = refs_of[0] if refs_of else "16"
             corpus = sorted({r.get("corpus") for r in ppl if r.get("corpus")})
             def speed_of(w, mode, cell):  # the fastest measured setting of these weights in this mode
                 vals = [c[cell]["value"] for s, c in settings.items() if quant(s[0]) == w and s[3] == mode and cell in c]
@@ -498,16 +506,16 @@ def page_run(g, m, gpus, models, speed, refs, quality):
                       "| Weights | Mode | One stream tok/s | Prefill tok/s | Perplexity | KL from " + ref_name
                       + " | Same top token |" + (" llama.cpp |" if with_ref else "") + " Measured |",
                       "|---|---|---:|---:|---:|---:|---:|" + ("---:|" if with_ref else "") + "---|"]
-            order = {"exact": 0, "fast": 1, "int8": 2}
+            order = {"16": 0, "auto": 1, "8": 2, "4": 3}
 
             def same(a, b):  # two modes that ran the same kernels: every quality number identical
                 return all(a.get(x, {}).get("value") == b.get(x, {}).get("value") for x in ("perplexity", "kld"))
 
             names = {}
-            for (w, mode) in list(by):  # int8 differs from fast only on weights fast keeps in 16 bits
-                if mode == "int8" and (w, "fast") in by and same(by[(w, "int8")], by[(w, "fast")]):
-                    del by[(w, "int8")]
-                    names[(w, "fast")] = "fast = int8"
+            for (w, mode) in list(by):  # 8 differs from auto only on weights auto keeps in 16 bits
+                if mode == "8" and (w, "auto") in by and same(by[(w, "8")], by[(w, "auto")]):
+                    del by[(w, "8")]
+                    names[(w, "auto")] = "auto = 8"
             for (w, mode), d in sorted(by.items(), key=lambda x: (x[0][0], order.get(x[0][1], 9))):
                 p, k, o = d.get("perplexity"), d.get("kld"), d.get("llama.cpp")
                 pk = max((k for k in {c for s in settings.values() for c in s} if k[0] == "prefill"), default=None)
@@ -520,7 +528,7 @@ def page_run(g, m, gpus, models, speed, refs, quality):
                 row.append(max(day(r) for r in d.values()))
                 lines.append("| " + " | ".join(row) + " |")
             if names:
-                lines += ["", "**fast = int8**: on these weights `fast` already runs 8-bit activations, so `int8` "
+                lines += ["", "**auto = 8**: on these weights `auto` already runs 8-bit activations, so `8` "
                           "takes the same kernels and gives the same numbers."]
             lines.append("")
         spec = [r for r in q if r["metric"] in ("acceptance", "greedy_match")]

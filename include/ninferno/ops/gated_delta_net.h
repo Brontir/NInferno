@@ -45,7 +45,7 @@ namespace ninferno::ops {
  * state remains FP32 throughout. Scratch capacity is independent of normalize_qk.
  * The chunked route cuts a call into 16-token chunks from its first token, so its bytes depend on
  * where calls start: a split of one call in two is byte-equal only at a multiple of 16 tokens.
- * Under the invariant route profile (ScopedInvariantRoutes, --activations exact) every call, of
+ * Under the invariant route profile (ScopedInvariantRoutes, --activations 16) every call, of
  * any T, takes the recurrent kernel instead: one transition per token, the one decode and verify
  * use, so a split anywhere and a call per token give the same outputs and state; it needs no
  * workspace.

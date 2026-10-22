@@ -94,7 +94,7 @@ public:
 private:
     const execution::Parameters& parameters_;
     ModelTraits traits_;
-    bool invariant_; // ActivationMode::Exact: the invariant route profile
+    bool invariant_; // ActivationMode::Bits16: the invariant route profile
 };
 
 // Qwen 3.5 planning over its parameters (planning/startup.cpp).

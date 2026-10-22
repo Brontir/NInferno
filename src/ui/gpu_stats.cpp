@@ -2,6 +2,7 @@
 
 #include "core/sys.h"
 
+#include <cstdio>
 #include <mutex>
 
 namespace ninferno::ui {
@@ -16,7 +17,16 @@ nlohmann::json GpuStat::to_json() const {
     for (const auto& process : processes) {
         processes_json.push_back({{"pid", process.pid}, {"used_bytes", process.used_bytes}});
     }
+    // "0x2684" as src/core/data/gpu_facts.json keys a board ("" when unknown): the page matches
+    // a lab row to this card by it, never by name.
+    std::string pci;
+    if (pci_device_id != 0) {
+        char text[8];
+        std::snprintf(text, sizeof(text), "0x%04X", static_cast<unsigned>(pci_device_id & 0xFFFF));
+        pci = text;
+    }
     return {{"index", index},
+            {"pci_device_id", pci},
             {"name", name},
             {"uuid", uuid},
             {"bus_id", bus_id},

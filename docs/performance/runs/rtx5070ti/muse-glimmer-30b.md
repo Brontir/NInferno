@@ -22,8 +22,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Muse-Glimmer-30B-GGUF` UD-IQ3_XXS | dflash ×3 | auto | fast | 2,230 | 103 | 101 | – | – | 2026-10-20 |
-| `unsloth/Muse-Glimmer-30B-GGUF` UD-IQ3_XXS | off | auto | fast | 2,275 | 57.3 | 58.0 | 182 | 268 | 2026-10-20 |
+| `unsloth/Muse-Glimmer-30B-GGUF` UD-IQ3_XXS | dflash ×3 | auto | auto | 2,230 | 103 | 101 | – | – | 2026-10-20 |
+| `unsloth/Muse-Glimmer-30B-GGUF` UD-IQ3_XXS | off | auto | auto | 2,275 | 57.3 | 58.0 | 182 | 268 | 2026-10-20 |
 
 ## Measurement
 

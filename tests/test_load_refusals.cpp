@@ -1,6 +1,6 @@
 // What a load refuses before it touches the device: the options only the Qwen 3.5 family
-// implements, named for the family that would ignore them, and option values it cannot read.
-// No GPU.
+// implements (not --activations, which every family takes), named for the family that would ignore
+// them, and option values it cannot read. No GPU.
 
 #include "ninferno/option_enums.h"
 #include "runtime/engine/hf_text_frontend.h"
@@ -48,10 +48,12 @@ int qwen_only_options() {
     failures += check(names(refused(yarn), "--rope-yarn-factor", "Gemma 4"),
                       "--rope-yarn-factor not refused with the family named");
 
-    EngineOptions int8;
-    int8.activations = ActivationMode::Int8;
-    failures += check(names(refused(int8), "--activations int8", "Gemma 4"),
-                      "--activations int8 not refused with the family named");
+    // --activations is every family's: 8 and 4 resolve per matrix (activation_precision.h).
+    for (const ActivationMode mode : {ActivationMode::Bits8, ActivationMode::Bits4}) {
+        EngineOptions narrow;
+        narrow.activations = mode;
+        failures += check(refused(narrow).empty(), "--activations 8|4 refused as Qwen-only");
+    }
 
     for (const RecurrentStateStorage storage :
          {RecurrentStateStorage::BF16, RecurrentStateStorage::FP16}) {

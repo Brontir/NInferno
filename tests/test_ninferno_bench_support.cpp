@@ -169,7 +169,7 @@ int test_cli_contract() {
     failures += expect(fp8.activations == ninferno::kDefaultActivationMode &&
                            parse_for_test({"ninferno_bench", "--weights", "model.ninferno",
                                            "--activations", "exact"})
-                                   .activations == ninferno::ActivationMode::Exact,
+                                   .activations == ninferno::ActivationMode::Bits16,
                        "--activations");
     failures += expect(qb::usage_text("ninferno_bench").find("nvfp4|k8v4") != std::string::npos,
                        "benchmark help omits new KV modes");

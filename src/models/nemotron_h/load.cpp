@@ -40,6 +40,10 @@ ops::MoeWeights prepare_moe(const loading::Prepare& prepare, const MoeIds& ids,
     m.shared_gate_up       = shared_up.weight;
     m.shared_down          = shared_down.weight;
     m.shared_policy        = ops::shared_moe_policy(shared_up.policy, shared_down.policy);
+    std::vector<Id> experts(ids.up);
+    experts.insert(experts.end(), ids.down.begin(), ids.down.end());
+    loading::generic_moe(m, prepare, experts, std::span(&ids.shared_up, 1),
+                         std::span(&ids.shared_down, 1));
     return m;
 }
 
@@ -136,7 +140,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
 
     model->backing_ = demands.materialize(device);
     auto& backing   = *model->backing_;
-    const loading::Prepare prepare(demands, backing, profile == ActivationProfile::Artifact);
+    const loading::Prepare prepare(demands, backing, activation_mode_of(profile));
     auto& w           = model->weights_;
     w.token_embedding = native_weight(prepare.view(embedding));
     w.output_head     = prepare.projection(head);

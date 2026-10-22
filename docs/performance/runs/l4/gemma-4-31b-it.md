@@ -16,8 +16,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | Measured |
 |---|---|---|---|---:|---:|---:|---|
-| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | mtp ×10 | auto | fast | 612 | 30.0 | 33.0 | 2026-10-20 |
-| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 611 | 11.9 | 12.6 | 2026-10-20 |
+| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | mtp ×10 | auto | auto | 612 | 30.0 | 33.0 | 2026-10-20 |
+| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | off | auto | auto | 611 | 11.9 | 12.6 | 2026-10-20 |
 
 ## Measurement
 

@@ -23,6 +23,7 @@ add_library(ninferno_serve STATIC
   openai_responses_http.cpp
   serve_options.cpp
   model_source.cpp
+  activation_preflight.cpp
 )
 ninferno_internal_includes(ninferno_serve)
 target_link_libraries(ninferno_serve

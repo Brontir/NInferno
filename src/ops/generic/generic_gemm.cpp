@@ -1723,7 +1723,7 @@ bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy) {
 namespace {
 // Q4/Q5/Q6 G64 weights take int8 activations at prefill wherever the route admits W4A8 (the
 // artifact's A16Only uses included) on the cards where they pay (qx_prefill_a8_pays);
-// --activations exact keeps A16 (invariant routes). Qwen3.8-27B book 8K KLD 0.0047, top-1 97.1 %.
+// --activations 16 keeps A16 (invariant routes). Qwen3.8-27B book 8K KLD 0.0047, top-1 97.1 %.
 // Int8 activations pay where the card's int8 mma runs well ahead of its bf16 mma with fp32
 // accumulation: the GeForce and Ada/Ampere inference parts (half-rate fp32-accumulate HMMA, a
 // quarter of int8). Qwen3.8-27B Q4/Q5 G64 24K prefill, MTP 3: RTX 4090
@@ -1733,25 +1733,18 @@ bool qx_prefill_a8_pays() {
     try {
         const auto& d = device_class();
         // Not on a chip whose mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq.
-        return d.features.mma_tensor && !d.features.mma_slow &&
-               !generation_row(d.major, d.minor).fp32acc_full_rate;
+        return qx_prefill_a8_pays_on(d.features,
+                                     generation_row(d.major, d.minor).fp32acc_full_rate);
     } catch (const std::exception&) {
         return false;
     }
 }
 
-bool qx_format(QType qtype) {
-    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
-           qtype == QType::Q6_G64_FP16;
-}
 } // namespace
 
 LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy) {
-    if (policy == LinearPolicy::A16Only && qx_format(qtype) && qx_prefill_a8_pays() &&
-        !invariant_routes_active()) {
-        return LinearPolicy::AllowA8;
-    }
-    return policy;
+    if (policy != LinearPolicy::A16Only || !qx_prefill_format(qtype)) { return policy; }
+    return prefill_a8_policy_on(qtype, policy, qx_prefill_a8_pays(), invariant_routes_active());
 }
 
 std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,

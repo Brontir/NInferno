@@ -1,6 +1,7 @@
 #include "models/gemma4/load.h"
 
 #include "artifact/reader.h"
+#include "models/common/activation_census.h"
 #include "core/arena.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/gemma4_moe.h"
@@ -305,8 +306,10 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                     return divisor.has_value() && std::isfinite(*divisor) && *divisor > 0;
                 });
             };
+            // --activations 8 holds the experts at eight bits: the native bank encodes its prefill
+            // in four, so they take the generic moe Op's W4A8 prefill (as Qwen's SparseMoe does).
             const bool nvfp4_experts =
-                c.moe() && ops::gemma4_moe_available() &&
+                c.moe() && profile != ActivationProfile::A8 && ops::gemma4_moe_available() &&
                 contiguous_weight_region(prepare.view(ids.expert_gate_up.front()))
                         .parent->geometry.format == QType::NVFP4 &&
                 calibrated(ids.expert_gate_up) && calibrated(ids.expert_down);
@@ -328,6 +331,9 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                 m.gate_up       = gate_up->weight;
                 m.down          = down->weight;
                 m.expert_policy = models::loading::expert_policy(*gate_up, *down);
+                std::vector<Id> experts(ids.expert_gate_up);
+                experts.insert(experts.end(), ids.expert_down.begin(), ids.expert_down.end());
+                models::loading::generic_moe(m, prepare, experts, {}, {});
                 const Tensor scale = prepare.tensor(ids.router_scale);
                 std::vector<float> values(static_cast<std::size_t>(c.hidden_size));
                 if (cudaMemcpy(values.data(), scale.data, values.size() * sizeof(float),
@@ -384,6 +390,17 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                 layer.moe_activations = profile == ActivationProfile::A16Full
                                             ? ops::Gemma4MoeActivations::A16Only
                                             : ops::Gemma4MoeActivations::Recorded;
+                // The activation census (models/common/activation_census.h): the bank's
+                // recorded four-bit prefill, or BF16 at every width under the full-A16 profile.
+                const bool a16 = layer.moe_activations == ops::Gemma4MoeActivations::A16Only;
+                for (const auto* bank : {&ids.expert_gate_up, &ids.expert_down}) {
+                    for (const Id id : *bank) {
+                        census_width(prepare.name(id), a16 ? 16 : 4,
+                                     a16 ? "the native Gemma 4 MoE runs BF16 activations under "
+                                           "this profile"
+                                         : "");
+                    }
+                }
             }
         } catch (const std::exception& error) {
             throw std::runtime_error("text/layers/" + std::to_string(i) + ": " + error.what());

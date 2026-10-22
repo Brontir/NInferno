@@ -5,7 +5,7 @@
 // both candidates with a CausalScoring Engine on the shared prefix and reports the log-probability
 // gap; a divergence with a gap above kBugGap is a bug.
 //
-// Every Engine, the scorer included, runs --activations exact (ActivationMode::Exact): the
+// Every Engine, the scorer included, runs --activations exact (ActivationMode::Bits16): the
 // contracts below are those of the exact mode. Under fast (NINFERNO_DET_ACTIVATIONS=fast) a wide
 // call encodes NVFP4 activations in four bits, the answer depends on the batch width, and the gap
 // bound does not hold.
@@ -243,8 +243,8 @@ void compare(Report& report, const std::string& phase, const std::string& label,
 // NINFERNO_DET_ACTIVATIONS exact (default) | fast, for every Engine of the probe.
 ninferno::ActivationMode probe_activations() {
     const std::string mode = env_string("NINFERNO_DET_ACTIVATIONS");
-    if (mode.empty() || mode == "exact") { return ninferno::ActivationMode::Exact; }
-    if (mode == "fast") { return ninferno::ActivationMode::Fast; }
+    if (mode.empty() || mode == "exact") { return ninferno::ActivationMode::Bits16; }
+    if (mode == "fast") { return ninferno::ActivationMode::Auto; }
     throw std::invalid_argument("NINFERNO_DET_ACTIVATIONS must be exact or fast");
 }
 
@@ -293,7 +293,7 @@ ninferno::EngineOptions generation_options(const std::string& artifact, std::uin
     // NINFERNO_DET_PENDING_MS: admission deadline. Exact prefills NVFP4 with BF16 activations, far
     // slower than the W4A4 prefill, so a queued hosttier request waits minutes, not seconds.
     options.pending_timeout_ms =
-        env_u32("NINFERNO_DET_PENDING_MS", options.activations == ninferno::ActivationMode::Exact
+        env_u32("NINFERNO_DET_PENDING_MS", options.activations == ninferno::ActivationMode::Bits16
                                                ? 1800000U
                                                : options.pending_timeout_ms);
     options.context_cache.enabled     = cache;
@@ -989,7 +989,7 @@ void phase_hosttier(Probe& probe, Report& report) {
     // NINFERNO_DET_WATCHDOG_S (default 900 s, 4800 s under exact, whose prefill is slower).
     const std::uint32_t limit =
         env_u32("NINFERNO_DET_WATCHDOG_S",
-                probe_activations() == ninferno::ActivationMode::Exact ? 4800 : 900);
+                probe_activations() == ninferno::ActivationMode::Bits16 ? 4800 : 900);
     std::thread watchdog([&] {
         while (!done.load()) {
             if (std::chrono::steady_clock::now() - started > std::chrono::seconds(limit)) {
@@ -1340,7 +1340,7 @@ void phase_vrampeak(Probe& probe, Report& report) {
 // the modes are, not a bug count.
 void phase_modes(Probe& probe, Report& report) {
     std::map<ninferno::ActivationMode, std::vector<Run>> runs;
-    for (const auto mode : {ninferno::ActivationMode::Exact, ninferno::ActivationMode::Fast}) {
+    for (const auto mode : {ninferno::ActivationMode::Bits16, ninferno::ActivationMode::Auto}) {
         ninferno::EngineOptions options = generation_options(probe.artifact, 1, false);
         options.activations           = mode;
         ninferno::Engine engine(options);
@@ -1354,8 +1354,8 @@ void phase_modes(Probe& probe, Report& report) {
     };
     std::vector<Split> splits;
     for (std::size_t p = 0; p < probe.prompts.size(); ++p) {
-        const Run& e = runs[ninferno::ActivationMode::Exact][p];
-        const Run& f = runs[ninferno::ActivationMode::Fast][p];
+        const Run& e         = runs[ninferno::ActivationMode::Bits16][p];
+        const Run& f         = runs[ninferno::ActivationMode::Auto][p];
         const std::size_t at = first_difference(e.output, f.output);
         report.line({{"phase", "modes"},
                      {"check", "p" + std::to_string(p) + " exact vs fast"},
@@ -1365,7 +1365,7 @@ void phase_modes(Probe& probe, Report& report) {
             splits.push_back({p, at, e.output[at], f.output[at]});
         }
     }
-    for (const auto mode : {ninferno::ActivationMode::Exact, ninferno::ActivationMode::Fast}) {
+    for (const auto mode : {ninferno::ActivationMode::Bits16, ninferno::ActivationMode::Auto}) {
         ninferno::EngineOptions options;
         options.artifact_path = probe.artifact;
         options.purpose       = ninferno::EnginePurpose::CausalScoring;
@@ -1377,7 +1377,7 @@ void phase_modes(Probe& probe, Report& report) {
         ninferno::Engine scorer(options);
         for (const Split& s : splits) {
             Tokens prefix = probe.prompts[s.prompt];
-            const Run& e  = runs[ninferno::ActivationMode::Exact][s.prompt];
+            const Run& e  = runs[ninferno::ActivationMode::Bits16][s.prompt];
             prefix.insert(prefix.end(), e.output.begin(),
                           e.output.begin() + static_cast<std::ptrdiff_t>(s.at));
             const auto score = [&](TokenId token) {
@@ -1392,7 +1392,7 @@ void phase_modes(Probe& probe, Report& report) {
             report.line(
                 {{"phase", "modes"},
                  {"check", "p" + std::to_string(s.prompt) + " scorer " +
-                               (mode == ninferno::ActivationMode::Exact ? "exact" : "fast")},
+                               (mode == ninferno::ActivationMode::Bits16 ? "exact" : "fast")},
                  {"position", s.at},
                  {"logp_exact_token", lp_exact},
                  {"logp_fast_token", lp_fast},

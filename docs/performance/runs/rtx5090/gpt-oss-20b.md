@@ -22,8 +22,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `openai/gpt-oss-20b` | dflash ×7 | auto | fast | 19,274 | 298 | 409 | 952 | 1,281 | 2026-10-20 |
-| `openai/gpt-oss-20b` | off | auto | fast | 20,164 | 317 | 329 | 710 | 979 | 2026-10-20 |
+| `openai/gpt-oss-20b` | dflash ×7 | auto | auto | 19,274 | 298 | 409 | 952 | 1,281 | 2026-10-20 |
+| `openai/gpt-oss-20b` | off | auto | auto | 20,164 | 317 | 329 | 710 | 979 | 2026-10-20 |
 
 ## Measurement
 

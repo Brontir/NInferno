@@ -4,8 +4,10 @@
 #include "core/units.h"
 #include "spec/registry.h"
 #include "ui/embedded_catalog.h"
+#include "ui/embedded_precision.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <stdexcept>
 
@@ -66,6 +68,18 @@ Catalog Catalog::parse(const nlohmann::json& document) {
         model.load = m.value("load", nlohmann::json::array());
         if (!model.load.is_array()) {
             throw std::runtime_error("catalog: " + model.id + "'s load is not a list");
+        }
+        model.precision = m.value("precision", nlohmann::json::array());
+        if (!model.precision.is_array()) {
+            throw std::runtime_error("catalog: " + model.id + "'s precision is not a list");
+        }
+        if (model.precision.empty()) {
+            static const nlohmann::json lab = nlohmann::json::parse(embedded::kPrecisionJson);
+            for (const auto& row : lab.at("rows")) {
+                if (row.value("model", std::string()) == model.id) {
+                    model.precision.push_back(row);
+                }
+            }
         }
         model.drafters   = m.value("drafters", nlohmann::json::array());
         model.spec_suite = m.value("spec_suite", nlohmann::json::array());
@@ -256,12 +270,23 @@ void count_params(KvModel& kv, const ModelShape& s) {
     // attention projections) and three of the widest feed-forward a token runs.
     const double ffn_active = moe ? s.experts_used * s.expert_ffn + s.shared_ffn : s.ffn;
     kv.workspace_bytes = static_cast<double>(kPrefillChunk) * (12 * s.hidden + 3 * ffn_active) * 2;
-    // One sequence's recurrent state: fp32 heads x key x value (inner x state), and the bf16
-    // convolution window over x, B and C.
+    // One sequence's recurrent state: heads x key x value (inner x state), and the bf16
+    // convolution window over x, B and C. fp32 under --activations 16; under the other modes the
+    // family's automatic state (runtime/engine/family_registry.cpp): f16 for Qwen 3.5's Gated
+    // DeltaNet, fp32 for the others (NemotronH's Mamba2).
     if (m > 0 && s.ssm_inner > 0 && s.ssm_state > 0) {
-        kv.state_bytes = m * (s.ssm_inner * s.ssm_state * 4 +
-                              std::max(0.0, s.ssm_conv - 1) *
-                                  (s.ssm_inner + 2 * s.ssm_groups * s.ssm_state) * 2);
+        const double conv =
+            std::max(0.0, s.ssm_conv - 1) * (s.ssm_inner + 2 * s.ssm_groups * s.ssm_state) * 2;
+        std::string family;
+        for (const char c : kv.architecture) {
+            if (std::isalnum(static_cast<unsigned char>(c))) {
+                family += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+        // "qwen35", "qwen35moe" (GGUF), "Qwen3_5MoeForConditionalGeneration" (config.json).
+        const double automatic = family.starts_with("qwen35") ? 2 : 4;
+        kv.state_bytes         = m * (s.ssm_inner * s.ssm_state * 4 + conv);
+        kv.state_bytes_auto    = m * (s.ssm_inner * s.ssm_state * automatic + conv);
     }
 }
 
@@ -468,6 +493,7 @@ nlohmann::json to_json(const KvModel& kv) {
             {"full_layers", kv.full_layers},
             {"kv_head_dim", kv.kv_head_dim},
             {"state_bytes", kv.state_bytes},
+            {"state_bytes_auto", kv.state_bytes_auto},
             {"workspace_bytes", kv.workspace_bytes},
             {"params", kv.params},
             {"active_params", kv.active_params},
@@ -594,6 +620,7 @@ nlohmann::json to_json(const ModelEstimate& e) {
             {"active_b", model.active_b},
             {"sources", sources},
             {"load", model.load},
+            {"precision", model.precision},
             {"drafters", model.drafters},
             {"spec_suite", model.spec_suite},
             {"preferred", e.preferred ? nlohmann::json(*e.preferred) : nlohmann::json(nullptr)},

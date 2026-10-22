@@ -116,6 +116,17 @@ LinearPolicy moe_policy(LinearPolicy gate_up, LinearPolicy down);
 /// The shared expert's policy from its projections': moe_policy.
 LinearPolicy shared_moe_policy(LinearPolicy gate_up, LinearPolicy down);
 
+/// The narrowest activation width the Op computes this layer's routed experts with, at any T:
+/// 8 where a call may take the grouped W4A8 (int8, or MXFP8 for MXFP4 banks on sm_120a) or the
+/// R8 decode (expert_policy, the banks' formats and K, as the plans select them), else 16. The
+/// Op has no four-bit expert route. What --activations' startup resolution counts.
+[[nodiscard]] int moe_expert_activation_bits(const MoeWeights& weights);
+
+/// The policy one shared-expert projection (shared_gate_up or shared_down) runs under on the
+/// generic projection path (MoeWeights::shared_policy, AllowA4 read as the Op reads it).
+[[nodiscard]] LinearPolicy moe_shared_activation_policy(const MoeWeights& weights,
+                                                        const Weight& projection);
+
 /// The routing and activation choices of a layer; everything else comes from the weights.
 struct MoeConfig {
     std::int32_t top_k           = 0;

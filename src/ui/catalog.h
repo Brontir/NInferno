@@ -52,6 +52,11 @@ struct CatalogModel {
     // configuration and task family): shown as they are, read by the page.
     nlohmann::json drafters   = nlohmann::json::array();
     nlohmann::json spec_suite = nlohmann::json::array();
+    // The lab's measurement of each --activations mode ([{gpu, quant, mode: auto|16|8|4, kld,
+    // reference, top1, perplexity, decode, prefill, run, ...}]): the model's own "precision" list,
+    // else the build's rows for its id (data/precision.json, tools/docs/gen_ui_precision.py). The
+    // page shows a mode's speed and quality only from a row of the user's card and quantization.
+    nlohmann::json precision = nlohmann::json::array();
 };
 
 struct CatalogGpu {
@@ -158,7 +163,10 @@ with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
 //   + per sequence, each active request and each cached device state of the context cache:
 //     state_bytes and a sliding ring of window + prefill chunk rows of window_bytes_per_token
 //   + workspace_bytes + kRuntimeOverheadGib (CUDA context, kernels, graphs).
-// KV is bf16, serve's default (--kv-dtype). The recurrent state is fp32, its convolution bf16.
+// KV is bf16 here (the page scales it by the --kv-dtype it sends). The recurrent state follows
+// --activations as ninferno-serve's automatic state does (runtime::normalize_engine_options):
+// fp32 under 16, under auto, 8 and 4 the family's own (f16 for Qwen 3.5's Gated DeltaNet, fp32
+// for the others); its convolution is bf16.
 inline constexpr double kKvElementBytes     = 2;
 inline constexpr long kPrefillChunk         = 1024; // serve's default prefill chunk
 inline constexpr double kRuntimeOverheadGib = 0.75;
@@ -173,6 +181,8 @@ struct KvModel {
     long full_layers              = 0; // full-attention layers that keep KV
     double kv_head_dim            = 0; // their key size: int8/fp8/nvfp4 KV only at 256
     double state_bytes            = 0; // recurrent (GatedDeltaNet, Mamba2) state of one sequence
+                                       // under --activations 16 (fp32)
+    double state_bytes_auto       = 0; // the same under auto, 8 and 4 (the family's state)
     double workspace_bytes        = 0; // activations of one prefill chunk
     double params                 = 0;
     double active_params          = 0;

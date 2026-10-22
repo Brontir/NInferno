@@ -1,4 +1,5 @@
 ninferno_target_sources(ninferno_ops PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/activation_width.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/linear.cpp"
 )
 

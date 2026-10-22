@@ -249,8 +249,8 @@ int main() {
             server.at("engine").at("context_cost").at("preset_path") == "local-costs.json",
         "resolved context-cost layers missing");
     failures += check(server.at("engine").at("prefix_reuse") == true, "prefix-reuse state missing");
-    failures += check(server.at("engine").at("activations") == "fast" ||
-                          server.at("engine").at("activations") == "exact",
+    failures += check(server.at("engine").at("activations") == "auto" ||
+                          server.at("engine").at("activations") == "16",
                       "activation mode missing");
     failures += check(
         server.at("engine").at("context_cache").at("device_state_slots") == 2 &&

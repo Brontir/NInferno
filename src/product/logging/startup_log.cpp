@@ -2,6 +2,7 @@
 
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
+#include "product/activation_options.h"
 
 #include <spdlog/logger.h>
 
@@ -317,6 +318,25 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
         impl_->logger->warn("device | {}", format_pretty_text(line));
     }
     if (!load.drafter.empty()) { impl_->logger->info("drafter | {}", load.drafter); }
+    // What --activations resolved to (runtime/engine/activation_precision.h), with the KV storage
+    // beside it (a separate choice: --kv-dtype), and the matrices a request of 8 or 4 left wider.
+    {
+        const auto& precision = load.metadata.activations;
+        impl_->logger->info("activations | {} (the narrowest width each computes with) | KV {} "
+                            "(--kv-dtype, separate)",
+                            describe_activation_precision(precision),
+                            load.metadata.kv_cache.empty() ? std::string("unknown")
+                                                           : load.metadata.kv_cache);
+        if (precision.drafter_bits4 + precision.drafter_bits8 + precision.drafter_bits16 > 0) {
+            impl_->logger->info("activations | drafter in the model (follows the mode): {}",
+                                describe_drafter_precision(precision));
+        }
+        for (const auto& line : precision.kept_wider) {
+            impl_->logger->warn("activations | WARNING --activations {} leaves {}",
+                                activation_mode_name(precision.requested), line);
+        }
+        for (const auto& line : precision.notes) { impl_->logger->warn("activations | {}", line); }
+    }
     // The decision fingerprint (docs/maintainer/deterministic-decisions.md): two runs that print
     // the same one were asked the same thing on the same kind of machine.
     if (!load.decision_fingerprint.empty()) {

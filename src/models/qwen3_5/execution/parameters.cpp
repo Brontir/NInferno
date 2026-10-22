@@ -1,6 +1,10 @@
 #include "models/qwen3_5/execution/parameters.h"
 
 #include "core/weight_view.h"
+#include "models/common/activation_census.h"
+
+#include <array>
+#include <span>
 
 #include <algorithm>
 #include <limits>
@@ -86,19 +90,55 @@ public:
                 model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                 model_.input(moe.shared.gate), model_.input(moe.shared.up),
                 model_.input(moe.shared.down));
-            // --activations int8 holds the experts at eight bits; SparseMoe NVFP4 encodes its
-            // prefill in four (it requires AllowA4), so an expert input allowed only A8 takes the
-            // generic MoE, whose NVFP4 banks have a W4A8 prefill.
-            const bool a8_held = generic.gate_up.qtype == QType::NVFP4 &&
-                                 std::any_of(gate_up.begin(), gate_up.end(), [](const auto& in) {
-                                     return in.policy == ops::LinearPolicy::AllowA8;
-                                 });
-            if (top_k == 8 && !a8_held && ops::sparse_moe_admits(generic)) {
+            // SparseMoe NVFP4 encodes its prefill in four bits (it requires AllowA4 on every
+            // input), so an expert input held wider takes the generic MoE: --activations 8 (its
+            // NVFP4 banks have a W4A8 prefill) and 16 (BF16 activations, never a refusal).
+            const auto held = [](std::span<const ops::WeightInput> inputs) {
+                return std::any_of(inputs.begin(), inputs.end(),
+                                   [](const auto& in) { return !ops::allows_a4(in.policy); });
+            };
+            const std::array shared_inputs{model_.input(moe.shared.gate),
+                                           model_.input(moe.shared.up),
+                                           model_.input(moe.shared.down)};
+            const bool nvfp4_held = generic.gate_up.qtype == QType::NVFP4 &&
+                                    (held(gate_up) || held(down) || held(shared_inputs));
+            // The parameter names of the layer's experts and shared expert, for the activation
+            // census (models/common/activation_census.h).
+            std::vector<std::string> experts, shared_gate_up, shared_down;
+            for (const auto& expert : moe.experts) {
+                experts.push_back(model_.weight(expert.gate).name);
+                experts.push_back(model_.weight(expert.up).name);
+                experts.push_back(model_.weight(expert.down).name);
+            }
+            shared_gate_up = {model_.weight(moe.shared.gate).name,
+                              model_.weight(moe.shared.up).name};
+            shared_down    = {model_.weight(moe.shared.down).name};
+            if (top_k == 8 && !nvfp4_held && ops::sparse_moe_admits(generic)) {
+                // The fused kernels: NVFP4 encodes the prefill's activations in four bits, the
+                // groupwise profiles keep them BF16 (their MMA is BF16) at every width.
+                const bool nvfp4 = generic.gate_up.qtype == QType::NVFP4;
+                const int bits   = nvfp4 ? 4 : 16;
+                const char* why  = nvfp4 ? ""
+                                         : "the fused Qwen MoE kernels compute this format with "
+                                           "BF16 activations";
+                for (const auto* names : {&experts, &shared_gate_up, &shared_down}) {
+                    for (const auto& name : *names) { census_width(name, bits, why); }
+                }
                 return ops::prepare_sparse_moe_weights(
                     model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                     model_.input(moe.shared.gate), model_.input(moe.shared.up),
                     model_.input(moe.shared.down));
             }
+            // The generic MoE has no four-bit route: under --activations 4 its policies read as
+            // eight bits, the narrowest it has (loading::generic_moe).
+            if (model_.options().activations == ActivationMode::Bits4) {
+                const auto eight = [](ops::LinearPolicy p) {
+                    return ops::allows_a4(p) ? ops::LinearPolicy::AllowA8 : p;
+                };
+                generic.expert_policy = eight(generic.expert_policy);
+                generic.shared_policy = eight(generic.shared_policy);
+            }
+            census_generic_moe(generic, experts, shared_gate_up, shared_down);
             // Qwen3.5-MoE routing: softmax over every expert, top-k renormalized, SwiGLU experts
             // with gate rows before up rows, the shared expert behind sigmoid(shared_score . x).
             ops::MoeConfig config;

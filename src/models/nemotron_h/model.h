@@ -9,6 +9,7 @@
 #include "models/nemotron_h/config.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "ninferno/types.h"
 
 #include <filesystem>
 #include <memory>
@@ -72,7 +73,23 @@ struct Weights {
     std::vector<Layer> layers;
 };
 
-enum class ActivationProfile : std::uint8_t { Artifact, A16 };
+// As dense::ActivationProfile: the recorded policies, BF16 everywhere, or eight or four bits
+// allowed everywhere (a head recorded BF16 keeps it).
+enum class ActivationProfile : std::uint8_t { Artifact, A16, A8, A4 };
+
+[[nodiscard]] constexpr ActivationMode activation_mode_of(ActivationProfile profile) noexcept {
+    switch (profile) {
+    case ActivationProfile::Artifact:
+        return ActivationMode::Auto;
+    case ActivationProfile::A16:
+        return ActivationMode::Bits16;
+    case ActivationProfile::A8:
+        return ActivationMode::Bits8;
+    case ActivationProfile::A4:
+        return ActivationMode::Bits4;
+    }
+    return ActivationMode::Bits16;
+}
 
 class Model {
 public:

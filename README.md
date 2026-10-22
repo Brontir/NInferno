@@ -60,9 +60,16 @@ two months, an enterprise one in six to eight. NInferno will not offer one.</sub
   with the reason. [Weight conversion](docs/weight-conversion.md) lists each family's formats.
 - **Image and video:** start with `--vision`, for models that have a vision tower (Gemma 4 12B has
   none); video is Qwen's. A GGUF needs its `mmproj` file beside it (converted with the model).
-- **Speculative decoding:** the full model checks every drafted token. `--activations exact`
+- **Speculative decoding:** the full model checks every drafted token. `--activations 16`
   makes the output identical whatever the load, batch or draft, at some speed
   ([quality checks](docs/perplexity.md)).
+- **Activation precision:** your choice of `--activations auto|16|8|4` (and the GUI's
+  **Activation precision** control): `auto` runs what the artifact records (for a GGUF, the
+  converter's choice), `16` keeps 16-bit activations everywhere, `8` and `4` allow 8-bit and FP4
+  activations where the weights and the card have the route (FP4: calibrated NVFP4 on RTX 50,
+  sm_120/121). The startup log says what the mode resolved to and when it equals `auto`, a mode
+  no matrix can take refuses to start before the load, and the KV cache stays a separate choice
+  ([activation precision](docs/cli.md#activation-precision)).
 - **KV cache:** BF16 or FP8 for every family; Qwen also INT8, NVFP4 and K8V4 (8-bit keys, 4-bit
   values).
 
@@ -144,7 +151,9 @@ browser at `http://localhost:8090`, and from there you can:
 
 - see your GPUs and the models measured on them, with the speed to expect;
 - search Hugging Face, compare quantizations by size, context and speed, and download one;
-- start it with the measured settings, then chat with it or point any OpenAI-compatible app at it.
+- start it with the measured settings, then chat with it or point any OpenAI-compatible app at it;
+- pick its precision (Auto, 16, 8 or 4 bits), with the quality and speed the lab measured for each
+  on your card where it has, and "no estimate" where it has not ([the page](docs/ui.md#precision)).
 
 The page is reachable from your own machine only. On a server with no display, `ninferno-ui`
 prints the address instead of opening a browser (`--no-browser` asks for that anywhere); over SSH,
@@ -190,7 +199,7 @@ table, so give `--spec-load` too.
 | `--draft-tokens N` | with `--spec`: the measured depth, else `3` (MTP) or `7` (DFlash) | draft depth, `1..15` |
 | `--spec-load L:D,...\|none` | with `auto`: the measured table | from `L` requests at once, drafts at most `D` deep (`0`: none) |
 | `--kv-dtype bf16\|fp8` | per model family and GPU | a smaller KV cache holds a longer context (`fp8` before RTX 40 is emulated, slower); Qwen also `int8\|nvfp4\|k8v4` |
-| `--activations exact\|fast` | `fast` | `exact`: the same output whatever the load and the drafts |
+| `--activations auto\|16\|8\|4` | `auto` | `16`: the same output whatever the load and the drafts; `8`, `4`: faster prefill, may move quality |
 | `--device N` | `0` | the GPU |
 | `--host H` `--port N` `--api-key-file F` | `127.0.0.1:8080`, no key (or `$NINFERNO_API_KEY`) | `--host 0.0.0.0` with a key opens it to the network |
 

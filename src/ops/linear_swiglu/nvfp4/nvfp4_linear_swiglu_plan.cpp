@@ -40,7 +40,7 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (!valid_linear_policy(policy)) {
         throw std::invalid_argument("nvfp4 linear_swiglu: invalid compute policy");
     }
-    // A16Only is the exact contract (ActivationMode::Exact): one token-invariant route at every
+    // A16Only is the exact contract (ActivationMode::Bits16): one token-invariant route at every
     // width. AllowA8 has no 8-bit form here and keeps the tuned A16 routes (a prefill call of 17
     // tokens or more the wrapper hands to the generic W4A8, generic::owned_prefill_w4a8; a wider
     // verify stays here); so does a route probe that forces A16.

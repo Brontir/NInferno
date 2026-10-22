@@ -88,7 +88,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--pending-timeout-ms N` | `600000` (10 min) | longest wait before admission |
 | `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short) |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` picks per model family |
-| `--activations exact\|fast\|int8` | `fast` | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it) |
+| `--activations auto\|16\|8\|4` | `auto` | activation precision ([below](#activation-precision)): `16` makes answers independent of load, but is slower; `8` and `4` allow int8 and FP4 activations where the weights and the GPU have them |
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | `auto` | speculative decoding backend |
 | `--draft-tokens N` | profile's depth, else 3 (MTP) or 7 (DFlash) | draft depth, `1..15` |
 | `--vision` | off | accept image input (Qwen3.5, 3.6, 3.8, Gemma 4 26B-A4B and 31B) and video input (Qwen); a GGUF needs its `mmproj` file beside it |
@@ -109,12 +109,30 @@ All other options (media, Host cache, response store, penalties, limits, decode 
 are in [maintainer options](maintainer/environment.md); no environment variable changes what the
 server decides.
 
+### Activation precision
+
+`--activations auto|16|8|4` is the narrowest activation width the quantized weights may compute
+with: `auto` (the default) runs what the artifact records (for a GGUF model, the converter's
+choice), `16` keeps 16-bit activations everywhere (the answer does not depend on the load, slower;
+never refused), `8` allows 8-bit activations (int8, or E4M3/MXFP8 by the weights' format) on every
+quantized linear with the route, `4` also allows FP4 activations on calibrated NVFP4 weights of an
+RTX 50 (sm_120/121). On most GGUF models `8` is the same as `auto`. The KV cache is chosen apart
+(`--kv-dtype`) under every mode. The startup line `activations | auto -> 4-bit on N, 8-bit on M,
+16-bit on K matrices` says what it resolved to, with notes (auto slower than 8 here, a mode equal to
+auto, a separate drafter at 16 bits, the KV kept 8-bit under 16); a mode no matrix can take refuses
+to start before the load, one only some can take starts with a warning naming the rest.
+`--activations-preflight 12.0` prints every mode's resolution for a GPU of that compute capability
+without loading anything.
+`exact`, `fast` and `int8` are the deprecated names of `16`, `auto` and `8`.
+[CLI: activation precision](cli.md#activation-precision) has the details; the GUI's **Activation precision**
+control is the same option ([ui](ui.md#precision)).
+
 ## Endpoints
 
 | Path | API | Notes |
 |---|---|---|
 | `GET /health` | server | `200 {"status":"ok"}` with the load gauges; `503` when unavailable, draining or stalled; no authentication |
-| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
+| `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.activations`: the requested `--activations` mode and what it resolved to (matrices per width, and those left wider); `meta.kv_cache`: the KV storage; `meta.sampling`: the presets a request that names no sampling field runs with; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
 | `GET /props` | llama.cpp | the model alias, context, vocabulary and slots llama.cpp's web UI reads |
 | `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill, and `ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1` |
 | `POST /v1/chat/completions` | OpenAI Chat | streaming, tools, images, `timings` extension |

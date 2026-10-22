@@ -631,6 +631,18 @@ std::size_t shared_planes_bytes(const MoeWeights& w, std::int32_t min_tokens,
 } // namespace
 } // namespace detail::moe
 
+int moe_expert_activation_bits(const MoeWeights& weights) {
+    using namespace detail::moe;
+    if (w4a8_banks_admit(weights)) { return 8; }
+    const bool r8 = allows_a8(weights.expert_policy) &&
+                    (r8_expert_supports(weights.gate_up) || r8_expert_supports(weights.down));
+    return r8 ? 8 : 16;
+}
+
+LinearPolicy moe_shared_activation_policy(const MoeWeights& weights, const Weight& projection) {
+    return detail::moe::shared_projection_policy(weights, projection);
+}
+
 std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t min_tokens, std::int32_t max_tokens) {
     using namespace detail::moe;

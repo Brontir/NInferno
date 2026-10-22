@@ -194,7 +194,7 @@ int main() {
         {
             // Plain decode, prefilled in narrow chunks, no prefix reuse (exact: neither the cut
             // nor a fork changes a token).
-            Engine engine(engine_options(artifact, ActivationMode::Exact, 128, 1, 1));
+            Engine engine(engine_options(artifact, ActivationMode::Bits16, 128, 1, 1));
             prose = engine.tokenize_text(std::string(kProse) + kQuestion);
             code  = engine.tokenize_text(kCode);
             std::string text;
@@ -230,7 +230,7 @@ int main() {
         // engine of its own; nullopt is a plain engine's request.
         const auto fork = [&](std::optional<std::uint32_t> first, std::optional<std::uint32_t> then,
                               bool speculative_engine) {
-            EngineOptions options = engine_options(artifact, ActivationMode::Exact, 2560, 1, 1);
+            EngineOptions options = engine_options(artifact, ActivationMode::Bits16, 2560, 1, 1);
             if (speculative_engine) { options = dflash_options(std::move(options), drafter); }
             Engine engine(std::move(options));
             const GenerationResult turn =
@@ -265,7 +265,7 @@ int main() {
             // Four rows. A chunk wider than the drafter's 2048-token window: the long prompt's
             // first chunk commits only its last window columns to the drafter's rings.
             Engine engine(dflash_options(
-                engine_options(artifact, ActivationMode::Exact, 2560, 4, 2), drafter));
+                engine_options(artifact, ActivationMode::Bits16, 2560, 4, 2), drafter));
             compare("exact prose " + kd, plain_prose,
                     engine.generate(engine.prepare_tokens(prose), request(deep, true)), true);
             compare("exact code " + km, plain_code,
@@ -316,7 +316,7 @@ int main() {
             // launch). The short code prompt decodes through that range at batch 8, the prose
             // prompt past it; two code rows at K=3 share the K=7 launches.
             Engine engine(dflash_options(
-                engine_options(artifact, ActivationMode::Exact, 512, 8, 1), drafter));
+                engine_options(artifact, ActivationMode::Bits16, 512, 8, 1), drafter));
             for (const auto& [label, prompt, reference] :
                  {std::tuple{"code", &code, &plain_code},
                   std::tuple{"prose", &prose, &plain_prose}}) {
@@ -339,7 +339,7 @@ int main() {
             // tokens: the defaults above ran the whole block in one-row rounds and K + 1 columns
             // in wider ones; here one-row rounds draft K + 1 columns and four-row rounds the block.
             EngineOptions options = dflash_options(
-                engine_options(artifact, ActivationMode::Exact, 2560, 4, 1), drafter);
+                engine_options(artifact, ActivationMode::Bits16, 2560, 4, 1), drafter);
             options.speculative.draft_width = DFlashDraftWidth::Drafts;
             Engine narrow(options);
             const GenerationResult result =
@@ -350,7 +350,7 @@ int main() {
         }
         {
             EngineOptions options = dflash_options(
-                engine_options(artifact, ActivationMode::Exact, 2560, 4, 1), drafter);
+                engine_options(artifact, ActivationMode::Bits16, 2560, 4, 1), drafter);
             options.speculative.draft_width = DFlashDraftWidth::Block;
             Engine engine(options);
             auto prose_row = engine.submit(engine.prepare_tokens(prose), request(7, false));
@@ -374,7 +374,7 @@ int main() {
         // without them.
         for (const bool graphs : {true, false}) {
             EngineOptions options = dflash_options(
-                engine_options(artifact, ActivationMode::Exact, 2560, 4, 1), drafter);
+                engine_options(artifact, ActivationMode::Bits16, 2560, 4, 1), drafter);
             options.use_cuda_graph = graphs;
             Engine engine(options);
             const std::string tag                   = graphs ? " (graphs)" : " (no graphs)";
@@ -407,12 +407,12 @@ int main() {
         }
         GenerationResult fast_plain;
         {
-            Engine engine(engine_options(artifact, ActivationMode::Fast, 2560, 1, 1));
+            Engine engine(engine_options(artifact, ActivationMode::Auto, 2560, 1, 1));
             fast_plain = engine.generate(engine.prepare_tokens(prose, false), request({}, false));
         }
         {
-            Engine engine(dflash_options(
-                engine_options(artifact, ActivationMode::Fast, 2560, 1, 1), drafter));
+            Engine engine(dflash_options(engine_options(artifact, ActivationMode::Auto, 2560, 1, 1),
+                                         drafter));
             // Reported only: the fast engines' verify widths may take other activation routes than
             // a decode step.
             compare("fast prose " + kd, fast_plain,

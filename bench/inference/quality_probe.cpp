@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
         if (argc < 3) {
             std::cerr << "usage: ninferno_quality_probe <artifact> score|generate --tokens T.bin "
                          "--out O.bin [--first-target F] [--max-new N] [--context N] "
-                         "[--kv-dtype D] [--activations exact|fast]\n";
+                         "[--kv-dtype D] [--activations auto|16|8|4]\n";
             return 2;
         }
         const std::string artifact = argv[1];

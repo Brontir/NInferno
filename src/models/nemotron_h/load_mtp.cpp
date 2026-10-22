@@ -131,7 +131,8 @@ std::unique_ptr<MtpDrafter> MtpDrafter::load(const std::filesystem::path& path,
 
     auto drafter      = std::unique_ptr<MtpDrafter>(new MtpDrafter());
     drafter->backing_ = demands.materialize(device);
-    const Prepare prepare(demands, *drafter->backing_, false); // A16: a drafter keeps BF16 inputs
+    const Prepare prepare(demands, *drafter->backing_,
+                          ActivationMode::Bits16); // a drafter keeps BF16 inputs
     auto& w          = drafter->weights_;
     w.rms_norm_eps   = c.rms_norm_eps;
     w.layer_norm_eps = c.layer_norm_eps;

@@ -24,8 +24,61 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
   NInferno runs; each repository's quantizations with their size and the context, concurrency and
   speed they leave on your GPU.
 - **Downloads:** progress of every download and conversion.
-- **Start:** a model with the measured speculation and its precision (exact output or the
-  faster default), then a chat window on it, or its OpenAI-compatible address for other apps.
+- **Start:** a model with the measured speculation, its context and parallel requests (1 to 8,
+  the server's limit), its KV cache and its precision, then a chat window on it, or its
+  OpenAI-compatible address for other apps.
+
+## Precision
+
+The model drawer's **Activation precision** control picks `ninferno-serve --activations`
+([serving](serving.md#activation-precision)): **Auto** (what the converter recorded in the model),
+**16** (16-bit everywhere: BF16, f16 on RTX 20 and V100; the answer does not depend on the load),
+**8** or **4** bits for the values the compressed weights are multiplied with. The **KV cache**
+beside it is a separate choice under every precision: under 16 a narrower KV cache stays narrower,
+and the drawer says so (pick KV BF16 for full precision).
+
+- **The server decides which modes run.** For a model converted on this machine the page asks
+  `/api/precision`, which runs `ninferno-serve MODEL --activations-preflight CC` (the resolver
+  alone: on the CPU, nothing loaded or downloaded) for the selected GPU's compute capability.
+  Each mode is enabled or disabled by that answer, with the server's own refusal as the reason,
+  and its tooltip counts the matrices at each width and names those left wider. A model not
+  downloaded yet is checked after its download: until then the page judges from the weights'
+  format (4 needs NVFP4 weights and an RTX 50, sm_120/121; 8 has no route on BF16, F16 or ternary
+  GGUF weights; FP8 weights need compute capability 8.9: RTX 40/50, L4/L40 or H100) and marks the
+  modes the name cannot settle *checked after download*.
+- **A mode equal to Auto says so.** Where a mode resolves to the same kernels as Auto (as the
+  server reports it; before the download, 8 on GGUF integer, MXFP4 and FP8 weights), it is marked
+  *= Auto (same kernels)* and shows Auto's numbers. Where Auto is slower than 8 (NVFP4 weights
+  without a calibrated divisor), the server's note says so above the table.
+- **Numbers are lab measurements only.** A row per mode shows its quality against 16 bits (how
+  often the next word matches; KL divergence and perplexity in the tooltip) and the decode and
+  prefill of one request, from a lab measurement of the same board (matched by its PCI device id,
+  never by name) and quantization, labelled *verified* with the card and the date. Without such a
+  measurement the table is replaced by one line.
+- **Memory follows the mode.** Under 16 the recurrent state of Qwen 3.5 models is FP32 (F16 under
+  the other modes), so less context fits; the drawer gives both figures.
+- A running model's row shows what its precision resolved to (`/v1/models` `meta.activations`):
+  the matrices at each width, with a warning mark when some are kept wider.
+- **Run** in *My models* starts a model with what the drawer last showed for it (precision, KV,
+  context, parallel requests, speculation); a model never opened in the drawer starts with Auto
+  and the defaults, as its tooltip says.
+- The lab rows come from `src/ui/data/precision.json`, generated from
+  `docs/performance/data/bench.jsonl` (`tools/bench/quality_rows.py` for quality,
+  `tools/bench/perf_matrix.py --activations MODE` for speed) by
+  `python3 tools/docs/gen_ui_precision.py` (`--check` verifies it), which adds each board's PCI
+  ids from `src/core/data/gpu_facts.json`. A catalog from `--catalog-url` may carry its own
+  `precision` list per model.
+
+`/api/launch` takes the old names `exact`, `fast` and `int8` as `16`, `auto` and `8`, and the
+model's log says they are deprecated.
+
+The page has no on-machine calibration: speculation and routes come from the profiles and tables
+measured in the lab, the same on every machine with the same card. A speculation tune calibrated on
+this machine (`ninferno spec-tune`, or an older version of this page) is never used by the page:
+when one lies beside a model, the model's log says so. Calibration is a command-line step:
+`ninferno spec-tune MODEL` writes the profile
+([maintainers](cli.md#measuring-speculation-profiles-maintainers)), and
+`ninferno-serve MODEL --spec-profile PATH` runs with it.
 
 ## Options
 

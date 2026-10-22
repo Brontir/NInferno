@@ -155,7 +155,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.sources["context_cost.presets"] =
         runtime::context_cost_presets_source(requested.context_cost.preset_path);
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
-                                   load.decode_steps_per_round);
+                                   load.decode_steps_per_round, load.metadata.activations);
     in.taint    = runtime::taint_of(in);
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));

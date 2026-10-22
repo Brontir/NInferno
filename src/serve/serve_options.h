@@ -37,6 +37,9 @@ struct ServeOptions {
     // serving (GenerationService::plan); --json prints it as JSON.
     bool plan_only = false;
     bool plan_json = false;
+    // --activations-preflight MAJOR.MINOR: print what each --activations mode resolves to on a GPU
+    // of that compute capability (serve/activation_preflight.h), then exit; "" when not asked.
+    std::string activations_preflight;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
@@ -82,8 +85,8 @@ struct ServeOptions {
     KvCacheStorage sliding_kv_cache        = KvCacheStorage::BFloat16; // --sliding-kv-dtype
     // --state-dtype (omitted: EngineOptions::recurrent_state_automatic).
     std::optional<RecurrentStateStorage> recurrent_state;
-    // --activations exact|fast (ninferno/types.h): BF16 activations on every quantized linear, or
-    // the width-dependent routes. The default is the product's one (kDefaultActivationMode).
+    // --activations auto|16|8|4 (ninferno/types.h ActivationMode; exact, fast and int8 are the
+    // deprecated names of 16, auto and 8). The default is the product's (kDefaultActivationMode).
     ActivationMode activations = kDefaultActivationMode;
     float rope_yarn_factor     = 1.0F; // --rope-yarn-factor (EngineOptions::rope_yarn_factor)
     SpeculativeOptions speculative;

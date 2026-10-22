@@ -198,7 +198,10 @@ private:
     const Config& c_;
     DensePass pass_;
     const speculation::DFlashDrafter* drafter_;
-    bool invariant_; // ActivationMode::Exact: the invariant route profile
+    bool invariant_; // ActivationMode::Bits16: the invariant route profile
+    // The mode the model was loaded under: what load_options() reports to the frozen sequence
+    // plan, which compares it with the startup options (program_impl.cpp).
+    ActivationMode activations_;
     ModelTraits traits_;
     std::vector<std::uint32_t> index_; // each target layer's place among its kind
     std::uint32_t full_layers_    = 0;

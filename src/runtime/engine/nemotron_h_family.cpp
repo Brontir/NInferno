@@ -14,6 +14,22 @@
 namespace ninferno::runtime {
 namespace {
 
+// --activations as the model's load profile: 16 keeps BF16 activations on every quantized linear, 8
+// and 4 allow eight and four bits everywhere.
+models::nemotron_h::ActivationProfile nemotron_h_profile(ActivationMode mode) {
+    switch (mode) {
+    case ActivationMode::Auto:
+        return models::nemotron_h::ActivationProfile::Artifact;
+    case ActivationMode::Bits16:
+        return models::nemotron_h::ActivationProfile::A16;
+    case ActivationMode::Bits8:
+        return models::nemotron_h::ActivationProfile::A8;
+    case ActivationMode::Bits4:
+        return models::nemotron_h::ActivationProfile::A4;
+    }
+    return models::nemotron_h::ActivationProfile::A16;
+}
+
 // The loaded decoder and the frontend resources its tokenizer and chat template were built from.
 class NemotronLoadedModel final : public LoadedModel {
 public:
@@ -40,13 +56,10 @@ FamilyLoad load_nemotron_h(const EngineOptions& options, DeviceContext& device) 
     }
     {
         StartupPhaseScope binding(options.startup_observer, StartupPhase::TargetPlan);
-        // --activations exact: BF16 activations on every projection, and (below) the invariant
+        // --activations 16: BF16 activations on every projection, and (below) the invariant
         // route profile on every call.
-        loaded->model =
-            models::nemotron_h::Model::load(options.artifact_path, device,
-                                            options.activations == ActivationMode::Exact
-                                                ? models::nemotron_h::ActivationProfile::A16
-                                                : models::nemotron_h::ActivationProfile::Artifact);
+        loaded->model = models::nemotron_h::Model::load(options.artifact_path, device,
+                                                        nemotron_h_profile(options.activations));
         if (options.speculative.backend == SpeculativeBackend::Mtp) {
             if (options.speculative.drafter.empty()) {
                 throw std::invalid_argument(

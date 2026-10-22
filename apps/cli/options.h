@@ -30,7 +30,7 @@ struct Options {
     KvCacheStorage sliding_kv_cache = KvCacheStorage::BFloat16; // --sliding-kv-dtype
     // --state-dtype (omitted: EngineOptions::recurrent_state_automatic).
     std::optional<RecurrentStateStorage> recurrent_state;
-    ActivationMode activations = kDefaultActivationMode; // --activations exact|fast
+    ActivationMode activations = kDefaultActivationMode; // --activations auto|16|8|4
     float rope_yarn_factor     = 1.0F;                   // --rope-yarn-factor
     SpeculativeOptions speculative;
     // --spec given explicitly (mtp|dflash|dflash2|none); otherwise the artifact's speculation

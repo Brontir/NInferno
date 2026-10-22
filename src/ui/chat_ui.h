@@ -28,18 +28,23 @@ find_chat_ui(const std::filesystem::path& configured, const std::filesystem::pat
 [[nodiscard]] std::string bundle_mime(const std::filesystem::path& file);
 
 // What the served model is, for the bundle's ./props (llama-server's shape, the fields it reads):
-// the model's id, its context per request, how many requests it runs at once and whether it takes
-// images.
+// the model's id, its context per request, how many requests it runs at once, whether it takes
+// images, and the sampling preset a request that names none runs with (/v1/models
+// meta.sampling: the thinking preset, the template default of every model that has two; null
+// when the server did not say).
 struct ChatModel {
     std::string id;
     long context = 0;
     int slots    = 1;
     bool vision  = false;
+    nlohmann::json
+        sampling; // {temperature, top_k, top_p, min_p, presence_penalty, frequency_penalty}
 };
 
 [[nodiscard]] nlohmann::json chat_props(const ChatModel& model);
 
-// The model's id and context from its ninferno-serve /v1/models body (id "" when unreadable).
+// The model's id, context and sampling preset from its ninferno-serve /v1/models body (id "" when
+// unreadable).
 [[nodiscard]] ChatModel chat_model_of(const std::string& models_body);
 
 // Whether a converted artifact takes images (it carries a vision component); false when unreadable.

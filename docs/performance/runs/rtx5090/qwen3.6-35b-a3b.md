@@ -22,8 +22,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | dflash ×7 | auto | fast | 18,032 | 593 | 588 | 1,249 | 1,526 | 2026-10-19 |
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | off | auto | fast | 18,496 | 344 | 378 | 955 | 1,215 | 2026-10-19 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | dflash ×7 | auto | auto | 18,032 | 593 | 588 | 1,249 | 1,526 | 2026-10-19 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | off | auto | auto | 18,496 | 344 | 378 | 955 | 1,215 | 2026-10-19 |
 
 ## Measurement
 

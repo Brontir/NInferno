@@ -59,7 +59,7 @@ ninferno_bench --weights <artifact.ninferno> [options]
 | `--max-ctx N` | sized from the tests | Context capacity; rejected when too small for the selected tests. |
 | `--prefill-chunk N` | 1024 | Prefill chunk; multiple of 128. |
 | `--kv-dtype T` | `bf16` | `bf16`, `int8`, `fp8`, `nvfp4` or `k8v4`. |
-| `--activations M` | `fast` | Quantized-linear activation mode: `exact`, `fast` or `int8`. |
+| `--activations M` | `auto` | Quantized-linear activation mode: `auto`, `16`, `8` or `4` (`exact`, `fast`, `int8`: deprecated names of `16`, `auto`, `8`). |
 | `--spec B` | none | Speculative backend: `mtp`, `dflash` or `dflash2`. |
 | `--draft-tokens N` | none | Draft window; required with `--spec` (1..15; a model may allow fewer, e.g. MTP of Qwen3.5 up to 5). |
 | `--lm-head-draft` | off | Use the optimized proposal head; requires `--spec`. |

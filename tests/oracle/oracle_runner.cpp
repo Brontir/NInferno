@@ -2,18 +2,18 @@
 // given token sequences, written for comparison against Hugging Face transformers.
 //
 //   ninferno_hf_oracle_runner FAMILY ARTIFACT TOKENS OUT [mode=score|decode] [profile=artifact|a16]
-//                           [chunk=N] [context=N] [invariant=1] [last=N] [activations=exact]
+//                           [chunk=N] [context=N] [invariant=1] [last=N] [activations=16]
 //
 // FAMILY is qwen3_5 (the public Engine, CausalScoring) or gemma4 (Model and Session). TOKENS holds
 // little-endian int32 words: the sequence count, then each sequence as its length and its ids. OUT
 // receives FP32 logits, for every sequence the positions 0 .. length-2 (position i predicts id
 // i+1), each over the public token domain. mode=decode (Gemma 4) produces them one decode step at
 // a time from the pending token instead of from the scoring prefill; profile=a16 loads Gemma 4
-// with ActivationProfile::A16Full (no activation encoded to four bits); activations=exact runs
-// Qwen with --activations exact (no int8 activations). mode=draft (Gemma 4, with
-// drafter=PATH, an MTP assistant artifact) prefills each sequence in a fresh session and runs one
-// speculative round at depth 1; with NINFERNO_GEMMA4_DUMP set, its eager warm-up step writes the
-// drafter's input and logits (mtp_round.cu). OUT is left empty in that mode.
+// with ActivationProfile::A16Full (no activation encoded to four bits); activations=16 (or exact)
+// runs Qwen with --activations 16 (no int8 activations). mode=draft (Gemma 4, with drafter=PATH, an
+// MTP assistant artifact) prefills each sequence in a fresh session and runs one speculative round
+// at depth 1; with NINFERNO_GEMMA4_DUMP set, its eager warm-up step writes the drafter's input and
+// logits (mtp_round.cu). OUT is left empty in that mode.
 
 #include "core/device.h"
 #include "models/gemma4/model.h"
@@ -69,7 +69,7 @@ int run_qwen(const std::filesystem::path& artifact,
              const std::filesystem::path& out, std::uint32_t context, bool exact) {
     ninferno::EngineOptions options;
     options.artifact_path = artifact;
-    if (exact) { options.activations = ninferno::ActivationMode::Exact; }
+    if (exact) { options.activations = ninferno::ActivationMode::Bits16; }
     options.purpose       = ninferno::EnginePurpose::CausalScoring;
     options.max_context   = context;
     ninferno::Engine engine(options);
@@ -171,7 +171,8 @@ int main(int argc, char** argv) {
             std::stoi(option("context", std::to_string(std::max<std::size_t>(1024, longest)))));
         if (family == "qwen3_5") {
             return run_qwen(argv[2], sequences, argv[4], static_cast<std::uint32_t>(context),
-                            option("activations", "fast") == "exact");
+                            option("activations", "auto") == "16" ||
+                                option("activations", "auto") == "exact");
         }
         if (family == "gemma4") {
             return run_gemma4(argv[2], sequences, argv[4], option("mode", "score"),

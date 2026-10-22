@@ -31,7 +31,7 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
                                DeviceContext& device, std::int32_t public_tokens,
                                ActivationMode activations)
     : model_(model), c_(model.config()), pass_(model, device), drafter_(drafter),
-      invariant_(activations == ActivationMode::Exact),
+      invariant_(activations == ActivationMode::Bits16), activations_(activations),
       traits_{.hidden             = c_.hidden_size,
               .output_rows        = c_.vocab_size,
               .public_tokens      = public_tokens,
@@ -78,7 +78,7 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
 
 models::LoadOptions DenseExecution::load_options() const {
     return {.speculative = drafter_ ? SpeculativeBackend::DFlash : SpeculativeBackend::None,
-            .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
+            .activations = activations_};
 }
 
 void DenseExecution::validate_options(DeviceContext& device, const EngineOptions& options) const {

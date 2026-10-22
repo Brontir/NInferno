@@ -80,7 +80,7 @@ std::string usage_text() {
            "       ninferno-perplexity <model.ninferno> "
            "(--corpus <manifest.json> [--quick] | --text <utf8-file>)\n"
            "       [--context N] [--stride N] [--device N] [--rope-yarn-factor F]\n"
-           "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
+           "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations auto|16|8|4]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
            "       [--kld-out <file> [--kld-top-k N] | --kld <file>]\n"
@@ -147,7 +147,8 @@ Options parse_options(int argc, char** argv) {
             out.state = *storage;
         } else if (option == "--activations") {
             try {
-                out.activations = ninferno::product::parse_activation_mode(value("--activations"));
+                out.activations = ninferno::product::parse_activation_option(value("--activations"),
+                                                                             "ninferno-perplexity");
             } catch (const std::invalid_argument& error) { usage_error(error.what()); }
         } else if (option == "--output") {
             out.output = std::filesystem::path(value("--output"));

@@ -37,6 +37,7 @@ set_source_files_properties(engine/decision_fingerprint.cpp PROPERTIES COMPILE_D
 
 # Public Engine and common contracts; model execution remains in the model layer.
 add_library(ninferno_engine STATIC
+  engine/activation_precision.cpp
   engine/family_registry.cpp
   engine/dense_family.cpp
   engine/decision_sources.cpp

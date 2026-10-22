@@ -1,6 +1,6 @@
 # Loader pieces with no family knowledge, shared by every family.
 add_library(ninferno_model_common STATIC common/config_json.cpp common/loading.cpp
-  common/weight_use.cpp)
+  common/weight_use.cpp common/activation_census.cpp)
 ninferno_internal_includes(ninferno_model_common)
 target_link_libraries(ninferno_model_common PUBLIC ninferno_artifact ninferno_ops ninferno_core)
 

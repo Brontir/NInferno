@@ -73,21 +73,24 @@ std::string bundle_mime(const fs::path& file) {
 }
 
 Json chat_props(const ChatModel& model) {
-    // The sampling fields stay at llama-server's defaults: ninferno-serve applies the model card's
-    // presets to a request that names none, and the bundle sends only what its user changes.
-    const Json params{{"n_predict", -1},
-                      {"seed", -1},
-                      {"temperature", 0.8},
-                      {"top_k", 40},
-                      {"top_p", 0.95},
-                      {"min_p", 0.05},
-                      {"max_tokens", -1},
-                      {"stream", true},
-                      {"stop", Json::array()},
-                      {"samplers", Json::array()},
-                      {"reasoning_format", "auto"},
-                      {"timings_per_token", false},
-                      {"lora", Json::array()}};
+    // The sampling fields are the ones ninferno-serve applies to a request that names none (its
+    // /v1/models meta.sampling), so the bundle shows what runs; it sends only what its user
+    // changes. A server that did not say leaves them out rather than advertise llama-server's.
+    Json params{{"n_predict", -1},
+                {"seed", -1},
+                {"max_tokens", -1},
+                {"stream", true},
+                {"stop", Json::array()},
+                {"samplers", Json::array()},
+                {"reasoning_format", "auto"},
+                {"timings_per_token", false},
+                {"lora", Json::array()}};
+    if (model.sampling.is_object()) {
+        for (const char* field :
+             {"temperature", "top_k", "top_p", "min_p", "presence_penalty", "frequency_penalty"}) {
+            if (model.sampling.contains(field)) { params[field] = model.sampling.at(field); }
+        }
+    }
     return Json{{"default_generation_settings",
                  {{"id", 0},
                   {"id_task", -1},
@@ -119,6 +122,13 @@ ChatModel chat_model_of(const std::string& models_body) {
         if (!model.is_object() || !model.contains("id") || !model["id"].is_string()) { continue; }
         out.id      = model["id"].get<std::string>();
         out.context = model.value("max_model_len", 0L);
+        if (model.contains("meta") && model["meta"].is_object() &&
+            model["meta"].contains("sampling") && model["meta"]["sampling"].is_object()) {
+            const auto& sampling = model["meta"]["sampling"];
+            if (sampling.contains("thinking") && sampling["thinking"].is_object()) {
+                out.sampling = sampling["thinking"];
+            }
+        }
         break;
     }
     return out;

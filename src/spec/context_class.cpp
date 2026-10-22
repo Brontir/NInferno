@@ -112,6 +112,11 @@ ContextClass class_of(std::int64_t prompt_tokens) noexcept {
     return ContextClass::Huge;
 }
 
+const char* byte_class_activations(bool sixteen, bool four_bit) noexcept {
+    if (sixteen) { return "exact"; }
+    return four_bit ? "fast-a4" : "fast-a8";
+}
+
 const char* class_name(ContextClass c) noexcept {
     switch (c) {
     case ContextClass::Short:

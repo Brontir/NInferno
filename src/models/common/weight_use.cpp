@@ -6,16 +6,33 @@
 
 namespace ninferno::models {
 
-static_assert(effective_policy(ops::LinearPolicy::AllowA4, ActivationMode::Exact) ==
-              ops::LinearPolicy::A16Only);
-static_assert(effective_policy(ops::LinearPolicy::AllowA8, ActivationMode::Exact) ==
-              ops::LinearPolicy::A16Only);
-static_assert(effective_policy(ops::LinearPolicy::AllowA4, ActivationMode::Fast) ==
-              ops::LinearPolicy::AllowA4);
-static_assert(effective_policy(ops::LinearPolicy::A16Only, ActivationMode::Int8) ==
-              ops::LinearPolicy::AllowA8);
-static_assert(effective_policy(ops::LinearPolicy::AllowA4, ActivationMode::Int8) ==
-              ops::LinearPolicy::AllowA8);
+namespace {
+using ops::LinearPolicy;
+constexpr MatrixUse kA4{.recorded = LinearPolicy::AllowA4};
+constexpr MatrixUse kA16{.recorded = LinearPolicy::A16Only};
+constexpr MatrixUse kHead{.recorded = LinearPolicy::A16Only, .logits_or_embedding = true};
+constexpr MatrixUse kNoDivisor{.recorded = LinearPolicy::A16Only, .nvfp4_without_divisor = true};
+} // namespace
+
+static_assert(effective_policy(kA4, ActivationMode::Bits16) == LinearPolicy::A16Only);
+static_assert(effective_policy(kA4, ActivationMode::Auto) == LinearPolicy::AllowA4);
+static_assert(effective_policy(kA16, ActivationMode::Auto) == LinearPolicy::A16Only);
+static_assert(effective_policy(kA16, ActivationMode::Bits8) == LinearPolicy::AllowA8);
+static_assert(effective_policy(kA4, ActivationMode::Bits8) == LinearPolicy::AllowA8);
+static_assert(effective_policy(kA16, ActivationMode::Bits4) == LinearPolicy::AllowA4);
+static_assert(effective_policy(kHead, ActivationMode::Bits8) == LinearPolicy::A16Only);
+static_assert(effective_policy(kHead, ActivationMode::Bits4) == LinearPolicy::A16Only);
+static_assert(effective_policy(kNoDivisor, ActivationMode::Bits4) == LinearPolicy::AllowA8);
+
+MatrixUse matrix_use(std::string_view name, const WeightView& view, const WeightUsePolicy& use) {
+    bool nvfp4 = false;
+    for (const auto& part : view.parts) {
+        nvfp4 = nvfp4 || (part.parent != nullptr && part.parent->geometry.format == QType::NVFP4);
+    }
+    return {.recorded              = use.policy,
+            .logits_or_embedding   = logits_or_embedding(name),
+            .nvfp4_without_divisor = nvfp4 && !use.activation_input_divisor.has_value()};
+}
 
 WeightUsePolicy read_weight_use(artifact::Binder& binder, const std::string& name,
                                 std::string_view input) {

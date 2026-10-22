@@ -22,7 +22,7 @@ struct FamilyEntry {
     FamilyLoader load = nullptr;
     // The KV storage of an automatic kv_cache (EngineOptions::kv_cache_automatic).
     KvCacheStorage kv_cache = KvCacheStorage::BFloat16;
-    // The recurrent state of an automatic recurrent_state under --activations fast
+    // The recurrent state of an automatic recurrent_state under --activations auto, 8 or 4
     // (EngineOptions::recurrent_state_automatic).
     RecurrentStateStorage recurrent_state = RecurrentStateStorage::FP32;
 };
@@ -42,8 +42,8 @@ struct FamilyEntry {
 [[nodiscard]] KvCacheStorage automatic_kv_cache(std::string_view model_type,
                                                 int compute_capability);
 
-// The recurrent state the family declaring `model_type` takes under --activations fast when the
-// Engine chooses it. Throws like family_loader when no family declares it.
+// The recurrent state the family declaring `model_type` takes under --activations auto, 8 or 4 when
+// the Engine chooses it. Throws like family_loader when no family declares it.
 [[nodiscard]] RecurrentStateStorage automatic_recurrent_state(std::string_view model_type);
 
 // The text component's model_type of the artifact at `path`, read from its directory only.

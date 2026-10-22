@@ -62,7 +62,7 @@ public:
     NemotronExecution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
                       std::int32_t public_tokens, ActivationMode activations)
         : model_(model), c_(model.config()), pass_(model, device), mtp_(mtp),
-          invariant_(activations == ActivationMode::Exact),
+          invariant_(activations == ActivationMode::Bits16), activations_(activations),
           traits_{.hidden        = c_.hidden_size,
                   .output_rows   = c_.vocab_size,
                   .public_tokens = public_tokens,
@@ -88,7 +88,7 @@ public:
 
     [[nodiscard]] models::LoadOptions load_options() const override {
         return {.speculative = mtp_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
-                .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
+                .activations = activations_};
     }
 
     void validate_options(DeviceContext& device, const EngineOptions& options) const override {
@@ -566,6 +566,9 @@ private:
     const MtpWeights* mtp_ = nullptr;
     std::optional<MtpPass> mtp_pass_;
     bool invariant_;
+    // The mode the model was loaded under: what load_options() reports to the frozen sequence
+    // plan, which compares it with the startup options (program_impl.cpp).
+    ActivationMode activations_;
     ModelTraits traits_;
 };
 

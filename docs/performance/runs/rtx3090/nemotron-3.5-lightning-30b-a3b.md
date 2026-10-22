@@ -22,8 +22,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-IQ3_XXS | mtp ×3 | auto | fast | 5,834 | 304 | 279 | 511 | 642 | 2026-10-20 |
-| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-IQ3_XXS | off | auto | fast | 6,150 | 203 | 212 | 457 | 563 | 2026-10-20 |
+| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-IQ3_XXS | mtp ×3 | auto | auto | 5,834 | 304 | 279 | 511 | 642 | 2026-10-20 |
+| `unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF` UD-IQ3_XXS | off | auto | auto | 6,150 | 203 | 212 | 457 | 563 | 2026-10-20 |
 
 ## Measurement
 

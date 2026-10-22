@@ -72,8 +72,8 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--prefill-chunk N` | `1024` | Text-prefill chunk. Positive multiple of 128. |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV storage. `auto` follows the model family (see [KV storage](#kv-storage-and-context)). |
 | `--sliding-kv-dtype bf16\|fp8` | `bf16` | Storage of sliding-window KV. |
-| `--state-dtype f32\|bf16\|f16` | `f16` for Qwen 3.5 with fast activations, else `f32` | Recurrent-state storage. |
-| `--activations exact\|fast\|int8` | `fast` | Activation precision on quantized linears ([details](#activation-precision)). |
+| `--state-dtype f32\|bf16\|f16` | `f16` for Qwen 3.5 unless `--activations 16`, else `f32` | Recurrent-state storage. |
+| `--activations auto\|16\|8\|4` | `auto` | Activation precision on quantized linears ([details](#activation-precision)); `exact`, `fast` and `int8` are the deprecated names of `16`, `auto` and `8`. |
 | `--rope-yarn-factor F` | `1` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. |
 | `--vision` | off | Enable image input (Qwen, Gemma 4) and video input (Qwen), and load the Vision GPU allocations. A GGUF needs its `mmproj` file beside it. |
 | `--no-cuda-graph` | graphs on | Disable CUDA Graph decode. |
@@ -202,16 +202,58 @@ Override the template:
 
 ## Activation precision
 
+`--activations` is the narrowest width the activations of a quantized linear may take. It is your
+choice; the default is `auto`. The KV cache is a separate choice (`--kv-dtype`) under every mode.
+
 | Mode | Behavior |
 |---|---|
-| `exact` | BF16 activations on every quantized linear. The answer does not depend on how the prompt is cut or on speculation. On Qwen models the Gated DeltaNet layers also prefill token by token, as decode runs them; the extra time grows linearly with the prompt: about 1.3 to 2 ms per such layer per 4096 prompt tokens on an RTX 5090 (35B-A3B and 27B head counts), more on older cards. |
-| `fast` (default) | Encodes activations on wide calls (prefill, batched verify): 4 bits for NVFP4 weights; 8 bits (int8, one scale per 32 values) for 4/5/6-bit integer formats that record `AllowA8` (GGUF Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL, IQ4_XS, Q4_K, Q5_K, Q6_K and u4 with zero points). |
-| `int8` | Eight bits: every quantized linear may take int8 activations (one scale per 32 values) where its route has one, and none takes four, whatever the artifact recorded; a head or embedding recorded BF16-only keeps BF16. This includes NVFP4 weights recorded for 4 bits with a calibrated input scale (a W4A4 checkpoint), which before ran their 4-bit route under int8 too. NVFP4 weights take int8 activations on prefill calls of 17 tokens or more on every GPU but Volta (V100 multiplies NVFP4 with BF16 activations on its tiled route), including those `fast` runs at 4 bits (a W4A16 checkpoint such as nvidia/Qwen3.6-27B-NVFP4: `exact` 16, `int8` 8, `fast` 4 bits on RTX 50); on RTX 50 (FP4 tensor cores) decode keeps BF16, and so does speculative verify on the layers with native NVFP4 kernels (generic-path NVFP4 shapes, such as shared experts and shapes without a native kernel, take int8 on every call of 17 tokens or more, a wide verify included), while GPUs without FP4 tensor cores use int8 there too. Qwen models only; other families refuse it at startup. |
+| `auto` (default) | What the artifact recorded for each matrix (for a GGUF model: what the converter recorded, since a GGUF names no activation width), with the width-dependent routes: on wide calls (prefill, batched verify) 4 bits for NVFP4 weights calibrated for it on an sm_120a build (RTX 50, sm_120/121); 8 bits (int8, one scale per 32 values) for the integer formats that record `AllowA8` (GGUF Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL, IQ4_XS, Q4_K, Q5_K, Q6_K, u4 with zero points). The official recipe's Q4/Q5/Q6 G64 matrices, recorded 16-bit, also prefill on int8 activations on the cards where that pays (GeForce, RTX/L-series workstation and inference parts; not A100, H100 or B200). The answer can depend on the load. |
+| `16` | 16-bit activations on every quantized linear (BF16; RTX 20 rounds them to f16 and V100 computes the same fragments with FP32 FMAs), under the invariant summation profile. The answer does not depend on how the prompt is cut or on speculation. On Qwen models the Gated DeltaNet layers also prefill token by token, as decode runs them; the extra time grows linearly with the prompt: about 1.3 to 2 ms per such layer per 4096 prompt tokens on an RTX 5090 (35B-A3B and 27B head counts), more on older cards, and the automatic recurrent state is FP32 (twice the state memory of `auto`). Calibrated NVFP4 MoE experts compute with BF16 activations too (Qwen 3.5/3.6 on the generic MoE, Gemma 4 on its native MoE's BF16 route). It does not change the KV cache: `--kv-dtype bf16` keeps that lossless too, and the startup log says when the KV stays 8-bit. Never refused. |
+| `8` | Every quantized linear may take 8-bit activations where its route has one (int8; E4M3 on FP8 weights; MXFP8 on MXFP4 experts on RTX 50), and none takes four, whatever the artifact recorded; a head or embedding recorded BF16-only keeps BF16. NVFP4 weights recorded for 4 bits take W4A8 (prefill calls of 17 tokens or more; Volta multiplies NVFP4 with BF16 activations on its tiled route); on RTX 50 decode keeps BF16, and so does speculative verify on the layers with native NVFP4 kernels. Calibrated NVFP4 MoE experts (Qwen 3.5/3.6, Gemma 4 26B-A4B) run the generic MoE, whose prefill is W4A8. The fused Qwen MoE kernels of the official G64/Q8 experts compute BF16 activations under every mode. On most GGUF models `8` is `auto` (the converter recorded 8 bits already): the startup log says so. Every family. |
+| `4` | As `8`, and every NVFP4 matrix with a calibrated activation divisor may take FP4 activations on an sm_120a build (RTX 50, sm_120/121). NVFP4 without a divisor and the integer formats stay at 8 bits; so do the generic MoE's experts, which have no four-bit route (the fused NVFP4 expert kernels of Qwen 3.5/3.6 and Gemma 4 take four). Every family. |
 
-`fast` also uses int8 activations (one scale per 32 values) for codebook experts at decode widths:
+What a mode resolves to is printed at startup, before the first request, and reported in
+`/v1/models` (`meta.activations`) and the [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint):
+
+```text
+activations | auto -> 4-bit on 312, 8-bit on 48, 16-bit on 6 matrices (the narrowest width each computes with) | KV int8 (--kv-dtype, separate)
+activations | drafter in the model (follows the mode): 4-bit on 12, 16-bit on 1 matrices
+```
+
+The counts are the target's matrices by the narrowest width a call of each computes with under the
+mode: for a linear, the route its format, shape and policy select on this GPU (prefill included);
+for a MoE expert, what the expert Op the model loaded runs (the generic MoE's grouped W4A8, MXFP8
+or R8, or a fused kernel's own width). Decode calls of the same matrix may run wider (NVFP4 decodes
+on BF16 activations on RTX 50). A drafter the model carries (Qwen MTP, DFlash, DFlash2) follows the
+mode and is counted on its own line; a separate drafter artifact (Gemma 4's MTP assistant,
+Nemotron-H's MTP head, a dense model's DFlash drafter) computes with 16-bit activations whatever
+the mode, and a note says so. Other notes: under `auto`, when `8` would compute some matrices
+narrower than `auto` does here (an NVFP4 checkpoint recorded for four bits without calibrated
+divisors stays at 16 bits under `auto` on RTX 50, where `8` runs W4A8): `auto` is then slower
+than `8`; under `8` or `4`, when the mode resolves to the same kernels as `auto` (never claimed for
+NVFP4 experts under `4`, whose Op the load picks); after the load, when `8` or `4` found no
+matrix to narrow (an expert Op without such a route). When the weights
+or the card cannot take the mode:
+
+- **Refused:** `8` or `4` that no matrix can take, before the weights load. The error says whether
+  the weights are the cause (`8` on BF16 weights; `4` without calibrated NVFP4 weights) or the GPU
+  (`4` on a GPU this build runs without FP4: anything but RTX 50 / sm_120a), and points at the
+  next mode that runs. `auto` and `16` are never refused. `ninferno-serve MODEL
+  --activations-preflight 12.0` prints, as JSON and without a GPU, what each mode resolves to on a
+  GPU of that compute capability (the desktop UI asks it before offering a mode).
+- **Started with a warning:** `8` or `4` that only some matrices can take. One line per group of
+  matrices left wider names the format, the width and the reason, for example
+  `activations | WARNING --activations 4 leaves 48 q4_k matrices at 8-bit: the format has no
+  four-bit activation route (NVFP4 only) (e.g. text/layers/0/mlp/gate)`.
+
+The decision reads only the option, the artifact (each matrix's format, shape, recorded policy and
+calibration) and the GPU's instruction set, so the same mode resolves the same way on every card of
+one generation ([deterministic decisions](maintainer/deterministic-decisions.md), class B1).
+
+`auto` also uses int8 activations (one scale per 32 values) for codebook experts at decode widths:
 the IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS and IQ3_S gate/up banks of the generic MoE layer, as in
 Qwen3.5/3.6 MoE GGUF artifacts. This applies to calls of at most four tokens (a prompt of at most
-four tokens included) on GPU classes whose MoE route lists it. `--activations exact` disables it.
+four tokens included) on GPU classes whose MoE route lists it. `--activations 16` disables it.
 
 ## Startup memory profile
 
@@ -301,9 +343,9 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
   with an FP32 scale per position and KV head (any head size). Sliding-window rings stay BF16.
 - Accuracy of `fp8` against BF16 keys and values, on chat answers: top-1 agreement 0.98-0.99, ΔNLL
   within 0.004 (Gemma 4 12B QAT, and 26B-A4B with BF16 activations). Under the default
-  `--activations fast` the gap is larger on models whose prefill runs 4-bit activations (NVFP4,
+  `--activations auto` the gap is larger on models whose prefill runs 4-bit activations (NVFP4,
   W4A4; Gemma 4 26B-A4B top-1 0.94), because that profile amplifies small cache changes. For
-  maximum accuracy use `--activations exact`.
+  maximum accuracy use `--activations 16`.
 - The prepared prompt must fit `--max-context`. Generation stops at the remaining context capacity.
 - `--kv-capacity N` sets the shared physical Main Text KV pool independently, rounded up to the
   64-token page size. The one-request CLI normally omits it so it follows `--max-context`; the

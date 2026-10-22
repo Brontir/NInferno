@@ -168,7 +168,7 @@ void launch_nvfp4_a16_family(const __nv_bfloat16* x, const Weight& weight, Epilo
     }
 }
 
-// The A16Only projection (ActivationMode::Exact) on a Qwen3.5-27B geometry.
+// The A16Only projection (ActivationMode::Bits16) on a Qwen3.5-27B geometry.
 template <class Geometry, class Epilogue, class Output>
 void launch_nvfp4_a16_exact(const __nv_bfloat16* x, const Weight& weight, Epilogue epilogue,
                             Output output, std::int32_t tokens, cudaStream_t stream) {
