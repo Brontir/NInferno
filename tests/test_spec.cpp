@@ -1544,9 +1544,9 @@ int test_source_identity() {
                                 std::string(64, 'a') + R"(",
                            "text/tokenizer.json": ")" +
                                 std::string(64, 'b') + R"("},
-        "inputs": [{"role": "base", "files": [{"repo": "unsloth/Qwen3.8-27B-GGUF",
-            "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-            "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf", "sha256": ")" +
+        "ranking": "/home/a/ranking.i64", "ranking_sha256": ")" +
+                                std::string(64, '3') + R"(",
+        "inputs": [{"role": "base", "files": [{"sha256": ")" +
                                 gguf + R"("}]}]})");
     const auto id = art::source_identity(d);
     failures += check(id && art::is_source_identity(*id), "a recorded conversion has an identity");
@@ -1563,12 +1563,8 @@ int test_source_identity() {
          [](art::Directory& x) {
              x.provenance["inputs"][0]["files"][0]["sha256"] = std::string(64, 'e');
          }},
-        {"the commit",
-         [](art::Directory& x) {
-             x.provenance["inputs"][0]["files"][0]["commit"] = std::string(40, 'a');
-         }},
-        {"the file name",
-         [](art::Directory& x) { x.provenance["inputs"][0]["files"][0]["name"] = "other.gguf"; }},
+        {"the ranking's content",
+         [](art::Directory& x) { x.provenance["ranking_sha256"] = std::string(64, '4'); }},
         {"the quant", [](art::Directory& x) { x.provenance["quant"] = "Q4_K_M"; }},
         {"the converter version",
          [](art::Directory& x) { x.provenance["converter"] = "ninferno-v4"; }},
@@ -1643,29 +1639,12 @@ int test_source_identity() {
     failures += check(art::tensor_index_sha256(d) == art::tensor_index_sha256(moved),
                       "the tensor index is in id order, without offsets");
 
-    const auto hub = art::hub_file("/root/hf/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/"
-                                   "4ca720788d1e01f1bff70c033e0d0028fd02e502/sub/m.gguf");
-    failures += check(hub && hub->repo == "unsloth/Qwen3.8-27B-GGUF" &&
-                          hub->commit == "4ca720788d1e01f1bff70c033e0d0028fd02e502" &&
-                          hub->name == "sub/m.gguf",
-                      "a hub snapshot file: repository, commit and path in it");
-    const auto windows = art::hub_file("C:\\Users\\me\\.cache\\huggingface\\hub\\"
-                                       "models--unsloth--Qwen3.8-27B-GGUF\\snapshots\\"
-                                       "4ca720788d1e01f1bff70c033e0d0028fd02e502\\sub\\m.gguf");
-    failures += check(windows && hub && windows->repo == hub->repo &&
-                          windows->commit == hub->commit && windows->name == hub->name,
-                      "a Windows hub path reads as the Linux one does");
-    failures +=
-        check(art::input_file(
-                  "C:\\hub\\models--a--b\\snapshots\\" + std::string(40, 'f') + "\\x.gguf", gguf) ==
-                  art::input_file("/hub/models--a--b/snapshots/" + std::string(40, 'f') + "/x.gguf",
-                                  gguf),
-              "a Windows and a Linux path of one hub file: one input");
-    failures += check(!art::hub_file("/data/models/m.gguf") &&
-                          !art::hub_file("/hub/models--a--b/snapshots/main/m.gguf"),
-                      "a local file or a snapshot that is no commit: no hub provenance");
-    failures += check(art::input_file("/data/m.gguf", gguf) == Json{{"sha256", gguf}},
-                      "a local file is keyed by its content alone");
+    // No path enters: the ranking at another path (the same content), the sources elsewhere.
+    auto elsewhere                                  = d;
+    elsewhere.provenance["ranking"]                 = "C:\\rankings\\ranking.i64";
+    elsewhere.provenance["sources"]["base"]["path"] = "relative/m.gguf";
+    failures += check(art::source_identity(elsewhere) == id,
+                      "the same ranking and sources at other paths: the same identity");
     return failures;
 }
 
@@ -1713,8 +1692,7 @@ int test_context_classes() {
     // of its two cards (two generations that agree within the tolerance in Mid and Long), not
     // unknown; Huge was not measured.
     {
-        const std::string missing =
-            "placeholder key: target=missing:inputs.side_files_and_resources,tensor_index";
+        const std::string missing = "placeholder key: target=missing:structure,tensor_index";
         auto known               = shipped;
         const std::string target = std::string(64, 'c');
         int measured             = 0;

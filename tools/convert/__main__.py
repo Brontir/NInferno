@@ -81,16 +81,6 @@ class SourceInputs(Mapping):
         return dict(self._sources)
 
 
-# The files beside a checkpoint's weights a conversion may read, hashed into its source identity
-# when present (src/artifact/source_identity.h; src/convert/convert.cpp kCheckpointFiles).
-_CHECKPOINT_FILES = (
-    "config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json",
-    "special_tokens_map.json", "tokenizer.model", "vocab.json", "merges.txt",
-    "chat_template.jinja", "chat_template.json", "preprocessor_config.json",
-    "video_preprocessor_config.json", "hf_quant_config.json", "model.safetensors.index.json",
-)
-
-
 def _content_sha256(file: Path) -> str:
     """A Hugging Face LFS snapshot file's blob name (its sha256, verified at download), else the
     sha256 of its bytes."""
@@ -105,57 +95,28 @@ def _content_sha256(file: Path) -> str:
     return digest.hexdigest()
 
 
+def _split_function(value: str) -> tuple[str, str | None]:
+    """FILE[:FUNCTION]: the colon only after the last path separator, so a Windows path
+    (C:\\r.py) keeps its drive."""
+    colon = value.rfind(":")
+    if colon > max(value.rfind("/"), value.rfind("\\")) and colon > 1:
+        return value[:colon], value[colon + 1:]
+    return value, None
+
+
 def _code_of(value: str) -> tuple[str, str]:
     """A FILE[:FUNCTION] recipe or override (_function) by its file's sha256 and the function."""
-    filename, separator, function = value.rpartition(":")
-    if not separator:
-        filename, function = value, "configure"
-    return _content_sha256(Path(filename).resolve()), function
+    filename, function = _split_function(value)
+    return _content_sha256(Path(filename).resolve()), function or "configure"
 
 
-def _input_file(file: Path, sha256: str) -> dict:
-    """A hub snapshot file (<hub>/models--org--name/snapshots/<commit>/<path>) by repository,
-    commit, path and content; any other by its content alone (keys sorted, as the native
-    converter writes them)."""
-    parts = []
-    for part in str(file).replace("\\", "/").split("/"):
-        if part == "..":
-            if parts:
-                parts.pop()
-        elif part and part != ".":
-            parts.append(part)
-    for i in range(len(parts) - 3):
-        if (parts[i].startswith("models--") and parts[i + 1] == "snapshots"
-                and re.fullmatch(r"[0-9a-f]{40}", parts[i + 2])):
-            org, sep, name = parts[i][8:].partition("--")
-            if not org or not sep or not name:
-                break
-            return {"commit": parts[i + 2], "name": "/".join(parts[i + 3:]),
-                    "repo": f"{org}/{name}", "sha256": sha256}
-    return {"sha256": sha256}
-
-
-def _input_of(role: str, files: list[Path], directory: Path | None) -> dict:
-    files = list(files)
-    if directory is not None:
-        for name in _CHECKPOINT_FILES:
-            path = directory / name
-            if path.is_file() and path not in files:
-                files.append(path)
-    return {"role": role, "files": [_input_file(f, _content_sha256(f)) for f in files]}
-
-
-def source_inputs(sources, resources) -> list[dict]:
+def source_inputs(sources) -> list[dict]:
     """The provenance's "inputs" (src/convert/convert.cpp source_inputs): every opened checkpoint
-    by its weight files (sorted by path) and side files, then every --resource."""
+    by the weight files it read, each by its content alone, sorted."""
     out = []
     for role, source in sources.opened().items():  # base first, then in opening order
-        files = sorted(set(source.weight_map.values()), key=lambda f: Path(f).as_posix())
-        out.append(_input_of(role, [Path(f) for f in files], source.root))
-    for role, path in resources.items():
-        path = Path(path)
-        out.append(_input_of(f"resource:{role}", [] if path.is_dir() else [path],
-                             path if path.is_dir() else None))
+        digests = sorted(_content_sha256(Path(f)) for f in set(source.weight_map.values()))
+        out.append({"role": role, "files": [{"sha256": d} for d in digests]})
     return out
 
 
@@ -172,9 +133,8 @@ def _pairs(values, label):
 def _function(value: str):
     if value in RECIPES:
         return RECIPES[value]
-    filename, separator, function = value.rpartition(":")
-    if not separator:
-        filename, function = value, "configure"
+    filename, function = _split_function(value)
+    function = function or "configure"
     path = Path(filename).resolve()
     spec = importlib.util.spec_from_file_location("ninferno_user_recipe", path)
     if spec is None or spec.loader is None:
@@ -287,7 +247,7 @@ def main(argv=None):
             "converter": "ninferno-v3",
             "recipe": args.recipe,
             "sources": sources.provenance(),
-            "inputs": source_inputs(sources, overrides),
+            "inputs": source_inputs(sources),
         }
         if args.override:
             provenance["override"] = args.override
@@ -297,6 +257,8 @@ def main(argv=None):
             provenance["recipe_sha256"], provenance["recipe_function"] = _code_of(args.recipe)
         if args.proposal:
             provenance["ranking"] = str(args.ranking)
+            # By content for the source identity, never the path.
+            provenance["ranking_sha256"] = _content_sha256(Path(args.ranking))
         published = published_activation_summary(model, recipe)
         if published is not None:
             provenance["published_activations"] = published

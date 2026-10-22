@@ -221,6 +221,20 @@ int convert_test(const fs::path& dir) {
     (void)convert(dir / "copy", b, false);
     failures += check(artifact_id(a) != artifact_id(b) && art::source_identity(b) == id,
                       "a reconversion (another id, another path) keeps the identity");
+    // The same weights typed as a relative path to the file itself, from a directory that also
+    // holds files the conversion does not read: the same identity (no path, no unread file).
+    fs::copy(dir / "ckpt", dir / "cluttered", fs::copy_options::recursive);
+    std::ofstream(dir / "cluttered" / "README.md") << "an unrelated file";
+    std::ofstream(dir / "cluttered" / "unrelated_config.json") << R"({"hidden_size": 9})";
+    {
+        const auto here = fs::current_path();
+        fs::current_path(dir);
+        const auto e = dir / "e.ninferno";
+        (void)convert(fs::path("cluttered") / "model.safetensors", e, false);
+        fs::current_path(here);
+        failures += check(art::source_identity(e) == id,
+                          "a relative path to the file, beside unread files: the same identity");
+    }
     // --consume-source writes through a mapping: the same bytes, digests and identity.
     fs::copy(dir / "ckpt", dir / "consumed", fs::copy_options::recursive);
     const auto c = dir / "c.ninferno";
@@ -363,9 +377,23 @@ int relayout_test(const fs::path& dir) {
     failures += check(digests_hold(*to_new.out) && art::source_identity(*to_new.out) &&
                           art::source_identity(*to_new.out) != art::source_identity(source),
                       "relayout to a new artifact seals the digests again: another identity");
+    // An in-place relayout stopped between its chunk moves and its directory rewrite: while the
+    // journal is pending the artifact is refused, so its stale digests are never read.
     cv::RelayoutOptions in_place;
-    in_place.artifact = source;
-    in_place.layout   = cv::ExpertLayout::Frag;
+    in_place.artifact        = source;
+    in_place.layout          = cv::ExpertLayout::Frag;
+    in_place.interrupt_after = 100;
+    bool stopped             = false;
+    try {
+        (void)cv::relayout(in_place);
+    } catch (const std::exception&) { stopped = true; }
+    bool refused = false;
+    try {
+        (void)art::source_identity(source);
+    } catch (const std::exception&) { refused = true; }
+    failures += check(stopped && refused,
+                      "an interrupted in-place relayout: the identity is not read (journal)");
+    in_place.interrupt_after.reset();
     (void)cv::relayout(in_place);
     failures += check(!art::source_identity(source),
                       "relayout in place drops the digests: no identity until converted again");

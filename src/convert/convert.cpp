@@ -1478,23 +1478,6 @@ void check_fidelity(const Checkpoint& base, const Model& model, const Plan& plan
         "NInferno's own quantization).");
 }
 
-// The files beside a checkpoint's weights that a conversion may read (its config, tokenizer,
-// template, generation and processor files), hashed into its source identity when present.
-constexpr std::array<const char*, 14> kCheckpointFiles{"config.json",
-                                                       "generation_config.json",
-                                                       "tokenizer.json",
-                                                       "tokenizer_config.json",
-                                                       "special_tokens_map.json",
-                                                       "tokenizer.model",
-                                                       "vocab.json",
-                                                       "merges.txt",
-                                                       "chat_template.jinja",
-                                                       "chat_template.json",
-                                                       "preprocessor_config.json",
-                                                       "video_preprocessor_config.json",
-                                                       "hf_quant_config.json",
-                                                       "model.safetensors.index.json"};
-
 // A file's content digest for the source identity: a Hugging Face snapshot file is a link to
 // <hub>/blobs/<sha256> for an LFS file, a digest the fetch verified when it downloaded it (and that
 // a source-consuming conversion, which punches the blob, cannot take again); any other file's
@@ -1511,46 +1494,21 @@ std::string content_sha256(const std::filesystem::path& file) {
     return file_sha256(file);
 }
 
-// The checkpoint files a role's input lists: `files`, then the known side files in `directory`.
-OJson input_of(const std::string& role, std::vector<std::filesystem::path> files,
-               const std::filesystem::path& directory) {
-    std::error_code ec;
-    for (const char* name : kCheckpointFiles) {
-        if (directory.empty()) { break; }
-        const auto path = directory / name;
-        if (std::filesystem::is_regular_file(path, ec) &&
-            std::find(files.begin(), files.end(), path) == files.end()) {
-            files.push_back(path);
-        }
-    }
-    OJson list = OJson::array();
-    for (const auto& file : files) {
-        list.push_back(OJson::parse(artifact::input_file(file, content_sha256(file)).dump()));
-    }
-    return OJson{{"role", role}, {"files", list}};
-}
-
 // The provenance's "inputs" (artifact/source_identity.h): every checkpoint the conversion opened,
-// by its weight files and side files, then every --resource.
-OJson source_inputs(const SourceInputs& sources, const ConvertOptions& options) {
+// by the weight files it read, each by its content alone ({"sha256": hex}), sorted. No path enters
+// and no side file does: what a side file (config, tokenizer, template) gives the artifact is in
+// its bytes and structure, which the content digests and the structure hash cover.
+OJson source_inputs(const SourceInputs& sources) {
     OJson out = OJson::array();
     for (const auto& [role, checkpoint] : sources.roles()) {
-        std::vector<std::filesystem::path> files;
+        std::vector<std::string> digests;
         for (std::size_t i = 0; i < checkpoint->shard_count(); ++i) {
-            files.push_back(checkpoint->shard_path(i));
+            digests.push_back(content_sha256(checkpoint->shard_path(i)));
         }
-        std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
-            return a.generic_u8string() < b.generic_u8string();
-        });
-        out.push_back(input_of(role, std::move(files), checkpoint->root()));
-    }
-    for (const auto& [role, path] : options.resources) {
-        std::error_code ec;
-        const bool directory = std::filesystem::is_directory(path, ec);
-        out.push_back(input_of("resource:" + role,
-                               directory ? std::vector<std::filesystem::path>{}
-                                         : std::vector<std::filesystem::path>{path},
-                               directory ? path : std::filesystem::path()));
+        std::sort(digests.begin(), digests.end());
+        OJson files = OJson::array();
+        for (const auto& digest : digests) { files.push_back(OJson{{"sha256", digest}}); }
+        out.push_back(OJson{{"role", role}, {"files", std::move(files)}});
     }
     return out;
 }
@@ -1772,7 +1730,7 @@ ConvertResult convert(const ConvertOptions& options) {
             provenance["inputs"] = OJson::parse(stream);
             log("source inputs: read from " + inputs_path.string() + " (resumed)");
         } else {
-            provenance["inputs"] = source_inputs(sources, options);
+            provenance["inputs"] = source_inputs(sources);
             if (options.consume_source) {
                 // Durable before the first punch: written to a temporary, fsynced, renamed in.
                 write_report(inputs_path.string(), provenance["inputs"]);
@@ -1786,7 +1744,11 @@ ConvertResult convert(const ConvertOptions& options) {
         const auto quant = gguf_quant_label(ninferno::utf8_file_name(base.shard_path(0)));
         if (!quant.empty()) { provenance["quant"] = quant; }
     }
-    if (options.proposal) { provenance["ranking"] = ranking_text; }
+    if (options.proposal) {
+        provenance["ranking"] = ranking_text;
+        // The identity takes the ranking by content (artifact/source_identity.h), never its path.
+        provenance["ranking_sha256"] = file_sha256(ranking);
+    }
     // Choices that change the bytes without changing a shape (the content digests cover them too).
     if (options.round_tiny_scales) { provenance["round_tiny_scales"] = true; }
     if (options.maintainer_quantize) { provenance["maintainer_quantize"] = true; }

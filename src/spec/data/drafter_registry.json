@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": 110,
-  "published": "2026-10-21",
+  "version": 111,
+  "published": "2026-10-22",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
     "mtp": {
@@ -182,9 +182,6 @@
                 "role": "base",
                 "files": [
                   {
-                    "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-                    "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
-                    "repo": "unsloth/Qwen3.8-27B-GGUF",
                     "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
                   }
                 ]
@@ -193,15 +190,6 @@
                 "role": "dflash2",
                 "files": [
                   {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "config.json",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
-                    "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
-                  },
-                  {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "model.safetensors",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
                     "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
                   }
                 ]
@@ -213,7 +201,25 @@
             "choices": {
               "drafter_quantization": "q8"
             },
-            "fetched_unplaced": [
+            "files_named": [
+              {
+                "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+                "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+                "repo": "unsloth/Qwen3.8-27B-GGUF",
+                "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "config.json",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "model.safetensors",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+              },
               {
                 "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
                 "name": "config.json",
@@ -253,7 +259,7 @@
             ]
           },
           "missing": [
-            "inputs.side_files_and_resources",
+            "structure",
             "tensor_index"
           ]
         },
@@ -271,7 +277,7 @@
         "corpus": "sha256:b5fe6d8e045cfee04ed80e2272547f7c21666c53b82adca49efad6f0da8621e3",
         "schedule": "x13-v1: C=1, the 160 requests of the corpus in order, max_tokens 512, one warm-up, --max-context 32768, --no-prefix-reuse",
         "tolerance": 0.05,
-        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec dflash2 --draft-tokens 7, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 0 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 3.36/2.93/2.06; gb203:70sm 3.38/2.91/2.00. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the tensor index needs the converted artifact (both stands deleted theirs), and which side files and tokenizer resources the conversion listed is not recorded (the files fetched are under fetched_unplaced).",
+        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec dflash2 --draft-tokens 7, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 0 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 3.36/2.93/2.06; gb203:70sm 3.38/2.91/2.00. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the inputs are the weight files by content (the GGUF and the DFlash2 companion's model.safetensors); the structure and the tensor index (content digests) need the converted artifact, which both stands deleted.",
         "cards": [
           {
             "gpu_class": "ad102:128sm",
@@ -306,9 +312,6 @@
                 "role": "base",
                 "files": [
                   {
-                    "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-                    "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
-                    "repo": "unsloth/Qwen3.8-27B-GGUF",
                     "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
                   }
                 ]
@@ -317,15 +320,6 @@
                 "role": "dflash2",
                 "files": [
                   {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "config.json",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
-                    "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
-                  },
-                  {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "model.safetensors",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
                     "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
                   }
                 ]
@@ -337,7 +331,25 @@
             "choices": {
               "drafter_quantization": "q8"
             },
-            "fetched_unplaced": [
+            "files_named": [
+              {
+                "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+                "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+                "repo": "unsloth/Qwen3.8-27B-GGUF",
+                "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "config.json",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "model.safetensors",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+              },
               {
                 "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
                 "name": "config.json",
@@ -377,7 +389,7 @@
             ]
           },
           "missing": [
-            "inputs.side_files_and_resources",
+            "structure",
             "tensor_index"
           ]
         },
@@ -395,7 +407,7 @@
         "corpus": "sha256:b5fe6d8e045cfee04ed80e2272547f7c21666c53b82adca49efad6f0da8621e3",
         "schedule": "x13-v1: C=1, the 160 requests of the corpus in order, max_tokens 512, one warm-up, --max-context 32768, --no-prefix-reuse",
         "tolerance": 0.05,
-        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec dflash2 --draft-tokens 7, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 1 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 3.06/2.44/1.92; gb203:70sm 3.02/2.46/1.93. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the tensor index needs the converted artifact (both stands deleted theirs), and which side files and tokenizer resources the conversion listed is not recorded (the files fetched are under fetched_unplaced).",
+        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec dflash2 --draft-tokens 7, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 1 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 3.06/2.44/1.92; gb203:70sm 3.02/2.46/1.93. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the inputs are the weight files by content (the GGUF and the DFlash2 companion's model.safetensors); the structure and the tensor index (content digests) need the converted artifact, which both stands deleted.",
         "cards": [
           {
             "gpu_class": "ad102:128sm",
@@ -430,9 +442,6 @@
                 "role": "base",
                 "files": [
                   {
-                    "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-                    "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
-                    "repo": "unsloth/Qwen3.8-27B-GGUF",
                     "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
                   }
                 ]
@@ -441,15 +450,6 @@
                 "role": "dflash2",
                 "files": [
                   {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "config.json",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
-                    "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
-                  },
-                  {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "model.safetensors",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
                     "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
                   }
                 ]
@@ -461,7 +461,25 @@
             "choices": {
               "drafter_quantization": "q8"
             },
-            "fetched_unplaced": [
+            "files_named": [
+              {
+                "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+                "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+                "repo": "unsloth/Qwen3.8-27B-GGUF",
+                "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "config.json",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "model.safetensors",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+              },
               {
                 "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
                 "name": "config.json",
@@ -501,7 +519,7 @@
             ]
           },
           "missing": [
-            "inputs.side_files_and_resources",
+            "structure",
             "tensor_index"
           ]
         },
@@ -519,7 +537,7 @@
         "corpus": "sha256:b5fe6d8e045cfee04ed80e2272547f7c21666c53b82adca49efad6f0da8621e3",
         "schedule": "x13-v1: C=1, the 160 requests of the corpus in order, max_tokens 512, one warm-up, --max-context 32768, --no-prefix-reuse",
         "tolerance": 0.05,
-        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec mtp --draft-tokens 5, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 0 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 2.80/2.65/2.35; gb203:70sm 2.81/2.57/2.22. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the tensor index needs the converted artifact (both stands deleted theirs), and which side files and tokenizer resources the conversion listed is not recorded (the files fetched are under fetched_unplaced).",
+        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec mtp --draft-tokens 5, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 0 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 2.80/2.65/2.35; gb203:70sm 2.81/2.57/2.22. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the inputs are the weight files by content (the GGUF and the DFlash2 companion's model.safetensors); the structure and the tensor index (content digests) need the converted artifact, which both stands deleted.",
         "cards": [
           {
             "gpu_class": "ad102:128sm",
@@ -554,9 +572,6 @@
                 "role": "base",
                 "files": [
                   {
-                    "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
-                    "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
-                    "repo": "unsloth/Qwen3.8-27B-GGUF",
                     "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
                   }
                 ]
@@ -565,15 +580,6 @@
                 "role": "dflash2",
                 "files": [
                   {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "config.json",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
-                    "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
-                  },
-                  {
-                    "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
-                    "name": "model.safetensors",
-                    "repo": "z-lab/Qwen3.8-27B-DFlash2",
                     "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
                   }
                 ]
@@ -585,7 +591,25 @@
             "choices": {
               "drafter_quantization": "q8"
             },
-            "fetched_unplaced": [
+            "files_named": [
+              {
+                "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+                "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+                "repo": "unsloth/Qwen3.8-27B-GGUF",
+                "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "config.json",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980"
+              },
+              {
+                "commit": "50307d4c4cde6860d4eee73e2547cd786fe8e8a4",
+                "name": "model.safetensors",
+                "repo": "z-lab/Qwen3.8-27B-DFlash2",
+                "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+              },
               {
                 "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
                 "name": "config.json",
@@ -625,7 +649,7 @@
             ]
           },
           "missing": [
-            "inputs.side_files_and_resources",
+            "structure",
             "tensor_index"
           ]
         },
@@ -643,7 +667,7 @@
         "corpus": "sha256:b5fe6d8e045cfee04ed80e2272547f7c21666c53b82adca49efad6f0da8621e3",
         "schedule": "x13-v1: C=1, the 160 requests of the corpus in order, max_tokens 512, one warm-up, --max-context 32768, --no-prefix-reuse",
         "tolerance": 0.05,
-        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec mtp --draft-tokens 5, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 1 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 2.40/2.16/1.92; gb203:70sm 2.28/2.16/1.83. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the tensor index needs the converted artifact (both stands deleted theirs), and which side files and tokenizer resources the conversion listed is not recorded (the files fetched are under fetched_unplaced).",
+        "source": "X13 b_p652_x13_l4090 (RTX 4090, ad102, sm89) and b_p651_x13_l5070 (RTX 5070 Ti, gb203, sm120, arch 120a), master 5191d5466, unsloth/Qwen3.8-27B-GGUF@4ca720788d1e UD-IQ3_XXS --with-drafters converted by ninferno-serve --prepare-only (recipe qwen3_5_bf16; mtp and dflash2 embedded, dflash2 from z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde in q8); ninferno-serve --spec mtp --draft-tokens 5, C=1, no watchdog trips or step-downs; server_start: activations fast, KV int8-group64, state f16. Temperature 1 with the model's sampling defaults (top_k 20; top_p 0.8 and presence penalty 1.5 without thinking, top_p 0.95 with), thinking on and off pooled: 20 prompts per class (Short: 10 chat + 10 short, 40), request-log speculative.accepted_tokens / rounds, classed by the measured prompt_tokens (Short 21-797, Mid 1078-7302, Long 9261-17774; no Huge prompt). Accepted drafts per round short/mid/long: ad102:128sm 2.40/2.16/1.92; gb203:70sm 2.28/2.16/1.83. Corpus: sha256 of the job's prompts.json (prompts.py over docs/*.md at 5191d5466, reproduced byte for byte). summation and parity are not logged: 'fast' (the per-width route tables of --activations fast) and 'none' (fast bytes depend on the width at T <= 16). Target: the source identity's proven parts (file hashes from the Hugging Face API); the inputs are the weight files by content (the GGUF and the DFlash2 companion's model.safetensors); the structure and the tensor index (content digests) need the converted artifact, which both stands deleted.",
         "cards": [
           {
             "gpu_class": "ad102:128sm",

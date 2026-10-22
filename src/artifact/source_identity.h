@@ -11,19 +11,21 @@
 // sorted (nlohmann::json::dump()):
 //
 //   {"schema": "ninferno-source/1",
-//    "inputs": the provenance's "inputs" (written by the converter): one entry per checkpoint and
-//              resource the conversion read, sorted by role,
-//              {"role": "base" | a --source name | "resource:<role>",
-//               "files": [{"repo": "org/name", "commit": 40 hex, "name": its path in the
-//                          repository, "sha256": 64 hex} for a Hugging Face file,
-//                         {"sha256": 64 hex} for a local file (keyed by its content alone)]},
-//              each list of files sorted (by its JSON);
+//    "inputs": the provenance's "inputs" (written by the converter): one entry per checkpoint the
+//              conversion opened, sorted by role, {"role": "base" | a --source name,
+//              "files": [{"sha256": 64 hex}, ...]}: the weight files it read, by content alone,
+//              sorted. No path, repository or file name enters, so the same files typed as
+//              another path, in another directory or under another name give the same inputs;
+//              no side file enters either (what a config, tokenizer or template gives the
+//              artifact is in its bytes and structure, which the content digests and
+//              "structure" cover),
 //    "quant": the provenance's "quant" (a GGUF's quantization label, from its file name) or "",
 //    "converter": the provenance's "converter" (the converter format version, "ninferno-v3"),
 //    "recipe": the provenance's "recipe" (an official name), or for a custom recipe file of the
 //              Python converter {"sha256": its content, "function": the function it names},
 //    "choices": the provenance's other byte-changing choices that are present
-//               (drafter_quantization, vocabulary, gguf_mapper, ranking, round_tiny_scales,
+//               (drafter_quantization, vocabulary, gguf_mapper, ranking_sha256 (a proposal
+//               head's token ranking by content), round_tiny_scales,
 //               maintainer_quantize, and the Python --override by content: override_sha256,
 //               override_function); never a path,
 //    "structure": structure_sha256 of the directory (components, bindings, uses, metadata),
@@ -74,19 +76,5 @@ inline constexpr std::string_view kSourceIdentitySchema = "ninferno-source/1";
 
 // Whether `text` is a source identity: 64 lowercase hex digits.
 [[nodiscard]] bool is_source_identity(std::string_view text) noexcept;
-
-// A file in a Hugging Face hub cache, <hub>/models--<org>--<name>/snapshots/<commit>/<path>:
-// its repository, commit and path in the repository; nullopt for any other path. The path is read
-// as written (a snapshot's files are symbolic links into blobs/; do not resolve it first), with
-// '\\' read as '/' on every platform, so a Windows path gives what the same Linux path does.
-struct HubFile {
-    std::string repo, commit, name;
-};
-
-[[nodiscard]] std::optional<HubFile> hub_file(const std::filesystem::path& file);
-
-// One "files" entry of an input: a hub file by repository, commit, path and content, any other by
-// its content alone.
-[[nodiscard]] Json input_file(const std::filesystem::path& file, const std::string& sha256);
 
 } // namespace ninferno::artifact

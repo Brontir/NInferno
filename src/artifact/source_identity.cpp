@@ -142,8 +142,8 @@ std::optional<Json> source_record(const Directory& directory) {
     // Never a path: a Python --override and a custom recipe enter by their file's content and the
     // function they name.
     for (const char* key :
-         {"drafter_quantization", "vocabulary", "gguf_mapper", "ranking", "round_tiny_scales",
-          "maintainer_quantize", "override_sha256", "override_function"}) {
+         {"drafter_quantization", "vocabulary", "gguf_mapper", "ranking_sha256",
+          "round_tiny_scales", "maintainer_quantize", "override_sha256", "override_function"}) {
         if (const auto it = provenance.find(key); it != provenance.end()) { choices[key] = *it; }
     }
     return Json{{"schema", std::string(kSourceIdentitySchema)},
@@ -171,48 +171,5 @@ std::optional<std::string> source_identity(const std::filesystem::path& artifact
 }
 
 bool is_source_identity(std::string_view text) noexcept { return hex_digits(text, 64); }
-
-std::optional<HubFile> hub_file(const std::filesystem::path& file) {
-    // Split on '/' and '\\' alike, so a Windows path reads as the same Linux path does.
-    std::string text = utf8_path(file);
-    std::replace(text.begin(), text.end(), '\\', '/');
-    std::vector<std::string> parts;
-    for (std::size_t at = 0; at <= text.size();) {
-        const auto end  = std::min(text.find('/', at), text.size());
-        const auto part = text.substr(at, end - at);
-        if (part == "..") {
-            if (!parts.empty()) { parts.pop_back(); }
-        } else if (!part.empty() && part != ".") {
-            parts.push_back(part);
-        }
-        at = end + 1;
-    }
-    for (std::size_t i = 0; i + 3 < parts.size(); ++i) {
-        const auto& repo = parts[i];
-        if (!repo.starts_with("models--") || parts[i + 1] != "snapshots" ||
-            !hex_digits(parts[i + 2], 40)) {
-            continue;
-        }
-        const auto name = repo.substr(8);
-        const auto cut  = name.find("--");
-        if (cut == std::string::npos || cut == 0 || cut + 2 >= name.size()) { return std::nullopt; }
-        HubFile out;
-        out.repo   = name.substr(0, cut) + "/" + name.substr(cut + 2);
-        out.commit = parts[i + 2];
-        for (std::size_t j = i + 3; j < parts.size(); ++j) {
-            out.name += (out.name.empty() ? "" : "/") + parts[j];
-        }
-        return out;
-    }
-    return std::nullopt;
-}
-
-Json input_file(const std::filesystem::path& file, const std::string& sha256) {
-    if (const auto hub = hub_file(file)) {
-        return Json{
-            {"repo", hub->repo}, {"commit", hub->commit}, {"name", hub->name}, {"sha256", sha256}};
-    }
-    return Json{{"sha256", sha256}};
-}
 
 } // namespace ninferno::artifact
