@@ -676,7 +676,8 @@ int contract_rejection_cases() {
 }
 
 // A BF16 or FP16 state (RecurrentStateStorage::BF16 / FP16) runs the same recurrence in FP32
-// registers and rounds only the state it stores. All arms start from the same BF16-representable
+// registers and rounds the state to the storage at every chunk end of a prefill call and when it
+// stores it. All arms start from the same BF16-representable
 // state and take the same calls: chunked prefill calls, then width-one decode steps through the
 // batch update, whose rounding carries from step to step. Outputs and the final state stay within
 // a relative L2 of 2e-2 of the FP32 arm (a BF16 store alone is 2^-9 relative, an FP16 one 2^-12).

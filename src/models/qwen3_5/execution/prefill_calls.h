@@ -18,8 +18,10 @@ inline constexpr std::uint32_t kPrefillMinTokens = 17;
 // cuts a call into 16-token chunks counted from the call's first token (the last one padded) and
 // folds each into the state as one block, so a call boundary that divides a chunk changes the bytes
 // after it; a boundary on this grid, a multiple of the 16-token chunk, is the only kind the chunk
-// size cannot move a token across. Under --activations exact the scan runs token by token and any
-// boundary is neutral for it (ops/linear_attention/gated_delta_net/gated_delta_net.cpp).
+// size cannot move a token across. A BF16 or FP16 state is rounded at every chunk end, so the call
+// before such a boundary stores the state one call carries past it. Under --activations exact the
+// scan runs token by token and any boundary is neutral for it
+// (ops/linear_attention/gated_delta_net/gated_delta_net.cpp).
 inline constexpr std::uint32_t kPrefillGridTokens = 64;
 
 // Absolute end of the next prefill call over [cursor, end) when at most `chunk` fit in one call.
