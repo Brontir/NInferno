@@ -11,7 +11,7 @@
 // call's start). A cut off that grid is reported, not failed: the scan folds the chunk the cut
 // divides into the state as two blocks, which rounds differently from one, so such a cut is a known
 // exception of the prefill profile; the Qwen planner keeps every call boundary it chooses on a
-// 64-token grid (models/qwen3_5/execution/prefill_calls.h).
+// 64-token grid counted from the segment's start (models/qwen3_5/execution/prefill_calls.h).
 //
 // The NVFP4 A16Only rows are the exact activation contract (--activations exact): there every width
 // counts, decode and speculative verify included, so their windows start at T = 1. Under it the

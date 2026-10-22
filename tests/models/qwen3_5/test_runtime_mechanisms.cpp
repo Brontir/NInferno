@@ -456,6 +456,36 @@ void test_staged_prefill_unit_end() {
     expect(mismatches == 0, "staged prefill units do not match the projected service work");
 }
 
+// Every call boundary of a segment lies a multiple of the scan's 16-token chunk after the
+// segment's start, for every --prefill-chunk (a multiple of 128) and for a start on the 64-token
+// grid or off it (a turn's rewrite frontier), so the Gated DeltaNet scan folds the same chunks
+// whatever the chunk size. A segment that starts on the grid stops early where it always did: on
+// the absolute grid.
+void test_prefill_calls_on_segment_grid() {
+    namespace ex       = q36::execution;
+    int off_chunk_grid = 0;
+    int moved          = 0;
+    for (const std::uint32_t start : {0U, 64U, 1000U, 4099U}) {
+        for (const std::uint32_t chunk : {128U, 256U, 512U, 1024U, 2048U}) {
+            for (std::uint32_t end = start + 1; end < start + 3000; ++end) {
+                std::uint32_t at = start;
+                while (at < end) {
+                    const std::uint32_t next = ex::prefill_call_end(chunk, at, end);
+                    if (next != end && (next - start) % 16 != 0) { ++off_chunk_grid; }
+                    if (start % ex::kPrefillGridTokens == 0 && next != end && next != at + chunk &&
+                        next != (end - ex::kPrefillMinTokens) / ex::kPrefillGridTokens *
+                                    ex::kPrefillGridTokens) {
+                        ++moved;
+                    }
+                    at = next;
+                }
+            }
+        }
+    }
+    expect(off_chunk_grid == 0, "a prefill call boundary divides a scan chunk of its segment");
+    expect(moved == 0, "an early stop of a segment on the grid left the absolute grid");
+}
+
 } // namespace
 
 // Shared and long-anchor capture and restore frontiers: only where the prefill decomposition of a
@@ -589,6 +619,7 @@ int main() {
     test_prefix_identity();
     test_rebuild_work_prompt_frontier_boundary();
     test_staged_prefill_unit_end();
+    test_prefill_calls_on_segment_grid();
     test_neutral_prefill_frontier();
     test_neutral_cache_opportunities();
     if (failures != 0) {

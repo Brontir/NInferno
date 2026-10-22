@@ -32,10 +32,9 @@ This page states the rule and its target. The engine does not meet all of it yet
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
 - under `fast`, the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
-  start, so after a call that starts off that grid (a turn's rewrite frontier, a private endpoint
-  restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
-  prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
-  the run it replaces; `exact` runs the scan token by token and is free of this;
+  start, so a prefix restored off the chunk grid of its segment (a private endpoint restore) or a
+  KV-lease re-prefill of decoded tokens gives other bytes than the run it replaces; `exact` runs the
+  scan token by token and is free of this;
 - launch counts stand as constants, the same on every board but not yet fitted on two lab cards
   or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
   decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
