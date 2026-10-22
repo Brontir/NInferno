@@ -235,6 +235,33 @@ class SpecGateTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("RTX 4090 m Q4 short C4 decode", err)
 
+    def test_served_report_wins_over_the_label(self):
+        # A row labelled plain whose server ran a drafter is judged as speculating ...
+        r = self.judge(row(80, [78, 82], served="none",
+                           served_speculation={"config": "dflash2:7", "selection": "profile"}),
+                       row(100, [98, 102], auto=False))
+        self.assertEqual((r["counts"]["fail"], r["cells"][0]["served"]), (1, "dflash2:7"))
+        # ... and one labelled with a drafter whose server ran plain decoding is plain-served.
+        r = self.judge(row(80, [78, 82], served_speculation={"config": "plain"}),
+                       row(100, [98, 102], auto=False))
+        self.assertEqual((r["counts"]["plain_served"], r["counts"]["fail"]), (1, 0))
+
+    def test_default_threshold_is_098(self):
+        r = self.judge(row(97.5, [97, 97.9]), row(100, [99, 101], auto=False))
+        self.assertEqual(r["counts"]["fail"], 1)
+
+    def test_release_blocks_stale_and_unpaired(self):
+        stale = (row(80, [78, 82], date=OLD), row(100, [98, 102], auto=False))
+        code, out, err = run_main(["--since-date", SINCE.isoformat(), "--json"], stale)
+        self.assertEqual((code, json.loads(out)["release_blocked"]), (0, 0))
+        code, out, err = run_main(["--since-date", SINCE.isoformat(), "--json", "--release"],
+                                  stale)
+        self.assertEqual((code, json.loads(out)["release_blocked"]), (1, 1))
+        self.assertIn("RELEASE BLOCKED", err)
+        unpaired = (row(99), row(100, auto=False), row(80, concurrency=4))
+        self.assertEqual(run_main(["--since-date", NEW], unpaired)[0], 0)
+        self.assertEqual(run_main(["--since-date", NEW, "--release"], unpaired)[0], 1)
+
     def test_missing_or_malformed_bench_exits_2(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(spec_gate.main(["--bench", "/nonexistent/bench.jsonl",

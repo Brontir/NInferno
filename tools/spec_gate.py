@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Lab gate: automatic speculation must not be slower than plain decoding.
 
-    python3 tools/spec_gate.py [--bench docs/performance/data/bench.jsonl] [--threshold 0.97]
-                               [--since-commit REV | --since-date ISO] [--losses] [--json]
+    python3 tools/spec_gate.py [--bench docs/performance/data/bench.jsonl] [--threshold 0.98]
+                               [--since-commit REV | --since-date ISO] [--release] [--losses]
+                               [--json]
 
 Every decode row measured with the automatic speculation decision (no `--spec`, or `--spec auto`)
 is paired with its plain twin (`--spec none`): the same engine, card (GPU name, SM and memory in
@@ -16,8 +17,12 @@ same driver, CUDA and power limit); an auto row whose plain rows all differ is l
 build/env", not judged. Of the matching plain rows the newest is the twin. When an auto key
 was measured more than once, the newest row of each side is used.
 
+What the decision served is the server's own report (`served_speculation.config`, which
+tools/bench/perf_matrix.py records from /v1/models: "plain" or the drafter and depth), whatever
+the row's `--spec` label says; a row from before that field falls back to its `spec` label.
+
 A cell FAILS when all of these hold:
-  * the decision speculates (the auto row's served `spec` is not `none`);
+  * the decision speculates (it served a drafter, not plain decoding);
   * auto < threshold x plain;
   * the spreads do not overlap (a row without a spread counts as the single value);
   * the auto row is newer than the decision code: its `commit` (or a `version` that is a commit
@@ -27,8 +32,13 @@ A cell FAILS when all of these hold:
 Losing cells that miss one of these are counted as plain-served, overlapping, stale or stale
 plain. Auto rows without a plain twin, or without one of their build/env, are listed on stderr.
 
-There is no exemption list and nothing is written back. Exit code 1 when a cell fails or nothing
-pairs; 2 on a missing or malformed bench file, a shallow clone or another git error.
+With --release the evidence must be current: a losing cell that is stale or has a stale plain
+twin, and an auto row without a plain twin of its build and environment, block too (re-measure
+them); without it they are reported, as in a lab run.
+
+There is no exemption list and nothing is written back. Exit code 1 when a cell fails (or, with
+--release, is blocked) or nothing pairs; 2 on a missing or malformed bench file, a shallow clone or
+another git error.
 """
 from __future__ import annotations
 
@@ -65,6 +75,10 @@ DECISION_FILES = (
     "src/runtime/engine/plan_ladder.h",
     "src/runtime/engine/kv_capacity.h",                      # the contexts a rung holds
     "src/models/qwen3_5/program/graphs.cpp",                 # the shortage auto answers shallower
+    "src/ops/generic/generic_gemm.cpp",                      # the routes of the verify widths
+    "src/ops/common/small_t_bands.h",                        # small-T bands by board
+    "src/core/measured_boards.h",                            # measured choices carried by distance
+    "routes",                                                # per-class route tables
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -134,6 +148,15 @@ def row_commit(row: dict) -> str | None:
     return commit if is_commit(commit) else None
 
 
+def served_config(row: dict) -> str:
+    """What the row's server ran: "none" for plain decoding, else the drafter and depth. The
+    server's report (served_speculation.config) when the row carries it, else the `spec` label."""
+    config = (row.get("served_speculation") or {}).get("config")
+    if config:
+        return "none" if config == "plain" else str(config)
+    return row.get("spec") or "none"
+
+
 def pair_key(row: dict) -> str:
     key = {k: row.get(k) for k in KEY_FIELDS}
     machine = row.get("machine") or {}
@@ -189,7 +212,7 @@ def cell_name(row: dict) -> str:
                      row.get("metric", ""), *extra])
 
 
-def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> dict:
+def gate(rows, since_date: dt.datetime, threshold: float = 0.98, newer=None) -> dict:
     """Pairs and judges the rows. `newer(row)` may answer from the row's commit (True/False) or
     return None to fall back to the date."""
     stats = {"rows": 0, "prefill_excluded": 0, "explicit_spec": 0, "forced_spec": 0,
@@ -239,13 +262,13 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
         candidates = plains.get(key)
         if not candidates:
             counts["unpaired_auto"] += 1
-            unpaired.append({"cell": cell_name(auto), "served": auto.get("spec"),
+            unpaired.append({"cell": cell_name(auto), "served": served_config(auto),
                              "auto": auto["value"], "auto_date": auto["date"]})
             continue
         same = [p for p in candidates if same_build_env(auto, p)]
         if not same:
             counts["unmatched_build_env"] += 1
-            unmatched.append({"cell": cell_name(auto), "served": auto.get("spec"),
+            unmatched.append({"cell": cell_name(auto), "served": served_config(auto),
                               "auto": auto["value"], "auto_date": auto["date"],
                               "auto_build_env": build_env(auto),
                               "plain_build_env": [build_env(p) for p in candidates]})
@@ -260,7 +283,7 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
             continue
         counts["losses"] += 1
         (alo, ahi), (plo, phi) = interval(auto), interval(plain)
-        if auto.get("spec") in ("none", "", None):
+        if served_config(auto) == "none":
             verdict = "plain_served"
         elif ahi >= plo and phi >= alo:
             verdict = "overlap"
@@ -271,7 +294,7 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
         else:
             verdict = "fail"
         counts[verdict] += 1
-        cells.append({"cell": cell_name(auto), "served": auto.get("spec"),
+        cells.append({"cell": cell_name(auto), "served": served_config(auto),
                       "draft_tokens": auto.get("draft_tokens"), "auto": auto["value"],
                       "plain": plain["value"], "ratio": round(ratio, 3),
                       "auto_spread": [alo, ahi], "plain_spread": [plo, phi],
@@ -340,11 +363,14 @@ def read_rows(path: Path) -> list[dict]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--bench", type=Path, default=DEFAULT_BENCH)
-    ap.add_argument("--threshold", type=float, default=0.97)
+    ap.add_argument("--threshold", type=float, default=0.98)
     group = ap.add_mutually_exclusive_group()
     group.add_argument("--since-commit", help="the decision commit (default: the last commit "
                        "touching DECISION_FILES)")
     group.add_argument("--since-date", help="ISO date instead of a commit (no git needed)")
+    ap.add_argument("--release", action="store_true", help="also block stale losing cells, losing "
+                    "cells with a stale plain twin and auto rows without a plain twin of their "
+                    "build and environment")
     ap.add_argument("--losses", action="store_true", help="list every losing cell, not only fails")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
@@ -384,6 +410,11 @@ def main(argv=None) -> int:
         return 2
     result["since"] = since
     result["threshold"] = a.threshold
+    counts = result["counts"]
+    # A release needs current evidence: what is stale or unpaired says nothing about today's
+    # decision, so it blocks until re-measured.
+    result["release_blocked"] = (counts["stale"] + counts["stale_plain"] + counts["unpaired_auto"]
+                                 + counts["unmatched_build_env"]) if a.release else 0
     if a.json:
         print(json.dumps(result, indent=1))
     else:
@@ -403,7 +434,12 @@ def main(argv=None) -> int:
     if result["counts"]["paired"] == 0:
         print("spec_gate: FAIL: no auto row pairs with a plain row", file=sys.stderr)
         return 1
-    return 1 if result["counts"]["fail"] else 0
+    if result["release_blocked"]:
+        print(f"spec_gate: RELEASE BLOCKED: {result['release_blocked']} cells need fresh rows "
+              f"(stale {counts['stale']}, stale plain {counts['stale_plain']}, unpaired auto "
+              f"{counts['unpaired_auto']}, unmatched build/env {counts['unmatched_build_env']})",
+              file=sys.stderr)
+    return 1 if result["counts"]["fail"] or result["release_blocked"] else 0
 
 
 if __name__ == "__main__":

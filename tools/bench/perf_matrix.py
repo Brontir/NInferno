@@ -71,6 +71,12 @@ class Server:
         meta = model.get("meta") or {}
         self.fingerprint = {key: meta[key] for key in ("decision_fingerprint", "decision_manifest")
                             if key in meta}
+        # The speculation the server runs since startup ("plain" or a drafter and depth, how it
+        # was selected and any fallback), whatever --spec labels the row: tools/spec_gate.py
+        # judges what was served.
+        served = meta.get("speculation") or {}
+        self.served_speculation = {key: served[key] for key in ("config", "selection", "fallback")
+                                   if key in served}
 
     def chat(self, prompt, max_tokens, top_p=None):
         body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
@@ -203,6 +209,8 @@ def main():
         if args.engine != "ninferno":
             common["engine"] = args.engine
         common.update(server.fingerprint)
+        if server.served_speculation:
+            common["served_speculation"] = server.served_speculation
         with args.jsonl.open("a", encoding="utf-8") as f:
             for row in results:
                 f.write(json.dumps({**common, **row}) + "\n")
