@@ -36,6 +36,27 @@ This page states the rule and its target. The engine does not meet all of it yet
   restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
   prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
   the run it replaces; `exact` runs the scan token by token and is free of this;
+- launch counts stand as constants, the same on every board but not yet fitted on two lab cards
+  or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
+  decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
+  tokens), the RMSNorm prefetch bound (170 blocks) and the sparse-MoE prefill grid bound (5440
+  CTAs) on the RTX 5090 and 5080, where an SM-count rule lost on the 5080; the generic R8 rule's
+  IQ3 edge at 96 SMs (`generic_gemm.cpp`, `rules_r8`), an SM-count bound placed between the two
+  measured boards (84 and 170). The literals that were the RTX 5090's 170 SMs and decided a grid
+  (the FP8 TMA split wave, the NVFP4 2048x5376 TMA route) are rules over the device's SM count
+  (`src/ops/common/sm_wave_rules.h`); the NVFP4 crossing is extrapolated from the RTX 5090 and
+  checked on the RTX 5070 Ti only;
+- the Gemma 4 Q8 5376x16384 projection keeps a literal tuned on the RTX 5090 that no device fact
+  explains: the 256-token tile at T a multiple of 1024, on every board
+  (`q8/shapes/n5376_k16384.cu`). Against the 128-token tile at those widths it wins on 60, 108
+  and 170 SMs (RTX 4070 Ti 2-6 %, A100 17-34 % at 2048..4096, RTX 5090 2.6-5.7 %) and loses on
+  70 and 128 (RTX 5070 Ti 4-20 %, RTX 4090 9-30 %), also where both grids fill their waves alike.
+  Whole waves, a wave-cost comparison, L2 per SM and DRAM bytes per SM clock do not order the
+  five boards, and neither fixed tile is conservative (always 128 costs the A100 up to a third,
+  always 256 at those widths the 4090 up to 30 %);
+- choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
+  `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
+  and spread gates): the nearest measured board, not a rule over facts;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;

@@ -1,6 +1,9 @@
 #include "ops/linear/nvfp4/nvfp4_shapes.h"
 #include "ops/linear/nvfp4/nvfp4_launch.cuh"
 
+#include "core/device_class.h"
+#include "ops/common/sm_wave_rules.h"
+
 // Gemma 4 31B projection [2048,5376].
 namespace ninferno::ops::detail {
 namespace {
@@ -28,13 +31,17 @@ Nvfp4Launch select_a16(std::int32_t tokens) {
     throw std::logic_error("nvfp4 A16 chunk exceeds shape capacity");
 }
 
+int sm_count() { return device_class().sms; }
+
 // The TMA grid is only 16 row tiles wide, so it stays under one wave and loses to the 128-token
-// MMA tile until that tile's grid passes 170 CTAs.
+// MMA tile until that tile's grid (16 row tiles by T/128) passes one CTA per SM
+// (sm_rules::grid_passes_wave; on the RTX 5090's 170 SMs: T > 1280).
 Nvfp4A4Route select_a4(std::int32_t tokens) {
     if (tokens <= 128) return nvfp4_a4_mma_route<Geometry, T16R64>();
     if (tokens <= 320) return nvfp4_a4_mma_route<Geometry, T32R128>();
     if (tokens <= 640) return nvfp4_a4_mma_route<Geometry, T64R128>();
-    if (tokens <= 1280) return nvfp4_a4_mma_route<Geometry, T128R128Pipelined>();
+    if (!sm_rules::grid_passes_wave(tokens, sm_count(), 2048 / 128, 128, 1))
+        return nvfp4_a4_mma_route<Geometry, T128R128Pipelined>();
     return nvfp4_a4_tma_route<Nvfp4GeometryId::N2048K5376>();
 }
 

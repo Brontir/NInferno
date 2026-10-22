@@ -10,8 +10,8 @@ using Sliced16 =
     Fp8A16SlicedKMmaSchedule<4, 16, 7, Cache::ca, Cache::cg, Fp8ActivationStage::PaddedZero, 1>;
 using Tma64x128  = Fp8A8TmaMmaSchedule<64, 128, 128, 2, 4, 2, 1>;
 using Tma192x128 = Fp8A8TmaMmaSchedule<192, 128, 128, 3, 4, 2, 1>;
-using MidBulk = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 2, 1>, 170, 4, 8>;
-using Bulk    = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 170, 4, 8>;
+using MidBulk = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 2, 1>, 4, 8>;
+using Bulk    = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 4, 8>;
 
 void launch_a16(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
     const int tokens = x.ne[1];
@@ -52,9 +52,9 @@ void launch_a8(const Tensor& x, const Weight& weight, Tensor& out, Fp8A8Workspac
 bool uses_a8(std::int32_t, std::int32_t max_tokens) { return max_tokens >= 17; }
 
 std::size_t partial_capacity_bytes(std::int32_t max_tokens) {
-    // One wave of partials wherever the dispatch runs a split schedule: whether its last wave
-    // splits depends on the device's SM count (fp8_tma_split_k_plan), not the tuned 170.
-    return max_tokens > 192 ? Bulk::kPartialBytes : 0;
+    // One wave of partials wherever the dispatch runs a split schedule: whether and how its last
+    // wave splits follows the device's SM count (fp8_tma_split_k_plan), and so do the partials.
+    return max_tokens > 192 ? fp8_tma_split_partial_bytes<Bulk>() : 0;
 }
 } // namespace
 

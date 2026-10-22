@@ -90,6 +90,12 @@ ninferno_add_op_test(ninferno_mma_fragments_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mma_fragments.cu"
   LIBRARIES ninferno_ops)
 
+# The SM-count launch rules (ops/common/sm_wave_rules.h): the RTX 5090's decisions unchanged at
+# 170 SMs, the other boards' answers printed and pinned. No GPU.
+ninferno_add_test(ninferno_sm_wave_rules_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sm_wave_rules.cpp"
+  LIBRARIES ninferno_core)
+
 # Per-GPU-class route_as overrides of the shape-owned Linear tables: loader and lookup.
 ninferno_add_op_test(ninferno_shape_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_shape_routes.cpp"

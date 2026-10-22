@@ -17,17 +17,17 @@ struct Fp8ResidualAddEpilogue : LinearResidualAddEpilogue {
 using K6144Tma32x64  = Fp8A8TmaMmaSchedule<32, 64, 128, 1, 2, 3, 2>;
 using K6144Tma64x128 = Fp8A8TmaMmaSchedule<64, 128, 128, 2, 4, 3, 1>;
 using K6144MidBulk =
-    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 3, 1>, 170, 4, 8>;
-using K6144Bulk = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 170, 4, 8>;
+    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 3, 1>, 4, 8>;
+using K6144Bulk = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 4, 8>;
 
 using K17408Tma32x64 = Fp8A8TmaMmaSchedule<32, 64, 128, 1, 2, 3, 2>;
 using K17408Small =
-    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<64, 128, 128, 2, 4, 3, 1>, 170, 4, 8>;
-using K17408Mid = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 3, 1>, 170, 4, 8>;
+    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<64, 128, 128, 2, 4, 3, 1>, 4, 8>;
+using K17408Mid = Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 128, 128, 2, 4, 3, 1>, 4, 8>;
 using K17408Wide =
-    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<192, 128, 128, 3, 4, 2, 1>, 170, 4, 8>;
+    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<192, 128, 128, 3, 4, 2, 1>, 4, 8>;
 using K17408Bulk =
-    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 170, 4, 8>;
+    Fp8A8TmaSplitKSchedule<Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>, 4, 8>;
 
 // `small_t`: the prefill profile's short calls (T <= 128) take only the tiles that sum a column's
 // K whole, in one order (no split-K), so a token's bytes do not depend on the chunk's size.
@@ -72,13 +72,13 @@ void launch_problem(const Tensor& x, const Weight& weight, Tensor& residual,
 
 std::size_t fp8_linear_add_partial_capacity_bytes(std::int32_t k, std::int32_t max_tokens) {
     if (k == 6144) {
-        if (max_tokens > 768) return K6144Bulk::kPartialBytes;
-        return max_tokens > 192 ? K6144MidBulk::kPartialBytes : 0;
+        if (max_tokens > 768) return fp8_tma_split_partial_bytes<K6144Bulk>();
+        return max_tokens > 192 ? fp8_tma_split_partial_bytes<K6144MidBulk>() : 0;
     }
-    if (max_tokens > 384) return K17408Bulk::kPartialBytes;
-    if (max_tokens > 256) return K17408Wide::kPartialBytes;
-    if (max_tokens > 128) return K17408Mid::kPartialBytes;
-    return max_tokens > 64 ? K17408Small::kPartialBytes : 0;
+    if (max_tokens > 384) return fp8_tma_split_partial_bytes<K17408Bulk>();
+    if (max_tokens > 256) return fp8_tma_split_partial_bytes<K17408Wide>();
+    if (max_tokens > 128) return fp8_tma_split_partial_bytes<K17408Mid>();
+    return max_tokens > 64 ? fp8_tma_split_partial_bytes<K17408Small>() : 0;
 }
 
 void fp8_linear_add_a8_launch(const Tensor& x, const Weight& weight, Tensor& residual,

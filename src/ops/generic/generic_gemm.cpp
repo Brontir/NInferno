@@ -1153,9 +1153,10 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.k >= 8192 || (iq2 && p.n >= 12288)) return r8_index(8, 2);
     if (p.epilogue != Epilogue::SwiGlu && p.k >= 5120 && device_class().major == 12) {
         if (iq2 && p.n >= 5120) return r8_index(8, 2);
-        // On 170 SMs (the 5090) IQ3 keeps four single-row warps: 10240x5120 IQ3_S w4r1
-        // 18.4 us against w8r2 20.3, IQ3_XXS 16.0 against w4r2 18.0; IQ2 still gains (IQ2_S
-        // 10240x5120 w4r2 29.9 -> w8r2 20.1 us).
+        // An SM-count rule, its edge between the measured boards: at 96 SMs or fewer (the
+        // 5080's 84) IQ3 takes the wider warps; at 170 (the 5090) it keeps four single-row
+        // warps: 10240x5120 IQ3_S w4r1 18.4 us against w8r2 20.3, IQ3_XXS 16.0 against w4r2
+        // 18.0; IQ2 still gains (IQ2_S 10240x5120 w4r2 29.9 -> w8r2 20.1 us).
         if (device_class().sms <= 96) {
             if (p.qtype == QType::GGML_IQ3_S && p.n >= 5120) return r8_index(8, 2);
             if (p.qtype == QType::GGML_IQ3_XXS && p.n >= 5120) return r8_index(4, 2);

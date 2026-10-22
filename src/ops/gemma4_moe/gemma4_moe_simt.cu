@@ -251,10 +251,10 @@ __device__ __forceinline__ void block_select_top8(const RouterPartials& router, 
     __syncthreads();
 }
 
-// Three blocks an SM are 510 slots for the 352 blocks: the whole grid in one wave, which a variant
-// at 84 registers (two blocks an SM after allocation granularity) would lose.
-// NINFERNO-SPECIAL(chip:gb202:170sm): one wave holds the grid on 170 SMs (510 slots); on 84 SMs
-// (252 slots) it takes two. Correct anywhere; the launch bound was chosen on the 5090.
+// Three blocks an SM: the 352 blocks take ceil(352 / (3 x SMs)) waves, never more than the
+// ceil(352 / (2 x SMs)) of a variant at 84 registers (two blocks an SM after allocation
+// granularity), on any SM count: one wave on 170 SMs (510 slots, where two blocks an SM would
+// take two), two on 84 (252 slots, three at two an SM).
 template <bool RankSelect, bool LoadsFirst>
 __global__ __launch_bounds__(256, 3) void decode_gate_up_kernel(
     const __nv_bfloat16* __restrict__ x, RouterPartials router, float eps,

@@ -13,11 +13,12 @@ constexpr int kLargeBlock               = 256;
 constexpr int kFullChunkBlock           = 192;
 constexpr int kSmallBlock               = 128;
 constexpr int kDefaultChunkTargetTokens = 1024;
-// RTX 5090 has 170 SMs and admits six of these 256-thread CTAs per SM.
-// NINFERNO-SPECIAL(chip:gb202:170sm): a one-wave argument for 170 SMs that does not carry over by
-// the SM count: on an RTX 5080 (84 SMs, one wave = 504) the 256-thread block measured equal to or
-// faster than the 192-thread one through 1020 tokens, so the literal stays. Retune per GPU class.
-constexpr int kLargeBlockWaveCapacity = 1020;
+// Text calls of at most this many tokens take the 256-thread block: a token count fitted on two
+// boards, not a wave of either. It began as the RTX 5090's wave (170 SMs x six of these CTAs), but
+// the crossing does not follow the SM count: on an RTX 5080 (84 SMs, a wave of 504) the 256-thread
+// block measured equal to or faster than the 192-thread one through 1020 tokens as well, where a
+// one-wave bound would have cut it at 504. Every board takes the same bound.
+constexpr int kLargeBlockMaxTokens = 1020;
 
 template <RopeKernelMode Mode>
 inline constexpr bool kTextMode =
@@ -51,7 +52,7 @@ void launch_fixed(const Tensor& positions, Tensor* q, Tensor* k, DeviceExecution
     if constexpr (kTextMode<Mode>) {
         if (tokens <= 6) {
             block = (QHeads + KHeads) * 32;
-        } else if (tokens <= kLargeBlockWaveCapacity) {
+        } else if (tokens <= kLargeBlockMaxTokens) {
             block = kLargeBlock;
         } else if (tokens <= kDefaultChunkTargetTokens) {
             block = kFullChunkBlock;

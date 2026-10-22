@@ -186,7 +186,7 @@ struct Fp8A8TmaMmaSchedule
     static constexpr int kStorageBytes    = Base::kSharedBytes;
     static constexpr int kBarrierBytes    = Stages * 2 * sizeof(std::uint64_t);
     static constexpr int kSharedBytes     = kStorageBytes + kBarrierBytes;
-    static constexpr int kSplitWaveCtas   = 0;
+    static constexpr bool kSplitsFinalWave = false;
     static constexpr int kReductionBlocks = 1;
     static_assert(BlockK == 64 || BlockK == 128);
     static_assert(BlockTokens <= 256 && BlockRows <= 256);
@@ -196,17 +196,17 @@ struct Fp8A8TmaMmaSchedule
 
 // Split only an underfilled final wave. Earlier CTAs keep the full K loop and
 // write their final outputs directly. The wave is the device's own resident grid, one CTA per SM
-// (fp8_tma_split_k_plan); WaveCtas is the grid the schedule was tuned on (the RTX 5090's 170 SMs)
-// and bounds it: the caller's partials hold that many split CTAs, so a card with more SMs splits
-// as a 170-SM one would.
-template <class TmaSchedule, int WaveCtas, int MaxParts, int ReductionBlocks>
+// (fp8_tma_split_k_plan, sm_rules::fp8_split_tail), and the caller's partials hold one wave of
+// split CTAs sized from the same SM count (fp8_tma_split_partial_bytes).
+template <class TmaSchedule, int MaxParts, int ReductionBlocks>
 struct Fp8A8TmaSplitKSchedule : TmaSchedule {
-    static constexpr int kSplitWaveCtas   = WaveCtas;
-    static constexpr int kMaxParts        = MaxParts;
-    static constexpr int kReductionBlocks = ReductionBlocks;
-    static constexpr std::size_t kPartialBytes =
-        std::size_t(WaveCtas) * TmaSchedule::kBlockTokens * TmaSchedule::kBlockRows * sizeof(float);
-    static_assert(WaveCtas > 0 && MaxParts >= 2 && ReductionBlocks > 0);
+    static constexpr bool kSplitsFinalWave = true;
+    static constexpr int kMaxParts         = MaxParts;
+    static constexpr int kReductionBlocks  = ReductionBlocks;
+    // One split CTA's FP32 partial tile.
+    static constexpr std::size_t kPartialBytesPerCta =
+        std::size_t(TmaSchedule::kBlockTokens) * TmaSchedule::kBlockRows * sizeof(float);
+    static_assert(MaxParts >= 2 && ReductionBlocks > 0);
     static_assert((TmaSchedule::kBlockTokens * TmaSchedule::kBlockRows) % (ReductionBlocks * 2) ==
                   0);
 };

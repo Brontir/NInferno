@@ -32,8 +32,8 @@ constexpr int kDflashRotaryDim        = 128;
 constexpr int kDflashQHeads           = 32;
 constexpr int kDflashKHeads           = 8;
 constexpr int kTextChunkMaxTokens     = 1024;
-// NINFERNO-SPECIAL(chip:gb202:170sm): mirrors src/ops/launcher/rope.cu.
-constexpr int kLargeBlockWaveCapacity = 1020;
+// Mirrors src/ops/launcher/rope.cu's kLargeBlockMaxTokens.
+constexpr int kLargeBlockMaxTokens    = 1020;
 constexpr float kTextTheta            = 1.0e7F;
 constexpr int kVisionHeadDim          = 72;
 constexpr int kVisionHeads            = 16;
@@ -213,7 +213,7 @@ __global__ void rope_split_payload_control_kernel(const std::int32_t* positions,
 template <int QHeads, int KHeads>
 int production_text_block(int tokens, DeviceExecutionView execution) {
     (void)execution;
-    const std::int64_t large_block_capacity = kLargeBlockWaveCapacity;
+    const std::int64_t large_block_capacity = kLargeBlockMaxTokens;
     int block                               = 128;
     if (tokens <= 6) {
         block = (QHeads + KHeads) * 32;
