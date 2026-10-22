@@ -2854,25 +2854,25 @@ int test_served_class_depths() {
     }
 
     // The registry lookup a server makes: sampling and corpus are the measurement's, the lowest
-    // known factor over them stands. With a source identity for the UD-IQ3_XXS target (the
-    // shipped entries miss parts of it, so a server gets unknown today).
+    // known factor over them stands. The shipped UD-IQ3_XXS entries carry the conversion's real
+    // source identity (#62): a server running that artifact knows Mid and Long; another
+    // artifact's identity knows nothing.
     {
         const auto& shipped = Registry::builtin().context_classes();
         AcceptanceKey key;
         key.model          = "qwen3.8-27b";
-        key.target         = std::string(64, 'c');
+        key.target         = "c7e691ccda50e9461e45f28e98bfa57d956c84900eecbc58941f683435216bb0";
         key.drafter        = "dflash2";
         key.drafter_source = "component:dflash2";
         key.byte_class     = served_byte_class("fast-a8", "int8-group64");
         key.depth          = 7;
         key.lanes          = 1;
-        const auto today   = served_factor(shipped, key, ContextClass::Long);
-        failures += check(!today.value,
-                          "the shipped registry: unknown for a server (" + today.reason + ")");
-        auto known_registry = shipped;
-        for (auto& entry : known_registry.entries) {
-            if (!entry.target_missing.empty()) { entry.key.target = key.target; }
-        }
+        auto other_key     = key;
+        other_key.target   = std::string(64, 'c');
+        const auto other   = served_factor(shipped, other_key, ContextClass::Long);
+        failures += check(!other.value && other.reason.starts_with("target differs"),
+                          "another artifact: unknown for a server (" + other.reason + ")");
+        const auto& known_registry = shipped;
         const auto mid  = served_factor(known_registry, key, ContextClass::Mid);
         const auto lng  = served_factor(known_registry, key, ContextClass::Long);
         const auto huge = served_factor(known_registry, key, ContextClass::Huge);

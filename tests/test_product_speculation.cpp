@@ -599,12 +599,15 @@ int main() {
                                               .drafter_source   = "component:dflash2",
                                               .tokens_per_round = 4.3};
         const ninferno::product::ServedBytes bytes{.activations = "fast-a8", .kv = "int8-group64"};
-        const std::string target(64, 'c');
+        // The UD-IQ3_XXS conversion's source identity, as the shipped entries key it (#62).
+        const std::string target =
+            "c7e691ccda50e9461e45f28e98bfa57d956c84900eecbc58941f683435216bb0";
+        const std::string other(64, 'c');
         const auto& shipped = ninferno::spec::Registry::builtin().context_classes();
         constexpr auto none = SpeculativeOptions::kNoClassBound;
 
-        // Today's registry (the target's identity is recorded only in part): no bound anywhere.
-        ninferno::product::apply_context_classes(served, target, bytes, shipped);
+        // Another artifact (another source identity): no bound anywhere.
+        ninferno::product::apply_context_classes(served, other, bytes, shipped);
         failures +=
             check(served.engine.class_depth == std::array<std::uint32_t, 4>{none, none, none, none},
                   "unknown factors: no class bound");
@@ -621,11 +624,8 @@ int main() {
         failures += check(served.classes[2].reason.find("no source identity") != std::string::npos,
                           "an artifact without a source identity: " + served.classes[2].reason);
 
-        // The same entries with the target's identity known: Long goes down, Short does not.
-        auto known = shipped;
-        for (auto& entry : known.entries) {
-            if (!entry.target_missing.empty()) { entry.key.target = target; }
-        }
+        // The shipped entries for this artifact: Long goes down, Short does not.
+        const auto& known = shipped;
         ninferno::product::apply_context_classes(served, target, bytes, known);
         const auto& bound = served.engine.class_depth;
         failures +=
