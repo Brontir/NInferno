@@ -69,6 +69,8 @@ struct Problem {
     std::int32_t value_heads;
     std::int32_t tokens;
     std::int32_t batch = 1;
+    // Bytes of one recurrent-state element: FP32, or 2 for a --state-dtype bf16 or f16 prefill.
+    std::size_t state_element = sizeof(float);
 };
 
 struct GraphMeasurement {
@@ -423,7 +425,7 @@ double running_logical_bytes(const Problem& problem) {
         static_cast<double>(problem.value_heads) * tokens * batch * sizeof(float);
     const double state_bytes = static_cast<double>(gated_delta_net_detail::kStateDim) *
                                gated_delta_net_detail::kStateDim * problem.value_heads * batch *
-                               sizeof(float);
+                               problem.state_element;
     return 2.0 * qk_bytes + 2.0 * value_bytes + 2.0 * gate_bytes + 2.0 * state_bytes;
 }
 
@@ -460,7 +462,8 @@ double gate_tensor_bytes(const Problem& problem) {
 
 double state_tensor_bytes(const Problem& problem) {
     return static_cast<double>(gated_delta_net_detail::kStateDim) *
-           gated_delta_net_detail::kStateDim * problem.value_heads * problem.batch * sizeof(float);
+           gated_delta_net_detail::kStateDim * problem.value_heads * problem.batch *
+           problem.state_element;
 }
 
 TrafficBytes prepare_traffic(const Problem& p, std::size_t workspace) {
@@ -576,7 +579,8 @@ std::vector<BenchRow> run_prefill(const Options& options, std::int32_t tokens,
     const bool force_recurrent = options.mode == Mode::RecurrentOnly;
     const bool chunked =
         force_chunked || (!force_recurrent && tokens >= chunked_detail::kMinTokens);
-    const Problem problem{options.qk_heads, options.value_heads, tokens};
+    const Problem problem{options.qk_heads, options.value_heads, tokens, 1,
+                          state_element_bytes(options.state_dtype)};
     Operands operands(problem, !normalize);
     const std::size_t state_elements = std::size_t(state_dim) * state_dim * problem.value_heads;
     DeviceBuffer state_in            = make_state(state_elements, options.state_dtype);
