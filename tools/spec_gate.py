@@ -52,6 +52,8 @@ DECISION_FILES = (
     "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
     "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
     "src/models/gemma4/session.h",                           # Gemma 4 depth adaptation
+    "src/models/dense/session.h",                            # dense draft_tokens / min_draft
+    "src/models/dense/program_family.cpp",                   # dense drafter window refusals
     "src/serve/serve_options.cpp",                           # no --spec -> --spec auto
     "src/runtime/engine/model_instance.cpp",                 # capacity refusal of a drafter's plan
     "src/runtime/engine/plan_ladder.cpp",                    # the memory plan rungs it picks from
@@ -133,7 +135,10 @@ def pair_key(row: dict) -> str:
                    None if vram is None else round(float(vram))]
     key["engine"] = row.get("engine") or "ninferno"
     key["activations"] = row.get("activations") or flag_value(row, "--activations") or "fast"
-    key["flags"] = parse_flags(row.get("flags"))[1]
+    # --activations is folded into key["activations"] above (an explicit `--activations fast` is
+    # the default; a field and a flag naming the same mode are the same cell).
+    key["flags"] = tuple(w for w in parse_flags(row.get("flags"))[1]
+                         if w.split("=", 1)[0] != "--activations")
     return json.dumps(key, sort_keys=True, default=str)
 
 
