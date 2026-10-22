@@ -1540,6 +1540,10 @@ int test_source_identity() {
     d.provenance  = Json::parse(R"({"converter": "ninferno-v3", "recipe": "qwen3_5_bf16",
         "quant": "UD-IQ3_XXS", "drafter_quantization": "q8",
         "sources": {"base": {"path": "/somewhere/else"}},
+        "content_sha256": {"text/layer.0/q": ")" +
+                                std::string(64, 'a') + R"(",
+                           "text/tokenizer.json": ")" +
+                                std::string(64, 'b') + R"("},
         "inputs": [{"role": "base", "files": [{"repo": "unsloth/Qwen3.8-27B-GGUF",
             "commit": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
             "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf", "sha256": ")" +
@@ -1575,6 +1579,10 @@ int test_source_identity() {
          [](art::Directory& x) { std::get<art::TensorObject>(x.objects[0]).format = "bf16"; }},
         {"a tensor's shape",
          [](art::Directory& x) { std::get<art::TensorObject>(x.objects[0]).shape = {4, 8}; }},
+        {"an object's content",
+         [](art::Directory& x) {
+             x.provenance["content_sha256"]["text/layer.0/q"] = std::string(64, 'c');
+         }},
         {"a resource's size",
          [](art::Directory& x) { std::get<art::ResourceObject>(x.objects[1]).bytes = 101; }},
     };
@@ -1588,6 +1596,26 @@ int test_source_identity() {
     old.provenance.erase("inputs");
     failures += check(!art::source_identity(old),
                       "an artifact converted before inputs were recorded has no identity");
+    auto undigested = d;
+    undigested.provenance.erase("content_sha256");
+    failures += check(!art::source_identity(undigested),
+                      "an artifact without content digests has no identity");
+    auto partial = d;
+    partial.provenance["content_sha256"].erase("text/tokenizer.json");
+    failures += check(!art::source_identity(partial), "a digest missing: no identity");
+    auto unsealed                                           = d;
+    unsealed.provenance["content_sha256"]["text/layer.0/q"] = std::string(64, '0');
+    failures += check(!art::source_identity(unsealed), "a placeholder digest: no identity");
+    // The inputs by role: the order the converter opened them in does not enter.
+    auto two = d;
+    two.provenance["inputs"].push_back(Json{
+        {"role", "dflash2"}, {"files", Json::array({Json{{"sha256", std::string(64, 'd')}}})}});
+    auto swapped = two;
+    swapped.provenance["inputs"] =
+        Json::array({two.provenance["inputs"][1], two.provenance["inputs"][0]});
+    failures += check(art::source_identity(two) && art::source_identity(two) != id &&
+                          art::source_identity(two) == art::source_identity(swapped),
+                      "inputs in another order: the same identity; another input: another");
     failures += check(art::tensor_index_sha256(d) == art::tensor_index_sha256(moved),
                       "the tensor index is in id order, without offsets");
 
@@ -1597,6 +1625,18 @@ int test_source_identity() {
                           hub->commit == "4ca720788d1e01f1bff70c033e0d0028fd02e502" &&
                           hub->name == "sub/m.gguf",
                       "a hub snapshot file: repository, commit and path in it");
+    const auto windows = art::hub_file("C:\\Users\\me\\.cache\\huggingface\\hub\\"
+                                       "models--unsloth--Qwen3.8-27B-GGUF\\snapshots\\"
+                                       "4ca720788d1e01f1bff70c033e0d0028fd02e502\\sub\\m.gguf");
+    failures += check(windows && hub && windows->repo == hub->repo &&
+                          windows->commit == hub->commit && windows->name == hub->name,
+                      "a Windows hub path reads as the Linux one does");
+    failures +=
+        check(art::input_file(
+                  "C:\\hub\\models--a--b\\snapshots\\" + std::string(40, 'f') + "\\x.gguf", gguf) ==
+                  art::input_file("/hub/models--a--b/snapshots/" + std::string(40, 'f') + "/x.gguf",
+                                  gguf),
+              "a Windows and a Linux path of one hub file: one input");
     failures += check(!art::hub_file("/data/models/m.gguf") &&
                           !art::hub_file("/hub/models--a--b/snapshots/main/m.gguf"),
                       "a local file or a snapshot that is no commit: no hub provenance");

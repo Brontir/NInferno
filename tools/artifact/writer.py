@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 import os
 import tempfile
@@ -119,10 +120,19 @@ class ArtifactWriter:
         metadata: dict | None = None,
         provenance: dict | None = None,
         max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
+        content_digests: bool = False,
     ) -> None:
         self.path = Path(path)
         self.objects = plan_objects(specs)
         self.by_id = {obj.id: obj for obj in self.objects}
+        # The content digests (src/artifact/source_identity.h, as src/convert/writer.h writes
+        # them): placeholders of their length in provenance["content_sha256"], replaced at
+        # finish() by the SHA-256 of each object's bytes, read back before publishing.
+        self._content_digests = content_digests
+        if content_digests:
+            if provenance is None:
+                provenance = {}
+            provenance["content_sha256"] = {obj.id: "0" * 64 for obj in self.objects}
         description = {
             "components": components,
             "objects": [obj.to_json() for obj in self.objects],
@@ -131,12 +141,15 @@ class ArtifactWriter:
             "metadata": {} if metadata is None else metadata,
             "provenance": {} if provenance is None else provenance,
         }
+        self._description = description
+        self._max_file_bytes = max_file_bytes
         self.directory, encoded, self.payload_offset = layout_directory(
             self.path.name,
             description,
             self.objects[-1].offset + self.objects[-1].bytes,
             max_file_bytes=max_file_bytes,
         )
+        self._encoded_length = len(encoded)
         self.artifact_id = uuid4().bytes
         self._coverage = {obj.id: _Coverage() for obj in self.objects}
         self._prefixes = [0]
@@ -237,6 +250,35 @@ class ArtifactWriter:
             offset += count
             length -= count
 
+    def _read_range(self, offset: int, length: int):
+        while length:
+            index = bisect_right(self._prefixes, offset) - 1
+            count = min(length, self._prefixes[index + 1] - offset, IO_CHUNK_BYTES)
+            start = self.payload_offset if index == 0 else PAYLOAD_ALIGNMENT
+            data = os.pread(self._fds[index], count, start + offset - self._prefixes[index])
+            if len(data) != count:
+                raise ArtifactError(f"short read back at payload offset {offset}")
+            yield data
+            offset += count
+            length -= count
+
+    def _seal(self) -> None:
+        digests = self._description["provenance"]["content_sha256"]
+        for obj in self.objects:
+            digest = hashlib.sha256()
+            for data in self._read_range(obj.offset, obj.bytes):
+                digest.update(data)
+            digests[obj.id] = digest.hexdigest()
+        _, encoded, _ = layout_directory(
+            self.path.name,
+            self._description,
+            self.objects[-1].offset + self.objects[-1].bytes,
+            max_file_bytes=self._max_file_bytes,
+        )
+        if len(encoded) != self._encoded_length:
+            raise ArtifactError("the sealed directory changed its length")
+        self._write_file(self._fds[0], HEADER.size, encoded)
+
     def write_object(self, object_id: str, chunks: bytes | Iterable[bytes]) -> None:
         if isinstance(chunks, (bytes, bytearray, memoryview)):
             chunks = (chunks,)
@@ -261,6 +303,8 @@ class ArtifactWriter:
                     raise ArtifactError(
                         f"file {index}: output length does not match directory"
                     )
+            if self._content_digests:
+                self._seal()
             self._writeback.flush()
             while self._fds:
                 os.close(self._fds.pop())

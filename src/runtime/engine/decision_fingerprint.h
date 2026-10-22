@@ -108,11 +108,12 @@ struct HostFacts {
 [[nodiscard]] DecisionSection build_of();
 
 // The options as asked (a copy taken before normalize_engine_options), with the artifact's source
-// identity (LoadSummary::source_identity: 64 hex digits, "none" for an artifact converted before
-// the converter recorded its inputs), its prefill signature (LoadSummary::prefill_signature) and a
-// separate drafter's source identity (empty: none). Paths, the device ordinal, queue limits, media
-// budgets, observers and SpeculativeOptions::decision_sources do not enter (the drafter enters by
-// its identity, the sources in their own section): a maintainer option naming a file or directory
+// identity (LoadSummary::source_identity: 64 hex digits, "none:<artifact id>" for an artifact
+// without one, so two such artifacts do not collide), its prefill signature
+// (LoadSummary::prefill_signature) and a separate drafter's source identity (empty: none). Paths,
+// the device ordinal, queue limits, media budgets, observers and
+// SpeculativeOptions::decision_sources do not enter (the drafter enters by its identity, the
+// sources in their own section): a maintainer option naming a file or directory
 // (--route-table, --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content
 // in sources.
 [[nodiscard]] DecisionSection options_of(const EngineOptions& requested,

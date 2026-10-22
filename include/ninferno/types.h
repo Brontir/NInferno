@@ -1812,8 +1812,9 @@ struct LoadSummary {
     // conversion, so it names the file (observed), not what it computes.
     std::string artifact_id;
     // The artifact's source identity (artifact/source_identity.h, 64 lowercase hex digits: what it
-    // was converted from and how), the key decisions and constants use; "none" for an artifact
-    // converted before the converter recorded its inputs.
+    // was converted from and how), the key decisions and constants use; "none:<artifact id>" for
+    // an artifact without one (converted before the converter recorded its inputs and digests),
+    // so two such artifacts still fingerprint apart while every constant reads unknown for them.
     std::string source_identity;
 };
 

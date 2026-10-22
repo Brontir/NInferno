@@ -16,8 +16,8 @@ namespace ninferno::serve {
 namespace {
 
 // The artifact's source identity (artifact/source_identity.h), as the Engine computes it at
-// startup from the same directory: "none" for an artifact converted before its inputs were
-// recorded.
+// startup from the same directory: "none" for an artifact converted before its inputs and content
+// digests were recorded (the Engine then keys it as "none:<artifact id>").
 void log_source_identity(const std::function<void(const std::string&)>& log,
                          const std::string& artifact) {
     if (!log) { return; }

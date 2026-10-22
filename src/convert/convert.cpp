@@ -1750,8 +1750,25 @@ ConvertResult convert(const ConvertOptions& options) {
     if (!vocabulary.empty()) { provenance["vocabulary"] = vocabulary; }
     provenance["sources"]   = sources.provenance();
     // The files read, by content, for the source identity (artifact/source_identity.h); the Python
-    // converter writes the same (tools/convert/__main__.py source_inputs).
-    provenance["inputs"] = source_inputs(sources, options);
+    // converter writes the same (tools/convert/__main__.py source_inputs). A source-consuming
+    // conversion keeps them beside its journal: a resumed run reads them there, never hashing a
+    // file it has punched.
+    {
+        const auto out         = py_path_str(options.out.string());
+        const auto inputs_path = std::filesystem::path(out + ".journal.inputs");
+        std::error_code ec;
+        if (options.consume_source && std::filesystem::exists(out + ".journal", ec) &&
+            std::filesystem::exists(inputs_path, ec)) {
+            std::ifstream stream(inputs_path);
+            provenance["inputs"] = OJson::parse(stream);
+            log("source inputs: read from " + inputs_path.string() + " (resumed)");
+        } else {
+            provenance["inputs"] = source_inputs(sources, options);
+            if (options.consume_source) {
+                write_report(inputs_path.string(), provenance["inputs"]);
+            }
+        }
+    }
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
     // What the source identity hashes (artifact/source_identity.h): a GGUF's quantization label.
     if (base.gguf() != nullptr && base.shard_count() > 0) {
@@ -1759,6 +1776,9 @@ ConvertResult convert(const ConvertOptions& options) {
         if (!quant.empty()) { provenance["quant"] = quant; }
     }
     if (options.proposal) { provenance["ranking"] = ranking_text; }
+    // Choices that change the bytes without changing a shape (the content digests cover them too).
+    if (options.round_tiny_scales) { provenance["round_tiny_scales"] = true; }
+    if (options.maintainer_quantize) { provenance["maintainer_quantize"] = true; }
     if (const auto published = published_activation_summary(sources, model, recipe)) {
         provenance["published_activations"] = *published;
         std::string widths;
@@ -1948,6 +1968,9 @@ ConvertResult convert(const ConvertOptions& options) {
     description["uses"]       = plan.uses;
     description["metadata"]   = metadata;
     description["provenance"] = provenance;
+    // The content digests (artifact/source_identity.h): laid out as placeholders of their length,
+    // computed once every byte is written and sealed into the directory before it is published.
+    description["provenance"]["content_sha256"] = content_digest_placeholders(plan.objects);
     auto layout = layout_artifact(options.out.filename().string(), py_dumps_compact(description),
                                   plan.payload_bytes, options.max_file_bytes);
 
@@ -2077,8 +2100,20 @@ ConvertResult convert(const ConvertOptions& options) {
     }
     result.write_seconds = seconds_since(writing);
     const auto finishing = Clock::now();
-    writer.finish();
+    OJson digests;
+    writer.finish([&] {
+        const auto hashing = Clock::now();
+        digests            = content_digests(writer, plan.objects, options.threads);
+        log("content digests: " + std::to_string(plan.objects.size()) + " objects, " +
+            format_gib(writer.payload_bytes()) + " in " +
+            std::to_string(seconds_since(hashing)).substr(0, 5) + " s");
+        description["provenance"]["content_sha256"] = digests;
+        return layout_artifact(options.out.filename().string(), py_dumps_compact(description),
+                               plan.payload_bytes, options.max_file_bytes)
+            .directory;
+    });
     sync_directory_of(options.out);
+    report["provenance"]["content_sha256"] = digests;
     if (!options.keep_source_cache) {
         for (const auto* store : stores) { store->release_all(); }
     }
@@ -2108,6 +2143,8 @@ ConvertResult convert(const ConvertOptions& options) {
         }
         sync_directory_of(base.shard_path(0));
         journal->remove();
+        std::error_code ignored;
+        std::filesystem::remove(output + ".journal.inputs", ignored);
     }
 
     result.seconds = seconds_since(begin);

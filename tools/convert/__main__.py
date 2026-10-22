@@ -109,7 +109,13 @@ def _input_file(file: Path, sha256: str) -> dict:
     """A hub snapshot file (<hub>/models--org--name/snapshots/<commit>/<path>) by repository,
     commit, path and content; any other by its content alone (keys sorted, as the native
     converter writes them)."""
-    parts = Path(os.path.normpath(file)).parts
+    parts = []
+    for part in str(file).replace("\\", "/").split("/"):
+        if part == "..":
+            if parts:
+                parts.pop()
+        elif part and part != ".":
+            parts.append(part)
     for i in range(len(parts) - 3):
         if (parts[i].startswith("models--") and parts[i + 1] == "snapshots"
                 and re.fullmatch(r"[0-9a-f]{40}", parts[i + 2])):
@@ -135,7 +141,7 @@ def source_inputs(sources, resources) -> list[dict]:
     """The provenance's "inputs" (src/convert/convert.cpp source_inputs): every opened checkpoint
     by its weight files (sorted by path) and side files, then every --resource."""
     out = []
-    for role, source in sources.opened().items():
+    for role, source in sources.opened().items():  # base first, then in opening order
         files = sorted(set(source.weight_map.values()), key=lambda f: Path(f).as_posix())
         out.append(_input_of(role, [Path(f) for f in files], source.root))
     for role, path in resources.items():
@@ -277,6 +283,12 @@ def main(argv=None):
         }
         if args.override:
             provenance["override"] = args.override
+            # Its code by content, as the source identity's choices take it.
+            provenance["override_sha256"] = _content_sha256(
+                Path(args.override.rpartition(":")[0] or args.override).resolve())
+        if args.recipe not in RECIPES:
+            provenance["recipe_sha256"] = _content_sha256(
+                Path(args.recipe.rpartition(":")[0] or args.recipe).resolve())
         if args.proposal:
             provenance["ranking"] = str(args.ranking)
         published = published_activation_summary(model, recipe)

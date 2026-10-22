@@ -12,7 +12,7 @@
 //
 //   {"schema": "ninferno-source/1",
 //    "inputs": the provenance's "inputs" (written by the converter): one entry per checkpoint and
-//              resource the conversion read, in the order it opened them,
+//              resource the conversion read, sorted by role,
 //              {"role": "base" | a --source name | "resource:<role>",
 //               "files": [{"repo": "org/name", "commit": 40 hex, "name": its path in the
 //                          repository, "sha256": 64 hex} for a Hugging Face file,
@@ -22,12 +22,22 @@
 //    "converter": the provenance's "converter" (the converter format version, "ninferno-v3"),
 //    "recipe": the provenance's "recipe",
 //    "choices": the provenance's other byte-changing choices that are present
-//               (drafter_quantization, vocabulary, gguf_mapper, ranking),
-//    "tensor_index": tensor_index_sha256 of the directory}
+//               (drafter_quantization, vocabulary, gguf_mapper, ranking, round_tiny_scales,
+//               maintainer_quantize, and the Python converter's override and recipe files by
+//               content: override, override_sha256, recipe_sha256),
+//    "tensor_index": tensor_index_sha256 of the directory, which carries every object's content
+//                    digest}
 //
-// An artifact converted before the converter recorded its inputs has no source identity
-// (nullopt): what it was converted from cannot be proven, and a constant keyed by an identity
-// reads as unknown for it.
+// The content digests are the SHA-256 of each object's payload bytes, which the converter
+// computes once every byte is written and seals into the directory before it publishes the
+// artifact (provenance "content_sha256": {object id: 64 hex}). So the identity changes exactly
+// when the bytes do (a quantizer or rounding fix that keeps every shape moves it; a byte-identical
+// reconversion, by either converter, keeps it), and reading it never hashes the weights.
+//
+// An artifact converted before the converter recorded its inputs and digests has no source
+// identity (nullopt): what it was converted from cannot be proven, and a constant keyed by an
+// identity reads as unknown for it. Neither has one whose digests do not cover every object (a
+// relayout drops them: it moves the bytes).
 
 #include "artifact/schema.h"
 
@@ -41,10 +51,11 @@ namespace ninferno::artifact {
 inline constexpr std::string_view kSourceIdentitySchema = "ninferno-source/1";
 
 // The SHA-256 (hex) of the directory's object index: one line per object in id order,
-// "tensor\t<id>\t<format>\t<layout>\t<shape, comma-joined>\t<bytes>\t<divisors>\n" or
-// "resource\t<id>\t<encoding>\t<bytes>\n". Offsets do not enter (the file split moves them).
-// The artifact stores no per-object content hashes, so contents enter through the inputs.
-[[nodiscard]] std::string tensor_index_sha256(const Directory& directory);
+// "tensor\t<id>\t<format>\t<layout>\t<shape, comma-joined>\t<bytes>\t<divisors>\t<sha256>\n" or
+// "resource\t<id>\t<encoding>\t<bytes>\t<sha256>\n", the sha256 its content digest from the
+// provenance's "content_sha256" (nullopt when one is missing or a placeholder of zeros). Offsets
+// do not enter (the file split moves them).
+[[nodiscard]] std::optional<std::string> tensor_index_sha256(const Directory& directory);
 
 // The record the identity hashes; nullopt when the provenance records no "inputs" (or no
 // converter or recipe).
@@ -59,7 +70,8 @@ inline constexpr std::string_view kSourceIdentitySchema = "ninferno-source/1";
 
 // A file in a Hugging Face hub cache, <hub>/models--<org>--<name>/snapshots/<commit>/<path>:
 // its repository, commit and path in the repository; nullopt for any other path. The path is read
-// as written (a snapshot's files are symbolic links into blobs/; do not resolve it first).
+// as written (a snapshot's files are symbolic links into blobs/; do not resolve it first), with
+// '\\' read as '/' on every platform, so a Windows path gives what the same Linux path does.
 struct HubFile {
     std::string repo, commit, name;
 };

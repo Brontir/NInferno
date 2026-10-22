@@ -12,7 +12,10 @@ namespace ninferno::runtime {
 std::string drafter_identity(const std::filesystem::path& drafter) noexcept {
     try {
         if (drafter.empty()) { return {}; }
-        return artifact::source_identity(drafter).value_or("none");
+        const artifact::Reader reader(drafter);
+        return artifact::source_identity(reader.directory())
+            .value_or("none:" +
+                      hex_encode(reader.artifact_id().data(), reader.artifact_id().size()));
     } catch (...) { return "unreadable"; }
 }
 

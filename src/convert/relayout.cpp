@@ -182,6 +182,11 @@ OJson relabeled(OJson root, const std::vector<Bank>& banks) {
             object["layout"] = std::string(artifact::layout_name(it->second));
         }
     }
+    // The banks' bytes move: their content digests no longer hold, and the artifact keeps no
+    // source identity (artifact/source_identity.h) until it is converted again.
+    if (!banks.empty() && root.contains("provenance") && root["provenance"].is_object()) {
+        root["provenance"].erase("content_sha256");
+    }
     return root;
 }
 

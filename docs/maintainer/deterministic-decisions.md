@@ -144,23 +144,35 @@ What the design guarantees once complete:
    The source identity is the SHA-256 of a record of everything that can change the converted
    bytes (schema `ninferno-source/1`, compact JSON with sorted keys):
    - the inputs, which the converter records in the provenance (`"inputs"`): every checkpoint and
-     `--resource` the conversion read, by role, each file by `repo`, `commit` and `name` (its path
+     `--resource` the conversion read, by role (sorted by role), each file by `repo`, `commit` and `name` (its path
      in the repository) when it comes from a Hugging Face snapshot, and always by `sha256` of its
      content. A local file without hub provenance is keyed by its content alone, so a rename does
      not move it. Weight files are listed with the config, tokenizer, template and processor files
      beside them. An LFS snapshot file takes its blob name, the sha256 the fetch verified at
-     download; any other file is hashed when it is converted;
+     download; any other file is hashed when it is converted (a source-consuming conversion keeps
+     the inputs beside its journal, so a resumed run never hashes a file it punched);
    - the quant (a GGUF's label, from its file name);
    - the converter format version (`"converter"`, `ninferno-v3`) and the recipe;
    - the byte-changing choices the provenance records (drafter quantization, vocabulary, GGUF
-     mapper, ranking);
-   - the tensor index: the SHA-256 of every object's id, format, layout, shape, size and divisor
-     count (and every resource's encoding and size), so a converter change that keeps its version
-     still moves the identity. The artifact stores no per-object content hashes, so contents enter
-     only through the inputs.
+     mapper, ranking, `--round-tiny-scales`, `--maintainer-quantize`, and the Python converter's
+     `--override` and custom recipe files by content);
+   - the tensor index: every object's id, format, layout, shape, size and divisor count (every
+     resource's encoding and size) and its **content digest**, the SHA-256 of its payload bytes.
+     The converter computes the digests once every byte is written, reading the output back, and
+     seals them into the directory (provenance `"content_sha256"`) before it publishes the
+     artifact; the Python converter does the same. So the identity changes exactly when the bytes
+     change: a quantizer or rounding fix that keeps every shape moves it, and a byte-identical
+     reconversion keeps it. The converter's build commit does not enter (it would void every
+     constant at every commit). Startup reads the stored digests; it never hashes the weights.
+     Reading back costs one sequential read of the output, hashed on the conversion's threads
+     (the conversion logs it as `content digests: ...`).
 
-   An artifact converted before the converter recorded its inputs has no source identity: the
-   fingerprint names it `none` and every constant keyed by an identity reads as unknown for it.
+   An artifact converted before the converter recorded its inputs and digests has no source
+   identity, nor has one a relayout rewrote (`ninferno-convert --relayout` drops the digests: it
+   moves the bytes; convert it again). The fingerprint names such an artifact
+   `none:<artifact id>`, so two of them still differ, and every constant keyed by an identity
+   reads as unknown for it. `ninferno-serve` logs the identity when it prepares a model
+   (`source identity <hex>`).
    An embedded component (an MTP head, a DFlash companion) is keyed by the target's identity and
    its name (`component:<name>`); a separate drafter by its own identity. A constant measured
    before its identity could be computed records the parts it can prove and names the missing

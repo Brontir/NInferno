@@ -427,7 +427,7 @@ namespace {
 // traits, the parameters, weight bytes and weights profile from the artifact's tensor inventory
 // (every component, as llama.cpp counts a whole GGUF).
 // `artifact_id`: the artifact's id (hex), `source_identity` its source identity
-// (artifact/source_identity.h; "none" when the artifact records no inputs), and
+// (artifact/source_identity.h; "none:<artifact id>" when it has none), and
 // `routed_expert_bytes`: the bytes of its routed-expert objects (artifact/routed_experts.h; the
 // decode-round price's MoE share), from the same read.
 ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const LoadSummary& summary,
@@ -441,7 +441,7 @@ ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const L
     metadata.native_context = traits.max_positions;
     const artifact::Reader reader(artifact_path);
     artifact_id     = hex_encode(reader.artifact_id().data(), reader.artifact_id().size());
-    source_identity = artifact::source_identity(reader.directory()).value_or("none");
+    source_identity = artifact::source_identity(reader.directory()).value_or("none:" + artifact_id);
     std::set<std::string> formats;
     const auto expert_layers = artifact::routed_expert_object_layers(reader.directory());
     routed_expert_bytes      = 0;
