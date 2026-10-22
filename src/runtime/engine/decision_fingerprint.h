@@ -100,7 +100,7 @@ struct HostFacts {
 // Of the clocks, "machine.*" are the facts the decisions read (DeviceClass::facts: source,
 // reference and memory clock, bus width, share, mma_slow); "driver.*" (the driver's clocks and
 // bus width) enter only when they fed a fact (MachineFacts::driver_read: an unknown id, a laptop
-// row without the bottom of its range).
+// row without the bottom of its range, a whole board on another memory than its id's row).
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
                                        int driver_version, const HostFacts& host);
 

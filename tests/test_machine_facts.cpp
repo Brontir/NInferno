@@ -292,6 +292,13 @@ void mig_and_zero_clocks() {
            "MIG slice: the table's clock");
     expect(std::abs(slice.share - 14.0 / 108) < 1e-12, "MIG slice: its share of the bandwidth");
     expect(std::abs(slice.dram_gbps() - 1555.2 * 14 / 108) < 1e-6, "MIG slice: bandwidth");
+    // A slice whose driver reports its own part of the memory (a narrower bus, a lower clock) is
+    // not a memory variant: the share prices that part once.
+    const MachineFacts reported = machine_facts(DriverReport{0x20B0, 8, 0, 14, 0, 1000000, 640});
+    expect(reported.memory_bus_bits == 5120 &&
+               reported.memory_clock_khz == slice.memory_clock_khz &&
+               std::abs(reported.dram_gbps() - slice.dram_gbps()) < 1e-6,
+           "MIG slice reporting its memory: the board's memory times the share, once");
     // The whole A100 with zero clocks (a WSL driver): verified table facts.
     const MachineFacts whole = machine_facts(DriverReport{0x20B0, 8, 0, 108, 0, 0, 0});
     expect(whole.source == FactSource::Verified && std::abs(whole.dram_gbps() - 1555.2) < 1e-6,
