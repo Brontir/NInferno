@@ -98,11 +98,11 @@ class SpecGateTest(unittest.TestCase):
                 g("add", "-A")
                 g("commit", "-q", "-m", name)
                 commits[name] = g("rev-parse", "HEAD")
-            plain = row(100, [98, 102], auto=False, commit=commits["after"])
             cases = (("after", OLD, 1), ("before", "2030-01-01T00:00:00Z", 0))
             for name, date, fails in cases:  # the commit decides, whatever the date says
                 with mock.patch.object(spec_gate, "REPO", Path(d)), \
                         mock.patch.object(spec_gate, "DECISION_FILES", ("src/spec",)):
+                    plain = row(100, [98, 102], auto=False, commit=commits[name])  # one build
                     code, out, _ = run_main(["--json"], [row(80, [78, 82], date=date,
                                                              commit=commits[name]), plain])
                 result = json.loads(out)
@@ -146,11 +146,37 @@ class SpecGateTest(unittest.TestCase):
         self.assertEqual(r["counts"]["paired"], 1)
 
     def test_card_is_gpu_name_and_sm_only(self):
+        # driver, CUDA and power limit are not the cell: the rows share a key, but without a
+        # common commit they are from another environment (unmatched, not unpaired)
+        machine = {"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "89", "vram_gb": 23.9,
+                   "driver": "590.1", "cuda": "13.1", "power_limit_w": 400.0}
         plain = row(100, auto=False, version="0.1.0", warmup=1)
-        auto = row(80, version="84d92a362", warmup=2, decision_fingerprint="x",
-                   machine={"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "89", "vram_gb": 23.9,
-                            "driver": "590.1", "cuda": "13.1", "power_limit_w": 400.0})
+        auto = row(80, version="84d92a362", warmup=2, decision_fingerprint="x", machine=machine)
+        r = self.judge(auto, plain)
+        self.assertEqual((r["counts"]["unpaired_auto"], r["counts"]["unmatched_build_env"]), (0, 1))
+        plain["commit"] = "84d92a362abc"  # the same build (a short id matches its full id)
         self.assertEqual(self.judge(auto, plain)["counts"]["paired"], 1)
+
+    def test_twin_from_the_same_build_and_environment_first(self):
+        other = {"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "89", "vram_gb": 24.0,
+                 "driver": "590.1"}
+        newest_other = row(200, auto=False, date="2026-10-21T12:00:00Z", machine=other)
+        older_same = row(100, auto=False, date="2026-10-21T09:00:00Z")
+        r = self.judge(row(80, [78, 82]), newest_other, older_same)
+        self.assertEqual((r["counts"]["paired"], r["cells"][0]["plain"]), (1, 100))
+        r = self.judge(row(80, commit="aaaaaaa"), row(100, auto=False, commit="bbbbbbb"))
+        self.assertEqual((r["counts"]["paired"], r["counts"]["unmatched_build_env"]), (0, 1))
+        self.assertEqual(len(r["unmatched_build_env"]), 1)
+        code, _, err = run_main(["--since-date", OLD], [row(80, commit="aaaaaaa"),
+                                                        row(100, auto=False, commit="bbbbbbb")])
+        self.assertEqual(code, 1)  # nothing paired
+        self.assertIn("another build or environment", err)
+
+    def test_out_tokens_in_the_key(self):
+        r = self.judge(row(80, out_tokens=512), row(100, auto=False))
+        self.assertEqual(r["counts"]["paired"], 1)
+        r = self.judge(row(80, out_tokens=256), row(100, auto=False))
+        self.assertEqual(r["counts"]["paired"], 0)
 
     def test_activations_flag_and_field_are_one_key(self):
         r = self.judge(row(80, extra="--activations fast"), row(100, auto=False))
@@ -167,7 +193,7 @@ class SpecGateTest(unittest.TestCase):
                    commit="abcdef1", version="abcdef1", meta={"plan_level": 2})
         plain = row(100, auto=False, decision_fingerprint="fp-plain",
                     decision_manifest={"spec": "none"}, run_id="r2", hostname="b",
-                    started="2026-10-21T09:30:00Z", repeats=1, commit="1234567", version="0.1.0")
+                    started="2026-10-21T09:30:00Z", repeats=1, commit="abcdef1234", version="0.1.0")
         self.assertEqual(self.judge(auto, plain)["counts"]["paired"], 1)
 
     def test_spec_auto_is_auto_and_forced_rows_are_excluded(self):

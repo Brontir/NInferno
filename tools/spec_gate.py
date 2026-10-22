@@ -7,9 +7,13 @@
 Every decode row measured with the automatic speculation decision (no `--spec`, or `--spec auto`)
 is paired with its plain twin (`--spec none`): the same engine, card (GPU name, SM and memory in
 whole GB), model, recipe, KV
-format, activation precision, sampling, prompt set, prompt length, unit, concurrency, metric and
+format, activation precision, sampling, prompt set, prompt length, output tokens, unit,
+concurrency, metric and
 every other flag. Left out: prefill rows (speculation does not decide the prefill), rows that name
-a drafter, and forced rows (`--draft-tokens` or `--spec-load` without a named drafter). When a key
+a drafter, and forced rows (`--draft-tokens` or `--spec-load` without a named drafter). The twin
+must come from the same build and environment (the same commit when both rows name one, else the
+same driver, CUDA and power limit); an auto row whose plain rows all differ is listed as "unmatched
+build/env", not judged. Of the matching plain rows the newest is the twin. When an auto key
 was measured more than once, the newest row of each side is used.
 
 A cell FAILS when all of these hold:
@@ -21,7 +25,7 @@ A cell FAILS when all of these hold:
     commit (none, or one this clone lacks: counted), its date is later than that commit's;
   * and so is its plain twin (else the cell counts as "stale plain": rerun the plain row).
 Losing cells that miss one of these are counted as plain-served, overlapping, stale or stale
-plain. Auto rows without a plain twin are listed on stderr.
+plain. Auto rows without a plain twin, or without one of their build/env, are listed on stderr.
 
 There is no exemption list and nothing is written back. Exit code 1 when a cell fails or nothing
 pairs; 2 on a missing or malformed bench file, a shallow clone or another git error.
@@ -54,6 +58,7 @@ DECISION_FILES = (
     "src/models/gemma4/session.h",                           # Gemma 4 depth adaptation
     "src/models/dense/session.h",                            # dense draft_tokens / min_draft
     "src/models/dense/program_family.cpp",                   # dense drafter window refusals
+    "src/models/nemotron_h/program_family.cpp",              # speculative memory from the window
     "src/serve/serve_options.cpp",                           # no --spec -> --spec auto
     "src/runtime/engine/model_instance.cpp",                 # capacity refusal of a drafter's plan
     "src/runtime/engine/plan_ladder.cpp",                    # the memory plan rungs it picks from
@@ -65,6 +70,7 @@ DECISION_FILES = (
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_BENCH = REPO / "docs" / "performance" / "data" / "bench.jsonl"
 DECODE_METRICS = ("decode", "decode_aggregate")
+DEFAULT_OUT_TOKENS = 512  # tools/bench/perf_matrix.py --out-tokens, for rows that predate the field
 # Flags that choose the speculation; everything else in `flags` is part of the pairing key.
 SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
 # The row fields that make the measured cell (an allow-list: anything else a row carries, such as
@@ -72,7 +78,8 @@ SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
 # hash the resolved speculation, so an auto row and its plain twin always differ), dates, run ids
 # or host names, is not part of the key). Besides these, the key holds the card (GPU name, SM and
 # memory in whole GB, not the driver, CUDA or power limit), the engine (missing = "ninferno"), the
-# activation precision (field, else flag, else "fast") and the non-speculation flags.
+# activation precision (field, else flag, else "fast"), the output tokens per request (missing =
+# perf_matrix's default) and the non-speculation flags.
 KEY_FIELDS = ("model", "recipe", "kv", "sampling", "metric", "prompt_set", "prompt_len",
               "concurrency", "unit", "context", "stride", "corpus")
 
@@ -134,12 +141,30 @@ def pair_key(row: dict) -> str:
     key["card"] = [machine.get("gpu_name"), str(machine.get("sm")),
                    None if vram is None else round(float(vram))]
     key["engine"] = row.get("engine") or "ninferno"
+    key["out_tokens"] = row.get("out_tokens") or DEFAULT_OUT_TOKENS
     key["activations"] = row.get("activations") or flag_value(row, "--activations") or "fast"
     # --activations is folded into key["activations"] above (an explicit `--activations fast` is
     # the default; a field and a flag naming the same mode are the same cell).
     key["flags"] = tuple(w for w in parse_flags(row.get("flags"))[1]
                          if w.split("=", 1)[0] != "--activations")
     return json.dumps(key, sort_keys=True, default=str)
+
+
+def build_env(row: dict) -> dict:
+    machine = row.get("machine") or {}
+    return {"commit": row_commit(row), "driver": machine.get("driver"),
+            "cuda": machine.get("cuda"), "power_limit_w": machine.get("power_limit_w")}
+
+
+def same_build_env(a: dict, b: dict) -> bool:
+    """Twins come from one build and environment: the same commit when both rows name one (a short
+    id matches its full id), else the same driver, CUDA version and power limit."""
+    ca, cb = row_commit(a), row_commit(b)
+    if ca and cb:
+        ca, cb = ca.lower(), cb.lower()
+        return ca.startswith(cb) or cb.startswith(ca)
+    ea, eb = build_env(a), build_env(b)
+    return all(ea[k] == eb[k] for k in ("driver", "cuda", "power_limit_w"))
 
 
 def interval(row: dict) -> tuple[float, float]:
@@ -169,7 +194,8 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
     return None to fall back to the date."""
     stats = {"rows": 0, "prefill_excluded": 0, "explicit_spec": 0, "forced_spec": 0,
              "superseded": 0}
-    sides: dict[str, dict[str, dict]] = {"auto": {}, "plain": {}}
+    autos: dict[str, dict] = {}
+    plains: dict[str, list[dict]] = {}  # every plain row: the twin is chosen by build/env first
     for row in rows:
         metric = row.get("metric")
         if metric == "prefill":
@@ -182,12 +208,15 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
         if side in ("explicit", "forced"):
             stats[f"{side}_spec"] += 1
             continue
-        key, have = pair_key(row), sides[side]
-        if key in have:
+        key = pair_key(row)
+        if side == "plain":
+            plains.setdefault(key, []).append(row)
+            continue
+        if key in autos:
             stats["superseded"] += 1
-            if parse_date(have[key]["date"]) >= parse_date(row["date"]):
+            if parse_date(autos[key]["date"]) >= parse_date(row["date"]):
                 continue
-        have[key] = row
+        autos[key] = row
 
     stats["commit_unknown"] = 0
     unknown_seen = set()
@@ -202,16 +231,28 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
             fresh = parse_date(row["date"]) > since_date
         return fresh
 
-    cells, unpaired = [], []
-    counts = {"paired": 0, "unpaired_auto": 0, "unpaired_plain": 0, "pass": 0, "losses": 0,
-              "plain_served": 0, "overlap": 0, "stale": 0, "stale_plain": 0, "fail": 0}
-    for key, auto in sides["auto"].items():
-        plain = sides["plain"].get(key)
-        if plain is None:
+    cells, unpaired, unmatched = [], [], []
+    counts = {"paired": 0, "unpaired_auto": 0, "unmatched_build_env": 0, "unpaired_plain": 0,
+              "pass": 0, "losses": 0, "plain_served": 0, "overlap": 0, "stale": 0,
+              "stale_plain": 0, "fail": 0}
+    for key, auto in autos.items():
+        candidates = plains.get(key)
+        if not candidates:
             counts["unpaired_auto"] += 1
             unpaired.append({"cell": cell_name(auto), "served": auto.get("spec"),
                              "auto": auto["value"], "auto_date": auto["date"]})
             continue
+        same = [p for p in candidates if same_build_env(auto, p)]
+        if not same:
+            counts["unmatched_build_env"] += 1
+            unmatched.append({"cell": cell_name(auto), "served": auto.get("spec"),
+                              "auto": auto["value"], "auto_date": auto["date"],
+                              "auto_build_env": build_env(auto),
+                              "plain_build_env": [build_env(p) for p in candidates]})
+            continue
+        if len(candidates) > 1:
+            stats["superseded"] += len(candidates) - 1
+        plain = max(same, key=lambda p: parse_date(p["date"]))
         counts["paired"] += 1
         ratio = auto["value"] / plain["value"] if plain["value"] else float("inf")
         if ratio >= threshold:
@@ -236,10 +277,12 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
                       "auto_spread": [alo, ahi], "plain_spread": [plo, phi],
                       "auto_date": auto["date"], "plain_date": plain["date"],
                       "auto_commit": row_commit(auto), "verdict": verdict})
-    counts["unpaired_plain"] = sum(1 for k in sides["plain"] if k not in sides["auto"])
+    counts["unpaired_plain"] = sum(1 for k in plains if k not in autos)
     cells.sort(key=lambda c: c["ratio"])
     unpaired.sort(key=lambda c: c["cell"])
-    return {"stats": stats, "counts": counts, "cells": cells, "unpaired_auto": unpaired}
+    unmatched.sort(key=lambda c: c["cell"])
+    return {"stats": stats, "counts": counts, "cells": cells, "unpaired_auto": unpaired,
+            "unmatched_build_env": unmatched}
 
 
 def git(*args: str) -> str:
@@ -269,7 +312,7 @@ def render(result: dict, since: str, show_all: bool) -> str:
              f"decode rows {s['rows']} (prefill excluded {s['prefill_excluded']}, explicit spec "
              f"{s['explicit_spec']}, forced spec {s['forced_spec']}, superseded "
              f"{s['superseded']}); paired {c['paired']}, unpaired auto {c['unpaired_auto']}, "
-             f"unpaired plain {c['unpaired_plain']}",
+             f"unmatched build/env {c['unmatched_build_env']}, unpaired plain {c['unpaired_plain']}",
              f"pass {c['pass']}; losses {c['losses']}: plain-served {c['plain_served']}, overlap "
              f"{c['overlap']}, stale {c['stale']}, stale plain {c['stale_plain']}, FAIL "
              f"{c['fail']}"]
@@ -350,6 +393,12 @@ def main(argv=None) -> int:
               "and are not judged:", file=sys.stderr)
         for x in result["unpaired_auto"]:
             print(f"  {x['cell']} ({x['served']}, {x['auto']:g}, {x['auto_date'][:16]})",
+                  file=sys.stderr)
+    if result["unmatched_build_env"]:
+        print(f"spec_gate: WARNING: {len(result['unmatched_build_env'])} auto rows have plain "
+              "twins only from another build or environment and are not judged:", file=sys.stderr)
+        for x in result["unmatched_build_env"]:
+            print(f"  {x['cell']} (auto {x['auto_build_env']}; plain {x['plain_build_env']})",
                   file=sys.stderr)
     if result["counts"]["paired"] == 0:
         print("spec_gate: FAIL: no auto row pairs with a plain row", file=sys.stderr)

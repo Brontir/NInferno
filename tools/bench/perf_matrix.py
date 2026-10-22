@@ -192,6 +192,7 @@ def main():
                   "spec": args.spec, "draft_tokens": args.draft_tokens, "kv": args.kv,
                   "activations": args.activations,
                   "sampling": "greedy", "warmup": 1, "unit": "tok/s", "flags": args.flags,
+                  "out_tokens": args.out_tokens,
                   "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         if args.version:
             common["version"] = args.version
