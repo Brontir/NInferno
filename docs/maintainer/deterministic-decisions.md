@@ -40,12 +40,12 @@ This page states the rule and its target. The engine does not meet all of it yet
   or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
   decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
   tokens), the RMSNorm prefetch bound (170 blocks) and the sparse-MoE prefill grid bound (5440
-  CTAs) on the RTX 5090 and 5080, where an SM-count rule lost on the 5080; the generic R8 rule's
-  IQ3 edge at 96 SMs (`generic_gemm.cpp`, `rules_r8`), an SM-count bound placed between the two
-  measured boards (84 and 170). The literals that were the RTX 5090's 170 SMs and decided a grid
-  (the FP8 TMA split wave, the NVFP4 2048x5376 TMA route) are rules over the device's SM count
-  (`src/ops/common/sm_wave_rules.h`); the NVFP4 crossing is extrapolated from the RTX 5090 and
-  checked on the RTX 5070 Ti only;
+  CTAs) on the RTX 5090 and 5080, where an SM-count rule lost on the 5080;
+- SM-count rules rest on few boards: the literals that were the RTX 5090's 170 SMs and decided a
+  grid (the FP8 TMA split wave, the NVFP4 2048x5376 TMA route) are rules over the device's SM
+  count (`src/ops/common/sm_wave_rules.h`), the NVFP4 crossing fitted on the RTX 5090 and checked
+  on the RTX 5070 Ti only; the generic R8 rule's IQ3 edge at 96 SMs (`generic_gemm.cpp`,
+  `rules_r8`) is a bound placed between the two measured boards (84 and 170);
 - the Gemma 4 Q8 5376x16384 projection keeps a literal tuned on the RTX 5090 that no device fact
   explains: the 256-token tile at T a multiple of 1024, on every board
   (`q8/shapes/n5376_k16384.cu`). Against the 128-token tile at those widths it wins on 60, 108
