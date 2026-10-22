@@ -14,7 +14,8 @@ Inputs (docs/performance/data/):
   bench.jsonl   one measurement per line: machine {gpu_name, sm, vram_gb, power_limit_w, driver,
                 cuda}, model (Hugging Face id or name), recipe ("org/repo --quant LABEL"), spec,
                 draft_tokens, kv, activations (--activations, default "fast"), metric, prompt_len, prompt_set, concurrency, context, repeats,
-                value, spread, unit, date, version, flags, engine (default "ninferno")
+                value, spread, unit, date, version, flags, engine (default "ninferno"), commit
+                (the NInferno git commit of the build, when known; tools/spec_gate.py reads it)
                 metric: prefill | decode (one stream after a long prompt) | decode_aggregate
                 (short chats, all streams together) | perplexity | acceptance | greedy_match
   gpus.json     {"<slug>": {"name", "chip", "sm", "vram_gb", "match": [nvidia-smi names]}}

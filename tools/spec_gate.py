@@ -5,7 +5,8 @@
                                [--since-commit REV | --since-date ISO] [--losses] [--json]
 
 Every decode row measured with the automatic speculation decision (no `--spec`, or `--spec auto`)
-is paired with its plain twin (`--spec none`): the same card (GPU name and SM), model, recipe, KV
+is paired with its plain twin (`--spec none`): the same engine, card (GPU name, SM and memory in
+whole GB), model, recipe, KV
 format, activation precision, sampling, prompt set, prompt length, unit, concurrency, metric and
 every other flag. Left out: prefill rows (speculation does not decide the prefill), rows that name
 a drafter, and forced rows (`--draft-tokens` or `--spec-load` without a named drafter). When a key
@@ -17,9 +18,10 @@ A cell FAILS when all of these hold:
   * the spreads do not overlap (a row without a spread counts as the single value);
   * the auto row is newer than the decision code: its `commit` (or a `version` that is a commit
     id) descends from the last commit that touched DECISION_FILES, or, for rows without a known
-    commit, its date is later than that commit's.
-Losing cells that miss one of these are counted as plain-served, overlapping or stale. Auto rows
-without a plain twin are listed on stderr.
+    commit (none, or one this clone lacks: counted), its date is later than that commit's;
+  * and so is its plain twin (else the cell counts as "stale plain": rerun the plain row).
+Losing cells that miss one of these are counted as plain-served, overlapping, stale or stale
+plain. Auto rows without a plain twin are listed on stderr.
 
 There is no exemption list and nothing is written back. Exit code 1 when a cell fails or nothing
 pairs; 2 on a missing or malformed bench file, a shallow clone or another git error.
@@ -58,7 +60,8 @@ DECODE_METRICS = ("decode", "decode_aggregate")
 SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
 # Row fields that are not the measured cell: the measurement itself, the speculation, and the
 # build (`version`, the decision fingerprint; the staleness test covers the build). `machine` is
-# reduced to the card (GPU name and SM): driver, CUDA, power limit and memory size are not the cell.
+# reduced to the card (GPU name, SM, memory in whole GB): driver, CUDA and power limit are not the
+# cell. A row without `engine` is NInferno's.
 NOT_KEY = {"spec", "draft_tokens", "flags", "value", "spread", "date", "repeats", "commit",
            "version", "warmup", "machine", "decision_fingerprint", "decision_manifest"}
 
@@ -116,7 +119,10 @@ def row_commit(row: dict) -> str | None:
 def pair_key(row: dict) -> str:
     key = {k: v for k, v in row.items() if k not in NOT_KEY}
     machine = row.get("machine") or {}
-    key["card"] = [machine.get("gpu_name"), str(machine.get("sm"))]
+    vram = machine.get("vram_gb")  # one name can come in two memory sizes (4060 Ti 8 / 16 GB)
+    key["card"] = [machine.get("gpu_name"), str(machine.get("sm")),
+                   None if vram is None else round(float(vram))]
+    key["engine"] = row.get("engine") or "ninferno"
     key["activations"] = row.get("activations") or flag_value(row, "--activations") or "fast"
     key["flags"] = parse_flags(row.get("flags"))[1]
     return json.dumps(key, sort_keys=True, default=str)
@@ -169,9 +175,22 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
                 continue
         have[key] = row
 
+    stats["commit_unknown"] = 0
+    unknown_seen = set()
+
+    def is_fresh(row: dict) -> bool:
+        """Newer than the decision code: by the row's commit when git knows it, else by date."""
+        fresh = newer(row) if newer else None
+        if fresh is None:
+            if row_commit(row) and id(row) not in unknown_seen:  # a commit this clone lacks
+                unknown_seen.add(id(row))
+                stats["commit_unknown"] += 1
+            fresh = parse_date(row["date"]) > since_date
+        return fresh
+
     cells, unpaired = [], []
     counts = {"paired": 0, "unpaired_auto": 0, "unpaired_plain": 0, "pass": 0, "losses": 0,
-              "plain_served": 0, "overlap": 0, "stale": 0, "fail": 0}
+              "plain_served": 0, "overlap": 0, "stale": 0, "stale_plain": 0, "fail": 0}
     for key, auto in sides["auto"].items():
         plain = sides["plain"].get(key)
         if plain is None:
@@ -186,15 +205,14 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
             continue
         counts["losses"] += 1
         (alo, ahi), (plo, phi) = interval(auto), interval(plain)
-        fresh = newer(auto) if newer else None
-        if fresh is None:
-            fresh = parse_date(auto["date"]) > since_date
         if auto.get("spec") in ("none", "", None):
             verdict = "plain_served"
         elif ahi >= plo and phi >= alo:
             verdict = "overlap"
-        elif not fresh:
+        elif not is_fresh(auto):
             verdict = "stale"
+        elif not is_fresh(plain):
+            verdict = "stale_plain"
         else:
             verdict = "fail"
         counts[verdict] += 1
@@ -239,7 +257,11 @@ def render(result: dict, since: str, show_all: bool) -> str:
              f"{s['superseded']}); paired {c['paired']}, unpaired auto {c['unpaired_auto']}, "
              f"unpaired plain {c['unpaired_plain']}",
              f"pass {c['pass']}; losses {c['losses']}: plain-served {c['plain_served']}, overlap "
-             f"{c['overlap']}, stale {c['stale']}, FAIL {c['fail']}"]
+             f"{c['overlap']}, stale {c['stale']}, stale plain {c['stale_plain']}, FAIL "
+             f"{c['fail']}"]
+    if s.get("commit_unknown"):
+        lines.append(f"{s['commit_unknown']} judged rows name a commit this clone lacks: "
+                     "judged by date")
     if shown:
         lines += ["", "| cell | served | auto | plain | ratio | auto date | verdict |",
                   "|---|---|---|---|---|---|---|"]

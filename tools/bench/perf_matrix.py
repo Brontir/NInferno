@@ -195,8 +195,9 @@ def main():
                   "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         if args.version:
             common["version"] = args.version
+        # The NInferno build only: another engine's --version is its own (llama.cpp's is hex too).
         commit = args.commit or (args.version if is_commit(args.version) else None)
-        if commit:
+        if commit and args.engine == "ninferno":
             common["commit"] = commit
         if args.engine != "ninferno":
             common["engine"] = args.engine
