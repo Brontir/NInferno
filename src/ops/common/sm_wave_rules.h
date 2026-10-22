@@ -35,8 +35,9 @@ constexpr SplitTail fp8_split_tail(int tiles, int k, int sms, int block_k, int m
 // Whether a grid of `row_tiles` row tiles by ceil(T / tile_tokens) token tiles passes one wave of
 // `ctas_per_sm` resident CTAs an SM. Gemma 4's NVFP4 2048x5376 A4 prefill: the TMA route's grid is
 // only 16 row tiles wide and stays under one wave, so it loses to the 128-token MMA tile (one CTA
-// an SM) until that tile's grid passes the SMs (RTX 5090: T > 1280). Measured on the 5090 alone;
-// on other boards the crossing is extrapolated until measured.
+// an SM) until that tile's grid passes the SMs (RTX 5090: T > 1280). Fitted on the 5090 and checked
+// on the RTX 5070 Ti (70 SMs: TMA from T = 641, 28 % faster there, equal from 768); other boards
+// are extrapolated until measured.
 constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int tile_tokens,
                                 int ctas_per_sm = 1) {
     if (sms <= 0 || ctas_per_sm <= 0 || row_tiles <= 0 || tile_tokens <= 0 || tokens <= 0)
