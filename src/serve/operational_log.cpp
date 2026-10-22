@@ -637,7 +637,7 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
             const auto& c = served->classes[i];
             logger_->info("speculation | class {} | depth {} | {} | {}",
                           spec::class_name(static_cast<spec::ContextClass>(i)), c.depth,
-                          spec::class_basis_name(c.basis), c.reason);
+                          spec::class_basis_label(c), c.reason);
         }
         if (!memory.speculative_graph_windows.empty()) {
             // An explicit plan reserves an allowance per window; an automatic one reserves none,

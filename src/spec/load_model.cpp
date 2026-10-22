@@ -420,17 +420,24 @@ const char* class_basis_name(ClassBasis basis) noexcept {
         return "modeled";
     case ClassBasis::NoEstimate:
         return "no estimate";
+    case ClassBasis::Bounded:
+        return "bounded";
     }
     return "no estimate";
 }
 
-double draft_decay(std::string_view drafter_kind) noexcept {
-    return drafter_kind == "dflash" || drafter_kind == "dflash2" ? 0.97 : 0.91;
+std::string class_basis_label(const ServedClassDepth& depth) {
+    if (depth.basis == ClassBasis::Bounded) {
+        return std::string("bounded by ") + class_name(depth.bounded_by);
+    }
+    return class_basis_name(depth.basis);
 }
 
 std::array<ServedClassDepth, kContextClasses>
 served_class_depths(std::int32_t pick, double measured_tokens, std::span<const DepthFloor> floors,
-                    double decay, const std::array<ClassFactor, kContextClasses>& factors) {
+                    const std::array<ClassFactor, kContextClasses>& factors) {
+    // A geometric block: every draft accepted with one probability given the ones before it.
+    constexpr double decay = 1.0;
     const auto ratio_text = [](double r) {
         char text[32];
         std::snprintf(text, sizeof text, "%.2fx", r);
@@ -487,34 +494,38 @@ served_class_depths(std::int32_t pick, double measured_tokens, std::span<const D
         const auto shorter               = static_cast<ContextClass>(i - 1);
         const ServedClassDepth& previous = out[i - 1];
         const std::int32_t cap           = previous.depth;
-        const std::string kept =
-            cap == pick ? "keeps the profile's depth " + std::to_string(pick)
-                        : "depth " + std::to_string(cap) + " as " + class_name(shorter);
+        // A shorter class lowered the depth: what keeps it is that class's bound.
+        const bool lowered = cap < pick;
+        const ContextClass bound =
+            previous.basis == ClassBasis::Bounded ? previous.bounded_by : shorter;
+        const std::string kept = lowered
+                                     ? "depth " + std::to_string(cap) + " as " + class_name(bound)
+                                     : "keeps the profile's depth " + std::to_string(pick);
+        const auto keep        = [&](ClassBasis basis, std::string reason) {
+            return lowered ? ServedClassDepth{.depth      = cap,
+                                                     .basis      = ClassBasis::Bounded,
+                                                     .bounded_by = bound,
+                                                     .reason     = std::move(reason)}
+                                  : ServedClassDepth{
+                                        .depth = cap, .basis = basis, .reason = std::move(reason)};
+        };
         if (cap == 0) {
-            out[i] = ServedClassDepth{.depth  = 0,
-                                      .basis  = previous.basis,
-                                      .reason = std::string("plain as ") + class_name(shorter)};
+            out[i] = keep(previous.basis, std::string("plain as ") + class_name(bound));
             continue;
         }
         if (!factors[i].value) {
-            out[i] = ServedClassDepth{.depth  = cap,
-                                      .basis  = ClassBasis::NoEstimate,
-                                      .reason = std::string(class_name(c)) + " factor unknown (" +
-                                                factors[i].reason + "): " + kept};
+            out[i] = keep(ClassBasis::NoEstimate, std::string(class_name(c)) + " factor unknown (" +
+                                                      factors[i].reason + "): " + kept);
             continue;
         }
         const double f = *factors[i].value;
         if (!no_model.empty()) {
-            out[i] = ServedClassDepth{.depth  = cap,
-                                      .basis  = ClassBasis::NoEstimate,
-                                      .reason = "factor " + factor_text(f) + ", no model (" +
-                                                no_model + "): " + kept};
+            out[i] = keep(ClassBasis::NoEstimate,
+                          "factor " + factor_text(f) + ", no model (" + no_model + "): " + kept);
             continue;
         }
         if (f >= 1.0) {
-            out[i] = ServedClassDepth{.depth  = cap,
-                                      .basis  = ClassBasis::Modeled,
-                                      .reason = "factor " + factor_text(f) + " >= 1: " + kept};
+            out[i] = keep(ClassBasis::Modeled, "factor " + factor_text(f) + " >= 1: " + kept);
             continue;
         }
         const double a_c = first_draft_acceptance(1.0 + (measured_tokens - 1.0) * f, pick, decay);

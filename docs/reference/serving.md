@@ -323,22 +323,26 @@ Huge (the rest).
   entry keyed by the artifact's source identity, the drafter, the depth, the byte class
   (activations, KV storage) and one lane, measured on two cards of different generations that
   agree. An unknown factor keeps the profile's pick. A longer class never drafts deeper than a
-  shorter one.
+  shorter one: when a shorter class went down, a longer class with an unknown factor keeps that
+  lower depth (basis `bounded by <class>`, say Huge `bounded by long`).
 - **The depth from a factor.** The profile measured T tokens per round at its pick K. A class with
   factor f accepts f times as many drafts there: 1 + (T - 1) f tokens per round. That gives the
-  class's first-draft acceptance, with the drafter's decay along the block (DFlash 0.97, MTP 0.91).
-  Each depth k up to K then yields its tokens per round and costs its watchdog floor (the measured
-  break-even, in plain-decode tokens per round). The class runs the depth with the highest ratio
+  per-draft acceptance, taking every draft of a round as accepted with that one probability given
+  the ones before it (no decay term, so no constant fitted on cards; it lowers less than a decaying
+  block would). Each depth k up to K then yields its tokens per round and costs its watchdog floor
+  (the measured break-even, in plain-decode tokens per round). The class runs the depth with the highest ratio
   of the two, or decodes plainly when no ratio passes 1. The rule applies only when it reproduces
   the profile's own pick at factor 1; otherwise every class keeps the pick ("no estimate").
 - **In a request.** A prompt's class bounds its depth at admission. Before each decode step, a
   context that has grown into a longer class takes that class's bound. The depth only falls: onto a
   step-down depth, judged by that depth's floor, or to plain decode for the rest of the request.
-  The Qwen 3.5 family applies the bounds.
+  Every Engine family applies the bounds (Qwen 3.5, the dense and MoE decoders such as gpt-oss and
+  Muse, Gemma 4, Nemotron-H): they all decode through the one Program.
 - **Reports.** The startup log has one `speculation | class <name> | depth <k> | <basis> |
   <reason>` line per class. `meta.speculation.classes` in `GET /v1/models` and
   `speculation_classes` in `--plan --json` list `{class, below_tokens, depth, basis, reason}`:
-  `basis` is `measured` (Short), `modeled` (a known factor) or `no estimate`. The bounds are part of
+  `basis` is `measured` (Short), `modeled` (a known factor), `no estimate` or `bounded by
+  <class>`. The bounds are part of
   the decision fingerprint (`speculative.class_depth`).
 
 ### Graphs and workspace

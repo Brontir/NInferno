@@ -635,11 +635,12 @@ int main() {
             check(ninferno::models::qwen3_5::detail::speculation_class_depth_valid(served.engine),
                   "the bounds pass the Engine's validation");
         const auto json = ninferno::product::context_classes_json(served);
-        failures += check(json.size() == 4 && json[0]["class"] == "short" &&
-                              json[0]["below_tokens"] == 1024 &&
-                              json[3]["below_tokens"].is_null() && json[0]["depth"] == 7 &&
-                              json[0]["basis"] == "measured" && json[2]["basis"] == "modeled",
-                          "context_classes_json: " + json.dump());
+        failures +=
+            check(json.size() == 4 && json[0]["class"] == "short" &&
+                      json[0]["below_tokens"] == 1024 && json[3]["below_tokens"].is_null() &&
+                      json[0]["depth"] == 7 && json[0]["basis"] == "measured" &&
+                      json[2]["basis"] == "modeled" && json[3]["basis"] == "bounded by long",
+                  "context_classes_json: " + json.dump());
         // Another byte class (exact activations) is not what was measured: no bound.
         ninferno::product::apply_context_classes(
             served, target, {.activations = "exact", .kv = "int8-group64"}, known);

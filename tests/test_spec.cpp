@@ -2702,16 +2702,13 @@ int test_served_class_depths() {
     int failures = 0;
     const ClassFactor unknown{std::nullopt, "no context_classes entry for model m"};
     const auto known = [](double f) { return ClassFactor{f, {}}; };
-    // DFlash2 at depth 7, 4.3 tokens per round, measured floors at 7, 5 and 3: at factor 1 the
-    // model reproduces the pick (7 at 2.26x, 5 at 2.22x, 3 at 2.08x).
-    const double decay                   = draft_decay("dflash2");
+    // Depth 7, 4.3 tokens per round, measured floors at 7, 5 and 3: at factor 1 the geometric
+    // block reproduces the pick (7 at 2.26x, 5 at 2.16x, 3 at 2.00x).
     const std::vector<DepthFloor> floors = {{7, 1.9}, {5, 1.75}, {3, 1.5}};
-    failures += check(decay == 0.97 && draft_decay("mtp") == 0.91, "draft_decay per kind");
 
     // Unknown factors: every class at the profile's pick.
     {
-        const auto got =
-            served_class_depths(7, 4.3, floors, decay, {unknown, unknown, unknown, unknown});
+        const auto got = served_class_depths(7, 4.3, floors, {unknown, unknown, unknown, unknown});
         for (std::size_t i = 0; i < kContextClasses; ++i) {
             failures += check(got[i].depth == 7, std::string("unknown factor keeps depth 7 in ") +
                                                      class_name(static_cast<ContextClass>(i)) +
@@ -2724,22 +2721,26 @@ int test_served_class_depths() {
                   "short measured, unknown classes no estimate (" + got[2].reason + ")");
         failures += check(std::string(class_basis_name(ClassBasis::NoEstimate)) == "no estimate" &&
                               std::string(class_basis_name(ClassBasis::Modeled)) == "modeled" &&
-                              std::string(class_basis_name(ClassBasis::Measured)) == "measured",
+                              std::string(class_basis_name(ClassBasis::Measured)) == "measured" &&
+                              class_basis_label(got[1]) == "no estimate",
                           "class basis names");
     }
     // A known Long factor of 0.60 lowers Long (and Huge, capped by it); Short and an unknown Mid
     // keep 7; a Short factor is ignored.
     {
         const auto got =
-            served_class_depths(7, 4.3, floors, decay, {known(0.5), unknown, known(0.60), unknown});
+            served_class_depths(7, 4.3, floors, {known(0.5), unknown, known(0.60), unknown});
         failures += check(got[0].depth == 7 && got[1].depth == 7,
                           "short and an unknown mid keep the pick (" + got[0].reason + "; " +
                               got[1].reason + ")");
         failures += check(got[2].depth == 3 && got[2].basis == ClassBasis::Modeled,
                           "long at factor 0.60 drops to depth 3 (" + got[2].reason + ")");
-        failures += check(got[3].depth == 3 && got[3].basis == ClassBasis::NoEstimate &&
+        failures += check(got[3].depth == 3 && got[3].basis == ClassBasis::Bounded &&
+                              got[3].bounded_by == ContextClass::Long &&
+                              class_basis_label(got[3]) == "bounded by long" &&
                               got[3].reason.find("as long") != std::string::npos,
-                          "an unknown huge never drafts deeper than long (" + got[3].reason + ")");
+                          "an unknown huge never drafts deeper than long, bounded by long (" +
+                              got[3].reason + ")");
     }
     // Monotone in the factor, never above the pick; a factor of 1 or more keeps it; a tiny one
     // decodes plainly, and so does every longer class.
@@ -2747,7 +2748,7 @@ int test_served_class_depths() {
         std::int32_t previous = 7;
         for (const double f : {1.2, 1.0, 0.95, 0.87, 0.6, 0.3, 0.1}) {
             const auto got =
-                served_class_depths(7, 4.3, floors, decay, {unknown, known(f), unknown, unknown});
+                served_class_depths(7, 4.3, floors, {unknown, known(f), unknown, unknown});
             failures += check(got[1].depth <= previous && got[1].depth <= 7 &&
                                   got[2].depth == got[1].depth && got[3].depth == got[1].depth,
                               "mid depth falls with the factor " + std::to_string(f) + " (" +
@@ -2756,9 +2757,11 @@ int test_served_class_depths() {
             previous = got[1].depth;
         }
         const auto tiny =
-            served_class_depths(7, 4.3, floors, decay, {unknown, known(0.1), unknown, unknown});
+            served_class_depths(7, 4.3, floors, {unknown, known(0.1), unknown, unknown});
         failures += check(tiny[1].depth == 0 && tiny[2].depth == 0 && tiny[3].depth == 0 &&
-                              tiny[1].reason.find("plain") != std::string::npos,
+                              tiny[1].reason.find("plain") != std::string::npos &&
+                              class_basis_label(tiny[2]) == "bounded by mid" &&
+                              class_basis_label(tiny[3]) == "bounded by mid",
                           "factor 0.1: plain from mid on (" + tiny[1].reason + ")");
     }
     // No model: floors that do not reproduce the pick (a floor raised from another GPU), no floor
@@ -2769,13 +2772,12 @@ int test_served_class_depths() {
         for (const auto& [label, got] :
              std::vector<std::pair<std::string, std::array<ServedClassDepth, kContextClasses>>>{
                  {"floors that pick 5",
-                  served_class_depths(7, 4.3, raised, decay,
+                  served_class_depths(7, 4.3, raised,
                                       {unknown, known(0.6), known(0.6), known(0.6)})},
                  {"no floor at 7",
-                  served_class_depths(7, 4.3, none, decay,
-                                      {unknown, known(0.6), known(0.6), known(0.6)})},
+                  served_class_depths(7, 4.3, none, {unknown, known(0.6), known(0.6), known(0.6)})},
                  {"no tokens per round",
-                  served_class_depths(7, 0.0, floors, decay,
+                  served_class_depths(7, 0.0, floors,
                                       {unknown, known(0.6), known(0.6), known(0.6)})}}) {
             failures += check(got[1].depth == 7 && got[2].depth == 7 && got[3].depth == 7 &&
                                   got[2].basis == ClassBasis::NoEstimate &&
@@ -2867,8 +2869,7 @@ int test_served_class_depths() {
                               exact_key.byte_class["parity"] == "exact",
                           "exact activations: another byte class, unknown");
         // End to end: the measured factors lower Long below the pick, Short keeps it.
-        const auto got =
-            served_class_depths(7, 4.3, floors, decay, {ClassFactor{}, mid, lng, huge});
+        const auto got = served_class_depths(7, 4.3, floors, {ClassFactor{}, mid, lng, huge});
         failures += check(got[0].depth == 7 && got[2].depth < 7 && got[2].depth <= got[1].depth &&
                               got[3].depth == got[2].depth,
                           "UD-IQ3_XXS dflash2:7: short 7, long " + std::to_string(got[2].depth) +

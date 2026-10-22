@@ -309,7 +309,7 @@ struct SpeculativeOptions {
     // at 0 it decodes plainly for the rest of the request). Non-increasing by class, each bound
     // kNoClassBound (none) or at most the engine's window. --spec auto fills it from the
     // registry's context-class factors (src/product/speculation, spec::served_class_depths); the
-    // Qwen 3.5 Program applies it.
+    // shared Program every Engine family decodes through applies it.
     static constexpr std::uint32_t kNoClassBound = 0xffffffffU;
     std::array<std::uint32_t, 4> class_depth{kNoClassBound, kNoClassBound, kNoClassBound,
                                              kNoClassBound};

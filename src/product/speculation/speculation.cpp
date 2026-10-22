@@ -378,7 +378,7 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
             }
         }
         const spec::ClassFactor unknown{std::nullopt, "not looked up"};
-        out.classes = spec::served_class_depths(out.menu.primary.config.k, 0.0, {}, 1.0,
+        out.classes = spec::served_class_depths(out.menu.primary.config.k, 0.0, {},
                                                 {unknown, unknown, unknown, unknown});
     }
     for (std::string& note : fit_draft_widths(out.engine, can)) {
@@ -421,8 +421,7 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
     for (const spec::MenuStep& step : served.menu.step_down(primary)) {
         floors.push_back({.depth = step.depth, .floor = step.floor});
     }
-    served.classes = spec::served_class_depths(pick, in.tokens_per_round, floors,
-                                               spec::draft_decay(in.drafter_kind), found);
+    served.classes = spec::served_class_depths(pick, in.tokens_per_round, floors, found);
     for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
         const std::int32_t depth     = served.classes[i].depth;
         served.engine.class_depth[i] = depth < pick ? static_cast<std::uint32_t>(std::max(depth, 0))
@@ -459,7 +458,7 @@ nlohmann::json context_classes_json(const ServedSpeculation& served) {
                                             ? nlohmann::json(spec::kContextBounds[i])
                                             : nlohmann::json(nullptr)},
                        {"depth", c.depth},
-                       {"basis", spec::class_basis_name(c.basis)},
+                       {"basis", spec::class_basis_label(c)},
                        {"reason", c.reason}});
     }
     return out;
