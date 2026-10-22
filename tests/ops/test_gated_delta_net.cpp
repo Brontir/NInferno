@@ -4,6 +4,7 @@
 
 #include "ops/gdn_ref.h"
 #include "ops/op_tester.h"
+#include "ninferno/ops/prefill_routes.h"
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -812,6 +813,166 @@ int bf16_state_case(const Case& test_case, std::uint32_t seed, const std::vector
     return failures;
 }
 
+// A BF16 or FP16 state value as the chunked scan stores it (gated_delta_net/chunked/recurrence.cu,
+// stored_value): BF16 rounded to nearest, FP16 saturated at its largest finite value first.
+float round_to_state(float value, DType dtype) {
+    if (dtype == DType::BF16) return round_to_bf16(value);
+    return __half2float(__float2half_rn(std::clamp(value, -65504.0F, 65504.0F)));
+}
+
+// The spacing of the stored state type at `value`.
+double state_ulp(float value, DType dtype) {
+    const float floor_value = dtype == DType::BF16 ? 1.0e-30F : 6.103515625e-05F;
+    const int exponent      = std::ilogb(std::max(std::abs(value), floor_value));
+    return std::ldexp(1.0, exponent - (dtype == DType::BF16 ? 7 : 10));
+}
+
+// An independent oracle for a BF16 or FP16 state: the FP64 reference (gdn_ref.h) run chunk by
+// chunk, its state rounded to the stored type after every 16-token chunk of a call, counted from
+// the call's first token, and at the call's end, as the chunked scan stores it. On random inputs
+// the chunked scan's FP32 arithmetic already differs from FP64 by more than the stored type's
+// spacing, which hides where it rounds; so the keys are zero and the state only decays (each head
+// and token its own gate, alpha = exp(g)): the scan then computes in FP32 what the oracle computes
+// in FP64 to far below that spacing, and the stored state must equal the oracle's rounded one,
+// while rounding at the calls' ends only, or another element's or head's value, cannot. Under
+// the prefill route profile every call takes the chunked scan. The calls take the model's shapes,
+// chunk-aligned and ragged widths and calls starting off the 16-token grid.
+int rounded_state_oracle_case(const Case& test_case, std::uint32_t seed,
+                              const std::vector<int>& calls, DType dtype) {
+    Case whole         = test_case;
+    whole.tokens       = std::accumulate(calls.begin(), calls.end(), 0);
+    gdn_ref::Inputs in = make_inputs(whole, seed);
+    for (float& value : in.state) { value = round_to_state(value, dtype); }
+    // Zero keys (the state only decays) and small gates of their own per head and token.
+    std::fill(in.k.begin(), in.k.end(), 0.0F);
+    for (std::size_t i = 0; i < in.g.size(); ++i) {
+        in.g[i] = -0.0005F - 0.0001F * static_cast<float>((i * 7) % 11);
+    }
+    std::string shape;
+    for (const int length : calls) shape += (shape.empty() ? "" : "+") + std::to_string(length);
+    const std::string label = std::string(test_case.name) +
+                              (dtype == DType::BF16 ? " bf16" : " f16") +
+                              " rounded-state oracle calls=" + shape;
+    std::cout << "GDN_CASE " << label << std::endl;
+    const float scale             = 1.0F / std::sqrt(static_cast<float>(kStateDim));
+    const std::size_t qk_column   = static_cast<std::size_t>(whole.qk_heads) * kStateDim;
+    const std::size_t v_column    = static_cast<std::size_t>(whole.value_heads) * kStateDim;
+    const std::size_t gate_column = static_cast<std::size_t>(whole.value_heads);
+
+    // The oracle from the initial state, rounding after every 16-token chunk of a call
+    // (every_chunk) or only at each call's end.
+    const auto oracle = [&](bool every_chunk) {
+        std::vector<double> out(in.v.size());
+        std::vector<float> state = in.state;
+        int begin                = 0;
+        for (const int length : calls) {
+            const int step = every_chunk ? 16 : length;
+            for (int first = begin; first < begin + length; first += step) {
+                const int last = std::min(first + step, begin + length);
+                gdn_ref::Inputs part;
+                part.head_dim    = in.head_dim;
+                part.qk_heads    = in.qk_heads;
+                part.value_heads = in.value_heads;
+                part.tokens      = last - first;
+                const auto slice = [](const std::vector<float>& values, std::size_t column,
+                                      int from, int to) {
+                    return std::vector<float>(values.begin() + std::ptrdiff_t(column * from),
+                                              values.begin() + std::ptrdiff_t(column * to));
+                };
+                part.q     = slice(in.q, qk_column, first, last);
+                part.k     = slice(in.k, qk_column, first, last);
+                part.v     = slice(in.v, v_column, first, last);
+                part.g     = slice(in.g, gate_column, first, last);
+                part.beta  = slice(in.beta, gate_column, first, last);
+                part.state = state;
+                const gdn_ref::Result result =
+                    gdn_ref::evaluate(part, scale, test_case.normalize_qk);
+                std::copy(result.out.begin(), result.out.end(),
+                          out.begin() + std::ptrdiff_t(v_column * first));
+                for (std::size_t i = 0; i < state.size(); ++i) {
+                    state[i] = round_to_state(static_cast<float>(result.final_state[i]), dtype);
+                }
+            }
+            begin += length;
+        }
+        return std::pair{std::move(out), std::move(state)};
+    };
+    const auto [chunk_out, chunk_state] = oracle(true);
+    const auto [call_out, call_state]   = oracle(false);
+
+    DeviceInputs device(in);
+    DeviceBuffer state = dtype == DType::BF16 ? to_device_bf16(in.state) : to_device_f16(in.state);
+    DeviceBuffer out(in.v.size() * sizeof(std::uint16_t));
+    const int qk = whole.qk_heads, vh = whole.value_heads;
+    Tensor q(device.q.p, DType::BF16, {kStateDim, qk, whole.tokens});
+    Tensor k(device.k.p, DType::BF16, {kStateDim, qk, whole.tokens});
+    Tensor v(device.v.p, DType::BF16, {kStateDim, vh, whole.tokens});
+    Tensor g(device.g.p, DType::FP32, {vh, whole.tokens});
+    Tensor beta(device.beta.p, DType::FP32, {vh, whole.tokens});
+    Tensor output(out.p, DType::BF16, {kStateDim, vh, whole.tokens});
+    Tensor state_tensor(state.p, dtype, {kStateDim, kStateDim, vh});
+    const int widest = *std::max_element(calls.begin(), calls.end());
+    GuardedDeviceBuffer scratch(std::max<std::size_t>(
+        ops::gated_delta_net_workspace_capacity_bytes(qk, vh, 1, widest), 256));
+    WorkspaceArena workspace(DeviceSpan{scratch.data(), scratch.bytes()});
+    DeviceContext context;
+    const auto device_execution = execution(context.stream);
+    {
+        const ops::ScopedPrefillRoutes prefill;
+        int begin = 0;
+        for (const int length : calls) {
+            Tensor os = output.slice(2, begin, length);
+            ops::gated_delta_net(q.slice(2, begin, length), k.slice(2, begin, length),
+                                 v.slice(2, begin, length), g.slice(1, begin, length),
+                                 beta.slice(1, begin, length), scale, test_case.normalize_qk,
+                                 workspace, state_tensor, os, device_execution);
+            begin += length;
+        }
+        cuda_synchronize();
+    }
+    const auto got_state = dtype == DType::BF16 ? from_device_bf16(state.p, in.state.size())
+                                                : from_device_f16(state.p, in.state.size());
+    const auto got_out   = from_device_bf16(out.p, in.v.size());
+
+    // The share of state elements equal to an oracle's, and the largest difference in units of
+    // the stored type's spacing.
+    const auto agreement = [&](const std::vector<float>& want) {
+        std::size_t equal = 0;
+        double worst      = 0.0;
+        for (std::size_t i = 0; i < want.size(); ++i) {
+            const double got = got_state[i];
+            if (got == static_cast<double>(want[i])) {
+                ++equal;
+            } else {
+                worst = std::max(worst, std::abs(got - want[i]) / state_ulp(want[i], dtype));
+            }
+        }
+        return std::pair{static_cast<double>(equal) / static_cast<double>(want.size()), worst};
+    };
+    const auto [chunk_equal, chunk_worst] = agreement(chunk_state);
+    const auto [call_equal, call_worst]   = agreement(call_state);
+    const double chunk_out_error          = relative_l2(got_out, chunk_out);
+    const double call_out_error           = relative_l2(got_out, call_out);
+    std::cout << "GDN_ROUNDED_STATE " << label << " chunk_oracle: equal=" << chunk_equal
+              << " worst_ulps=" << chunk_worst << " out_rel_l2=" << chunk_out_error
+              << " | call_oracle: equal=" << call_equal << " worst_ulps=" << call_worst
+              << " out_rel_l2=" << call_out_error << '\n';
+    // Measured on an RTX 5070 Ti: the per-chunk oracle matches 99.98-100 % of the elements within
+    // one spacing, the per-call one 3-39 % (up to 26 spacings apart).
+    int failures = 0;
+    if (!(chunk_equal >= 0.999) || !(chunk_worst <= 1.0) || !(chunk_out_error < 5.0e-3)) {
+        std::cerr << label << ": the stored state is not the per-chunk rounded oracle's (equal "
+                  << chunk_equal << ", worst " << chunk_worst << " spacings, out "
+                  << chunk_out_error << ")\n";
+        ++failures;
+    }
+    if (!(chunk_equal - call_equal >= 0.5)) {
+        std::cerr << label << ": the oracle no longer tells per-chunk from per-call rounding\n";
+        ++failures;
+    }
+    return failures;
+}
+
 int bf16_state_contract_cases() {
     DeviceBuffer buffer(kStateDim * kStateDim * 8 * sizeof(float));
     WorkspaceArena workspace(256);
@@ -960,6 +1121,13 @@ int main() {
     failures += bf16_state_case({"27b", 16, 48, 0, true}, 17001U, {1024, 1024, 17}, 64);
     failures += bf16_state_case({"35b-a3b", 16, 32, 0, true}, 17002U, {4096}, 256);
     failures += bf16_state_case({"35b-a3b raw", 16, 32, 0, false}, 17003U, {15, 17}, 32);
+    for (const DType dtype : {DType::FP16, DType::BF16}) {
+        failures +=
+            rounded_state_oracle_case({"27b", 16, 48, 0, true}, 17101U, {1024, 1024, 17}, dtype);
+        failures += rounded_state_oracle_case({"35b-a3b", 16, 32, 0, true}, 17102U, {2048}, dtype);
+        failures += rounded_state_oracle_case({"35b-a3b raw", 16, 32, 0, false}, 17103U,
+                                              {15, 17, 7, 100, 33}, dtype);
+    }
 
     print_summaries();
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gated_delta_net correctness\n";
