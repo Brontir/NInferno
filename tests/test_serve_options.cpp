@@ -656,6 +656,24 @@ int main() {
     failures += check(serve_usage_text("ninferno-serve").find("metadata.name") != std::string::npos,
                       "serve help omits the artifact-derived model id default");
 
+    // --max-context-cap: an automatic context with a ceiling (the free memory still picks the
+    // rung, so a busy card steps down), not with --max-context.
+    {
+        const ServeOptions capped = parse({"ninferno-serve", "model.ninferno", "--max-context-cap",
+                                           "49152", "--max-concurrency", "4"});
+        const ninferno::EngineOptions engine = ninferno::serve::engine_options_of(capped);
+        failures += check(capped.max_context == 0 && capped.max_context_cap == 49152 &&
+                              engine.max_context_automatic && engine.max_context == 49152 &&
+                              capped.kv_capacity.mode == ninferno::KvCapacityMode::Automatic,
+                          "--max-context-cap is not an automatic context's ceiling");
+        bool both = false;
+        try {
+            (void)parse({"ninferno-serve", "model.ninferno", "--max-context", "4096",
+                         "--max-context-cap", "8192"});
+        } catch (const std::invalid_argument&) { both = true; }
+        failures += check(both, "--max-context with --max-context-cap is accepted");
+    }
+
     const ServeOptions inherited =
         parse({"ninferno-serve", "model.ninferno", "--max-context", "16384"});
     failures += check(inherited.kv_capacity.mode == ninferno::KvCapacityMode::Explicit &&

@@ -1,5 +1,6 @@
 #include "serve/plan_offline.h"
 
+#include "artifact/source_identity.h"
 #include "convert/acquire.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
@@ -135,10 +136,6 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo) {
     return out;
 }
 
-bool looks_gguf_repo(const std::string& spec) {
-    return ascii_lower(spec).find("gguf") != std::string::npos;
-}
-
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
 ModelRead read_hub(const std::string& spec, const std::string& quant) {
     ModelRead out;
@@ -269,6 +266,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
         try {
             out.inputs.ask.artifact_id = spec::artifact_id_hex(model.artifact);
+            out.inputs.ask.source_identity =
+                artifact::source_identity(model.artifact).value_or(std::string());
         } catch (const std::exception&) {}
     } else {
         out.subject =
@@ -296,7 +295,8 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         gpu    = product::gpu_key_of(device);
     } else {
         try {
-            device = product::plan_device_of_cuda(options.device, true);
+            device = product::plan_device_of_cuda(
+                options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
         } catch (const std::exception& e) {
             throw std::runtime_error(std::string("no GPU to plan for (") + e.what() +
                                      "): name a board with --plan-device");
@@ -403,10 +403,11 @@ HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan&
     if (options.max_context == 0 && options.max_concurrency > 1 && row.launch_context != 0) {
         out.launch_context = row.launch_context;
         if (log) {
-            log("quant | --max-context " + std::to_string(row.launch_context) + ": each of the " +
-                std::to_string(options.max_concurrency) + " streams keeps " +
+            log("quant | --max-context-cap " + std::to_string(row.launch_context) +
+                ": each of the " + std::to_string(options.max_concurrency) + " streams keeps " +
                 std::to_string(row.launch_context) +
-                " tokens of its own (the automatic context would let them share one pool)");
+                " tokens of its own (an automatic context would let them share one pool; a busy "
+                "card still steps down)");
         }
     }
     if (log && plan.pick && plan.pick->tier == runtime::QuantPickTier::Desktop &&
@@ -490,10 +491,6 @@ largest_fitting_hub_quant(const ServeOptions& options,
                                          e.what() + "), and no cached one fits: " + plan.rule +
                                          "; pass --quant LABEL");
             }
-        }
-        if (looks_gguf_repo(options.model_source)) {
-            throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" + e.what() +
-                                     "); pass --quant LABEL");
         }
         if (log) { log(std::string("quant | the largest that fits is not planned: ") + e.what()); }
         return std::nullopt;

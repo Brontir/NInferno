@@ -336,7 +336,9 @@ ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
     engine_options.artifact_path           = options.artifact_path;
     engine_options.chat_template_path      = options.chat_template_path;
     engine_options.device                  = options.device;
-    engine_options.max_context             = options.max_context;
+    // An automatic context under --max-context-cap: its ceiling (plan_context_ceiling).
+    engine_options.max_context =
+        options.max_context != 0 ? options.max_context : options.max_context_cap;
     engine_options.max_context_automatic   = options.max_context == 0;
     engine_options.kv_capacity             = options.kv_capacity;
     engine_options.max_concurrency         = options.max_concurrency;

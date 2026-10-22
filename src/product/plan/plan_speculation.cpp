@@ -464,7 +464,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         if (const spec::ModelEntry* entry = spec::Registry::builtin().by_repo(ask.model_repo)) {
             key.model = entry->id;
         }
-        key.target_artifact = ask.artifact_id;
+        key.target          = ask.source_identity;
         key.drafter         = r.drafter_kind;
         key.depth           = measured_depth;
         key.lanes           = static_cast<std::int32_t>(concurrency);

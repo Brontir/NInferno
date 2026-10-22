@@ -762,6 +762,34 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                         check(start.bytes == start_off.bytes && dry.workspace == dry_off.workspace,
                               where + ": no copy window outside MTP on a copy-round family");
                     }
+                    // An explicit copy window deeper than the draft (validate_program_options
+                    // requires one): the start and the dry run plan the same bytes, and the axes'
+                    // round stays the draft window + 1 on both sides (plan_round_tokens), so a
+                    // start's consistency check with the dry run's axes holds.
+                    EngineOptions explicit_window                   = o;
+                    explicit_window.speculative.ngram_draft_tokens  = 8;
+                    EngineOptions planned_explicit                  = planned;
+                    planned_explicit.speculative.ngram_draft_tokens = 8;
+                    const StartPlan start_explicit = start_plan(s.family, planned_explicit, low);
+                    const rt::PlanRungBytes dry_explicit =
+                        rt::plan_rung_bytes(s.facts, rung, explicit_window, concurrency, false);
+                    check(dry_explicit.total() - dry_explicit.workspace == start_explicit.bytes,
+                          where + ": explicit copy window 8: dry run " +
+                              std::to_string(dry_explicit.total() - dry_explicit.workspace) +
+                              " != start " + std::to_string(start_explicit.bytes));
+                    check(!copies || start_explicit.copy_window == 8U,
+                          where + ": an explicit copy window is the start's");
+                    const rt::PlanAxes axes = rt::plan_axes(planned_explicit, 262144, false, 0);
+                    check(axes.round_tokens ==
+                                  rt::plan_round_tokens(planned_explicit.speculative) &&
+                              axes.round_tokens ==
+                                  std::max(planned_explicit.speculative.draft_tokens,
+                                           planned_explicit.speculative.request_draft_tokens.empty()
+                                               ? 0U
+                                               : planned_explicit.speculative.request_draft_tokens
+                                                     .front()) +
+                                      1U,
+                          where + ": the axes' round is the draft window + 1 with a copy window");
                 }
             }
         }

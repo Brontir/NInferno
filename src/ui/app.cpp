@@ -467,6 +467,9 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         throw std::invalid_argument("bad hub: " + request.hub);
     }
     if (request.max_context < 0) { throw std::invalid_argument("bad max_context"); }
+    if (request.max_context_cap < 0 || (request.max_context_cap > 0 && request.max_context > 0)) {
+        throw std::invalid_argument("bad max_context_cap");
+    }
     if (request.max_concurrency < 0 || request.max_concurrency > 64) {
         throw std::invalid_argument("bad max_concurrency");
     }
@@ -497,6 +500,10 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         if (request.max_context > 0) {
             spec.argv.push_back("--max-context");
             spec.argv.push_back(std::to_string(request.max_context));
+        }
+        if (request.max_context_cap > 0) {
+            spec.argv.push_back("--max-context-cap");
+            spec.argv.push_back(std::to_string(request.max_context_cap));
         }
         // Precision: exact is ninferno-serve's --activations exact with a BF16 KV cache (the
         // output does not depend on the load); balanced and compact keep its defaults, which already
@@ -1955,6 +1962,7 @@ void App::install(httplib::Server& server) {
         out.quant       = body.value("quant", std::string());
         out.gpu         = body.value("gpu", 0);
         out.max_context = body.value("max_context", 0L);
+        out.max_context_cap = body.value("max_context_cap", 0L);
         out.max_concurrency = body.value("max_concurrency", 0);
         out.spec        = body.value("spec", std::string());
         out.precision   = body.value("precision", std::string());

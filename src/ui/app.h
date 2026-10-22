@@ -90,6 +90,7 @@ struct LaunchRequest {
     int gpu          = 0;
     int port         = 0;
     long max_context = 0;  // 0: automatic
+    long max_context_cap = 0;  // with an automatic context: its ceiling (--max-context-cap)
     int max_concurrency = 0;  // requests at once; 0: ninferno-serve's default
     std::string spec;      // "" or auto | none | mtp | dflash | dflash2
     std::string precision; // "" or exact | balanced | fast

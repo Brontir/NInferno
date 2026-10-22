@@ -37,9 +37,11 @@ std::uint64_t vector_bytes(KvCacheStorage storage, std::uint64_t width, bool key
     return 2 * width;
 }
 
-// The widest round's columns: the deepest draft depth, or an MTP copy window (resolved:
-// models::qwen3_5::detail::resolve_copy_window) deeper still, and the anchor.
-std::uint64_t round_tokens_of(const SpeculativeOptions& speculative) {
+// The widest round's logits columns the workspace estimate counts: the deepest draft depth, or an
+// MTP copy window (resolved: models::qwen3_5::detail::resolve_copy_window) deeper still, and the
+// anchor. Not the axes' round_tokens (plan_round_tokens), which a start's warm-up and the
+// ladder's floor read as the draft window + 1.
+std::uint64_t workspace_round_columns(const SpeculativeOptions& speculative) {
     std::uint32_t window = speculative.draft_tokens;
     for (const std::uint32_t k : speculative.request_draft_tokens) { window = std::max(window, k); }
     if (speculative.backend == SpeculativeBackend::Mtp &&
@@ -58,6 +60,18 @@ std::string gib_text(std::uint64_t bytes) {
 } // namespace
 
 // ---- Seams.
+
+bool plan_automatic_fit(const EngineOptions& options) noexcept {
+    return options.max_context_automatic || options.prefill_chunk_automatic ||
+           options.kv_capacity.mode == KvCapacityMode::Automatic ||
+           (options.context_cache.enabled && !options.context_cache.device_state_slots.has_value());
+}
+
+std::uint32_t plan_round_tokens(const SpeculativeOptions& speculative) noexcept {
+    std::uint32_t window = speculative.draft_tokens;
+    for (const std::uint32_t k : speculative.request_draft_tokens) { window = std::max(window, k); }
+    return window + 1U;
+}
 
 std::uint32_t plan_context_ceiling(const EngineOptions& options, std::uint32_t native_context) {
     if (!options.max_context_automatic) { return options.max_context; }
@@ -93,7 +107,7 @@ PlanAxes plan_axes(const EngineOptions& options, std::uint32_t native_context,
     axes.chunk_automatic = options.prefill_chunk_automatic;
     axes.class_reserve   = class_reserve;
     axes.speculation     = options.speculative.backend != SpeculativeBackend::None;
-    axes.round_tokens    = static_cast<std::uint32_t>(round_tokens_of(options.speculative));
+    axes.round_tokens       = plan_round_tokens(options.speculative);
     return axes;
 }
 
@@ -292,7 +306,7 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
                                       const EngineOptions& options, std::uint32_t concurrency) {
     const std::uint64_t chunk = std::min(rung.prefill_chunk, rung.max_context);
-    const std::uint64_t round = round_tokens_of(options.speculative);
+    const std::uint64_t round = workspace_round_columns(options.speculative);
     if (model.hidden == 0) { return std::uint64_t{256} << 20; }
     // About twelve hidden-wide BF16 rows a token (norms, residual, attention projections) and
     // three of the widest feed-forward it runs (catalog.h's estimate, checked on the RTX 4090

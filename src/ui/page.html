@@ -2532,7 +2532,10 @@ function renderDownloads() {
 // The settings the detail view launches with: the typed context, else under Auto the row's
 // launch_context (0: the server's automatic one), the streams, the KV chosen, the speed-up mode.
 function detailLaunchSettings() {
-  return {ctx: launchContextOf(quantSel ? rowPlan(quantSel) : null, {ctx: ctxValue, par: parallel}),
+  // A typed context is the server's; under Auto the planned own context is the automatic
+  // context's ceiling (--max-context-cap: a busy card still steps down).
+  const planned = launchContextOf(quantSel ? rowPlan(quantSel) : null, {ctx: ctxValue, par: parallel});
+  return {ctx: ctxValue > 0 ? planned : 0, cap: ctxValue > 0 ? 0 : planned,
           par: Math.min(Math.max(parallel, 1), MAX_PAR),
           kv: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "", spec: specMode};
 }
@@ -2540,7 +2543,8 @@ async function launch(model, quant, button, settings, keys) {
   if (button) { button.disabled = true; button.textContent = t("launching"); }
   const s = settings || detailLaunchSettings();
   try {
-    const j = await api("/api/launch", {model, quant, gpu, max_context: s.ctx, max_concurrency: s.par,
+    const j = await api("/api/launch", {model, quant, gpu, max_context: s.ctx || 0,
+      max_context_cap: s.ctx > 0 ? 0 : (s.cap || 0), max_concurrency: s.par,
       hub: selected && model === selected.repo ? selected.hubName : "", spec: planSpecOf(s.spec), kv_dtype: s.kv});
     saveLaunch(keys || [], s);
     openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);

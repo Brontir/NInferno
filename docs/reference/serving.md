@@ -2005,8 +2005,9 @@ table (`core/data/gpu_facts.json`). A named board is a what-if:
 - by default the board has this host's driver model, and a display under WDDM.
 
 Its memory is 97.5 % of the marketed VRAM. The free memory is the device's now, less the weights,
-when the device is real, read as a start reads it: with the CUDA stack limit at 0 (the driver's
-default per-thread stack reservation, 0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
+when the device is real, read as a start reads it: with the CUDA stack limit at 0 when the plan
+has an automatic axis (`plan_automatic_fit`: the driver's default per-thread stack reservation,
+0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
 memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
 (Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
 
@@ -2098,8 +2099,9 @@ is "unknown" when that size is not known before the start.
 
 Under an automatic context with several streams, an own pick whose served plan would share one
 pool carries `launch_context`, the own context. Both launch what was planned: ninferno-ui passes it
-as `--max-context`, and `ninferno-serve` without `--max-context` pins it before the start (`quant |
---max-context 49152: each of the 4 streams keeps 49152 tokens of its own`).
+as `--max-context-cap`, and `ninferno-serve` without `--max-context` sets it before the start
+(`quant | --max-context-cap 49152: each of the 4 streams keeps 49152 tokens of its own`): the
+context stays automatic under that ceiling, so a busy card steps down a rung as without it.
 
 A start without `--quant` does the same before the download:
 
@@ -2110,8 +2112,8 @@ A start without `--quant` does the same before the download:
   `the rule's pick at this ask is ...`): other flags never download another file silently;
 - when nothing fits, it refuses before anything is downloaded and names what fits instead;
 - when the hub cannot be reached, the cached quantizations are planned from their own headers and
-  the rule picks among those that fit; with none cached, or none that fits, a GGUF repository is
-  refused (`can't reach the hub to choose a quant; pass --quant`);
+  the rule picks among those that fit; when none fits it refuses (`can't reach the hub ...; pass
+  --quant`); with none it can plan, the fetch's own default applies, as before;
 - a separate drafter attached with `--with-drafters` counts its weights (its listing's size);
 - when the shape cannot be read it does not refuse: the fetch's default order applies (`can't plan
   before download`).

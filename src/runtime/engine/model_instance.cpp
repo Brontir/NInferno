@@ -589,12 +589,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     const EngineOptions unfitted = resolved;
     // Whether the driver holds the plan's CUDA graph memory (the kernel warm-up below).
     bool graph_memory_held = false;
-    // The longest decode round a request asks for: the widest launch window and its target.
-    std::uint32_t window = resolved.speculative.draft_tokens;
-    for (const std::uint32_t k : resolved.speculative.request_draft_tokens) {
-        window = std::max(window, k);
-    }
-    const std::uint32_t round_tokens = window + 1U;
+    // The longest decode round a request asks for: the widest launch window and its target
+    // (plan_dry_run.h, the definition the dry run's axes share).
+    const std::uint32_t round_tokens = plan_round_tokens(resolved.speculative);
     const bool kv_automatic          = resolved.kv_capacity.mode == KvCapacityMode::Automatic;
     // Whether a kernel warm-up measures what the plan's kernels take before the plan is final.
     const bool automatic_fit = context.automatic || resolved.prefill_chunk_automatic ||

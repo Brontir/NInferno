@@ -35,7 +35,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
            "[--plan-device NAME]]] [--with-drafters] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
-           "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
+           "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
+           "[--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
            "[--prefill-chunk N] [--kv-lease-window N] [--log-stats-interval-ms N] "
@@ -119,6 +120,10 @@ std::string serve_usage_text(const char* argv0) {
            "       --health-stall-ms (default 60000; 0 off): /health is 503 while the engine has "
            "work and makes no progress that long\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
+           "       --max-context-cap N keeps the context automatic (the free memory picks the "
+           "rung, a busy card steps down) but at most N tokens; not with --max-context. A GGUF "
+           "repository fetched without --quant for several slots sets it to the context each "
+           "slot was planned to keep of its own\n"
            "       --max-context defaults to automatic: the free GPU memory picks the first rung "
            "that fits of a declared plan ladder (the same for the same model, options and card "
            "type): the model's own context (max_position_embeddings) for every slot, then the "
@@ -306,6 +311,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.max_context = count("--max-context");
             if (options.max_context == 0) {
                 throw std::invalid_argument("--max-context must be positive");
+            }
+        } else if (arg == "--max-context-cap") {
+            options.max_context_cap = count("--max-context-cap");
+            if (options.max_context_cap == 0) {
+                throw std::invalid_argument("--max-context-cap must be positive");
             }
         } else if (arg.starts_with("--moe-offload")) {
             // MoE expert offload (--moe-offload, --moe-offload-compute, --moe-offload-threads)
@@ -538,6 +548,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     // more slots take an automatic capacity, which the Engine bounds by the context's pages below
     // and every slot's full context above (--max-concurrency x --max-context when that fits, else
     // the most that does), so a server does not run fewer requests than it admits.
+    if (options.max_context != 0 && options.max_context_cap != 0) {
+        throw std::invalid_argument("--max-context-cap caps an automatic context: pass it or "
+                                    "--max-context, not both");
+    }
     if (!kv_capacity_explicit) {
         options.kv_capacity = options.max_context == 0 || options.max_concurrency > 1
                                   ? KvCapacityPolicy::automatic()

@@ -2,6 +2,7 @@
 #include "options.h"
 #include "spec_tune.h"
 
+#include "artifact/source_identity.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -352,7 +353,8 @@ int main(int argc, char** argv) {
                 device = *board;
                 gpu    = product::gpu_key_of(device);
             } else {
-                device = product::plan_device_of_cuda(cli.device, true);
+                device = product::plan_device_of_cuda(
+                    cli.device, true, ninferno::runtime::plan_automatic_fit(engine_options));
                 gpu    = ninferno::spec::gpu_identity(cli.device).key;
             }
             const product::PlanSourceFacts facts =
@@ -367,7 +369,11 @@ int main(int argc, char** argv) {
                                                                  .given     = cli.speculative,
                                                                  .thinking  = cli.enable_thinking.value_or(true)};
             inputs.options.speculative = cli.speculative;
-            inputs.subject             = &subject;
+            try {
+                inputs.ask.source_identity =
+                    ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
+            } catch (const std::exception&) {}
+            inputs.subject                            = &subject;
             const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
             const std::string source                  = cli.artifact_path.string();
             std::cout << (cli.plan_json ? product::dry_plan_document(facts, source, "artifact",

@@ -251,6 +251,29 @@ void test_seams() {
                             std::to_string(streams));
         }
     }
+    // The automatic fit (a start resets the stack limit and measures the warm-up under it).
+    {
+        EngineOptions pinned           = serve_like(32768, 1);
+        pinned.prefill_chunk_automatic = false;
+        pinned.kv_capacity             = ninferno::KvCapacityPolicy::explicit_capacity(32768);
+        pinned.context_cache.device_state_slots = 2;
+        check(rt::plan_automatic_fit(serve_like(0, 1)) && !rt::plan_automatic_fit(pinned),
+              "plan_automatic_fit: automatic axes, and none");
+    }
+    // MTP with an explicit copy window deeper than the draft (a start's validation requires a
+    // nonzero one deeper than every depth): the axes' round is the draft window + 1, the
+    // definition a start checks its axes against (plan_round_tokens), and the dry run plans.
+    for (const auto make : {qwen27b, gemma31b}) {
+        EngineOptions o                  = serve_like(32768, 2);
+        o.speculative.backend            = ninferno::SpeculativeBackend::Mtp;
+        o.speculative.draft_tokens       = 3;
+        o.speculative.ngram_draft_tokens = 8;
+        const rt::PlanAxes a             = rt::plan_axes(o, 262144, true, 0);
+        check(a.round_tokens == 4 && a.round_tokens == rt::plan_round_tokens(o.speculative),
+              "an explicit copy window leaves the axes' round at the draft window + 1");
+        const rt::DryRunPlan d = rt::dry_run_plan(make(15 * kGiB), device, o);
+        check(d.planned && d.axes.round_tokens == 4, "MTP with an explicit copy window plans");
+    }
 }
 
 // The family table the dry run reads is the Engine's (family_registry.cpp).

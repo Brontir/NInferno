@@ -69,9 +69,12 @@ struct SpeculationAsk {
     // with on this GPU, else product::default_draft_tokens (ServeOptions::draft_tokens_from_model).
     bool depth_from_profile = false;
     // The model's hub id (the registry entry the class acceptance factors are keyed by; "" when
-    // none) and its artifact id when converted ("" otherwise: the factors then say unknown).
+    // none), its artifact id when converted, and its source identity (artifact/source_identity.h,
+    // the factors' target key; "" before a conversion or for an artifact that records none: the
+    // factors then say unknown).
     std::string model_repo;
     std::string artifact_id;
+    std::string source_identity;
 };
 
 struct SpeculationClassRow {

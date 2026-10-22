@@ -54,6 +54,11 @@ struct ServeOptions {
     // 0 (no --max-context): automatic, the context of the plan ladder's rung the free Device
     // memory picks (EngineOptions::max_context_automatic); the Engine reports the rung.
     std::uint32_t max_context          = 0;
+    // --max-context-cap N: the context stays automatic (the free memory picks the rung, stepping
+    // down on a busy card as without it) but at most N tokens. The quantization a GGUF hub
+    // repository is fetched at without --quant sets it to the context each of several streams
+    // was planned to keep (serve/plan_offline.h), as ninferno-ui's launch passes it. 0: none.
+    std::uint32_t max_context_cap = 0;
     // Unset --kv-capacity: automatic with an automatic context, else max_context tokens.
     KvCapacityPolicy kv_capacity       = KvCapacityPolicy::automatic();
     std::uint32_t max_concurrency      = 1;

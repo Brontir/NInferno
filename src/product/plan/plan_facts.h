@@ -122,7 +122,10 @@ plan_drafter_state_of_config(const nlohmann::json& config, std::uint32_t target_
 // The CUDA device `device`: its name, total memory, compute capability, WDDM (as the Engine reads
 // it), display (the kernel watchdog) and integrated flag; with `measure_free` the free memory now
 // (cudaMemGetInfo). Throws std::runtime_error when the device cannot be read.
-[[nodiscard]] runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free);
+// `stack_reset`: read the free memory with the CUDA stack limit at 0, as a start does when its
+// plan has an automatic axis (runtime::plan_automatic_fit).
+[[nodiscard]] runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free,
+                                                           bool stack_reset = true);
 
 // The device from what NVML says (ninferno-ui): total bytes, name, compute capability; the driver
 // model this host's; `display` as NVML reports it (nullopt: unknown, taken as driving one under

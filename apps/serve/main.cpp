@@ -192,9 +192,11 @@ int main(int argc, char** argv) {
         const ninferno::serve::ModelSource source = ninferno::serve::resolve_model_source(
             options, [&](const std::string& line) { logger->info("model | {}", line); });
         options.artifact_path = source.artifact_path;
-        // The quantization was chosen for each stream's own context: the start keeps it.
-        if (source.planned_context != 0 && options.max_context == 0) {
-            options.max_context = source.planned_context;
+        // The quantization was chosen for each stream's own context: the start keeps it as the
+        // ceiling of its automatic context (a busy card still steps down a rung).
+        if (source.planned_context != 0 && options.max_context == 0 &&
+            options.max_context_cap == 0) {
+            options.max_context_cap = source.planned_context;
         }
         if (source.kind == ninferno::serve::ModelSource::Kind::Hub &&
             !options.model_id_override.has_value()) {

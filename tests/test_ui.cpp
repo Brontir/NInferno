@@ -218,6 +218,25 @@ void test_launch() {
     request.max_context                 = 32768;
     request.spec                        = "mtp";
     request.precision                   = "exact";
+    {
+        // Under Auto the planned own context is the automatic context's ceiling.
+        LaunchRequest capped   = request;
+        capped.max_context     = 0;
+        capped.max_context_cap = 49152;
+        const auto capped_argv = make_launch(options, capped).argv;
+        const auto at = std::find(capped_argv.begin(), capped_argv.end(), "--max-context-cap");
+        check(at != capped_argv.end() && at + 1 != capped_argv.end() && *(at + 1) == "49152" &&
+                  std::find(capped_argv.begin(), capped_argv.end(), "--max-context") ==
+                      capped_argv.end(),
+              "a planned context launches as --max-context-cap");
+        LaunchRequest both   = request;
+        both.max_context_cap = 49152;
+        bool refused         = false;
+        try {
+            (void)make_launch(options, both);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "max_context with max_context_cap is refused");
+    }
     const auto spec                     = make_launch(options, request);
     const std::vector<std::string> want = {"/opt/ninferno/bin/ninferno-serve",
                                            "unsloth/Qwen3.5-9B-GGUF",

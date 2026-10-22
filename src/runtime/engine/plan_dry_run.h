@@ -62,6 +62,17 @@ struct PlanAxes {
     std::uint32_t round_tokens   = 1; // the widest decode round: draft window + 1
 };
 
+// The widest decode round a request asks for, the axes' round_tokens: the deepest launch window
+// (the draft depth and every per-request one) and its target token. A start's warm-up and the
+// ladder's floor read it; an MTP copy window is the family planner's (sequence_planning_inputs)
+// and not part of it.
+[[nodiscard]] std::uint32_t plan_round_tokens(const SpeculativeOptions& speculative) noexcept;
+
+// Whether a start's plan has an automatic axis (the context, the chunk, the KV pool, or the cached
+// states), so it measures the kernel warm-up and resets the CUDA stack limit before it reads the
+// free memory (model_instance.cpp, automatic_fit).
+[[nodiscard]] bool plan_automatic_fit(const EngineOptions& options) noexcept;
+
 // The context ceiling of a start: an explicit --max-context, else the model's own, under an
 // automatic context's cap (a nonzero max_context with max_context_automatic) and an explicit KV
 // capacity (which bounds one sequence).

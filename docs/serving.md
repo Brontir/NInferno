@@ -62,13 +62,16 @@ For a hub id:
   - "fits" means each stream holds the asked context of its own; with an automatic context, at
     least 32K each (or the model's own length), then 16K, then 8K, before the streams share one
     pool, and that is logged in plain words; with several streams and no `--max-context`, the
-    start keeps the context it chose the file for (`--max-context` is pinned to it);
+    start keeps the context it chose the file for as the automatic context's ceiling
+    (`--max-context-cap`);
   - below 3.5 bits per weight only when nothing larger fits at all;
   - a quantization already downloaded that fits is kept, so other flags do not download another
     file;
   - when none fits, nothing is downloaded and the refusal says what fits instead;
-  - when the hub cannot be reached, it takes the largest cached file that fits, else asks for
-    `--quant`.
+  - when the hub cannot be reached, it takes the largest cached file that fits; with none it can
+    plan, the fetch's own default applies;
+  - the fetch's own default order (when no plan applies) now puts BF16 and F16 files last: the
+    engine serves 8 bits or fewer, so a repository without Q8_0 gets a K-quant, not BF16.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
@@ -100,6 +103,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--api-key KEY`, `--api-key-file PATH` | unset | require a bearer / `x-api-key` value |
 | `--model-id ID` | `metadata.name`, else the file name | public model alias; it does not change execution |
 | `--max-context N` | auto: the first rung of the plan ladder that fits (the model's own context at the top) | per-request context ceiling |
+| `--max-context-cap N` | none; a GGUF repository fetched without `--quant` for several requests: the context each was planned to keep of its own | keeps the context automatic (the free memory picks the rung, a busy card steps down) but at most N; not with `--max-context` |
 | `--kv-capacity N\|auto` | `auto`; with `--max-context` and one request, that context | shared KV pool size |
 | `--max-concurrency N` | `1` | requests generated at once, `1..8` |
 | `--max-pending-requests N` | `16` | requests allowed to wait for admission |

@@ -975,7 +975,7 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
     return out;
 }
 
-runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free) {
+runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free, bool stack_reset) {
     const auto check = [&](cudaError_t status, const char* what) {
         if (status != cudaSuccess) {
             throw std::runtime_error("GPU " + std::to_string(device) + ": " + what + ": " +
@@ -1001,10 +1001,11 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free) {
     out.sms           = cls.sms;
     if (measure_free) {
         check(cudaSetDevice(device), "cudaSetDevice");
-        // As a start reads it (model_instance.cpp, construct_or_plan): with the CUDA stack limit
-        // at 0, which returns the driver's default per-thread stack reservation (about 1 KiB for
-        // each resident thread: 0.09-0.19 GiB on the lab's cards) before the free memory is read.
-        check(cudaDeviceSetLimit(cudaLimitStackSize, 0), "cudaDeviceSetLimit");
+        // As a start reads it (model_instance.cpp, construct_or_plan): when its plan has an
+        // automatic axis, with the CUDA stack limit at 0, which returns the driver's default
+        // per-thread stack reservation (about 1 KiB for each resident thread: 0.09-0.19 GiB on
+        // the lab's cards) before the free memory is read.
+        if (stack_reset) { check(cudaDeviceSetLimit(cudaLimitStackSize, 0), "cudaDeviceSetLimit"); }
         std::size_t free_bytes = 0, total_bytes = 0;
         check(cudaMemGetInfo(&free_bytes, &total_bytes), "cudaMemGetInfo");
         out.free_bytes = free_bytes;
