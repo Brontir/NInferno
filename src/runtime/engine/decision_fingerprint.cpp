@@ -363,6 +363,11 @@ DecisionSection options_of(const EngineOptions& o, std::string_view source_ident
     }
     out["speculative.load"]                = joined(load);
     out["speculative.context_limit"]       = number(s.context_limit);
+    std::vector<std::string> classes;
+    for (const std::uint32_t k : s.class_depth) {
+        classes.push_back(k == SpeculativeOptions::kNoClassBound ? std::string("none") : number(k));
+    }
+    out["speculative.class_depth"]         = joined(classes);
     out["speculative.watchdog_window"]     = number(s.watchdog_window);
     out["speculative.watchdog_min_rounds"] = number(s.watchdog_min_rounds);
     out["speculative.shared_trip_floor"]   = bits(s.shared_trip_floor);

@@ -94,6 +94,8 @@ struct StartupSpeculation {
     std::string reason;
     std::string fallback = "none";
     double floor        = 0.0; // the watchdog floor the engine runs without a served menu
+    // The depth per context class (product::context_classes_json); null without --spec auto.
+    nlohmann::json classes;
 };
 
 struct GenerationOutcome {
@@ -170,6 +172,8 @@ struct PreparedRequest {
 struct ServePlan {
     ninferno::PlanSummary plan;
     std::string speculation; // the speculation planned ("plain" without)
+    // --spec auto: the depth per context class (product::context_classes_json); null otherwise.
+    nlohmann::json speculation_classes;
     // --spec auto when no rung fits beside the drafter: plain decode's ladder, which the server
     // falls back to after its shallower drafts.
     std::optional<ninferno::PlanSummary> plain;

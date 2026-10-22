@@ -1,6 +1,7 @@
 #include "product/speculation/speculation.h"
 
 #include "artifact/reader.h"
+#include "artifact/source_identity.h"
 #include "spec/fingerprint.h"
 #include "spec/gpu_identity.h"
 #include "spec/manifest.h"
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <variant>
 #include <stdexcept>
 #include <string>
 
@@ -351,11 +353,128 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     out.engine.load = engine_load(profile.load, speculative_window(out.engine));
     out.engine.context_limit = profile.context_limit;
     out.engine.decision_sources = decision_sources_of(resolved);
+    // What the depth per context class is decided from (apply_context_classes).
+    {
+        const std::string name =
+            primary.drafter.empty() ? spec::mode_name(primary.config.mode) : primary.drafter;
+        auto& in        = out.class_inputs;
+        in.drafter_kind = spec::mode_name(out.menu.mode);
+        in.tokens_per_round =
+            primary.config == out.menu.primary.config ? primary.tokens_per_round : 0.0;
+        if (const auto manifest = spec::read_manifest(spec::manifest_path(artifact))) {
+            in.model = manifest->entry;
+            if (const auto* drafter = manifest->drafter(name); drafter && !drafter->kind.empty()) {
+                in.drafter_kind = drafter->kind;
+            }
+        }
+        if (const auto it = resolved.drafters.find(name); it != resolved.drafters.end()) {
+            if (it->second.starts_with("component:")) {
+                in.drafter_source = it->second;
+            } else {
+                try {
+                    in.drafter_source =
+                        artifact::source_identity(std::filesystem::path(it->second)).value_or("");
+                } catch (const std::exception&) {}
+            }
+        }
+        const spec::ClassFactor unknown{std::nullopt, "not looked up"};
+        out.classes = spec::served_class_depths(out.menu.primary.config.k, 0.0, {}, 1.0,
+                                                {unknown, unknown, unknown, unknown});
+    }
     for (std::string& note : fit_draft_widths(out.engine, can)) {
         out.notes.push_back(std::move(note));
     }
     return out;
 }
+
+} // namespace
+
+void apply_context_classes(ServedSpeculation& served, const std::optional<std::string>& target,
+                           const ServedBytes& bytes, const spec::ContextFactors& factors) {
+    served.engine.class_depth.fill(SpeculativeOptions::kNoClassBound);
+    if (served.menu.mode == spec::Mode::None || !served.menu.primary.config.enabled()) { return; }
+    const spec::MenuChoice& primary = served.menu.primary;
+    const std::int32_t pick         = primary.config.k;
+    const auto& in                  = served.class_inputs;
+    spec::AcceptanceKey key;
+    key.model          = in.model;
+    key.target         = target.value_or("");
+    key.drafter        = in.drafter_kind;
+    key.drafter_source = in.drafter_source;
+    key.byte_class     = spec::served_byte_class(bytes.activations, bytes.kv);
+    key.depth          = pick;
+    key.lanes          = 1; // the one-row rule; the load table bounds a step of more rows
+    std::array<spec::ClassFactor, spec::kContextClasses> found{};
+    for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+        const auto c = static_cast<spec::ContextClass>(i);
+        if (in.model.empty()) {
+            found[i] = {std::nullopt, "the artifact's manifest names no registry model"};
+        } else if (!target) {
+            found[i] = {std::nullopt, "the artifact has no source identity"};
+        } else {
+            found[i] = spec::served_factor(factors, key, c);
+        }
+    }
+    // The floors the watchdog judges the pick and its step-down depths by (raised where the
+    // profile was measured elsewhere): a round's cost in plain-decode tokens.
+    std::vector<spec::DepthFloor> floors{{.depth = pick, .floor = primary.floor}};
+    for (const spec::MenuStep& step : served.menu.step_down(primary)) {
+        floors.push_back({.depth = step.depth, .floor = step.floor});
+    }
+    served.classes = spec::served_class_depths(pick, in.tokens_per_round, floors,
+                                               spec::draft_decay(in.drafter_kind), found);
+    for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+        const std::int32_t depth     = served.classes[i].depth;
+        served.engine.class_depth[i] = depth < pick ? static_cast<std::uint32_t>(std::max(depth, 0))
+                                                    : SpeculativeOptions::kNoClassBound;
+    }
+}
+
+ServedBytes served_bytes(const std::filesystem::path& artifact, ActivationMode activations,
+                         KvCacheStorage kv) {
+    ServedBytes out{.activations = "fast-a8", .kv = std::string(kv_cache_storage_layout(kv))};
+    if (activations == ActivationMode::Exact) {
+        out.activations = "exact";
+    } else if (activations == ActivationMode::Fast) {
+        try {
+            const artifact::Reader reader(artifact);
+            for (const auto& object : reader.directory().objects) {
+                const auto* tensor = std::get_if<artifact::TensorObject>(&object);
+                if (tensor != nullptr && tensor->format.starts_with("nvfp4")) {
+                    out.activations = "fast-a4";
+                    break;
+                }
+            }
+        } catch (const std::exception&) {}
+    }
+    return out;
+}
+
+nlohmann::json context_classes_json(const ServedSpeculation& served) {
+    auto out = nlohmann::json::array();
+    for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+        const auto& c = served.classes[i];
+        out.push_back({{"class", spec::class_name(static_cast<spec::ContextClass>(i))},
+                       {"below_tokens", i + 1 < spec::kContextClasses
+                                            ? nlohmann::json(spec::kContextBounds[i])
+                                            : nlohmann::json(nullptr)},
+                       {"depth", c.depth},
+                       {"basis", spec::class_basis_name(c.basis)},
+                       {"reason", c.reason}});
+    }
+    return out;
+}
+
+void apply_context_classes(ServedSpeculation& served, const std::filesystem::path& artifact,
+                           const ServedBytes& bytes) {
+    std::optional<std::string> target;
+    try {
+        target = artifact::source_identity(artifact);
+    } catch (const std::exception&) {}
+    apply_context_classes(served, target, bytes, spec::Registry::builtin().context_classes());
+}
+
+namespace {
 
 // The profile with every choice replaced by its fit fallback.
 spec::Profile fallback_profile(const spec::Profile& profile) {

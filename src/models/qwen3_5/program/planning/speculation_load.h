@@ -34,6 +34,21 @@ namespace ninferno::models::qwen3_5::detail {
     return true;
 }
 
+// The context-class bounds (SpeculativeOptions::class_depth): non-increasing by class, each
+// kNoClassBound or at most the engine's window (a bound never widens a launch).
+[[nodiscard]] inline bool speculation_class_depth_valid(const SpeculativeOptions& options) {
+    std::uint32_t window = options.draft_tokens;
+    for (const std::uint32_t k : options.request_draft_tokens) { window = std::max(window, k); }
+    std::uint32_t previous = SpeculativeOptions::kNoClassBound;
+    for (const std::uint32_t k : options.class_depth) {
+        if (k > previous || (k != SpeculativeOptions::kNoClassBound && k > window)) {
+            return false;
+        }
+        previous = k;
+    }
+    return true;
+}
+
 // The load bound of a step of `rows` rows: the entry with the largest lanes at most `rows`, or
 // the largest uint32 (no bound) below the first entry.
 [[nodiscard]] inline std::uint32_t speculation_load_bound(const std::vector<SpeculationLoad>& load,

@@ -412,4 +412,128 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
     return out;
 }
 
+const char* class_basis_name(ClassBasis basis) noexcept {
+    switch (basis) {
+    case ClassBasis::Measured:
+        return "measured";
+    case ClassBasis::Modeled:
+        return "modeled";
+    case ClassBasis::NoEstimate:
+        return "no estimate";
+    }
+    return "no estimate";
+}
+
+double draft_decay(std::string_view drafter_kind) noexcept {
+    return drafter_kind == "dflash" || drafter_kind == "dflash2" ? 0.97 : 0.91;
+}
+
+std::array<ServedClassDepth, kContextClasses>
+served_class_depths(std::int32_t pick, double measured_tokens, std::span<const DepthFloor> floors,
+                    double decay, const std::array<ClassFactor, kContextClasses>& factors) {
+    const auto ratio_text = [](double r) {
+        char text[32];
+        std::snprintf(text, sizeof text, "%.2fx", r);
+        return std::string(text);
+    };
+    const auto factor_text = [](double f) {
+        char text[32];
+        std::snprintf(text, sizeof text, "%.3g", f);
+        return std::string(text);
+    };
+    std::array<ServedClassDepth, kContextClasses> out{};
+    out[0] =
+        ServedClassDepth{.depth  = std::max(pick, 0),
+                         .basis  = ClassBasis::Measured,
+                         .reason = pick > 0 ? "the profile's pick, depth " + std::to_string(pick)
+                                            : std::string("plain: the profile's pick")};
+    // The measured round costs at the pick and below it.
+    std::vector<DepthFloor> costs;
+    for (const DepthFloor& f : floors) {
+        if (f.depth > 0 && f.depth <= pick && f.floor > 1.0) { costs.push_back(f); }
+    }
+    std::sort(costs.begin(), costs.end(),
+              [](const DepthFloor& x, const DepthFloor& y) { return x.depth < y.depth; });
+    const bool pick_costed = std::any_of(costs.begin(), costs.end(),
+                                         [&](const DepthFloor& f) { return f.depth == pick; });
+    // The best depth up to `cap` at first-draft acceptance `a` (ties: the deeper), and its speed
+    // over plain decode.
+    const auto best_at = [&](double a, std::int32_t cap) {
+        std::pair<std::int32_t, double> best{0, 0.0};
+        for (const DepthFloor& f : costs) {
+            if (f.depth > cap) { continue; }
+            const double s = tokens_per_round(a, decay, f.depth) / f.floor;
+            if (s >= best.second) { best = {f.depth, s}; }
+        }
+        return best;
+    };
+    std::string no_model; // why the model cannot be used ("" when it can)
+    if (pick <= 0) {
+        no_model = "the profile decodes plainly";
+    } else if (!(measured_tokens > 1.0)) {
+        no_model = "no measured tokens per round at the pick";
+    } else if (!pick_costed) {
+        no_model = "no measured floor at depth " + std::to_string(pick);
+    } else {
+        const auto short_best = best_at(first_draft_acceptance(measured_tokens, pick, decay), pick);
+        if (short_best.first != pick || !(short_best.second > 1.0)) {
+            no_model = "the floors do not reproduce the profile's pick (depth " +
+                       std::to_string(short_best.first) + " at " + ratio_text(short_best.second) +
+                       ")";
+        }
+    }
+    for (std::size_t i = 1; i < kContextClasses; ++i) {
+        const auto c                     = static_cast<ContextClass>(i);
+        const auto shorter               = static_cast<ContextClass>(i - 1);
+        const ServedClassDepth& previous = out[i - 1];
+        const std::int32_t cap           = previous.depth;
+        const std::string kept =
+            cap == pick ? "keeps the profile's depth " + std::to_string(pick)
+                        : "depth " + std::to_string(cap) + " as " + class_name(shorter);
+        if (cap == 0) {
+            out[i] = ServedClassDepth{.depth  = 0,
+                                      .basis  = previous.basis,
+                                      .reason = std::string("plain as ") + class_name(shorter)};
+            continue;
+        }
+        if (!factors[i].value) {
+            out[i] = ServedClassDepth{.depth  = cap,
+                                      .basis  = ClassBasis::NoEstimate,
+                                      .reason = std::string(class_name(c)) + " factor unknown (" +
+                                                factors[i].reason + "): " + kept};
+            continue;
+        }
+        const double f = *factors[i].value;
+        if (!no_model.empty()) {
+            out[i] = ServedClassDepth{.depth  = cap,
+                                      .basis  = ClassBasis::NoEstimate,
+                                      .reason = "factor " + factor_text(f) + ", no model (" +
+                                                no_model + "): " + kept};
+            continue;
+        }
+        if (f >= 1.0) {
+            out[i] = ServedClassDepth{.depth  = cap,
+                                      .basis  = ClassBasis::Modeled,
+                                      .reason = "factor " + factor_text(f) + " >= 1: " + kept};
+            continue;
+        }
+        const double a_c = first_draft_acceptance(1.0 + (measured_tokens - 1.0) * f, pick, decay);
+        const auto best  = best_at(a_c, cap);
+        if (best.second > 1.0) {
+            out[i] = ServedClassDepth{.depth  = best.first,
+                                      .basis  = ClassBasis::Modeled,
+                                      .reason = "factor " + factor_text(f) + ": depth " +
+                                                std::to_string(best.first) + " at " +
+                                                ratio_text(best.second) + " plain"};
+        } else {
+            out[i] = ServedClassDepth{.depth  = 0,
+                                      .basis  = ClassBasis::Modeled,
+                                      .reason = "factor " + factor_text(f) +
+                                                ": plain (the best depth gives " +
+                                                ratio_text(best.second) + ")"};
+        }
+    }
+    return out;
+}
+
 } // namespace ninferno::spec

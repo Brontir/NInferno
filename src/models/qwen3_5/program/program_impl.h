@@ -10,6 +10,7 @@
 #include "core/decode_graph.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 #include "runtime/contract/token_mask_staging.h"
+#include "spec/context_bounds.h"
 #include "spec/watchdog.h"
 
 #include "models/qwen3_5/program/model_family.h"
@@ -684,6 +685,7 @@ public:
     const std::vector<SpeculationStep> default_step_down; // SpeculativeOptions::step_down
     const std::vector<SpeculationLoad> speculation_load;  // SpeculativeOptions::load
     const std::uint32_t speculation_context_limit;        // SpeculativeOptions::context_limit
+    const std::array<std::uint32_t, 4> speculation_class_depth; // SpeculativeOptions::class_depth
     const std::uint32_t speculative_batch_limit;          // the widest speculative launch
     const bool vision_enabled;
     const bool use_cuda_graph;

@@ -310,6 +310,37 @@ The profile therefore bounds speculation under load, in its `load` table.
   run (an MTP pick or fit fallback, `block` on Qwen 3.5) is dropped with a note in the startup log
   rather than refused.
 
+### Depth by context class
+
+Acceptance falls as the context grows, so a depth that pays on a short prompt can lose to plain
+decode on a long one. Under `--spec auto` the server bounds the depth per context class, by the
+tokens a request's context holds: Short (under 1024), Mid (under 8192), Long (under 24576) and
+Huge (the rest).
+
+- **Short** always runs the profile's measured pick.
+- **Mid, Long and Huge** only go down from it, and only where the registry knows the class's
+  acceptance factor (its accepted drafts per round over Short's) for this model and drafter: an
+  entry keyed by the artifact's source identity, the drafter, the depth, the byte class
+  (activations, KV storage) and one lane, measured on two cards of different generations that
+  agree. An unknown factor keeps the profile's pick. A longer class never drafts deeper than a
+  shorter one.
+- **The depth from a factor.** The profile measured T tokens per round at its pick K. A class with
+  factor f accepts f times as many drafts there: 1 + (T - 1) f tokens per round. That gives the
+  class's first-draft acceptance, with the drafter's decay along the block (DFlash 0.97, MTP 0.91).
+  Each depth k up to K then yields its tokens per round and costs its watchdog floor (the measured
+  break-even, in plain-decode tokens per round). The class runs the depth with the highest ratio
+  of the two, or decodes plainly when no ratio passes 1. The rule applies only when it reproduces
+  the profile's own pick at factor 1; otherwise every class keeps the pick ("no estimate").
+- **In a request.** A prompt's class bounds its depth at admission. Before each decode step, a
+  context that has grown into a longer class takes that class's bound. The depth only falls: onto a
+  step-down depth, judged by that depth's floor, or to plain decode for the rest of the request.
+  The Qwen 3.5 family applies the bounds.
+- **Reports.** The startup log has one `speculation | class <name> | depth <k> | <basis> |
+  <reason>` line per class. `meta.speculation.classes` in `GET /v1/models` and
+  `speculation_classes` in `--plan --json` list `{class, below_tokens, depth, basis, reason}`:
+  `basis` is `measured` (Short), `modeled` (a known factor) or `no estimate`. The bounds are part of
+  the decision fingerprint (`speculative.class_depth`).
+
 ### Graphs and workspace
 
 The startup log's `load` field shows the bounds in force. `speculation | graphs` lists each captured
@@ -365,7 +396,8 @@ and on a server plain since startup:
 | `note` | what the profile would have run, and the fit fallback's refusal, when there is one |
 | `fallback` | the first that applies: `context_plain` (the prompt passed the profile's `context_limit`: plain from the first token), `load_plain` (a load bound of 0), `watchdog_plain` (the acceptance watchdog stopped drafting), `step_down` (the watchdog went shallower), `fit_fallback` (the profile's choice did not fit at startup; a fallback runs), `startup_plain` (nothing that drafts fit at startup), `none` |
 
-`GET /v1/models` shows the startup part before any request (`meta.speculation`), and the startup
+`GET /v1/models` shows the startup part before any request (`meta.speculation`, with the depth
+per context class in `classes` under `--spec auto`: [Depth by context class](#depth-by-context-class)), and the startup
 log has one line with it: `speculation | serves <config> (<selection>) | fallback <fallback> |
 <reason>`. The UI keeps the last speculation warning of a server's log beside it.
 

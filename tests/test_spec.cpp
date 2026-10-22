@@ -2695,6 +2695,188 @@ int test_variants() {
 
 } // namespace
 
+// The served depth per context class (served_class_depths, G2 PR-b): Short keeps the profile's
+// pick, a longer class only goes down and only where its factor is known; the clamp a growing
+// context applies mid-request only lowers.
+int test_served_class_depths() {
+    int failures = 0;
+    const ClassFactor unknown{std::nullopt, "no context_classes entry for model m"};
+    const auto known = [](double f) { return ClassFactor{f, {}}; };
+    // DFlash2 at depth 7, 4.3 tokens per round, measured floors at 7, 5 and 3: at factor 1 the
+    // model reproduces the pick (7 at 2.26x, 5 at 2.22x, 3 at 2.08x).
+    const double decay                   = draft_decay("dflash2");
+    const std::vector<DepthFloor> floors = {{7, 1.9}, {5, 1.75}, {3, 1.5}};
+    failures += check(decay == 0.97 && draft_decay("mtp") == 0.91, "draft_decay per kind");
+
+    // Unknown factors: every class at the profile's pick.
+    {
+        const auto got =
+            served_class_depths(7, 4.3, floors, decay, {unknown, unknown, unknown, unknown});
+        for (std::size_t i = 0; i < kContextClasses; ++i) {
+            failures += check(got[i].depth == 7, std::string("unknown factor keeps depth 7 in ") +
+                                                     class_name(static_cast<ContextClass>(i)) +
+                                                     " (" + got[i].reason + ")");
+        }
+        failures +=
+            check(got[0].basis == ClassBasis::Measured && got[1].basis == ClassBasis::NoEstimate &&
+                      got[3].basis == ClassBasis::NoEstimate &&
+                      got[2].reason.find("keeps the profile's depth 7") != std::string::npos,
+                  "short measured, unknown classes no estimate (" + got[2].reason + ")");
+        failures += check(std::string(class_basis_name(ClassBasis::NoEstimate)) == "no estimate" &&
+                              std::string(class_basis_name(ClassBasis::Modeled)) == "modeled" &&
+                              std::string(class_basis_name(ClassBasis::Measured)) == "measured",
+                          "class basis names");
+    }
+    // A known Long factor of 0.60 lowers Long (and Huge, capped by it); Short and an unknown Mid
+    // keep 7; a Short factor is ignored.
+    {
+        const auto got =
+            served_class_depths(7, 4.3, floors, decay, {known(0.5), unknown, known(0.60), unknown});
+        failures += check(got[0].depth == 7 && got[1].depth == 7,
+                          "short and an unknown mid keep the pick (" + got[0].reason + "; " +
+                              got[1].reason + ")");
+        failures += check(got[2].depth == 3 && got[2].basis == ClassBasis::Modeled,
+                          "long at factor 0.60 drops to depth 3 (" + got[2].reason + ")");
+        failures += check(got[3].depth == 3 && got[3].basis == ClassBasis::NoEstimate &&
+                              got[3].reason.find("as long") != std::string::npos,
+                          "an unknown huge never drafts deeper than long (" + got[3].reason + ")");
+    }
+    // Monotone in the factor, never above the pick; a factor of 1 or more keeps it; a tiny one
+    // decodes plainly, and so does every longer class.
+    {
+        std::int32_t previous = 7;
+        for (const double f : {1.2, 1.0, 0.95, 0.87, 0.6, 0.3, 0.1}) {
+            const auto got =
+                served_class_depths(7, 4.3, floors, decay, {unknown, known(f), unknown, unknown});
+            failures += check(got[1].depth <= previous && got[1].depth <= 7 &&
+                                  got[2].depth == got[1].depth && got[3].depth == got[1].depth,
+                              "mid depth falls with the factor " + std::to_string(f) + " (" +
+                                  got[1].reason + ")");
+            if (f >= 1.0) { failures += check(got[1].depth == 7, "a factor >= 1 keeps the pick"); }
+            previous = got[1].depth;
+        }
+        const auto tiny =
+            served_class_depths(7, 4.3, floors, decay, {unknown, known(0.1), unknown, unknown});
+        failures += check(tiny[1].depth == 0 && tiny[2].depth == 0 && tiny[3].depth == 0 &&
+                              tiny[1].reason.find("plain") != std::string::npos,
+                          "factor 0.1: plain from mid on (" + tiny[1].reason + ")");
+    }
+    // No model: floors that do not reproduce the pick (a floor raised from another GPU), no floor
+    // at the pick, no tokens per round: a known factor keeps the pick.
+    {
+        const std::vector<DepthFloor> raised = {{7, 3.0}, {5, 1.75}, {3, 1.5}};
+        const std::vector<DepthFloor> none   = {{5, 1.75}, {3, 1.5}};
+        for (const auto& [label, got] :
+             std::vector<std::pair<std::string, std::array<ServedClassDepth, kContextClasses>>>{
+                 {"floors that pick 5",
+                  served_class_depths(7, 4.3, raised, decay,
+                                      {unknown, known(0.6), known(0.6), known(0.6)})},
+                 {"no floor at 7",
+                  served_class_depths(7, 4.3, none, decay,
+                                      {unknown, known(0.6), known(0.6), known(0.6)})},
+                 {"no tokens per round",
+                  served_class_depths(7, 0.0, floors, decay,
+                                      {unknown, known(0.6), known(0.6), known(0.6)})}}) {
+            failures += check(got[1].depth == 7 && got[2].depth == 7 && got[3].depth == 7 &&
+                                  got[2].basis == ClassBasis::NoEstimate &&
+                                  got[2].reason.find("no model") != std::string::npos,
+                              label + ": no model keeps the pick (" + got[2].reason + ")");
+        }
+    }
+
+    // The clamp a request takes as its context grows (SpeculativeOptions::class_depth).
+    {
+        const std::array<std::uint32_t, kContextClasses> bounds{kNoClassBound, kNoClassBound, 3, 0};
+        const std::vector<std::pair<std::uint32_t, double>> steps{{5, 1.6}, {3, 1.4}, {1, 1.1}};
+        const auto stay = clamp_to_class(bounds, 900, 7, steps);
+        failures += check(stay.depth == 7 && stay.dropped == 0 && !stay.floor,
+                          "a short context keeps depth 7");
+        const auto mid = clamp_to_class(bounds, 5000, 7, steps);
+        failures += check(mid.depth == 7 && !mid.lowered(7), "an unbounded mid keeps depth 7");
+        const auto long_ = clamp_to_class(bounds, 8192, 7, steps);
+        failures += check(long_.depth == 3 && long_.dropped == 2 && long_.floor == 1.4,
+                          "crossing into long lowers 7 to the step at 3 with its floor");
+        // Never raises: a shallower request (a watchdog step-down) stays, and so does one whose
+        // context is back in a shorter class (it never is: the frontier only grows).
+        const auto shallow = clamp_to_class(bounds, 9000, 2, {{1, 1.1}});
+        failures +=
+            check(shallow.depth == 2 && shallow.dropped == 0, "a bound above the depth leaves it");
+        const auto back = clamp_to_class(bounds, 100, 3, {{1, 1.1}});
+        failures += check(back.depth == 3, "a shorter class never raises a lowered depth");
+        const auto huge = clamp_to_class(bounds, 30000, 3, {{1, 1.1}});
+        failures +=
+            check(huge.depth == 0 && huge.dropped == 1, "crossing into huge decodes plainly");
+        const std::array<std::uint32_t, kContextClasses> between{kNoClassBound, 4, 4, 4};
+        const auto off_step = clamp_to_class(between, 2000, 7, {{5, 1.6}, {3, 1.4}});
+        failures += check(off_step.depth == 4 && off_step.dropped == 1 && !off_step.floor,
+                          "a bound between steps drops the deeper ones, no floor of its own");
+        failures += check(class_bound(bounds, 24575) == 3 && class_bound(bounds, 24576) == 0 &&
+                              class_bound(bounds, 1023) == kNoClassBound,
+                          "class_bound follows class_of");
+        // A request walking through the classes, prompt to long output: the depth never rises.
+        std::uint32_t depth                                = 7;
+        std::vector<std::pair<std::uint32_t, double>> left = steps;
+        for (const std::int64_t frontier : {500, 1500, 8000, 8200, 20000, 24600, 30000}) {
+            const auto c = clamp_to_class(bounds, frontier, depth, left);
+            failures +=
+                check(c.depth <= depth, "the depth never rises at " + std::to_string(frontier));
+            left.erase(left.begin(), left.begin() + static_cast<std::ptrdiff_t>(c.dropped));
+            depth = c.depth;
+        }
+        failures += check(depth == 0, "a request that grows past 24K ends plain");
+    }
+
+    // The registry lookup a server makes: sampling and corpus are the measurement's, the lowest
+    // known factor over them stands. With a source identity for the UD-IQ3_XXS target (the
+    // shipped entries miss parts of it, so a server gets unknown today).
+    {
+        const auto& shipped = Registry::builtin().context_classes();
+        AcceptanceKey key;
+        key.model          = "qwen3.8-27b";
+        key.target         = std::string(64, 'c');
+        key.drafter        = "dflash2";
+        key.drafter_source = "component:dflash2";
+        key.byte_class     = served_byte_class("fast-a8", "int8-group64");
+        key.depth          = 7;
+        key.lanes          = 1;
+        const auto today   = served_factor(shipped, key, ContextClass::Long);
+        failures += check(!today.value,
+                          "the shipped registry: unknown for a server (" + today.reason + ")");
+        auto known_registry = shipped;
+        for (auto& entry : known_registry.entries) {
+            if (!entry.target_missing.empty()) { entry.key.target = key.target; }
+        }
+        const auto mid  = served_factor(known_registry, key, ContextClass::Mid);
+        const auto lng  = served_factor(known_registry, key, ContextClass::Long);
+        const auto huge = served_factor(known_registry, key, ContextClass::Huge);
+        failures += check(mid.value && std::abs(*mid.value - (0.798 + 0.813) / 2) < 1e-12,
+                          "mid: the lower of t0 0.8675 and t1 0.8055");
+        failures += check(lng.value && std::abs(*lng.value - (0.614 + 0.593) / 2) < 1e-12,
+                          "long: the lower of t0 0.6035 and t1 0.633");
+        failures += check(!huge.value, "huge: not measured, unknown (" + huge.reason + ")");
+        auto mtp_key           = key;
+        mtp_key.drafter        = "mtp";
+        mtp_key.drafter_source = "component:mtp";
+        failures +=
+            check(!served_factor(known_registry, mtp_key, ContextClass::Long).value,
+                  "mtp at depth 7: no entry measured it (" +
+                      served_factor(known_registry, mtp_key, ContextClass::Long).reason + ")");
+        auto exact_key       = key;
+        exact_key.byte_class = served_byte_class("exact", "int8-group64");
+        failures += check(!served_factor(known_registry, exact_key, ContextClass::Long).value &&
+                              exact_key.byte_class["parity"] == "exact",
+                          "exact activations: another byte class, unknown");
+        // End to end: the measured factors lower Long below the pick, Short keeps it.
+        const auto got =
+            served_class_depths(7, 4.3, floors, decay, {ClassFactor{}, mid, lng, huge});
+        failures += check(got[0].depth == 7 && got[2].depth < 7 && got[2].depth <= got[1].depth &&
+                              got[3].depth == got[2].depth,
+                          "UD-IQ3_XXS dflash2:7: short 7, long " + std::to_string(got[2].depth) +
+                              " (" + got[2].reason + ")");
+    }
+    return failures;
+}
+
 int main() {
     int failures = 0;
     failures += test_config();
@@ -2707,6 +2889,7 @@ int main() {
     failures += test_load_model();
     failures += test_cost_model();
     failures += test_class_depths();
+    failures += test_served_class_depths();
     failures += test_select_published();
     failures += test_registry_and_corpus();
     failures += test_source_identity();

@@ -164,6 +164,13 @@ std::string render_plan_text(const ServePlan& served, std::uint32_t max_concurre
     };
     std::ostringstream out;
     out << "plan | speculation " << served.speculation << "\n";
+    if (served.speculation_classes.is_array()) {
+        for (const auto& c : served.speculation_classes) {
+            out << "plan | speculation class " << c.value("class", std::string()) << ": depth "
+                << c.value("depth", 0) << " (" << c.value("basis", std::string()) << ") "
+                << c.value("reason", std::string()) << "\n";
+        }
+    }
     table(out, served.plan);
     if (served.plain) {
         out << "plan | --spec auto would try the profile's fit fallback, shallower drafts and the "
@@ -178,6 +185,7 @@ std::string render_plan_text(const ServePlan& served, std::uint32_t max_concurre
 std::string render_plan_json(const ServePlan& served) {
     Json out{{"schema", "ninferno-plan/1"},
              {"speculation", served.speculation},
+             {"speculation_classes", served.speculation_classes},
              {"plan", plan_summary_json(served.plan, true)}};
     out["plain"] = served.plain ? plan_summary_json(*served.plain, true) : Json(nullptr);
     return out.dump(2);

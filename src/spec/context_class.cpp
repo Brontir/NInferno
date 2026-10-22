@@ -105,27 +105,6 @@ bool known_route(std::string_view route) {
     return false;
 }
 
-ContextClass class_of(std::int64_t prompt_tokens) noexcept {
-    if (prompt_tokens < kContextBounds[0]) { return ContextClass::Short; }
-    if (prompt_tokens < kContextBounds[1]) { return ContextClass::Mid; }
-    if (prompt_tokens < kContextBounds[2]) { return ContextClass::Long; }
-    return ContextClass::Huge;
-}
-
-const char* class_name(ContextClass c) noexcept {
-    switch (c) {
-    case ContextClass::Short:
-        return "short";
-    case ContextClass::Mid:
-        return "mid";
-    case ContextClass::Long:
-        return "long";
-    case ContextClass::Huge:
-        return "huge";
-    }
-    return "unknown";
-}
-
 ContextFactors parse_context_factors(const Json& object) {
     if (!object.is_object()) { refuse("not an object"); }
     ContextFactors out;
@@ -368,6 +347,30 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
                        " from their mean, tolerance " + percent(best->tolerance) + ")");
     }
     return ClassFactor{mean, {}};
+}
+
+ClassFactor served_factor(const ContextFactors& factors, AcceptanceKey key, ContextClass c) {
+    std::optional<ClassFactor> first;
+    std::optional<double> lowest;
+    for (const auto& entry : factors.entries) {
+        if (entry.key.model != key.model) { continue; }
+        key.sampling    = entry.key.sampling;
+        key.corpus      = entry.key.corpus;
+        ClassFactor got = factor(factors, key, c);
+        if (got.value) { lowest = lowest ? std::min(*lowest, *got.value) : *got.value; }
+        if (!first) { first = std::move(got); }
+    }
+    if (lowest) { return ClassFactor{lowest, {}}; }
+    if (first) { return ClassFactor{std::nullopt, first->reason}; }
+    return factor(factors, key, c);
+}
+
+Json served_byte_class(std::string_view activations, std::string_view kv) {
+    const bool exact = activations == "exact";
+    return Json{{"activations", std::string(activations)},
+                {"kv", std::string(kv)},
+                {"summation", exact ? "exact" : "fast"},
+                {"parity", exact ? "exact" : "none"}};
 }
 
 } // namespace ninferno::spec

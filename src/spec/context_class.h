@@ -42,8 +42,11 @@
 // "sha256:" and 64 lower-case hex digits) is never known. Otherwise factor() says unknown and why.
 // Unknown is never 1.0.
 //
-// No decision reads factor() yet: this is the data and the API (idea 32, step 2); the rule that
-// picks a depth per class comes next.
+// A server reads the factors through served_factor (spec/load_model.h served_class_depths turns
+// them into a depth per class, product/speculation hands it to the Engine as
+// SpeculativeOptions::class_depth).
+
+#include "spec/context_bounds.h"
 
 #include <nlohmann/json.hpp>
 
@@ -52,23 +55,17 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ninferno::spec {
 
-enum class ContextClass : std::uint8_t { Short, Mid, Long, Huge };
-
-inline constexpr std::size_t kContextClasses = 4;
-// The upper bounds (exclusive) of Short, Mid and Long, in prompt tokens.
-inline constexpr std::array<std::int64_t, kContextClasses - 1> kContextBounds{1024, 8192, 24576};
+// ContextClass, kContextBounds, class_of and class_name: spec/context_bounds.h.
 // Bound of a factor: acceptance at longer context rarely rises much above the Short class's.
 inline constexpr double kMaxContextFactor = 1.5;
 // How far each card of an entry may lie from the cards' mean (|v - mean| / mean) for the mean to
 // stand. Every entry records it ("tolerance") and must record this value.
 inline constexpr double kContextTolerance = 0.05;
-
-[[nodiscard]] ContextClass class_of(std::int64_t prompt_tokens) noexcept;
-[[nodiscard]] const char* class_name(ContextClass c) noexcept; // short, mid, long, huge
 
 // What an acceptance factor is measured for, and what a lookup asks for.
 struct AcceptanceKey {
@@ -133,8 +130,24 @@ struct ClassFactor {
 // The factor for `key` in class `c`, or unknown with a labelled reason: no context_classes, no
 // entry for the model, a key field that differs ("<field> differs"), a placeholder key
 // ("placeholder key: <field>=<value>"), no data for the class, fewer than two cards of different
-// generations or routes, a card beyond the tolerance of the mean. No caller yet.
+// generations or routes, a card beyond the tolerance of the mean.
 [[nodiscard]] ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key,
                                  ContextClass c);
+
+// The factor a server running `key` takes in class `c`. The sampling and the corpus are conditions
+// of a measurement, not of a server (a server serves every sampling, and its prompts are no
+// corpus), so every entry of key.model is tried with its own sampling and corpus in their place
+// (factor() then decides, every other field and rule as there), and the lowest factor any of them
+// knows stands: the conservative side, as a depth falls with the factor. Unknown when none knows
+// one, with the reason of the first entry tried (factor()'s own when the model has no entry).
+[[nodiscard]] ClassFactor served_factor(const ContextFactors& factors, AcceptanceKey key,
+                                        ContextClass c);
+
+// The byte class a server runs (the key's "byte_class"): activations "exact" (--activations
+// exact), "fast-a4" (fast on an artifact holding NVFP4 weights, which fast may run W4A4) or
+// "fast-a8" (fast otherwise, and --activations int8); kv the KV storage's layout name
+// (kv_cache_storage_layout: "bf16", "int8-group64", "fp8-row256", ...); summation "exact" or
+// "fast" and parity "exact" or "none" with the activations (fast bytes depend on the width).
+[[nodiscard]] nlohmann::json served_byte_class(std::string_view activations, std::string_view kv);
 
 } // namespace ninferno::spec

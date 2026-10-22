@@ -84,6 +84,9 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
                                    {"selection", speculation->selection},
                                    {"reason", speculation->reason},
                                    {"fallback", speculation->fallback}};
+        if (!speculation->classes.is_null()) {
+            meta["speculation"]["classes"] = speculation->classes;
+        }
     }
     return Json{{"id", model_id},
                 {"object", "model"},

@@ -2,6 +2,7 @@
 
 #include "ninferno/option_enums.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -300,6 +301,18 @@ struct SpeculativeOptions {
     // decode pays for it once per token, so past some length the rounds cost more than their
     // tokens save. 0: none.
     std::uint32_t context_limit = 0;
+    // The depth bound per context class, by the tokens a request's context holds (Short < 1024,
+    // Mid < 8192, Long < 24576, Huge the rest; spec/context_class.h): a request drafts at most
+    // class_depth[class] drafts, at 0 it decodes plainly. Applied when its prompt is admitted
+    // (beside context_limit) and again before each decode step, as its context grows into a longer
+    // class: a request's depth only falls (onto a step-down depth it then judges by that floor;
+    // at 0 it decodes plainly for the rest of the request). Non-increasing by class, each bound
+    // kNoClassBound (none) or at most the engine's window. --spec auto fills it from the
+    // registry's context-class factors (src/product/speculation, spec::served_class_depths); the
+    // Qwen 3.5 Program applies it.
+    static constexpr std::uint32_t kNoClassBound = 0xffffffffU;
+    std::array<std::uint32_t, 4> class_depth{kNoClassBound, kNoClassBound, kNoClassBound,
+                                             kNoClassBound};
     std::uint32_t watchdog_window     = 32;
     std::uint32_t watchdog_min_rounds = 16;
     // The acceptance floor is a break-even against plain decode of one request. A request whose

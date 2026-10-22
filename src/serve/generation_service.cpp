@@ -2,6 +2,8 @@
 
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
+#include "core/device_class.h"
+#include "runtime/engine/family_registry.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -424,6 +426,23 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         served_speculation_->engine.load        = speculative.load;
         served_speculation_->engine.draft_width = speculative.draft_width;
+        // The depth per context class for the bytes this Engine runs: an automatic KV storage
+        // as the Engine will choose it (the family's, by the device's compute capability).
+        KvCacheStorage kv = engine_options.kv_cache;
+        if (engine_options.kv_cache_automatic) {
+            try {
+                int compute_capability = 1000;
+                try {
+                    compute_capability = device_class(options_.device).compute_capability();
+                } catch (const std::exception&) {}
+                kv = runtime::automatic_kv_cache(
+                    runtime::artifact_model_type(options_.artifact_path), compute_capability);
+            } catch (const std::exception&) {}
+        }
+        product::apply_context_classes(
+            *served_speculation_, options_.artifact_path,
+            product::served_bytes(options_.artifact_path, engine_options.activations, kv));
+        speculative.class_depth = served_speculation_->engine.class_depth;
     };
     bound_load(engine_options.speculative);
     engine_options.context_cache            = options_.context_cache;
@@ -439,6 +458,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         dry.speculation = engine_options.speculative.backend == SpeculativeBackend::None
                               ? std::string("plain")
                               : product::speculation_label(engine_options.speculative);
+        if (served_speculation_) {
+            dry.speculation_classes = product::context_classes_json(*served_speculation_);
+        }
         if (dry.plan.rung == 0 && served_speculation_) {
             ninferno::EngineOptions plain = engine_options;
             plain.speculative             = SpeculativeOptions{};
@@ -676,6 +698,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                               : "profile " + served_speculation_->source,
                        .fallback  = fell_back ? "fit_fallback" : "none",
         };
+        startup_speculation_.classes = product::context_classes_json(*served_speculation_);
     } else if (!speculation_plain_reason_.empty()) {
         startup_speculation_ = {.selection = "startup",
                                 .reason    = speculation_plain_reason_,

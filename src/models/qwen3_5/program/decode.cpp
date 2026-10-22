@@ -283,6 +283,40 @@ void apply_watchdog_trip(RequestControl& request, double shared_floor) {
     request.drafting_stopped        = true;
 }
 
+// A request whose context grew into a longer class (its execution frontier crossed a bound of
+// SpeculativeOptions::class_depth) drafts no deeper than that class allows: its depth only falls,
+// onto a step-down depth whose floor the watchdog then judges it by (afresh from this round), or
+// to plain decode for the rest of the request (its drafter state does not follow plain steps, as
+// after a trip). A depth the bound leaves is untouched, so this never raises one.
+void apply_context_class(RequestControl& request,
+                         const std::array<std::uint32_t, spec::kContextClasses>& bounds,
+                         std::uint32_t frontier) {
+    if (request.plain || request.drafting_stopped || request.draft_depth == 0 ||
+        spec::class_bound(bounds, frontier) >= request.draft_depth) {
+        return;
+    }
+    std::vector<std::pair<std::uint32_t, double>> steps;
+    steps.reserve(request.step_down.size());
+    for (const SpeculationStep& step : request.step_down) {
+        steps.emplace_back(step.draft_tokens, step.acceptance_floor);
+    }
+    const spec::ClassClamp clamp =
+        spec::clamp_to_class(bounds, frontier, request.draft_depth, steps);
+    request.step_down.erase(request.step_down.begin(),
+                            request.step_down.begin() + static_cast<std::ptrdiff_t>(clamp.dropped));
+    if (clamp.depth == 0) {
+        request.step_down.clear();
+        request.plain = true;
+        return;
+    }
+    request.draft_depth                          = clamp.depth;
+    request.speculative_stats.final_draft_window = clamp.depth;
+    if (clamp.floor) {
+        request.watchdog.restart(*clamp.floor, static_cast<std::int64_t>(request.judged_rounds),
+                                 static_cast<std::int64_t>(request.judged_accepted));
+    }
+}
+
 } // namespace
 
 void ProgramImpl::install_sampling(SequenceState& sequence, RequestControl& request,
@@ -455,6 +489,14 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
     // plain beside a newcomer that drafted, decoded at 35 tok/s against 50 alone). A joiner does
     // not pass this on, so under overlapping traffic speculation resumes once the rows the bound
     // itself turned plain have finished.
+    // A row whose context grew into a longer class first takes that class's depth bound.
+    if (speculative_backend != SpeculativeBackend::None) {
+        for (const std::uint32_t lane : lanes) {
+            if (lane >= max_concurrency) { continue; }
+            apply_context_class(requests[lane], speculation_class_depth,
+                                active_sequence(lane).execution_frontier);
+        }
+    }
     const std::uint32_t natural = load_bound(lanes.size());
     bool latched                = false;
     for (const std::uint32_t lane : lanes) {

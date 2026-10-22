@@ -633,6 +633,12 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                       service.options().per_request_speculation ? "by thinking flag" : "fixed",
                       product::speculation_load_label(served->engine.load));
         for (const auto& note : served->notes) { logger_->info("speculation | {}", note); }
+        for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+            const auto& c = served->classes[i];
+            logger_->info("speculation | class {} | depth {} | {} | {}",
+                          spec::class_name(static_cast<spec::ContextClass>(i)), c.depth,
+                          spec::class_basis_name(c.basis), c.reason);
+        }
         if (!memory.speculative_graph_windows.empty()) {
             // An explicit plan reserves an allowance per window; an automatic one reserves none,
             // since the kernel warm-up measured the graphs' memory before the fit.

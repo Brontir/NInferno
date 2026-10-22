@@ -13,6 +13,7 @@
 #include "models/qwen3_5/program/planning/speculation_load.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -111,6 +112,9 @@ struct SequencePlanningInputs {
     std::vector<SpeculationStep> step_down;         // SpeculativeOptions::step_down
     std::vector<SpeculationLoad> load;              // SpeculativeOptions::load
     std::uint32_t context_limit             = 0; // SpeculativeOptions::context_limit
+    std::array<std::uint32_t, 4> class_depth{
+        SpeculativeOptions::kNoClassBound, SpeculativeOptions::kNoClassBound,
+        SpeculativeOptions::kNoClassBound, SpeculativeOptions::kNoClassBound}; // ::class_depth
     std::uint32_t watchdog_window           = 32;
     std::uint32_t watchdog_min_rounds       = 16;
     double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor
@@ -158,6 +162,9 @@ struct SequencePlanImpl {
     std::vector<SpeculationStep> step_down;         // SpeculativeOptions::step_down
     std::vector<SpeculationLoad> load;              // SpeculativeOptions::load
     std::uint32_t context_limit             = 0; // SpeculativeOptions::context_limit
+    std::array<std::uint32_t, 4> class_depth{
+        SpeculativeOptions::kNoClassBound, SpeculativeOptions::kNoClassBound,
+        SpeculativeOptions::kNoClassBound, SpeculativeOptions::kNoClassBound}; // ::class_depth
     std::uint32_t watchdog_window           = 32;
     std::uint32_t watchdog_min_rounds       = 16;
     double shared_trip_floor                = 1.4; // SpeculativeOptions::shared_trip_floor

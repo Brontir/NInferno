@@ -663,6 +663,24 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             speculation.draft_depth = 0;
             speculation.step_down.clear();
         }
+        // The prompt's context class bounds its depth (SpeculativeOptions::class_depth): only ever
+        // lower, onto a step-down depth with that step's floor where it is one.
+        if (speculation.draft_depth != 0) {
+            std::vector<std::pair<std::uint32_t, double>> steps;
+            for (const SpeculationStep& step : speculation.step_down) {
+                steps.emplace_back(step.draft_tokens, step.acceptance_floor);
+            }
+            const spec::ClassClamp clamp = spec::clamp_to_class(
+                speculation_class_depth, prompt_tokens, speculation.draft_depth, steps);
+            if (clamp.lowered(speculation.draft_depth)) {
+                speculation.draft_depth = clamp.depth;
+                speculation.step_down.erase(speculation.step_down.begin(),
+                                            speculation.step_down.begin() +
+                                                static_cast<std::ptrdiff_t>(clamp.dropped));
+                if (clamp.floor) { speculation.acceptance_floor = *clamp.floor; }
+                if (clamp.depth == 0) { speculation.step_down.clear(); }
+            }
+        }
         install_sampling(sequence, request, request_plan.sampling, speculation);
         request.speculative_stats.context_plain = past_context_limit &&
                                                   speculative_backend != SpeculativeBackend::None &&
