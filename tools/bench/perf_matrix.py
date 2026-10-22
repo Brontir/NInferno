@@ -56,6 +56,11 @@ CHAT_PROMPTS = [
 ]
 
 
+def is_commit(text):
+    """True for a git commit id (7 to 40 hex digits), not a release version such as 0.1.0."""
+    return bool(text) and 7 <= len(text) <= 40 and all(c in "0123456789abcdef" for c in text.lower())
+
+
 class Server:
     def __init__(self, host, port):
         self.base = f"http://{host}:{port}"
@@ -153,6 +158,9 @@ def main():
     rows.add_argument("--activations", default="fast", help="the server's --activations mode")
     rows.add_argument("--flags", default="", help="the server flags, as on the pair's page")
     rows.add_argument("--version", help="the NInferno release or public commit (with --engine, that engine's build)")
+    rows.add_argument("--commit", help="the NInferno git commit the server was built from (default: "
+                      "--version when it is a commit id); tools/spec_gate.py compares it with the "
+                      "speculation-decision code")
     rows.add_argument("--engine", default="ninferno",
                       help="the server measured: ninferno, or llama.cpp for a reference row "
                            "(llama-server with -np equal to the concurrency)")
@@ -187,6 +195,9 @@ def main():
                   "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         if args.version:
             common["version"] = args.version
+        commit = args.commit or (args.version if is_commit(args.version) else None)
+        if commit:
+            common["commit"] = commit
         if args.engine != "ninferno":
             common["engine"] = args.engine
         common.update(server.fingerprint)

@@ -4,22 +4,25 @@
     python3 tools/spec_gate.py [--bench docs/performance/data/bench.jsonl] [--threshold 0.97]
                                [--since-commit REV | --since-date ISO] [--losses] [--json]
 
-Every decode row measured with the automatic speculation decision (no `--spec` in its flags) is
-paired with its plain twin (`--spec none`): the same card, model, recipe, KV format, activation
-precision, sampling, prompt set, prompt length, concurrency, metric and every other flag. Prefill
-rows are left out (speculation does not decide the prefill), and so are rows that name a drafter
-explicitly. When a key was measured more than once, the newest row of each side is used.
+Every decode row measured with the automatic speculation decision (no `--spec`, or `--spec auto`)
+is paired with its plain twin (`--spec none`): the same card (GPU name and SM), model, recipe, KV
+format, activation precision, sampling, prompt set, prompt length, unit, concurrency, metric and
+every other flag. Left out: prefill rows (speculation does not decide the prefill), rows that name
+a drafter, and forced rows (`--draft-tokens` or `--spec-load` without a named drafter). When a key
+was measured more than once, the newest row of each side is used.
 
 A cell FAILS when all of these hold:
   * the decision speculates (the auto row's served `spec` is not `none`);
   * auto < threshold x plain;
   * the spreads do not overlap (a row without a spread counts as the single value);
-  * the auto row is newer than the decision code: its `commit` descends from the last commit that
-    touched DECISION_FILES, or, for rows without a commit, its date is later than that commit's.
-Losing cells that miss one of these are counted as plain-served, overlapping or stale.
+  * the auto row is newer than the decision code: its `commit` (or a `version` that is a commit
+    id) descends from the last commit that touched DECISION_FILES, or, for rows without a known
+    commit, its date is later than that commit's.
+Losing cells that miss one of these are counted as plain-served, overlapping or stale. Auto rows
+without a plain twin are listed on stderr.
 
-There is no exemption list and nothing is written back. Exit code 1 when a cell fails, 2 on a
-usage or git error.
+There is no exemption list and nothing is written back. Exit code 1 when a cell fails or nothing
+pairs; 2 on a missing or malformed bench file, a shallow clone or another git error.
 """
 from __future__ import annotations
 
@@ -31,11 +34,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The files whose change can change what the automatic speculation decision serves. A row measured
-# before the last commit touching one of them says nothing about today's decision (it is stale).
+# The files whose change can change what the automatic speculation decision serves (the drafter,
+# the depth, the load table, the fallbacks). A row measured before the last commit touching one of
+# them says nothing about today's decision (it is stale).
 DECISION_FILES = (
-    "src/spec",
-    "src/product/speculation",
+    "src/spec",                                              # profiles, load tables, cost, watchdog
+    "src/product/speculation",                               # the auto request -> drafter, depth
+    "src/product/speculative_options.h",
+    "src/models/speculation",                                # next_draft_depth (draft_target.h)
+    "src/serve/generation_service.cpp",                      # auto fit / shallower / pool fallbacks
+    "src/models/qwen3_5/program/planning/startup.cpp",       # the speculative plan rung
+    "src/models/qwen3_5/program/planning/request_plan.cpp",  # the per-request speculation plan
+    "src/models/qwen3_5/program/planning/speculation_load.h",
+    "src/models/qwen3_5/program/prefill.cpp",                # the request's depth at admission
+    "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
+    "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -43,12 +56,15 @@ DEFAULT_BENCH = REPO / "docs" / "performance" / "data" / "bench.jsonl"
 DECODE_METRICS = ("decode", "decode_aggregate")
 # Flags that choose the speculation; everything else in `flags` is part of the pairing key.
 SPEC_FLAGS = ("--spec", "--draft-tokens", "--spec-load")
-# Row fields that are measurements or describe the speculation, not the measured setting.
-NOT_KEY = {"spec", "draft_tokens", "flags", "value", "spread", "date", "repeats", "commit"}
+# Row fields that are not the measured cell: the measurement itself, the speculation, and the
+# build (`version`, the decision fingerprint; the staleness test covers the build). `machine` is
+# reduced to the card (GPU name and SM): driver, CUDA, power limit and memory size are not the cell.
+NOT_KEY = {"spec", "draft_tokens", "flags", "value", "spread", "date", "repeats", "commit",
+           "version", "warmup", "machine", "decision_fingerprint", "decision_manifest"}
 
 
 def parse_flags(flags: str | None) -> tuple[str | None, tuple[str, ...]]:
-    """Returns (the --spec value or None, the other flags in a canonical order)."""
+    """Returns (the --spec value or None, the other non-speculation flags in a canonical order)."""
     words = shlex.split(flags or "")
     spec, rest, i = None, [], 0
     while i < len(words):
@@ -66,15 +82,42 @@ def parse_flags(flags: str | None) -> tuple[str | None, tuple[str, ...]]:
     return spec, tuple(sorted(rest))
 
 
-def side_of(row: dict) -> str | None:
+def side_of(row: dict) -> str:
+    """auto, plain, explicit (a named drafter) or forced (a depth or load without a drafter)."""
     spec, _ = parse_flags(row.get("flags"))
-    if spec is None:
-        return "auto"
-    return "plain" if spec == "none" else None  # an explicit drafter is neither
+    if spec == "none":
+        return "plain"
+    if spec not in (None, "auto"):
+        return "explicit"
+    words = shlex.split(row.get("flags") or "")
+    if any(w.split("=", 1)[0] in ("--draft-tokens", "--spec-load") for w in words):
+        return "forced"
+    return "auto"
+
+
+def flag_value(row: dict, name: str) -> str | None:
+    for word in parse_flags(row.get("flags"))[1]:
+        if word.startswith(name + "="):
+            return word.split("=", 1)[1]
+    return None
+
+
+def is_commit(text) -> bool:
+    """A git commit id (7 to 40 hex digits), not a release version such as 0.1.0."""
+    return isinstance(text, str) and 7 <= len(text) <= 40 and all(
+        c in "0123456789abcdef" for c in text.lower())
+
+
+def row_commit(row: dict) -> str | None:
+    commit = row.get("commit") or row.get("version")
+    return commit if is_commit(commit) else None
 
 
 def pair_key(row: dict) -> str:
     key = {k: v for k, v in row.items() if k not in NOT_KEY}
+    machine = row.get("machine") or {}
+    key["card"] = [machine.get("gpu_name"), str(machine.get("sm"))]
+    key["activations"] = row.get("activations") or flag_value(row, "--activations") or "fast"
     key["flags"] = parse_flags(row.get("flags"))[1]
     return json.dumps(key, sort_keys=True, default=str)
 
@@ -104,7 +147,8 @@ def cell_name(row: dict) -> str:
 def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> dict:
     """Pairs and judges the rows. `newer(row)` may answer from the row's commit (True/False) or
     return None to fall back to the date."""
-    stats = {"rows": 0, "prefill_excluded": 0, "explicit_spec": 0, "superseded": 0}
+    stats = {"rows": 0, "prefill_excluded": 0, "explicit_spec": 0, "forced_spec": 0,
+             "superseded": 0}
     sides: dict[str, dict[str, dict]] = {"auto": {}, "plain": {}}
     for row in rows:
         metric = row.get("metric")
@@ -115,8 +159,8 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
             continue
         stats["rows"] += 1
         side = side_of(row)
-        if side is None:
-            stats["explicit_spec"] += 1
+        if side in ("explicit", "forced"):
+            stats[f"{side}_spec"] += 1
             continue
         key, have = pair_key(row), sides[side]
         if key in have:
@@ -125,12 +169,15 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
                 continue
         have[key] = row
 
-    cells, counts = [], {"paired": 0, "unpaired_auto": 0, "unpaired_plain": 0, "pass": 0,
-                         "losses": 0, "plain_served": 0, "overlap": 0, "stale": 0, "fail": 0}
+    cells, unpaired = [], []
+    counts = {"paired": 0, "unpaired_auto": 0, "unpaired_plain": 0, "pass": 0, "losses": 0,
+              "plain_served": 0, "overlap": 0, "stale": 0, "fail": 0}
     for key, auto in sides["auto"].items():
         plain = sides["plain"].get(key)
         if plain is None:
             counts["unpaired_auto"] += 1
+            unpaired.append({"cell": cell_name(auto), "served": auto.get("spec"),
+                             "auto": auto["value"], "auto_date": auto["date"]})
             continue
         counts["paired"] += 1
         ratio = auto["value"] / plain["value"] if plain["value"] else float("inf")
@@ -155,10 +202,12 @@ def gate(rows, since_date: dt.datetime, threshold: float = 0.97, newer=None) -> 
                       "draft_tokens": auto.get("draft_tokens"), "auto": auto["value"],
                       "plain": plain["value"], "ratio": round(ratio, 3),
                       "auto_spread": [alo, ahi], "plain_spread": [plo, phi],
-                      "auto_date": auto["date"], "plain_date": plain["date"], "verdict": verdict})
+                      "auto_date": auto["date"], "plain_date": plain["date"],
+                      "auto_commit": row_commit(auto), "verdict": verdict})
     counts["unpaired_plain"] = sum(1 for k in sides["plain"] if k not in sides["auto"])
     cells.sort(key=lambda c: c["ratio"])
-    return {"stats": stats, "counts": counts, "cells": cells}
+    unpaired.sort(key=lambda c: c["cell"])
+    return {"stats": stats, "counts": counts, "cells": cells, "unpaired_auto": unpaired}
 
 
 def git(*args: str) -> str:
@@ -166,13 +215,29 @@ def git(*args: str) -> str:
                           text=True).stdout.strip()
 
 
+def decision_commit(since_commit: str | None) -> tuple[str, str]:
+    """(full id, committer date) of the decision commit; RuntimeError when git cannot say."""
+    if git("rev-parse", "--is-shallow-repository") == "true":
+        raise RuntimeError("a shallow clone: the decision commit and the rows' ancestry are "
+                           "unknown (git fetch --unshallow, or pass --since-date)")
+    rev = since_commit or git("log", "-1", "--format=%H", "--", *DECISION_FILES)
+    if not rev:
+        raise RuntimeError("no commit touches DECISION_FILES")
+    full, when, *parents = git("log", "-1", "--format=%H %cI %P", rev).split()
+    if not parents:
+        raise RuntimeError(f"the decision commit {full[:12]} is the root commit (a truncated "
+                           "history?); pass --since-commit or --since-date")
+    return full, when
+
+
 def render(result: dict, since: str, show_all: bool) -> str:
     c, s = result["counts"], result["stats"]
     shown = [x for x in result["cells"] if show_all or x["verdict"] == "fail"]
     lines = [f"decision code: {since}",
              f"decode rows {s['rows']} (prefill excluded {s['prefill_excluded']}, explicit spec "
-             f"{s['explicit_spec']}, superseded {s['superseded']}); paired {c['paired']}, unpaired "
-             f"auto {c['unpaired_auto']}, unpaired plain {c['unpaired_plain']}",
+             f"{s['explicit_spec']}, forced spec {s['forced_spec']}, superseded "
+             f"{s['superseded']}); paired {c['paired']}, unpaired auto {c['unpaired_auto']}, "
+             f"unpaired plain {c['unpaired_plain']}",
              f"pass {c['pass']}; losses {c['losses']}: plain-served {c['plain_served']}, overlap "
              f"{c['overlap']}, stale {c['stale']}, FAIL {c['fail']}"]
     if shown:
@@ -183,6 +248,14 @@ def render(result: dict, since: str, show_all: bool) -> str:
             lines.append(f"| {x['cell']} | {served} | {x['auto']:g} | {x['plain']:g} | "
                          f"{x['ratio']:.3f} | {x['auto_date'][:16]} | {x['verdict']} |")
     return "\n".join(lines)
+
+
+def read_rows(path: Path) -> list[dict]:
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    if not all(isinstance(r, dict) for r in rows):
+        raise ValueError("a line is not a JSON object")
+    return rows
 
 
 def main(argv=None) -> int:
@@ -197,39 +270,54 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
 
+    try:
+        rows = read_rows(a.bench)
+    except (OSError, ValueError) as e:
+        print(f"spec_gate: cannot read {a.bench}: {e}", file=sys.stderr)
+        return 2
+
     newer, ancestry = None, {}
     try:
         if a.since_date:
             since_date, since = parse_date(a.since_date), a.since_date
         else:
-            rev = a.since_commit or git("log", "-1", "--format=%H", "--", *DECISION_FILES)
-            if not rev:
-                raise subprocess.CalledProcessError(1, "git log", stderr="no decision commit")
-            full, when = git("log", "-1", "--format=%H %cI", rev).split()
+            full, when = decision_commit(a.since_commit)
             since_date, since = parse_date(when), f"{full[:12]} {when}"
 
             def newer(row):
-                commit = row.get("commit")
+                commit = row_commit(row)
                 if not commit:
                     return None
                 if commit not in ancestry:
                     r = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                                         full, commit], capture_output=True)
-                    ancestry[commit] = {0: True, 1: False}.get(r.returncode)
+                    ancestry[commit] = {0: True, 1: False}.get(r.returncode)  # else: unknown
                 return ancestry[commit]
-    except (subprocess.CalledProcessError, OSError, ValueError) as e:
+    except (subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as e:
         print(f"spec_gate: cannot find the decision commit: {getattr(e, 'stderr', '') or e}",
               file=sys.stderr)
         return 2
 
-    rows = [json.loads(l) for l in a.bench.read_text(encoding="utf-8").splitlines() if l.strip()]
-    result = gate(rows, since_date, a.threshold, newer)
+    try:
+        result = gate(rows, since_date, a.threshold, newer)
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"spec_gate: malformed row in {a.bench}: {e!r}", file=sys.stderr)
+        return 2
     result["since"] = since
     result["threshold"] = a.threshold
     if a.json:
         print(json.dumps(result, indent=1))
     else:
         print(render(result, since, a.losses))
+    if result["unpaired_auto"]:
+        print(f"spec_gate: WARNING: {len(result['unpaired_auto'])} auto rows have no plain twin "
+              "and are not judged:", file=sys.stderr)
+        for x in result["unpaired_auto"]:
+            print(f"  {x['cell']} ({x['served']}, {x['auto']:g}, {x['auto_date'][:16]})",
+                  file=sys.stderr)
+    if result["counts"]["paired"] == 0:
+        print("spec_gate: FAIL: no auto row pairs with a plain row", file=sys.stderr)
+        return 1
     return 1 if result["counts"]["fail"] else 0
 
 

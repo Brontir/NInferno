@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import spec_gate  # noqa: E402
@@ -16,7 +17,8 @@ NEW, OLD = "2026-10-21T10:00:00Z", "2026-10-19T10:00:00Z"
 
 def row(value, spread=None, auto=True, served="dflash", date=NEW, metric="decode", extra="",
         **fields):
-    out = {"machine": {"gpu_name": "NVIDIA GeForce RTX 4090", "vram_gb": 24.0},
+    out = {"machine": {"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "89", "vram_gb": 24.0,
+                       "driver": "580.95.05"},
            "model": "org/m", "recipe": "org/m-GGUF --quant Q4", "kv": "auto", "sampling": "greedy",
            "metric": metric, "prompt_set": "short", "concurrency": 1, "date": date,
            "spec": served if auto else "none", "draft_tokens": 7 if auto else None,
@@ -25,6 +27,20 @@ def row(value, spread=None, auto=True, served="dflash", date=NEW, metric="decode
            "value": value, "spread": spread}
     out.update(fields)
     return out
+
+
+def run_main(args, rows=None, text=None):
+    """main() over a temporary bench file; returns (exit code, stdout, stderr)."""
+    with tempfile.TemporaryDirectory() as d:
+        bench = Path(d) / "bench.jsonl"
+        if rows is not None:
+            bench.write_text("\n".join(json.dumps(x) for x in rows))
+        elif text is not None:
+            bench.write_text(text)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = spec_gate.main(["--bench", str(bench), *args])
+        return code, out.getvalue(), err.getvalue()
 
 
 class SpecGateTest(unittest.TestCase):
@@ -51,9 +67,14 @@ class SpecGateTest(unittest.TestCase):
         self.assertEqual((r["counts"]["stale"], r["counts"]["fail"]), (1, 0))
 
     def test_commit_answer_wins_over_date(self):
-        rows = [row(80, [78, 82], date=OLD, commit="abc"), row(100, [98, 102], auto=False)]
-        r = spec_gate.gate(rows, SINCE, newer=lambda x: x.get("commit") == "abc")
+        rows = [row(80, [78, 82], date=OLD, commit="abcdef1"), row(100, [98, 102], auto=False)]
+        r = spec_gate.gate(rows, SINCE, newer=lambda x: spec_gate.row_commit(x) == "abcdef1")
         self.assertEqual(r["counts"]["fail"], 1)
+
+    def test_row_commit_from_commit_or_sha_version(self):
+        self.assertEqual(spec_gate.row_commit({"commit": "84d92a362"}), "84d92a362")
+        self.assertEqual(spec_gate.row_commit({"version": "84d92a362"}), "84d92a362")
+        self.assertIsNone(spec_gate.row_commit({"version": "0.1.0"}))
 
     def test_plain_served_and_small_loss_pass(self):
         r = self.judge(row(80, served="none"), row(100, auto=False))
@@ -64,8 +85,9 @@ class SpecGateTest(unittest.TestCase):
     def test_pairs_on_every_non_spec_flag(self):
         plain = row(100, auto=False)
         for auto in (row(80, extra="--activations exact"), row(80, kv="fp8"),
-                     row(80, concurrency=4), row(80, prompt_set="long"),
-                     row(80, machine={"gpu_name": "NVIDIA GeForce RTX 5090", "vram_gb": 32.0}),
+                     row(80, concurrency=4), row(80, prompt_set="long"), row(80, prompt_len=9),
+                     row(80, machine={"gpu_name": "NVIDIA GeForce RTX 5090", "sm": "120"}),
+                     row(80, machine={"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "90"}),
                      row(80, recipe="org/m-GGUF --quant Q8")):
             r = self.judge(auto, plain)
             self.assertEqual((r["counts"]["paired"], r["counts"]["unpaired_auto"],
@@ -74,33 +96,80 @@ class SpecGateTest(unittest.TestCase):
         r = self.judge(row(80, extra="--x 1 --y 2"), row(100, auto=False, extra="--y 2 --x 1"))
         self.assertEqual(r["counts"]["paired"], 1)
 
+    def test_card_is_gpu_name_and_sm_only(self):
+        plain = row(100, auto=False, version="0.1.0", warmup=1)
+        auto = row(80, version="84d92a362", warmup=2, decision_fingerprint="x",
+                   machine={"gpu_name": "NVIDIA GeForce RTX 4090", "sm": "89", "vram_gb": 23.9,
+                            "driver": "590.1", "cuda": "13.1", "power_limit_w": 400.0})
+        self.assertEqual(self.judge(auto, plain)["counts"]["paired"], 1)
+
+    def test_spec_auto_is_auto_and_forced_rows_are_excluded(self):
+        plain = row(100, auto=False)
+        r = self.judge(row(80, extra="--spec auto"), plain)
+        self.assertEqual(r["counts"]["paired"], 1)
+        for extra in ("--draft-tokens 3", "--spec-load 4:2", "--spec auto --draft-tokens=3"):
+            r = self.judge(row(80, extra=extra), plain)
+            self.assertEqual((r["stats"]["forced_spec"], r["counts"]["paired"]), (1, 0), extra)
+
     def test_prefill_and_explicit_spec_excluded(self):
-        explicit = row(50)
-        explicit["flags"] += " --spec mtp"
-        r = self.judge(row(10, metric="prefill"), row(100, auto=False, metric="prefill"), explicit)
+        r = self.judge(row(10, metric="prefill"), row(100, auto=False, metric="prefill"),
+                       row(50, extra="--spec mtp"))
         self.assertEqual(r["stats"]["prefill_excluded"], 2)
         self.assertEqual(r["stats"]["explicit_spec"], 1)
         self.assertEqual(r["counts"]["paired"], 0)
 
     def test_newest_row_of_a_side_is_used(self):
-        r = self.judge(row(80, date=NEW), row(120, date="2026-10-21T12:00:00Z"),
-                       row(100, auto=False))
-        self.assertEqual((r["stats"]["superseded"], r["counts"]["pass"]), (1, 1))
+        newer = row(120, date="2026-10-21T12:00:00Z")
+        for order in ((row(80), newer), (newer, row(80))):  # the older one first, then second
+            r = self.judge(*order, row(100, auto=False))
+            self.assertEqual((r["stats"]["superseded"], r["counts"]["pass"]), (1, 1))
 
     def test_main_exit_code_and_json(self):
-        with tempfile.TemporaryDirectory() as d:
-            bench = Path(d) / "bench.jsonl"
-            bench.write_text("\n".join(json.dumps(x) for x in
-                                       (row(80, [78, 82]), row(100, [98, 102], auto=False))))
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                code = spec_gate.main(["--bench", str(bench), "--since-date", SINCE.isoformat(),
-                                       "--json"])
-            self.assertEqual(code, 1)
-            self.assertEqual(json.loads(out.getvalue())["counts"]["fail"], 1)
-            with contextlib.redirect_stdout(io.StringIO()):
-                code = spec_gate.main(["--bench", str(bench), "--since-date", NEW])
-            self.assertEqual(code, 0)
+        rows = (row(80, [78, 82]), row(100, [98, 102], auto=False))
+        code, out, _ = run_main(["--since-date", SINCE.isoformat(), "--json"], rows)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["counts"]["fail"], 1)
+        self.assertEqual(run_main(["--since-date", NEW], rows)[0], 0)
+
+    def test_nothing_paired_fails_and_unpaired_auto_warns(self):
+        rows = (row(80, concurrency=4), row(100, auto=False))
+        code, _, err = run_main(["--since-date", NEW], rows)
+        self.assertEqual(code, 1)
+        self.assertIn("no auto row pairs", err)
+        self.assertIn("WARNING: 1 auto rows have no plain twin", err)
+        rows = (row(99), row(100, auto=False), row(80, concurrency=4))
+        code, _, err = run_main(["--since-date", NEW], rows)
+        self.assertEqual(code, 0)
+        self.assertIn("RTX 4090 m Q4 short C4 decode", err)
+
+    def test_missing_or_malformed_bench_exits_2(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(spec_gate.main(["--bench", "/nonexistent/bench.jsonl",
+                                             "--since-date", NEW]), 2)
+        self.assertEqual(run_main(["--since-date", NEW], text="{not json")[0], 2)
+        self.assertEqual(run_main(["--since-date", NEW], text="[1, 2]")[0], 2)
+        bad = row(80)
+        del bad["value"]
+        self.assertEqual(run_main(["--since-date", NEW], [bad, row(100, auto=False)])[0], 2)
+
+    def test_shallow_clone_or_root_decision_commit_exits_2(self):
+        rows = (row(99), row(100, auto=False))
+        with mock.patch.object(spec_gate, "git", return_value="true"):
+            code, _, err = run_main([], rows)
+        self.assertEqual(code, 2)
+        self.assertIn("shallow", err)
+
+        def root_only(*args):
+            if args[0] == "rev-parse":
+                return "false"
+            if "--format=%H" in args:
+                return "a" * 40
+            return "a" * 40 + " 2026-10-21T22:13:54+02:00"  # no parents: the root commit
+
+        with mock.patch.object(spec_gate, "git", side_effect=root_only):
+            code, _, err = run_main([], rows)
+        self.assertEqual(code, 2)
+        self.assertIn("root commit", err)
 
 
 if __name__ == "__main__":
