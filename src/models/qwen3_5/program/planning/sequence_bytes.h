@@ -3,8 +3,9 @@
 // The byte arithmetic of a sequence plan that needs no bound weights, shared by a start and the
 // plan without the weights (runtime/engine/plan_dry_run.h):
 //
-//   sequence_planning_inputs   the planner's inputs from the Engine options (the launch windows,
-//                              the load bounds' batches, the codecs);
+//   sequence_planning_inputs   the planner's inputs from the Engine options (the copy window
+//                              resolved, the launch windows, the load bounds' batches, the
+//                              codecs);
 //   sequence_page_range        the Main KV page groups a plan of a context and concurrency spans;
 //   sequence_plan_shell        a candidate plan at a page count, before its layouts;
 //   plan_persistent_layout     every family's persistent state (ModelExecution::persistent_layout
@@ -55,9 +56,25 @@ void validate_state_storage(const StateShape& shape, const EngineOptions& option
 // The recurrent state's element type a --state-dtype names.
 [[nodiscard]] DType recurrent_state_dtype(RecurrentStateStorage storage) noexcept;
 
-// The planner's inputs of `options` (validated by the family; the copy window resolved), with no
-// model (`model` null: the caller sets it).
+// Whether a family's MTP round runs copy rounds (ModelTraits::copy_rounds: the families' traits
+// take it from here): Qwen 3.5 / 3.6 and Gemma 4.
+[[nodiscard]] constexpr bool family_copy_rounds(models::StateFamily family) noexcept {
+    return family == models::StateFamily::Qwen35 || family == models::StateFamily::Gemma4;
+}
+
+// The copy window (SpeculativeOptions::ngram_draft_tokens) a plan takes: an automatic one
+// (kCopyWindowAuto) is the MTP backend's widest window (kMtpDecodeMaximumDrafts) on a family whose
+// round runs copy rounds (`copy_rounds`), where it is deeper than every draft depth and
+// ngram_min_match is positive, and none otherwise; an explicit one stays.
+[[nodiscard]] SpeculativeOptions resolve_copy_window(SpeculativeOptions speculative,
+                                                     bool copy_rounds);
+
+// The planner's inputs of `options` (validated by the family) on a family that runs copy rounds
+// or not (`copy_rounds`, ModelTraits::copy_rounds): the copy window resolved here
+// (resolve_copy_window), for a start and the plan without the weights alike. No model (`model`
+// null: the caller sets it).
 [[nodiscard]] SequencePlanningInputs sequence_planning_inputs(const EngineOptions& options,
+                                                              bool copy_rounds,
                                                               std::int32_t multiprocessor_count,
                                                               bool graph_memory_held);
 

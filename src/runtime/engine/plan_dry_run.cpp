@@ -37,9 +37,15 @@ std::uint64_t vector_bytes(KvCacheStorage storage, std::uint64_t width, bool key
     return 2 * width;
 }
 
+// The widest round's columns: the deepest draft depth, or an MTP copy window (resolved:
+// models::qwen3_5::detail::resolve_copy_window) deeper still, and the anchor.
 std::uint64_t round_tokens_of(const SpeculativeOptions& speculative) {
     std::uint32_t window = speculative.draft_tokens;
     for (const std::uint32_t k : speculative.request_draft_tokens) { window = std::max(window, k); }
+    if (speculative.backend == SpeculativeBackend::Mtp &&
+        speculative.ngram_draft_tokens != SpeculativeOptions::kCopyWindowAuto) {
+        window = std::max(window, speculative.ngram_draft_tokens);
+    }
     return window + 1U;
 }
 
@@ -217,8 +223,10 @@ std::string_view weight_basis_name(WeightBasis basis) noexcept {
 }
 
 std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
-    const std::uint64_t taken =
-        kPlanIdleContextBytes + plan_desktop_bytes(device.paravirtual, device.drives_display);
+    std::uint64_t taken = kPlanIdleContextBytes;
+    if (device.drives_display) {
+        taken += device.paravirtual ? kPlanIdleWindowsDesktopBytes : kPlanIdleLinuxDesktopBytes;
+    }
     return device.total_bytes > taken ? device.total_bytes - taken : 0;
 }
 
@@ -300,14 +308,17 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     if (!model.offline_bytes) {
         throw std::logic_error("plan_rung_bytes needs the facts of the model's state");
     }
-    // The options a start plans this rung with (construct_or_plan, planned_at).
+    // The options a start plans this rung with (construct_or_plan, planned_at), its copy window
+    // resolved by the family's rule as the start's planner resolves it (sequence_planning_inputs).
+    const bool copy_rounds                   = detail::family_copy_rounds(model.state.family);
     EngineOptions planned                    = options;
     planned.max_context                      = rung.max_context;
     planned.max_concurrency                  = concurrency;
     planned.prefill_chunk                    = rung.prefill_chunk;
     planned.context_cache.device_state_slots = rung.cached_states;
+    planned.speculative = detail::resolve_copy_window(planned.speculative, copy_rounds);
     const detail::SequencePlanningInputs inputs =
-        detail::sequence_planning_inputs(planned, 0, false);
+        detail::sequence_planning_inputs(planned, copy_rounds, 0, false);
     const detail::SequencePageRange range =
         detail::sequence_page_range(inputs.capacity, inputs.max_concurrency);
     // An automatic pool's pages are the planner's curve's (a start clamps them the same way); an
@@ -344,7 +355,8 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     if (held > layout.bytes) { throw std::logic_error("the persistent layout's regions overlap"); }
     out.fixed            = layout.bytes - held;
     out.graphs           = plan->graph_allowance_bytes;
-    out.workspace        = plan_workspace_estimate(model, rung, options, concurrency);
+    // The workspace's round logits over the resolved window's columns, as the start's are.
+    out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency);
     out.host_state_image = images.host.image_bytes;
     return out;
 }
@@ -479,9 +491,7 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     }
     const bool host_states =
         plan_host_states_configured(cache, default_host_slots, device.integrated);
-    // The class reserve beside the free memory: the desktop's share is already out of it (the idle
-    // card's, or the device's now), as at a start (construct_or_plan).
-    const std::uint64_t class_reserve = plan_reserve_beside_free(
+    const std::uint64_t class_reserve = plan_class_reserve(
         device.total_bytes, device.paravirtual, device.drives_display, device.integrated);
     out.axes    = plan_axes(options, model.native_context, host_states, class_reserve);
     out.margins = plan_margins(out.axes);

@@ -57,7 +57,7 @@ struct PlanAxes {
     std::uint32_t states_minimum = 1;           // 0 when a Host tier keeps StateImages
     std::uint32_t prefill_chunk  = 1024;
     bool chunk_automatic         = true;
-    std::uint64_t class_reserve  = 0; // plan_reserve_beside_free of the device
+    std::uint64_t class_reserve  = 0; // plan_class_reserve of the device
     bool speculation             = false;
     std::uint32_t round_tokens   = 1; // the widest decode round: draft window + 1
 };
@@ -208,14 +208,10 @@ struct PlanDeviceFacts {
 
 // What a CUDA context and the driver take of an idle card before any weights (declared, not
 // measured: 448-600 MiB with lazy loading on the lab's cards), and what a desktop the card drives
-// holds (plan_ladder.h, plan_desktop_bytes: Linux 256 MiB; Windows and WSL 2 1.5 GiB). The idle
-// card's free memory is the VRAM less both; the class reserve the selection then keeps beside it
-// (plan_reserve_beside_free) is the class reserve less that same desktop share, as at a start,
-// whose measured free memory already lacks the desktop's use: the desktop keeps the larger of its
-// share and the class reserve, never their sum.
+// holds (Linux 256 MiB; Windows and WSL 2 1.5 GiB: 1.0-1.9 measured on the RTX 5090 desktop).
 inline constexpr std::uint64_t kPlanIdleContextBytes        = std::uint64_t{512} << 20;
-inline constexpr std::uint64_t kPlanIdleLinuxDesktopBytes   = kPlanLinuxDesktopBytes;
-inline constexpr std::uint64_t kPlanIdleWindowsDesktopBytes = kPlanWindowsDesktopBytes;
+inline constexpr std::uint64_t kPlanIdleLinuxDesktopBytes   = std::uint64_t{256} << 20;
+inline constexpr std::uint64_t kPlanIdleWindowsDesktopBytes = std::uint64_t{1536} << 20;
 [[nodiscard]] std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept;
 
 // A named board's memory as the driver reports it: 97.5 % of the marketed VRAM (an RTX 5090's

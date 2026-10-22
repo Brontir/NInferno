@@ -20,9 +20,19 @@ struct SequencePlannerImpl {
     std::unique_ptr<SequencePlanImpl> minimum;
 };
 
+// A start's sequence planner: `options` validated by the model's family, then planned over the
+// device's multiprocessors.
 [[nodiscard]] std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
 make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
                            const EngineOptions& options, bool graph_memory_held = false);
+
+// The planner of `options` the family already validated (the copy window resolved from the
+// model's traits, sequence_planning_inputs): its inputs, its smallest candidate and its affine
+// page curve, over the model's layouts. The seam needs no device, so a CPU test builds a start's
+// planner over a model that lays out a synthetic shape (tests/test_plan_bytes.cpp).
+[[nodiscard]] std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
+make_sequence_planner_impl(const ModelExecution& model, const EngineOptions& options,
+                           std::int32_t multiprocessor_count, bool graph_memory_held);
 
 // Planning pieces every family's Program shares.
 struct ModelTraits;

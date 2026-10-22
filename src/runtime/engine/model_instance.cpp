@@ -1,3 +1,4 @@
+#include "core/device_traits.h"
 #include "runtime/engine/model_instance.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -54,29 +55,10 @@ std::size_t current_free_device_bytes() {
     return free_bytes;
 }
 
-// The GPU is shared through WDDM, whose paging spills an over-full device to host memory instead
-// of failing: natively on Windows a card in WDDM mode (not TCC), and under WSL 2 every GPU (it
-// reaches the Windows host's through /dev/dxg).
-bool paravirtualized_gpu(int device) {
-#ifdef _WIN32
-    int tcc = 0;
-    return cudaDeviceGetAttribute(&tcc, cudaDevAttrTccDriver, device) != cudaSuccess || tcc == 0;
-#else
-    (void)device;
-    static const bool present = [] {
-        std::error_code error;
-        return std::filesystem::exists("/dev/dxg", error);
-    }();
-    return present;
-#endif
-}
-
-// The GPU drives a display: the host's kernel-run watchdog is on (a headless card has it off).
-bool drives_display(int device) {
-    int watchdog = 0;
-    CUDA_CHECK(cudaDeviceGetAttribute(&watchdog, cudaDevAttrKernelExecTimeout, device));
-    return watchdog != 0;
-}
+// The driver model and the display: core/device_traits.h (the plan without the weights reads the
+// same functions).
+using ninferno::drives_display;
+using ninferno::paravirtualized_gpu;
 
 // The CUDA stack limit: the local memory per thread the driver keeps for every resident thread. It
 // starts at the driver's default and grows at the first launch of a kernel with a larger frame.
@@ -722,13 +704,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     };
     // What the selection keeps beside a rung (plan_ladder.h, PlanMargins). The class reserve of a
     // GPU Windows shares and of one sharing the host's memory applies to an automatic pool only;
-    // an explicit --kv-capacity keeps none, as before. It is kept beside the free memory less the
-    // desktop's declared share (plan_reserve_beside_free): the free memory read below already
-    // lacks what the desktop holds, so the desktop keeps the larger of the two, not their sum, and
-    // the dry run's idle card (plan_idle_free_bytes) keeps the same.
+    // an explicit --kv-capacity keeps none, as before.
     const bool paravirtual            = paravirtualized_gpu(device.device);
     const bool with_display           = drives_display(device.device);
-    const std::uint64_t class_reserve = plan_reserve_beside_free(
+    const std::uint64_t class_reserve = plan_class_reserve(
         device.props.totalGlobalMem, paravirtual, with_display, device.props.integrated != 0);
     // The ladder's axes and margins (plan_dry_run.h): the seams the dry run without the weights
     // (ninferno-serve --plan --no-load) shares with a start.

@@ -46,6 +46,9 @@ std::vector<std::string> referenced(const Profile& p) {
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
+    out.basis          = published.value("gpu_class", std::string()) == "*" ? "generic"
+                         : out.foreign_floors                               ? "similar"
+                                                                            : "own";
     if (auto note = similarity_note(gpu, published); !note.empty()) {
         out.notes.push_back(std::move(note));
     }
@@ -496,6 +499,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         for (const auto& reason : refusals) { refuse(reason); }
         if (refusals.empty()) {
             out.source  = "local tune " + tuned_path.string();
+            out.basis   = "own";
             out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);
             for (const auto& d : out.profile.drafters) {

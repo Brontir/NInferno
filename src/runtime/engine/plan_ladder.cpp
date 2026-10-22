@@ -289,19 +289,6 @@ std::uint64_t plan_class_reserve(std::uint64_t total_bytes, bool paravirtual, bo
     return reserve;
 }
 
-std::uint64_t plan_desktop_bytes(bool paravirtual, bool drives_display) noexcept {
-    if (!drives_display) { return 0; }
-    return paravirtual ? kPlanWindowsDesktopBytes : kPlanLinuxDesktopBytes;
-}
-
-std::uint64_t plan_reserve_beside_free(std::uint64_t total_bytes, bool paravirtual,
-                                       bool drives_display, bool integrated) noexcept {
-    const std::uint64_t reserve =
-        plan_class_reserve(total_bytes, paravirtual, drives_display, integrated);
-    const std::uint64_t desktop = plan_desktop_bytes(paravirtual, drives_display);
-    return reserve > desktop ? reserve - desktop : 0;
-}
-
 std::uint64_t plan_needed_bytes(const PlanRungCost& cost, const PlanMargins& margins,
                                 PlanReserve reserve) noexcept {
     switch (reserve) {

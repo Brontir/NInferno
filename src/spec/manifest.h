@@ -66,6 +66,10 @@ struct ResolvedSpeculation {
     std::map<std::string, std::string> drafters;
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
+    // Where the profile came from, as data: "own" (this GPU's class, or a local tune), "similar"
+    // (another GPU's standing in), "generic" (the "*" profile), "builtin" (the built-in
+    // drafter's untuned default); "" when none was found.
+    std::string basis;
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
     // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;

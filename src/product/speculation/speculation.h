@@ -16,6 +16,7 @@
 #include "spec/manifest.h"
 #include "spec/menu.h"
 #include "spec/profile.h"
+#include "spec/registry.h"
 
 #include <filesystem>
 #include <functional>
@@ -66,6 +67,7 @@ struct ServedSpeculation {
     spec::SpeculationMenu menu;
     SpeculativeOptions engine; // backend, default depth, every depth of the menu, head, floor
     std::string source;        // where the profile came from
+    std::string basis; // the same as data: own | similar | generic | builtin (ResolvedSpeculation)
     std::vector<std::string> notes;
     // Set when the profile's choice did not fit the requested context on this device and its fit
     // fallback runs instead: why (the Engine's refusal). Logged as a warning.
@@ -85,6 +87,9 @@ struct SpeculationSubject {
     std::set<std::string> components; // the artifact's (text, mtp, dflash, dflash2, ...)
     bool proposal_head = false;       // it carries Qwen's proposal head
     spec::EngineSupport support;      // what the Engine's family runs
+    // A dry run's separate drafters the converter's drafter plan attaches (uploaded beside the
+    // target: their weights are counted); empty for an artifact.
+    std::vector<spec::DrafterDecl> attached_drafters;
 };
 
 [[nodiscard]] SpeculationSubject

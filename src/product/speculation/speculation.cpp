@@ -152,6 +152,7 @@ void default_for_builtin_drafter(const std::set<std::string>& components, bool p
     resolved.profile.thinking         = choice;
     resolved.profile.non_thinking     = choice;
     resolved.foreign_floors           = true;
+    resolved.basis                    = "builtin";
     resolved.source                   = "the built-in " + choice.drafter + " drafter's default (" +
                       choice.config.label() + ", untuned on this GPU: spec-tune measures one)";
     spec::raise_foreign_floors(resolved.profile, resolved, resolved.notes);
@@ -408,6 +409,7 @@ std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& su
     if (!resolved || !resolved->found()) { return std::nullopt; }
     ServedSpeculation out;
     out.source                  = resolved->source;
+    out.basis                   = resolved->basis;
     out.notes                   = resolved->notes;
     const spec::Profile profile = engine_choices(resolved->profile, &out.notes);
     return served_of(profile, spec::pick(profile, thinking), *resolved, subject, per_request,
@@ -467,6 +469,7 @@ std::optional<ServedSpeculation> served_shallower(const SpeculationSubject& subj
     ServedSpeculation out;
     out.source =
         resolved->source + " (" + profile->overall.config.label() + ", shallower to fit)";
+    out.basis = resolved->basis;
     out.notes = resolved->notes;
     out = served_of(*profile, profile->overall, *resolved, subject, per_request, std::move(out));
     if (out.menu.mode == spec::Mode::None) { return std::nullopt; }
@@ -556,6 +559,7 @@ std::optional<ServedSpeculation> served_fit_fallback(const SpeculationSubject& s
     ServedSpeculation out;
     out.source = resolved->source + " (fit fallback " +
                  resolved->profile.fit_fallback->config.label() + ")";
+    out.basis                   = resolved->basis;
     out.notes  = resolved->notes;
     const spec::Profile profile = fallback_profile(resolved->profile);
     out = served_of(profile, profile.overall, *resolved, subject, per_request, std::move(out));
@@ -585,6 +589,7 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     ServedSpeculation out;
     out.source = resolved->source + " (fit fallback: the built-in " +
                  head.profile.overall.config.label() + ")";
+    out.basis  = "builtin";
     out.notes  = resolved->notes;
     out = served_of(head.profile, head.profile.overall, head, subject, per_request, std::move(out));
     if (out.menu.mode == spec::Mode::None) { return std::nullopt; }

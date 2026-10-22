@@ -1932,11 +1932,7 @@ pinning) the selection keeps:
   `--kv-capacity`);
 - on a GPU Windows shares (native Windows, WSL 2), a class reserve for what Windows will add: an 8th
   of the card, at most 4 GiB, when it drives the display, else a 32nd, at most 1 GiB; on a GPU
-  sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. The free memory already lacks
-  what the desktop holds, so the reserve kept beside it is less the desktop's declared share
-  (1.5 GiB under WDDM, 256 MiB on Linux, with a display): the desktop keeps the larger of the two,
-  not their sum (WDDM with a display: 8 GB card 1.5 GiB, none beside the free memory; 16 GB
-  1.97 GiB, 0.47 beside; 32 GB 4 GiB, 2.5 beside). It is given up only by a
+  sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. It is given up only by a
   survival rung (with a warning; the first is the floor quality itself), by a `warm_up` admission
   when nothing else fits, and by the options that keep none: it applies to an automatic pool only,
   so an explicit `--kv-capacity` keeps none, and so does an explicit `--max-context` with
@@ -2009,11 +2005,10 @@ table (`core/data/gpu_facts.json`). A named board is a what-if:
 - by default the board has this host's driver model, and a display under WDDM.
 
 Its memory is 97.5 % of the marketed VRAM. The free memory is the device's now, less the weights,
-when the device is real. On a named board, and in ninferno-ui, the dry run takes an idle card: the
+when the device is real, read as a start reads it: with the CUDA stack limit at 0 (the driver's
+default per-thread stack reservation, 0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
 memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
-(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured. The class
-reserve then kept beside the free memory is a start's, the reserve less that desktop share, so the
-desktop keeps the larger of the two in the dry run as at a start.
+(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
 
 **What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
 own: the start and the dry run call the same function (`plan_persistent_layout` over a
@@ -2102,19 +2097,22 @@ bytes; a Qwen3.5/3.6 MoE BF16 checkpoint takes `qwen3_6_35b_a3b`'s Q4/Q5 experts
 is "unknown" when that size is not known before the start.
 
 Under an automatic context with several streams, an own pick whose served plan would share one
-pool carries `launch_context`, the own context; ninferno-ui launches with it as `--max-context`, and
-`ninferno-serve` logs it as advice (`quant | ... --max-context 49152 keeps 49152 tokens for each`).
+pool carries `launch_context`, the own context. Both launch what was planned: ninferno-ui passes it
+as `--max-context`, and `ninferno-serve` without `--max-context` pins it before the start (`quant |
+--max-context 49152: each of the 4 streams keeps 49152 tokens of its own`).
 
 A start without `--quant` does the same before the download:
 
 - it logs the rule's line (`quant | UD-Q4_K_XL: the largest that fits on this NVIDIA GeForce RTX
   4090 (24 GB) at auto context x 1 stream, 49,152`);
 - a quantization of the repository already in the hub cache that fits the ask is kept (`quant |
-  using the cached Q4_K_M; Q5_K_M would be larger`): other flags never download another file
-  silently;
+  using the cached Q4_K_M; Q5_K_M would be larger`, or, for a cached one larger than the pick,
+  `the rule's pick at this ask is ...`): other flags never download another file silently;
 - when nothing fits, it refuses before anything is downloaded and names what fits instead;
-- when the hub cannot be reached, a cached quantization is served; for a GGUF repository with none
-  cached it refuses (`can't reach the hub to choose a quant; pass --quant`);
+- when the hub cannot be reached, the cached quantizations are planned from their own headers and
+  the rule picks among those that fit; with none cached, or none that fits, a GGUF repository is
+  refused (`can't reach the hub to choose a quant; pass --quant`);
+- a separate drafter attached with `--with-drafters` counts its weights (its listing's size);
 - when the shape cannot be read it does not refuse: the fetch's default order applies (`can't plan
   before download`).
 
@@ -2132,7 +2130,7 @@ idle card too, and reports the free memory now beside it (`device.free_now_bytes
 |---|---|
 | `estimate` | always `true` |
 | `model` | `source`, `kind` (`hub`, `gguf`, `checkpoint`, `artifact`), `architecture`, `family` (the artifact's model_type, `""` when no family serves it), `native_context`, `params`, `shape_known`, `weights_bytes`, `weights_basis`, `kv_bytes_per_token` (`bf16`, `int8`, `fp8`, `nvfp4`, `k8v4`), `window`, `builtin_mtp` |
-| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (what the selection keeps beside the free memory: the class reserve less the desktop's share), `desktop_bytes` (the desktop's declared share: the desktop keeps the larger of the two); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
+| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (the class reserve the selection keeps beside the free memory, for the growth of what Windows holds), `desktop_bytes` (the desktop's declared share an idle card's free memory lacks); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
 | `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
 | `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
 | `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned); a single quantization's row when one was named; empty for a single model |

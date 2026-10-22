@@ -1,16 +1,27 @@
 // The plan without the weights takes a start's bytes: for every family, the state shape the dry
 // run reads from a config.json or a GGUF header (product/plan/plan_facts.cpp) is the one the
 // family's own planner reads from its bound config (each family's state_shape), and a dry-run
-// rung's bytes (runtime/engine/plan_dry_run.h, plan_rung_bytes) are the start's planner's
-// (models/qwen3_5/program/planning/sequence_bytes.h, over the start's affine page curve) to the
-// byte, but for the workspace: its Op scratch the bound weights' routes size, an estimate on both
-// sides of the comparison. Synthetic shapes of the lab's models over concurrencies, speculation
-// (none, MTP, DFlash), codecs, contexts, chunks and cached states. CPU, no GPU, no files.
+// rung's bytes (runtime/engine/plan_dry_run.h, plan_rung_bytes) are the start's planner's to the
+// byte, but for the workspace: its Op scratch the bound weights' routes size, an estimate.
+//
+// The start's side is the planner a start builds (make_sequence_planner_impl, startup.h, over its
+// device-free seam: the options the family validated and the multiprocessor count): its copy
+// window resolved from the model's traits, its inputs, its candidates and its affine page curve,
+// then the plan finalize_sequence_plan_impl lays out at the rung's pages. The model under it is a
+// ModelExecution that lays out the family's synthetic shape (the families' persistent_layout is
+// plan_persistent_layout over their state_shape; test_shapes checks the shapes) with the family's
+// traits (family_copy_rounds, which the families' traits read) and no workspace: the real
+// families need bound weights and a device to construct. Synthetic shapes of the lab's models
+// over concurrencies, speculation (none, MTP, DFlash), codecs, contexts, chunks, cached states and
+// the copy window (automatic as a server's default options leave it, and off). CPU, no GPU, no
+// files.
 
 #include "models/dense/program_family.h"
 #include "models/gemma4/program_family.h"
 #include "models/nemotron_h/program_family.h"
+#include "models/qwen3_5/program/model_family.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
+#include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -23,10 +34,79 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <optional>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
+
+namespace ninferno::models::qwen3_5::detail {
+namespace {
+
+// A model the start's planner plans over without weights: a family's state shape laid out by the
+// family's rule, the family's traits, no workspace (the dry run estimates it). Nothing runs on it.
+class ShapeExecution final : public ModelExecution {
+public:
+    explicit ShapeExecution(const StateShape& shape)
+        : shape_(shape), traits_{.hidden        = shape.hidden,
+                                 .output_rows   = shape.output_rows,
+                                 .public_tokens = shape.public_tokens,
+                                 .copy_rounds   = family_copy_rounds(shape.family)} {}
+
+    [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
+
+    [[nodiscard]] models::LoadOptions load_options() const override { return {}; }
+
+    void validate_options(DeviceContext&, const EngineOptions&) const override { unused(); }
+
+    [[nodiscard]] PersistentLayout persistent_layout(const SequencePlanImpl& plan) const override {
+        return plan_persistent_layout(shape_, plan);
+    }
+
+    [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl&) const override {
+        return {};
+    }
+
+    [[nodiscard]] std::uint32_t prefill_call_tokens(std::uint32_t, std::uint32_t,
+                                                    std::uint32_t) const override {
+        unused();
+    }
+
+    [[nodiscard]] execution::PrefillChunkResult
+    prefill_text_chunk(execution::PrefillContext&, std::span<const TokenId>, std::uint32_t,
+                       std::optional<std::uint32_t>, bool) const override {
+        unused();
+    }
+
+    void output_logits(const Tensor&, Tensor&, WorkspaceArena&, cudaStream_t) const override {
+        unused();
+    }
+
+    void capture_ordinary_decode_batch(execution::OrdinaryBatchContext&, std::int32_t,
+                                       ops::CausalAttentionExecutionEnvelope,
+                                       DecodeGraphDefinition&) const override {
+        unused();
+    }
+
+    void ordinary_decode_batch(execution::OrdinaryBatchContext&, std::int32_t,
+                               ops::CausalAttentionExecutionEnvelope,
+                               DecodeGraphExecutable*) const override {
+        unused();
+    }
+
+private:
+    [[noreturn]] static void unused() {
+        throw std::logic_error("the planning-only model runs nothing");
+    }
+
+    StateShape shape_;
+    ModelTraits traits_;
+};
+
+} // namespace
+} // namespace ninferno::models::qwen3_5::detail
 
 namespace {
 
@@ -474,24 +554,32 @@ std::vector<Subject> subjects() {
     return out;
 }
 
-// ---- The start's bytes: its planner's curve (make_sequence_planner_impl) at the rung's pages.
+// ---- The start's bytes: the planner a start builds (make_sequence_planner_impl), its curve at
+// the rung's pages and the plan it finalizes there.
+
+struct StartPlan {
+    std::uint64_t bytes        = 0; // the finalized plan's reservation (no workspace here)
+    std::uint32_t draft_window = 0;
+    std::uint32_t copy_window  = 0; // the planner's resolved ngram_draft_tokens
+};
+
+StartPlan start_plan(const m::StateShape& shape, const EngineOptions& planned,
+                     std::uint32_t pages) {
+    const detail::ShapeExecution model(shape);
+    auto planner = detail::make_sequence_planner_impl(model, planned, 0, false);
+    StartPlan out{.draft_window = planner->inputs.draft_window,
+                  .copy_window  = planner->inputs.ngram_draft_tokens};
+    const std::uint64_t curve = planner->curve.reservation_bytes(pages);
+    const auto plan           = detail::finalize_sequence_plan_impl(std::move(planner), pages);
+    check(plan->device_reservation_bytes == curve, "the start's plan is on its curve");
+    check(plan->workspace.capacity == 0, "the planning-only model plans no workspace");
+    out.bytes = plan->device_reservation_bytes;
+    return out;
+}
 
 std::uint64_t start_bytes(const m::StateShape& shape, const EngineOptions& planned,
                           std::uint32_t pages) {
-    const detail::SequencePlanningInputs inputs =
-        detail::sequence_planning_inputs(planned, 0, false);
-    const detail::SequencePageRange range =
-        detail::sequence_page_range(inputs.capacity, inputs.max_concurrency);
-    const auto at = [&](std::uint32_t p) {
-        auto plan        = detail::sequence_plan_shell(inputs, p);
-        plan->persistent = detail::plan_persistent_layout(shape, *plan);
-        detail::plan_graph_allowance(*plan, false);
-        return std::uint64_t{plan->persistent.bytes} + plan->graph_allowance_bytes;
-    };
-    const std::uint64_t minimum = at(range.minimum);
-    const std::uint64_t stride =
-        range.minimum < range.maximum ? at(range.minimum + 1) - minimum : 0;
-    return minimum + static_cast<std::uint64_t>(pages - range.minimum) * stride;
+    return start_plan(shape, planned, pages).bytes;
 }
 
 EngineOptions options_of(std::uint32_t concurrency, SpeculativeBackend spec, KvCacheStorage kv,
@@ -511,6 +599,7 @@ EngineOptions options_of(std::uint32_t concurrency, SpeculativeBackend spec, KvC
     if (spec == SpeculativeBackend::DFlash || spec == SpeculativeBackend::DFlash2) {
         o.speculative.request_draft_tokens = {3U};
     }
+    // The copy window stays the Engine's default (automatic), as a server leaves it.
     return o;
 }
 
@@ -588,6 +677,141 @@ void test_bytes(const std::vector<Subject>& all) {
                 }
             }
         }
+    }
+}
+
+// The copy window a server's default options leave automatic (ngram_draft_tokens
+// kCopyWindowAuto, copy rounds on): a start plans MTP on a family whose round runs copy rounds
+// with the 15-draft window (its 16-column round logits, replay width, MTP pages and graphs), and
+// the dry run now plans the same (the round-2 review's M1: it planned the depth's window alone).
+// Under none and DFlash, and with the window off, no copy window.
+void test_default_copy_window(const std::vector<Subject>& all) {
+    std::size_t windows = 0;
+    for (const Subject& s : all) {
+        if (!s.facts.offline_bytes) { continue; }
+        for (const SpeculativeBackend spec : s.spec) {
+            const char* name = spec == SpeculativeBackend::None     ? "none"
+                               : spec == SpeculativeBackend::Mtp    ? "mtp"
+                               : spec == SpeculativeBackend::DFlash ? "dflash"
+                                                                    : "dflash2";
+            for (const std::uint32_t concurrency : {1U, 4U}) {
+                // ninferno-serve's options for --spec <name> (product/plan, launch_options), the
+                // codecs and the depth named as the dry run normalizes them.
+                EngineOptions o =
+                    pr::launch_options(
+                        {.max_context = 32768, .max_concurrency = concurrency, .spec = name})
+                        .options;
+                check(o.speculative.ngram_draft_tokens ==
+                              ninferno::SpeculativeOptions::kCopyWindowAuto &&
+                          o.speculative.ngram_min_match != 0,
+                      "a server's default options leave the copy window automatic");
+                const EngineOptions shaped = options_of(
+                    concurrency, spec, s.kv.front(), s.rings.front(),
+                    s.recurrent ? RecurrentStateStorage::FP16 : RecurrentStateStorage::FP32);
+                o.kv_cache                         = shaped.kv_cache;
+                o.kv_cache_automatic               = false;
+                o.sliding_kv_cache                 = shaped.sliding_kv_cache;
+                o.recurrent_state                  = shaped.recurrent_state;
+                o.recurrent_state_automatic        = false;
+                o.speculative.draft_tokens         = shaped.speculative.draft_tokens;
+                o.speculative.request_draft_tokens = shaped.speculative.request_draft_tokens;
+                EngineOptions off                  = o;
+                off.speculative.ngram_draft_tokens = 0;
+                const bool copies =
+                    spec == SpeculativeBackend::Mtp && detail::family_copy_rounds(s.family.family);
+                for (const std::uint32_t cached : {0U, 2U}) {
+                    const std::uint32_t logical = rt::plan_context_pages(32768);
+                    const std::uint32_t low     = std::max(logical, concurrency);
+                    const rt::PlanRung rung{.max_context   = 32768,
+                                            .kv_pages      = low,
+                                            .cached_states = cached,
+                                            .prefill_chunk = 1024};
+                    EngineOptions planned                      = o;
+                    planned.max_context                        = 32768;
+                    planned.prefill_chunk                      = 1024;
+                    planned.context_cache.device_state_slots   = cached;
+                    EngineOptions planned_off                  = planned;
+                    planned_off.speculative.ngram_draft_tokens = 0;
+                    const StartPlan start                      = start_plan(s.family, planned, low);
+                    const StartPlan start_off = start_plan(s.family, planned_off, low);
+                    const rt::PlanRungBytes dry =
+                        rt::plan_rung_bytes(s.facts, rung, o, concurrency, false);
+                    const rt::PlanRungBytes dry_off =
+                        rt::plan_rung_bytes(s.facts, rung, off, concurrency, false);
+                    const std::string where = s.name + " --spec " + name + " C" +
+                                              std::to_string(concurrency) + " cached " +
+                                              std::to_string(cached);
+                    ++compared;
+                    check(dry.total() - dry.workspace == start.bytes,
+                          where + ": default options: dry run " +
+                              std::to_string(dry.total() - dry.workspace) + " != start " +
+                              std::to_string(start.bytes));
+                    check(dry_off.total() - dry_off.workspace == start_off.bytes,
+                          where + ": copy window off: dry run " +
+                              std::to_string(dry_off.total() - dry_off.workspace) + " != start " +
+                              std::to_string(start_off.bytes));
+                    check(start.copy_window == (copies ? 15U : 0U) && start_off.copy_window == 0,
+                          where + ": the start resolves the copy window by the family's rule");
+                    if (copies) {
+                        ++windows;
+                        check(start.draft_window == 15 && start_off.draft_window == 3,
+                              where + ": the start's widest window is the copy window");
+                        check(start.bytes > start_off.bytes && dry.workspace > dry_off.workspace,
+                              where + ": the copy window's bytes and round logits are planned");
+                    } else {
+                        check(start.bytes == start_off.bytes && dry.workspace == dry_off.workspace,
+                              where + ": no copy window outside MTP on a copy-round family");
+                    }
+                }
+            }
+        }
+    }
+    check(windows != 0, "copy windows compared");
+    // The review's row: Qwen3.8-27B UD-IQ3_XXS on the RTX 5070 Ti, --spec mtp at depth 3 with a
+    // server's default options, the copy window planned (now) and not (the dry run before M1).
+    rt::PlanDeviceFacts device;
+    device.name               = "RTX 5070 Ti";
+    device.total_bytes        = rt::plan_board_total_bytes(16);
+    device.compute_capability = 120;
+    rt::PlanModelFacts facts  = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0).model;
+    facts.weight_bytes        = static_cast<std::uint64_t>(10.20 * kGiB);
+    facts.mtp_bytes           = static_cast<std::uint64_t>(0.33 * kGiB);
+    for (const auto& [concurrency, free_gib] :
+         std::vector<std::tuple<std::uint32_t, double>>{{1, 5.21}, {4, 5.17}}) {
+        device.free_bytes = facts.weight_bytes + static_cast<std::uint64_t>(free_gib * kGiB);
+        EngineOptions now =
+            pr::launch_options({.max_context = 0, .max_concurrency = concurrency, .spec = "mtp"})
+                .options;
+        now.speculative.draft_tokens          = 3;
+        EngineOptions before                  = now;
+        before.speculative.ngram_draft_tokens = 0;
+        const rt::DryRunPlan plan_now         = rt::dry_run_plan(facts, device, now);
+        const rt::DryRunPlan plan_before      = rt::dry_run_plan(facts, device, before);
+        check(plan_now.planned && plan_before.planned, "the 27B MTP rows plan");
+        if (!plan_now.planned || !plan_before.planned || plan_now.ladder.empty()) { continue; }
+        // The ladder's first rung under both, and the rung each chooses.
+        const rt::DryRunRung& top_now    = plan_now.ladder.front();
+        const rt::DryRunRung& top_before = plan_before.ladder.front();
+        std::cout << "5070 Ti 27B IQ3 --spec mtp C" << concurrency << " (" << free_gib
+                  << " GiB free), rung 1 (" << top_before.rung.max_context << "/"
+                  << top_before.rung.kv_pages << " -> " << top_now.rung.max_context << "/"
+                  << top_now.rung.kv_pages << " tokens/pages): total " << top_before.bytes.total()
+                  << " -> " << top_now.bytes.total() << " ("
+                  << static_cast<long long>(top_now.bytes.total()) -
+                         static_cast<long long>(top_before.bytes.total())
+                  << ": kv " << top_before.bytes.kv << " -> " << top_now.bytes.kv << ", fixed "
+                  << top_before.bytes.fixed << " -> " << top_now.bytes.fixed << ", graphs "
+                  << top_before.bytes.graphs << " -> " << top_now.bytes.graphs << ", workspace "
+                  << top_before.bytes.workspace << " -> " << top_now.bytes.workspace << "); chosen "
+                  << (plan_before.fits ? std::to_string(plan_before.chosen()->rung.max_context)
+                                       : std::string("none"))
+                  << " -> "
+                  << (plan_now.fits ? std::to_string(plan_now.chosen()->rung.max_context)
+                                    : std::string("none"))
+                  << " tokens\n";
+        check(top_now.rung.max_context != top_before.rung.max_context ||
+                  top_now.bytes.total() > top_before.bytes.total(),
+              "the copy window costs the 27B MTP rung bytes");
     }
 }
 
@@ -763,6 +987,7 @@ int main() {
     const std::vector<Subject> all = subjects();
     test_shapes(all);
     test_bytes(all);
+    test_default_copy_window(all);
     test_what_the_estimate_missed();
     test_dry_run_basis();
     test_fits_instead();

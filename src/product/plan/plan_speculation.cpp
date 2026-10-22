@@ -111,16 +111,9 @@ std::string label_of(const SpeculativeOptions& speculative) {
            std::to_string(speculative.draft_tokens);
 }
 
+// Where the served profile came from (ServedSpeculation::basis, set where it was resolved).
 std::string basis_of(const ServedSpeculation& served) {
-    if (served.source.starts_with("the built-in")) { return "builtin"; }
-    if (served.source.find("(*") != std::string::npos) { return "generic"; }
-    for (const std::string& note : served.notes) {
-        if (note.find("stands in") != std::string::npos ||
-            note.find("measured on") != std::string::npos) {
-            return "similar";
-        }
-    }
-    return "own";
+    return served.basis.empty() ? std::string("own") : served.basis;
 }
 
 } // namespace
@@ -173,6 +166,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
                     out.components.insert(d.decl.component);
                 } else {
                     item["status"] = "attached";
+                    out.attached_drafters.push_back(d.decl);
                 }
             }
             manifest = spec::manifest_from_json(doc);

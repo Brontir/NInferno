@@ -183,7 +183,7 @@ public:
                   .public_tokens = public_tokens,
                   .weight_bytes  = model.device_bytes(),
                   .max_positions = static_cast<std::uint64_t>(c_.max_positions),
-                  .copy_rounds   = true} {
+                  .copy_rounds   = qwen3_5::detail::family_copy_rounds(StateFamily::Gemma4)} {
         if (public_tokens <= 0 || public_tokens > c_.vocab_size) {
             throw std::invalid_argument("Gemma 4 public token domain exceeds the embedding rows");
         }

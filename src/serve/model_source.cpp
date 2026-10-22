@@ -120,8 +120,9 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
     if (options.quant.empty() && !options.prepare_only) {
-        if (const auto quant = largest_fitting_hub_quant(options, log)) {
-            acquire.fetch.quant = *quant;
+        if (const auto choice = largest_fitting_hub_quant(options, log)) {
+            acquire.fetch.quant = choice->quant;
+            out.planned_context = choice->launch_context;
         }
     }
     acquire.fetch.log      = log;

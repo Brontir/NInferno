@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -31,7 +32,16 @@ struct OfflinePlan {
 // line through `log`). nullopt when the rule does not apply (not a GGUF repository, the listing or
 // the GPU unreadable): the fetch then takes its own default. Throws std::runtime_error when no
 // quantization fits, before anything is downloaded.
-[[nodiscard]] std::optional<std::string>
+//
+// `launch_context`: under an automatic context with several streams, the own context per stream
+// the quantization was chosen for: the start pins --max-context to it (ninferno-ui's launch does
+// the same), so the streams never share one pool silently. 0 otherwise.
+struct HubQuantChoice {
+    std::string quant;
+    std::uint32_t launch_context = 0;
+};
+
+[[nodiscard]] std::optional<HubQuantChoice>
 largest_fitting_hub_quant(const ServeOptions& options,
                           const std::function<void(const std::string&)>& log);
 

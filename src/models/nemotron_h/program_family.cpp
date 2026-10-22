@@ -67,7 +67,8 @@ public:
                   .output_rows   = c_.vocab_size,
                   .public_tokens = public_tokens,
                   .weight_bytes  = model.device_bytes(),
-                  .max_positions = static_cast<std::uint64_t>(c_.max_positions)} {
+                  .max_positions = static_cast<std::uint64_t>(c_.max_positions),
+                  .copy_rounds   = qwen3_5::detail::family_copy_rounds(StateFamily::NemotronH)} {
         if (public_tokens <= 0 || public_tokens > c_.vocab_size) {
             throw std::invalid_argument("nemotron_h public token domain exceeds the embedding rows");
         }

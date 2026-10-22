@@ -557,20 +557,34 @@ DType recurrent_state_dtype(RecurrentStateStorage storage) noexcept {
     return DType::FP32;
 }
 
-SequencePlanningInputs sequence_planning_inputs(const EngineOptions& options,
+SpeculativeOptions resolve_copy_window(SpeculativeOptions speculative, bool copy_rounds) {
+    if (speculative.ngram_draft_tokens != SpeculativeOptions::kCopyWindowAuto) {
+        return speculative;
+    }
+    std::uint32_t deepest = speculative.draft_tokens;
+    for (const std::uint32_t k : speculative.request_draft_tokens) {
+        deepest = std::max(deepest, k);
+    }
+    const bool runs = speculative.backend == SpeculativeBackend::Mtp && copy_rounds &&
+                      deepest < kMtpDecodeMaximumDrafts && speculative.ngram_min_match != 0;
+    speculative.ngram_draft_tokens = runs ? kMtpDecodeMaximumDrafts : 0U;
+    return speculative;
+}
+
+SequencePlanningInputs sequence_planning_inputs(const EngineOptions& options, bool copy_rounds,
                                                 std::int32_t multiprocessor_count,
                                                 bool graph_memory_held) {
+    const SpeculativeOptions speculative = resolve_copy_window(options.speculative, copy_rounds);
     std::vector<std::uint32_t> launch_windows;
     std::vector<std::uint32_t> launch_window_min_batch;
     for (const LaunchWindowShape& window :
-         launch_window_shapes(options.speculative, options.max_concurrency)) {
+         launch_window_shapes(speculative, options.max_concurrency)) {
         launch_windows.push_back(window.drafts);
         launch_window_min_batch.push_back(window.min_batch);
     }
     const std::uint32_t batch_limit =
-        launch_windows.empty()
-            ? 0U
-            : speculative_batch_limit(options.speculative.load, options.max_concurrency);
+        launch_windows.empty() ? 0U
+                               : speculative_batch_limit(speculative.load, options.max_concurrency);
     return SequencePlanningInputs{
         .model                   = nullptr,
         .capacity                = options.max_context,
@@ -580,25 +594,25 @@ SequencePlanningInputs sequence_planning_inputs(const EngineOptions& options,
         .launch_windows          = launch_windows,
         .launch_window_min_batch = launch_window_min_batch,
         .launch_window_batches =
-            launch_window_batches(launch_windows, launch_window_min_batch, options.speculative.load,
+            launch_window_batches(launch_windows, launch_window_min_batch, speculative.load,
                                   options.max_concurrency, batch_limit),
         .speculative_batch_limit = batch_limit,
-        .default_draft_depth     = options.speculative.draft_tokens,
-        .speculative_backend     = options.speculative.backend,
+        .default_draft_depth     = speculative.draft_tokens,
+        .speculative_backend     = speculative.backend,
         .kv_storage              = options.kv_cache,
         .ring_storage            = options.sliding_kv_cache,
         .recurrent_state_dtype   = recurrent_state_dtype(options.recurrent_state),
-        .proposal_head           = options.speculative.proposal_head,
-        .draft_width             = options.speculative.draft_width,
-        .acceptance_floor        = options.speculative.acceptance_floor,
-        .step_down               = options.speculative.step_down,
-        .load                    = options.speculative.load,
-        .context_limit           = options.speculative.context_limit,
-        .watchdog_window         = options.speculative.watchdog_window,
-        .watchdog_min_rounds     = options.speculative.watchdog_min_rounds,
-        .shared_trip_floor       = options.speculative.shared_trip_floor,
-        .ngram_draft_tokens      = options.speculative.ngram_draft_tokens,
-        .ngram_min_match         = options.speculative.ngram_min_match,
+        .proposal_head           = speculative.proposal_head,
+        .draft_width             = speculative.draft_width,
+        .acceptance_floor        = speculative.acceptance_floor,
+        .step_down               = speculative.step_down,
+        .load                    = speculative.load,
+        .context_limit           = speculative.context_limit,
+        .watchdog_window         = speculative.watchdog_window,
+        .watchdog_min_rounds     = speculative.watchdog_min_rounds,
+        .shared_trip_floor       = speculative.shared_trip_floor,
+        .ngram_draft_tokens      = speculative.ngram_draft_tokens,
+        .ngram_min_match         = speculative.ngram_min_match,
         .kv_lease_window         = options.kv_lease_window,
         .decode_pacing           = options.pacing,
         .features                = models::load_options(options),

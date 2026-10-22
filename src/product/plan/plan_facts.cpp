@@ -1,3 +1,4 @@
+#include "core/device_traits.h"
 #include "product/plan/plan_facts.h"
 
 #include "artifact/reader.h"
@@ -989,20 +990,10 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free) {
     out.total_bytes        = props.totalGlobalMem;
     out.compute_capability = props.major * 10 + props.minor;
     out.integrated         = props.integrated != 0;
-    // The driver model as the Engine reads it (model_instance.cpp paravirtualized_gpu): natively
-    // on Windows a card not in TCC mode, under WSL 2 every GPU.
-#ifdef _WIN32
-    int tcc = 0;
-    out.paravirtual =
-        cudaDeviceGetAttribute(&tcc, cudaDevAttrTccDriver, device) != cudaSuccess || tcc == 0;
-#else
-    out.paravirtual = host_paravirtual();
-#endif
-    // A display: the kernel-run watchdog is on (model_instance.cpp drives_display).
-    int watchdog = 0;
-    check(cudaDeviceGetAttribute(&watchdog, cudaDevAttrKernelExecTimeout, device),
-          "cudaDevAttrKernelExecTimeout");
-    out.drives_display = watchdog != 0;
+    // The driver model and the display as a start reads them (core/device_traits.h, the
+    // functions model_instance.cpp calls).
+    out.paravirtual    = paravirtualized_gpu(device);
+    out.drives_display = drives_display(device);
     // The PCI product id and the multiprocessors as the device class reads them (the
     // pciDeviceID property is the bus slot, not the product).
     const auto& cls   = device_class(device);
@@ -1010,6 +1001,10 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free) {
     out.sms           = cls.sms;
     if (measure_free) {
         check(cudaSetDevice(device), "cudaSetDevice");
+        // As a start reads it (model_instance.cpp, construct_or_plan): with the CUDA stack limit
+        // at 0, which returns the driver's default per-thread stack reservation (about 1 KiB for
+        // each resident thread: 0.09-0.19 GiB on the lab's cards) before the free memory is read.
+        check(cudaDeviceSetLimit(cudaLimitStackSize, 0), "cudaDeviceSetLimit");
         std::size_t free_bytes = 0, total_bytes = 0;
         check(cudaMemGetInfo(&free_bytes, &total_bytes), "cudaMemGetInfo");
         out.free_bytes = free_bytes;

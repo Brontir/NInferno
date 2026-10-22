@@ -154,9 +154,8 @@ using PlanRungCostFn = std::function<std::optional<PlanRungCost>(std::size_t run
 
 // What the selection keeps beside a rung. `base`: the driver's own allocations (the automatic KV
 // headroom, --kv-auto-headroom-mib; 0 with an explicit --kv-capacity, as before); `reserve`: the
-// class reserve of a GPU Windows shares (WDDM, WSL 2) or one sharing the host's memory, beside the
-// free memory (plan_reserve_beside_free: less the desktop's share the free memory already lacks),
-// which includes `base`; `allowance`: what the warm-up takes after the measurement (0 without one).
+// class reserve of a GPU Windows shares (WDDM, WSL 2) or one sharing the host's memory, which
+// includes `base`; `allowance`: what the warm-up takes after the measurement (0 without one).
 struct PlanMargins {
     std::uint64_t base      = 0;
     std::uint64_t reserve   = 0;
@@ -168,24 +167,6 @@ struct PlanMargins {
 // least 4 GiB; else 0. The driver model, the display and the integrated flag are discrete facts.
 [[nodiscard]] std::uint64_t plan_class_reserve(std::uint64_t total_bytes, bool paravirtual,
                                                bool drives_display, bool integrated) noexcept;
-
-// What a desktop the card drives holds before any weights (declared, not measured): Linux 256 MiB;
-// Windows and WSL 2 1.5 GiB (1.0-1.9 GiB measured on the RTX 5090 desktop); 0 on a headless card.
-// Discrete facts: the driver model and the display.
-inline constexpr std::uint64_t kPlanLinuxDesktopBytes   = std::uint64_t{256} << 20;
-inline constexpr std::uint64_t kPlanWindowsDesktopBytes = std::uint64_t{1536} << 20;
-[[nodiscard]] std::uint64_t plan_desktop_bytes(bool paravirtual, bool drives_display) noexcept;
-
-// The class reserve the selection keeps beside the free memory (PlanMargins::reserve): the class
-// reserve less the desktop's declared share (plan_desktop_bytes), at least 0. The free memory a
-// start measures already lacks what the desktop holds, and the dry run's idle card subtracts the
-// declared share (plan_dry_run.h, plan_idle_free_bytes), so the desktop keeps the larger of its
-// share and the class reserve in both, never their sum: under WDDM with a display an 8 GB card
-// keeps 1.5 GiB (its 0.97 GiB reserve is inside the share, none beside), a 16 GB card 1.97 GiB
-// (0.47 beside), a 32 GB card 4 GiB (2.5 beside). From discrete facts only: the desktop's measured
-// use never sizes it.
-[[nodiscard]] std::uint64_t plan_reserve_beside_free(std::uint64_t total_bytes, bool paravirtual,
-                                                     bool drives_display, bool integrated) noexcept;
 
 // How a rung was admitted:
 //   Kept      with every margin: the class reserve and the warm-up allowance;

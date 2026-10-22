@@ -42,7 +42,8 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
                   drafter && drafter->config().max_positions != 0
                       ? std::min<std::uint64_t>(c_.max_positions, drafter->config().max_positions)
                       : static_cast<std::uint64_t>(c_.max_positions),
-              .dflash_block_width = drafter != nullptr} {
+              .dflash_block_width = drafter != nullptr,
+              .copy_rounds = qwen3_5::detail::family_copy_rounds(StateFamily::DenseDecoder)} {
     if (public_tokens <= 0 || public_tokens > c_.vocab_size) {
         throw std::invalid_argument(
             "dense decoder public token domain exceeds the embedding rows");

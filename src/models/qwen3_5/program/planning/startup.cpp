@@ -821,31 +821,19 @@ WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
     return build_workspace_plan(parameters, plan);
 }
 
-namespace {
-// The copy window an automatic ngram_draft_tokens takes: the MTP backend's widest window on a
-// family whose round runs copy rounds, where it is deeper than every draft depth; else none.
-EngineOptions resolve_copy_window(const ModelExecution& model, const EngineOptions& options) {
-    EngineOptions out = options;
-    if (out.speculative.ngram_draft_tokens != SpeculativeOptions::kCopyWindowAuto) { return out; }
-    std::uint32_t deepest = out.speculative.draft_tokens;
-    for (const std::uint32_t k : out.speculative.request_draft_tokens) {
-        deepest = std::max(deepest, k);
-    }
-    const bool runs = out.speculative.backend == SpeculativeBackend::Mtp &&
-                      model.traits().copy_rounds && deepest < kMtpDecodeMaximumDrafts &&
-                      out.speculative.ngram_min_match != 0;
-    out.speculative.ngram_draft_tokens = runs ? kMtpDecodeMaximumDrafts : 0U;
-    return out;
-}
-} // namespace
-
 std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
 make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
-                           const EngineOptions& requested, bool graph_memory_held) {
-    const EngineOptions options = resolve_copy_window(model, requested);
+                           const EngineOptions& options, bool graph_memory_held) {
     model.validate_options(device, options);
-    SequencePlanningInputs inputs =
-        sequence_planning_inputs(options, device.multiprocessor_count(), graph_memory_held);
+    return make_sequence_planner_impl(model, options, device.multiprocessor_count(),
+                                      graph_memory_held);
+}
+
+std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
+make_sequence_planner_impl(const ModelExecution& model, const EngineOptions& options,
+                           std::int32_t multiprocessor_count, bool graph_memory_held) {
+    SequencePlanningInputs inputs = sequence_planning_inputs(
+        options, model.traits().copy_rounds, multiprocessor_count, graph_memory_held);
     inputs.model                  = &model;
     const SequencePageRange range = sequence_page_range(inputs.capacity, inputs.max_concurrency);
     const std::uint32_t minimum_pages = range.minimum;
