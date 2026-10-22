@@ -51,7 +51,7 @@ Build options are listed in [`docs/maintainer/build-system.md`](docs/maintainer/
 
 ```bash
 ctest --preset dev                      # or: ctest --test-dir build --output-on-failure
-python3 -m pytest tests/artifact tests/convert tests/test_serve_corpus.py
+python3 -m pytest tests/artifact tests/convert tests/test_serve_corpus.py tests/test_spec_gate.py
 ```
 
 Use Python 3.11. Run GPU tests serially. A case your GPU or build cannot run prints `SKIP` and still
