@@ -1,5 +1,6 @@
 #include "ops/softmax_attention/dense/causal_cache/int8/plan.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/operands.h"
+#include "ops/softmax_attention/dense/causal_cache/int8/prompt_split.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/volta_splitd.h"
 #include "ops/softmax_attention/dense/causal_cache/plan_rules.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -20,6 +21,12 @@ constexpr int kPrefillTiledMinWidth = 17;
 constexpr bool kPrefillTiledAtEveryWidth = false;
 #else
 constexpr bool kPrefillTiledAtEveryWidth = true;
+#endif
+// The tiled family runs the prompt kernel, with key pieces, from sm_80 (int8/launch.cu).
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH >= 80
+constexpr bool kPromptKernel = true;
+#else
+constexpr bool kPromptKernel = false;
 #endif
 } // namespace
 
@@ -75,6 +82,20 @@ std::size_t int8_kv_workspace_bytes(int heads, int kv_heads, int batch, int min_
         (void)allocate_causal_partials(layout, heads, width, splits, batch);
         if (widths.chunks) allocate_causal_chunk_metadata(layout);
         maximum = std::max(maximum, layout.peak_bytes(1));
+    }
+    // The prompt kernel's piece partials (int8/prompt_split.h): a one-row tiled call's grow with
+    // its width up to the launch budget, so the widest tiled call of the interval sizes them.
+    if (kPromptKernel && batch == 1) {
+        const int pieces = int8_prompt_pieces(static_cast<int>(envelope.max_visible_keys));
+        const auto plan  = make_int8_kv_causal_plan(heads, kv_heads, max_width, batch, envelope,
+                                                    multiprocessor_count);
+        if (pieces > 1 && plan.family == Int8KvFamily::Tiled) {
+            const int columns = int8_prompt_launch_columns(max_width, heads, pieces);
+            WorkspaceLayoutBuilder layout;
+            (void)allocate_causal_partials(layout, heads, columns, pieces, 1);
+            if (columns < max_width) allocate_causal_chunk_metadata(layout);
+            maximum = std::max(maximum, layout.peak_bytes(1));
+        }
     }
     // A Volta prefill call wider than the grouped tiles takes split-D flash attention. A run's
     // envelope is exact (its visible keys), a plan's spans 1..capacity: size the widest exact run,

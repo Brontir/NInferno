@@ -19,8 +19,15 @@
 //     a partial past the FP16 range decodes with its scales divided by an exact power of two and
 //     multiplies the partial back.
 //   * CTAs issue longest-first, so a causal prompt's heaviest row blocks do not form the tail.
+//   * A row's keys are swept in pieces of kInt8PromptSplitKeys from position 0, one CTA each (the
+//     launch's third dimension). A row that sees at most one piece is stored directly; a longer
+//     row leaves an FP32 partial per piece, folded in piece order by the merge kernel below. The
+//     pieces follow the row's own position, so a row's bytes do not depend on the call's width,
+//     and a narrow call over a long context still spreads over the SMs.
 
+#include "ops/softmax_attention/dense/causal_cache/int8/prompt_split.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/tile_io.cuh"
+#include "ops/softmax_attention/common/causal_operands.h"
 
 #include "ops/kv_cache/hadamard_d256.cuh"
 
@@ -55,6 +62,11 @@ struct Int8PromptFastShape {
 // a scale at or below 8 keeps it, with rounding slack, under 65504.
 inline constexpr float kInt8PromptFastF16PartialScaleLimit = 8.0f;
 
+// The key tiles of one piece (int8/prompt_split.h); a row seeing v keys runs
+// (v - 1) / kInt8PromptSplitKeys + 1 pieces.
+inline constexpr int kInt8PromptSplitTiles = kInt8PromptSplitKeys / kInt8PromptFastBc;
+static_assert(kInt8PromptSplitKeys % kInt8PromptFastBc == 0);
+
 static_assert(kInt8PromptFastBc == kPagedKVPageSize);
 static_assert(kInt8PromptFastGroups == 4);
 static_assert(Int8PromptFastShape<8>::kSharedBytes == 100352);
@@ -77,12 +89,13 @@ __device__ __forceinline__ void int8_prompt_fast_decode_v_pair(unsigned codes, u
 }
 
 template <typename Geometry, typename Metadata, int Warps>
-__global__ __launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_kv_prompt_fast_kernel(
+__global__
+__launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_kv_prompt_fast_kernel(
     const __nv_bfloat16* __restrict__ q, const std::int8_t* __restrict__ cache_k,
     const std::int8_t* __restrict__ cache_v, const __half* __restrict__ cache_k_scale,
     const __half* __restrict__ cache_v_scale, Metadata metadata,
     const std::int32_t* __restrict__ positions, float scale, __nv_bfloat16* __restrict__ out,
-    std::int32_t width, std::int32_t narrow_slots) {
+    std::int32_t width, std::int32_t narrow_slots, CausalPartialView partial) {
     constexpr int D             = kInt8PromptFastD;
     constexpr int DB16          = D / 2;
     using Shape                 = Int8PromptFastShape<Warps>;
@@ -141,8 +154,11 @@ __global__ __launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_
         store_vec(&out[causal_q_index<Geometry>(q_head, d0, token)], packed);
     };
 
+    const int split = static_cast<int>(blockIdx.z);
     if (q0 >= tokens) {
-        causal_zero_rows<Geometry>(out, q_head, q0, min(q0 + cta_rows, width), tid, Threads);
+        if (split == 0) {
+            causal_zero_rows<Geometry>(out, q_head, q0, min(q0 + cta_rows, width), tid, Threads);
+        }
         return;
     }
 
@@ -151,6 +167,10 @@ __global__ __launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_
     const int rows                  = min(cta_rows, tokens - q0);
     const int max_query_abs         = base_pos + q0 + rows - 1;
     const int key_blocks            = max_query_abs / Bc + 1;
+    // This CTA's piece of the keys; none of its rows reaches a later piece.
+    const int first_block = split * kInt8PromptSplitTiles;
+    if (first_block >= key_blocks) { return; }
+    const int end_block = min(key_blocks, first_block + kInt8PromptSplitTiles);
 
     // Each warp rotates and encodes its own 16 rows, keeping the two rows each lane owns in the
     // MMA C layout as register scales.
@@ -467,29 +487,116 @@ __global__ __launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_
     };
 
     // Every warp publishes one tile per barrier; the next tile's copy overlaps this tile's math.
-    issue_tile(0);
+    issue_tile(first_block);
 #pragma unroll 1
-    for (int kb = 0; kb < key_blocks; ++kb) {
+    for (int kb = first_block; kb < end_block; ++kb) {
         cp_wait<0>();
         __syncthreads();
-        if (kb + 1 < key_blocks) { issue_tile(kb + 1); }
+        if (kb + 1 < end_block) { issue_tile(kb + 1); }
         qk_softmax(kb);
         pv(kb);
     }
 
-    running_l0         = warp_sum<4>(running_l0, FullMask);
-    running_l1         = warp_sum<4>(running_l1, FullMask);
-    const float inv_l0 = running_l0 > 0.0f ? __frcp_rn(running_l0) : 0.0f;
-    const float inv_l1 = running_l1 > 0.0f ? __frcp_rn(running_l1) : 0.0f;
+    running_l0 = warp_sum<4>(running_l0, FullMask);
+    running_l1 = warp_sum<4>(running_l1, FullMask);
+    // A row's last piece; an inactive row (past the valid tokens) is stored by piece 0 as zeros.
+    const int last0     = qabs0 < 0 ? 0 : qabs0 >> kInt8PromptSplitShift;
+    const int last1     = qabs1 < 0 ? 0 : qabs1 >> kInt8PromptSplitShift;
+    const bool direct0  = last0 == 0;
+    const bool direct1  = last1 == 0;
+    const bool partial0 = !direct0 && split <= last0;
+    const bool partial1 = !direct1 && split <= last1;
     // Even n8 tiles hold dimensions 16b + 2n and odd tiles 16b + 2n + 1, so lane (g, t) owns the
     // four contiguous dimensions 16b + 4t .. 16b + 4t + 3 of its two rows.
+    if (split == 0 && (direct0 || direct1)) {
+        const float inv_l0 = running_l0 > 0.0f ? __frcp_rn(running_l0) : 0.0f;
+        const float inv_l1 = running_l1 > 0.0f ? __frcp_rn(running_l1) : 0.0f;
 #pragma unroll
-    for (int b = 0; b < DBlocks; ++b) {
-        const int d0 = b * 16 + 4 * lid;
-        store_row(row0, d0, acc[b][0][0] * inv_l0, acc[b][1][0] * inv_l0, acc[b][0][1] * inv_l0,
-                  acc[b][1][1] * inv_l0);
-        store_row(row1, d0, acc[b][0][2] * inv_l1, acc[b][1][2] * inv_l1, acc[b][0][3] * inv_l1,
-                  acc[b][1][3] * inv_l1);
+        for (int b = 0; b < DBlocks; ++b) {
+            const int d0 = b * 16 + 4 * lid;
+            if (direct0) {
+                store_row(row0, d0, acc[b][0][0] * inv_l0, acc[b][1][0] * inv_l0,
+                          acc[b][0][1] * inv_l0, acc[b][1][1] * inv_l0);
+            }
+            if (direct1) {
+                store_row(row1, d0, acc[b][0][2] * inv_l1, acc[b][1][2] * inv_l1,
+                          acc[b][0][3] * inv_l1, acc[b][1][3] * inv_l1);
+            }
+        }
+    }
+    // A longer row's piece: the unnormalized sums, the row's maximum score and its probability sum.
+    const auto store_partial = [&](int row, int d0, float v0, float v1, float v2, float v3) {
+        const int token = q0 + row;
+        store_vec(&partial.acc[causal_partial_index<Geometry>(q_head, d0, token, split, width)],
+                  make_float4(v0, v1, v2, v3));
+    };
+    if (partial0 || partial1) {
+#pragma unroll
+        for (int b = 0; b < DBlocks; ++b) {
+            const int d0 = b * 16 + 4 * lid;
+            if (partial0) {
+                store_partial(row0, d0, acc[b][0][0], acc[b][1][0], acc[b][0][1], acc[b][1][1]);
+            }
+            if (partial1) {
+                store_partial(row1, d0, acc[b][0][2], acc[b][1][2], acc[b][0][3], acc[b][1][3]);
+            }
+        }
+        if (lid == 0) {
+            if (partial0) {
+                const auto stat = causal_stat_index<Geometry>(q_head, q0 + row0, split, width);
+                partial.maximum[stat] = running_m0;
+                partial.sum[stat]     = running_l0;
+            }
+            if (partial1) {
+                const auto stat = causal_stat_index<Geometry>(q_head, q0 + row1, split, width);
+                partial.maximum[stat] = running_m1;
+                partial.sum[stat]     = running_l1;
+            }
+        }
+    }
+}
+
+// Folds a longer row's pieces in piece order: their largest maximum M, then each piece's sums
+// weighted by exp2((m_s - M) * scale * log2 e) as the sweep rescales a tile, and the row divided
+// by the weighted probability sum. One warp per (token, head); rows of one piece were stored
+// directly. Every launch of a row takes this fold, so its bytes follow its own position only.
+template <typename Geometry, typename Metadata>
+__global__ __launch_bounds__(256) void int8_prompt_fast_merge_kernel(
+    CausalPartialView partial, Metadata metadata, const std::int32_t* __restrict__ positions,
+    float scale, __nv_bfloat16* __restrict__ out, std::int32_t width) {
+    const int lane   = static_cast<int>(threadIdx.x) & 31;
+    const int linear = static_cast<int>(blockIdx.x) * 8 + (static_cast<int>(threadIdx.x) >> 5);
+    const int head   = linear % Geometry::QHeads;
+    const int token  = linear / Geometry::QHeads;
+    if (token >= width || token >= metadata.valid_tokens(width)) { return; }
+    const int last   = positions[0] + token;
+    const int pieces = (last >> kInt8PromptSplitShift) + 1;
+    if (pieces == 1) { return; }
+    const float scale_l2 = scale * kLog2E;
+    float maximum        = -CUDART_INF_F;
+    for (int s = 0; s < pieces; ++s) {
+        maximum =
+            fmaxf(maximum, partial.maximum[causal_stat_index<Geometry>(head, token, s, width)]);
+    }
+    const float maximum_scaled = maximum * scale_l2;
+    float sum                  = 0.0f;
+    float values[8]{};
+    for (int s = 0; s < pieces; ++s) {
+        const auto stat = causal_stat_index<Geometry>(head, token, s, width);
+        const float w   = exp2_approx(__fmaf_rn(partial.maximum[stat], scale_l2, -maximum_scaled));
+        sum             = __fmaf_rn(partial.sum[stat], w, sum);
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            const float a =
+                partial.acc[causal_partial_index<Geometry>(head, lane + 32 * i, token, s, width)];
+            values[i] = __fmaf_rn(a, w, values[i]);
+        }
+    }
+    const float inverse = sum > 0.0f ? __frcp_rn(sum) : 0.0f;
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        out[causal_q_index<Geometry>(head, lane + 32 * i, token)] =
+            __float2bfloat16(values[i] * inverse);
     }
 }
 
