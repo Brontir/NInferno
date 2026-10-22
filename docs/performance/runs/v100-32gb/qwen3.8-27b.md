@@ -4,16 +4,16 @@
 
 ## Best launch
 
-One stream, 33.0 tok/s:
+One stream, 44.1 tok/s:
 
 ```bash
-ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --spec none
+ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --with-drafters --spec dflash2 --draft-tokens 5
 ```
 
-4 concurrent chats, 82.9 tok/s over all streams:
+8 concurrent chats, 97.2 tok/s over all streams:
 
 ```bash
-ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --spec none --max-concurrency 4
+ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-Q4_K_XL --spec none --max-concurrency 8
 ```
 
 ## Every setting measured
@@ -22,8 +22,8 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×5 | auto | fast | 673 | 15.2 | 15.8 | 81.2 | 38.9 | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | fast | 856 | 33.2 | 33.0 | 82.9 | 38.9 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | dflash2 ×5 | auto | fast | 673 | 43.4 | 44.1 | 82.2 | 97.1 | 2026-10-22 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-Q4_K_XL | off | auto | fast | 855 | 33.1 | 33.0 | 83.1 | 97.2 | 2026-10-22 |
 
 ## Measurement
 
