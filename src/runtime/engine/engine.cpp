@@ -129,7 +129,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
         runtime::facts_of(device_class(resolved.device), build_features(), driver_version, host);
     in.build   = runtime::build_of();
     in.options = runtime::options_of(
-        requested, load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
+        requested, load.source_identity.empty() ? std::string("unreadable") : load.source_identity,
         load.prefill_signature, runtime::drafter_identity(requested.speculative.drafter));
     for (const auto& [key, value] : requested.speculative.decision_sources) {
         in.sources[key] = value;
@@ -159,6 +159,9 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.taint    = runtime::taint_of(in);
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));
+    in.observed.merge(runtime::artifact_ids_of(
+        load.artifact_id.empty() ? std::string("unreadable") : load.artifact_id,
+        runtime::drafter_artifact_id(requested.speculative.drafter)));
     const runtime::DecisionFingerprint fingerprint = runtime::decision_fingerprint(in);
     load.decision_fingerprint                      = fingerprint.value;
     load.decision_manifest                         = fingerprint.manifest;

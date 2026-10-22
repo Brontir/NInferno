@@ -6,14 +6,22 @@
 //   Short  < 1024 tokens      Mid  < 8192      Long  < 24576      Huge  the rest
 //
 // Acceptance is a property of the model pair and of the bytes it computes, not of a kernel, so a
-// factor is keyed by what acceptance depends on: the target and drafter artifacts, the whole byte
-// class (B1: activation precision, summation order, KV codec, decode/verify parity), the sampling,
-// the draft depth K, the prompt set (corpus hash) and, under fast activations, the lane count
-// (at small T the bytes depend on the batch). The registry's top-level "context_classes":
+// factor is keyed by what acceptance depends on: the target and drafter by their source identity
+// (artifact/source_identity.h: what they were converted from and how, never the artifact id, which
+// is drawn at random per conversion), the whole byte class (B1: activation precision, summation
+// order, KV codec, decode/verify parity), the sampling, the draft depth K, the prompt set (corpus
+// hash) and, under fast activations, the lane count (at small T the bytes depend on the batch).
+// The registry's top-level "context_classes":
 //
 //   {"bounds": [1024, 8192, 24576] (must be kContextBounds),
-//    "entries": [{"model": registry model id, "target_artifact": id,
-//                 "drafter": kind, "drafter_artifact": id | "component:<name>" (of the target),
+//    "entries": [{"model": registry model id,
+//                 "target": source identity (64 hex) | {"source_identity": 64 hex | null,
+//                           "proven": {the parts of the identity record known, as data},
+//                           "missing": [the parts not known]} | a placeholder,
+//                 "drafter": kind,
+//                 "drafter_source": a separate drafter's source identity | "component:<name>"
+//                                   (a component of the target: the target's identity and the
+//                                   name),
 //                 "byte_class": {"activations": "exact" | "fast-a8" | "fast-a4", "kv": ...,
 //                                "summation": ..., "parity": ...},
 //                 "sampling": "t0" | ..., "depth": K, "lanes": C, "corpus": "sha256:<64 hex>" |
@@ -29,8 +37,10 @@
 // mean
 // (|v - mean| / mean); the estimate is that mean. Routes count by family (the text before the
 // first '.', route_family). A key holding a placeholder ("auto", an id "placeholder:...", in any
-// case, or a corpus that is no "sha256:" and 64 lower-case hex digits) is never known. Otherwise
-// factor() says unknown and why. Unknown is never 1.0.
+// case, a target that is no source identity, a target object with a part "missing", a
+// drafter_source that is neither a source identity nor "component:<name>", or a corpus that is no
+// "sha256:" and 64 lower-case hex digits) is never known. Otherwise factor() says unknown and why.
+// Unknown is never 1.0.
 //
 // No decision reads factor() yet: this is the data and the API (idea 32, step 2); the rule that
 // picks a depth per class comes next.
@@ -62,10 +72,10 @@ inline constexpr double kContextTolerance = 0.05;
 
 // What an acceptance factor is measured for, and what a lookup asks for.
 struct AcceptanceKey {
-    std::string model; // registry model id
-    std::string target_artifact;
-    std::string drafter;          // drafter kind (DrafterDecl::kind)
-    std::string drafter_artifact; // its artifact id, or "component:<name>" of the target
+    std::string model;          // registry model id
+    std::string target;         // its source identity (artifact::source_identity)
+    std::string drafter;        // drafter kind (DrafterDecl::kind)
+    std::string drafter_source; // a separate drafter's source identity, or "component:<name>"
     nlohmann::json byte_class = nlohmann::json::object(); // compared whole
     std::string sampling;
     std::int32_t depth = 0;
@@ -82,6 +92,10 @@ struct CardFactors {
 
 struct ContextEntry {
     AcceptanceKey key;
+    // A target given as an object: its proven parts and the names of the missing ones (the key's
+    // target is then "missing:<names>", never known).
+    nlohmann::json target_parts = nlohmann::json::object();
+    std::vector<std::string> target_missing;
     std::string schedule, source;
     double tolerance = kContextTolerance;
     std::vector<CardFactors> cards;

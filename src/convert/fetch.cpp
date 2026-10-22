@@ -241,6 +241,18 @@ std::string file_digest(const fs::path& path, bool git_sha1) {
     return hex_encode(digest, size);
 }
 
+} // namespace
+
+std::string file_sha256(const fs::path& path) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+        throw std::runtime_error("cannot read " + path.string() + " to take its sha256");
+    }
+    return file_digest(path, false);
+}
+
+namespace {
+
 // ---------------------------------------------------------------------------------------------
 // Chunked, resumable, parallel transfer of one file.
 

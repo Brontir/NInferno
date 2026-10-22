@@ -5,6 +5,7 @@
 #include "artifact/reader.h"
 #include "artifact/formats.h"
 #include "artifact/routed_experts.h"
+#include "artifact/source_identity.h"
 #include "core/arena.h"
 #include "core/device_class.h"
 #include "core/hex.h"
@@ -429,18 +430,22 @@ namespace {
 // The static /v1/models facts of any family: the identity and dimensions from the loaded model's
 // traits, the parameters, weight bytes and weights profile from the artifact's tensor inventory
 // (every component, as llama.cpp counts a whole GGUF).
-// `artifact_id`: the artifact's id (hex), and `routed_expert_bytes`: the bytes of its routed-expert
-// objects (artifact/routed_experts.h; the decode-round price's MoE share), from the same read.
+// `artifact_id`: the artifact's id (hex), `source_identity` its source identity
+// (artifact/source_identity.h; "none:<artifact id>" when it has none), and
+// `routed_expert_bytes`: the bytes of its routed-expert objects (artifact/routed_experts.h; the
+// decode-round price's MoE share), from the same read.
 ModelMetadata model_metadata(const std::filesystem::path& artifact_path, const LoadSummary& summary,
                              const models::qwen3_5::detail::ModelTraits& traits,
-                             std::string& artifact_id, std::uint64_t& routed_expert_bytes) {
+                             std::string& artifact_id, std::string& source_identity,
+                             std::uint64_t& routed_expert_bytes) {
     ModelMetadata metadata;
     metadata.model_id       = summary.model_name;
     metadata.vocab_size     = static_cast<std::uint64_t>(traits.public_tokens);
     metadata.embedding_size = static_cast<std::uint64_t>(traits.hidden);
     metadata.native_context = traits.max_positions;
     const artifact::Reader reader(artifact_path);
-    artifact_id = hex_encode(reader.artifact_id().data(), reader.artifact_id().size());
+    artifact_id     = hex_encode(reader.artifact_id().data(), reader.artifact_id().size());
+    source_identity = artifact::source_identity(reader.directory()).value_or("none:" + artifact_id);
     std::set<std::string> formats;
     const auto expert_layers = artifact::routed_expert_object_layers(reader.directory());
     routed_expert_bytes      = 0;
@@ -1388,9 +1393,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     summary.route_table  = ops::route_table_status().message;
     summary.load_seconds = std::chrono::duration<double>(Clock::now() - start).count();
     summary.context_cost = std::move(context_cost.summary);
-    summary.metadata =
-        model_metadata(options.artifact_path, summary, instance->execution->traits(),
-                       summary.artifact_id, instance->decode_round_shape.routed_expert_bytes);
+    summary.metadata = model_metadata(options.artifact_path, summary, instance->execution->traits(),
+                                      summary.artifact_id, summary.source_identity,
+                                      instance->decode_round_shape.routed_expert_bytes);
     instance->decode_round_shape.weight_bytes = summary.metadata.weight_bytes;
     return {std::move(instance), std::move(summary), std::move(context_cost.model),
             std::move(resolved)};

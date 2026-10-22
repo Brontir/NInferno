@@ -213,6 +213,12 @@ OJson SourceInputs::provenance() const {
     return out;
 }
 
+std::vector<std::pair<std::string, const Checkpoint*>> SourceInputs::roles() const {
+    std::vector<std::pair<std::string, const Checkpoint*>> out{{"base", &base_}};
+    for (const auto& [name, checkpoint] : opened_) { out.emplace_back(name, checkpoint.get()); }
+    return out;
+}
+
 std::vector<const Checkpoint*> SourceInputs::opened() const {
     std::vector<const Checkpoint*> out{&base_};
     for (const auto& [name, checkpoint] : opened_) { out.push_back(checkpoint.get()); }

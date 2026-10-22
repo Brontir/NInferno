@@ -43,6 +43,15 @@ ninferno_add_test(ninferno_convert_checkpoint_index_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_checkpoint_index.cpp"
   LIBRARIES ninferno_convert)
 
+# The content digests convert() seals into the directory (src/convert/writer.h) and the source
+# identity they key (artifact/source_identity.h); the Python writer seals the same. CPU, no torch.
+ninferno_add_test(ninferno_convert_content_digests_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_content_digests.cpp"
+  LIBRARIES ninferno_convert)
+add_test(NAME ninferno_convert_content_digests_interop_test
+  COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_CURRENT_LIST_DIR}/content_digests_interop.py"
+    $<TARGET_FILE:ninferno_convert_content_digests_test>)
+
 ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)

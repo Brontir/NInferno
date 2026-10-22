@@ -129,6 +129,8 @@ public:
     [[nodiscard]] OJson provenance() const;
     // Every opened checkpoint, the base first.
     [[nodiscard]] std::vector<const Checkpoint*> opened() const;
+    // The same with their roles: "base", then each --source name in opening order.
+    [[nodiscard]] std::vector<std::pair<std::string, const Checkpoint*>> roles() const;
 
 private:
     const Checkpoint& base_;

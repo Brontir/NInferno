@@ -4,12 +4,15 @@
 #include "convert/files.h"
 #include "core/clock.h"
 #include "core/hex.h"
+#include "core/sha256.h"
 
 #include "artifact/formats.h"
+#include "artifact/source_identity.h"
 #include "convert/consume.h"
 #include "convert/dense.h"
 #include "convert/gguf_model.h"
 #include "convert/drafters.h"
+#include "convert/fetch.h"
 #include "convert/formats.h"
 #include "convert/gemma4.h"
 #include "convert/ggml_quants.h"
@@ -1475,6 +1478,41 @@ void check_fidelity(const Checkpoint& base, const Model& model, const Plan& plan
         "NInferno's own quantization).");
 }
 
+// A file's content digest for the source identity: a Hugging Face snapshot file is a link to
+// <hub>/blobs/<sha256> for an LFS file, a digest the fetch verified when it downloaded it (and that
+// a source-consuming conversion, which punches the blob, cannot take again); any other file's
+// bytes are read.
+std::string content_sha256(const std::filesystem::path& file) {
+    std::error_code ec;
+    if (std::filesystem::is_symlink(file, ec)) {
+        const auto target = std::filesystem::canonical(file, ec);
+        if (!ec && target.parent_path().filename() == "blobs" &&
+            artifact::is_source_identity(ninferno::utf8_file_name(target))) {
+            return ninferno::utf8_file_name(target);
+        }
+    }
+    return file_sha256(file);
+}
+
+// The provenance's "inputs" (artifact/source_identity.h): every checkpoint the conversion opened,
+// by the weight files it read, each by its content alone ({"sha256": hex}), sorted. No path enters
+// and no side file does: what a side file (config, tokenizer, template) gives the artifact is in
+// its bytes and structure, which the content digests and the structure hash cover.
+OJson source_inputs(const SourceInputs& sources) {
+    OJson out = OJson::array();
+    for (const auto& [role, checkpoint] : sources.roles()) {
+        std::vector<std::string> digests;
+        for (std::size_t i = 0; i < checkpoint->shard_count(); ++i) {
+            digests.push_back(content_sha256(checkpoint->shard_path(i)));
+        }
+        std::sort(digests.begin(), digests.end());
+        OJson files = OJson::array();
+        for (const auto& digest : digests) { files.push_back(OJson{{"sha256", digest}}); }
+        out.push_back(OJson{{"role", role}, {"files", std::move(files)}});
+    }
+    return out;
+}
+
 } // namespace
 
 ConvertResult convert(const ConvertOptions& options) {
@@ -1669,8 +1707,51 @@ ConvertResult convert(const ConvertOptions& options) {
     if (!drafter_quant.empty()) { provenance["drafter_quantization"] = drafter_quant; }
     if (!vocabulary.empty()) { provenance["vocabulary"] = vocabulary; }
     provenance["sources"]   = sources.provenance();
+    // The files read, by content, for the source identity (artifact/source_identity.h); the Python
+    // converter writes the same (tools/convert/__main__.py source_inputs). A source-consuming
+    // conversion keeps them beside its journal: a resumed run reads them there, never hashing a
+    // file it has punched.
+    {
+        const auto out         = py_path_str(options.out.string());
+        const auto inputs_path = std::filesystem::path(out + ".journal.inputs");
+        std::error_code ec;
+        const bool resuming =
+            options.consume_source && std::filesystem::exists(out + ".journal", ec);
+        if (resuming && !std::filesystem::exists(inputs_path, ec)) {
+            // Its sources may be punched already: hashing them now would record other inputs.
+            throw std::runtime_error("cannot resume " + out +
+                                     ": its journal has no recorded source inputs (" +
+                                     inputs_path.string() +
+                                     "; a run by an older converter); convert from the full "
+                                     "checkpoint again");
+        }
+        if (resuming) {
+            std::ifstream stream(inputs_path);
+            provenance["inputs"] = OJson::parse(stream);
+            log("source inputs: read from " + inputs_path.string() + " (resumed)");
+        } else {
+            provenance["inputs"] = source_inputs(sources);
+            if (options.consume_source) {
+                // Durable before the first punch: written to a temporary, fsynced, renamed in.
+                write_report(inputs_path.string(), provenance["inputs"]);
+                sync_directory_of(inputs_path);
+            }
+        }
+    }
     if (!base.gguf_mapper().empty()) { provenance["gguf_mapper"] = base.gguf_mapper(); }
-    if (options.proposal) { provenance["ranking"] = ranking_text; }
+    // What the source identity hashes (artifact/source_identity.h): a GGUF's quantization label.
+    if (base.gguf() != nullptr && base.shard_count() > 0) {
+        const auto quant = gguf_quant_label(ninferno::utf8_file_name(base.shard_path(0)));
+        if (!quant.empty()) { provenance["quant"] = quant; }
+    }
+    if (options.proposal) {
+        provenance["ranking"] = ranking_text;
+        // The identity takes the ranking by content (artifact/source_identity.h), never its path.
+        provenance["ranking_sha256"] = file_sha256(ranking);
+    }
+    // Choices that change the bytes without changing a shape (the content digests cover them too).
+    if (options.round_tiny_scales) { provenance["round_tiny_scales"] = true; }
+    if (options.maintainer_quantize) { provenance["maintainer_quantize"] = true; }
     if (const auto published = published_activation_summary(sources, model, recipe)) {
         provenance["published_activations"] = *published;
         std::string widths;
@@ -1860,6 +1941,9 @@ ConvertResult convert(const ConvertOptions& options) {
     description["uses"]       = plan.uses;
     description["metadata"]   = metadata;
     description["provenance"] = provenance;
+    // The content digests (artifact/source_identity.h): laid out as placeholders of their length,
+    // computed once every byte is written and sealed into the directory before it is published.
+    description["provenance"]["content_sha256"] = content_digest_placeholders(plan.objects);
     auto layout = layout_artifact(options.out.filename().string(), py_dumps_compact(description),
                                   plan.payload_bytes, options.max_file_bytes);
 
@@ -1989,8 +2073,20 @@ ConvertResult convert(const ConvertOptions& options) {
     }
     result.write_seconds = seconds_since(writing);
     const auto finishing = Clock::now();
-    writer.finish();
+    OJson digests;
+    writer.finish([&] {
+        const auto hashing = Clock::now();
+        digests            = content_digests(writer, plan.objects, options.threads);
+        log("content digests: " + std::to_string(plan.objects.size()) + " objects, " +
+            format_gib(writer.payload_bytes()) + " in " +
+            std::to_string(seconds_since(hashing)).substr(0, 5) + " s");
+        description["provenance"]["content_sha256"] = digests;
+        return layout_artifact(options.out.filename().string(), py_dumps_compact(description),
+                               plan.payload_bytes, options.max_file_bytes)
+            .directory;
+    });
     sync_directory_of(options.out);
+    report["provenance"]["content_sha256"] = digests;
     if (!options.keep_source_cache) {
         for (const auto* store : stores) { store->release_all(); }
     }
@@ -2020,6 +2116,8 @@ ConvertResult convert(const ConvertOptions& options) {
         }
         sync_directory_of(base.shard_path(0));
         journal->remove();
+        std::error_code ignored;
+        std::filesystem::remove(output + ".journal.inputs", ignored);
     }
 
     result.seconds = seconds_since(begin);

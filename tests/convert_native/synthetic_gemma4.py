@@ -286,6 +286,23 @@ def compare(name: str, python_out: Path, native_out: Path) -> list[str]:
         Path(str(native_out) + ".conversion.json")
     ):
         errors.append(f"{name}: conversion reports differ")
+    # The source identity's parts (src/artifact/source_identity.h): the inputs read and a sealed
+    # content digest per object, the same from both converters (the bytes above are).
+    from artifact_directory import directory
+    sealed = []
+    for out in (python_out, native_out):
+        value, objects, _, _ = directory(out)
+        provenance = value.get("provenance", {})
+        digests = provenance.get("content_sha256", {})
+        if not provenance.get("inputs") or not all(
+            f.get("sha256") for i in provenance["inputs"] for f in i.get("files", [])
+        ):
+            errors.append(f"{name}: {out.name} records no inputs")
+        if set(digests) != set(objects) or any(d == "0" * 64 for d in digests.values()):
+            errors.append(f"{name}: {out.name} has no sealed digest for every object")
+        sealed.append((provenance.get("inputs"), digests))
+    if sealed[0] != sealed[1]:
+        errors.append(f"{name}: the converters record other inputs or digests")
     return errors
 
 

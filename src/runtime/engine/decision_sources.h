@@ -9,9 +9,15 @@
 
 namespace ninferno::runtime {
 
-// A separate drafter's artifact id (32 lowercase hex digits), read as the main artifact's is;
-// empty for an empty path (no separate drafter), "unreadable" when its directory cannot be read.
+// A separate drafter's source identity (artifact/source_identity.h, 64 lowercase hex digits), read
+// as the main artifact's is; empty for an empty path (no separate drafter), "none:<artifact id>"
+// for a drafter without one (converted before the converter recorded its inputs and digests, so
+// two such drafters still differ), "unreadable" when its directory cannot be read.
 [[nodiscard]] std::string drafter_identity(const std::filesystem::path& drafter) noexcept;
+
+// Its artifact id (32 lowercase hex digits; observed, not a decision input): empty for an empty
+// path, "unreadable" when its directory cannot be read.
+[[nodiscard]] std::string drafter_artifact_id(const std::filesystem::path& drafter) noexcept;
 
 // A --context-cost-presets file: "<file name> sha256:<hex of its bytes>", "none" for an empty
 // path, "unreadable" when it cannot be read.

@@ -5,6 +5,7 @@
 #include "core/device_class.h"
 
 #include "spec/config.h"
+#include "artifact/source_identity.h"
 #include "spec/context_class.h"
 #include "spec/corpus.h"
 #include "spec/engine_support.h"
@@ -1526,6 +1527,131 @@ int test_select_published() {
     return failures;
 }
 
+// The source identity (artifact/source_identity.h): a digest of what an artifact was converted
+// from and how, the same for every conversion of the same sources, moved by each part.
+int test_source_identity() {
+    namespace art          = ninferno::artifact;
+    int failures           = 0;
+    const std::string gguf = "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee";
+    art::Directory d;
+    d.objects.push_back(
+        art::TensorObject{"text/layer.0/q", {8, 4}, "ggml_iq3_xxs", "row", 0, 14, 1});
+    d.objects.push_back(art::ResourceObject{"text/tokenizer.json", "bytes", 64, 100});
+    d.provenance  = Json::parse(R"({"converter": "ninferno-v3", "recipe": "qwen3_5_bf16",
+        "quant": "UD-IQ3_XXS", "drafter_quantization": "q8",
+        "sources": {"base": {"path": "/somewhere/else"}},
+        "content_sha256": {"text/layer.0/q": ")" +
+                                std::string(64, 'a') + R"(",
+                           "text/tokenizer.json": ")" +
+                                std::string(64, 'b') + R"("},
+        "ranking": "/home/a/ranking.i64", "ranking_sha256": ")" +
+                                std::string(64, '3') + R"(",
+        "inputs": [{"role": "base", "files": [{"sha256": ")" +
+                                gguf + R"("}]}]})");
+    const auto id = art::source_identity(d);
+    failures += check(id && art::is_source_identity(*id), "a recorded conversion has an identity");
+    // The same conversion elsewhere (another artifact id, path, file split): the same identity.
+    auto moved                                           = d;
+    moved.provenance["sources"]["base"]["path"]          = "/root/hf/other";
+    std::get<art::TensorObject>(moved.objects[0]).offset = 4096;
+    std::swap(moved.objects[0], moved.objects[1]);
+    failures += check(art::source_identity(moved) == id,
+                      "paths, offsets and object order leave the identity");
+    // Each part moves it.
+    const std::vector<std::pair<std::string, std::function<void(art::Directory&)>>> parts = {
+        {"the file content",
+         [](art::Directory& x) {
+             x.provenance["inputs"][0]["files"][0]["sha256"] = std::string(64, 'e');
+         }},
+        {"the ranking's content",
+         [](art::Directory& x) { x.provenance["ranking_sha256"] = std::string(64, '4'); }},
+        {"the quant", [](art::Directory& x) { x.provenance["quant"] = "Q4_K_M"; }},
+        {"the converter version",
+         [](art::Directory& x) { x.provenance["converter"] = "ninferno-v4"; }},
+        {"the recipe", [](art::Directory& x) { x.provenance["recipe"] = "dense_bf16"; }},
+        {"a byte-changing choice",
+         [](art::Directory& x) { x.provenance["drafter_quantization"] = "q4"; }},
+        {"the metadata", [](art::Directory& x) { x.metadata["license"] = "other"; }},
+        {"a component's config",
+         [](art::Directory& x) { x.components["text"].config["hidden_size"] = 8; }},
+        {"an override's code",
+         [](art::Directory& x) { x.provenance["override_sha256"] = std::string(64, 'e'); }},
+        {"a tensor's format",
+         [](art::Directory& x) { std::get<art::TensorObject>(x.objects[0]).format = "bf16"; }},
+        {"a tensor's shape",
+         [](art::Directory& x) { std::get<art::TensorObject>(x.objects[0]).shape = {4, 8}; }},
+        {"an object's content",
+         [](art::Directory& x) {
+             x.provenance["content_sha256"]["text/layer.0/q"] = std::string(64, 'c');
+         }},
+        {"a resource's size",
+         [](art::Directory& x) { std::get<art::ResourceObject>(x.objects[1]).bytes = 101; }},
+    };
+    for (const auto& [what, change] : parts) {
+        auto other = d;
+        change(other);
+        failures += check(art::source_identity(other) && art::source_identity(other) != id,
+                          what + " moves the source identity");
+    }
+    auto old = d;
+    old.provenance.erase("inputs");
+    failures += check(!art::source_identity(old),
+                      "an artifact converted before inputs were recorded has no identity");
+    auto undigested = d;
+    undigested.provenance.erase("content_sha256");
+    failures += check(!art::source_identity(undigested),
+                      "an artifact without content digests has no identity");
+    auto partial = d;
+    partial.provenance["content_sha256"].erase("text/tokenizer.json");
+    failures += check(!art::source_identity(partial), "a digest missing: no identity");
+    auto unsealed                                           = d;
+    unsealed.provenance["content_sha256"]["text/layer.0/q"] = std::string(64, '0');
+    failures += check(!art::source_identity(unsealed), "a placeholder digest: no identity");
+    // The inputs by role: the order the converter opened them in does not enter.
+    auto two = d;
+    two.provenance["inputs"].push_back(Json{
+        {"role", "dflash2"}, {"files", Json::array({Json{{"sha256", std::string(64, 'd')}}})}});
+    auto swapped = two;
+    swapped.provenance["inputs"] =
+        Json::array({two.provenance["inputs"][1], two.provenance["inputs"][0]});
+    failures += check(art::source_identity(two) && art::source_identity(two) != id &&
+                          art::source_identity(two) == art::source_identity(swapped),
+                      "inputs in another order: the same identity; another input: another");
+    // Never a path: a custom recipe and an override enter by content and function name.
+    auto here  = d;
+    auto there = d;
+    for (auto* x : {&here, &there}) {
+        x->provenance["recipe_sha256"]     = std::string(64, '1');
+        x->provenance["recipe_function"]   = "configure";
+        x->provenance["override_sha256"]   = std::string(64, '2');
+        x->provenance["override_function"] = "tweak";
+    }
+    here.provenance["recipe"]    = "/home/a/recipe.py";
+    there.provenance["recipe"]   = "/srv/b/recipe.py";
+    here.provenance["override"]  = "/home/a/o.py:tweak";
+    there.provenance["override"] = "/srv/b/o.py:tweak";
+    failures += check(art::source_identity(here) &&
+                          art::source_identity(here) == art::source_identity(there),
+                      "a custom recipe or override file at another path: the same identity");
+    there.provenance["recipe_function"] = "other";
+    failures += check(art::source_identity(here) != art::source_identity(there),
+                      "another recipe function: another identity");
+    failures += check(art::tensor_index_sha256(d) == art::tensor_index_sha256(moved),
+                      "the tensor index is in id order, without offsets");
+
+    // No path enters: the ranking at another path (the same content), the sources elsewhere.
+    auto elsewhere                                  = d;
+    elsewhere.provenance["ranking"]                 = "C:\\rankings\\ranking.i64";
+    elsewhere.provenance["sources"]["base"]["path"] = "relative/m.gguf";
+    failures += check(art::source_identity(elsewhere) == id,
+                      "the same ranking and sources at other paths: the same identity");
+    auto named             = d;
+    named.metadata["name"] = "my-instance";
+    failures += check(art::source_identity(named) == id,
+                      "the public instance name (--name) leaves the identity");
+    return failures;
+}
+
 // Context classes (spec/context_class.h): the bounds, and a factor only from two cards of different
 // generations or routes that agree, for exactly the key measured; never a silent 1.0.
 int test_context_classes() {
@@ -1552,21 +1678,68 @@ int test_context_classes() {
                           !known_route("RMMA") && !known_route(""),
                       "known_route takes the GEMM route families");
 
-    // The shipped registry: the RTX 3090 X13 entries, one card each and placeholder ids, so every
-    // factor is unknown.
+    // The shipped registry: the RTX 3090 X13 entries (one card each, placeholder ids: unknown)
+    // and the Qwen3.8-27B UD-IQ3_XXS ones measured on an RTX 4090 (ad102, sm89) and an RTX 5070 Ti
+    // (gb203, sm120), one per drafter and temperature, keyed by the source identity the converter
+    // logged for that conversion (b_p663): a server that loads that artifact computes the same key.
     const auto& shipped = Registry::builtin().context_classes();
-    failures += check(shipped.present && shipped.entries.size() == 3,
-                      "the registry carries three X13 entries");
+    failures += check(shipped.present && shipped.entries.size() == 7,
+                      "the registry carries seven X13 entries");
+    const std::string iq3 = "c7e691ccda50e9461e45f28e98bfa57d956c84900eecbc58941f683435216bb0";
+    int measured          = 0;
     for (const auto& entry : shipped.entries) {
-        const auto mid = factor(shipped, entry.key, ContextClass::Mid);
-        failures += check(entry.tolerance == kContextTolerance && !mid.value &&
-                              mid.reason.starts_with("placeholder key: "),
-                          "the X13 entries are placeholders: unknown (" + mid.reason + ")");
+        failures += check(entry.tolerance == kContextTolerance, "the X13 tolerance");
+        const auto& key = entry.key; // the running server's key, field for field
+        const auto label =
+            key.model + " " + key.drafter + ":" + std::to_string(key.depth) + " " + key.sampling;
+        if (key.target != iq3) {
+            const auto mid = factor(shipped, key, ContextClass::Mid);
+            failures += check(!mid.value && mid.reason.starts_with("placeholder key: "),
+                              label + ": a placeholder, unknown (" + mid.reason + ")");
+            continue;
+        }
+        ++measured;
+        failures +=
+            check(entry.target_missing.empty() &&
+                      entry.target_parts["inputs"][0]["files"][0]["sha256"] ==
+                          "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee" &&
+                      entry.target_parts["quant"] == "UD-IQ3_XXS",
+                  label + ": the target is complete and names the GGUF by its content");
+        failures += check(entry.cards.size() == 2 && entry.cards[0].arch != entry.cards[1].arch,
+                          label + ": two cards of different generations");
+        for (const auto c : {ContextClass::Mid, ContextClass::Long}) {
+            const auto i      = static_cast<std::size_t>(c);
+            const double mean = (*entry.cards[0].factors[i] + *entry.cards[1].factors[i]) / 2;
+            const auto got    = factor(shipped, key, c);
+            failures +=
+                check(got.value && got.reason.empty() && std::abs(*got.value - mean) < 1e-12,
+                      label + " " + class_name(c) + ": the cards' mean (" + got.reason + ")");
+        }
+        failures += check(factor(shipped, key, ContextClass::Short).value == 1.0,
+                          label + ": the short factor is 1");
+        const auto huge = factor(shipped, key, ContextClass::Huge);
+        failures += check(!huge.value && huge.reason.starts_with("no huge context factor"),
+                          label + ": huge unknown (" + huge.reason + ")");
+        if (key.drafter == "dflash2" && key.sampling == "t0") {
+            const auto mid = factor(shipped, key, ContextClass::Mid);
+            failures += check(mid.value && std::abs(*mid.value - (0.872 + 0.863) / 2) < 1e-12,
+                              "dflash2:7 t0 mid factor 0.8675 (4090 0.872, 5070 Ti 0.863)");
+            auto other     = key;
+            other.sampling = "pooled t0+t1";
+            failures += check(!factor(shipped, other, ContextClass::Mid).value,
+                              "another sampling than the entries' is unknown");
+            auto converted   = key;
+            converted.target = std::string(64, 'd'); // another conversion of other bytes
+            const auto got   = factor(shipped, converted, ContextClass::Mid);
+            failures += check(!got.value && got.reason.starts_with("target differs"),
+                              "another artifact's identity: unknown (" + got.reason + ")");
+        }
     }
+    failures += check(measured == 4, "four UD-IQ3_XXS entries (dflash2:7, mtp:5; t0, t1)");
 
     const auto key_json = [](const std::string& cards) {
-        return R"({"model": "m", "target_artifact": "t1", "drafter": "dflash",
-            "drafter_artifact": "component:dflash",
+        return R"({"model": "m", "target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "drafter": "dflash", "drafter_source": "component:dflash",
             "byte_class": {"activations": "fast-a8", "kv": "k8v4", "summation": "s", "parity": "p"},
             "sampling": "t0", "depth": 7, "lanes": 1, "corpus": "sha256:abababababababababababababababababababababababababababababababab", "schedule": "x",
             "tolerance": 0.05, "cards": )" +
@@ -1589,9 +1762,9 @@ int test_context_classes() {
     };
     AcceptanceKey key;
     key.model            = "m";
-    key.target_artifact  = "t1";
+    key.target           = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
     key.drafter          = "dflash";
-    key.drafter_artifact = "component:dflash";
+    key.drafter_source   = "component:dflash";
     key.byte_class =
         Json{{"activations", "fast-a8"}, {"kv", "k8v4"}, {"summation", "s"}, {"parity", "p"}};
     key.sampling = "t0";
@@ -1660,9 +1833,12 @@ int test_context_classes() {
                       "W4A8 with and without producer warps: one family, unknown");
     // Every key field: a different one is unknown, the reason naming it.
     const std::vector<std::pair<std::string, std::function<void(AcceptanceKey&)>>> fields = {
-        {"target_artifact differs", [](AcceptanceKey& k) { k.target_artifact = "t2"; }},
+        {"target differs",
+         [](AcceptanceKey& k) {
+             k.target = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
+         }},
         {"drafter differs", [](AcceptanceKey& k) { k.drafter = "mtp"; }},
-        {"drafter_artifact differs", [](AcceptanceKey& k) { k.drafter_artifact = "d1"; }},
+        {"drafter_source differs", [](AcceptanceKey& k) { k.drafter_source = "d1"; }},
         {"byte_class differs", [](AcceptanceKey& k) { k.byte_class["kv"] = "bf16"; }},
         {"byte_class differs", [](AcceptanceKey& k) { k.byte_class["activations"] = "exact"; }},
         {"sampling differs", [](AcceptanceKey& k) { k.sampling = "t1"; }},
@@ -1683,14 +1859,29 @@ int test_context_classes() {
     }
     // A placeholder in the key is unknown even where two generations agree.
     const std::vector<std::tuple<std::string, std::string, std::string>> placeholders = {
-        {R"("target_artifact": "t1")", R"("target_artifact": "placeholder:t1")",
-         "placeholder key: target_artifact=placeholder:t1"},
+        {R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+         R"("target": "placeholder:t1")", "placeholder key: target=placeholder:t1"},
+        // A target or drafter keyed otherwise than by a source identity (an artifact id, a name).
+        {R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+         R"("target": "00112233445566778899aabbccddeeff")",
+         "placeholder key: target=00112233445566778899aabbccddeeff"},
+        {R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+         R"("target": "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1")",
+         "placeholder key: "
+         "target=A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"},
+        {R"("drafter_source": "component:dflash")", R"("drafter_source": "d1")",
+         "placeholder key: drafter_source=d1"},
+        // A target recorded in part: the missing parts named, never known.
+        {R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+         R"("target": {"source_identity": null, "proven": {"quant": "Q4_K_M"},
+             "missing": ["tensor_index", "inputs"]})",
+         "placeholder key: target=missing:tensor_index,inputs"},
         {R"("kv": "k8v4")", R"("kv": "auto")", "placeholder key: byte_class.kv=auto"},
         {R"("kv": "k8v4")", R"("kv": "AUTO")", "placeholder key: byte_class.kv=AUTO"},
         {R"("drafter": "dflash")", R"("drafter": "auto")", "placeholder key: drafter=auto"},
         {R"("model": "m")", R"("model": "placeholder:m")", "placeholder key: model=placeholder:m"},
-        {R"("target_artifact": "t1")", R"("target_artifact": "Placeholder:t1")",
-         "placeholder key: target_artifact=Placeholder:t1"},
+        {R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+         R"("target": "Placeholder:t1")", "placeholder key: target=Placeholder:t1"},
         {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
          R"("corpus": "sha256:ab")", "placeholder key: corpus=sha256:ab"},
         {R"("corpus": "sha256:abababababababababababababababababababababababababababababababab")",
@@ -1707,6 +1898,18 @@ int test_context_classes() {
         const auto got   = factor(entry, entry.entries[0].key, ContextClass::Mid);
         failures += check(!got.value && got.reason == reason,
                           "unknown: " + reason + " (" + got.reason + ")");
+    }
+    {
+        auto text = key_json(pair(card("ga102", 0.9), card("ad102", 0.9)));
+        const std::string from =
+            R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")";
+        text.replace(
+            text.find(from), from.size(),
+            R"("target": {"source_identity": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "proven": {}, "missing": []})");
+        const auto entry = parse_context_factors(Json::parse(with_entry(text)));
+        failures += check(entry.entries[0].key.target == key.target &&
+                              factor(entry, key, ContextClass::Mid).value == 0.9,
+                          "a target object with its source identity and nothing missing: known");
     }
     // Under exact activations the lane count does not change the bytes.
     auto exact = Json::parse(with_entry(key_json(pair(card("ga102", 0.9), card("sm89", 0.9)))));
@@ -1750,7 +1953,18 @@ int test_context_classes() {
         R"({"bounds": [1024, 8192, 24576], "entries": {}})",
         entry_with(R"("tolerance": 0.05, )", ""),
         entry_with(R"("tolerance": 0.05)", R"("tolerance": 0.06)"),
-        entry_with(R"("target_artifact": "t1", )", ""),
+        entry_with(
+            R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",)", ""),
+        entry_with(
+            R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+            R"("target": {"proven": {}})"),
+        entry_with(
+            R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+            R"("target": {"source_identity": "t1", "proven": {}, "missing": []})"),
+        entry_with(
+            R"("target": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")",
+            R"("target": {"source_identity": null, "proven": {}, "missing": [""]})"),
+        entry_with(R"("drafter_source": "component:dflash",)", ""),
         entry_with(
             R"("corpus": "sha256:abababababababababababababababababababababababababababababababab", )",
             ""),
@@ -1793,8 +2007,8 @@ int test_context_classes() {
             "engine": "qwen3_5", "drafters": [{"kind": "dflash"}]}],
             "context_classes": {"bounds": [1024, 8192, 24576], "entries": [
             {"model": ")") +
-               model + R"(", "target_artifact": "t", "drafter": ")" + drafter +
-               R"(", "drafter_artifact": "component:dflash", "byte_class": {"activations": "exact",
+               model + R"(", "target": "t", "drafter": ")" + drafter +
+               R"(", "drafter_source": "component:dflash", "byte_class": {"activations": "exact",
                "kv": "bf16", "summation": "s", "parity": "p"}, "sampling": "t0", "depth": 7,
                "lanes": 1, "corpus": "c", "schedule": "x", "tolerance": 0.05,
                "cards": [{"schedule": "x", "gpu_class": "ga102", "factors": [1, 1, 1, 1]}]}]}})";
@@ -2495,6 +2709,7 @@ int main() {
     failures += test_class_depths();
     failures += test_select_published();
     failures += test_registry_and_corpus();
+    failures += test_source_identity();
     failures += test_context_classes();
     failures += test_variants();
     failures += test_resolve();
