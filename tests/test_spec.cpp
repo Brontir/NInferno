@@ -2733,8 +2733,10 @@ int test_served_class_depths() {
         failures += check(got[0].depth == 7 && got[1].depth == 7,
                           "short and an unknown mid keep the pick (" + got[0].reason + "; " +
                               got[1].reason + ")");
-        failures += check(got[2].depth == 3 && got[2].basis == ClassBasis::Modeled,
-                          "long at factor 0.60 drops to depth 3 (" + got[2].reason + ")");
+        failures += check(got[2].depth == 3 && got[2].basis == ClassBasis::Modeled &&
+                              got[2].reason.find("floor from profile context") != std::string::npos,
+                          "long at factor 0.60 drops to depth 3, its floor labelled (" +
+                              got[2].reason + ")");
         failures += check(got[3].depth == 3 && got[3].basis == ClassBasis::Bounded &&
                               got[3].bounded_by == ContextClass::Long &&
                               class_basis_label(got[3]) == "bounded by long" &&
@@ -2783,6 +2785,29 @@ int test_served_class_depths() {
                                   got[2].basis == ClassBasis::NoEstimate &&
                                   got[2].reason.find("no model") != std::string::npos,
                               label + ": no model keeps the pick (" + got[2].reason + ")");
+        }
+    }
+
+    // The bounds apply only to a request that starts at the default depth they were decided for:
+    // a per-request choice at another depth (--spec-select thinking) or a plain one is not bounded.
+    failures += check(class_bounds_apply(7, 7) && !class_bounds_apply(5, 7) &&
+                          !class_bounds_apply(0, 7) && !class_bounds_apply(0, 0),
+                      "class_bounds_apply: only the default depth");
+    // --spec-class-depth's text.
+    {
+        failures +=
+            check(parse_class_depths("none,none,3,0") ==
+                          std::array<std::uint32_t, kContextClasses>{kNoClassBound, kNoClassBound,
+                                                                     3, 0} &&
+                      class_depths_label(parse_class_depths("none,none,3,0")) == "none,none,3,0" &&
+                      class_depths_label(parse_class_depths("none")) == "none",
+                  "parse_class_depths and its label");
+        for (const char* bad : {"", "3", "1,2,3", "none,3,5,0", "a,b,c,d", "1,1,1,1,1", "1,,1,1"}) {
+            bool refused = false;
+            try {
+                (void)parse_class_depths(bad);
+            } catch (const std::invalid_argument&) { refused = true; }
+            failures += check(refused, std::string("parse_class_depths refuses '") + bad + "'");
         }
     }
 

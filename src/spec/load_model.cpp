@@ -531,17 +531,17 @@ served_class_depths(std::int32_t pick, double measured_tokens, std::span<const D
         const double a_c = first_draft_acceptance(1.0 + (measured_tokens - 1.0) * f, pick, decay);
         const auto best  = best_at(a_c, cap);
         if (best.second > 1.0) {
-            out[i] = ServedClassDepth{.depth  = best.first,
-                                      .basis  = ClassBasis::Modeled,
-                                      .reason = "factor " + factor_text(f) + ": depth " +
-                                                std::to_string(best.first) + " at " +
-                                                ratio_text(best.second) + " plain"};
+            out[i] = ServedClassDepth{
+                .depth  = best.first,
+                .basis  = ClassBasis::Modeled,
+                .reason = "factor " + factor_text(f) + ": depth " + std::to_string(best.first) +
+                          " at " + ratio_text(best.second) + " plain (floor from profile context)"};
         } else {
-            out[i] = ServedClassDepth{.depth  = 0,
-                                      .basis  = ClassBasis::Modeled,
-                                      .reason = "factor " + factor_text(f) +
-                                                ": plain (the best depth gives " +
-                                                ratio_text(best.second) + ")"};
+            out[i] = ServedClassDepth{
+                .depth  = 0,
+                .basis  = ClassBasis::Modeled,
+                .reason = "factor " + factor_text(f) + ": plain (the best depth gives " +
+                          ratio_text(best.second) + ", floor from profile context)"};
         }
     }
     return out;

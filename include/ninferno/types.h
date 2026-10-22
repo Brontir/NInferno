@@ -1292,6 +1292,12 @@ struct SpeculativeStats {
     // Its prompt held more tokens than the context bound (SpeculativeOptions::context_limit):
     // a request that would have drafted decoded plainly from its first token.
     bool context_plain = false;
+    // A context-class bound (SpeculativeOptions::class_depth) turned it plain (class_plain), at
+    // admission or when its context grew into a longer class, or lowered its depth: the last
+    // depth a bound lowered it to (class_depth; 0: none, or plain). A request a bound turned plain
+    // keeps its checkpoints from before the switch, not its endpoint (as load_plain).
+    bool class_plain          = false;
+    std::uint32_t class_depth = 0;
     // The acceptance watchdog's verdict (SpeculativeOptions::acceptance_floor): the round it
     // tripped at and the rolling tokens per round it saw. From then on the request drafts no
     // more (fallback_steps beside drafting rows, else plain_steps).

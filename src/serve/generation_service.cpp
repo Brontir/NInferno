@@ -2,8 +2,7 @@
 
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
-#include "core/device_class.h"
-#include "runtime/engine/family_registry.h"
+#include "runtime/engine/served_bytes.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -300,6 +299,7 @@ void mark_fit_fallback(SpeculativeOptions& speculative, std::string_view label) 
 
 std::string speculation_fallback(const GenerationMetrics& metrics, std::string_view startup) {
     if (metrics.speculative_context_plain) { return "context_plain"; }
+    if (metrics.speculative_class_plain) { return "class_plain"; }
     if (metrics.speculative_load_plain) { return "load_plain"; }
     if (metrics.speculative_watchdog_tripped) { return "watchdog_plain"; }
     if (metrics.speculative_step_downs != 0) { return "step_down"; }
@@ -419,6 +419,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             speculative.load = product::engine_load(*options_.speculation_load,
                                                     product::speculative_window(speculative));
         }
+        // --spec-class-depth: the bounds as given (an explicit --spec too), replacing --spec
+        // auto's.
+        if (options_.class_depth) { speculative.class_depth = *options_.class_depth; }
         if (!served_speculation_) { return; }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
@@ -426,22 +429,28 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         served_speculation_->engine.load        = speculative.load;
         served_speculation_->engine.draft_width = speculative.draft_width;
-        // The depth per context class for the bytes this Engine runs: an automatic KV storage
-        // as the Engine will choose it (the family's, by the device's compute capability).
+        // The depth per context class for the bytes this Engine runs, resolved as the Engine
+        // resolves them (runtime/engine/served_bytes.h).
         KvCacheStorage kv = engine_options.kv_cache;
-        if (engine_options.kv_cache_automatic) {
-            try {
-                int compute_capability = 1000;
-                try {
-                    compute_capability = device_class(options_.device).compute_capability();
-                } catch (const std::exception&) {}
-                kv = runtime::automatic_kv_cache(
-                    runtime::artifact_model_type(options_.artifact_path), compute_capability);
-            } catch (const std::exception&) {}
+        try {
+            kv = runtime::resolved_kv_cache(engine_options);
+        } catch (const std::exception&) {}
+        product::apply_context_classes(*served_speculation_, options_.artifact_path,
+                                       {.activations = runtime::served_activations(engine_options),
+                                        .kv          = std::string(kv_cache_storage_layout(kv))});
+        if (options_.class_depth) {
+            served_speculation_->engine.class_depth = *options_.class_depth;
+            for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+                const std::uint32_t k = (*options_.class_depth)[i];
+                auto& c               = served_speculation_->classes[i];
+                if (k != SpeculativeOptions::kNoClassBound &&
+                    k < static_cast<std::uint32_t>(c.depth)) {
+                    c.depth = static_cast<std::int32_t>(k);
+                }
+                c.reason = "--spec-class-depth " + spec::class_depths_label(*options_.class_depth) +
+                           " (was: " + c.reason + ")";
+            }
         }
-        product::apply_context_classes(
-            *served_speculation_, options_.artifact_path,
-            product::served_bytes(options_.artifact_path, engine_options.activations, kv));
         speculative.class_depth = served_speculation_->engine.class_depth;
     };
     bound_load(engine_options.speculative);
@@ -1047,6 +1056,8 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_trips_held            = result.speculative.shared_trip_deferrals;
     outcome.metrics.speculative_load_plain            = result.speculative.load_plain;
     outcome.metrics.speculative_context_plain         = result.speculative.context_plain;
+    outcome.metrics.speculative_class_plain           = result.speculative.class_plain;
+    outcome.metrics.speculative_class_depth           = result.speculative.class_depth;
     outcome.metrics.speculative_watchdog_tripped      = result.speculative.watchdog_tripped;
     outcome.metrics.speculative_watchdog_round        = result.speculative.watchdog_round;
     outcome.metrics.speculative_step_downs            = result.speculative.step_downs;

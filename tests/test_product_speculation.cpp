@@ -639,7 +639,8 @@ int main() {
             check(json.size() == 4 && json[0]["class"] == "short" &&
                       json[0]["below_tokens"] == 1024 && json[3]["below_tokens"].is_null() &&
                       json[0]["depth"] == 7 && json[0]["basis"] == "measured" &&
-                      json[2]["basis"] == "modeled" && json[3]["basis"] == "bounded by long",
+                      json[2]["basis"] == "modeled" && json[3]["basis"] == "bounded by long" &&
+                      json[0]["for_depth"] == 7 && json[3]["for_depth"] == 7,
                   "context_classes_json: " + json.dump());
         // Another byte class (exact activations) is not what was measured: no bound.
         ninferno::product::apply_context_classes(

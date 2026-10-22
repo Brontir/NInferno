@@ -90,7 +90,8 @@ struct ServedSpeculation {
 };
 
 // The byte class a server runs, as the registry's context-class keys spell it
-// (spec::served_byte_class): "exact", "fast-a8" or "fast-a4", and the KV storage's layout name.
+// (spec::served_byte_class): runtime::served_activations ("exact", "fast-a8" or "fast-a4") and the
+// layout name of runtime::resolved_kv_cache, both as the Engine resolves them.
 struct ServedBytes {
     std::string activations;
     std::string kv;
@@ -107,13 +108,10 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
 // The same for the artifact at `artifact` with the factors this binary carries.
 void apply_context_classes(ServedSpeculation& served, const std::filesystem::path& artifact,
                            const ServedBytes& bytes);
-// The byte class an Engine runs the artifact at `artifact` with: `activations` as
-// ServedBytes spells it (fast on an artifact holding NVFP4 weights: "fast-a4") and `kv`, the KV
-// storage it runs (an automatic one resolved by the caller), by its layout name.
-[[nodiscard]] ServedBytes served_bytes(const std::filesystem::path& artifact,
-                                       ActivationMode activations, KvCacheStorage kv);
 // The context classes as reports carry them (/v1/models meta.speculation.classes, the startup
-// log): [{class, below_tokens (null for huge), depth, basis, reason}].
+// log): [{class, below_tokens (null for huge), for_depth, depth, basis, reason}]. for_depth: the
+// default choice's depth the bounds were decided for; a request on another menu choice
+// (--spec-select thinking at another depth) is not bounded (spec::class_bounds_apply).
 [[nodiscard]] nlohmann::json context_classes_json(const ServedSpeculation& served);
 
 // nullopt when the artifact came with no speculation profile for this GPU. `thinking` is the

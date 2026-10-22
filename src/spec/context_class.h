@@ -67,6 +67,14 @@ inline constexpr double kMaxContextFactor = 1.5;
 // stand. Every entry records it ("tolerance") and must record this value.
 inline constexpr double kContextTolerance = 0.05;
 
+// "none,none,3,0" (Short, Mid, Long, Huge; each a depth or "none"; "none" alone: no bound), as
+// --spec-class-depth takes it. Throws std::invalid_argument on other text or bounds that rise
+// with the class.
+[[nodiscard]] std::array<std::uint32_t, kContextClasses> parse_class_depths(std::string_view text);
+// The inverse ("none" when no class is bounded).
+[[nodiscard]] std::string
+class_depths_label(const std::array<std::uint32_t, kContextClasses>& bounds);
+
 // What an acceptance factor is measured for, and what a lookup asks for.
 struct AcceptanceKey {
     std::string model;          // registry model id

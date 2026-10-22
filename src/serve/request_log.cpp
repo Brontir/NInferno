@@ -300,6 +300,8 @@ Json speculative_json(const GenerationMetrics& metrics) {
              {"shared_trip_deferrals", metrics.speculative_trips_held},
              {"load_plain", metrics.speculative_load_plain},
              {"context_plain", metrics.speculative_context_plain},
+             {"class_plain", metrics.speculative_class_plain},
+             {"class_depth", metrics.speculative_class_depth},
              {"fallback", metrics.speculative_fallback.empty() ? std::string("none")
                                                                : metrics.speculative_fallback},
              {"watchdog_tripped", metrics.speculative_watchdog_tripped},

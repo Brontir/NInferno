@@ -664,8 +664,13 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             speculation.step_down.clear();
         }
         // The prompt's context class bounds its depth (SpeculativeOptions::class_depth): only ever
-        // lower, onto a step-down depth with that step's floor where it is one.
-        if (speculation.draft_depth != 0) {
+        // lower, onto a step-down depth with that step's floor where it is one; only a request at
+        // the default depth the bounds were decided for.
+        const bool class_bounded =
+            spec::class_bounds_apply(request_plan.speculation.draft_depth, default_draft_depth);
+        bool class_plain               = false;
+        std::uint32_t class_lowered_to = 0;
+        if (class_bounded && speculation.draft_depth != 0) {
             std::vector<std::pair<std::uint32_t, double>> steps;
             for (const SpeculationStep& step : speculation.step_down) {
                 steps.emplace_back(step.draft_tokens, step.acceptance_floor);
@@ -679,9 +684,14 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
                                                 static_cast<std::ptrdiff_t>(clamp.dropped));
                 if (clamp.floor) { speculation.acceptance_floor = *clamp.floor; }
                 if (clamp.depth == 0) { speculation.step_down.clear(); }
+                class_plain      = clamp.depth == 0;
+                class_lowered_to = clamp.depth;
             }
         }
         install_sampling(sequence, request, request_plan.sampling, speculation);
+        request.class_bounded                   = class_bounded;
+        request.speculative_stats.class_plain   = class_plain;
+        request.speculative_stats.class_depth   = class_lowered_to;
         request.speculative_stats.context_plain = past_context_limit &&
                                                   speculative_backend != SpeculativeBackend::None &&
                                                   request_plan.speculation.draft_depth != 0;

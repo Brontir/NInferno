@@ -355,6 +355,21 @@ int main() {
                           (*loaded.speculation_load)[1].lanes == 4 &&
                           (*loaded.speculation_load)[1].depth == 0,
                       "--spec-load was not parsed");
+    {
+        const ServeOptions classed = parse({"ninferno-serve", "model.ninferno", "--spec", "auto",
+                                            "--spec-class-depth", "none,none,3,0"});
+        constexpr auto none        = ninferno::SpeculativeOptions::kNoClassBound;
+        failures += check(classed.class_depth && *classed.class_depth ==
+                                                     std::array<std::uint32_t, 4>{none, none, 3, 0},
+                          "--spec-class-depth was not parsed");
+        failures += check(!profiled.class_depth, "--spec auto has no class-depth override");
+        bool refused = false;
+        try {
+            (void)parse({"ninferno-serve", "model.ninferno", "--spec", "auto", "--spec-class-depth",
+                         "none,3,5,0"});
+        } catch (const std::invalid_argument&) { refused = true; }
+        failures += check(refused, "rising --spec-class-depth bounds were accepted");
+    }
     const ServeOptions unbounded =
         parse({"ninferno-serve", "model.ninferno", "--spec", "auto", "--spec-load", "none"});
     failures += check(unbounded.speculation_load && unbounded.speculation_load->empty(),

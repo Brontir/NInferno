@@ -291,8 +291,8 @@ void apply_watchdog_trip(RequestControl& request, double shared_floor) {
 void apply_context_class(RequestControl& request,
                          const std::array<std::uint32_t, spec::kContextClasses>& bounds,
                          std::uint32_t frontier) {
-    if (request.plain || request.drafting_stopped || request.draft_depth == 0 ||
-        spec::class_bound(bounds, frontier) >= request.draft_depth) {
+    if (!request.class_bounded || request.plain || request.drafting_stopped ||
+        request.draft_depth == 0 || spec::class_bound(bounds, frontier) >= request.draft_depth) {
         return;
     }
     std::vector<std::pair<std::uint32_t, double>> steps;
@@ -306,11 +306,14 @@ void apply_context_class(RequestControl& request,
                             request.step_down.begin() + static_cast<std::ptrdiff_t>(clamp.dropped));
     if (clamp.depth == 0) {
         request.step_down.clear();
-        request.plain = true;
+        request.plain                         = true;
+        request.speculative_stats.class_plain = true;
+        request.speculative_stats.class_depth = 0;
         return;
     }
     request.draft_depth                          = clamp.depth;
     request.speculative_stats.final_draft_window = clamp.depth;
+    request.speculative_stats.class_depth        = clamp.depth;
     if (clamp.floor) {
         request.watchdog.restart(*clamp.floor, static_cast<std::int64_t>(request.judged_rounds),
                                  static_cast<std::int64_t>(request.judged_accepted));

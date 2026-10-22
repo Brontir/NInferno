@@ -580,6 +580,24 @@ int main() {
         plain.metrics.speculative_fallback = speculation_fallback(plain.metrics, "fit_fallback");
         const Json logged =
             Json::parse(format_request_done_json("serve-test", 3002, context, plain));
+        {
+            GenerationOutcome classed               = outcome;
+            classed.metrics.speculative_class_plain = true;
+            classed.metrics.speculative_fallback    = speculation_fallback(classed.metrics, "none");
+            const Json c =
+                Json::parse(format_request_done_json("serve-test", 3003, context, classed));
+            failures += check(c.at("speculative").at("fallback") == "class_plain" &&
+                                  c.at("speculative").at("class_plain") == true &&
+                                  c.at("speculative").at("class_depth") == 0,
+                              "a class-bound plain request must log fallback class_plain");
+            GenerationOutcome lowered               = outcome;
+            lowered.metrics.speculative_class_depth = 3;
+            const Json l =
+                Json::parse(format_request_done_json("serve-test", 3004, context, lowered));
+            failures += check(l.at("speculative").at("class_depth") == 3 &&
+                                  l.at("speculative").at("class_plain") == false,
+                              "a class-lowered request must log its class_depth");
+        }
         failures += check(logged.at("speculative").at("fallback") == "context_plain" &&
                               logged.at("speculative").at("context_plain") == true &&
                               logged.at("speculative").at("selection") == "fixed",

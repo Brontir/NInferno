@@ -53,6 +53,15 @@ class_bound(const std::array<std::uint32_t, kContextClasses>& bounds,
     return bounds[static_cast<std::size_t>(class_of(tokens))];
 }
 
+// Whether the class bounds apply to a request: the bounds are decided for the engine's default
+// choice (its depth `default_depth`, the profile's pick for the server's thinking default), so
+// they bound only a request that starts speculating at that depth. A request on another menu
+// choice (--spec-select thinking with another depth) or plain is not bounded.
+[[nodiscard]] constexpr bool class_bounds_apply(std::uint32_t start_depth,
+                                                std::uint32_t default_depth) noexcept {
+    return start_depth != 0 && start_depth == default_depth;
+}
+
 // A request drafting at `depth`, whose step-down depths are `steps` ({depth, floor}, deepest first,
 // each below the one before), once its context holds `tokens` tokens: the depth its class allows,
 // never above `depth` (a bound only lowers it: a context that grows into a longer class with a

@@ -122,7 +122,9 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
                  {"copy_accepted_tokens", outcome.metrics.speculative_copy_accepted},
                  {"shared_trip_deferrals", outcome.metrics.speculative_trips_held},
                  {"load_plain", outcome.metrics.speculative_load_plain},
-                 {"context_plain", outcome.metrics.speculative_context_plain}});
+                 {"context_plain", outcome.metrics.speculative_context_plain},
+                 {"class_plain", outcome.metrics.speculative_class_plain},
+                 {"class_depth", outcome.metrics.speculative_class_depth}});
     }
     timings.constraint_mask_ms =
         finite_nonnegative(outcome.metrics.constraint_mask_host_seconds * 1000.0);

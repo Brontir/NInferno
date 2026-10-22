@@ -15,7 +15,6 @@
 #include <iterator>
 #include <map>
 #include <set>
-#include <variant>
 #include <stdexcept>
 #include <string>
 
@@ -429,31 +428,12 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
     }
 }
 
-ServedBytes served_bytes(const std::filesystem::path& artifact, ActivationMode activations,
-                         KvCacheStorage kv) {
-    ServedBytes out{.activations = "fast-a8", .kv = std::string(kv_cache_storage_layout(kv))};
-    if (activations == ActivationMode::Exact) {
-        out.activations = "exact";
-    } else if (activations == ActivationMode::Fast) {
-        try {
-            const artifact::Reader reader(artifact);
-            for (const auto& object : reader.directory().objects) {
-                const auto* tensor = std::get_if<artifact::TensorObject>(&object);
-                if (tensor != nullptr && tensor->format.starts_with("nvfp4")) {
-                    out.activations = "fast-a4";
-                    break;
-                }
-            }
-        } catch (const std::exception&) {}
-    }
-    return out;
-}
-
 nlohmann::json context_classes_json(const ServedSpeculation& served) {
     auto out = nlohmann::json::array();
     for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
         const auto& c = served.classes[i];
         out.push_back({{"class", spec::class_name(static_cast<spec::ContextClass>(i))},
+                       {"for_depth", served.menu.primary.config.k},
                        {"below_tokens", i + 1 < spec::kContextClasses
                                             ? nlohmann::json(spec::kContextBounds[i])
                                             : nlohmann::json(nullptr)},

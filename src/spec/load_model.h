@@ -210,6 +210,9 @@ class_depths(const std::optional<RoundCost>& cost, double a, double d,
 //   deeper), or plain decode when no ratio passes 1. A factor of 1 or more keeps the cap. Without
 //   a decay along the block a shallower depth's drafts look no better than the deep ones' average,
 //   so the rule lowers less than a decaying block would (the conservative side for "only down").
+// - The floors were measured at the profile's own context (spec-tune's prompts), not at the
+//   class's: a longer context costs a round more than its floor says, so the rule errs towards
+//   keeping depth there; a modeled reason says "floor from profile context".
 // - The rule must reproduce the profile's own pick: at factor 1 the highest ratio must be at
 //   `pick` and pass 1. Otherwise (a floor raised from another GPU, say), or with no measured floor
 //   at the pick or no tokens per round over 1, every class keeps the cap ("no estimate").

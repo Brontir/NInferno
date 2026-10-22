@@ -60,6 +60,8 @@ struct GenerationMetrics {
     std::uint64_t speculative_trips_held     = 0; // watchdog verdicts a shared launch held
     bool speculative_load_plain              = false; // a load bound of 0 turned it plain
     bool speculative_context_plain           = false; // its prompt passed the context bound
+    bool speculative_class_plain             = false; // a context-class bound turned it plain
+    std::uint32_t speculative_class_depth    = 0; // the depth a class bound lowered it to (0: none)
     // The fallback its speculation took (speculation_fallback()).
     std::string speculative_fallback;
     bool speculative_watchdog_tripped        = false;
@@ -76,6 +78,7 @@ struct GenerationMetrics {
 
 // The fallback a request's speculation took, the first that applies: "context_plain" (its prompt
 // passed the context bound, SpeculativeOptions::context_limit: plain from its first token),
+// "class_plain" (a context-class bound, SpeculativeOptions::class_depth, turned it plain),
 // "load_plain" (a load bound of 0), "watchdog_plain" (the acceptance watchdog stopped its
 // drafting), "step_down" (the watchdog moved it shallower), else the server's own since startup
 // (`startup`, StartupSpeculation::fallback), else "none".

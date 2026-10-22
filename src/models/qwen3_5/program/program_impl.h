@@ -465,6 +465,9 @@ struct RequestControl {
     std::uint32_t draft_depth = 0;
     std::vector<SpeculationStep> step_down;
     bool plain                = false;
+    // The context-class bounds apply to it (spec::class_bounds_apply: it started at the engine's
+    // default depth, the one the bounds were decided for).
+    bool class_bounded = false;
     // A load bound of 0 turned it plain in a step at least the bound's lanes wide (drafting or
     // watchdog-stopped): while it decodes, a request that joins it decodes plainly as well (not
     // set for such a joiner, so the latch ends with the rows the bound itself turned plain).

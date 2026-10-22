@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -105,6 +106,9 @@ struct ServeOptions {
     // (SpeculativeOptions::load) instead of the profile's table (spec::Profile::load); with an
     // explicit --spec, its only bounds. Absent: the profile's table (none with an explicit --spec).
     std::optional<std::vector<spec::LoadBound>> speculation_load;
+    // --spec-class-depth S,M,L,H|none: the depth bound per context class (SpeculativeOptions::
+    // class_depth) instead of --spec auto's; it bounds an explicit --spec as well.
+    std::optional<std::array<std::uint32_t, 4>> class_depth;
     // --spec-profile PATH: a maintainer's own tune (`ninferno spec-tune`'s output) in place of the
     // published profile. Only read when named: a tune left beside the artifact is not.
     std::filesystem::path spec_profile;

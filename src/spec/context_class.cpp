@@ -365,6 +365,54 @@ ClassFactor served_factor(const ContextFactors& factors, AcceptanceKey key, Cont
     return factor(factors, key, c);
 }
 
+std::array<std::uint32_t, kContextClasses> parse_class_depths(std::string_view text) {
+    std::array<std::uint32_t, kContextClasses> out{};
+    out.fill(kNoClassBound);
+    if (text == "none") { return out; }
+    const auto bad = [&] {
+        return std::invalid_argument("--spec-class-depth takes four comma-separated depths or "
+                                     "\"none\" (short,mid,long,huge), not rising: '" +
+                                     std::string(text) + "'");
+    };
+    std::size_t i     = 0;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t end = text.find(',', start);
+        const auto part =
+            text.substr(start, end == std::string_view::npos ? text.size() - start : end - start);
+        if (i >= kContextClasses || part.empty()) { throw bad(); }
+        if (part != "none") {
+            std::uint32_t v = 0;
+            for (const char ch : part) {
+                if (ch < '0' || ch > '9' || v > 1000) { throw bad(); }
+                v = v * 10 + static_cast<std::uint32_t>(ch - '0');
+            }
+            out[i] = v;
+        }
+        ++i;
+        if (end == std::string_view::npos) { break; }
+        start = end + 1;
+    }
+    if (i != kContextClasses) { throw bad(); }
+    for (std::size_t c = 1; c < kContextClasses; ++c) {
+        if (out[c] > out[c - 1]) { throw bad(); }
+    }
+    return out;
+}
+
+std::string class_depths_label(const std::array<std::uint32_t, kContextClasses>& bounds) {
+    if (std::all_of(bounds.begin(), bounds.end(),
+                    [](std::uint32_t k) { return k == kNoClassBound; })) {
+        return "none";
+    }
+    std::string out;
+    for (const std::uint32_t k : bounds) {
+        out += (out.empty() ? "" : ",") +
+               (k == kNoClassBound ? std::string("none") : std::to_string(k));
+    }
+    return out;
+}
+
 Json served_byte_class(std::string_view activations, std::string_view kv) {
     const bool exact = activations == "exact";
     return Json{{"activations", std::string(activations)},
