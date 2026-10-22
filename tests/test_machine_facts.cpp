@@ -219,6 +219,13 @@ void laptops_conservative() {
         machine_facts(DriverReport{0x2520, 8, 6, 30, 1703000, 7001000, 192}).reference_clock_khz ==
             1283000,
         "RTX 3060 Laptop GPU: 1283 MHz, the bottom of 1283-1703");
+    // A laptop's OEM memory clock or bus width is not read as a memory variant: two laptops of
+    // one name keep the row's memory and fingerprint alike.
+    const MachineFacts slow_memory =
+        machine_facts(DriverReport{0x2717, 8, 9, 76, 1755000, 8001000, 192});
+    expect(slow_memory.memory_clock_khz == 9000000 && slow_memory.memory_bus_bits == 256 &&
+               !slow_memory.driver_read,
+           "RTX 4090 Laptop GPU on a slower or narrower memory report: the row's memory");
     const std::string row =
         R"({"schema":1,"gpus":[{"id":"0x2717","name":"x","chip":"ad103","cc":89,)"
         R"("segment":"geforce","form":"laptop","sms":76,"boost_mhz":2040,"bus_bits":256,)"

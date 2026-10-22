@@ -230,9 +230,12 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         // a grid step (2.2 %) below the row's on the 2^(1/16) grid. A faster clock than the row's
         // (an overclock) and a driver's rounding (14001 MHz against 14000) are not read, nor a
         // value no memory has (a bus width that is not a whole number of 32-bit channels, a clock
-        // under 100 MHz): it is as good as unreported. Only a whole board is read so: a slice's
-        // memory values are its part of the board's, which the share above already prices.
-        const bool whole_board = driver.sms <= 0 || driver.sms == row->sms;
+        // under 100 MHz): it is as good as unreported. Only a whole board off the laptop rows is
+        // read so: a slice's memory values are its part of the board's, which the share above
+        // already prices, and a laptop is priced from its published range whatever its driver
+        // reports (two laptops of one name fingerprint alike).
+        const bool whole_board =
+            row->form != FormFactor::Laptop && (driver.sms <= 0 || driver.sms == row->sms);
         if (whole_board && driver.memory_bus_bits >= 32 && driver.memory_bus_bits % 32 == 0 &&
             driver.memory_bus_bits != row->bus_bits) {
             f.source          = FactSource::Extrapolated;
