@@ -10,10 +10,10 @@ One stream, 57.6 tok/s:
 ninferno-serve unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --with-drafters --spec mtp --draft-tokens 3
 ```
 
-8 concurrent chats, 86.9 tok/s over all streams:
+4 concurrent chats, 73.9 tok/s over all streams:
 
 ```bash
-ninferno-serve unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --spec none --max-concurrency 8
+ninferno-serve unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --spec none --max-concurrency 4
 ```
 
 ## Every setting measured
@@ -23,7 +23,7 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
 | `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | mtp ×3 | auto | fast | 266 | 43.1 | 57.6 | 25.2 | 28.2 | 2026-10-20 |
-| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 266 | 24.9 | 29.2 | 73.6 | 86.9 | 2026-10-22 |
+| `unsloth/gemma-4-31B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 266 | 24.9 | 29.3 | 73.9 | 28.9 | 2026-10-20 |
 
 ## Measurement
 
