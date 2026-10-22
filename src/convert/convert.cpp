@@ -1757,15 +1757,26 @@ ConvertResult convert(const ConvertOptions& options) {
         const auto out         = py_path_str(options.out.string());
         const auto inputs_path = std::filesystem::path(out + ".journal.inputs");
         std::error_code ec;
-        if (options.consume_source && std::filesystem::exists(out + ".journal", ec) &&
-            std::filesystem::exists(inputs_path, ec)) {
+        const bool resuming =
+            options.consume_source && std::filesystem::exists(out + ".journal", ec);
+        if (resuming && !std::filesystem::exists(inputs_path, ec)) {
+            // Its sources may be punched already: hashing them now would record other inputs.
+            throw std::runtime_error("cannot resume " + out +
+                                     ": its journal has no recorded source inputs (" +
+                                     inputs_path.string() +
+                                     "; a run by an older converter); convert from the full "
+                                     "checkpoint again");
+        }
+        if (resuming) {
             std::ifstream stream(inputs_path);
             provenance["inputs"] = OJson::parse(stream);
             log("source inputs: read from " + inputs_path.string() + " (resumed)");
         } else {
             provenance["inputs"] = source_inputs(sources, options);
             if (options.consume_source) {
+                // Durable before the first punch: written to a temporary, fsynced, renamed in.
                 write_report(inputs_path.string(), provenance["inputs"]);
+                sync_directory_of(inputs_path);
             }
         }
     }

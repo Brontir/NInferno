@@ -20,11 +20,13 @@
 //              each list of files sorted (by its JSON);
 //    "quant": the provenance's "quant" (a GGUF's quantization label, from its file name) or "",
 //    "converter": the provenance's "converter" (the converter format version, "ninferno-v3"),
-//    "recipe": the provenance's "recipe",
+//    "recipe": the provenance's "recipe" (an official name), or for a custom recipe file of the
+//              Python converter {"sha256": its content, "function": the function it names},
 //    "choices": the provenance's other byte-changing choices that are present
 //               (drafter_quantization, vocabulary, gguf_mapper, ranking, round_tiny_scales,
-//               maintainer_quantize, and the Python converter's override and recipe files by
-//               content: override, override_sha256, recipe_sha256),
+//               maintainer_quantize, and the Python --override by content: override_sha256,
+//               override_function); never a path,
+//    "structure": structure_sha256 of the directory (components, bindings, uses, metadata),
 //    "tensor_index": tensor_index_sha256 of the directory, which carries every object's content
 //                    digest}
 //
@@ -56,6 +58,11 @@ inline constexpr std::string_view kSourceIdentitySchema = "ninferno-source/1";
 // provenance's "content_sha256" (nullopt when one is missing or a placeholder of zeros). Offsets
 // do not enter (the file split moves them).
 [[nodiscard]] std::optional<std::string> tensor_index_sha256(const Directory& directory);
+
+// The SHA-256 (hex) of the directory's structure as compact JSON with sorted keys: every
+// component (config, target, resources by object id, proposal), binding (parts by object id and
+// range) and use (parameter, input, activation policy, auxiliary bindings), and the metadata.
+[[nodiscard]] std::string structure_sha256(const Directory& directory);
 
 // The record the identity hashes; nullopt when the provenance records no "inputs" (or no
 // converter or recipe).

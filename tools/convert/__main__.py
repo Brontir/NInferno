@@ -105,6 +105,14 @@ def _content_sha256(file: Path) -> str:
     return digest.hexdigest()
 
 
+def _code_of(value: str) -> tuple[str, str]:
+    """A FILE[:FUNCTION] recipe or override (_function) by its file's sha256 and the function."""
+    filename, separator, function = value.rpartition(":")
+    if not separator:
+        filename, function = value, "configure"
+    return _content_sha256(Path(filename).resolve()), function
+
+
 def _input_file(file: Path, sha256: str) -> dict:
     """A hub snapshot file (<hub>/models--org--name/snapshots/<commit>/<path>) by repository,
     commit, path and content; any other by its content alone (keys sorted, as the native
@@ -283,12 +291,10 @@ def main(argv=None):
         }
         if args.override:
             provenance["override"] = args.override
-            # Its code by content, as the source identity's choices take it.
-            provenance["override_sha256"] = _content_sha256(
-                Path(args.override.rpartition(":")[0] or args.override).resolve())
+            # By content and function name, as the source identity takes it (never the path).
+            provenance["override_sha256"], provenance["override_function"] = _code_of(args.override)
         if args.recipe not in RECIPES:
-            provenance["recipe_sha256"] = _content_sha256(
-                Path(args.recipe.rpartition(":")[0] or args.recipe).resolve())
+            provenance["recipe_sha256"], provenance["recipe_function"] = _code_of(args.recipe)
         if args.proposal:
             provenance["ranking"] = str(args.ranking)
         published = published_activation_summary(model, recipe)

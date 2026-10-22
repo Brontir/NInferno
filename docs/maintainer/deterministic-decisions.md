@@ -150,12 +150,15 @@ What the design guarantees once complete:
      not move it. Weight files are listed with the config, tokenizer, template and processor files
      beside them. An LFS snapshot file takes its blob name, the sha256 the fetch verified at
      download; any other file is hashed when it is converted (a source-consuming conversion keeps
-     the inputs beside its journal, so a resumed run never hashes a file it punched);
+     the inputs beside its journal, written durably before its first punch, so a resumed run never
+     hashes a file it punched, and refuses to resume a journal without them);
    - the quant (a GGUF's label, from its file name);
-   - the converter format version (`"converter"`, `ninferno-v3`) and the recipe;
+   - the converter format version (`"converter"`, `ninferno-v3`) and the recipe (an official
+     name, or a custom recipe file by its sha256 and function name);
    - the byte-changing choices the provenance records (drafter quantization, vocabulary, GGUF
      mapper, ranking, `--round-tiny-scales`, `--maintainer-quantize`, and the Python converter's
-     `--override` and custom recipe files by content);
+     `--override` by its file's sha256 and function name). No path enters;
+   - the structure: the SHA-256 of the directory's components, bindings, uses and metadata;
    - the tensor index: every object's id, format, layout, shape, size and divisor count (every
      resource's encoding and size) and its **content digest**, the SHA-256 of its payload bytes.
      The converter computes the digests once every byte is written, reading the output back, and
@@ -167,9 +170,11 @@ What the design guarantees once complete:
      Reading back costs one sequential read of the output, hashed on the conversion's threads
      (the conversion logs it as `content digests: ...`).
 
-   An artifact converted before the converter recorded its inputs and digests has no source
-   identity, nor has one a relayout rewrote (`ninferno-convert --relayout` drops the digests: it
-   moves the bytes; convert it again). The fingerprint names such an artifact
+   A run stopped after the directory was sealed and before the files were published resumes:
+   the partial entry is compared with its digests masked and sealed again. A relayout to a new
+   artifact (`ninferno-convert --relayout --out`) seals the digests again; one in place drops
+   them (it moves the bytes): that artifact has no identity until it is converted again, nor has
+   one converted before the converter recorded its inputs and digests. The fingerprint names such an artifact
    `none:<artifact id>`, so two of them still differ, and every constant keyed by an identity
    reads as unknown for it. `ninferno-serve` logs the identity when it prepares a model
    (`source identity <hex>`).

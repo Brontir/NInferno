@@ -22,6 +22,57 @@ std::string text_of(const Json& object, const char* key) {
 
 } // namespace
 
+std::string structure_sha256(const Directory& directory) {
+    const auto id_of = [&](ObjectHandle handle) {
+        return handle.index < directory.objects.size() ? object_id(directory.objects[handle.index])
+                                                       : std::string("?");
+    };
+    const auto binding_json = [&](const Binding& binding) {
+        Json parts = Json::array();
+        for (const auto& part : binding.parts) {
+            parts.push_back(
+                Json{{"object", id_of(part.object)}, {"begin", part.begin}, {"end", part.end}});
+        }
+        return Json{{"whole_object", binding.whole_object},
+                    {"parts", std::move(parts)},
+                    {"elements", binding.elements}};
+    };
+    Json components = Json::object();
+    for (const auto& [name, component] : directory.components) {
+        Json resources = Json::object();
+        for (const auto& [role, handle] : component.resources) { resources[role] = id_of(handle); }
+        Json item = {{"config", component.config}, {"resources", std::move(resources)}};
+        if (component.target) { item["target"] = *component.target; }
+        if (component.proposal) {
+            item["proposal"] =
+                Json{{"indexed", component.proposal->indexed}, {"rows", component.proposal->rows}};
+        }
+        components[name] = std::move(item);
+    }
+    Json bindings = Json::object();
+    for (const auto& [name, binding] : directory.bindings) {
+        bindings[name] = binding_json(binding);
+    }
+    Json uses = Json::array();
+    for (const auto& [key, use] : directory.uses) {
+        Json auxiliaries = Json::object();
+        for (const auto& [name, binding] : use.auxiliaries) {
+            auxiliaries[name] = binding_json(binding);
+        }
+        uses.push_back(Json{{"parameter", use.parameter},
+                            {"input", use.input},
+                            {"activation_policy",
+                             use.activation_policy ? Json(static_cast<int>(*use.activation_policy))
+                                                   : Json(nullptr)},
+                            {"auxiliaries", std::move(auxiliaries)}});
+    }
+    const Json all = {{"components", std::move(components)},
+                      {"bindings", std::move(bindings)},
+                      {"uses", std::move(uses)},
+                      {"metadata", directory.metadata}};
+    return sha256_hex(all.dump());
+}
+
 std::optional<std::string> tensor_index_sha256(const Directory& directory) {
     const auto digests = directory.provenance.find("content_sha256");
     if (digests == directory.provenance.end() || !digests->is_object()) { return std::nullopt; }
@@ -88,17 +139,23 @@ std::optional<Json> source_record(const Directory& directory) {
         return text_of(a, "role") < text_of(b, "role");
     });
     Json choices = Json::object();
+    // Never a path: a Python --override and a custom recipe enter by their file's content and the
+    // function they name.
     for (const char* key :
          {"drafter_quantization", "vocabulary", "gguf_mapper", "ranking", "round_tiny_scales",
-          "maintainer_quantize", "override", "override_sha256", "recipe_sha256"}) {
+          "maintainer_quantize", "override_sha256", "override_function"}) {
         if (const auto it = provenance.find(key); it != provenance.end()) { choices[key] = *it; }
     }
     return Json{{"schema", std::string(kSourceIdentitySchema)},
                 {"inputs", std::move(sorted)},
                 {"quant", text_of(provenance, "quant")},
                 {"converter", converter},
-                {"recipe", recipe},
+                {"recipe", provenance.contains("recipe_sha256")
+                               ? Json{{"sha256", text_of(provenance, "recipe_sha256")},
+                                      {"function", text_of(provenance, "recipe_function")}}
+                               : Json(recipe)},
                 {"choices", std::move(choices)},
+                {"structure", structure_sha256(directory)},
                 {"tensor_index", *index}};
 }
 

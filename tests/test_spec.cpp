@@ -1575,6 +1575,11 @@ int test_source_identity() {
         {"the recipe", [](art::Directory& x) { x.provenance["recipe"] = "dense_bf16"; }},
         {"a byte-changing choice",
          [](art::Directory& x) { x.provenance["drafter_quantization"] = "q4"; }},
+        {"the metadata", [](art::Directory& x) { x.metadata["name"] = "renamed"; }},
+        {"a component's config",
+         [](art::Directory& x) { x.components["text"].config["hidden_size"] = 8; }},
+        {"an override's code",
+         [](art::Directory& x) { x.provenance["override_sha256"] = std::string(64, 'e'); }},
         {"a tensor's format",
          [](art::Directory& x) { std::get<art::TensorObject>(x.objects[0]).format = "bf16"; }},
         {"a tensor's shape",
@@ -1616,6 +1621,25 @@ int test_source_identity() {
     failures += check(art::source_identity(two) && art::source_identity(two) != id &&
                           art::source_identity(two) == art::source_identity(swapped),
                       "inputs in another order: the same identity; another input: another");
+    // Never a path: a custom recipe and an override enter by content and function name.
+    auto here  = d;
+    auto there = d;
+    for (auto* x : {&here, &there}) {
+        x->provenance["recipe_sha256"]     = std::string(64, '1');
+        x->provenance["recipe_function"]   = "configure";
+        x->provenance["override_sha256"]   = std::string(64, '2');
+        x->provenance["override_function"] = "tweak";
+    }
+    here.provenance["recipe"]    = "/home/a/recipe.py";
+    there.provenance["recipe"]   = "/srv/b/recipe.py";
+    here.provenance["override"]  = "/home/a/o.py:tweak";
+    there.provenance["override"] = "/srv/b/o.py:tweak";
+    failures += check(art::source_identity(here) &&
+                          art::source_identity(here) == art::source_identity(there),
+                      "a custom recipe or override file at another path: the same identity");
+    there.provenance["recipe_function"] = "other";
+    failures += check(art::source_identity(here) != art::source_identity(there),
+                      "another recipe function: another identity");
     failures += check(art::tensor_index_sha256(d) == art::tensor_index_sha256(moved),
                       "the tensor index is in id order, without offsets");
 

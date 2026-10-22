@@ -182,8 +182,9 @@ OJson relabeled(OJson root, const std::vector<Bank>& banks) {
             object["layout"] = std::string(artifact::layout_name(it->second));
         }
     }
-    // The banks' bytes move: their content digests no longer hold, and the artifact keeps no
-    // source identity (artifact/source_identity.h) until it is converted again.
+    // The banks' bytes move: their content digests no longer hold. A relayout to a new artifact
+    // seals them again (to_new); one in place keeps none, so the artifact has no source identity
+    // (artifact/source_identity.h) until it is converted again.
     if (!banks.empty() && root.contains("provenance") && root["provenance"].is_object()) {
         root["provenance"].erase("content_sha256");
     }
@@ -661,8 +662,14 @@ RelayoutResult to_new(const RelayoutOptions& options, RelayoutResult result,
     const auto banks    = plan_banks(reader, options.layout);
     const auto payload  = reader.directory().payload_bytes;
     const auto chunks   = plan_chunks(banks, options.chunk_bytes, payload);
+    const bool digested = dir.root.contains("provenance") && dir.root["provenance"].is_object() &&
+                          dir.root["provenance"].contains("content_sha256");
     OJson description   = relabeled(dir.root, banks);
-    const OJson new_root = description;
+    if (digested) {
+        description["provenance"]["content_sha256"] =
+            content_digest_placeholders(description["objects"]);
+    }
+    OJson new_root = description;
     description.erase("files");
     auto layout = layout_artifact(out.filename().string(), py_dumps_compact(description), payload,
                                   options.max_file_bytes);
@@ -689,7 +696,19 @@ RelayoutResult to_new(const RelayoutOptions& options, RelayoutResult result,
             writer.write(chunk.offset, permuted.data(), chunk.bytes);
             result.code_bytes += chunk.bytes;
         }
-        writer.finish();
+        if (digested) {
+            writer.finish([&] {
+                description["provenance"]["content_sha256"] =
+                    content_digests(writer, description["objects"], 0);
+                new_root["provenance"]["content_sha256"] =
+                    description["provenance"]["content_sha256"];
+                return layout_artifact(out.filename().string(), py_dumps_compact(description),
+                                       payload, options.max_file_bytes)
+                    .directory;
+            });
+        } else {
+            writer.finish();
+        }
     } catch (...) {
         writer.abort();
         throw;

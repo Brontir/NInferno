@@ -42,6 +42,27 @@ std::string files_json(const std::vector<OutputFile>& files) {
     return py_dumps_compact(list);
 }
 
+// Whether a partial entry's prefix (`actual`) is `expected` but for sealed content digests: a run
+// that stopped after finish() sealed the directory and before it published the files left the
+// digests where `expected` has the placeholders (64 zeros each, in provenance "content_sha256"),
+// which the resumed run seals again.
+bool same_but_digests(const std::vector<std::byte>& actual, const std::vector<std::byte>& expected,
+                      std::size_t directory_offset) {
+    if (actual.size() != expected.size()) { return false; }
+    const std::string_view text(reinterpret_cast<const char*>(expected.data()), expected.size());
+    const auto key   = std::string_view("\"content_sha256\":{");
+    const auto begin = text.find(key, directory_offset);
+    const auto end   = begin == std::string_view::npos ? begin : text.find('}', begin + key.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (actual[i] == expected[i]) { continue; }
+        const auto c      = static_cast<char>(actual[i]);
+        const bool digest = end != std::string_view::npos && i >= begin + key.size() && i < end &&
+                            text[i] == '0' && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+        if (!digest) { return false; }
+    }
+    return true;
+}
+
 void put_u64(std::byte* out, std::uint64_t value) {
     for (int i = 0; i < 8; ++i) { out[i] = std::byte((value >> (8 * i)) & 0xFF); }
 }
@@ -428,7 +449,7 @@ void ArtifactWriter::reopen(std::size_t index) {
         std::memcpy(expected.data() + kHeaderBytes, layout_.directory.data(),
                     layout_.directory.size());
     }
-    if (actual != expected) {
+    if (actual != expected && !(index == 0 && same_but_digests(actual, expected, kHeaderBytes))) {
         throw std::runtime_error("cannot resume: " + name.string() +
                                  " was written for a different plan or artifact id");
     }
