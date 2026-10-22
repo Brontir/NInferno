@@ -182,8 +182,11 @@ enum class Family : std::uint8_t {
     // in the order of the register MMA with WarpsK = classes (nvfp4_a16_tiled.cuh).
     Nvfp4TiledMma,
     R8Mma, // generic_r8.cuh: q8/codebook weights with int8 activations, T <= 8 (AllowA8)
-    // ggml_mmq/: ggml's int8 tensor-core tiles with stream-k over K (third_party/ggml-quants), the
-    // ggml block formats at speculative-verify widths (AllowA8), an FP32 plane then the epilogue.
+    // ggml_mmq/: ggml's int8 tensor-core tiles (third_party/ggml-quants), the ggml block formats
+    // at speculative-verify and prefill widths (AllowA8), an FP32 plane then the epilogue.
+    // Schedules: kMmqStreamK (stream-k over K, the speed profile) and kMmqTiles (CTAs per output
+    // tile and K parts fixed by the weight's shape: the prefill profile's token-invariant form,
+    // ggml_mmq::Split).
     GgmlMmq,
     // ggml_mmq/ggml_vec.cu: ggml's dp4a vector kernel (after ninfer-all's), the ggml block
     // formats at 1..8 tokens (AllowA8), the epilogue in the kernel; the dense tuner's candidate.
@@ -199,6 +202,10 @@ struct Route {
 };
 
 bool operator==(Route a, Route b);
+
+// Family::GgmlMmq's schedules.
+inline constexpr std::uint8_t kMmqStreamK = 0;
+inline constexpr std::uint8_t kMmqTiles   = 1;
 
 // Compiled schedules. RegisterMma: (warps_m, warps_k, m_tiles, n_tiles, cluster: K split over a
 // thread-block cluster of that many CTAs); W4a4Mma: (block_m, block_n) with warps fixed per entry.
@@ -563,9 +570,12 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // Its workspace for a call (or a prefill slice) of `tokens` tokens.
 [[nodiscard]] std::size_t ggml_mmq_gated_pair_bytes(std::int32_t k, std::int32_t rows,
                                                     std::int32_t tokens);
-// The widest slice ggml's matrix kernel runs in one pass for a weight of `qtype` on this device:
-// a prefill slice where its prefill route holds (mmq_prefill_wins), its 16-token band otherwise.
-[[nodiscard]] std::int32_t ggml_mmq_slice_tokens(QType qtype);
+// The widest slice ggml's matrix kernel runs in one pass for a weight of `qtype` whose FP32 plane
+// has `plane_rows` rows (SwiGLU: both halves), the bound workspaces are sized for: for a format
+// the kernel takes, ggml_mmq.tiles' cap of 512..1024 tokens (1024 while the plane stays within
+// 96 MiB; the stream-k schedule's 512-token slice is within it); 16 (its token band) otherwise.
+// A function of the shape alone, not of the device.
+[[nodiscard]] std::int32_t ggml_mmq_slice_tokens(QType qtype, std::int32_t plane_rows);
 
 // Calls routed to ggml's matrix or vector kernel that ran A16 instead (a workspace short of the
 // route, an unaligned x or rows off its multiple), since the process started.

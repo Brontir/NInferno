@@ -450,10 +450,104 @@ MmqPlaneBytes mmq_plane_bytes(QType q) {
 // -12 % at 8; RTX 5080 IQ3_S even. Below the band it loses to R8 (5090 C1 -11 %).
 constexpr std::int32_t kMmqMinTokens = kR8VerifyTokens + 1;
 constexpr std::int32_t kMmqMaxTokens = 16;
-// A prefill call on ggml's matrix kernel (mmq_prefill_wins) runs this many tokens at a time: its
-// FP32 plane (a 27B SwiGLU's gate and up rows: 2 x 17408 x 512 x 4 bytes = 71 MB) instead of the
-// chunk's, and 512 columns of 128 give every SM of a 16 GB card whole tiles (no stream-k fixup).
-constexpr std::int32_t kMmqPrefillSlice = 512;
+// A wide call on ggml's matrix kernel runs in slices through one FP32 plane instead of the chunk's:
+// stream-k (the speed profile) kMmqStreamKSlice tokens at a time; kMmqTiles (the prefill profile:
+// K parts fixed by the weight's shape, so a token's bytes do not depend on the slice it sits in
+// nor on the call's width) 512 to kMmqTilesMaxSlice tokens, as many as keep the plane within
+// kMmqPlaneBudget (a 27B SwiGLU's gate and up rows: 2 x 17408 x 640 x 4 bytes = 89 MB).
+constexpr std::int32_t kMmqStreamKSlice  = 512;
+constexpr std::int32_t kMmqTilesMaxSlice = 1024;
+constexpr std::size_t kMmqPlaneBudget    = std::size_t{96} << 20;
+
+// The widest kMmqTiles slice of a call whose plane holds `plane_rows` rows: whole 128-token
+// column tiles, at least kMmqStreamKSlice tokens, at most kMmqTilesMaxSlice.
+std::int32_t mmq_tiles_slice_cap(std::int32_t plane_rows) {
+    const std::size_t per_column =
+        static_cast<std::size_t>(std::max(plane_rows, 1)) * 128 * sizeof(float);
+    const auto columns = static_cast<std::int32_t>(std::clamp<std::size_t>(
+        kMmqPlaneBudget / per_column, kMmqStreamKSlice / 128, kMmqTilesMaxSlice / 128));
+    return 128 * columns;
+}
+
+// kMmqTiles' K split of one product of `rows` weight rows (SwiGLU: one half) and K: a function of
+// the weight's shape alone, so every call of a weight, at any width, slice or device, sums an
+// element in one order (ggml_mmq::Split::Tiles). Stream-k kept the SMs busy by splitting tiles
+// over K by the call's tile count and the SM count; a weight of few 128-row tiles splits its K
+// instead, into the fewest parts (each a whole number of 256-value steps, at least
+// kMmqSplitMinSteps) that give kMmqSplitRowTiles row tiles x parts, at most kMmqSplitMaxRowTiles.
+// A split costs about a tenth (the parts' partial tiles and the fixup), so only narrow weights
+// take one. RTX 5090 (170 SMs), Q4_K, K 5120, T 1024 and 4096, against stream-k: 1024 rows
+// x1.92..2.14 unsplit, x0.93..1.08 in 4 parts; 2048 rows x1.59..1.61 unsplit, x1.10..1.12 in 2;
+// 6144 rows x1.05..1.13 unsplit at its best slice, x1.20 in 4; 12288 rows x1.12..1.20 unsplit,
+// x1.16..1.18 in 2; 16384 rows x1.24 unsplit, x1.25..1.29 in 2.
+constexpr int kMmqSplitRowTiles    = 32;
+constexpr int kMmqSplitMaxRowTiles = 64;
+constexpr int kMmqSplitMinSteps    = 2;
+
+int mmq_k_splits(std::int32_t rows, std::int32_t k) {
+    const int row_tiles = std::max(1, rows / ggml_mmq::kRowMultiple);
+    const int steps     = k / ggml_mmq::kKMultiple;
+    int best            = 1;
+    for (int d = 1; d <= steps; ++d) {
+        if (steps % d != 0 || steps / d < kMmqSplitMinSteps ||
+            row_tiles * d > kMmqSplitMaxRowTiles) {
+            continue;
+        }
+        best = d;
+        if (row_tiles * d >= kMmqSplitRowTiles) break;
+    }
+    return best;
+}
+
+// The CTAs of one kMmqTiles launch whose parts write the fixup plane: at most this many, 32 MiB
+// of 128 x 128 FP32 partial tiles.
+constexpr int kMmqFixupBlocks = 512;
+
+// kMmqTiles' slice for a launch of `rows` weight rows split `splits` ways over K, whose plane holds
+// `plane_rows` rows: whole 128-token column tiles, 1 to mmq_tiles_slice_cap's (fewer where the
+// split's fixup plane would pass kMmqFixupBlocks), chosen by how well its CTAs fill the waves of
+// the device's slots (SMs x occupancy, ggml_mmq::tile_slots): the tiles do not even out a ragged
+// last wave as stream-k did. RTX 5090 (170 slots): 128 row tiles (16384 rows) fill 4.0 waves at 5
+// column tiles against 3.01 at 4 (75 %); a 27B SwiGLU's gate and up in one launch (272) 8.0 at 5.
+// A narrower slice must fill 2 % better (each slice reads the whole weight again). Byte-neutral:
+// under kMmqTiles a token's bytes do not depend on its slice; it reads the SM count only for
+// speed.
+int mmq_tiles_slice(ggml_mmq::Type type, std::int32_t rows, int splits, std::int32_t plane_rows,
+                    std::int32_t tokens) {
+    const std::int64_t units = std::int64_t(rows / ggml_mmq::kRowMultiple) * splits;
+    const std::int64_t slots = ggml_mmq::tile_slots(type);
+    const auto fill          = [&](std::int64_t columns) {
+        const std::int64_t blocks = units * columns;
+        return static_cast<double>(blocks) /
+               static_cast<double>(slots * ((blocks + slots - 1) / slots));
+    };
+    int widest = mmq_tiles_slice_cap(plane_rows) / 128;
+    if (splits > 1) {
+        widest = static_cast<int>(std::clamp<std::int64_t>(
+            kMmqFixupBlocks / std::max<std::int64_t>(units, 1), 1, widest));
+    }
+    int best         = widest;
+    double best_fill = fill(best);
+    for (int c = widest - 1; c >= 1; --c) {
+        if (fill(c) > 1.02 * best_fill) {
+            best      = c;
+            best_fill = fill(c);
+        }
+    }
+    return std::min(tokens, 128 * best);
+}
+
+// The fixup plane kMmqTiles may need in a launch of up to `plane_rows` rows (a SwiGLU's gate and
+// up in one launch, split as either half) at `tokens` tokens; 0 where no product of that shape
+// splits K.
+std::size_t mmq_tiles_fixup_bound(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
+    const int splits = std::max(mmq_k_splits(plane_rows, k), mmq_k_splits(plane_rows / 2, k));
+    if (splits <= 1) return 0;
+    const std::int64_t columns = (std::int64_t(tokens) + 127) / 128;
+    const std::int64_t blocks  = std::min<std::int64_t>(
+        kMmqFixupBlocks, std::int64_t(plane_rows / ggml_mmq::kRowMultiple) * splits * columns);
+    return static_cast<std::size_t>(blocks) * 128 * ggml_mmq::kRowMultiple * sizeof(float);
+}
 
 // The weight in the layout ggml's kernels read: whole blocks for Q4_K / Q5_K, the planes otherwise.
 bool ggml_layout_admits(const Weight& w) {
@@ -479,7 +573,7 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 }
 
 // Prefill (17 tokens and up) of the ggml block formats on ggml's matrix kernel instead of the W4A8
-// tiles, kMmqPrefillSlice tokens at a time. ninfer-all's 24K prefill of ISTA GSQ IQ3_S led ours on
+// tiles, a slice of tokens at a time. ninfer-all's 24K prefill of ISTA GSQ IQ3_S led ours on
 // the 16 GB cards, and its nsys is 75 % mul_mat_q (J 16..128, stream-k); ours ran the same kernel
 // at verify widths only. 24K prompt, two passes: RTX 4060 Ti 931 -> 971 tok/s (ninfer-all 1004),
 // the depth decode after it 47.7 -> 52.3; L4 763 -> 821; A10 (sm_86) 819 -> 897; RTX 2080 Ti
@@ -621,7 +715,8 @@ std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::in
     WorkspaceLayoutBuilder layout;
     (void)layout.alloc_bytes(ggml_mmq::activation_bytes(k, tokens), 256);
     (void)layout.alloc_bytes(static_cast<std::size_t>(plane_rows) * tokens * sizeof(float), 256);
-    (void)layout.alloc_bytes(ggml_mmq::fixup_bound(tokens), 256);
+    (void)layout.alloc_bytes(
+        std::max(ggml_mmq::fixup_bound(tokens), mmq_tiles_fixup_bound(k, plane_rows, tokens)), 256);
     return layout.peak_bytes(1);
 }
 
@@ -1564,7 +1659,7 @@ std::string route_name(Route route) {
         return "r8.w" + std::to_string(s.warps) + "r" + std::to_string(s.rows);
     }
     case Family::GgmlMmq:
-        return "ggml_mmq";
+        return route.schedule == kMmqTiles ? "ggml_mmq.tiles" : "ggml_mmq";
     case Family::GgmlVec:
         return "ggml_vec";
     case Family::I8Mma: {
@@ -1577,7 +1672,8 @@ std::string route_name(Route route) {
 
 std::optional<Route> parse_route(std::string_view name) {
     if (name == "scalar") return Route{Family::Scalar, 0};
-    if (name == "ggml_mmq") return Route{Family::GgmlMmq, 0};
+    if (name == "ggml_mmq") return Route{Family::GgmlMmq, kMmqStreamK};
+    if (name == "ggml_mmq.tiles") return Route{Family::GgmlMmq, kMmqTiles};
     if (name == "ggml_vec") return Route{Family::GgmlVec, 0};
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
@@ -2079,7 +2175,7 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     case Family::R8Mma:
         return route.schedule < r8_schedule_count() && allows_r8(w, policy);
     case Family::GgmlMmq:
-        return route.schedule == 0 && mmq_admits(w, policy);
+        return route.schedule <= kMmqTiles && mmq_admits(w, policy);
     case Family::GgmlVec:
         return route.schedule == 0 && vec_admits(w, policy);
     case Family::I8Mma:
@@ -2113,8 +2209,8 @@ bool route_is_token_invariant(Route route) {
         return nvfp4_tiled_schedule_info(route.schedule).classes == 1; // rmma WarpsK == 1
     case Family::Scalar:
         return true; // one lane order per element, independent of T
-    case Family::GgmlMmq: // stream-k splits K by the call's tile count
-        return false;
+    case Family::GgmlMmq: // stream-k splits K by the call's tile count, the tiles by the shape
+        return route.schedule == kMmqTiles;
     case Family::GgmlVec: // a lane's slices and one butterfly per token, whatever T
         return true;
     case Family::I8Mma: // K groups ascending, never split: a token's sums are its own
@@ -2274,13 +2370,14 @@ std::optional<Route> staged_speed_route(const Problem& problem, const Weight& we
 // SwiGLU: the weight has 2 n rows, a tile of block_n rows makes block_n / 2 outputs (gate and up
 // rows interleave), so a call takes twice the tiles and each multiplies block_n rows; `bpw` is the
 // payload over the n output rows, i.e. twice the bytes per weight. ggml's kernel takes its calls of
-// 17 tokens or more in 512-token slices on every device (ggml_mmq_slice_tokens, whose workspace the
-// planner reserves), so it is a candidate wherever the policy admits it; not yet on the minor-0
-// datacenter row, where its microbenchmark win (1.26..1.8x the W4A8 tile) and the 24K prefill
-// A/B (-15 %) disagree. ninferno_route_tune --a8 and --a8 --epilogue timings of the RTX 4090, 5090,
-// 4060 Ti, L4, A10 and A100 (six formats, n 48..28672, T 17..2048, quantizer in the sample; SwiGLU
-// and AddResidual on the A100), constants refit with the board held out: 1.06..1.09 of the best
-// route of either class on the consumer boards (the minor-0 row has one board: 1.13 in sample).
+// 17 tokens or more in slices on every device (512 tokens stream-k; 128..1024 for ggml_mmq.tiles,
+// ggml_mmq_slice_tokens, whose workspace the planner reserves), so it is a candidate wherever the
+// policy admits it; not yet on the minor-0 datacenter row, where its microbenchmark win (1.26..1.8x
+// the W4A8 tile) and the 24K prefill A/B (-15 %) disagree. ninferno_route_tune --a8 and --a8
+// --epilogue timings of the RTX 4090, 5090, 4060 Ti, L4, A10 and A100 (six formats, n 48..28672,
+// T 17..2048, quantizer in the sample; SwiGLU and AddResidual on the A100), constants refit with
+// the board held out: 1.06..1.09 of the best route of either class on the consumer boards (the
+// minor-0 row has one board: 1.13 in sample).
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
@@ -2356,8 +2453,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     }
     if (g.mmq_candidate && ggml_mmq_format(problem.qtype) &&
         problem.n % ggml_mmq::kRowMultiple == 0 && problem.k % ggml_mmq::kKMultiple == 0) {
-        const double slices = std::ceil(t / kMmqPrefillSlice);
-        const double tt     = std::min<double>(t, kMmqPrefillSlice);
+        const double slices = std::ceil(t / kMmqStreamKSlice);
+        const double tt     = std::min<double>(t, kMmqStreamKSlice);
         const double cols   = std::min(128.0, cdiv(tt, 8.0) * 8.0);
         const double tiles  = cdiv(n * sets, 128.0) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
@@ -2521,7 +2618,11 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
         const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, tokens))};
         if (route_admits(r, weight, problem.policy)) return r;
     }
-    if (tokens >= 17 && mmq_prefill_wins(problem, weight)) return Route{Family::GgmlMmq, 0};
+    // Under the prefill profile its one-tile-per-CTA schedule: stream-k would split a tile's K by
+    // the call's tile count and the SM count.
+    if (tokens >= 17 && mmq_prefill_wins(problem, weight)) {
+        return Route{Family::GgmlMmq, prefill_band ? kMmqTiles : kMmqStreamK};
+    }
     if (tokens >= 17) {
         if (const auto r = i8_route(problem, weight, tokens)) return *r;
     }
@@ -2783,12 +2884,13 @@ std::size_t ggml_mmq_gated_pair_bytes(std::int32_t k, std::int32_t rows, std::in
     (void)layout.alloc_bytes(ggml_mmq::activation_bytes(k, tokens), 256);
     (void)layout.alloc_bytes(ggml_mmq::activation_bytes(k, tokens), 256);
     (void)layout.alloc_bytes(static_cast<std::size_t>(2) * rows * tokens * sizeof(float), 256);
-    (void)layout.alloc_bytes(ggml_mmq::fixup_bound(tokens), 256);
+    (void)layout.alloc_bytes(
+        std::max(ggml_mmq::fixup_bound(tokens), mmq_tiles_fixup_bound(k, rows, tokens)), 256);
     return layout.peak_bytes(1) + kGgmlArenaSlack;
 }
 
-std::int32_t ggml_mmq_slice_tokens(QType qtype) {
-    return ggml_mmq_format(qtype) ? kMmqPrefillSlice : kMmqMaxTokens;
+std::int32_t ggml_mmq_slice_tokens(QType qtype, std::int32_t plane_rows) {
+    return ggml_mmq_format(qtype) ? mmq_tiles_slice_cap(plane_rows) : kMmqMaxTokens;
 }
 
 bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
@@ -2802,18 +2904,34 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
         return false;
     }
     // A prefill takes the pair where a call of each half alone takes the kernel (mmq_prefill_wins
-    // and the prefill route tables, as select_route decides it); the band where the tuner says.
-    const auto takes = [&](const PairHalf& h) {
+    // and the prefill route tables, as select_route decides it), with that call's schedule (the
+    // tiles under the prefill profile); the band where the tuner says (stream-k).
+    const auto takes = [&](const PairHalf& h) -> std::optional<ggml_mmq::Split> {
         if (tokens <= kMmqMaxTokens) {
-            return ggml_mmq_takes_tuned(x, *h.weight, h.policy, h.row, rows, stream);
+            if (!ggml_mmq_takes_tuned(x, *h.weight, h.policy, h.row, rows, stream)) {
+                return std::nullopt;
+            }
+            return ggml_mmq::Split::StreamK;
         }
         const Problem problem{h.weight->qtype, h.policy, rows, k, Epilogue::Store};
-        return (rows % ggml_mmq::kRowMultiple) == 0 && mmq_admits(*h.weight, h.policy) &&
-               select_route(problem, *h.weight, tokens, prefill_routes_active()).family ==
-                   Family::GgmlMmq;
+        if ((rows % ggml_mmq::kRowMultiple) != 0 || !mmq_admits(*h.weight, h.policy)) {
+            return std::nullopt;
+        }
+        const Route r = select_route(problem, *h.weight, tokens, prefill_routes_active());
+        if (r.family != Family::GgmlMmq) return std::nullopt;
+        return r.schedule == kMmqTiles ? ggml_mmq::Split::Tiles : ggml_mmq::Split::StreamK;
     };
-    if (!takes(gate) || !takes(up)) return false;
-    const std::int32_t slice = std::min(tokens, kMmqPrefillSlice);
+    const auto gate_split = takes(gate);
+    if (!gate_split) return false;
+    const auto up_split = takes(up);
+    if (!up_split) return false;
+    const bool tiles = *gate_split == ggml_mmq::Split::Tiles && *up_split == ggml_mmq::Split::Tiles;
+    // Both halves split K as a product of `rows` rows of K does (their own launches).
+    const int splits = tiles ? mmq_k_splits(rows, k) : 1;
+    const std::int32_t slice =
+        tiles ? std::min(mmq_tiles_slice(*mmq_type(*gate.weight), rows, splits, 2 * rows, tokens),
+                         mmq_tiles_slice(*mmq_type(*up.weight), rows, splits, 2 * rows, tokens))
+              : std::min(tokens, kMmqStreamKSlice);
     if (workspace.used() + ggml_mmq_gated_pair_bytes(k, rows, slice) > workspace.capacity()) {
         return false;
     }
@@ -2829,7 +2947,11 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
     const int plane_rows = 2 * rows;
     auto* plane          = static_cast<float*>(
         workspace.alloc_bytes(static_cast<std::size_t>(plane_rows) * slice * sizeof(float)).data);
-    void* fixup = workspace.alloc_bytes(ggml_mmq::fixup_bound(slice)).data;
+    const std::size_t fixup_bytes =
+        tiles ? std::max(ggml_mmq::tiles_fixup_bytes(gate_type, rows, slice, splits),
+                         ggml_mmq::tiles_fixup_bytes(up_type, rows, slice, splits))
+              : ggml_mmq::fixup_bound(slice);
+    void* fixup = fixup_bytes > 0 ? workspace.alloc_bytes(fixup_bytes).data : nullptr;
     for (std::int32_t t0 = 0; t0 < tokens; t0 += slice) {
         const std::int32_t t = std::min(slice, tokens - t0);
         const auto* xb       = static_cast<const __nv_bfloat16*>(x.data) +
@@ -2837,14 +2959,15 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
         ggml_mmq::quantize_activation(gate_type, xb, k, k, t, gate_activation, stream);
         if (two) ggml_mmq::quantize_activation(up_type, xb, k, k, t, up_activation, stream);
         const auto product = [&](const PairHalf& h, ggml_mmq::Type type, const void* activation,
-                                 float* to) {
+                                 float* to, ggml_mmq::Split split) {
             const int bpr = h.weight->k / static_cast<int>(ggml_block_values(h.weight->qtype));
             ggml_mmq::product(type,
                               ggml_rows_at(weight_args(*h.weight), h.weight->qtype, bpr, h.row),
-                              bpr, rows, k, activation, t, to, plane_rows, fixup, stream);
+                              bpr, rows, k, activation, t, to, plane_rows, fixup, stream, split,
+                              split == ggml_mmq::Split::Tiles ? splits : 1);
         };
-        product(gate, gate_type, gate_activation, plane);
-        product(up, up_type, up_activation, plane + rows);
+        product(gate, gate_type, gate_activation, plane, *gate_split);
+        product(up, up_type, up_activation, plane + rows, *up_split);
         GemmArgs args;
         args.tokens         = t;
         args.rows           = rows;
@@ -3075,16 +3198,17 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     // stream-k fixup, at the widest call of its band in the interval.
     std::size_t mmq = 0;
     if (weight == nullptr || mmq_admits(*weight, problem.policy)) {
-        // A prefill runs any width of 17 tokens or more in slices of at most kMmqPrefillSlice: an
-        // interval wholly above the slice (513..1024) still needs one slice's planes.
-        const bool prefill    = ggml_mmq_format(problem.qtype);
+        // A prefill runs any width of 17 tokens or more in slices of at most
+        // mmq_tiles_slice_cap: an interval wholly above the slice still needs one slice's planes.
+        const bool prefill = ggml_mmq_format(problem.qtype);
+        const std::int32_t plane_rows =
+            problem.epilogue == Epilogue::SwiGlu ? 2 * problem.n : problem.n;
         const std::int32_t hi = prefill ? max_tokens : std::min(max_tokens, kMmqMaxTokens);
-        const std::int32_t t  = std::min(max_tokens, prefill ? kMmqPrefillSlice : kMmqMaxTokens);
+        const std::int32_t t =
+            std::min(max_tokens, prefill ? mmq_tiles_slice_cap(plane_rows) : kMmqMaxTokens);
         if (ggml_mmq_format(problem.qtype) && allows_a8(problem.policy) && forced != 0 &&
             hi >= std::max(min_tokens, kMmqMinTokens) && (problem.n % ggml_mmq::kRowMultiple) == 0 &&
             (problem.k % ggml_mmq::kKMultiple) == 0 && ggml_mmq::device_supported()) {
-            const std::int32_t plane_rows =
-                problem.epilogue == Epilogue::SwiGlu ? 2 * problem.n : problem.n;
             mmq = mmq_workspace_bytes(problem.k, plane_rows, t) + kGgmlArenaSlack;
         }
     }
@@ -3290,11 +3414,14 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     // cannot take runs A16 (the same route the heuristic gives without the band).
     const bool gated     = call.epilogue == Epilogue::SwiGlu;
     const int plane_rows = gated ? 2 * call.rows : call.rows;
+    const std::int32_t mmq_slice =
+        std::min(args.tokens, route.family == Family::GgmlMmq && route.schedule == kMmqTiles
+                                  ? mmq_tiles_slice_cap(plane_rows)
+                                  : kMmqStreamKSlice);
     if ((route.family == Family::GgmlMmq &&
          (workspace == nullptr || !aligned_to(args.x, 16) || (args.ldx % 4) != 0 ||
           (call.rows % ggml_mmq::kRowMultiple) != 0 ||
-          !mmq_fits(*workspace, mmq_workspace_bytes(w.k, plane_rows,
-                                                    std::min(args.tokens, kMmqPrefillSlice))))) ||
+          !mmq_fits(*workspace, mmq_workspace_bytes(w.k, plane_rows, mmq_slice)))) ||
         (route.family == Family::GgmlVec &&
          (workspace == nullptr || args.segments > ggml_mmq::kVecMaxSegments ||
           !mmq_fits(*workspace,
@@ -3310,8 +3437,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                 workspace != nullptr ? workspace->capacity() : 0,
                 route.family == Family::GgmlVec
                     ? vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns))
-                    : mmq_workspace_bytes(w.k, plane_rows,
-                                          std::min(args.tokens, kMmqPrefillSlice)));
+                    : mmq_workspace_bytes(w.k, plane_rows, mmq_slice));
         });
         const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
         route = Route{Family::RegisterMma,
@@ -3349,15 +3475,30 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     case Family::GgmlMmq: {
         auto scope       = workspace->scope();
         const auto type  = *mmq_type(w);
-        const int slice  = std::min(args.tokens, kMmqPrefillSlice);
+        const bool tiles = route.schedule == kMmqTiles;
+        // Under kMmqTiles the gate and up rows of one weight (up right after gate) run as one
+        // launch of both halves into the [gate; up] plane: a row's sums do not depend on the
+        // launch that carries it, and twice the row tiles fill the SMs' waves the better.
+        const bool fused      = tiles && gated && call.up_offset == call.rows;
+        const int launch_rows = fused ? 2 * call.rows : call.rows;
+        // The split is the product's (call.rows), whether or not its halves share a launch.
+        const int splits = tiles ? mmq_k_splits(call.rows, w.k) : 1;
+        const int slice  = tiles
+                               ? mmq_tiles_slice(type, launch_rows, splits, plane_rows, args.tokens)
+                               : std::min(args.tokens, kMmqStreamKSlice);
         const int bpr    = w.k / static_cast<int>(ggml_block_values(w.qtype));
         void* activation = workspace->alloc_bytes(ggml_mmq::activation_bytes(w.k, slice)).data;
         auto* plane      = static_cast<float*>(
             workspace->alloc_bytes(static_cast<std::size_t>(plane_rows) * slice * sizeof(float))
                 .data);
-        void* fixup        = workspace->alloc_bytes(ggml_mmq::fixup_bound(slice)).data;
+        const std::size_t fixup_bytes =
+            tiles ? ggml_mmq::tiles_fixup_bytes(type, launch_rows, slice, splits)
+                  : ggml_mmq::fixup_bound(slice);
+        void* fixup        = fixup_bytes > 0 ? workspace->alloc_bytes(fixup_bytes).data : nullptr;
         const auto rows_at = [&](int row) { return ggml_rows_at(args, w.qtype, bpr, row); };
-        // A prefill call kMmqPrefillSlice tokens at a time through the one activation and plane.
+        const auto split   = tiles ? ggml_mmq::Split::Tiles : ggml_mmq::Split::StreamK;
+        // A prefill call `slice` tokens at a time through the one activation and plane (under
+        // kMmqTiles a column's bytes do not depend on the slice it sits in).
         for (int t0 = 0; t0 < args.tokens; t0 += slice) {
             const auto first = static_cast<std::size_t>(t0);
             GemmArgs part    = args;
@@ -3368,12 +3509,12 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             }
             ggml_mmq::quantize_activation(type, static_cast<const __nv_bfloat16*>(part.x),
                                           args.ldx, w.k, part.tokens, activation, stream);
-            ggml_mmq::product(type, rows_at(call.row_begin), bpr, call.rows, w.k, activation,
-                              part.tokens, plane, plane_rows, fixup, stream);
-            if (gated) {
+            ggml_mmq::product(type, rows_at(call.row_begin), bpr, launch_rows, w.k, activation,
+                              part.tokens, plane, plane_rows, fixup, stream, split, splits);
+            if (gated && !fused) {
                 ggml_mmq::product(type, rows_at(call.row_begin + call.up_offset), bpr, call.rows,
                                   w.k, activation, part.tokens, plane + call.rows, plane_rows,
-                                  fixup, stream);
+                                  fixup, stream, split, splits);
             }
             launch_mmq_epilogue(call.epilogue, part, plane, plane_rows, stream);
         }

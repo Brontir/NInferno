@@ -122,7 +122,7 @@ Result check(const Pair& p, std::int32_t rows, std::int32_t k, std::int32_t t, b
     };
     // A prefill width takes the pair in slices where the kernel's prefill route holds.
     const auto takes_prefill = [&](const Weight& w) {
-        return generic::ggml_mmq_slice_tokens(w.qtype) > generic::kGgmlMmqMaxTokens;
+        return generic::ggml_mmq_slice_tokens(w.qtype, 2 * rows) > generic::kGgmlMmqMaxTokens;
     };
     r.paired = t <= generic::kGgmlVecMaxTokens   ? takes(gate) && takes(up)
                : t <= generic::kGgmlMmqMaxTokens ? takes_mmq(gate) && takes_mmq(up)

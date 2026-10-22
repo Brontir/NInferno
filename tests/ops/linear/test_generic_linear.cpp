@@ -16,6 +16,7 @@
 #include "ninferno/ops/linear_swiglu.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
+#include "models/qwen3_5/execution/prefill_calls.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/op_tester.h"
@@ -786,6 +787,210 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
         std::cout << f.name << " " << op_name(op) << (a4 ? " A4" : a8 ? " A8" : "") << " ["
                   << rows_n << "," << k
                   << "]: " << routes.size() << " routes x 10 windows byte-identical\n";
+    }
+    return failures;
+}
+
+// How a gated product reaches ggml's matrix kernel in check_mmq_cut_invariance: one weight of
+// [gate; up] rows (up_offset == rows, one launch of 2 rows), one weight with the up rows further on
+// (up_offset != rows, a launch per half), or two weights through ggml_mmq_gated_pair (the
+// segmented gate/up projection).
+enum class MmqGate { Fused, Unfused, Pair };
+
+const char* mmq_gate_name(MmqGate gate) {
+    switch (gate) {
+    case MmqGate::Fused:
+        return "";
+    case MmqGate::Unfused:
+        return " unfused";
+    case MmqGate::Pair:
+        return " gated pair";
+    }
+    return "";
+}
+
+// ggml's matrix kernel under the prefill profile (Route{GgmlMmq, kMmqTiles}): a prompt of 1300
+// tokens (one slice of up to 1024 tokens and a short one) prefilled as one call and as two calls
+// cut at k (a cache frontier, a restore base, a chunk) gives every token the same bytes, and so
+// does a window inside it. The cuts include the ones the Qwen chunker makes at a chunk of 1024 and
+// of 1290 (prefill_call_end's stop on the 64-token grid, ungridded_call_tokens' stop 17 short of
+// the end). Both parts run the kernel whatever their width (a part of 1..16 tokens here takes the
+// kernel too, which the selector gives it only from 17; not through the gated pair, whose calls of
+// 16 tokens or fewer take the stream-k band), so the cut moves the column tile (16..128), the slice
+// a token sits in and the tile count of each call. The selector's prefill route of the format, for
+// the Store and AddResidual epilogues (SwiGLU for a gated op), is checked to be that schedule (or
+// another token-invariant one on a board where the kernel does not pay). The shapes cover one part
+// per tile and K split in two and in four (generic's mmq_k_splits: a weight of few row tiles splits
+// K). The stream-k schedule on the same cuts is the control: with more (tile, K block) units than
+// the SMs its partial sums follow the call's tile count and the SM count, so there (`control`) some
+// cut must differ, or the comparison would not see the defect it guards.
+int check_mmq_cut_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                             std::uint32_t seed, bool control, MmqGate gate = MmqGate::Fused) {
+    namespace chunker            = ninferno::models::qwen3_5::execution;
+    const std::int32_t wide   = 1300;
+    const bool pair              = gated(op) && gate == MmqGate::Pair;
+    const bool unfused           = gated(op) && gate == MmqGate::Unfused;
+    const std::int32_t rows_n    = pair        ? out_rows
+                                   : unfused   ? 3 * out_rows
+                                   : gated(op) ? 2 * out_rows
+                                               : out_rows;
+    const std::int32_t up_offset = unfused ? 2 * out_rows : gated(op) ? out_rows : 0;
+    const std::string label      = std::string(f.name) + " " + op_name(op) + mmq_gate_name(gate);
+    const HostWeight host        = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device          = upload_weight(host);
+    // The gated pair's up half: a weight of its own.
+    const HostWeight up_host = make_weight(f.qtype, pair ? out_rows : 128, k, seed + 1U);
+    DeviceWeight up_device   = upload_weight(up_host);
+    const generic::Route tiles{generic::Family::GgmlMmq, generic::kMmqTiles};
+    const generic::Route stream_k{generic::Family::GgmlMmq, generic::kMmqStreamK};
+    if (!generic::route_admits(tiles, device.weight, ops::LinearPolicy::AllowA8)) {
+        std::cout << f.name << " ggml_mmq.tiles: not admitted on this device\n";
+        return 0;
+    }
+    int failures = 0;
+    if (!generic::route_is_token_invariant(tiles) || generic::route_is_token_invariant(stream_k)) {
+        std::cerr << "ggml_mmq: token invariance of the schedules misreported\n";
+        ++failures;
+    }
+    if (gate == MmqGate::Fused) {
+        ops::ScopedPrefillRoutes prefill;
+        std::vector<generic::Epilogue> epilogues{generic::Epilogue::SwiGlu};
+        if (!gated(op)) epilogues = {generic::Epilogue::Store, generic::Epilogue::AddResidual};
+        for (const generic::Epilogue epilogue : epilogues) {
+            const generic::Problem problem{f.qtype, ops::LinearPolicy::AllowA8, out_rows, k,
+                                           epilogue};
+            for (const std::int32_t t : {17, 31, 64, 100, 512, 513, 1024, 1300, 4096}) {
+                const auto r = generic::select_route(problem, device.weight, t, true);
+                if (!generic::route_is_token_invariant(r) ||
+                    (r.family == generic::Family::GgmlMmq && r.schedule != generic::kMmqTiles)) {
+                    std::cerr << label << " prefill T=" << t << " epilogue "
+                              << static_cast<int>(epilogue) << ": route " << generic::route_name(r)
+                              << " is not token-invariant\n";
+                    ++failures;
+                }
+            }
+        }
+    }
+    const auto activation = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(
+        std::max(generic::ggml_mmq_workspace_bytes(k, rows_n, 1024),
+                 generic::ggml_mmq_gated_pair_bytes(
+                     k, out_rows, generic::ggml_mmq_slice_tokens(f.qtype, 2 * out_rows))) +
+        256);
+    // The bytes of tokens [offset, offset + t); empty where the gated pair did not take the call.
+    const auto run = [&](generic::Route route, std::int32_t offset, std::int32_t t) {
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        cuda_check(cudaMemset(out.p, 0xff, out.bytes), "poison");
+        Tensor tx(static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k,
+                  DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
+        if (pair) {
+            ops::ScopedPrefillRoutes prefill;
+            const generic::PairHalf g{&device.weight, ops::LinearPolicy::AllowA8, 0};
+            const generic::PairHalf u{&up_device.weight, ops::LinearPolicy::AllowA8, 0};
+            if (!generic::ggml_mmq_gated_pair(tx, g, u, out_rows, false, tout, workspace,
+                                              nullptr)) {
+                return std::vector<std::uint16_t>{};
+            }
+        } else {
+            generic::Call call;
+            call.x               = &tx;
+            call.weight          = &device.weight;
+            call.rows            = out_rows;
+            call.up_offset       = up_offset;
+            call.epilogue        = gated(op) ? generic::Epilogue::SwiGlu : generic::Epilogue::Store;
+            call.out[0]          = &tout;
+            call.segment_rows[0] = out_rows;
+            generic::run_route(route, call, &workspace, nullptr);
+        }
+        cuda_check(cudaDeviceSynchronize(), "run");
+        if (generic::ggml_mmq_fallback_count() != fallbacks) {
+            throw std::runtime_error("ggml_mmq ran A16 in a workspace sized for it");
+        }
+        return download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+    };
+    // Tokens [offset, offset + t) of a call against the same tokens of the reference; the first
+    // differing token, or -1.
+    const auto first_difference = [&](const std::vector<std::uint16_t>& reference,
+                                      const std::vector<std::uint16_t>& bits, std::int32_t offset,
+                                      std::int32_t t) {
+        for (std::int32_t token = 0; token < t; ++token) {
+            if (std::memcmp(bits.data() + static_cast<std::size_t>(token) * out_rows,
+                            reference.data() + static_cast<std::size_t>(offset + token) * out_rows,
+                            static_cast<std::size_t>(out_rows) * 2) != 0) {
+                return token;
+            }
+        }
+        return -1;
+    };
+    // The chunker's cuts of this prompt: a chunk of 1024, and a chunk of 1290, which would leave
+    // 10 tokens (the Qwen grid stop at 1280; the families without a grid stop at 1283).
+    constexpr std::int32_t grid_stop =
+        static_cast<std::int32_t>(chunker::prefill_call_end(1290, 0, 1300));
+    constexpr std::int32_t ungridded_stop =
+        static_cast<std::int32_t>(chunker::ungridded_call_tokens(1290, 1300));
+    static_assert(grid_stop == 1280 && ungridded_stop == 1283);
+    const std::int32_t cuts[] = {
+        1, 7, 17, 64, 100, 511, 512, 513, 700, 1023, 1024, grid_stop, ungridded_stop, 1299};
+    const std::pair<std::int32_t, std::int32_t> windows[] = {{5, 600}, {511, 2}, {700, 513}};
+    int control_differs                                   = 0;
+    int compared                                          = 0;
+    int not_taken                                         = 0;
+    const std::vector<generic::Route> routes =
+        pair ? std::vector<generic::Route>{tiles} : std::vector<generic::Route>{tiles, stream_k};
+    for (const auto route : routes) {
+        const auto reference = run(route, 0, wide);
+        if (reference.empty()) {
+            std::cout << label << ": the gated pair does not take a prefill of " << wide
+                      << " tokens on this device\n";
+            return failures;
+        }
+        int differs        = 0;
+        const auto compare = [&](std::int32_t offset, std::int32_t t) {
+            // The gated pair's calls of 16 tokens or fewer take its stream-k band.
+            if (pair && t < static_cast<std::int32_t>(chunker::kPrefillMinTokens)) return;
+            const auto bits = run(route, offset, t);
+            if (bits.empty()) {
+                ++not_taken;
+                return;
+            }
+            if (route == tiles) ++compared;
+            const int token = first_difference(reference, bits, offset, t);
+            if (token < 0) return;
+            ++differs;
+            if (route == tiles) {
+                std::cerr << label << " ggml_mmq.tiles: call " << offset << "+" << t << " token "
+                          << offset + token << " differs from the one-call prefill\n";
+            }
+        };
+        for (const std::int32_t cut : cuts) {
+            compare(0, cut);
+            compare(cut, wide - cut);
+        }
+        for (const auto [offset, t] : windows) compare(offset, t);
+        if (route == tiles) {
+            failures += differs;
+        } else {
+            control_differs = differs;
+        }
+    }
+    if (control && !pair && control_differs == 0) {
+        std::cerr << label
+                  << " ggml_mmq: the stream-k control gave the same bytes at every cut (the "
+                     "comparison sees nothing)\n";
+        ++failures;
+    }
+    if (failures == 0) {
+        std::cout << label << " [" << rows_n << "," << k << "] ggml_mmq.tiles: " << compared
+                  << " calls byte-identical to one call";
+        if (pair) {
+            std::cout << " (" << not_taken << " taken by another route)\n";
+        } else {
+            std::cout << " (stream-k control: " << control_differs << " calls differ)\n";
+        }
     }
     return failures;
 }
@@ -1702,6 +1907,15 @@ int main() {
                                                ActivationCompute::A8);
                     }
                 }
+                // The prefill profile's schedule (one CTA per tile) at prefill widths.
+                const generic::Route tiles{generic::Family::GgmlMmq, generic::kMmqTiles};
+                for (const std::int32_t t : {17, 130, 600}) {
+                    for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu}) {
+                        failures += check_case(f, op, n, k, t, ops::LinearPolicy::AllowA8,
+                                               static_cast<std::uint32_t>(37U + t + k), &tiles,
+                                               ActivationCompute::A8);
+                    }
+                }
             }
         }
     }
@@ -1914,6 +2128,22 @@ int main() {
         const std::int32_t k = f.qtype == QType::NVFP4 ? 1024 : awkward_k(f);
         failures += check_invariance(f, Op::Linear, n, k, ops::LinearPolicy::A16Only, 41U);
         failures += check_invariance(f, Op::SwiGlu, n, k, ops::LinearPolicy::A16Only, 43U);
+    }
+    // ggml's matrix kernel under the prefill profile: a prompt cut anywhere, every format it reads.
+    for (const Format& f : kFormats) {
+        if (!on_build(f) || !generic::ggml_mmq_format(f.qtype)) continue;
+        // 1024 x 4096 (K in four parts): more (tile, K block) units than a large board has
+        // SMs, so stream-k's control spreads them over the CTAs by the call's tile count (at a few
+        // units per SM each unit gets its own CTA in every call, and its bytes do not move).
+        // 2048 x 1024: K in two parts; 1024 x 512: one part per tile.
+        failures += check_mmq_cut_invariance(f, Op::Linear, 1024, 4096, 101U, true);
+        failures += check_mmq_cut_invariance(f, Op::SwiGlu, 1024, 4096, 103U, true);
+        failures += check_mmq_cut_invariance(f, Op::Linear, 2048, 1024, 105U, false);
+        failures += check_mmq_cut_invariance(f, Op::SwiGlu, 1024, 512, 107U, false);
+        // The SwiGLU halves as two launches (up rows off the gate's end) and as two weights.
+        failures +=
+            check_mmq_cut_invariance(f, Op::SwiGlu, 1024, 4096, 109U, false, MmqGate::Unfused);
+        failures += check_mmq_cut_invariance(f, Op::SwiGlu, 1024, 4096, 111U, false, MmqGate::Pair);
     }
     // BF16 at a K the staged schedules admit: they join the register-MMA routes' bytes.
     failures += check_invariance(bf16, Op::Linear, 136, 1088, ops::LinearPolicy::A16Only, 59U);

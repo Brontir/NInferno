@@ -24,6 +24,7 @@
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/mmq.cuh"
 
+#include <algorithm>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -90,7 +91,7 @@ struct Launch {
 };
 
 template <ggml_type type>
-Launch select_launch(int rows, int columns) {
+Launch select_launch(int rows, int columns, Split split, int k_splits = 1) {
     const DeviceFacts& device = device_facts();
     Launch best;
     int best_tiles = INT_MAX;
@@ -114,7 +115,19 @@ Launch select_launch(int rows, int columns) {
     best.row_tiles    = (rows + best.I - 1) / best.I;
     best.column_tiles = (columns + best.J - 1) / best.J;
     const int tiles   = best.row_tiles * best.column_tiles;
-    if (best.stream_k) {
+    if (split == Split::Tiles && best.stream_k) {
+        // The stream-k kernel with k_splits CTAs per tile: the grid's (tile, K block) range cut
+        // into tiles * k_splits equal parts, each CTA one 1/k_splits of one tile's K (k_splits
+        // divides K's 256-value steps, so no part straddles a tile or a step). The CTA of the
+        // last part writes its sums, the fixup adds the others' in descending order: one order
+        // per element for a given k_splits, whatever the tile count. One part: a tiled grid.
+        best.blocks = tiles * k_splits;
+        best.fixup  = k_splits > 1;
+    } else if (split == Split::Tiles) {
+        // A config compiled without stream-k launches the 2D grid: every CTA one tile's whole K,
+        // which is token-invariant as is; K splits do not apply and need no fixup.
+        best.blocks = tiles;
+    } else if (best.stream_k) {
         const int waves      = (tiles + device.sm_count - 1) / device.sm_count;
         const int efficiency = 100 * tiles / (device.sm_count * waves);
         best.blocks          = efficiency >= 90 ? tiles : device.sm_count;
@@ -126,8 +139,8 @@ Launch select_launch(int rows, int columns) {
 }
 
 template <ggml_type type>
-std::size_t fixup_bytes_impl(int rows, int columns) {
-    const Launch l = select_launch<type>(rows, columns);
+std::size_t fixup_bytes_impl(int rows, int columns, Split split, int k_splits) {
+    const Launch l = select_launch<type>(rows, columns, split, k_splits);
     return l.fixup ? std::size_t(l.blocks) * l.J * l.I * sizeof(float) : 0;
 }
 
@@ -169,15 +182,58 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
           "fixup launch");
 }
 
+template <ggml_type type, int J>
+int occupancy(const Launch& l) {
+    static PerDevice<bool> raised;
+    allow_dynamic_smem(raised, mul_mat_q<type, J, false>, l.shared);
+    int per_sm = 0;
+    check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, mul_mat_q<type, J, false>,
+                                                        l.threads, l.shared),
+          "occupancy");
+    return per_sm;
+}
+
+template <ggml_type type>
+int tile_slots_impl() {
+    static PerDevice<int> slots;
+    return slots.get([](int) {
+        const Launch l = select_launch<type>(kRowMultiple, 128, Split::Tiles);
+        int per_sm     = 0;
+        switch (l.J) {
+        case 16:
+            per_sm = occupancy<type, 16>(l);
+            break;
+        case 32:
+            per_sm = occupancy<type, 32>(l);
+            break;
+        case 64:
+            per_sm = occupancy<type, 64>(l);
+            break;
+        case 128:
+            per_sm = occupancy<type, 128>(l);
+            break;
+        default:
+            throw std::invalid_argument("ggml mmq: unexpected column tile");
+        }
+        return std::max(per_sm, 1) * device_facts().sm_count;
+    });
+}
+
 template <ggml_type type>
 void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const void* activation,
                   int columns, float* out, std::int64_t out_column_stride, void* fixup,
-                  cudaStream_t stream) {
+                  cudaStream_t stream, Split split, int k_splits) {
     constexpr int qk = ggml_cuda_type_traits<type>::qk;
     if (k % 256 != 0 || rows % kRowMultiple != 0 || blocks_per_row < k / qk) {
         throw std::invalid_argument("ggml mmq: unsupported geometry");
     }
-    const Launch l = select_launch<type>(rows, columns);
+    // Every format here steps K by MMQ_ITER_K (256) values (the FP4 formats, which step 512, do
+    // not take this kernel).
+    if (k_splits < 1 || (k / MMQ_ITER_K) % k_splits != 0 ||
+        (split == Split::StreamK && k_splits != 1)) {
+        throw std::invalid_argument("ggml mmq: K splits must divide K's 256-value steps");
+    }
+    const Launch l = select_launch<type>(rows, columns, split, k_splits);
     const auto* x  = static_cast<const char*>(w.codes);
     const ggml_planes planes{static_cast<const char*>(w.high), static_cast<const char*>(w.scales)};
     const auto* y = static_cast<const int*>(activation);
@@ -203,7 +259,9 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
 } // namespace ninferno::ops::ggml_mmq::detail
 
 #define NINFERNO_GGML_MMQ_INSTANCE(TYPE)                                                           \
-    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int);        \
+    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(                  \
+        int, int, ninferno::ops::ggml_mmq::Split, int);                                            \
+    template int ninferno::ops::ggml_mmq::detail::tile_slots_impl<TYPE>();                         \
     template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
-        std::int64_t, void*, cudaStream_t)
+        std::int64_t, void*, cudaStream_t, ninferno::ops::ggml_mmq::Split, int)
