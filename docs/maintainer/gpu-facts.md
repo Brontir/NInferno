@@ -59,7 +59,8 @@ row in the table has it.
   driver's memory: the bus width it reports when that differs from the row's, and its memory clock
   on the 2^(1/16) grid when that is more than half a grid step (2.2 %) below the row's. A faster
   memory clock (an overclock) is not read, so such a board keeps the row's; a board on a faster
-  memory than its row's (a GTX 1650 with GDDR6) is priced as the row.
+  memory than its row's (a GTX 1650 with GDDR6) is priced as the row. A value no memory has (a bus
+  that is not a whole number of 32-bit channels, a clock under 100 MHz) is as good as unreported.
 - **An unknown id** takes the driver's SM and memory clocks rounded to the nearest 2^(k/16), and
   keeps the bus width. The source is *extrapolated*. With no clocks reported it is *none*, there is
   no roofline, and the cost model stands aside.

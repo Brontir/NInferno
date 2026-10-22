@@ -228,13 +228,16 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         // 4070 with GDDR6 under the GDDR6X board's id, an 8 GB RTX 3060 on a 128-bit bus) prices
         // its memory at the driver's: the bus width it reports, and a memory clock more than half
         // a grid step (2.2 %) below the row's on the 2^(1/16) grid. A faster clock than the row's
-        // (an overclock) and a driver's rounding (14001 MHz against 14000) are not read.
-        if (driver.memory_bus_bits > 0 && driver.memory_bus_bits != row->bus_bits) {
+        // (an overclock) and a driver's rounding (14001 MHz against 14000) are not read, nor a
+        // value no memory has (a bus width that is not a whole number of 32-bit channels, a clock
+        // under 100 MHz): it is as good as unreported.
+        if (driver.memory_bus_bits >= 32 && driver.memory_bus_bits % 32 == 0 &&
+            driver.memory_bus_bits != row->bus_bits) {
             f.source          = FactSource::Extrapolated;
             f.driver_read     = true;
             f.memory_bus_bits = driver.memory_bus_bits;
         }
-        if (driver.memory_clock_khz > 0 &&
+        if (driver.memory_clock_khz >= 100000 &&
             std::int64_t{driver.memory_clock_khz} * 1000 < std::int64_t{f.memory_clock_khz} * 978) {
             f.source      = FactSource::Extrapolated;
             f.driver_read = true;

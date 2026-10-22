@@ -195,6 +195,11 @@ void memory_variants() {
     }
     expect(same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 10501000, 0}), x),
            "no bus width reported: the row's");
+    // Values no memory has (a bus that is no whole number of 32-bit channels, a clock under
+    // 100 MHz) are as good as unreported.
+    expect(same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 1, 1}), x) &&
+               same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 99999, 200}), x),
+           "implausible driver memory values: the row's");
 }
 
 // Principle 7: a laptop is priced at the bottom of its published boost range (an RTX 4090 Laptop
