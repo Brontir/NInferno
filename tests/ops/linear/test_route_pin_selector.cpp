@@ -10,7 +10,11 @@
 // Byte-identical automatic selection is ninferno_selector_golden_test's: it runs with no pin.
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
-// process runs one board: without arguments the test runs itself once per board.
+// process runs one board: without arguments the test runs itself once per board. Those caches are
+// per CUDA device (core/per_device.h): without a device the selector takes other routes than the
+// release's (the R8 decode tables, the int8 prefill gate), so the test needs one and skips (77)
+// without it.
+#include "ops/linear/linear_test_common.h"
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -363,6 +367,10 @@ int run_board(const PinBoard& b) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (!ninferno::test::linear::cuda_available()) {
+        std::cout << "CUDA unavailable; skipping route pin selector test\n";
+        return 77;
+    }
     try {
         std::string board;
         for (int i = 1; i < argc; ++i) {

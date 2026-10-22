@@ -105,6 +105,10 @@ Where the pins reach:
   and `--prefill-route w4a4` takes A4 from 17 tokens;
 - the MoE path choice of the Qwen 3.5/3.6 and Gemma 4 families.
 
+ninfer-all's dedicated int8 kernels of the Qwen3.8-27B Q4/Q5 G64 shapes (the `linear_swiglu`
+gate_up, the `linear_add` down and output projections) give way to a prefill pin of `a16`, `w4a8`
+or `i8`.
+
 Where they do not: the fused NVFP4 plans of the registered Qwen shapes (attention and GDN input
 projections, `linear_add`, `linear_swiglu`) keep their own A4 or A16 choice; the routed experts'
 grouped GEMMs keep their schedules (`--moe-tune` and the route tables' MoE bands); a GPU without
@@ -125,7 +129,9 @@ Refusals, each naming what can run instead:
    whose band had calls none of which it could take, naming the families those calls could take;
    `--moe-path` on a model with no MoE layer that chooses. A band no startup call reached (no
    warm-up because every size was given explicitly, and no decode graphs) is reported as not
-   checked.
+   checked. The check reads what the selection took: a launch's own fallbacks (ggml's kernels with
+   a workspace short of them, which warn once; an unaligned activation) still run another route.
+   With several Engines alive in the process, the others' calls during this startup count too.
 
 The startup log prints one `routes | pinned |` line per pin with the families its band met. The
 serve bench tools take the three options (`tools/bench/run_serve_corpus.py`,

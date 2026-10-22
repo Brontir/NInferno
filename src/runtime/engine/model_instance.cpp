@@ -536,6 +536,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                                    FamilyLoader load, PlanSummary* dry_run) {
     validate_engine_options(options);
     const auto start    = Clock::now();
+    ops::clear_route_pin_ledger(); // this model's calls only (ops/route_pins.h)
     FamilyLoad loaded   = load(options, device);
     LoadSummary summary = std::move(loaded.summary);
     if (!loaded.execution || !loaded.make_frontend) {

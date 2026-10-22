@@ -10,8 +10,10 @@
 // that it can compute; a call it cannot compute (another format, a K or alignment its tiles do not
 // take, a width past its kernel, a policy without its activations) keeps the automatic route, and
 // the ledger below records both, so that the startup refuses a pin that took no call and names the
-// families that could (check_route_pin_coverage). Nothing here times anything or reads the
-// environment.
+// families that could (check_route_pin_coverage). The ledger notes a route when it is
+// selected: the launch's own fallbacks still apply (ggml's kernels with a workspace short of them,
+// an unaligned x: the register MMA or the scalar route, the ggml ones with a warning), and a gate
+// asked while a plan is built notes it too. Nothing here times anything or reads the environment.
 
 #include "ninferno/option_enums.h"
 
@@ -42,6 +44,9 @@ inline constexpr std::int32_t kDecodePinMaxTokens  = 16;
 
 // Sets the process's pins and clears the ledger.
 void set_route_pins(const RoutePins& pins) noexcept;
+// Clears the ledger alone (each Engine's model construction starts from an empty one). Another
+// Engine of the process that keeps resolving routes meanwhile still adds to it.
+void clear_route_pin_ledger() noexcept;
 [[nodiscard]] RoutePins route_pins() noexcept;
 
 // The families a pin's band met since set_route_pins, as bit masks over the enum's values

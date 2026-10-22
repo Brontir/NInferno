@@ -66,6 +66,10 @@ void set_route_pins(const RoutePins& pins) noexcept {
     g_prefill.store(static_cast<std::uint8_t>(pins.prefill), std::memory_order_relaxed);
     g_decode.store(static_cast<std::uint8_t>(pins.decode), std::memory_order_relaxed);
     g_moe.store(static_cast<std::uint8_t>(pins.moe), std::memory_order_relaxed);
+    clear_route_pin_ledger();
+}
+
+void clear_route_pin_ledger() noexcept {
     g_prefill_band.clear();
     g_decode_band.clear();
     g_moe_choices.store(0, std::memory_order_relaxed);

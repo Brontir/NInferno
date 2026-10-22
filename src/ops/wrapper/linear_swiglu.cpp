@@ -6,6 +6,7 @@
 
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/route_pins.h"
 #include "ops/linear/fp8/fp8_format.h"
 #include "ops/linear/nvfp4/nvfp4_format.h"
 #include "ops/linear_swiglu/fp8/fp8_linear_swiglu_plan.h"
@@ -147,9 +148,15 @@ namespace {
 // prefill int8 tier, so it runs where that tier runs; where FP32-accumulate HMMA runs at full
 // rate (the A100) the tier stays off only because its generic kernel loses there
 // (prefill_a8_policy), and this one runs in its place inside a prefill.
-// --activations exact keeps A16 everywhere.
+// --activations exact keeps A16 everywhere. A prefill route pin (ops/route_pins.h) of a family the
+// shape can run takes it instead: a16 keeps BF16 activations, w4a8 and i8 the pinned generic tier.
 bool dedicated_q4a8_swiglu(bool prefill_a8) {
     if (invariant_routes_active() || !detail::q4a8_swiglu_pays()) return false;
+    if (const PrefillRoute pin = ops::route_pins().prefill;
+        prefill_routes_active() &&
+        (pin == PrefillRoute::A16 || pin == PrefillRoute::W4a8 || pin == PrefillRoute::I8)) {
+        return false;
+    }
     const bool full_rate = [] {
         try {
             const auto& d = device_class();
