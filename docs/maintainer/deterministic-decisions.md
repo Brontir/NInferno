@@ -44,7 +44,8 @@ This page states the rule and its target. The engine does not meet all of it yet
   `tests/ops/linear/selector_properties_known.txt`: on a board the PCI-ID table does not know,
   driver clocks move the speed profile; ggml's matrix kernel serves prefill widths although its
   stream-k is not token-invariant. The tuner-cache check cannot reach the tuner on a CPU (it
-  reads the cache only for a weight in device memory). The shape tables, MoE, attention and
+  reads the cache only for a weight in device memory): a run without a GPU skips it and asserts
+  that the tuner refuses every problem. The shape tables, MoE, attention and
   speculation choices have no property check, and the rules' remaining timer and file reads are
   listed in `tools/audit/selection_static_allow.txt`;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate

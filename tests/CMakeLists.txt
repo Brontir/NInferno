@@ -39,6 +39,7 @@ set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
 if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
+  set_tests_properties(ninferno_decision_inputs_test PROPERTIES LABELS cpu)
 endif()
 
 # The selection rules under src/ops read no environment, clock, timer, free memory or file beyond

@@ -15,8 +15,9 @@
 //      - tune: a dense-tune cache naming the scalar route at every decode width for every A16
 //        problem of the board, with the tuner enabled: under --dense-tune off the choices must not
 //        move; under on they may (a tuning run, tainted in the fingerprint), which is reported.
-//        On a CPU both legs only show that nothing but the tuner reaches the file: the tuner reads
-//        it for a weight in device memory alone (cudaPointerGetAttributes), which no CPU run has.
+//        The tuner reads the file for a weight in device memory alone (cudaPointerGetAttributes),
+//        which no CPU run has: without a GPU both legs are skipped, and the plain run asserts
+//        instead that the tuner, enabled and handed every problem, times and reports none.
 //      - clock: zero clocks (MIG, WSL) or skewed ones, the facts derived from them as the query
 //        does. The invariant profile must not move at all.
 //   P3 capability safety: every choice is one route_admits accepts and needs no feature the board
@@ -34,7 +35,8 @@
 // A violation that exists today is listed in selector_properties_known.txt with its gap, the route
 // sets (@set) and the boards (%board, %group: "group <name> <board>...", or the built-in known-pci
 // and unknown-pci) it is seen on; the test fails on a violation of a board no entry covers and on
-// an entry no board shows any more (then the entry is removed and the pillar's gap list updated).
+// an entry a board it names no longer shows (then the board or the entry is removed, and the
+// pillar's gap list updated).
 // --update rewrites the digest file of this build's route set.
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
@@ -43,6 +45,8 @@
 #include "ops/linear/selector_boards.h"
 
 #include "ops/common/native_nvfp4.h"
+
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>
@@ -150,6 +154,26 @@ struct Violations {
 const char* policy_key(LinearPolicy p) {
     return p == LinearPolicy::AllowA4 ? "a4" : p == LinearPolicy::AllowA8 ? "a8" : "a16";
 }
+
+// A GPU this process can use (the CI and the WSL checks have none).
+bool device_present() {
+    int count     = 0;
+    const bool ok = cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
+    (void)cudaGetLastError();
+    return ok;
+}
+
+// Hands every problem to the dense tuner and checks nothing else.
+struct TunerPrimer final : ChoiceCheck {
+    void problem(const generic::Problem& p, const Weight& w) override {
+        generic::Call call;
+        call.weight = &w;
+        call.rows   = p.n;
+        generic::tune_dense(p, call, nullptr);
+    }
+
+    void check(const Row&, std::int32_t, const Weight&, const Outcome&) override {}
+};
 
 struct SafetyCheck final : ChoiceCheck {
     Violations* out;
@@ -357,9 +381,32 @@ int run_child(const TestBoard& b, const ChildOptions& opt) {
     // the dense tuner's state (the plain run only: the variants compare their first evaluation).
     if (opt.repeat) {
         {
+            // On a machine without a GPU this evaluation also runs every problem past a timing
+            // tuner (--dense-tune on, its cache in a scratch directory): the tuner must refuse
+            // every one (no weight is in device memory), never time or report a problem.
             const ops::ScopedPrefillRoutes prefill(true);
             const ops::ScopedRoundLanes lanes(4);
-            (void)evaluate(b.name);
+            TunerPrimer primer;
+            const bool deviceless = !device_present();
+            const auto tuner_dir  = std::filesystem::temp_directory_path() /
+                                   ("ninferno_selector_tuner_" + std::string(b.name));
+            if (deviceless) {
+                generic::set_dense_tune(TuneMode::On, tuner_dir);
+                generic::enable_dense_tune(true);
+            }
+            (void)evaluate(b.name, deviceless ? &primer : nullptr);
+            if (deviceless) {
+                if (const auto report = generic::dense_tune_report(); !report.empty()) {
+                    v.add("P2", "tune", "a device-less run reached the tuner: " + report.front());
+                }
+                if (std::filesystem::exists(tuner_dir / "dense_tune.json")) {
+                    v.add("P2", "tune", "a device-less run wrote the tuner's cache");
+                }
+                generic::enable_dense_tune(false);
+                generic::set_dense_tune(TuneMode::Off, {});
+                std::error_code ignored;
+                std::filesystem::remove_all(tuner_dir, ignored);
+            }
         }
         generic::clear_dense_tune();
         const std::string again = render(evaluate(b.name));
@@ -588,6 +635,12 @@ int run_parent(const std::string& exe, bool update, const std::string& only) {
         if (std::string_view(b.name).find(only) != std::string_view::npos) boards.push_back(&b);
     const bool focused = !only.empty();
 
+    // Without a GPU the tuner refuses every problem (no weight is in device memory), so the tune
+    // legs would only repeat the plain run: they are skipped, and the plain run asserts instead
+    // that the tuner, primed with every problem, timed and reported none.
+    const bool gpu = device_present();
+    if (!gpu)
+        std::cout << "no GPU: tune:off and tune:on skipped (the plain run checks the tuner)\n";
     std::vector<Job> jobs;
     for (const TestBoard* b : boards) {
         const std::string self = shell_quote(exe) + " --board " + b->name;
@@ -596,6 +649,7 @@ int run_parent(const std::string& exe, bool update, const std::string& only) {
         jobs.push_back({b, "clock:zero", self + " --no-repeat --clock zero 2>&1"});
         jobs.push_back({b, "clock:skew", self + " --no-repeat --clock skew 2>&1"});
         jobs.push_back({b, "env", self + " --no-repeat 2>&1", all_env});
+        if (!gpu) continue;
         jobs.push_back(
             {b, "tune:off",
              self + " --no-repeat --tune off --tune-dir " + shell_quote(tune + "_off") + " 2>&1"});
@@ -728,11 +782,28 @@ int run_parent(const std::string& exe, bool update, const std::string& only) {
                  uncovered);
         }
     }
+    // Staleness, per board: an entry naming boards (directly, through a group or a class) must
+    // still be seen on every evaluated board it names; an entry for every board, on one.
     for (const Known& k : known.entries) {
-        if (!focused && applies(k) && !k.seen) {
+        if (focused || !applies(k)) continue;
+        if (!k.seen) {
             fail("listed in " + std::string(NINFERNO_SELECTOR_PROPERTIES_KNOWN) +
                  " but not seen: " + k.key +
                  " (fixed: remove the entry and update the pillar's gap list)");
+            continue;
+        }
+        if (k.boards.empty()) continue;
+        const auto seen_on = observed.find(k.key);
+        std::string gone;
+        for (const auto& [board, cls] : board_class) {
+            if (!covers(known, k, board, cls)) continue;
+            if (seen_on == observed.end() || seen_on->second.count(board) == 0)
+                gone += (gone.empty() ? "" : " ") + board;
+        }
+        if (!gone.empty()) {
+            fail("listed in " + std::string(NINFERNO_SELECTOR_PROPERTIES_KNOWN) + " for boards " +
+                 "that no longer show it: " + k.key + " on " + gone +
+                 " (fixed there: drop them from the entry or its group)");
         }
     }
     std::cout << "P2-tune on: " << tune_on_moved

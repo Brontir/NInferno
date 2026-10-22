@@ -44,13 +44,38 @@ BANNED = {
 ENV_LITERAL = re.compile(r'"(NINFERNO_[A-Z0-9_]+)"')
 
 
+RAW_PREFIXES = ("R", "u8R", "uR", "UR", "LR")
+
+
+def _token_start(text: str, i: int) -> int:
+    """Where the identifier or number that ends just before `i` starts (`'` and `.` included, so a
+    number with digit separators is one token)."""
+    j = i
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_'."):
+        j -= 1
+    return j
+
+
 def strip_comments(text: str) -> str:
-    """Drops // and /* */ comments, keeping string literals and line numbers."""
+    """Drops // and /* */ comments, keeping string literals (raw ones too) and line numbers."""
     out = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
-        if c == '"' or c == "'":
+        prefix = text[_token_start(text, i) : i] if c in "\"'" else ""
+        if c == '"' and prefix.endswith("R") and prefix in RAW_PREFIXES:
+            # R"delim( ... )delim": nothing inside is a comment or an escape.
+            open_paren = text.find("(", i)
+            delim = text[i + 1 : open_paren] if open_paren >= 0 else ""
+            close = text.find(")" + delim + '"', open_paren + 1) if open_paren >= 0 else -1
+            j = n if close < 0 else close + len(delim) + 2
+            out.append(text[i:j])
+            i = j
+        elif c == "'" and prefix[:1].isdigit():
+            # A digit separator (1'000'000), not a character literal.
+            out.append(c)
+            i += 1
+        elif c == '"' or c == "'":
             j = i + 1
             while j < n and text[j] != c and text[j] != "\n":
                 j += 2 if text[j] == "\\" else 1
@@ -68,6 +93,22 @@ def strip_comments(text: str) -> str:
             out.append(c)
             i += 1
     return "".join(out)
+
+
+def self_test() -> None:
+    """Planted text: comments go; literals (raw ones too), digit separators and line breaks stay."""
+    cases = [
+        ("a // getenv(\n", "a \n"),
+        ("int x = 1'000'000; // getenv(x)\n", "int x = 1'000'000; \n"),
+        ('auto s = R"x(// kept )" still)x"; getenv(y)', 'auto s = R"x(// kept )" still)x"; getenv(y)'),
+        ('auto s = u8R"(/* kept */)"; /* gone\n */ b', 'auto s = u8R"(/* kept */)"; \n b'),
+        ("char c = '/'; // gone", "char c = '/'; "),
+        ('auto t = L"//x"; z', 'auto t = L"//x"; z'),
+    ]
+    for given, want in cases:
+        got = strip_comments(given)
+        if got != want:
+            raise SystemExit(f"strip_comments self-test: {given!r} -> {got!r}, want {want!r}")
 
 
 def selection_files(root: Path) -> tuple[list[Path], list[str]]:
@@ -100,6 +141,7 @@ def read_allow(path: Path) -> dict[tuple[str, str], int]:
 
 
 def main() -> int:
+    self_test()
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[2])
     allow = read_allow(root / "tools" / "audit" / "selection_static_allow.txt")
     failures: list[str] = []

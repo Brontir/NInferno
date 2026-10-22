@@ -3,7 +3,8 @@
 # %board: every board. A group is "group <name> <board>..." (lines of one name add up); known-pci
 # (a PCI id the reference table knows) and unknown-pci are built in. Each entry is a known gap of
 # docs/maintainer/deterministic-decisions.md; remove it in the change that closes it. A violation
-# on a board no entry covers fails, and so does an entry no board shows any more.
+# on a board no entry covers fails, and so does an entry a board it names (directly, through a
+# group or a class) no longer shows.
 
 # No environment variable moves a choice: the route-table, tuner and verify knobs became options
 # (#51), and the suite sets every NINFERNO_* variable (removed ones too) and sees no change.
