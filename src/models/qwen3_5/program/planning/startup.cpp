@@ -937,8 +937,8 @@ void validate_program_options(const EngineOptions& options, std::uint64_t max_po
                       spec::kContextClasses);
     if (!speculation_class_depth_valid(options.speculative)) {
         throw std::invalid_argument(
-            "speculative context-class bounds must not rise with the class and must lie within "
-            "the window");
+            "speculative context-class bounds must not rise with the class and each must be 0 or "
+            "a captured draft depth");
     }
     switch (options.speculative.backend) {
     case SpeculativeBackend::None:

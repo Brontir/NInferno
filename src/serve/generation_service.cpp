@@ -420,12 +420,11 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                                     product::speculative_window(speculative));
         }
         // --spec-class-depth: the bounds as given (an explicit --spec too), replacing --spec
-        // auto's, clamped to this candidate's window so they only lower (a fallback candidate
-        // shallower than a bound takes it as no bound rather than refuse to start).
+        // auto's, clamped to this candidate's captured depths so they only lower (a fallback
+        // candidate shallower than a bound takes it as no bound rather than refuse to start).
         const auto override_depths =
             options_.class_depth
-                ? std::optional(product::clamp_class_override(
-                      *options_.class_depth, product::speculative_window(speculative)))
+                ? std::optional(product::clamp_class_override(*options_.class_depth, speculative))
                 : std::nullopt;
         if (override_depths) { speculative.class_depth = *override_depths; }
         if (!served_speculation_) { return; }

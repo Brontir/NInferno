@@ -684,10 +684,10 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                       startup.selection, startup.fallback, startup.reason);
     }
     // --spec-class-depth, --spec auto or an explicit --spec: the bounds the started Engine runs,
-    // clamped to its window (product::clamp_class_override).
+    // clamped to its captured depths (product::clamp_class_override).
     if (const auto& asked = service.options().class_depth) {
         logger_->info(
-            "speculation | class bounds {} (--spec-class-depth {}, clamped to the window)",
+            "speculation | class bounds {} (--spec-class-depth {}, clamped to captured depths)",
             spec::class_depths_label(service.engine_options().speculative.class_depth),
             spec::class_depths_label(*asked));
     }

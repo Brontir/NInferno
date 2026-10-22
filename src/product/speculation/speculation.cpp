@@ -426,14 +426,26 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
         served.engine.class_depth[i] = depth < pick ? static_cast<std::uint32_t>(std::max(depth, 0))
                                                     : SpeculativeOptions::kNoClassBound;
     }
+    served.engine.class_depth = clamp_class_override(served.engine.class_depth, served.engine);
 }
 
 std::array<std::uint32_t, spec::kContextClasses>
 clamp_class_override(const std::array<std::uint32_t, spec::kContextClasses>& bounds,
-                     std::uint32_t window) {
+                     const SpeculativeOptions& engine) {
+    const std::uint32_t window          = speculative_window(engine);
+    std::vector<std::uint32_t> captured = engine.request_draft_tokens;
+    captured.push_back(engine.draft_tokens);
     auto out = bounds;
     for (std::uint32_t& k : out) {
-        if (k >= window) { k = SpeculativeOptions::kNoClassBound; }
+        if (k >= window) {
+            k = SpeculativeOptions::kNoClassBound;
+            continue;
+        }
+        std::uint32_t runs = 0;
+        for (const std::uint32_t c : captured) {
+            if (c <= k) { runs = std::max(runs, c); }
+        }
+        k = runs;
     }
     return out;
 }
@@ -528,6 +540,10 @@ std::optional<spec::Profile> shallower_profile(const spec::Profile& profile,
         }
     }
     shallower.floor_tokens_per_round = shallower_floor(floors, shallower.config.k);
+    // Nothing was measured at this depth: the tried depth's acceptance is not this one's, so the
+    // context classes keep this depth (served_class_depths: no measured tokens per round).
+    shallower.tokens_per_round       = 0;
+    shallower.acceptance             = 0;
     spec::Profile out                = profile;
     out.overall                      = shallower;
     out.thinking                     = shallower;

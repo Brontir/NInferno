@@ -108,13 +108,15 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
 // The same for the artifact at `artifact` with the factors this binary carries.
 void apply_context_classes(ServedSpeculation& served, const std::filesystem::path& artifact,
                            const ServedBytes& bytes);
-// --spec-class-depth's bounds for an engine whose deepest captured depth is `window`
-// (speculative_window): a bound at or past the window bounds nothing and becomes kNoClassBound, so
-// the override only ever lowers and every fallback candidate (a shallower depth, the head) takes
-// it without a refusal. Non-increasing bounds stay non-increasing.
+// Class bounds as `engine` can run them: a bound at or past its window (speculative_window)
+// bounds nothing and becomes kNoClassBound; any other is rounded down to the deepest depth the
+// engine captures (draft_tokens, request_draft_tokens) at most the bound, or 0 (plain) when none
+// is, since a launch drafts at its captured window's width. So --spec-class-depth only ever lowers
+// and every fallback candidate (a shallower depth, the head) takes it without a refusal, and the
+// depth reported is the one that runs. Non-increasing bounds stay non-increasing.
 [[nodiscard]] std::array<std::uint32_t, spec::kContextClasses>
 clamp_class_override(const std::array<std::uint32_t, spec::kContextClasses>& bounds,
-                     std::uint32_t window);
+                     const SpeculativeOptions& engine);
 // served.classes after --spec-class-depth `bounds` (already clamped): each class at the depth the
 // engine runs, min(the primary's depth, bound) (the primary's where a class is unbounded), the
 // override named in its reason.

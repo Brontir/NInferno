@@ -358,8 +358,10 @@ Huge (the rest).
   replaces the bounds, for an explicit `--spec` too; the startup log names the bounds the started
   Engine runs, clamped (`speculation | class bounds ...`). It applies to every
   candidate startup tries (the fit fallback, shallower depths, the model's MTP head), each clamped
-  to that candidate's window: a bound at or past the window bounds nothing, so the override only
-  lowers. The report shows the depth the engine runs, the smaller of the served depth and the
+  to that candidate's captured depths: a bound at or past the window bounds nothing, any other
+  rounds down to the deepest captured depth within it (or plain), since a launch drafts at its
+  captured window's width; so the override only lowers. A shallower fallback depth carries no
+  measurement of its own, so the classes keep it ("no estimate"). The report shows the depth the engine runs, the smaller of the served depth and the
   bound.
 
 ### Graphs and workspace

@@ -653,7 +653,14 @@ int main() {
         // validation takes, and the report shows the depth the engine runs.
         {
             const std::array<std::uint32_t, 4> asked{7, 5, 3, 0};
-            const auto clamped = ninferno::product::clamp_class_override(asked, 4);
+            const auto engine_at = [](std::uint32_t k, std::vector<std::uint32_t> more) {
+                SpeculativeOptions o;
+                o.backend              = ninferno::SpeculativeBackend::DFlash2;
+                o.draft_tokens         = k;
+                o.request_draft_tokens = std::move(more);
+                return o;
+            };
+            const auto clamped = ninferno::product::clamp_class_override(asked, engine_at(4, {3}));
             failures += check(clamped == std::array<std::uint32_t, 4>{none, none, 3, 0},
                               "the override clamps to the window");
             auto shallower                        = served;
@@ -674,13 +681,62 @@ int main() {
                     shallower.classes[2].depth == 3 && shallower.classes[3].depth == 0 &&
                     shallower.classes[2].reason.starts_with("--spec-class-depth none,none,3,0"),
                 "the report shows min(pick, bound): " + shallower.classes[2].reason);
-            const auto deeper = ninferno::product::clamp_class_override(asked, 7);
+            const auto deeper =
+                ninferno::product::clamp_class_override(asked, engine_at(7, {5, 3}));
             failures += check(deeper == std::array<std::uint32_t, 4>{none, 5, 3, 0},
                               "at window 7 a bound of 7 bounds nothing");
             // The model's MTP head at depth 3 (the last fallback before plain).
-            failures += check(ninferno::product::clamp_class_override(asked, 3) ==
-                                  std::array<std::uint32_t, 4>{none, none, none, 0},
-                              "at the head's window 3: none,none,none,0");
+            failures +=
+                check(ninferno::product::clamp_class_override(asked, engine_at(3, {2, 1})) ==
+                          std::array<std::uint32_t, 4>{none, none, none, 0},
+                      "at the head's window 3: none,none,none,0");
+            // A bound between captured depths rounds down to the one that runs: 6,4,2,0 on an
+            // engine capturing 7, 5 and 3 runs 5, 3, plain, plain; the Engine refuses the
+            // uncaptured bounds as given and takes the rounded ones.
+            {
+                const std::array<std::uint32_t, 4> between{6, 4, 2, 0};
+                const auto engine  = engine_at(7, {5, 3});
+                const auto rounded = ninferno::product::clamp_class_override(between, engine);
+                failures += check(rounded == std::array<std::uint32_t, 4>{5, 3, 0, 0},
+                                  "uncaptured bounds round down to captured depths");
+                SpeculativeOptions as_given = engine;
+                as_given.class_depth        = between;
+                SpeculativeOptions runs     = engine;
+                runs.class_depth            = rounded;
+                failures += check(
+                    !ninferno::models::qwen3_5::detail::speculation_class_depth_valid(as_given) &&
+                        ninferno::models::qwen3_5::detail::speculation_class_depth_valid(runs),
+                    "the Engine takes only captured class bounds");
+                auto report = served;
+                ninferno::product::apply_class_override(report, rounded);
+                failures += check(report.classes[0].depth == 5 && report.classes[1].depth == 3 &&
+                                      report.classes[2].depth == 0,
+                                  "the report shows the captured depth that runs");
+            }
+        }
+        // A shallower fallback carries no measurement at its depth: the classes keep its pick.
+        {
+            ninferno::spec::Profile profile;
+            ninferno::spec::Choice measured;
+            measured.config                 = at(7);
+            measured.drafter                = "dflash2";
+            measured.tokens_per_round       = 4.3;
+            measured.floor_tokens_per_round = 1.9;
+            profile.overall = profile.thinking = profile.non_thinking = measured;
+            const auto shallower = ninferno::product::shallower_profile(profile, at(7), 1.9);
+            failures += check(shallower && shallower->overall.config.k == 6 &&
+                                  shallower->overall.tokens_per_round == 0 &&
+                                  shallower->thinking.tokens_per_round == 0,
+                              "a shallower fallback is not measured at its depth");
+            // Known factors on it keep the pick: no measured tokens per round at depth 6.
+            const ninferno::spec::ClassFactor f6{0.6, {}};
+            const std::vector<ninferno::spec::DepthFloor> floors6 = {{6, 1.8}, {5, 1.75}, {3, 1.5}};
+            const auto kept = ninferno::spec::served_class_depths(
+                6, shallower->overall.tokens_per_round, floors6, {f6, f6, f6, f6});
+            failures += check(
+                kept[1].depth == 6 && kept[2].depth == 6 && kept[3].depth == 6 &&
+                    kept[2].reason.find("no measured tokens per round") != std::string::npos,
+                "known factors on an unmeasured fallback keep its pick (" + kept[2].reason + ")");
         }
         // A plain menu: nothing.
         ninferno::product::ServedSpeculation plain;
