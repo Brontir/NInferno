@@ -14,9 +14,9 @@ namespace ninferno::ops::detail {
 // The columns one launch of a grouped kernel takes under the invariant route profile
 // (prefill_routes.h): a wider call of one row runs as consecutive chunks of them after its keys
 // and values are in the cache, so the grouped kernel serves every width and its partials stay
-// within 64 columns x the heads x the aligned splits (64 at 262,144 keys). A column's bytes do
-// not depend on the chunk that carries it: its row's splits are aligned to the keys, and the rows
-// of a token tile do not mix.
+// within 64 columns x the heads x the aligned splits (at most 64 per column). A column's bytes do
+// not depend on the chunk that carries it: its splits follow its own position
+// (CausalKvPartition::aligned_row), and the rows of a token tile do not mix.
 inline constexpr int kCausalInvariantChunkColumns = 64;
 
 // The columns one grouped launch of a `width`-column call takes: the whole call, or under the

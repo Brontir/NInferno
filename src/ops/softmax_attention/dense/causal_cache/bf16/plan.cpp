@@ -13,7 +13,7 @@ constexpr int kGroupedPrefillMaxWidth = 256;
 } // namespace
 
 Bf16KvCausalPlan make_bf16_kv_causal_plan(int heads, int kv_heads, int width, int batch,
-                                          CausalAttentionExecutionEnvelope envelope, int row_keys,
+                                          CausalAttentionExecutionEnvelope envelope,
                                           int multiprocessor_count) {
     require_causal_plan_inputs("BF16", heads, kv_heads, width, batch, envelope);
     if (multiprocessor_count <= 0) throw std::invalid_argument("BF16 attention: invalid SM count");
@@ -62,9 +62,9 @@ Bf16KvCausalPlan make_bf16_kv_causal_plan(int heads, int kv_heads, int width, in
         partition.interval_capacity(low, std::min(visible, 32767), partition.normal_target),
         partition.interval_capacity(std::max(low, 32768), visible, partition.long_target));
     if (invariant) {
-        // Splits aligned to the KV row, as CausalKvPartition::aligned_to_row.
-        partition.aligned_keys = 1 << CausalKvPartition::aligned_key_shift(row_keys);
-        partition.capacity     = CausalKvPartition::aligned_capacity(visible, row_keys);
+        // Splits aligned to each token's own position, as CausalKvPartition::aligned_to_positions.
+        partition.aligned  = true;
+        partition.capacity = CausalKvPartition::aligned_capacity(visible);
     }
     return {instance, partition, heads,    kv_heads,
             width,    batch,     envelope, causal_launch_columns(width, invariant)};
@@ -77,7 +77,7 @@ std::size_t bf16_kv_workspace_bytes(int heads, int kv_heads, int batch, int min_
     const auto widths   = causal_grouped_workspace_widths(
         min_width, max_width, kGroupedPrefillMaxWidth, invariant_routes_active());
     for (int width = widths.first; width <= widths.last; ++width) {
-        const auto plan = make_bf16_kv_causal_plan(heads, kv_heads, width, batch, envelope, 0,
+        const auto plan = make_bf16_kv_causal_plan(heads, kv_heads, width, batch, envelope,
                                                    multiprocessor_count);
         WorkspaceLayoutBuilder layout;
         (void)allocate_causal_partials(layout, heads, width, plan.partition.capacity, batch);

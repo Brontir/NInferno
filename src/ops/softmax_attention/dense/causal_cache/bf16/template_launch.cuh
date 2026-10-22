@@ -35,7 +35,10 @@ int bf16_kv_dynamic_shared() {
     return Bytes;
 }
 
-template <class G, class S, bool MultiBatch, bool Masked, bool Writable, class Input>
+// AlignedCapable: the instance the invariant route profile launches (Grouped32); only it builds
+// the aligned kernel and merge.
+template <class G, class S, bool MultiBatch, bool Masked, bool Writable, class Input,
+          bool AlignedCapable = false>
 void launch_bf16_kv_grouped_mma(const CausalAttentionOperands& p, Bf16KvCacheView<Writable> cache,
                                 Input input, Bf16KvPartition partition, CausalPartialView partials,
                                 cudaStream_t stream) {
@@ -43,16 +46,20 @@ void launch_bf16_kv_grouped_mma(const CausalAttentionOperands& p, Bf16KvCacheVie
     validate_bf16_kv_operands<G>(p, cache);
     if ((S::kFixedWidth && p.width != S::kFixedWidth) || partition.capacity < 1 ||
         partition.capacity > 256 || partition.normal_target < 1 || partition.long_target < 1 ||
-        partition.key_rows != S::kKeyRows ||
-        partition.live(p.visible_capacity).splits > partition.capacity || !partials.acc ||
+        partition.key_rows != S::kKeyRows || (partition.aligned && !AlignedCapable) ||
+        (partition.aligned ? Bf16KvPartition::aligned_live(p.visible_capacity)
+                           : partition.live(p.visible_capacity))
+                .splits > partition.capacity ||
+        !partials.acc ||
         !partials.maximum || !partials.sum || MultiBatch != (p.batch > 1) ||
         Masked != (cache.valid_columns != nullptr))
         throw std::invalid_argument("BF16 grouped attention: invalid partition or metadata");
     if constexpr (Input::writes_cache) {
         if (!input.k || !input.v) throw std::invalid_argument("BF16 grouped append requires K/V");
     }
-    {
-        static constexpr auto kernel = bf16_kv_grouped_mma_kernel<G, S, MultiBatch, Masked, Input>;
+    const auto launch = [&]<bool Aligned>() {
+        static constexpr auto kernel =
+            bf16_kv_grouped_mma_kernel<G, S, MultiBatch, Masked, Input, Aligned>;
         constexpr int bytes   = sizeof(Bf16KvGroupedStorage<G, S>);
         int dynamic           = 0;
         if constexpr (bytes > kStaticSharedBytesPerBlock)
@@ -62,21 +69,35 @@ void launch_bf16_kv_grouped_mma(const CausalAttentionOperands& p, Bf16KvCacheVie
         kernel<<<grid, S::kThreads, dynamic, stream>>>(
             p.q, input, p.positions, cache.keys, cache.values, cache.tables, cache.valid_columns,
             cache.table_rows, cache.table_stride, p.width, p.scale, partition, partials);
+        CUDA_CHECK(cudaGetLastError());
+    };
+    if constexpr (AlignedCapable) {
+        if (partition.aligned) return launch.template operator()<true>();
     }
-    CUDA_CHECK(cudaGetLastError());
+    launch.template operator()<false>();
 }
 
-template <class G, class S, bool MultiBatch, bool Masked, bool Writable>
+template <class G, class S, bool MultiBatch, bool Masked, bool Writable,
+          bool AlignedCapable = false>
 void launch_bf16_kv_merge(const CausalAttentionOperands& p, Bf16KvCacheView<Writable> cache,
                           Bf16KvPartition partition, CausalPartialView partials,
                           cudaStream_t stream) {
     if (partition.capacity > S::kThreads)
         throw std::invalid_argument("BF16 merge capacity exceeds the reduction block");
     const dim3 grid(G::QHeads, div_up(G::kHeadDim, S::kDChunk), p.width * p.batch);
-    bf16_kv_merge_kernel<G, S, MultiBatch, Masked><<<grid, S::kThreads, 0, stream>>>(
-        partials.acc, partials.maximum, partials.sum, p.positions, cache.valid_columns, p.width,
-        p.batch, partition, p.out, p.gate);
-    CUDA_CHECK(cudaGetLastError());
+    const auto launch = [&]<bool Aligned>() {
+        bf16_kv_merge_kernel<G, S, MultiBatch, Masked, Aligned><<<grid, S::kThreads, 0, stream>>>(
+            partials.acc, partials.maximum, partials.sum, p.positions, cache.valid_columns, p.width,
+            p.batch, partition, p.out, p.gate);
+        CUDA_CHECK(cudaGetLastError());
+    };
+    if constexpr (AlignedCapable) {
+        if (partition.aligned) return launch.template operator()<true>();
+    } else {
+        if (partition.aligned)
+            throw std::invalid_argument("BF16 merge: aligned splits need the aligned instance");
+    }
+    launch.template operator()<false>();
 }
 
 template <class Geometry, class Schedule>

@@ -13,7 +13,8 @@ void launch_mxfp8_kv_tiled_mma(const CausalAttentionOperands& p, View cache,
                                CausalKvPartition partition, CausalPartialView partial,
                                cudaStream_t stream) {
     validate_quantized_causal_operands<G>(p, cache);
-    if (p.batch != 1 || partition.target < 1 || partition.target > kMxfp8TiledMaxSplits ||
+    if (p.batch != 1 || partition.aligned || partition.target < 1 ||
+        partition.target > kMxfp8TiledMaxSplits ||
         partition.capacity != partition.active(p.visible_capacity) || !partial.acc ||
         !partial.maximum || !partial.sum)
         throw std::invalid_argument("MXFP8 tiled attention: invalid batch or partial storage");

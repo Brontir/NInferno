@@ -16,8 +16,7 @@ constexpr bool kTiledKernel = kNativeNvfp4;
 
 Nvfp4KvCausalPlan make_nvfp4_kv_causal_plan(int heads, int kv_heads, int width, int batch,
                                             CausalAttentionExecutionEnvelope envelope,
-                                            int row_keys,
- int multiprocessor_count) {
+                                            int multiprocessor_count) {
     require_causal_plan_inputs("NVFP4", heads, kv_heads, width, batch, envelope);
     if (multiprocessor_count <= 0)
         throw std::invalid_argument("NVFP4 attention: invalid SM count");
@@ -35,7 +34,7 @@ Nvfp4KvCausalPlan make_nvfp4_kv_causal_plan(int heads, int kv_heads, int width, 
                 batch,
                 grouped_limit,
                 envelope,
-                CausalKvPartition::aligned_to_row(row_keys, envelope.max_visible_keys),
+                CausalKvPartition::aligned_to_positions(envelope.max_visible_keys),
                 launch_columns};
     const auto family           = width <= grouped_limit ? Nvfp4KvFamily::Grouped
                                   : width <= kGroupedPrefillMaxWidth || !kTiledKernel
@@ -61,7 +60,8 @@ std::size_t nvfp4_kv_workspace_bytes(int heads, int kv_heads, int batch, int min
         min_width, max_width, kTiledKernel ? kGroupedPrefillMaxWidth : max_width,
         invariant_routes_active());
     for (int width = widths.first; width <= widths.last; ++width) {
-        const auto plan = make_nvfp4_kv_causal_plan(heads, kv_heads, width, batch, envelope, 0, multiprocessor_count);
+        const auto plan = make_nvfp4_kv_causal_plan(heads, kv_heads, width, batch, envelope,
+                                                    multiprocessor_count);
         if (plan.family == Nvfp4KvFamily::Tiled) continue;
         const int splits = plan.partition.capacity;
         WorkspaceLayoutBuilder layout;

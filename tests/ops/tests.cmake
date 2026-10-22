@@ -262,3 +262,10 @@ include("${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_add/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_pair/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_swiglu/tests.cmake")
+
+# The position-aligned KV splits of the invariant route profile (CausalKvPartition): a host replica
+# of the aligned grouped kernel's split walk gives every token its decode's partials under any
+# prompt chunking; prints the split plan per SM count. No GPU.
+ninferno_add_test(ninferno_causal_position_partition_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
+  LIBRARIES ninferno::cudart)

@@ -6,7 +6,10 @@ reach the runtime only as facts or as constants.
 
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
-- the attention split under `exact` follows the free-memory-sized context;
+- under `exact`, the DFlash drafter's attention over its context (`context_softmax_attention`)
+  still takes its split count from the free-memory-sized context, so the drafts and how many are
+  accepted can follow free memory; under greedy decoding the emitted bytes do not (the target's
+  verify decides them). The target's causal attention splits follow each token's position only;
 - a constrained row's measured mask time decides whether its masks are filled before launch and
   whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
   wait cannot change bytes or batches;

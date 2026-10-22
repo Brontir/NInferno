@@ -19,25 +19,38 @@ void launch_fp8_kv_grouped_mma(const CausalAttentionOperands& p, Fp8KvCacheView<
         Masked != (cache.valid_columns != nullptr) || partition.capacity < 1 ||
         partition.target > CausalKvPartition::kMaxSplits || partition.target < 1 ||
         partition.key_shift < 6 || partition.key_shift > 14 ||
-        partition.capacity != partition.active(p.visible_capacity) || !partial.acc ||
+        partition.capacity != partition.capacity_for(p.visible_capacity) || !partial.acc ||
         !partial.maximum || !partial.sum)
         throw std::invalid_argument("FP8 grouped attention: invalid schedule/partials");
     if constexpr (Input::writes_cache)
         if (!input.k || !input.v) throw std::invalid_argument("FP8 append requires K/V");
-    static constexpr auto kernel =
-        fp8_kv_grouped_mma_kernel<G, S, MultiBatch, Masked, Input, ParallelQueries>;
-    constexpr int bytes = S::kDynamicArena ? S::kArenaBytes : 0;
-    if constexpr (S::kDynamicArena) {
-        static ::ninferno::PerDevice<bool> status;
-        ::ninferno::allow_dynamic_smem(status, kernel, bytes);
+    const auto launch = [&]<bool Aligned>() {
+        static constexpr auto kernel =
+            fp8_kv_grouped_mma_kernel<G, S, MultiBatch, Masked, Input, ParallelQueries, Aligned>;
+        constexpr int bytes = S::kDynamicArena ? S::kArenaBytes : 0;
+        if constexpr (S::kDynamicArena) {
+            static ::ninferno::PerDevice<bool> status;
+            ::ninferno::allow_dynamic_smem(status, kernel, bytes);
+        }
+        const dim3 grid(G::KVHeads * (ParallelQueries ? div_up(p.width, S::kTokenTile) : 1),
+                        partition.capacity, p.batch);
+        kernel<<<grid, S::kThreads, bytes, stream>>>(
+            p.q, input, p.positions, cache.keys, cache.values, cache.key_scales,
+            cache.value_scales, cache.tables, cache.valid_columns, cache.table_rows,
+            cache.table_stride, p.width, p.visible_capacity, partition, p.scale, partial.acc,
+            partial.maximum, partial.sum);
+        CUDA_CHECK(cudaGetLastError());
+    };
+    // The invariant route profile launches the parallel tiles over the cache only
+    // (CausalKvPartition::aligned_to_positions); only those instances are built aligned.
+    if constexpr (ParallelQueries && !Input::writes_cache) {
+        if (partition.aligned) return launch.template operator()<true>();
+    } else {
+        if (partition.aligned)
+            throw std::invalid_argument(
+                "FP8 grouped attention: aligned splits need the parallel tiles");
     }
-    const dim3 grid(G::KVHeads * (ParallelQueries ? div_up(p.width, S::kTokenTile) : 1),
-                    partition.capacity, p.batch);
-    kernel<<<grid, S::kThreads, bytes, stream>>>(
-        p.q, input, p.positions, cache.keys, cache.values, cache.key_scales, cache.value_scales,
-        cache.tables, cache.valid_columns, cache.table_rows, cache.table_stride, p.width,
-        p.visible_capacity, partition, p.scale, partial.acc, partial.maximum, partial.sum);
-    CUDA_CHECK(cudaGetLastError());
+    launch.template operator()<false>();
 }
 
 } // namespace ninferno::ops::detail
