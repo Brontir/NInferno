@@ -1,7 +1,7 @@
 // Qwen 3.x prefill ops: a token's output must not depend on how many other tokens share the call,
 // nor on where in the call it sits. A prefill chunk's size and start are decided by where a request
-// was cut (the chunk size, a cache frontier, a restore base), not by the model, so every column of a
-// call over tokens [o, o+t) has to equal, byte for byte, the same column of one wide call.
+// was cut (the chunk size, a cache frontier, a restore base), not by the model, so every column of
+// a call over tokens [o, o+t) has to equal, byte for byte, the same column of one wide call.
 //
 // Every prefill op and registered shape of the two v3 artifacts is run once over the widest call
 // and again over windows that cross each route and tile frontier (T from 17 up), at the start of
@@ -686,13 +686,13 @@ DeviceBuffer upload_state(const std::vector<float>& values, DType dtype) {
 }
 
 // Gated DeltaNet prefill scan. One call over kT tokens is the reference; each cut runs the same
-// tokens as [0, cut) and [cut, kT), carrying the state in `state_dtype`. Under the prefill profile a
-// cut on the 16-token chunk grid must be invariant whatever the state's storage (the scan rounds a
-// BF16 or FP16 state at every chunk end, so a call that ends on the grid hands on the state the one
-// call carries past it), and a cut off the grid is reported with the first differing column (known
-// exception, see the header). Under the invariant profile (`exact`, which keeps the state in FP32)
-// every cut must be invariant, and so must the same tokens fed one call per token, as decode feeds
-// them.
+// tokens as [0, cut) and [cut, kT), carrying the state in `state_dtype`. Under the prefill profile
+// a cut on the 16-token chunk grid must be invariant whatever the state's storage (the scan rounds
+// a BF16 or FP16 state at every chunk end, so a call that ends on the grid hands on the state the
+// one call carries past it), and a cut off the grid is reported with the first differing column
+// (known exception, see the header). Under the invariant profile (`exact`, which keeps the state in
+// FP32) every cut must be invariant, and so must the same tokens fed one call per token, as decode
+// feeds them.
 int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* name, bool exact,
                     DType state_dtype = DType::FP32) {
     constexpr std::int32_t kD = 128;
@@ -747,7 +747,7 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         }
         return std::int32_t{-1};
     };
-    const char* mode = exact                           ? " exact"
+    const char* mode = exact                        ? " exact"
                        : state_dtype == DType::FP16 ? " f16 state"
                        : state_dtype == DType::BF16 ? " bf16 state"
                                                     : "";
