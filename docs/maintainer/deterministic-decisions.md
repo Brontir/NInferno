@@ -432,6 +432,15 @@ build the same rungs for the same options, and that the family table the dry run
 Only the rung bytes differ: a declared estimate of KV pages, states, rings, workspace and a graph
 allowance.
 
+Known gap, on the conservative side (principle 7): the dry prefill workspace is an upper estimate
+(about chunk·(12·hidden + 3·ffn)·2 bytes plus the logits). A start sizes it from the family's
+activation layout and the bound weights' route scratch (`build_workspace_plan`). For Qwen 3.5 9B
+Q8_0 the dry workspace is 169 MiB where a start takes about 77 MiB at chunk 1024 (22 against about
+17.5 MiB at chunk 128). On a card where the free memory sits near a rung boundary, the dry plan
+(and so the quant rule and the planned context ceiling) can land one rung below the start: the
+RTX 4070 Ti Q8_0 row of 21.10. It never lands higher. The fix (the dry workspace from the
+family's layout plus each format's route scratch, tested equal to a start's) is separate work.
+
 The free memory is either the device's now, less the weights, or that of an idle card of the class:
 the VRAM less a declared driver share and a desktop share. It still only selects a declared rung.
 
