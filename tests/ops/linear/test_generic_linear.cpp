@@ -1302,7 +1302,7 @@ int check_nvfp4_a8_routes() {
             DeviceBuffer x(activation.size() * 2);
             x.copy_from_host(activation.data(), x.bytes);
             DeviceBuffer out(static_cast<std::size_t>(o.n) * t * 2);
-            cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+            out.fill(0); // settles before the launch
             Tensor tx(x.p, DType::BF16, {o.k, t});
             Tensor tout(out.p, DType::BF16, {o.n, t});
             const std::size_t capacity =

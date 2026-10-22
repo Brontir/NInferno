@@ -771,7 +771,9 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         // The decode kernel itself: the same tokens through gated_delta_net_batch_update (B = 1),
         // one in-place pool slot.
         DeviceBuffer pool(s0.bytes), decoded(static_cast<std::size_t>(kD) * v_heads * kSteps * 2);
-        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        // On the stream the kernels below run on, so the copy is ordered before them.
+        cuda_check(cudaMemcpyAsync(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice, stream()),
+                   "pool");
         const auto slot = upload(std::vector<std::int32_t>{0});
         Tensor pool_tensor(pool.p, DType::FP32, {kD, kD, v_heads, 1});
         const Tensor slot_tensor(slot.p, DType::I32, {1});
@@ -806,7 +808,9 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         // The verify kernel: one 16-column window through gated_delta_net_replay_record (B = 1)
         // from the initial state, which it leaves unchanged.
         constexpr std::int32_t kWindow = 16;
-        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        // On the stream the kernels below run on, so the copy is ordered before them.
+        cuda_check(cudaMemcpyAsync(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice, stream()),
+                   "pool");
         DeviceBuffer key_record(static_cast<std::size_t>(kD) * qk_heads * kWindow * 2);
         DeviceBuffer value_record(static_cast<std::size_t>(kD) * v_heads * kWindow * 2);
         DeviceBuffer gate_record(static_cast<std::size_t>(2) * v_heads * kWindow * 4);
