@@ -722,10 +722,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     };
     // What the selection keeps beside a rung (plan_ladder.h, PlanMargins). The class reserve of a
     // GPU Windows shares and of one sharing the host's memory applies to an automatic pool only;
-    // an explicit --kv-capacity keeps none, as before.
+    // an explicit --kv-capacity keeps none, as before. It is kept beside the free memory less the
+    // desktop's declared share (plan_reserve_beside_free): the free memory read below already
+    // lacks what the desktop holds, so the desktop keeps the larger of the two, not their sum, and
+    // the dry run's idle card (plan_idle_free_bytes) keeps the same.
     const bool paravirtual            = paravirtualized_gpu(device.device);
     const bool with_display           = drives_display(device.device);
-    const std::uint64_t class_reserve = plan_class_reserve(
+    const std::uint64_t class_reserve = plan_reserve_beside_free(
         device.props.totalGlobalMem, paravirtual, with_display, device.props.integrated != 0);
     // The ladder's axes and margins (plan_dry_run.h): the seams the dry run without the weights
     // (ninferno-serve --plan --no-load) shares with a start.
@@ -779,22 +782,20 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         if (!fit) { return std::nullopt; }
         return ladder.rungs[fit->rung].max_context;
     };
+    // longest_context in `free_bytes`, as the advice functions the dry run shares read it
+    // (plan_dry_run.h, plan_fits_instead).
+    const auto longest_in = [&](std::uint64_t free_bytes) {
+        return PlanLongestContextFn([&, free_bytes](std::uint32_t concurrency, bool chunk_kept) {
+            return longest_context(concurrency, free_bytes, chunk_kept);
+        });
+    };
     // Each lower concurrency that fits a longer automatic context than `served_context` (nullopt:
     // nothing fits at the served concurrency), the highest first.
     const auto lower_concurrency_fits = [&](std::optional<std::uint32_t> served_context,
                                             std::uint64_t free_bytes, bool chunk_pinned) {
-        std::vector<ConcurrencyFit> out;
-        for (std::uint32_t concurrency = resolved.max_concurrency - 1U; concurrency >= 1U;
-             --concurrency) {
-            const std::optional<std::uint32_t> fit =
-                longest_context(concurrency, free_bytes, chunk_pinned);
-            if (fit && (!served_context || *fit > *served_context)) {
-                out.push_back({.max_concurrency = concurrency, .max_context = *fit});
-                served_context = fit;
-            }
-            if (served_context && *served_context >= unfitted.max_context) { break; }
-        }
-        return out;
+        return plan_lower_concurrency_fits(resolved.max_concurrency, served_context,
+                                           unfitted.max_context, chunk_pinned,
+                                           longest_in(free_bytes));
     };
     // No rung fits: the refusal names the last rung's need, the free memory and what fits
     // instead (a CapacityError: ninferno-serve's fallbacks recover by that type).
@@ -817,25 +818,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         // or the states were asked for) and at each lower one that fits longer.
         const bool pinned = !context.automatic || !kv_automatic || configured_states.has_value();
         const bool chunk_pinned = !resolved.prefill_chunk_automatic;
-        const auto what_fits    = [&](bool chunk_kept) {
-            std::vector<ConcurrencyFit> out;
-            if (pinned) {
-                if (const auto here =
-                        longest_context(resolved.max_concurrency, free_bytes, chunk_kept)) {
-                    out.push_back(
-                        {.max_concurrency = resolved.max_concurrency, .max_context = *here});
-                }
-            }
-            if (resolved.max_concurrency > 1) {
-                const std::vector<ConcurrencyFit> lower = lower_concurrency_fits(
-                    out.empty() ? std::nullopt
-                                : std::optional<std::uint32_t>(out.back().max_context),
-                    free_bytes, chunk_kept);
-                out.insert(out.end(), lower.begin(), lower.end());
-            }
-            return out;
-        };
-        std::vector<ConcurrencyFit> fits = what_fits(chunk_pinned);
+        const PlanFitsInstead instead_fits =
+            plan_fits_instead(resolved.max_concurrency, unfitted.max_context, pinned, chunk_pinned,
+                              longest_in(free_bytes));
+        std::vector<ConcurrencyFit> fits = instead_fits.fits;
         std::vector<std::uint32_t> chunks{unfitted.prefill_chunk};
         if (!chunk_pinned) {
             for (std::uint32_t chunk = unfitted.prefill_chunk / 2;
@@ -844,13 +830,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
         }
         std::uint32_t narrowed_from = 0;
-        if (fits.empty() && chunk_pinned) {
+        if (instead_fits.narrowed) {
             // An explicit --prefill-chunk nothing fits with: what the narrower chunks fit.
-            fits = what_fits(false);
-            if (!fits.empty()) {
-                narrowed_from = unfitted.prefill_chunk;
-                chunks        = {kNarrowestAutomaticPrefillChunk};
-            }
+            narrowed_from = unfitted.prefill_chunk;
+            chunks        = {kNarrowestAutomaticPrefillChunk};
         }
         const bool explicit_plan = !context.automatic && !resolved.prefill_chunk_automatic &&
                                    !kv_automatic && configured_states.has_value();

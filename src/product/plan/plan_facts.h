@@ -19,6 +19,16 @@
 // The family (PlanModelFacts::model_type) is the model_type the converted artifact would declare
 // (qwen3_5_text, qwen3_5_moe_text, gemma4_text, dense_decoder, moe_decoder, nemotron_h), from the
 // GGUF architecture or the checkpoint's architectures[0]; "" when no family serves it.
+//
+// The state the family's planner lays out (PlanModelFacts::state, offline_bytes) is read from the
+// same keys: the full layers' KV heads and widths (one geometry; a model whose full layers differ
+// is approximate), the sliding layers' (a ring decoder keeps the full layers' geometry in its
+// rings), the recurrent mixers' (GatedDeltaNet: ssm.time_step_rank value heads of
+// ssm.inner_size / heads, ssm.group_count key heads of ssm.state_size; Mamba2: heads, head width,
+// groups, state), the residual width and the vocabulary (the ids a request may carry are taken as
+// the vocabulary: the planner sizes its token counts by the tokenizer's, at most the vocabulary).
+// An artifact's DFlash component names its drafter (state.drafter); a separate drafter's config is
+// plan_drafter_state_of_config's.
 // Pure but for plan_device_of_cuda (the CUDA runtime) and plan_facts_of_artifact (the file).
 
 #include "runtime/engine/plan_dry_run.h"
@@ -83,6 +93,15 @@ struct PlanSourceFacts {
 // From a .ninferno artifact: its text config and its tensors (Artifact). Throws
 // std::runtime_error when the file is no artifact.
 [[nodiscard]] PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact);
+
+// A DFlash drafter's state from its config.json (a Qwen artifact's dflash / dflash2 component, or a
+// separate drafter's: z-lab's DFlash and DFlash2 checkpoints, a converted gemma4_dflash / dflash
+// artifact): its full and sliding layers, window, KV heads and width, and the target features one
+// column holds (`target_hidden` x its taps; a drafter whose feature projection is split by tap
+// holds the hidden width a prefill column, which its config does not say: the unsplit rows, the
+// larger). nullopt: the config names no DFlash drafter.
+[[nodiscard]] std::optional<models::DrafterStateShape>
+plan_drafter_state_of_config(const nlohmann::json& config, std::uint32_t target_hidden);
 
 // The same model at another quantization of `bytes` (a hub listing's row): the shape kept, the
 // weights replaced (basis as given), the bits-per-weight of the rule from the parameter count.

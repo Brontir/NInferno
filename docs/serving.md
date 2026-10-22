@@ -58,8 +58,15 @@ For a hub id:
   ([reference](reference/serving.md#the-plan-without-the-weights)).
 - `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
   Without `--quant`, a GGUF repository is fetched at the largest quantization that fits the asked
-  context and streams on this GPU's card type, and the log says which (`quant | ...`). When none
-  fits, nothing is downloaded and the refusal says what fits instead.
+  context and streams on this GPU's card type, and the log says which (`quant | ...`):
+  - "fits" means each stream holds the asked context of its own; with an automatic context, at
+    least 32K each (or the model's own length), then 16K, then 8K, before the streams share one
+    pool, and that is logged in plain words;
+  - below 3.5 bits per weight only when nothing larger fits at all;
+  - a quantization already downloaded that fits is kept, so other flags do not download another
+    file;
+  - when none fits, nothing is downloaded and the refusal says what fits instead;
+  - when the hub cannot be reached and nothing is cached, it asks for `--quant`.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is

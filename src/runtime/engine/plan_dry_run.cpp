@@ -1,9 +1,11 @@
 #include "runtime/engine/plan_dry_run.h"
 
+#include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "runtime/engine/kv_capacity.h"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -136,6 +138,49 @@ PlanLadderInputs plan_ladder_inputs(const PlanAxes& axes, std::uint32_t concurre
     };
 }
 
+std::vector<ConcurrencyFit> plan_lower_concurrency_fits(std::uint32_t concurrency,
+                                                        std::optional<std::uint32_t> served_context,
+                                                        std::uint32_t ceiling, bool chunk_kept,
+                                                        const PlanLongestContextFn& longest) {
+    std::vector<ConcurrencyFit> out;
+    for (std::uint32_t lower = concurrency - 1U; lower >= 1U && concurrency >= 1U; --lower) {
+        const std::optional<std::uint32_t> fit = longest(lower, chunk_kept);
+        if (fit && (!served_context || *fit > *served_context)) {
+            out.push_back({.max_concurrency = lower, .max_context = *fit});
+            served_context = fit;
+        }
+        if (served_context && *served_context >= ceiling) { break; }
+    }
+    return out;
+}
+
+PlanFitsInstead plan_fits_instead(std::uint32_t concurrency, std::uint32_t ceiling, bool pinned,
+                                  bool chunk_pinned, const PlanLongestContextFn& longest) {
+    const auto what_fits = [&](bool chunk_kept) {
+        std::vector<ConcurrencyFit> out;
+        if (pinned) {
+            if (const auto here = longest(concurrency, chunk_kept)) {
+                out.push_back({.max_concurrency = concurrency, .max_context = *here});
+            }
+        }
+        if (concurrency > 1) {
+            const std::vector<ConcurrencyFit> lower = plan_lower_concurrency_fits(
+                concurrency,
+                out.empty() ? std::nullopt : std::optional<std::uint32_t>(out.back().max_context),
+                ceiling, chunk_kept, longest);
+            out.insert(out.end(), lower.begin(), lower.end());
+        }
+        return out;
+    };
+    PlanFitsInstead out{.fits = what_fits(chunk_pinned)};
+    if (out.fits.empty() && chunk_pinned) {
+        // An explicit --prefill-chunk nothing fits with: what the narrower chunks fit.
+        out.fits     = what_fits(false);
+        out.narrowed = !out.fits.empty();
+    }
+    return out;
+}
+
 std::optional<PlanFamilyStorage> plan_family_storage(std::string_view model_type,
                                                      int compute_capability) {
     PlanFamilyStorage out;
@@ -172,10 +217,8 @@ std::string_view weight_basis_name(WeightBasis basis) noexcept {
 }
 
 std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
-    std::uint64_t taken = kPlanIdleContextBytes;
-    if (device.drives_display) {
-        taken += device.paravirtual ? kPlanIdleWindowsDesktopBytes : kPlanIdleLinuxDesktopBytes;
-    }
+    const std::uint64_t taken =
+        kPlanIdleContextBytes + plan_desktop_bytes(device.paravirtual, device.drives_display);
     return device.total_bytes > taken ? device.total_bytes - taken : 0;
 }
 
@@ -218,16 +261,7 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
             std::min<std::uint64_t>(model.window + chunk - 1, rung.max_context);
         out.rings = sequences * rows * plan_ring_bytes_per_token(model, options.sliding_kv_cache);
     }
-    const std::uint64_t round = round_tokens_of(options.speculative);
-    if (model.hidden != 0) {
-        // About twelve hidden-wide BF16 rows a token (norms, residual, attention projections) and
-        // three of the widest feed-forward it runs (catalog.h's estimate, checked on the RTX 4090
-        // log of Qwen3.6 35B: 79 MiB at chunk 1024), and FP32 logits of every decode column.
-        out.workspace = chunk * (12ULL * model.hidden + 3ULL * model.ffn_active) * 2ULL +
-                        static_cast<std::uint64_t>(concurrency) * round * model.vocab * 4ULL;
-    } else {
-        out.workspace = std::uint64_t{256} << 20;
-    }
+    out.workspace = plan_workspace_estimate(model, rung, options, concurrency);
     if (options.use_cuda_graph) {
         std::set<std::uint32_t> depths;
         if (options.speculative.backend != SpeculativeBackend::None) {
@@ -239,6 +273,79 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
         out.graphs = kPlanGraphBytesPerLane * concurrency * (1 + depths.size());
     }
     out.fixed = kPlanFixedRuntimeBytes;
+    out.host_state_image =
+        plan_state_bytes(model, options.recurrent_state) +
+        (model.sliding_layers != 0 ? static_cast<std::uint64_t>(model.window) *
+                                         plan_ring_bytes_per_token(model, options.sliding_kv_cache)
+                                   : 0);
+    return out;
+}
+
+std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
+                                      const EngineOptions& options, std::uint32_t concurrency) {
+    const std::uint64_t chunk = std::min(rung.prefill_chunk, rung.max_context);
+    const std::uint64_t round = round_tokens_of(options.speculative);
+    if (model.hidden == 0) { return std::uint64_t{256} << 20; }
+    // About twelve hidden-wide BF16 rows a token (norms, residual, attention projections) and
+    // three of the widest feed-forward it runs (catalog.h's estimate, checked on the RTX 4090
+    // log of Qwen3.6 35B: 79 MiB at chunk 1024), and FP32 logits of every decode column.
+    return chunk * (12ULL * model.hidden + 3ULL * model.ffn_active) * 2ULL +
+           static_cast<std::uint64_t>(concurrency) * round * model.vocab * 4ULL;
+}
+
+PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
+                              const EngineOptions& options, std::uint32_t concurrency,
+                              bool kv_explicit) {
+    namespace detail = models::qwen3_5::detail;
+    if (!model.offline_bytes) {
+        throw std::logic_error("plan_rung_bytes needs the facts of the model's state");
+    }
+    // The options a start plans this rung with (construct_or_plan, planned_at).
+    EngineOptions planned                    = options;
+    planned.max_context                      = rung.max_context;
+    planned.max_concurrency                  = concurrency;
+    planned.prefill_chunk                    = rung.prefill_chunk;
+    planned.context_cache.device_state_slots = rung.cached_states;
+    const detail::SequencePlanningInputs inputs =
+        detail::sequence_planning_inputs(planned, 0, false);
+    const detail::SequencePageRange range =
+        detail::sequence_page_range(inputs.capacity, inputs.max_concurrency);
+    // An automatic pool's pages are the planner's curve's (a start clamps them the same way); an
+    // explicit --kv-capacity outside it is refused.
+    const std::uint32_t pages =
+        kv_explicit ? rung.kv_pages : std::clamp(rung.kv_pages, range.minimum, range.maximum);
+    if (pages < range.minimum || pages > range.maximum) {
+        throw std::invalid_argument(
+            "kv_capacity is outside the usable range for max_context and max_concurrency");
+    }
+    const auto plan                       = detail::sequence_plan_shell(inputs, pages);
+    const detail::PersistentLayout layout = detail::plan_persistent_layout(model.state, *plan);
+    detail::plan_graph_allowance(*plan, false);
+
+    PlanRungBytes out;
+    out.kv             = layout.kv_payload_bytes;
+    const auto& images = layout.state_images;
+    if (images.linear) {
+        for (const auto& region : images.linear->conv) { out.states += region.bytes; }
+        for (const auto& region : images.linear->recurrent) { out.states += region.bytes; }
+    }
+    out.states += images.continuation_hidden.region.bytes;
+    for (const auto& group : images.rings) {
+        for (const auto* planes : {&group.k, &group.v, &group.k_scale, &group.v_scale}) {
+            for (const auto& plane : *planes) { out.rings += plane.region.bytes; }
+        }
+    }
+    if (images.dflash_local) {
+        for (const auto* planes : {&images.dflash_local->k, &images.dflash_local->v}) {
+            for (const auto& plane : *planes) { out.rings += plane.region.bytes; }
+        }
+    }
+    const std::uint64_t held = out.kv + out.states + out.rings;
+    if (held > layout.bytes) { throw std::logic_error("the persistent layout's regions overlap"); }
+    out.fixed            = layout.bytes - held;
+    out.graphs           = plan->graph_allowance_bytes;
+    out.workspace        = plan_workspace_estimate(model, rung, options, concurrency);
+    out.host_state_image = images.host.image_bytes;
     return out;
 }
 
@@ -308,7 +415,17 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     out.total_bytes   = device.total_bytes;
     out.free_measured = device.free_bytes.has_value();
     out.free_bytes    = device.free_bytes.value_or(plan_idle_free_bytes(device));
-    out.weight_bytes  = model.weight_bytes + model.drafter_bytes;
+    // The weights a start uploads for these options: the MTP layers only under MTP, the model's
+    // own DFlash drafter only under DFlash (the family load reads only the component the
+    // speculation names).
+    const SpeculativeBackend backend = options.speculative.backend;
+    const std::uint64_t unloaded =
+        (backend != SpeculativeBackend::Mtp ? model.mtp_bytes : 0) +
+        (backend != SpeculativeBackend::DFlash && backend != SpeculativeBackend::DFlash2
+             ? model.own_drafter_bytes
+             : 0);
+    out.weight_bytes = (model.weight_bytes > unloaded ? model.weight_bytes - unloaded : 0) +
+                       model.drafter_bytes + (options.enable_vision ? model.vision_bytes : 0);
     out.free_after_weights =
         out.free_bytes > out.weight_bytes ? out.free_bytes - out.weight_bytes : 0;
     if (!model.known()) {
@@ -320,6 +437,39 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     out.kv_cache  = options.kv_cache;
     out.recurrent = options.recurrent_state;
 
+    // The bytes' basis: the family planner's byte functions when the facts name the state whole
+    // (and, for a DFlash plan, its drafter's).
+    const bool masked_draft = options.speculative.backend == SpeculativeBackend::DFlash ||
+                              options.speculative.backend == SpeculativeBackend::DFlash2;
+    bool family_planner = model.offline_bytes;
+    if (!family_planner) {
+        out.estimate_reason = model.offline_reason.empty()
+                                  ? "the facts do not name the model's state"
+                                  : model.offline_reason;
+    } else if (masked_draft && !model.state.drafter) {
+        family_planner = false;
+        out.estimate_reason =
+            "the DFlash drafter's shape is unknown: its KV and ring are estimated";
+    }
+    if (family_planner) {
+        // What the family refuses before any plan (its storage, its drafter).
+        try {
+            models::qwen3_5::detail::validate_state_storage(model.state, options);
+            if (masked_draft && model.state.family == models::StateFamily::Qwen35 &&
+                (options.speculative.backend == SpeculativeBackend::DFlash2) !=
+                    model.state.drafter->dflash2) {
+                throw std::invalid_argument(
+                    "selected masked draft backend is not supported by this target");
+            }
+        } catch (const std::invalid_argument& refusal) {
+            out.reason = refusal.what();
+            return out;
+        }
+        out.estimate_basis  = "family_planner";
+        out.estimate_reason = "the family planner's persistent state and graph allowance; the "
+                              "workspace estimated (its Op scratch the bound weights' routes size)";
+    }
+
     ContextCacheOptions& cache = options.context_cache;
     // An automatic Host tier on a GPU sharing the host's memory is off (construct_or_plan).
     const std::uint32_t default_host_slots = cache.host_state_slots;
@@ -329,64 +479,97 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     }
     const bool host_states =
         plan_host_states_configured(cache, default_host_slots, device.integrated);
-    const std::uint64_t class_reserve = plan_class_reserve(
+    // The class reserve beside the free memory: the desktop's share is already out of it (the idle
+    // card's, or the device's now), as at a start (construct_or_plan).
+    const std::uint64_t class_reserve = plan_reserve_beside_free(
         device.total_bytes, device.paravirtual, device.drives_display, device.integrated);
     out.axes    = plan_axes(options, model.native_context, host_states, class_reserve);
     out.margins = plan_margins(out.axes);
 
-    const std::uint64_t image_bytes =
-        plan_state_bytes(model, options.recurrent_state) +
-        (model.sliding_layers != 0 ? static_cast<std::uint64_t>(model.window) *
-                                         plan_ring_bytes_per_token(model, options.sliding_kv_cache)
-                                   : 0);
-    const std::uint64_t pin_bytes =
-        cache.enabled ? (cache.host_kv_capacity_bytes +
-                         static_cast<std::uint64_t>(cache.host_state_slots) * image_bytes) >>
-                            9
-                      : 0;
+    // The Host tier's pinning (2 MiB of page tables per pinned GiB), from a rung's StateImage as
+    // the planner's host_state_image_bytes gives it.
+    const auto pin_bytes_of = [&](const PlanRungBytes& b) -> std::uint64_t {
+        if (!cache.enabled) { return 0; }
+        const std::uint64_t pinned =
+            cache.host_kv_capacity_bytes +
+            (cache.host_state_slots != 0
+                 ? b.host_state_image * static_cast<std::uint64_t>(cache.host_state_slots)
+                 : 0ULL);
+        return pinned >> 9;
+    };
+    const auto bytes_of = [&](const PlanRung& rung, std::uint32_t concurrency,
+                              bool kv_explicit) -> std::optional<PlanRungBytes> {
+        if (!family_planner) { return plan_rung_estimate(model, rung, options, concurrency); }
+        return plan_rung_bytes(model, rung, options, concurrency, kv_explicit);
+    };
 
     struct Built {
         std::vector<PlanRung> rungs;
-        std::vector<PlanRungBytes> bytes;
+        std::vector<std::optional<PlanRungBytes>> bytes;
     };
 
+    // A ladder of a concurrency (`pins`: the served one), as a start builds it: a shape the family
+    // cannot lay out is the user's option at the top rung of the served ladder (refused), and is
+    // skipped anywhere else.
     const auto build = [&](std::uint32_t concurrency, bool pins, bool chunk_pinned) {
+        const bool kv_explicit = pins && !out.axes.kv_automatic;
         const std::vector<PlanRung> candidates =
             plan_ladder(plan_ladder_inputs(out.axes, concurrency, pins, chunk_pinned));
-        std::vector<PlanRungBytes> candidate_bytes;
+        const auto bytes_at = [&](const PlanRung& rung, bool top) -> std::optional<PlanRungBytes> {
+            try {
+                return bytes_of(rung, concurrency, kv_explicit);
+            } catch (const std::invalid_argument&) {
+                if (top) { throw; }
+            } catch (const std::overflow_error&) {
+                if (top) { throw; }
+            }
+            return std::nullopt;
+        };
+        std::vector<std::optional<PlanRungBytes>> candidate_bytes;
         candidate_bytes.reserve(candidates.size());
-        for (const PlanRung& rung : candidates) {
-            candidate_bytes.push_back(plan_rung_estimate(model, rung, options, concurrency));
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            candidate_bytes.push_back(bytes_at(candidates[i], pins && i == 0));
         }
         Built built;
         built.rungs = prune_plan_ladder(candidates, [&](std::size_t index) {
-            return std::optional<std::uint64_t>(candidate_bytes[index].total());
+            return candidate_bytes[index]
+                       ? std::optional<std::uint64_t>(candidate_bytes[index]->total())
+                       : std::nullopt;
         });
-        for (const PlanRung& rung : built.rungs) {
-            built.bytes.push_back(plan_rung_estimate(model, rung, options, concurrency));
+        for (std::size_t i = 0; i < built.rungs.size(); ++i) {
+            built.bytes.push_back(bytes_at(built.rungs[i], pins && i == 0));
         }
         return built;
     };
     const auto cost_of = [&](const Built& built) {
         return PlanRungCostFn(
-            [&built, pin_bytes](std::size_t index) -> std::optional<PlanRungCost> {
-                const PlanRungBytes& b = built.bytes.at(index);
-                return PlanRungCost{
-                    .bytes = b.total(), .held_bytes = b.total() - b.graphs, .pin_bytes = pin_bytes};
+            [&built, &pin_bytes_of](std::size_t index) -> std::optional<PlanRungCost> {
+                const std::optional<PlanRungBytes>& b = built.bytes.at(index);
+                if (!b) { return std::nullopt; }
+                return PlanRungCost{.bytes      = b->total(),
+                                    .held_bytes = b->total() - b->graphs,
+                                    .pin_bytes  = pin_bytes_of(*b)};
             });
     };
 
-    const bool chunk_pinned   = !out.axes.chunk_automatic;
-    const Built served        = build(out.axes.concurrency, true, chunk_pinned);
+    const bool chunk_pinned = !out.axes.chunk_automatic;
+    Built served;
+    try {
+        served = build(out.axes.concurrency, true, chunk_pinned);
+    } catch (const std::exception& refusal) { // the family refuses the asked shape
+        out.reason = refusal.what();
+        return out;
+    }
     const PlanRungCostFn cost = cost_of(served);
     for (std::size_t index = 0; index < served.rungs.size(); ++index) {
         const PlanRung& rung = served.rungs[index];
-        const PlanRungCost c = *cost(index);
-        out.ladder.push_back(
-            DryRunRung{.rung   = rung,
-                       .bytes  = served.bytes[index],
-                       .needed = plan_needed_bytes(
-                           c, out.margins, rung.survival ? PlanReserve::Soft : PlanReserve::Kept)});
+        const std::optional<PlanRungCost> c = cost(index);
+        out.ladder.push_back(DryRunRung{
+            .rung   = rung,
+            .bytes  = served.bytes[index].value_or(PlanRungBytes{}),
+            .needed = c ? plan_needed_bytes(*c, out.margins,
+                                            rung.survival ? PlanReserve::Soft : PlanReserve::Kept)
+                        : 0});
     }
     out.planned = true;
     const std::optional<PlanSelection> selected =
@@ -397,91 +580,38 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
         out.reserve = selected->reserve;
         return out;
     }
-    // Nothing fits: why, and the longest automatic context each concurrency fits.
+    // Nothing fits: why, and what fits instead as a start's refusal advises it.
     const PlanMargins advice = plan_advice_margins(out.axes);
-    for (std::uint32_t concurrency = out.axes.concurrency; concurrency >= 1; --concurrency) {
-        const Built ladder = build(concurrency, false, chunk_pinned);
-        if (const std::optional<PlanSelection> fit =
-                select_plan_rung(ladder.rungs, cost_of(ladder), out.free_after_weights, advice)) {
-            const std::uint32_t context = ladder.rungs[fit->rung].max_context;
-            if (out.fits_instead.empty() || context > out.fits_instead.back().max_context) {
-                out.fits_instead.push_back(
-                    {.max_concurrency = concurrency, .max_context = context});
-            }
-        }
-    }
+    const bool pinned =
+        !out.axes.context_automatic || !out.axes.kv_automatic || out.axes.states_pinned.has_value();
+    out.fits_instead =
+        plan_fits_instead(
+            out.axes.concurrency, out.axes.context_ceiling, pinned, chunk_pinned,
+            [&](std::uint32_t concurrency, bool chunk_kept) -> std::optional<std::uint32_t> {
+                const Built ladder = build(concurrency, false, chunk_kept);
+                const std::optional<PlanSelection> fit =
+                    select_plan_rung(ladder.rungs, cost_of(ladder), out.free_after_weights, advice);
+                if (!fit) { return std::nullopt; }
+                return ladder.rungs[fit->rung].max_context;
+            })
+            .fits;
     const DryRunRung& last = out.ladder.back();
     if (out.weight_bytes >= out.free_bytes) {
         out.reason = "the weights (" + gib_text(out.weight_bytes) + ") do not fit the " +
                      gib_text(out.free_bytes) + " the card has free";
     } else {
+        const std::optional<PlanRungCost> low = cost(served.rungs.size() - 1);
         const std::uint64_t tier =
-            plan_needed_bytes(*cost(served.rungs.size() - 1), out.margins,
-                              out.margins.allowance != 0 ? PlanReserve::WarmUp : PlanReserve::Soft);
+            low ? plan_needed_bytes(*low, out.margins,
+                                    out.margins.allowance != 0 ? PlanReserve::WarmUp
+                                                               : PlanReserve::Soft)
+                : 0;
         out.reason = "beside the weights (" + gib_text(out.weight_bytes) + ") the smallest plan, " +
                      describe_plan_rung(last.rung, out.axes.concurrency) + ", needs " +
                      gib_text(tier) + "; " + gib_text(out.free_after_weights) + " is free, " +
                      gib_text(tier > out.free_after_weights ? tier - out.free_after_weights : 0) +
                      " more is needed";
     }
-    return out;
-}
-
-// ---- The quant rule.
-
-namespace {
-
-double rank_bits(const QuantCandidate& q) noexcept {
-    return q.bits_per_weight > 0 ? q.bits_per_weight : static_cast<double>(q.label_bits);
-}
-
-bool near_bytes(std::uint64_t a, std::uint64_t b) noexcept {
-    const double hi = static_cast<double>(std::max(a, b));
-    const double lo = static_cast<double>(std::min(a, b));
-    return hi > 0 && (hi - lo) / hi <= 0.01;
-}
-
-} // namespace
-
-bool quant_ranks_above(const QuantCandidate& a, const QuantCandidate& b) noexcept {
-    if (near_bytes(a.bytes, b.bytes)) {
-        if (a.quality_loss && b.quality_loss && *a.quality_loss != *b.quality_loss) {
-            return *a.quality_loss < *b.quality_loss;
-        }
-        if (a.bytes != b.bytes) { return a.bytes > b.bytes; }
-        return a.label < b.label;
-    }
-    const double x = rank_bits(a), y = rank_bits(b);
-    if (x != y) { return x > y; }
-    if (a.bytes != b.bytes) { return a.bytes > b.bytes; }
-    return a.label < b.label;
-}
-
-std::optional<std::size_t> largest_fitting_quant(const std::vector<QuantCandidate>& candidates,
-                                                 const std::vector<QuantFit>& fits) {
-    if (fits.size() != candidates.size()) {
-        throw std::invalid_argument("largest_fitting_quant: a fit for every candidate");
-    }
-    for (const bool private_only : {true, false}) {
-        std::optional<std::size_t> best;
-        for (std::size_t i = 0; i < candidates.size(); ++i) {
-            if (!candidates[i].supported) { continue; }
-            const bool ok = private_only ? fits[i].fits : fits[i].shared;
-            if (!ok) { continue; }
-            if (!best || quant_ranks_above(candidates[i], candidates[*best])) { best = i; }
-        }
-        if (best) { return best; }
-    }
-    return std::nullopt;
-}
-
-QuantFit quant_fit_of(const DryRunPlan& plan) {
-    QuantFit out;
-    const DryRunRung* chosen = plan.chosen();
-    if (chosen == nullptr || chosen->rung.survival) { return out; }
-    out.context = chosen->rung.max_context;
-    out.fits    = plan.private_contexts();
-    out.shared  = !out.fits;
     return out;
 }
 

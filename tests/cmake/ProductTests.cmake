@@ -136,3 +136,21 @@ ninferno_add_test(ninferno_plan_dry_run_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_dry_run.cpp"
   LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_dry_run_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# Every setup docs/performance/data/bench.jsonl measured through ninferno-serve fits the plan
+# without the weights on its named board (facts: tests/fixtures/plan/bench_models.json).
+ninferno_add_test(ninferno_plan_bench_fits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bench_fits.cpp"
+  LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_bench_fits_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(ninferno_plan_bench_fits_test PRIVATE
+  NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+# The plan without the weights takes a start's bytes: every family's state shape from a config.json
+# or a GGUF header is the family planner's, and a dry-run rung's bytes are the start planner's
+# (sequence_bytes.h) to the byte but for the estimated workspace, over concurrencies, speculation,
+# codecs, contexts, chunks and cached states. CPU.
+ninferno_add_test(ninferno_plan_bytes_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bytes.cpp"
+  LIBRARIES ninferno_product_plan ninferno_model_runtime ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR}/src)

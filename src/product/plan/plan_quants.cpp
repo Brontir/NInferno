@@ -37,26 +37,68 @@ std::string context_text(const EngineOptions& options) {
 }
 
 std::string class_text(const runtime::PlanDeviceFacts& device) {
-    const std::uint64_t vram_class =
-        device.total_bytes / runtime::kPlanVramClassGrainBytes * runtime::kPlanVramClassGrainBytes;
-    char text[64];
-    std::snprintf(text, sizeof text, "%.2f GiB class", static_cast<double>(vram_class) / kGiB);
+    return std::to_string(card_gb(device)) + " GB";
+}
+
+std::string ascii_upper(std::string text) {
+    for (char& c : text) {
+        if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
+    }
     return text;
 }
 
-// Why a listed quantization is not planned ("" when it is).
-std::string unsupported(const QuantListing& q, double bits_per_weight) {
-    if (q.drafter) { return "a drafter or sidecar file, not a model"; }
+struct Unsupported {
+    std::string code;
+    std::string text;
+};
+
+// Why a listed quantization is not planned (an empty code when it is).
+Unsupported unsupported(const QuantListing& q, double bits_per_weight,
+                        const runtime::PlanDeviceFacts& device) {
+    if (q.drafter) { return {"drafter_file", "a drafter or sidecar file, not a model"}; }
     if (q.format == "safetensors") {
-        return q.bits > 8 || q.bits == 0
-                   ? "converted at start by its recipe: its size after conversion is not known "
-                     "before"
-                   : "";
+        if (q.converted_bytes) { return {}; }
+        return {"converted_size_unknown",
+                "converted at start by its recipe: its size after conversion is planned at the "
+                "start"};
     }
     if (q.bits > 8 || (q.bits == 0 && bits_per_weight > 9.0)) {
-        return "above 8 bits per weight: the engine serves 8 bits or fewer";
+        return {"above_8_bits", "above 8 bits per weight: the engine serves 8 bits or fewer"};
     }
-    return "";
+    // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up).
+    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos && device.compute_capability != 0 &&
+        device.compute_capability < 100) {
+        return {"nvfp4_card", "NVFP4 weights need an RTX 50 / Blackwell card"};
+    }
+    return {};
+}
+
+// The probe contexts own_context_of tries, ascending (the model's own last).
+std::vector<std::uint32_t> probe_contexts(std::uint32_t native) {
+    std::vector<std::uint32_t> out;
+    for (const std::uint32_t c : {8192U, 12288U, 16384U, 24576U, 32768U, 49152U, 65536U, 98304U,
+                                  131072U, 196608U, 262144U, 393216U, 524288U, 786432U, 1048576U}) {
+        if (c < native) { out.push_back(c); }
+    }
+    out.push_back(native);
+    return out;
+}
+
+// The inputs at a pinned context (ninferno-serve --max-context X with these streams: an
+// automatic pool with several, launch_options' rule).
+DryRunInputs at_context(const DryRunInputs& inputs, std::uint32_t context) {
+    DryRunInputs out                  = inputs;
+    out.options.max_context           = context;
+    out.options.max_context_automatic = false;
+    out.options.kv_capacity           = out.options.max_concurrency > 1
+                                            ? KvCapacityPolicy::automatic()
+                                            : KvCapacityPolicy::explicit_capacity(context);
+    return out;
+}
+
+bool own_plan(const runtime::DryRunPlan& plan) {
+    const runtime::DryRunRung* chosen = plan.chosen();
+    return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
 }
 
 std::string reserve_name(runtime::PlanReserve reserve) {
@@ -109,56 +151,211 @@ PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& 
                                  inputs.gpu, inputs.drafter_bytes);
 }
 
+runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
+    return runtime::QuantAsk{
+        .automatic   = inputs.options.max_context_automatic,
+        .context     = inputs.options.max_context_automatic ? 0U : inputs.options.max_context,
+        .concurrency = std::max(1U, inputs.options.max_concurrency),
+        .native      = native_context};
+}
+
+std::uint32_t card_gb(const runtime::PlanDeviceFacts& device) noexcept {
+    constexpr std::uint64_t kOne = std::uint64_t{1} << 30;
+    return static_cast<std::uint32_t>((device.total_bytes + kOne - 1) / kOne);
+}
+
+PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
+    PlanReasonCode out;
+    if (!plan.planned) {
+        out.code = "shape_unknown";
+        return out;
+    }
+    if (const runtime::DryRunRung* chosen = plan.chosen()) {
+        if (chosen->rung.survival) {
+            out.code   = "survival_only";
+            out.params = {{"context", chosen->rung.max_context},
+                          {"reserve_bytes", plan.axes.class_reserve}};
+        }
+        return out;
+    }
+    if (plan.weight_bytes >= plan.free_bytes) {
+        out.code   = "weights_too_big";
+        out.params = {{"weights_bytes", plan.weight_bytes}, {"free_bytes", plan.free_bytes}};
+        return out;
+    }
+    const std::uint64_t needed = plan.ladder.empty() ? 0 : plan.ladder.back().needed;
+    out.code                   = "smallest_plan_short";
+    out.params                 = {
+        {"weights_bytes", plan.weight_bytes},
+        {"needed_bytes", needed},
+        {"free_after_weights_bytes", plan.free_after_weights},
+        {"short_bytes", needed > plan.free_after_weights ? needed - plan.free_after_weights : 0},
+        {"context", plan.ladder.empty() ? 0U : plan.ladder.back().rung.max_context},
+        {"concurrency", plan.axes.concurrency}};
+    return out;
+}
+
+std::optional<std::uint64_t> checkpoint_converted_bytes(const Json& config, std::uint64_t bytes) {
+    const Json& text       = config.contains("text_config") && config["text_config"].is_object()
+                                 ? config["text_config"]
+                                 : config;
+    const std::string type = text.value("model_type", config.value("model_type", std::string()));
+    const bool qwen        = type.rfind("qwen3_5", 0) == 0 || type.rfind("qwen3_6", 0) == 0;
+    const bool moe         = text.contains("num_experts") && !text["num_experts"].is_null();
+    // An encoded checkpoint (a quantization_config) runs as published by the recipes that keep it.
+    if (!qwen || !moe || config.contains("quantization_config")) { return bytes; }
+    // qwen3_6_35b_a3b: routed experts gate/up Q4, down Q5 (Q6 on three layers), the rest Q8; a
+    // group of 32 weights carries a BF16 scale: Q4 4.5, Q5 5.5, Q8 8.5 bits per weight.
+    const double layers  = text.value("num_hidden_layers", 0.0);
+    const double experts = text.value("num_experts", 0.0);
+    const double hidden  = text.value("hidden_size", 0.0);
+    const double inter   = text.value("moe_intermediate_size", 0.0);
+    const double params  = static_cast<double>(bytes) / 2.0; // BF16
+    const double routed  = layers * experts * 3.0 * hidden * inter;
+    if (routed <= 0 || routed >= params) { return std::nullopt; }
+    const double bits = routed * (2.0 * 4.5 + 5.5) / 3.0 + (params - routed) * 8.5;
+    return static_cast<std::uint64_t>(bits / 8.0);
+}
+
+std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                             const PlannedSpeculation& served) {
+    const runtime::DryRunPlan& plan = served.plan;
+    if (!plan.planned) { return 0; }
+    if (own_plan(plan)) { return plan.chosen()->rung.max_context; }
+    if (!inputs.options.max_context_automatic) { return 0; }
+    // An automatic context: the longest pinned context that keeps every stream's own (the plan
+    // is monotone in the context: a shorter one fits whenever a longer one does).
+    const std::vector<std::uint32_t> probes = probe_contexts(facts.model.native_context);
+    std::size_t lo = 0, hi = probes.size(); // [lo, hi): the first not own
+    std::uint32_t best = 0;
+    while (lo < hi) {
+        const std::size_t mid            = lo + (hi - lo) / 2;
+        const DryRunInputs pinned        = at_context(inputs, probes[mid]);
+        const PlannedSpeculation planned = plan_model(facts, pinned);
+        if (own_plan(planned.plan)) {
+            best = planned.plan.chosen()->rung.max_context;
+            lo   = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return best;
+}
+
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
                       const DryRunInputs& inputs) {
     QuantPlan out;
+    const runtime::QuantAsk ask = quant_ask_of(inputs, shape.model.native_context);
     std::vector<runtime::QuantCandidate> candidates;
     std::vector<runtime::QuantFit> fits;
     for (const QuantListing& q : listing) {
         if (q.drafter) { continue; }
         QuantRow row;
-        row.listing = q;
-        row.basis   = q.format == "ninferno" ? runtime::WeightBasis::Artifact
-                                             : runtime::WeightBasis::FileSize;
-        // The shape's own file keeps the header's tensor bytes.
-        if (shape.model.weight_bytes == q.bytes &&
+        row.listing      = q;
+        row.converted    = q.format == "safetensors" && q.converted_bytes.has_value();
+        row.weight_bytes = q.converted_bytes.value_or(q.bytes);
+        row.basis        = q.format == "ninferno" ? runtime::WeightBasis::Artifact
+                                                  : runtime::WeightBasis::FileSize;
+        // One size source per quantization: the shape's own file keeps the header's tensor
+        // bytes; every other the listed file sizes.
+        if (!row.converted && shape.model.weight_bytes == q.bytes &&
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
         row.candidate.label      = q.quant;
-        row.candidate.bytes      = q.bytes;
+        row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
         row.candidate.bits_per_weight =
-            shape.model.params > 0 ? static_cast<double>(q.bytes) * 8.0 / shape.model.params : 0.0;
-        row.why_unsupported     = unsupported(q, row.candidate.bits_per_weight);
-        row.candidate.supported = row.why_unsupported.empty();
+            shape.model.params > 0
+                ? static_cast<double>(row.weight_bytes) * 8.0 / shape.model.params
+                : 0.0;
+        const Unsupported why   = unsupported(q, row.candidate.bits_per_weight, inputs.device);
+        row.unsupported_code    = why.code;
+        row.why_unsupported     = why.text;
+        row.candidate.supported = why.code.empty();
         if (row.candidate.supported) {
-            const PlanSourceFacts facts = with_weights(shape, q.bytes, row.basis);
+            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             row.planned                 = plan_model(facts, inputs);
-            row.fit                     = runtime::quant_fit_of(row.planned.plan);
+            row.fit                     = runtime::quant_fit_of(row.planned.plan,
+                                                                own_context_of(facts, inputs, row.planned), ask);
+            if (!ask.automatic) {
+                row.launch_context = ask.context;
+            } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
+                       !own_plan(row.planned.plan)) {
+                row.launch_context = row.fit.own_context;
+            }
+        } else {
+            row.fit.state = why.code == "converted_size_unknown"
+                                ? runtime::QuantFitState::Unknown
+                                : runtime::QuantFitState::Unsupported;
         }
         candidates.push_back(row.candidate);
         fits.push_back(row.fit);
         out.rows.push_back(std::move(row));
     }
-    out.chosen = runtime::largest_fitting_quant(candidates, fits);
-    if (out.chosen) { out.rows[*out.chosen].largest = true; }
+    out.pick = runtime::largest_fitting_quant(candidates, fits, ask);
+    if (out.pick) {
+        out.chosen                        = out.pick->index;
+        out.rows[out.pick->index].largest = true;
+    }
     out.rule = quant_rule_line(out, inputs);
     return out;
 }
 
-std::string quant_rule_line(const QuantPlan& plan, const DryRunInputs& inputs) {
-    const std::string ask =
-        context_text(inputs.options) + " x " + std::to_string(inputs.options.max_concurrency);
-    const std::string where = inputs.device.name + " (" + class_text(inputs.device) + ")";
-    if (plan.chosen) {
-        const QuantRow& row = plan.rows[*plan.chosen];
-        std::string line    = row.listing.quant + ": the largest that fits " + ask + " on " + where;
-        if (row.fit.shared) {
-            line += ", one pool the " + std::to_string(inputs.options.max_concurrency) +
-                    " streams share (no quantization holds a whole context for each)";
-        } else if (inputs.options.max_context_automatic) {
-            line += " (context " + grouped(row.fit.context) + ")";
+std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
+    const std::uint32_t streams = std::max(1U, inputs.options.max_concurrency);
+    const std::string stream_text =
+        std::to_string(streams) + (streams == 1 ? " stream" : " streams");
+    const std::string where = "this " + inputs.device.name + " (" + class_text(inputs.device) + ")";
+    const bool automatic    = inputs.options.max_context_automatic;
+    QuantPlan& mutable_plan = plan;
+    Json& params            = mutable_plan.rule_params;
+    params                  = {{"concurrency", streams},
+                               {"card_gb", card_gb(inputs.device)},
+                               {"automatic", automatic},
+                               {"context", automatic ? 0U : inputs.options.max_context}};
+    if (plan.pick) {
+        const QuantRow& row         = plan.rows[plan.pick->index];
+        const runtime::QuantPick& k = *plan.pick;
+        const std::uint32_t context = row.launch_context != 0    ? row.launch_context
+                                      : row.fit.own_context != 0 ? row.fit.own_context
+                                                                 : row.fit.context;
+        mutable_plan.rule_code      = "largest_fits";
+        params["quant"]             = row.listing.quant;
+        params["tier"]              = std::string(runtime::quant_pick_tier_name(k.tier));
+        params["planned_context"]   = context;
+        params["below_floor"]       = k.below_floor;
+        params["low_quality"]       = k.low_quality;
+        std::string line = row.listing.quant + ": the largest that fits on " + where + " at " +
+                           (automatic ? "auto context" : grouped(inputs.options.max_context)) +
+                           " × " + stream_text;
+        switch (k.tier) {
+        case runtime::QuantPickTier::Own:
+        case runtime::QuantPickTier::OwnStepped:
+        case runtime::QuantPickTier::OwnBelowFloor:
+            line += ", " + grouped(context) + (streams == 1 ? "" : " for each stream on its own");
+            if (k.tier == runtime::QuantPickTier::OwnStepped && automatic) {
+                line += " (no larger quantization holds " +
+                        grouped(runtime::quant_own_targets(
+                                    quant_ask_of(inputs, row.planned.plan.axes.context_ceiling))
+                                    .front()) +
+                        " each)";
+            }
+            break;
+        case runtime::QuantPickTier::Shared:
+        case runtime::QuantPickTier::SharedBelowFloor:
+            line += ": the " + std::to_string(streams) + " streams share one pool of " +
+                    grouped(row.fit.context) +
+                    " tokens (no quantization gives each its own context)";
+            break;
+        case runtime::QuantPickTier::Desktop:
+            line += ": only by giving up the memory kept for the desktop (the screen may stutter)";
+            break;
+        }
+        if (k.low_quality) {
+            line += "; below 3 bits per weight: the answers lose quality";
+        } else if (k.below_floor) {
+            line += "; below 3.5 bits per weight: nothing larger fits";
         }
         return line;
     }
@@ -170,18 +367,27 @@ std::string quant_rule_line(const QuantPlan& plan, const DryRunInputs& inputs) {
             smallest = &row;
         }
     }
+    const std::string ask =
+        (automatic ? std::string("auto context") : grouped(inputs.options.max_context)) + " × " +
+        stream_text;
     if (smallest == nullptr) {
-        return "no quantization of this repository is served (" + ask + ")";
+        mutable_plan.rule_code = "none_served";
+        return "no quantization of this repository is served here (" + ask + ")";
     }
-    std::string line = "no quantization fits " + ask + " on " + where + "; the smallest, " +
-                       smallest->listing.quant + ": ";
+    mutable_plan.rule_code       = "none_fits";
     const runtime::DryRunPlan& p = smallest->planned.plan;
-    if (p.fits) {
-        line += p.private_contexts() ? "fits only below the floor quality (a survival rung)"
-                                     : "fits only as a shared pool";
-    } else {
-        line += p.reason;
+    const PlanReasonCode reason  = plan_reason_code(p);
+    params["smallest"]           = smallest->listing.quant;
+    params["reason_code"]        = reason.code;
+    params["reason_params"]      = reason.params;
+    Json instead                 = Json::array();
+    for (const ConcurrencyFit& fit : p.fits_instead) {
+        instead.push_back({{"concurrency", fit.max_concurrency}, {"context", fit.max_context}});
     }
+    params["fits_instead"] = std::move(instead);
+    std::string line       = "no quantization fits " + ask + " on " + where + "; the smallest, " +
+                       smallest->listing.quant + ": " +
+                       (p.reason.empty() ? std::string("does not fit") : p.reason);
     for (const ConcurrencyFit& fit : p.fits_instead) {
         line += "; --max-concurrency " + std::to_string(fit.max_concurrency) + " fits " +
                 grouped(fit.max_context) + " tokens";
@@ -207,22 +413,27 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
                     {"bytes", bytes_json(r.bytes)},
                     {"needed_bytes", r.needed}};
     };
-    Json out     = {{"planned", plan.planned},
-                    {"fits", plan.fits},
-                    {"estimate", true},
-                    {"kv_dtype", std::string(kv_cache_storage_name(plan.kv_cache))},
-                    {"state_dtype", plan.recurrent == RecurrentStateStorage::FP32   ? "fp32"
-                                    : plan.recurrent == RecurrentStateStorage::BF16 ? "bf16"
-                                                                                    : "f16"},
-                    {"rungs", plan.ladder.size()},
-                    {"weights_bytes", plan.weight_bytes},
-                    {"free_bytes", plan.free_bytes},
-                    {"free_after_weights_bytes", plan.free_after_weights},
-                    {"class_reserve_bytes", plan.axes.class_reserve},
-                    {"base_margin_bytes", plan.margins.base},
-                    {"allowance_bytes", plan.margins.allowance},
-                    {"context_ceiling", plan.axes.context_ceiling},
-                    {"reason", plan.reason}};
+    Json out                    = {{"planned", plan.planned},
+                                   {"fits", plan.fits},
+                                   {"estimate", true},
+                                   {"kv_dtype", std::string(kv_cache_storage_name(plan.kv_cache))},
+                                   {"state_dtype", plan.recurrent == RecurrentStateStorage::FP32 ? "fp32"
+                                                   : plan.recurrent == RecurrentStateStorage::BF16 ? "bf16"
+                                                                                                   : "f16"},
+                                   {"rungs", plan.ladder.size()},
+                                   {"weights_bytes", plan.weight_bytes},
+                                   {"free_bytes", plan.free_bytes},
+                                   {"free_after_weights_bytes", plan.free_after_weights},
+                                   {"class_reserve_bytes", plan.axes.class_reserve},
+                                   {"base_margin_bytes", plan.margins.base},
+                                   {"allowance_bytes", plan.margins.allowance},
+                                   {"context_ceiling", plan.axes.context_ceiling},
+                                   {"estimate_basis", plan.estimate_basis},
+                                   {"estimate_reason", plan.estimate_reason},
+                                   {"reason", plan.reason}};
+    const PlanReasonCode reason = plan_reason_code(plan);
+    out["reason_code"]          = reason.code;
+    out["reason_params"]        = reason.params;
     Json instead = Json::array();
     for (const ConcurrencyFit& fit : plan.fits_instead) {
         instead.push_back({{"concurrency", fit.max_concurrency}, {"context", fit.max_context}});
@@ -262,21 +473,24 @@ Json planned_json(const PlannedSpeculation& planned, bool ladder) {
 }
 
 Json device_json(const runtime::PlanDeviceFacts& device, const runtime::DryRunPlan& plan) {
-    return {{"name", device.name},
-            {"source", device.source},
-            {"total_bytes", device.total_bytes},
-            {"class_bytes", device.total_bytes / runtime::kPlanVramClassGrainBytes *
-                                runtime::kPlanVramClassGrainBytes},
-            {"compute_capability", device.compute_capability},
-            {"pci_device_id", device.pci_device_id},
-            {"wddm", device.paravirtual},
-            {"display", device.drives_display},
-            {"integrated", device.integrated},
-            {"free_basis", device.free_bytes ? "measured_now" : "idle_card"},
-            {"free_bytes", plan.free_bytes},
-            {"class_reserve_bytes",
-             runtime::plan_class_reserve(device.total_bytes, device.paravirtual,
-                                         device.drives_display, device.integrated)}};
+    return {
+        {"name", device.name},
+        {"source", device.source},
+        {"total_bytes", device.total_bytes},
+        {"class_bytes", device.total_bytes / runtime::kPlanVramClassGrainBytes *
+                            runtime::kPlanVramClassGrainBytes},
+        {"compute_capability", device.compute_capability},
+        {"pci_device_id", device.pci_device_id},
+        {"wddm", device.paravirtual},
+        {"display", device.drives_display},
+        {"integrated", device.integrated},
+        {"card_gb", card_gb(device)},
+        {"free_basis", device.free_bytes ? "measured" : "idle_card"},
+        {"free_bytes", plan.free_bytes},
+        {"class_reserve_bytes",
+         runtime::plan_reserve_beside_free(device.total_bytes, device.paravirtual,
+                                           device.drives_display, device.integrated)},
+        {"desktop_bytes", runtime::plan_desktop_bytes(device.paravirtual, device.drives_display)}};
 }
 
 Json model_json(const PlanSourceFacts& facts, const std::string& source, const std::string& kind) {
@@ -319,19 +533,49 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"format", row.listing.format},
                         {"bits", row.listing.bits},
                         {"bits_per_weight", round_to(row.candidate.bits_per_weight, 0.01)},
-                        {"weights_bytes", row.listing.bytes},
-                        {"weights_basis", std::string(runtime::weight_basis_name(row.basis))},
+                        {"weights_bytes", row.weight_bytes},
+                        {"weights_basis", row.converted
+                                              ? std::string("converted")
+                                              : std::string(runtime::weight_basis_name(row.basis))},
                         {"supported", row.candidate.supported},
+                        {"unsupported_code", row.unsupported_code},
                         {"why_unsupported", row.why_unsupported},
-                        {"fits", row.fit.fits},
-                        {"fits_shared", row.fit.shared},
+                        {"state", std::string(runtime::quant_fit_state_name(row.fit.state))},
+                        {"own_context", row.fit.own_context},
+                        {"launch_context", row.launch_context},
+                        {"below_floor",
+                         row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
+                             runtime::quant_rank_bits(row.candidate) < runtime::kPlanQualityFloorBits},
+                        {"low_quality",
+                         row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
+                             runtime::quant_rank_bits(row.candidate) < runtime::kPlanLowQualityBits},
+                        {"drafter_bytes", row.planned.plan.weight_bytes > row.weight_bytes
+                                              ? row.planned.plan.weight_bytes - row.weight_bytes
+                                              : 0},
+                        {"fits", row.fit.state == runtime::QuantFitState::Own},
+                        {"fits_shared", row.fit.state == runtime::QuantFitState::Shared},
                         {"largest", row.largest}};
-        item["plan"] = row.candidate.supported ? planned_json(row.planned, false) : Json(nullptr);
+        item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
         rows.push_back(std::move(item));
+    }
+    Json pick = nullptr;
+    if (plan.pick) {
+        const QuantRow& row = plan.rows[plan.pick->index];
+        pick                = {{"quant", row.listing.quant},
+                               {"tier", std::string(runtime::quant_pick_tier_name(plan.pick->tier))},
+                               {"target_context", plan.pick->target_context},
+                               {"context", plan.rule_params.value("planned_context", 0U)},
+                               {"concurrency", plan.rule_params.value("concurrency", 1U)},
+                               {"card_gb", plan.rule_params.value("card_gb", 0U)},
+                               {"below_floor", plan.pick->below_floor},
+                               {"low_quality", plan.pick->low_quality}};
     }
     return {{"quants", std::move(rows)},
             {"chosen", plan.chosen ? Json(plan.rows[*plan.chosen].listing.quant) : Json(nullptr)},
-            {"rule", plan.rule}};
+            {"pick", std::move(pick)},
+            {"rule", plan.rule},
+            {"rule_code", plan.rule_code},
+            {"rule_params", plan.rule_params}};
 }
 
 Json dry_plan_document(const PlanSourceFacts& facts, const std::string& source,
@@ -346,12 +590,18 @@ Json dry_plan_document(const PlanSourceFacts& facts, const std::string& source,
     if (quants != nullptr) {
         Json q        = quant_plan_json(*quants);
         out["quants"] = std::move(q["quants"]);
-        out["chosen"] = std::move(q["chosen"]);
-        out["rule"]   = std::move(q["rule"]);
+        out["chosen"]      = std::move(q["chosen"]);
+        out["pick"]        = std::move(q["pick"]);
+        out["rule"]        = std::move(q["rule"]);
+        out["rule_code"]   = std::move(q["rule_code"]);
+        out["rule_params"] = std::move(q["rule_params"]);
     } else {
-        out["quants"] = Json::array();
-        out["chosen"] = nullptr;
-        out["rule"]   = "";
+        out["quants"]      = Json::array();
+        out["chosen"]      = nullptr;
+        out["pick"]        = nullptr;
+        out["rule"]        = "";
+        out["rule_code"]   = "";
+        out["rule_params"] = Json::object();
     }
     return out;
 }
@@ -370,7 +620,7 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
         << (device.paravirtual ? ", WDDM" : "") << (device.drives_display ? ", display" : "")
         << "), " << (device.free_bytes ? "free now " : "idle card ") << gib(plan.free_bytes)
         << "\n";
-    out << "ask    | context " << context_text(inputs.options) << " x "
+    out << "ask    | context " << context_text(inputs.options) << " × "
         << inputs.options.max_concurrency << " streams, KV "
         << (inputs.options.kv_cache_automatic ? "auto"
                                               : kv_cache_storage_name(inputs.options.kv_cache))
@@ -389,18 +639,37 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
                           row->listing.quant.c_str(), row->candidate.bits_per_weight,
                           gib(row->listing.bytes).c_str());
             out << line;
-            if (!row->candidate.supported) {
+            switch (row->fit.state) {
+            case runtime::QuantFitState::Unsupported:
                 out << "not served: " << row->why_unsupported;
-            } else if (row->fit.fits) {
-                out << "fits, context " << grouped(row->fit.context);
-            } else if (row->fit.shared) {
-                out << "fits as a shared pool, context " << grouped(row->fit.context);
-            } else if (row->planned.plan.fits) {
-                out << "survival rung only";
-            } else {
+                break;
+            case runtime::QuantFitState::Unknown:
+                out << "not planned: "
+                    << (row->why_unsupported.empty() ? row->planned.plan.reason
+                                                     : row->why_unsupported);
+                break;
+            case runtime::QuantFitState::Own:
+                out << "fits, "
+                    << grouped(row->fit.own_context != 0 ? row->fit.own_context : row->fit.context)
+                    << (inputs.options.max_concurrency > 1 ? " each" : "");
+                if (row->launch_context != 0 && inputs.options.max_context_automatic) {
+                    out << " (--max-context " << row->launch_context << ")";
+                }
+                break;
+            case runtime::QuantFitState::Shared:
+                out << "fits as one shared pool of " << grouped(row->fit.context);
+                break;
+            case runtime::QuantFitState::Desktop:
+                out << "fits only without the desktop's reserve";
+                break;
+            case runtime::QuantFitState::No:
                 out << "does not fit";
+                break;
             }
-            out << " (" << runtime::weight_basis_name(row->basis) << ")\n";
+            out << " ("
+                << (row->converted ? std::string_view("converted")
+                                   : runtime::weight_basis_name(row->basis))
+                << ")\n";
         }
         out << "quant  | " << quants->rule << "\n";
     }

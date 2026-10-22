@@ -291,7 +291,14 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         if (!served || served->menu.mode == spec::Mode::None) {
             const SpeculativeOptions plain;
             runtime::DryRunPlan plan = plan_of(plain);
-            step("plain", plain, plan, "no speculation profile for this model on this GPU");
+            if (served) {
+                // A profile whose choice is plain decode: measured faster without speculation.
+                r.source = served->source;
+                r.basis  = "measured_plain";
+                step("plain", plain, plan, "measured faster without speculation here");
+            } else {
+                step("plain", plain, plan, "no speculation profile for this model on this GPU");
+            }
             serve(plain, std::move(plan));
         } else {
             r.source = served->source;

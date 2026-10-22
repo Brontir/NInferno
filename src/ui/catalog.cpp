@@ -169,7 +169,7 @@ void attach_speculation(nlohmann::json& model_json, const SpeculationPlan& plan)
 
 CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
                                 const std::map<std::string, nlohmann::json>& listings,
-                                const QuantFits& fits) {
+                                const QuantFits& fits, const QuantPickOf& pick) {
     if (gpu.memory_gib <= 0) { return model; }
     const double budget = gpu.memory_gib * 0.95 - kReserveGib;
     // The plan's word where it has one, else the weights against the budget.
@@ -191,6 +191,23 @@ CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
     }
     const nlohmann::json* best = nullptr;
     std::string best_repo;
+    // The rule's pick first (the same rule the detail page and ninferno-serve apply).
+    if (pick) {
+        for (const auto& source : model.sources) {
+            if (source.format != "gguf") { continue; }
+            const auto it = listings.find(source.repo);
+            if (it == listings.end()) { continue; }
+            if (const auto quant = pick(source.repo)) {
+                for (const auto& q : it->second) {
+                    if (q.value("quant", std::string()) == *quant && !q.value("drafter", false)) {
+                        CatalogModel out = model;
+                        out.sources.push_back({source.repo, *quant, "gguf", q.value("bits", 4)});
+                        return out;
+                    }
+                }
+            }
+        }
+    }
     for (const auto& source : model.sources) {
         if (source.format != "gguf") { continue; }
         const auto it = listings.find(source.repo);

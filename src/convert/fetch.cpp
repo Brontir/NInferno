@@ -1895,7 +1895,10 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             quant.files.push_back(file.path);
             out.push_back(std::move(quant));
         } else if (name.ends_with(".safetensors") && name.find("mtp") == std::string::npos &&
-                   name.find("visual") == std::string::npos) {
+                   name.find("visual") == std::string::npos &&
+                   file.path.find('/') == std::string::npos) {
+            // The top-level weights, as the fetch takes them (subdirectories hold originals and
+            // other formats: gpt-oss's original/model.safetensors).
             weights.bytes += file.size;
             weights.files.push_back(file.path);
         }

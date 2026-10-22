@@ -142,9 +142,14 @@ inline constexpr double kReserveGib = 2.0;
 // repository's shape not read yet), where the weights against the card with kReserveGib stand in.
 using QuantFits =
     std::function<std::optional<bool>(const std::string& repo, const nlohmann::json& quant)>;
+// `pick(repo)`: the rule's pick for the repository at the user's context x streams (nullopt: not
+// planned); when it has one, that is the quant added, else the listing's largest 2-4 bit quant
+// that fits.
+using QuantPickOf = std::function<std::optional<std::string>(const std::string& repo)>;
 [[nodiscard]] CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
                                               const std::map<std::string, nlohmann::json>& listings,
-                                              const QuantFits& fits = {});
+                                              const QuantFits& fits   = {},
+                                              const QuantPickOf& pick = {});
 
 // The KV cache a model keeps per token of a request, from its GGUF metadata (general.architecture
 // and its keys): full-attention layers grow with the context, sliding-window layers stop at the

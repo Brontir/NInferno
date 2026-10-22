@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <stdexcept>
 
 namespace ninferno::serve {
@@ -89,6 +90,45 @@ std::uint64_t safetensors_bytes(const fs::path& dir) {
 convert::FetchOptions fetch_options() {
     convert::FetchOptions fetch;
     return fetch;
+}
+
+// The GGUF quantizations of a hub repository already in the local hub cache: a downloaded file,
+// or the artifact converted from one (<snapshot>/.ninferno-cache/<gguf stem>.<recipe>.ninferno).
+std::set<std::string> cached_quants(const std::string& repo) {
+    std::set<std::string> out;
+    std::error_code error;
+    const fs::path root =
+        convert::default_hub_cache() / convert::hub_repo_directory(repo) / "snapshots";
+    if (!fs::is_directory(root, error)) { return out; }
+    for (auto it = fs::recursive_directory_iterator(root, error);
+         !error && it != fs::recursive_directory_iterator(); it.increment(error)) {
+        const std::string name  = it->path().filename().string();
+        const std::string lower = ascii_lower(name);
+        std::string gguf;
+        if (lower.ends_with(".gguf")) {
+            gguf = name;
+        } else if (lower.ends_with(".ninferno") &&
+                   it->path().parent_path().filename() == ".ninferno-cache") {
+            // <stem>.<recipe>.ninferno: the stem is the GGUF's.
+            const std::string stem = it->path().stem().string(); // <stem>.<recipe>
+            const auto dot         = stem.rfind('.');
+            if (dot == std::string::npos) { continue; }
+            gguf = stem.substr(0, dot) + ".gguf";
+        } else {
+            continue;
+        }
+        if (ascii_lower(gguf).starts_with("mmproj") || ascii_lower(gguf).find("mtp") == 0) {
+            continue;
+        }
+        if (const std::string label = convert::gguf_quant_label(gguf); !label.empty()) {
+            out.insert(label);
+        }
+    }
+    return out;
+}
+
+bool looks_gguf_repo(const std::string& spec) {
+    return ascii_lower(spec).find("gguf") != std::string::npos;
 }
 
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
@@ -250,7 +290,12 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         }
         gpu = spec::gpu_identity(options.device).key;
     }
-    const ModelRead model   = read_model(options);
+    const ModelRead model = read_model(options);
+    // A quantization is chosen on an idle card of this GPU (as the fetch without --quant does:
+    // the same card type, the same flags, the same file); the free memory now is reported beside.
+    const bool table = model.kind == "hub" && model.gguf && options.quant.empty();
+    const std::optional<std::uint64_t> free_now = device.free_bytes;
+    if (table) { device.free_bytes.reset(); }
     Planning planning       = planning_of(options, model, device, gpu);
     planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
     OfflinePlan out;
@@ -272,7 +317,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         }
         if (chosen != nullptr) {
             planned = chosen->planned;
-            facts   = product::with_weights(model.facts, chosen->listing.bytes, chosen->basis);
+            facts   = product::with_weights(model.facts, chosen->weight_bytes, chosen->basis);
         } else {
             planned = product::plan_model(model.facts, planning.inputs);
         }
@@ -286,6 +331,22 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
                                              quants ? &*quants : nullptr);
     out.fits = planned.plan.fits;
+    // The free memory now (another process may hold some): would the pick start right now?
+    if (table && free_now && quants && quants->pick) {
+        product::DryRunInputs now                = planning.inputs;
+        now.device.free_bytes                    = free_now;
+        const product::QuantRow& row             = quants->rows[quants->pick->index];
+        const product::PlannedSpeculation at_now = product::plan_model(
+            product::with_weights(model.facts, row.weight_bytes, row.basis), now);
+        out.json["device"]["free_now_bytes"] = *free_now;
+        out.json["device"]["fits_now"]       = at_now.plan.fits;
+        if (!at_now.plan.fits) {
+            out.text += "now    | free now " +
+                        std::to_string(*free_now / (std::uint64_t{1} << 20)) +
+                        " MiB: " + row.listing.quant + " would not start right now (" +
+                        at_now.plan.reason + ")\n";
+        }
+    }
     return out;
 }
 
@@ -295,10 +356,29 @@ largest_fitting_hub_quant(const ServeOptions& options,
     if (!options.quant.empty() || !convert::is_repository_spec(options.model_source)) {
         return std::nullopt;
     }
+    const std::string repo = convert::split_spec(options.model_source, fetch_options()).first;
+    const std::set<std::string> cached = cached_quants(repo);
     ModelRead model;
     try {
         model = read_hub(options.model_source, "");
     } catch (const std::exception& e) {
+        // The hub cannot be reached: a quantization already here is served; otherwise the choice
+        // is the user's (never a default that ignores the card).
+        if (!cached.empty()) {
+            const std::string pick = *std::max_element(
+                cached.begin(), cached.end(), [](const std::string& a, const std::string& b) {
+                    return convert::quant_label_bits(a) < convert::quant_label_bits(b);
+                });
+            if (log) {
+                log("quant | can't reach the hub to choose a quant (" + std::string(e.what()) +
+                    "); using the cached " + pick + " (--quant LABEL takes another)");
+            }
+            return pick;
+        }
+        if (looks_gguf_repo(options.model_source)) {
+            throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" + e.what() +
+                                     "); pass --quant LABEL");
+        }
         if (log) { log(std::string("quant | the largest that fits is not planned: ") + e.what()); }
         return std::nullopt;
     }
@@ -320,14 +400,55 @@ largest_fitting_hub_quant(const ServeOptions& options,
     planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
     const product::QuantPlan plan =
         product::plan_quants(model.facts, model.listing, planning.inputs);
-    if (!plan.chosen) {
+    // The shape could not be read: no plan before the download (the fetch's default).
+    if (!model.facts.model.known()) {
+        if (log) {
+            log("quant | can't plan before download: the model's shape is not in its header "
+                "(the fetch's default; --quant LABEL takes another)");
+        }
+        return std::nullopt;
+    }
+    if (!plan.pick) {
         throw std::runtime_error(model.repo + ": " + plan.rule +
                                  " (nothing was downloaded; --quant LABEL takes one anyway, "
                                  "ninferno-serve " +
                                  model.repo + " --plan --no-load lists every quantization)");
     }
-    if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
-    return plan.rows[*plan.chosen].listing.quant;
+    const product::QuantRow& row = plan.rows[plan.pick->index];
+    // A quantization already here that runs at the ask is kept: other flags never download
+    // another file silently.
+    const product::QuantRow* kept = nullptr;
+    for (const product::QuantRow& r : plan.rows) {
+        if (!cached.contains(r.listing.quant) || !r.candidate.supported) { continue; }
+        if (r.fit.state != runtime::QuantFitState::Own &&
+            r.fit.state != runtime::QuantFitState::Shared) {
+            continue;
+        }
+        if (kept == nullptr || runtime::quant_ranks_above(r.candidate, kept->candidate)) {
+            kept = &r;
+        }
+    }
+    if (kept != nullptr && kept != &row) {
+        if (log) {
+            log("quant | using the cached " + kept->listing.quant + "; " + row.listing.quant +
+                " would be larger (--quant " + row.listing.quant + " downloads it)");
+        }
+        return kept->listing.quant;
+    }
+    if (log) {
+        log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)");
+        if (row.launch_context != 0 && options.max_context == 0 && options.max_concurrency > 1) {
+            log("quant | under an automatic context the " +
+                std::to_string(options.max_concurrency) +
+                " streams may share one pool; --max-context " + std::to_string(row.launch_context) +
+                " keeps " + std::to_string(row.launch_context) + " tokens for each");
+        }
+        if (plan.pick->tier == runtime::QuantPickTier::Desktop) {
+            log("quant | WARNING: " + row.listing.quant +
+                " fits only by giving up the memory kept for the desktop: the screen may stutter");
+        }
+    }
+    return row.listing.quant;
 }
 
 } // namespace ninferno::serve

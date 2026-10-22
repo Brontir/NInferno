@@ -37,6 +37,7 @@ target_link_libraries(ninferno_product_speculation PUBLIC ninferno_spec PRIVATE 
 # and what a device is, the speculation a start would serve with, and the largest quantization that
 # fits: ninferno-serve --plan --no-load, the quant a hub GGUF is fetched at, ninferno-ui /api/plan.
 add_library(ninferno_product_plan STATIC
+  plan/plan_device.cpp
   plan/plan_facts.cpp
   plan/plan_speculation.cpp
   plan/plan_quants.cpp

@@ -1932,7 +1932,11 @@ pinning) the selection keeps:
   `--kv-capacity`);
 - on a GPU Windows shares (native Windows, WSL 2), a class reserve for what Windows will add: an 8th
   of the card, at most 4 GiB, when it drives the display, else a 32nd, at most 1 GiB; on a GPU
-  sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. It is given up only by a
+  sharing the host's memory (GB10, Jetson) an 8th, at least 4 GiB. The free memory already lacks
+  what the desktop holds, so the reserve kept beside it is less the desktop's declared share
+  (1.5 GiB under WDDM, 256 MiB on Linux, with a display): the desktop keeps the larger of the two,
+  not their sum (WDDM with a display: 8 GB card 1.5 GiB, none beside the free memory; 16 GB
+  1.97 GiB, 0.47 beside; 32 GB 4 GiB, 2.5 beside). It is given up only by a
   survival rung (with a warning; the first is the floor quality itself), by a `warm_up` admission
   when nothing else fits, and by the options that keep none: it applies to an automatic pool only,
   so an explicit `--kv-capacity` keeps none, and so does an explicit `--max-context` with
@@ -2007,19 +2011,34 @@ table (`core/data/gpu_facts.json`). A named board is a what-if:
 Its memory is 97.5 % of the marketed VRAM. The free memory is the device's now, less the weights,
 when the device is real. On a named board, and in ninferno-ui, the dry run takes an idle card: the
 memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
-(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
+(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured. The class
+reserve then kept beside the free memory is a start's, the reserve less that desktop share, so the
+desktop keeps the larger of the two in the dry run as at a start.
 
-**What is estimated.** A start sizes each rung with the family's planner over the loaded model. The
-dry run sizes it from the shape:
+**What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
+own: the start and the dry run call the same function (`plan_persistent_layout` over a
+`StateShape`, models/qwen3_5/program/planning/sequence_bytes.h, one per family: Qwen 3.5/3.6, the
+dense and MoE decoders with gpt-oss, Gemma 4, NemotronH), with the shape the start builds from its
+bound config and the dry run from the header or config:
 
-- KV pages at the codec's bytes per token;
-- the recurrent states and sliding rings of the active and the cached sequences;
-- the prefill chunk's activations and the decode logits;
-- a declared CUDA Graph allowance (16 MiB a lane for each set of graphs).
+- the paged KV, the MTP layer's pool, a DFlash drafter's paged KV, ring and features;
+- the recurrent states with their replay records, the sliding rings;
+- the Program's buffers and the CUDA Graph allowance;
+- the host tier's pinned StateImages, and the advice when nothing fits (`plan_fits_instead`).
+
+A CPU test (`ninferno_plan_bytes_test`) checks the two to the byte over 7,056 rungs of nine models.
+`plan.estimate_basis` is `family_planner` then, or `approximate` with `estimate_reason` where the
+facts do not name the state (a DFlash plan without its drafter's shape). What stays an estimate on
+both bases is the workspace: a start sizes its Op scratch from the bound weights' kernel routes,
+the dry run from the prefill chunk's activations and the decode logits. It is the remaining
+difference (about one rung in the lab's stand checks).
 
 The weights are the GGUF tensor table's bytes when one file holds the whole model
 (`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
-size"), and an artifact's tensors (`artifact`). The start stays the authority.
+size"), and an artifact's tensors (`artifact`). A GGUF's NextN (MTP) block and an artifact's own
+drafter are counted only when the plan serves MTP or DFlash (a start uploads them only then), the
+Vision encoder only under `--vision`, and a separate drafter's weights beside. The start stays the
+authority.
 
 The documented exception is what the start measures and the dry run cannot:
 
@@ -2051,21 +2070,61 @@ The depth per context class (`spec::class_depths`: Short < 1,024 prompt tokens, 
 < 24,576, Huge) is reported from the card's round cost and the registry's class acceptance factors.
 No request routes by class yet.
 
-**The largest quantization that fits.** A hub GGUF repository without `--quant` plans every listed
-quantization at the asked context and `--max-concurrency`. It takes the largest that fits:
-- the most bits per weight (the bytes over the parameter count; the label's bits when the count is
-  unknown);
-- within 1 % of the bytes, a tie goes to the lower published quality loss where both have one, then
-  to the larger;
-- "fits" means a rung that is not a survival rung, whose pool holds a whole context of the asked
-  length for every stream (of its context with an automatic one);
-- when none does, the largest that fits as one pool the streams share.
+**The largest quantization that fits** (`runtime/engine/quant_rule.h`). A hub GGUF repository
+without `--quant` plans every listed quantization at the asked context and `--max-concurrency` on an
+idle card of the device, and the rule picks one. What "fits" means:
 
-Above 8 bits per weight, drafters and sidecars are not served. A start does the same before the
-download. It logs the rule's line (`quant | UD-Q6_K_XL: the largest that fits 32,768 x 1 on NVIDIA
-GeForce RTX 4090 (23.50 GiB class)`). When nothing fits, it refuses before anything is downloaded and
-names what fits instead. The rule judges an idle card of the device's class, so the same card type
-gets the same quantization.
+- **Own**: every stream holds the target context of its own. The target is an asked
+  `--max-context`, or under an automatic context min(the model's own, 32,768): "own" is the longest
+  context each stream gets, probed at pinned contexts 8K .. the model's own.
+- **Shared**: it fits only as one pool the streams share (a rung with fewer whole contexts than
+  streams). This is said in plain words, never shown as "× streams".
+- **Desktop**: it fits only on a survival rung, which gives up the class reserve kept for the
+  desktop. The server starts it with a warning; the screen may stutter.
+- **No**, **unknown** (the shape could not be read: nothing is refused for it), **unsupported**.
+
+The pick goes through these tiers in order, and within a tier takes the most bits per weight (the
+bytes over the parameter count, the label's bits when the count is unknown), then the more bytes,
+then the label (a strict order; no published quality data is wired in, so there is no quality
+tie-break):
+
+1. own at the target, at or above 3.5 bits per weight;
+2. under an automatic context, own at 16K, then 8K (the context steps down before the quality);
+3. shared, at or above 3.5 bits;
+4. own below 3.5 bits (at the same targets), then shared below 3.5 bits;
+5. desktop.
+
+A pick under 3 bits per weight is marked low quality. Above 8 bits per weight, drafters and
+sidecars are not served, nor NVFP4 weights on a card below compute capability 10.0. A safetensors
+checkpoint is planned at the size the start's recipe converts it to
+(`product::checkpoint_converted_bytes`: a recipe that keeps the published encodings keeps its
+bytes; a Qwen3.5/3.6 MoE BF16 checkpoint takes `qwen3_6_35b_a3b`'s Q4/Q5 experts and Q8 rest), and
+is "unknown" when that size is not known before the start.
+
+Under an automatic context with several streams, an own pick whose served plan would share one
+pool carries `launch_context`, the own context; ninferno-ui launches with it as `--max-context`, and
+`ninferno-serve` logs it as advice (`quant | ... --max-context 49152 keeps 49152 tokens for each`).
+
+A start without `--quant` does the same before the download:
+
+- it logs the rule's line (`quant | UD-Q4_K_XL: the largest that fits on this NVIDIA GeForce RTX
+  4090 (24 GB) at auto context x 1 stream, 49,152`);
+- a quantization of the repository already in the hub cache that fits the ask is kept (`quant |
+  using the cached Q4_K_M; Q5_K_M would be larger`): other flags never download another file
+  silently;
+- when nothing fits, it refuses before anything is downloaded and names what fits instead;
+- when the hub cannot be reached, a cached quantization is served; for a GGUF repository with none
+  cached it refuses (`can't reach the hub to choose a quant; pass --quant`);
+- when the shape cannot be read it does not refuse: the fetch's default order applies (`can't plan
+  before download`).
+
+The default order itself (convert/fetch.cpp `gguf_rank`) now puts BF16 and F16 last: NVFP4, MXFP4,
+Q8_0, Q6_K, Q5, Q4, IQ4, Q3, Q2, then the full-precision files the engine does not serve.
+
+The rule judges an idle card of the device (`device.free_basis` `idle_card`), so the same card type
+and the same flags get the same file. `--plan --no-load` on a live GPU builds its quant table on the
+idle card too, and reports the free memory now beside it (`device.free_now_bytes`, `fits_now`, and a
+`now |` line when the pick would not start right now).
 
 **JSON** (`--plan --no-load --json`, ninferno-ui `/api/plan`), schema `ninferno-dry-plan/1`:
 
@@ -2073,12 +2132,14 @@ gets the same quantization.
 |---|---|
 | `estimate` | always `true` |
 | `model` | `source`, `kind` (`hub`, `gguf`, `checkpoint`, `artifact`), `architecture`, `family` (the artifact's model_type, `""` when no family serves it), `native_context`, `params`, `shape_known`, `weights_bytes`, `weights_basis`, `kv_bytes_per_token` (`bf16`, `int8`, `fp8`, `nvfp4`, `k8v4`), `window`, `builtin_mtp` |
-| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)`), `total_bytes`, `class_bytes`, `compute_capability`, `pci_device_id`, `wddm`, `display`, `integrated`, `free_basis` (`measured_now` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` |
+| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (what the selection keeps beside the free memory: the class reserve less the desktop's share), `desktop_bytes` (the desktop's declared share: the desktop keeps the larger of the two); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
 | `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
 | `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
-| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes`, `weights_basis`, `supported`, `why_unsupported`, `fits` (whole contexts), `fits_shared`, `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when unsupported); empty for a single model |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned); a single quantization's row when one was named; empty for a single model |
 | `chosen` | the rule's quantization, `null` when none fits or there is no listing |
-| `rule` | the rule's line, or why nothing fits |
+| `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
+| `rule` | the rule's line (English, for a terminal) |
+| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
 
 PLAN:
 
@@ -2093,7 +2154,9 @@ PLAN:
 | `description` | the rung in words |
 | `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
+| `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |
 | `reason`, `fits_instead` | when nothing fits: why, and `[{concurrency, context}]`, the longest automatic context each concurrency fits |
+| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`) |
 | `ladder` | every rung, top first, as `chosen` |
 | `speculation` | SPEC: the speculation the plan was made with |
 
@@ -2104,7 +2167,7 @@ SPEC:
 | `ask` | `auto`, `none` or the explicit label |
 | `served`, `backend`, `depth` | what the start would serve (`plain`, `mtp:3`, `dflash2:7`, ...) |
 | `drafter`, `drafter_kind` | the drafter (`mtp`, `dflash`, `dflash2`, `gemma4_assistant`, `nemotron_h_mtp`) |
-| `basis`, `source` | where the choice came from: `own` (this GPU's profile), `similar` (another GPU's standing in), `generic` (the `*` profile), `builtin` (the built-in drafter's untuned default), `explicit`, `none` |
+| `basis`, `source` | where the choice came from: `own` (this GPU's profile), `similar` (another GPU's standing in), `generic` (the `*` profile), `builtin` (the built-in drafter's untuned default), `measured_plain` (a profile whose choice is plain decode: measured faster without speculation here), `explicit`, `none` (no profile) |
 | `depths`, `floor` | the depths the engine captures and the watchdog floor |
 | `load`, `load_label`, `load_basis` | the profile's load table (`[{lanes, depth}]`, after the stand-in cap; `measured` or `none`) |
 | `depth_at_concurrency` | the depth a step of `--max-concurrency` lanes runs at |

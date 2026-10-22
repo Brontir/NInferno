@@ -252,7 +252,8 @@ public:
             throw std::invalid_argument("Gemma 4's assistant scores with the full head "
                                         "(--lm-head-draft is for Qwen models)");
         }
-        qwen3_5::detail::validate_ring_decoder_storage(options, "Gemma 4");
+        qwen3_5::detail::validate_state_storage(gemma4::state_shape(c_, traits_.public_tokens),
+                                                options);
         qwen3_5::detail::validate_program_options(
             options, traits_.max_positions, gemma4::kMaximumMtpDraftTokens, traits_.copy_rounds);
         try {
@@ -270,55 +271,8 @@ public:
     }
 
     [[nodiscard]] PersistentLayout persistent_layout(const SequencePlanImpl& plan) const override {
-        if (!plan.context_cache.device_state_slots) {
-            throw std::logic_error("Gemma 4 context cache options are not normalized");
-        }
-        const std::uint64_t slots = static_cast<std::uint64_t>(plan.max_concurrency) +
-                                    *plan.context_cache.device_state_slots;
-        if (slots > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-            throw std::overflow_error("Gemma 4 state image slot count exceeds int32");
-        }
-        const AttentionGeometry& full    = c_.full;
-        const AttentionGeometry& sliding = c_.sliding;
-        // --kv-dtype fp8: the full layers' pool holds E4M3 codes and an FP32 scale per row
-        // (Gemma4KvLayer's FP8 storage, any head_dim); the sliding layers' rings follow
-        // --sliding-kv-dtype, the same storage in the images layout.
-        const bool fp8 = plan.kv_storage == KvCacheStorage::Fp8E4M3Row256;
-        const PagedKVVectorLayout vector =
-            fp8 ? PagedKVVectorLayout{DType::FP8_E4M3FN, full.head_dim, DType::FP32, 1}
-                : PagedKVVectorLayout{DType::BF16, full.head_dim, DType::U8, 0};
-        const KvCacheStorage storage =
-            fp8 ? KvCacheStorage::Fp8E4M3Row256 : KvCacheStorage::BFloat16;
-
-        LayoutBuilder builder;
-        PersistentLayout out;
-        out.decoder = qwen3_5::plan_decoder_state(
-            builder, qwen3_5::DecoderStateSpec{
-                         .full_attention_layers = full_layers_,
-                         .capacity              = plan.capacity,
-                         .kv_heads              = full.kv_heads,
-                         .attention_head_dim    = full.head_dim,
-                         .kv_storage            = storage,
-                         .kv_table_rows         = static_cast<std::int32_t>(plan.max_concurrency),
-                         .text_physical_page_groups = plan.main_page_groups,
-                         // The Gemma 4 attention reads keys and values from a head-major pool.
-                         .layer_storage =
-                             PagedKVStorageLayout{storage, full.head_dim, vector, vector},
-                         .plane_order   = PagedKVPlaneOrder::HeadMajor,
-                     });
-        out.state_images = qwen3_5::plan_state_image_device_pool(
-            builder, qwen3_5::StateImageSpec{
-                         .linear = {.layers = 0, .slot_count = static_cast<std::int32_t>(slots)},
-                         .hidden = c_.hidden_size,
-                         .rings  = {{.layers   = sliding_layers_,
-                                     .capacity = ring_capacity(plan),
-                                     .kv_heads = sliding.kv_heads,
-                                     .head_dim = sliding.head_dim,
-                                     .fp8 = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256}},
-                     });
-        qwen3_5::detail::plan_program_buffers(builder, plan, traits_, out);
-        out.kv_payload_bytes = out.decoder.kv_payload_bytes();
-        return out;
+        return qwen3_5::detail::plan_persistent_layout(
+            gemma4::state_shape(c_, traits_.public_tokens), plan);
     }
 
     [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl& plan) const override {
@@ -676,13 +630,8 @@ private:
         };
     }
 
-    // Sliding rings keep every key the widest call can see while it appends its own rows.
-    [[nodiscard]] std::uint32_t ring_capacity(const SequencePlanImpl& plan) const {
-        return static_cast<std::uint32_t>(c_.sliding_window) + widest_call(plan) - 1U;
-    }
-
     [[nodiscard]] static std::uint32_t widest_call(const SequencePlanImpl& plan) {
-        return std::max(std::min(plan.prefill_chunk, plan.capacity), plan.draft_window + 1U);
+        return qwen3_5::detail::ring_decoder_widest_call(plan);
     }
 
     // One binding per layer (ring_decoder_bindings): a full layer reads the paged pool through
@@ -855,6 +804,27 @@ void Gemma4Execution::mtp_bridge_and_propose(program::PrefillContext& state,
 }
 
 } // namespace
+
+StateShape state_shape(const Config& config, std::int32_t public_tokens) {
+    // A layer that reads shared keys and values takes its source's place and adds none.
+    StateShape out{
+        .family           = StateFamily::Gemma4,
+        .kv_heads         = config.full.kv_heads,
+        .head_dim         = config.full.head_dim,
+        .sliding_kv_heads = config.sliding.kv_heads,
+        .sliding_head_dim = config.sliding.head_dim,
+        .window           = static_cast<std::uint32_t>(config.sliding_window),
+        .hidden           = config.hidden_size,
+        .output_rows      = config.vocab_size,
+        .public_tokens    = public_tokens,
+    };
+    for (std::int32_t i = 0; i < config.layers; ++i) {
+        if (!config.owns_kv(i)) { continue; }
+        ++(config.kinds[static_cast<std::size_t>(i)] == LayerKind::Full ? out.full_layers
+                                                                        : out.sliding_layers);
+    }
+    return out;
+}
 
 std::unique_ptr<const ModelExecution> make_program_execution(const Model& model,
                                                              const Drafter* drafter,

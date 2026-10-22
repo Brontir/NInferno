@@ -490,6 +490,13 @@ void test_catalog() {
     };
     check(with_fitting_quant(*qwen, gb203, listings, unknown).sources.back().quant == "UD-IQ3_XXS",
           "16 GB: without the plan's word the weights against the budget decide");
+    // The rule's pick, where the repository is planned, is the quant the catalog adds.
+    const QuantPickOf rule = [](const std::string&) -> std::optional<std::string> {
+        return std::string("UD-IQ2_M");
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown, rule).sources.back().quant ==
+              "UD-IQ2_M",
+          "16 GB: the rule's pick is added");
 
     // The chat proxy names the served model when the page sends none, and keeps one it sends.
     check(first_model_id(R"({"object":"list","data":[{"id":"qwen3.5-4b","object":"model"}]})") ==
@@ -982,10 +989,10 @@ void test_http() {
           "a broken JSON body answered 400");
     // The plan without the weights: its parameters as ninferno-serve takes them, refused with 400;
     // offline the repository's shape cannot be read (502 with the reason, never a guess).
-    for (const char* query :
-         {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9", "/api/plan?repo=a/b&par=0",
-          "/api/plan?repo=a/b&kv=fp16", "/api/plan?repo=a/b&spec=eagle",
-          "/api/quants?repo=a/b&gpu=0&ctx=-5"}) {
+    for (const char* query : {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9",
+                              "/api/plan?repo=a/b&par=0", "/api/plan?repo=a/b&kv=fp16",
+                              "/api/plan?repo=a/b&spec=eagle", "/api/quants?repo=a/b&gpu=0&ctx=-5",
+                              "/api/catalog?gpu=0&ctx=abc", "/api/catalog?gpu=0&par=12"}) {
         res = client.Get(query);
         check(res && res->status == 400 && res->body.find("\"error\"") != std::string::npos,
               std::string("a bad plan parameter answered 400: ") + query);

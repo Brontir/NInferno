@@ -10,9 +10,11 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -118,6 +120,83 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double kv_heads, doub
     }
 }
 
+// The state the family's planner lays out (models::StateShape), from the geometry; an empty
+// reason when the geometry names it whole.
+std::string state_of(const Geometry& g, models::StateShape& s) {
+    const auto per_layer = [](std::uint32_t total, std::uint32_t layers) -> std::int32_t {
+        return layers != 0 && total % layers == 0 ? static_cast<std::int32_t>(total / layers) : 0;
+    };
+    const std::string& type = g.model_type;
+    if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
+        s.family = models::StateFamily::Qwen35;
+    } else if (type == "dense_decoder" || type == "moe_decoder") {
+        s.family = models::StateFamily::DenseDecoder;
+    } else if (type == "gemma4_text") {
+        s.family = models::StateFamily::Gemma4;
+    } else if (type == "nemotron_h") {
+        s.family = models::StateFamily::NemotronH;
+    } else {
+        return "no family serves the model";
+    }
+    if (g.hidden == 0 || g.vocab == 0) { return "the residual width or the vocabulary is unknown"; }
+    s.hidden        = static_cast<std::int32_t>(g.hidden);
+    s.output_rows   = static_cast<std::int32_t>(g.vocab);
+    s.public_tokens = static_cast<std::int32_t>(g.vocab);
+    s.full_layers   = g.full_layers;
+    s.kv_heads      = per_layer(g.full_kv_total, g.full_layers);
+    s.head_dim      = static_cast<std::int32_t>(g.full_key);
+    if (g.full_layers == 0 || s.kv_heads == 0 || s.head_dim == 0 || g.full_value != g.full_key) {
+        return "the full-attention layers' geometry is unknown or not one for all of them";
+    }
+    if (g.sliding_layers != 0) {
+        s.sliding_layers   = g.sliding_layers;
+        s.sliding_kv_heads = per_layer(g.sliding_kv_total, g.sliding_layers);
+        s.sliding_head_dim = static_cast<std::int32_t>(g.sliding_key);
+        s.window           = g.window;
+        if (s.sliding_kv_heads == 0 || s.sliding_head_dim == 0 ||
+            g.sliding_value != g.sliding_key || g.window == 0) {
+            return "the sliding layers' geometry is unknown or not one for all of them";
+        }
+    }
+    switch (s.family) {
+    case models::StateFamily::DenseDecoder:
+        // One geometry for the pool and the rings.
+        if (s.sliding_layers != 0 &&
+            (s.sliding_kv_heads != s.kv_heads || s.sliding_head_dim != s.head_dim)) {
+            return "the sliding layers' geometry differs from the full layers'";
+        }
+        break;
+    case models::StateFamily::Gemma4:
+        if (s.sliding_layers == 0) { return "a Gemma 4 model without sliding layers"; }
+        break;
+    case models::StateFamily::Qwen35:
+    case models::StateFamily::NemotronH:
+        if (s.sliding_layers != 0) { return "sliding layers in a family without rings"; }
+        break;
+    }
+    if (s.family == models::StateFamily::Qwen35 || s.family == models::StateFamily::NemotronH) {
+        const auto heads = static_cast<std::uint64_t>(g.ssm_heads);
+        if (g.recurrent_layers == 0 || heads == 0 || g.ssm_state <= 0 || g.ssm_groups <= 0 ||
+            static_cast<std::uint64_t>(g.ssm_inner) % heads != 0) {
+            return "the recurrent mixers' geometry is unknown";
+        }
+        s.recurrent_layers = g.recurrent_layers;
+        s.value_heads      = static_cast<std::int32_t>(heads);
+        s.value_dim = static_cast<std::int32_t>(static_cast<std::uint64_t>(g.ssm_inner) / heads);
+        s.key_heads = static_cast<std::int32_t>(g.ssm_groups);
+        s.key_dim   = static_cast<std::int32_t>(g.ssm_state);
+        // GatedDeltaNet's convolution kernel (Mamba2's layout keeps its own rows).
+        s.conv_kernel =
+            s.family == models::StateFamily::Qwen35 ? static_cast<std::int32_t>(g.ssm_conv) : 0;
+        if (s.family == models::StateFamily::Qwen35 && s.conv_kernel < 2) {
+            return "the recurrent mixers' convolution kernel is unknown";
+        }
+    } else if (g.recurrent_layers != 0) {
+        return "recurrent layers in a family without them";
+    }
+    return {};
+}
+
 // count_params of ui/catalog.cpp, the same arithmetic (a CPU test of the UI checks its figures):
 // attention, recurrent mixers (in-projection to x, z, B, C and the heads' gates, out) and
 // feed-forward (dense or experts) each over the layers that have them, and the vocabulary tables.
@@ -141,6 +220,8 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     m.vocab                  = g.vocab;
     m.weight_bytes           = weight_bytes;
     m.weight_basis           = basis;
+    m.offline_reason         = state_of(g, m.state);
+    m.offline_bytes          = m.offline_reason.empty();
     // One sequence's state: heads x key x value per layer (GatedDeltaNet v_heads * dk * dv, Mamba2
     // heads * head_dim * state: inner x state either way), and the BF16 convolution window over
     // x, B and C (inner + 2 * groups * state channels, conv_kernel - 1 rows).
@@ -599,6 +680,48 @@ std::string plan_model_type_of_config(const json& config) {
     return {};
 }
 
+std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json& config,
+                                                                      std::uint32_t target_hidden) {
+    const auto draft = config.find("dflash_config");
+    const auto kinds = config.find("layer_types");
+    if (draft == config.end() || !draft->is_object() || kinds == config.end() ||
+        !kinds->is_array() || target_hidden == 0) {
+        return std::nullopt;
+    }
+    models::DrafterStateShape out;
+    for (const auto& kind : *kinds) {
+        const std::string name = kind.is_string() ? kind.get<std::string>() : std::string();
+        if (name == "sliding_attention") {
+            ++out.local_layers;
+        } else if (name == "full_attention") {
+            ++out.full_layers;
+        } else {
+            return std::nullopt;
+        }
+    }
+    out.window      = out.local_layers != 0 ? u32(number(config, "sliding_window")) : 0;
+    out.kv_heads    = static_cast<std::int32_t>(u32(number(config, "num_key_value_heads")));
+    out.head_dim    = static_cast<std::int32_t>(u32(number(config, "head_dim")));
+    const auto taps = draft->find("target_layer_ids");
+    if (taps == draft->end() || !taps->is_array() || taps->empty() || out.kv_heads == 0 ||
+        out.head_dim == 0 || (out.local_layers != 0 && out.window == 0)) {
+        return std::nullopt;
+    }
+    const std::uint64_t rows = std::uint64_t{target_hidden} * taps->size();
+    if (rows > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+        return std::nullopt;
+    }
+    out.feature_rows         = static_cast<std::int32_t>(rows);
+    out.prefill_feature_rows = out.feature_rows;
+    std::string arch;
+    if (const auto it = config.find("architectures");
+        it != config.end() && it->is_array() && !it->empty() && (*it)[0].is_string()) {
+        arch = (*it)[0].get<std::string>();
+    }
+    out.dflash2 = arch == "DFlash2DraftModel" || draft->contains("selector_rank");
+    return out;
+}
+
 PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t file_bytes) {
     auto out = finish(geometry_of_gguf(metadata), file_bytes, runtime::WeightBasis::FileSize);
     out.shape.base_model = base_model_of(metadata);
@@ -611,8 +734,25 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     std::set<std::string> formats;
     bool kquant                = false;
     std::uint64_t tensor_bytes = 0;
+    // The NextN blocks after the trunk (blk.<b>.* for b at least the trunk's layers): the MTP
+    // layers the converter moves to the mtp component, uploaded under MTP only.
+    std::uint64_t mtp_bytes = 0;
+    const auto block_of     = [](const std::string& name) -> std::optional<std::uint64_t> {
+        if (!starts_with(name, "blk.")) { return std::nullopt; }
+        const auto dot = name.find('.', 4);
+        if (dot == std::string::npos || dot == 4) { return std::nullopt; }
+        std::uint64_t block = 0;
+        for (std::size_t i = 4; i < dot; ++i) {
+            if (name[i] < '0' || name[i] > '9') { return std::nullopt; }
+            block = block * 10 + static_cast<std::uint64_t>(name[i] - '0');
+        }
+        return block;
+    };
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
+        if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
+            mtp_bytes += t.bytes;
+        }
         has_output = has_output || t.name == "output.weight";
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
@@ -630,6 +770,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.kquant         = kquant;
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.base_model     = base_model_of(head.metadata);
+    out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     return out;
 }
 
@@ -645,26 +786,51 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     if (text == dir.components.end()) {
         throw std::runtime_error(artifact.string() + ": the artifact has no text component");
     }
+
     // The vision encoder's tensors stay off the Device for a text plan: the objects only
     // "vision/..." parameters bind (a parameter is named <component>/<name>).
-    std::vector<bool> vision(dir.objects.size(), false), other(dir.objects.size(), false);
+    // An object only a component the options may leave unloaded binds: the vision encoder's (under
+    // --vision), the MTP layers' (under MTP), the own DFlash drafter's (under DFlash).
+    enum Part : std::uint8_t { Vision, Mtp, Drafter, Other, Parts };
+
+    std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     for (const auto& [name, binding] : dir.bindings) {
-        auto& marks = starts_with(name, "vision/") ? vision : other;
-        for (const auto& part : binding.parts) {
-            if (part.object.index < marks.size()) { marks[part.object.index] = true; }
+        const Part part = starts_with(name, "vision/")                                    ? Vision
+                          : starts_with(name, "mtp/")                                     ? Mtp
+                          : starts_with(name, "dflash/") || starts_with(name, "dflash2/") ? Drafter
+                                                                                          : Other;
+        for (const auto& piece : binding.parts) {
+            if (piece.object.index < marks.size()) { marks[piece.object.index][part] = true; }
         }
     }
-    std::uint64_t bytes = 0;
+    std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0;
     std::set<std::string> formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
-        if (tensor == nullptr || (vision[i] && !other[i])) { continue; } // resources, vision
+        if (tensor == nullptr) { continue; } // resources
+        const auto& m    = marks[i];
+        const bool alone = !m[Other] && (int(m[Vision]) + int(m[Mtp]) + int(m[Drafter]) == 1);
+        if (alone && m[Vision]) {
+            vision_bytes += tensor->bytes; // off the text plan's weights
+            continue;
+        }
         bytes += tensor->bytes;
         formats.insert(tensor->format);
+        if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
+        if (alone && m[Drafter]) { drafter_bytes += tensor->bytes; }
     }
     auto out =
         finish(geometry_of_config(text->second.config), bytes, runtime::WeightBasis::Artifact);
-    out.shape.builtin_mtp = out.shape.builtin_mtp || dir.components.contains("mtp");
+    out.model.vision_bytes      = vision_bytes;
+    out.model.mtp_bytes         = mtp_bytes;
+    out.model.own_drafter_bytes = drafter_bytes;
+    out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
+    // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
+    for (const char* component : {"dflash", "dflash2"}) {
+        const auto it = dir.components.find(component);
+        if (it == dir.components.end() || out.model.state.drafter) { continue; }
+        out.model.state.drafter = plan_drafter_state_of_config(it->second.config, out.model.hidden);
+    }
     for (const auto& f : formats) {
         // ggml_q2_k..ggml_q6_k and the i-quants: the k-quant route's.
         out.shape.kquant =
@@ -677,8 +843,17 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
 
 PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
                              runtime::WeightBasis basis) {
-    facts.model.weight_bytes = bytes;
-    facts.model.weight_basis = basis;
+    // The speculation-only shares at the other quantization: in proportion (a listing names only
+    // the file's size).
+    const auto scaled = [&](std::uint64_t part) -> std::uint64_t {
+        const std::uint64_t whole = facts.model.weight_bytes;
+        if (whole == 0 || part == 0) { return 0; }
+        return static_cast<std::uint64_t>(static_cast<long double>(part) * bytes / whole);
+    };
+    facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
+    facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
+    facts.model.weight_bytes      = bytes;
+    facts.model.weight_basis      = basis;
     return facts;
 }
 

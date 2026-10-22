@@ -395,6 +395,37 @@ int selection() {
                   rt::plan_class_reserve(128 * kGiB, false, false, true) == 16 * kGiB &&
                   rt::plan_class_reserve(16 * kGiB + 100 * kMiB, true, true, false) == 2 * kGiB,
               "the class reserve: WDDM an 8th/32nd, unified an 8th, by the 256 MiB class");
+    // Beside the free memory (which lacks the desktop's use) the reserve less the desktop's
+    // declared share: the desktop keeps max(share, reserve), never the sum. WDDM with a display:
+    // 8 GB 0.97 GiB reserve inside the 1.5 GiB share, 16 GB 1.97 (0.47 beside), 32 GB 4 (2.5).
+    const std::uint64_t share = rt::kPlanWindowsDesktopBytes;
+    failures += check(rt::plan_desktop_bytes(true, true) == 1536 * kMiB &&
+                          rt::plan_desktop_bytes(false, true) == 256 * kMiB &&
+                          rt::plan_desktop_bytes(true, false) == 0 &&
+                          rt::plan_desktop_bytes(false, false) == 0,
+                      "the desktop's declared share");
+    for (const std::uint64_t total : {7936 * kMiB, 16128 * kMiB, 32604 * kMiB, 24 * kGiB}) {
+        const std::uint64_t reserve = rt::plan_class_reserve(total, true, true, false);
+        const std::uint64_t beside  = rt::plan_reserve_beside_free(total, true, true, false);
+        failures += check(share + beside == std::max(share, reserve),
+                          "WDDM with a display keeps max(desktop share, class reserve)");
+        // Headless and Linux: no share, the reserve whole (0 on Linux).
+        failures += check(rt::plan_reserve_beside_free(total, true, false, false) ==
+                                  rt::plan_class_reserve(total, true, false, false) &&
+                              rt::plan_reserve_beside_free(total, false, false, false) == 0 &&
+                              rt::plan_reserve_beside_free(total, false, true, false) == 0,
+                          "headless WDDM keeps its reserve, Linux none");
+    }
+    failures +=
+        check(rt::plan_reserve_beside_free(7936 * kMiB, true, true, false) == 0 &&
+                  rt::plan_reserve_beside_free(16128 * kMiB, true, true, false) ==
+                      16128 * kMiB / 8 - share &&
+                  rt::plan_reserve_beside_free(32 * kGiB, true, true, false) == 4 * kGiB - share,
+              "the reserve beside the free memory: 8, 16 and 32 GB under WDDM");
+    // A GPU sharing the host's memory with a Linux display: its 256 MiB is out of the free memory.
+    failures +=
+        check(rt::plan_reserve_beside_free(128 * kGiB, false, true, true) == 16 * kGiB - 256 * kMiB,
+              "unified memory with a display");
     return failures;
 }
 

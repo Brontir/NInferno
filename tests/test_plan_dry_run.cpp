@@ -10,6 +10,7 @@
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/kv_capacity.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/quant_rule.h"
 #include "runtime/engine/plan_ladder.h"
 #include "serve/generation_service.h"
 #include "serve/serve_options.h"
@@ -39,6 +40,35 @@ void check(bool condition, const std::string& message) {
     ++failures;
 }
 
+// The state the family planner lays out (plan_facts.cpp reads it from a header or a config).
+ninferno::models::StateShape state(ninferno::models::StateFamily family, std::uint32_t full,
+                                   std::int32_t kv, std::int32_t dim, std::uint32_t sliding,
+                                   std::int32_t sliding_kv, std::int32_t sliding_dim,
+                                   std::uint32_t window, std::uint32_t recurrent,
+                                   std::int32_t value_heads, std::int32_t value_dim,
+                                   std::int32_t key_heads, std::int32_t key_dim, std::int32_t conv,
+                                   std::int32_t hidden, std::int32_t vocab) {
+    return {.family           = family,
+            .full_layers      = full,
+            .kv_heads         = kv,
+            .head_dim         = dim,
+            .sliding_layers   = sliding,
+            .sliding_kv_heads = sliding_kv,
+            .sliding_head_dim = sliding_dim,
+            .window           = window,
+            .recurrent_layers = recurrent,
+            .value_heads      = value_heads,
+            .value_dim        = value_dim,
+            .key_heads        = key_heads,
+            .key_dim          = key_dim,
+            .conv_kernel      = conv,
+            .hidden           = hidden,
+            .output_rows      = vocab,
+            .public_tokens    = vocab};
+}
+
+using ninferno::models::StateFamily;
+
 // Synthetic shapes (the arithmetic of the lab's models, rounded).
 rt::PlanModelFacts qwen27b(std::uint64_t weights) {
     rt::PlanModelFacts m;
@@ -58,6 +88,9 @@ rt::PlanModelFacts qwen27b(std::uint64_t weights) {
     m.params                   = 27e9;
     m.weight_bytes             = weights;
     m.weight_basis             = rt::WeightBasis::FileSize;
+    m.state =
+        state(StateFamily::Qwen35, 16, 4, 256, 0, 0, 0, 0, 48, 48, 128, 16, 128, 4, 5120, 248320);
+    m.offline_bytes = true;
     return m;
 }
 
@@ -72,6 +105,8 @@ rt::PlanModelFacts moe35b(std::uint64_t weights) {
     m.hidden                   = 2048;
     m.ffn_active               = 8 * 512 + 512;
     m.params                   = 35e9;
+    m.state =
+        state(StateFamily::Qwen35, 10, 2, 256, 0, 0, 0, 0, 30, 32, 128, 16, 128, 4, 2048, 248320);
     return m;
 }
 
@@ -94,6 +129,9 @@ rt::PlanModelFacts gemma31b(std::uint64_t weights) {
     m.vocab                  = 262144;
     m.params                 = 31e9;
     m.weight_bytes           = weights;
+    m.state =
+        state(StateFamily::Gemma4, 10, 4, 512, 50, 16, 256, 1024, 0, 0, 0, 0, 0, 0, 5376, 262144);
+    m.offline_bytes = true;
     return m;
 }
 
@@ -116,6 +154,9 @@ rt::PlanModelFacts gptoss20b(std::uint64_t weights) {
     m.vocab                  = 201088;
     m.params                 = 21e9;
     m.weight_bytes           = weights;
+    m.state =
+        state(StateFamily::DenseDecoder, 12, 8, 64, 12, 8, 64, 128, 0, 0, 0, 0, 0, 0, 2880, 201088);
+    m.offline_bytes = true;
     return m;
 }
 
@@ -136,6 +177,9 @@ rt::PlanModelFacts nemotron30b(std::uint64_t weights) {
     m.vocab                    = 131072;
     m.params                   = 31.6e9;
     m.weight_bytes             = weights;
+    m.state =
+        state(StateFamily::NemotronH, 6, 2, 128, 0, 0, 0, 0, 23, 64, 64, 8, 128, 0, 2688, 131072);
+    m.offline_bytes = true;
     return m;
 }
 
@@ -156,6 +200,12 @@ EngineOptions serve_like(std::uint32_t context, std::uint32_t streams) {
 }
 
 // ---- 1. The seams: the dry run's ladder is the one a start builds from the same functions.
+
+// Every stream holds a context of its own on a non-survival rung (the rule's own fit).
+bool own_fit(const rt::DryRunPlan& plan) {
+    const rt::DryRunRung* chosen = plan.chosen();
+    return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
+}
 
 void test_seams() {
     const rt::PlanModelFacts model   = qwen27b(15 * kGiB);
@@ -187,7 +237,7 @@ void test_seams() {
             const auto candidates =
                 rt::plan_ladder(rt::plan_ladder_inputs(axes, streams, true, !axes.chunk_automatic));
             const auto bytes = [&](const rt::PlanRung& rung) {
-                return rt::plan_rung_estimate(model, rung, options, streams);
+                return rt::plan_rung_bytes(model, rung, options, streams, !axes.kv_automatic);
             };
             const auto ladder = rt::prune_plan_ladder(candidates, [&](std::size_t i) {
                 return std::optional<std::uint64_t>(bytes(candidates[i]).total());
@@ -358,7 +408,7 @@ void test_properties() {
                         for (std::size_t q = model.quants.size(); q-- > 0;) {
                             const rt::DryRunPlan plan = rt::dry_run_plan(
                                 model.make(model.quants[q]), device, serve_like(context, streams));
-                            const bool fits = rt::quant_fit_of(plan).fits;
+                            const bool fits = own_fit(plan);
                             check(!larger_fits || fits,
                                   model.name + ": a smaller quantization fits where a larger does");
                             larger_fits = larger_fits || fits;
@@ -372,7 +422,7 @@ void test_properties() {
                         if (*it == 0 || *it > model.make(0).native_context) { continue; }
                         const rt::DryRunPlan plan = rt::dry_run_plan(
                             model.make(model.quants.front()), device, serve_like(*it, streams));
-                        const bool fits = rt::quant_fit_of(plan).fits;
+                        const bool fits = own_fit(plan);
                         check(!longer_fits || fits, model.name + ": a shorter context fits");
                         longer_fits = longer_fits || fits;
                     }
@@ -383,6 +433,11 @@ void test_properties() {
                 for (const char* kv : {"bf16", "fp8", "nvfp4"}) {
                     const auto o = pr::launch_options({.max_context = 0, .kv_dtype = kv}).options;
                     const rt::DryRunPlan plan = rt::dry_run_plan(facts, device, o);
+                    // A codec the family does not lay out is refused, with its words.
+                    if (!plan.planned) {
+                        check(!plan.reason.empty(), model.name + ": a refused codec says why");
+                        continue;
+                    }
                     const std::uint32_t got   = plan.fits ? plan.chosen()->rung.max_context : 0;
                     check(got >= wider, model.name + ": a narrower KV codec never less context");
                     wider = std::max(wider, got);
@@ -399,49 +454,109 @@ void test_properties() {
 void test_rule() {
     using rt::QuantCandidate;
     using rt::QuantFit;
+    using rt::QuantFitState;
+    using rt::QuantPickTier;
+    // The targets.
+    check(rt::quant_own_targets({.automatic = true, .native = 262144}) ==
+              std::vector<std::uint32_t>{32768, 16384, 8192},
+          "auto targets 32K, 16K, 8K");
+    check(rt::quant_own_targets({.automatic = true, .native = 20000}) ==
+              std::vector<std::uint32_t>{20000, 16384, 8192},
+          "auto targets under a short native context");
+    check(rt::quant_own_targets({.automatic = true, .native = 4096}) ==
+              std::vector<std::uint32_t>{4096},
+          "auto target: the model's own when shorter than 8K");
+    check(rt::quant_own_targets({.automatic = false, .context = 131072}) ==
+              std::vector<std::uint32_t>{131072},
+          "a pinned context is the one target");
+
     const std::vector<QuantCandidate> c = {
-        {.label = "Q4_K_M", .bytes = 16 * kGiB, .label_bits = 4, .bits_per_weight = 4.8},
-        {.label           = "UD-Q4_K_XL",
-         .bytes           = 16 * kGiB + 50 * kMiB,
-         .label_bits      = 4,
-         .bits_per_weight = 4.81,
-         .quality_loss    = 0.010},
-        {.label           = "Q4_K_S",
-         .bytes           = 16 * kGiB + 10 * kMiB,
-         .label_bits      = 4,
-         .bits_per_weight = 4.80,
-         .quality_loss    = 0.020},
-        {.label = "Q6_K", .bytes = 21 * kGiB, .label_bits = 6, .bits_per_weight = 6.6},
-        {.label = "Q8_0", .bytes = 27 * kGiB, .label_bits = 8, .bits_per_weight = 8.5},
+        {.label = "UD-IQ2_M", .bytes = 10 * kGiB, .label_bits = 2, .bits_per_weight = 2.7},
+        {.label = "IQ3_XXS", .bytes = 12 * kGiB, .label_bits = 3, .bits_per_weight = 3.1},
+        {.label = "Q3_K_M", .bytes = 15 * kGiB, .label_bits = 3, .bits_per_weight = 3.9},
+        {.label = "Q4_K_M", .bytes = 18 * kGiB, .label_bits = 4, .bits_per_weight = 4.8},
+        {.label = "Q6_K", .bytes = 24 * kGiB, .label_bits = 6, .bits_per_weight = 6.6},
         {.label           = "BF16",
-         .bytes           = 50 * kGiB,
+         .bytes           = 54 * kGiB,
          .label_bits      = 16,
          .bits_per_weight = 16,
          .supported       = false},
     };
-    std::vector<QuantFit> fits(c.size());
-    fits[0].fits = fits[1].fits = fits[2].fits = fits[3].fits = true;
-    fits[5].fits                                              = true; // unsupported never wins
-    auto pick                                                 = rt::largest_fitting_quant(c, fits);
-    check(pick && c[*pick].label == "Q6_K", "the most bits per weight that fits");
-    fits[3].fits = false;
-    pick         = rt::largest_fitting_quant(c, fits);
-    check(pick && c[*pick].label == "UD-Q4_K_XL",
-          "within 1 % of the bytes the lower published loss wins");
-    fits[1].fits = false;
-    pick         = rt::largest_fitting_quant(c, fits);
-    check(pick && c[*pick].label == "Q4_K_S", "then the next");
-    std::vector<QuantFit> shared(c.size());
-    shared[3].shared = true;
-    shared[0].shared = true;
-    pick             = rt::largest_fitting_quant(c, shared);
-    check(pick && c[*pick].label == "Q6_K", "the largest shared fit when none is private");
-    shared[2].fits = true;
-    pick           = rt::largest_fitting_quant(c, shared);
-    check(pick && c[*pick].label == "Q4_K_S", "a private fit before a shared one");
-    check(!rt::largest_fitting_quant(c, std::vector<QuantFit>(c.size())), "none fits");
+    const rt::QuantAsk auto4{.automatic = true, .concurrency = 4, .native = 262144};
+    const auto fit = [](QuantFitState state, std::uint32_t own = 0, std::uint32_t context = 0) {
+        return QuantFit{.state = state, .context = context, .own_context = own};
+    };
+    std::vector<QuantFit> fits = {
+        fit(QuantFitState::Own, 98304),      fit(QuantFitState::Own, 65536),
+        fit(QuantFitState::Own, 65536),      fit(QuantFitState::Own, 49152),
+        fit(QuantFitState::Shared, 0, 9000), fit(QuantFitState::Own, 1 << 20)};
+    auto pick = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "Q4_K_M" && pick->tier == QuantPickTier::Own &&
+              pick->target_context == 32768,
+          "auto x 4: the largest whose streams hold 32K each, not the shared Q6_K");
+    fits[3] = fit(QuantFitState::Own, 20000);
+    fits[2] = fit(QuantFitState::Own, 20000);
+    fits[1] = fit(QuantFitState::Own, 65536);
+    pick    = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "Q4_K_M" && pick->tier == QuantPickTier::OwnStepped &&
+              pick->target_context == 16384,
+          "no floor quant reaches 32K each: the context steps down before a lower quant");
+    fits[3] = fit(QuantFitState::Shared, 0, 12000);
+    fits[2] = fit(QuantFitState::Shared, 0, 15000);
+    pick    = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "Q6_K" && pick->tier == QuantPickTier::Shared &&
+              !pick->below_floor,
+          "nothing at the floor holds 8K each: the shared pool of the largest, not 3 bits own");
+    for (std::size_t i = 2; i < 5; ++i) { fits[i] = fit(QuantFitState::No); }
+    pick = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "IQ3_XXS" && pick->tier == QuantPickTier::OwnBelowFloor &&
+              pick->below_floor && !pick->low_quality,
+          "below the floor only when nothing at it fits");
+    fits[1] = fit(QuantFitState::No);
+    pick    = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "UD-IQ2_M" && pick->low_quality,
+          "under 3 bits the pick is low quality");
+    fits[0] = fit(QuantFitState::No);
+    fits[3] = fit(QuantFitState::Desktop, 0, 8192);
+    pick    = rt::largest_fitting_quant(c, fits, auto4);
+    check(pick && c[pick->index].label == "Q4_K_M" && pick->tier == QuantPickTier::Desktop,
+          "last: what fits only without the desktop's reserve");
+    fits[3] = fit(QuantFitState::Unknown);
+    check(!rt::largest_fitting_quant(c, fits, auto4), "none fits (the unsupported never wins)");
+    // A pinned context: own at it, then shared, then below the floor.
+    const rt::QuantAsk pinned3{.automatic = false, .context = 131072, .concurrency = 3};
+    fits = {fit(QuantFitState::Own, 131072),
+            fit(QuantFitState::No),
+            fit(QuantFitState::No),
+            fit(QuantFitState::Shared, 0, 131072),
+            fit(QuantFitState::Shared, 0, 131072),
+            fit(QuantFitState::No)};
+    pick = rt::largest_fitting_quant(c, fits, pinned3);
+    check(pick && c[pick->index].label == "Q6_K" && pick->tier == QuantPickTier::Shared,
+          "128K x 3: the shared Q6_K before a 2-bit file with three own contexts");
+    // One stream: its context is its own whatever its length.
+    const rt::QuantAsk auto1{.automatic = true, .concurrency = 1, .native = 262144};
+    fits = {fit(QuantFitState::No), fit(QuantFitState::No),
+            fit(QuantFitState::No), fit(QuantFitState::Own, 6144, 6144),
+            fit(QuantFitState::No), fit(QuantFitState::No)};
+    pick = rt::largest_fitting_quant(c, fits, auto1);
+    check(pick && c[pick->index].label == "Q4_K_M" && pick->tier == QuantPickTier::OwnStepped,
+          "one stream with a short context: an own pick, never called shared");
+    // A strict weak order.
+    for (const QuantCandidate& a : c) {
+        check(!rt::quant_ranks_above(a, a), "irreflexive: " + a.label);
+        for (const QuantCandidate& b : c) {
+            check(!(rt::quant_ranks_above(a, b) && rt::quant_ranks_above(b, a)),
+                  "asymmetric: " + a.label + " " + b.label);
+            for (const QuantCandidate& d : c) {
+                if (rt::quant_ranks_above(a, b) && rt::quant_ranks_above(b, d)) {
+                    check(rt::quant_ranks_above(a, d), "transitive");
+                }
+            }
+        }
+    }
 
-    // The table: the rule's pick fits and every larger supported one does not (consistency).
+    // The table: the rule's pick fits and no larger quantization fits at the pick's tier.
     const rt::PlanDeviceFacts device = card(24, 89);
     pr::PlanSourceFacts shape;
     shape.model = qwen27b(9 * kGiB);
@@ -460,6 +575,7 @@ void test_rule() {
                            .bits   = bits});
     }
     listing.push_back({.quant = "mmproj-F16", .format = "gguf", .bytes = kGiB, .drafter = true});
+    listing.push_back({.quant = "NVFP4", .format = "gguf", .bytes = 15 * kGiB, .bits = 4});
     for (const std::uint32_t context : {0U, 32768U, 131072U}) {
         for (const std::uint32_t streams : {1U, 4U}) {
             pr::DryRunInputs inputs;
@@ -469,35 +585,82 @@ void test_rule() {
             inputs.options           = o.options;
             inputs.ask               = o.ask;
             const pr::QuantPlan plan = pr::plan_quants(shape, listing, inputs);
+            const std::string what =
+                "ctx " + std::to_string(context) + " x " + std::to_string(streams);
             check(plan.rows.size() == listing.size() - 1, "drafters left out of the table");
-            check(!plan.rule.empty(), "a rule line");
+            check(!plan.rule.empty() && !plan.rule_code.empty(), "a rule line and its code");
             const auto row = [&](const std::string& label) -> const pr::QuantRow& {
                 return *std::find_if(
                     plan.rows.begin(), plan.rows.end(),
                     [&](const pr::QuantRow& r) { return r.listing.quant == label; });
             };
-            check(!row("BF16").candidate.supported, "BF16 is not served");
-            if (!plan.chosen) { continue; }
-            const pr::QuantRow& chosen = plan.rows[*plan.chosen];
-            check(chosen.fit.fits || chosen.fit.shared, "the pick fits");
+            check(row("BF16").fit.state == QuantFitState::Unsupported &&
+                      row("BF16").unsupported_code == "above_8_bits",
+                  "BF16 GGUF is not served");
+            check(row("NVFP4").unsupported_code == "nvfp4_card", "NVFP4 needs an FP4 card");
+            if (!plan.pick) { continue; }
+            const pr::QuantRow& chosen = plan.rows[plan.pick->index];
+            check(chosen.largest && plan.chosen == plan.pick->index, "the pick is marked");
+            check(chosen.fit.state == QuantFitState::Own ||
+                      chosen.fit.state == QuantFitState::Shared ||
+                      chosen.fit.state == QuantFitState::Desktop,
+                  what + ": the pick fits");
+            const bool own_tier = plan.pick->tier == QuantPickTier::Own ||
+                                  plan.pick->tier == QuantPickTier::OwnStepped;
             for (const pr::QuantRow& r : plan.rows) {
-                if (r.candidate.supported && rt::quant_ranks_above(r.candidate, chosen.candidate)) {
-                    check(!(chosen.fit.fits ? r.fit.fits : (r.fit.fits || r.fit.shared)),
-                          "no larger quantization fits: " + r.listing.quant + " over " +
-                              chosen.listing.quant);
+                if (!r.candidate.supported ||
+                    !rt::quant_ranks_above(r.candidate, chosen.candidate)) {
+                    continue;
                 }
+                if (own_tier) {
+                    check(!(r.fit.state == QuantFitState::Own &&
+                            r.fit.own_context >= plan.pick->target_context),
+                          what + ": no larger quantization holds the target each: " +
+                              r.listing.quant + " over " + chosen.listing.quant);
+                }
+            }
+            // Auto with several streams: the launch pins the own context the pick was made for,
+            // and a plan pinned there keeps every stream's own.
+            if (context == 0 && streams > 1 && chosen.launch_context != 0) {
+                check(chosen.launch_context == chosen.fit.own_context, what + ": launch context");
+                pr::DryRunInputs pinned = inputs;
+                const pr::LaunchPlanOptions p =
+                    pr::launch_options({.max_context     = chosen.launch_context,
+                                        .max_concurrency = streams,
+                                        .spec            = "none"});
+                pinned.options                  = p.options;
+                const pr::PlannedSpeculation at = pr::plan_model(
+                    pr::with_weights(shape, chosen.weight_bytes, chosen.basis), pinned);
+                check(own_fit(at.plan), what + ": the pinned launch keeps each stream's own");
+            }
+            if (context != 0) {
+                check(chosen.launch_context == context, what + ": a pinned launch keeps it");
             }
             // The JSON document carries the schema's fields.
             const nlohmann::json doc =
                 pr::dry_plan_document(shape, "test/repo", "hub", inputs, chosen.planned, &plan);
             check(doc["schema"] == "ninferno-dry-plan/1", "schema");
             check(doc["chosen"] == chosen.listing.quant, "chosen in the document");
+            check(doc["pick"].is_object() && doc["pick"]["quant"] == chosen.listing.quant &&
+                      doc["pick"]["card_gb"] == 24,
+                  "the pick in the document");
+            check(doc["rule_code"] == "largest_fits" &&
+                      doc["rule_params"]["quant"] == chosen.listing.quant,
+                  "the rule as data");
+            check(doc["device"]["card_gb"] == 24, "the card as sold");
             check(doc["plan"].contains("ladder") && doc["plan"].contains("speculation"),
                   "plan with ladder and speculation");
             check(doc["quants"].size() == plan.rows.size(), "every row");
-            for (const char* key :
-                 {"fits", "rung", "rungs", "reserve", "context", "pool_contexts",
-                  "private_contexts", "kv_dtype", "state_dtype", "reason", "fits_instead"}) {
+            for (const auto& q : doc["quants"]) {
+                for (const char* key : {"state", "own_context", "launch_context", "below_floor",
+                                        "low_quality", "drafter_bytes", "unsupported_code",
+                                        "weights_basis", "fits", "fits_shared"}) {
+                    check(q.contains(key), std::string("quants[].") + key);
+                }
+            }
+            for (const char* key : {"fits", "rung", "rungs", "reserve", "context", "pool_contexts",
+                                    "private_contexts", "kv_dtype", "state_dtype", "reason",
+                                    "reason_code", "reason_params", "fits_instead"}) {
                 check(doc["plan"].contains(key), std::string("plan.") + key);
             }
             for (const char* key : {"ask", "served", "classes", "fallbacks", "load", "basis"}) {
@@ -505,6 +668,49 @@ void test_rule() {
             }
             check(doc["plan"]["speculation"]["classes"].size() == 4, "four context classes");
         }
+    }
+    // A safetensors checkpoint: planned at its converted size, or not planned (never refused).
+    {
+        const nlohmann::json dense = {{"model_type", "qwen3_5_text"}};
+        check(pr::checkpoint_converted_bytes(dense, 54 * kGiB) == 54 * kGiB,
+              "a BF16 dense checkpoint runs at its own size");
+        const nlohmann::json moe = {{"text_config",
+                                     {{"model_type", "qwen3_5_moe_text"},
+                                      {"num_experts", 256},
+                                      {"num_hidden_layers", 40},
+                                      {"hidden_size", 2048},
+                                      {"moe_intermediate_size", 512}}}};
+        const auto bytes         = pr::checkpoint_converted_bytes(moe, 67 * kGiB);
+        check(bytes && *bytes > 17 * kGiB && *bytes < 25 * kGiB,
+              "a 35B-A3B BF16 checkpoint converts to about 20 GiB");
+        std::vector<pr::QuantListing> one = {
+            {.quant = "", .format = "safetensors", .bytes = 54 * kGiB, .bits = 16}};
+        pr::DryRunInputs inputs;
+        inputs.device                 = device;
+        const pr::LaunchPlanOptions o = pr::launch_options({.spec = "none"});
+        inputs.options                = o.options;
+        inputs.ask                    = o.ask;
+        check(pr::plan_quants(shape, one, inputs).rows[0].fit.state == QuantFitState::Unknown,
+              "a checkpoint of unknown converted size is not planned, not refused");
+        one[0].converted_bytes      = 54 * kGiB;
+        const pr::QuantPlan planned = pr::plan_quants(shape, one, inputs);
+        check(planned.rows[0].converted && planned.rows[0].weight_bytes == 54 * kGiB &&
+                  planned.rows[0].fit.state == QuantFitState::No,
+              "planned at its converted size");
+    }
+    // An unreadable shape: every row unknown, nothing picked (the caller falls back).
+    {
+        pr::PlanSourceFacts blank;
+        pr::DryRunInputs inputs;
+        inputs.device                 = device;
+        const pr::LaunchPlanOptions o = pr::launch_options({.spec = "none"});
+        inputs.options                = o.options;
+        inputs.ask                    = o.ask;
+        const pr::QuantPlan plan      = pr::plan_quants(blank, listing, inputs);
+        check(!plan.pick, "nothing picked without a shape");
+        check(plan.rows[2].fit.state == QuantFitState::Unknown &&
+                  pr::plan_reason_code(plan.rows[2].planned.plan).code == "shape_unknown",
+              "unknown, with its code");
     }
     // On a 24 GB card at 32K x 1 a 27B fits at Q6_K, not at Q8_0 (the lab's 4090).
     {

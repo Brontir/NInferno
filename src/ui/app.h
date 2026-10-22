@@ -34,6 +34,7 @@
 #include "product/plan/plan_quants.h"
 #include "product/update/update_check.h"
 
+#include <chrono>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -186,7 +187,7 @@ private:
     std::uint64_t install_update();
     void restart();
     nlohmann::json state_json();
-    nlohmann::json catalog_json(int gpu);
+    nlohmann::json catalog_json(int gpu, const product::LaunchAsk& launch = {});
     nlohmann::json quants_json(const std::string& repo, int gpu,
                                const std::string& hub           = "huggingface",
                                const product::LaunchAsk& launch = {});
@@ -239,8 +240,13 @@ private:
     std::map<std::string, nlohmann::json> kv_; // repo -> KvModel json
     // hub_key -> the plan facts kv_json read with it (product/plan/plan_facts.h)
     std::map<std::string, product::PlanSourceFacts> plan_facts_;
-    // plan_json's documents by their inputs (the listing and the GPU's facts do not change)
+    // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
+    // bounded: plan_json clears it beyond kMaxKeptPlans)
     std::map<std::string, nlohmann::json> plans_;
+    // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
+    std::map<std::string, nlohmann::json> configs_;
+    // hub_key -> when a header or config read last failed (tried again after a minute)
+    std::map<std::string, std::chrono::steady_clock::time_point> kv_failed_;
     std::map<std::string, nlohmann::json> archs_;    // arch_json, by hub_key
     std::map<std::string, std::string> base_models_; // repo -> its card's base_model ("-": none)
     std::map<std::string, std::pair<std::int64_t, nlohmann::json>> searches_; // q -> (time, hits)

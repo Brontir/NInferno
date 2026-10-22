@@ -343,18 +343,31 @@ allowance and a margin:
 |---|---|---|
 | Weights | not in the need: the free memory is read after the target's and a separate drafter's weights are uploaded, and the plan reports their sum | the family load |
 | Base margin | 32 MiB (`--kv-auto-headroom-mib`), 0 with an explicit `--kv-capacity` | option |
-| Class reserve | under WDDM (native Windows, WSL 2) an 8th of the VRAM class, at most 4 GiB, on a card driving the display, a 32nd, at most 1 GiB, headless; an 8th, at least 4 GiB, on a GPU sharing the host's memory; else 0. The VRAM class is the total memory rounded down to 256 MiB | driver model, display, integrated: discrete facts |
+| Class reserve | under WDDM (native Windows, WSL 2) an 8th of the VRAM class, at most 4 GiB, on a card driving the display, a 32nd, at most 1 GiB, headless; an 8th, at least 4 GiB, on a GPU sharing the host's memory; else 0. The VRAM class is the total memory rounded down to 256 MiB. Kept beside the free memory less the desktop's declared share (`plan_reserve_beside_free`) | driver model, display, integrated: discrete facts |
 | Warm-up allowance | 64 MiB (kernel code and the per-thread stack, measured at 6-40 MiB on an RTX 5080), 0 when nothing is automatic | declared |
 
 - The class reserve covers the growth of what Windows already holds: the free memory is measured
   with the desktop's current use taken, so the reserve is not a guess of that use.
+- The desktop keeps the larger of its declared share and the class reserve, never their sum. The
+  free memory a start reads already lacks the desktop's use, so the selection keeps beside it only
+  the class reserve less the declared share (`plan_desktop_bytes`: 1.5 GiB under WDDM, 256 MiB on
+  Linux, with a display; 0 headless): `plan_reserve_beside_free`. Under WDDM with a display an
+  8 GB card keeps nothing beside (its 0.97 GiB reserve is inside the 1.5 GiB share), a 16 GB card
+  0.47 GiB (1.97 in all), a 32 GB card 2.5 GiB (4 in all); a headless card and Linux are as
+  before (a 32nd, at most 1 GiB, under WDDM; none on Linux). Before, the share and the reserve
+  were added: 3.5 GiB of a 16 GB card, 5.5 of a 32 GB one.
+- The share is declared, from the driver model and the display, never measured: reducing the
+  reserve by the use the free memory shows would make the reserve a function of the measurement.
+  A desktop holding more than its share at a start leaves less free memory, which picks a lower
+  declared rung, as any other memory taken does.
 - The class reserve is given up in three cases only: a survival rung (below the floor quality), a
   `warm_up` admission (nothing else fits), and the options that keep none (below). Down to the
   floor quality it is kept, so a desktop on a small card gets the floor before the reserve is given
   up (master gave it up for a longer context and let Windows page the pool out). Once it is given
-  up the plan does not drop to the bottom: the floor quality comes first (an 8 GB card with a
-  display and 1.0-1.3 GiB free: 8,192 tokens at chunk 1024), then the chunk, the states and
-  shorter contexts.
+  up the plan does not drop to the bottom: the floor quality comes first (the review's 8 GB card
+  with a display, 1.0-1.3 GiB free and a whole 1 GiB reserve: 8,192 tokens at chunk 1024), then
+  the chunk, the states and shorter contexts. Under WDDM an 8 GB card with a display now keeps no
+  reserve beside its desktop share (above).
 - The reserve applies to an automatic pool only. An explicit `--kv-capacity` keeps none, and so
   does an explicit `--max-context` at `--max-concurrency 1`, which makes the pool that one context
   (an explicit `--kv-capacity`). When the rung above the chosen one fits without the reserve, the
@@ -430,12 +443,20 @@ allowance.
 
 The free memory is either the device's now, less the weights, or that of an idle card of the class:
 the VRAM less a declared driver share and a desktop share. It still only selects a declared rung.
+The class reserve beside it is a start's (`plan_reserve_beside_free`: the reserve less the same
+desktop share), so the idle card keeps the larger of the two for the desktop, as a start does.
+`tests/test_plan_bench_fits.cpp` plans every setup `docs/performance/data/bench.jsonl` measured
+through `ninferno-serve` on its named board and checks that each fits; the started plan stays the
+authority, and a setup the estimate does not fit yet is a named exception in that test.
 
-The quantization rule (`largest_fitting_quant`) is a pure function of the listing, the shape and
-those facts. It takes the most bits per weight whose selected rung is not a survival rung and holds
-a whole context for every stream. Ties go to the published quality loss, then the bytes. Without a
-private fit it takes the largest shared one. The rule reads the idle-card free memory, so the same
-card type gets the same quantization.
+The quantization rule (`largest_fitting_quant`, `runtime/engine/quant_rule.h`) is a pure function
+of the listing, the shape and those facts, through declared constants: the own context per stream
+it aims for (an asked one, or min(the model's own, 32K), stepping to 16K and 8K under Auto), the
+quality floor (3.5 bits per weight) and the low-quality mark (3). Its tiers: own at or above the
+floor, shared at or above it, then the same below it, then a survival rung (the desktop's reserve
+given up). Within a tier the most bits per weight, then the bytes, then the label (a strict order).
+The own context is probed at declared pinned contexts with the same plan, never measured. The rule
+reads the idle-card free memory, so the same card type gets the same quantization.
 
 ### The fingerprint
 
@@ -456,7 +477,8 @@ master's or longer (no cached Device states give it more), the KV within 6 % at
 `--max-concurrency` 4 and 8; the one exception is an 8 GB card under WSL with a display and
 1.39 GiB free, where the 1 GiB reserve does not fit beside the floor quality: the ladder serves
 8,192 tokens at chunk 1024 without the reserve (a warning), where master served 50,816 with none
-left for Windows.
+left for Windows. These replays keep the review's margins (a whole class reserve beside the free
+memory); a start now keeps the reserve less the desktop's share, none on that 8 GB card.
 
 ## Fingerprint
 
