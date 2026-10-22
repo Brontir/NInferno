@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Fails when decision code can read a clock or the monitor. Observations (timings, step latencies,
-# NVML clocks, temperature, power) may be logged and exported, never fed back into a decision
-# (docs/maintainer/deterministic-decisions.md, principle 3). The files below choose routes, depth,
-# speculation, admission, placement and cache plans; they may not include a clock or timing header
-# nor name a clock, a timer or a clock read outside comments.
+# Fails when decision code can read a clock, the monitor, the environment or the free Device
+# memory. Observations (timings, step latencies, NVML clocks, temperature, power) may be logged and
+# exported, never fed back into a decision (docs/maintainer/deterministic-decisions.md, principle
+# 3); no environment variable decides (an option does, hashed in the fingerprint); the free memory
+# is read once, by the plan ladder's selection in runtime/engine/model_instance.cpp, which is not
+# listed. The files below choose routes, depth, speculation, admission, placement and cache plans;
+# they may not include a clock or timing header nor name a clock, a timer, a clock read, an
+# environment read or a free-memory query outside comments. `allowed` names the one environment
+# read a listed file keeps: a lab dump that decides nothing.
 #
 # The monitor side of planning is context_cache/planning_stopwatch.h (not listed). Its one user is
 # context_cache/resource_manager.h, which may include it and nothing else of the monitor: it
@@ -30,6 +34,11 @@ cd "$root"
 decision_patterns=(
   src/core/host_cpu_quota.h
   src/core/machine_facts.cpp
+  src/runtime/engine/plan_ladder.cpp
+  src/runtime/engine/plan_ladder.h
+  src/ops/generic/generic_gemm.cpp
+  src/ops/generic/generic_gemm.h
+  src/ops/softmax_attention/common/causal_partition.h
   src/runtime/engine/admission_policy.cpp
   src/runtime/engine/admission_policy.h
   src/runtime/engine/decision_fingerprint.cpp
@@ -76,8 +85,15 @@ names='steady_clock|system_clock|high_resolution_clock|Clock::now|CudaEventTimer
 names+='|cudaEventElapsedTime|elapsed_ms\(|elapsed_ns\(|seconds_since|utc_now|clock_gettime'
 names+='|QueryPerformanceCounter|GetTickCount|timeGetTime|globaltimer|clock64|(^|[^_[:alnum:]])clock\('
 names+='|nvml[A-Z]'
+# Environment reads and free-memory queries.
+names+='|(^|[^_[:alnum:]])(secure_)?getenv\(|_dupenv_s|GetEnvironmentVariable|cudaMemGetInfo'
+names+='|cuMemGetInfo'
 forbidden="$(include_of "$clock_headers|$monitor_header")|$names"
 forbidden_for_monitor_user="$(include_of "$clock_headers")|$names"
+# "file|text" pairs: a hit in that file whose line holds that text is not an offence.
+allowed=(
+  'src/ops/generic/generic_gemm.cpp|getenv("NINFERNO_ROUTE_RECORD")' # the problems reached, a dump
+)
 
 # The file's code lines as "line:text": `//` comment lines and the lines of /* */ blocks are left
 # out (a comment may name what the monitor measures); every other line is read, whatever it
@@ -103,14 +119,26 @@ code_lines() {
     }' "$1"
 }
 
+# Whether `file`'s hit `line` is an allowed exception.
+is_allowed() {
+  local file=$1 line=$2 entry
+  for entry in "${allowed[@]}"; do
+    [[ $file == "${entry%%|*}" && $line == *"${entry#*|}"* ]] && return 0
+  done
+  return 1
+}
+
 # Prints the offending lines of `file` against `pattern`; returns 1 when there are any.
 check_file() {
-  local file=$1 pattern=$2 hits
+  local file=$1 pattern=$2 hits found=0
   if hits=$(code_lines "$file" | grep -E "$pattern"); then
-    while IFS= read -r hit; do echo "$file:$hit"; done <<< "$hits"
-    return 1
+    while IFS= read -r hit; do
+      is_allowed "$file" "$hit" && continue
+      echo "$file:$hit"
+      found=1
+    done <<< "$hits"
   fi
-  return 0
+  return $found
 }
 
 # Self-test: planted violations are caught, comments and clean code are not.
@@ -126,9 +154,13 @@ self_test() {
     > "$dir/after_block.h"
   printf '%s\n' '// Clock::now() in a comment' '/* steady_clock */ int a = 0;' '#include <cstdint>' \
     'std::uint64_t clocks = 0; // a word, not a read' '#include "runtime/contract/execution_timing.h"' \
-    > "$dir/clean.h"
+    '// getenv("X") and cudaMemGetInfo in a comment' 'bool regetenv(int);' > "$dir/clean.h"
+  printf '%s\n' '    const char* knob = std::getenv("NINFERNO_KNOB");' > "$dir/env.h"
+  printf '%s\n' '    cudaMemGetInfo(&free_bytes, &total_bytes);' > "$dir/memory.h"
+  # An allowed read is allowed in its own file only.
+  printf '%s\n' '    static const char* path = std::getenv("NINFERNO_ROUTE_RECORD");' > "$dir/dump.h"
   local planted
-  for planted in deref monitor clock libc after_block; do
+  for planted in deref monitor clock libc after_block env memory dump; do
     if check_file "$dir/$planted.h" "$forbidden" > /dev/null; then
       echo "self-test: a planted violation passed ($planted)"
       return 1
@@ -167,7 +199,7 @@ for file in "${decision_files[@]}"; do
   check_file "$file" "$pattern" || bad=1
 done
 if [[ $bad -ne 0 ]]; then
-  echo "decision code reads a clock or the monitor (deterministic-decisions.md, principle 3)"
+  echo "decision code reads a clock, the monitor, the environment or the free memory (deterministic-decisions.md, principle 3)"
   exit 1
 fi
-echo "${#decision_files[@]} decision files read no clock"
+echo "${#decision_files[@]} decision files read no clock, environment or free memory"
