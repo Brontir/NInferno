@@ -85,8 +85,10 @@ names='steady_clock|system_clock|high_resolution_clock|Clock::now|CudaEventTimer
 names+='|cudaEventElapsedTime|elapsed_ms\(|elapsed_ns\(|seconds_since|utc_now|clock_gettime'
 names+='|QueryPerformanceCounter|GetTickCount|timeGetTime|globaltimer|clock64|(^|[^_[:alnum:]])clock\('
 names+='|nvml[A-Z]'
-# Environment reads and free-memory queries.
-names+='|(^|[^_[:alnum:]])(secure_)?getenv\(|_dupenv_s|GetEnvironmentVariable|cudaMemGetInfo'
+# Environment reads (the C library, Win32 and the project's sys::env accessor) and free-memory
+# queries.
+names+='|(^|[^_[:alnum:]])(secure_)?getenv\(|_wgetenv|_w?dupenv_s|GetEnvironmentVariable'
+names+='|sys::env\(|cudaMemGetInfo'
 names+='|cuMemGetInfo'
 forbidden="$(include_of "$clock_headers|$monitor_header")|$names"
 forbidden_for_monitor_user="$(include_of "$clock_headers")|$names"
@@ -156,11 +158,13 @@ self_test() {
     'std::uint64_t clocks = 0; // a word, not a read' '#include "runtime/contract/execution_timing.h"' \
     '// getenv("X") and cudaMemGetInfo in a comment' 'bool regetenv(int);' > "$dir/clean.h"
   printf '%s\n' '    const char* knob = std::getenv("NINFERNO_KNOB");' > "$dir/env.h"
+  printf '%s\n' '    const std::string dir = sys::env("NINFERNO_ROUTE_DIR");' > "$dir/sysenv.h"
+  printf '%s\n' '    const wchar_t* home = _wgetenv(L"HF_HOME");' > "$dir/wenv.h"
   printf '%s\n' '    cudaMemGetInfo(&free_bytes, &total_bytes);' > "$dir/memory.h"
   # An allowed read is allowed in its own file only.
   printf '%s\n' '    static const char* path = std::getenv("NINFERNO_ROUTE_RECORD");' > "$dir/dump.h"
   local planted
-  for planted in deref monitor clock libc after_block env memory dump; do
+  for planted in deref monitor clock libc after_block env sysenv wenv memory dump; do
     if check_file "$dir/$planted.h" "$forbidden" > /dev/null; then
       echo "self-test: a planted violation passed ($planted)"
       return 1
