@@ -1362,6 +1362,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     planning.complete();
     StartupPhaseScope frontend(options.startup_observer, StartupPhase::FrontendInitialize);
     models::qwen3_5::Frontend served_frontend = loaded.make_frontend(resolved.max_context);
+    loaded.summary.chat_template_source       = served_frontend.chat_template_source();
     frontend.complete();
     const DecodeRoundShape round_shape{.experts           = loaded.routed_experts,
                                        .experts_per_token = loaded.experts_per_token};

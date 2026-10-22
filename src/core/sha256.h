@@ -39,5 +39,9 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 // How the decision fingerprint names a source file: "<file name> sha256:<hex of its bytes>";
 // nullopt when it cannot be read. Never throws.
 [[nodiscard]] std::optional<std::string> named_file_sha256(const std::filesystem::path& path);
+// The same name for bytes already read from `name`: "<file name> sha256:<hex of the bytes>", so a
+// caller that compiled a file hashes exactly what it compiled, never a later read of the path.
+[[nodiscard]] std::string named_bytes_sha256(const std::filesystem::path& name,
+                                             std::string_view bytes);
 
 } // namespace ninferno

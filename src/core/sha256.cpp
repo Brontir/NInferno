@@ -162,4 +162,8 @@ std::optional<std::string> named_file_sha256(const std::filesystem::path& path) 
     } catch (const std::exception&) { return std::nullopt; }
 }
 
+std::string named_bytes_sha256(const std::filesystem::path& name, std::string_view bytes) {
+    return utf8_file_name(name) + " sha256:" + sha256_hex(bytes);
+}
+
 } // namespace ninferno
