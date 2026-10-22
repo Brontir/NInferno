@@ -1,7 +1,7 @@
 // The SM-count launch rules (ops/common/sm_wave_rules.h) against the literals they replaced: on the
 // RTX 5090's 170 SMs every decision is the old one, at every width; on other SM counts the test
-// prints what the property rule decides instead and pins it. (The Gemma 4 Q8 5376x16384 tile is
-// no SM-count rule: it takes the 128-token tile on every board, q8/shapes/n5376_k16384.cu.) No GPU.
+// prints what the property rule decides instead and pins it. The Gemma 4 Q8 5376x16384 tile is no
+// SM-count rule: it keeps master's literal (q8/shapes/n5376_k16384.cu), the same on 170 SMs. No GPU.
 #include "ops/common/sm_wave_rules.h"
 
 #include <algorithm>
