@@ -648,6 +648,36 @@ int main() {
         failures +=
             check(served.engine.class_depth == std::array<std::uint32_t, 4>{none, none, none, none},
                   "exact activations: no bound");
+        // --spec-class-depth on a fallback candidate shallower than its bounds: the auto pick 7 did
+        // not fit, the shallower 4 runs; 7,5,3,0 clamps to none,none,3,0, which the Engine's
+        // validation takes, and the report shows the depth the engine runs.
+        {
+            const std::array<std::uint32_t, 4> asked{7, 5, 3, 0};
+            const auto clamped = ninferno::product::clamp_class_override(asked, 4);
+            failures += check(clamped == std::array<std::uint32_t, 4>{none, none, 3, 0},
+                              "the override clamps to the window");
+            auto shallower                        = served;
+            shallower.menu.primary.config.k       = 4;
+            shallower.engine.draft_tokens         = 4;
+            shallower.engine.request_draft_tokens = {3};
+            SpeculativeOptions unclamped          = shallower.engine;
+            unclamped.class_depth                 = asked;
+            failures +=
+                check(!ninferno::models::qwen3_5::detail::speculation_class_depth_valid(unclamped),
+                      "unclamped, 7,5,3,0 is refused at window 4");
+            ninferno::product::apply_class_override(shallower, clamped);
+            failures += check(
+                ninferno::models::qwen3_5::detail::speculation_class_depth_valid(shallower.engine),
+                "clamped, the shallower candidate starts");
+            failures += check(
+                shallower.classes[0].depth == 4 && shallower.classes[1].depth == 4 &&
+                    shallower.classes[2].depth == 3 && shallower.classes[3].depth == 0 &&
+                    shallower.classes[2].reason.starts_with("--spec-class-depth none,none,3,0"),
+                "the report shows min(pick, bound): " + shallower.classes[2].reason);
+            const auto deeper = ninferno::product::clamp_class_override(asked, 7);
+            failures += check(deeper == std::array<std::uint32_t, 4>{none, 5, 3, 0},
+                              "at window 7 a bound of 7 bounds nothing");
+        }
         // A plain menu: nothing.
         ninferno::product::ServedSpeculation plain;
         ninferno::product::apply_context_classes(plain, target, bytes, known);

@@ -89,6 +89,10 @@ int main() {
                   activation_bits(ActivationMode::Fast, false, true) == "fast-a8" &&
                   activation_bits(ActivationMode::Int8, true, true) == "fast-a8",
               "activation_bits follows effective_policy and the W4A4 device features");
+        // No artifact and no device here: never "fast-a4".
+        auto none_here = options;
+        check(ninferno::runtime::served_activations(none_here) == "fast-a8",
+              "an unreadable artifact labels fast-a8");
         auto o               = options;
         o.kv_cache           = ninferno::KvCacheStorage::Int8Group64;
         o.kv_cache_automatic = false;

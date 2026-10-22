@@ -37,7 +37,9 @@ std::string served_activations(const EngineOptions& options) {
     try {
         const artifact::Reader reader(options.artifact_path);
         for (const auto& [key, use] : reader.directory().uses) {
-            if (use.activation_policy == artifact::ActivationPolicy::AllowA4) {
+            // W4A4 needs an AllowA4 use with its calibrated activation divisor (route_admits).
+            if (use.activation_policy == artifact::ActivationPolicy::AllowA4 &&
+                use.auxiliaries.contains("activation_input_divisor")) {
                 recorded = true;
                 break;
             }
@@ -45,9 +47,12 @@ std::string served_activations(const EngineOptions& options) {
     } catch (const std::exception&) {}
     try {
         namespace generic = ops::detail::generic;
-        device            = has_features(
-            device_class(options.device).features,
-            generic::route_requires(generic::Route{.family = generic::Family::W4a4Mma}));
+        // The device's features and this build's W4A4 kernels (none in a build without them:
+        // an sm_120 build without the family-specific "120a" target, say).
+        device = generic::w4a4_schedule_count() > 0 &&
+                 has_features(
+                     device_class(options.device).features,
+                     generic::route_requires(generic::Route{.family = generic::Family::W4a4Mma}));
     } catch (const std::exception&) {}
     return std::string(activation_bits(options.activations, recorded, device));
 }

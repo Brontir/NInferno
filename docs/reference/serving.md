@@ -335,7 +335,8 @@ Huge (the rest).
   the profile's own pick at factor 1; otherwise every class keeps the pick ("no estimate").
 - **Which requests.** The bounds are decided for the default choice (its depth is `for_depth` in
   the report). A request that starts on another menu choice (`--spec-select thinking` at another
-  depth) is not bounded.
+  depth) is not bounded: the conservative side, and each class's reason says so under
+  `--spec-select thinking`.
 - **Floors.** The floors were measured at the profile's own prompts, not at each class's context,
   so a modeled reason says "floor from profile context".
 - **In a request.** A prompt's class bounds its depth at admission. Before each decode step, a
@@ -354,7 +355,11 @@ Huge (the rest).
   `load_plain` request, keeps its checkpoints from before the switch but not its endpoint: its
   drafter state stops at the switch, and a continuation from that endpoint would draft from it.
 - **Override.** `--spec-class-depth S,M,L,H` (each a depth or `none`; `none` alone: no bound)
-  replaces the bounds, for an explicit `--spec` too; the startup log names it.
+  replaces the bounds, for an explicit `--spec` too; the startup log names it. It applies to every
+  candidate startup tries (the fit fallback, shallower depths, the model's MTP head), each clamped
+  to that candidate's window: a bound at or past the window bounds nothing, so the override only
+  lowers. The report shows the depth the engine runs, the smaller of the served depth and the
+  bound.
 
 ### Graphs and workspace
 

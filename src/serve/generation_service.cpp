@@ -420,8 +420,14 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                                     product::speculative_window(speculative));
         }
         // --spec-class-depth: the bounds as given (an explicit --spec too), replacing --spec
-        // auto's.
-        if (options_.class_depth) { speculative.class_depth = *options_.class_depth; }
+        // auto's, clamped to this candidate's window so they only lower (a fallback candidate
+        // shallower than a bound takes it as no bound rather than refuse to start).
+        const auto override_depths =
+            options_.class_depth
+                ? std::optional(product::clamp_class_override(
+                      *options_.class_depth, product::speculative_window(speculative)))
+                : std::nullopt;
+        if (override_depths) { speculative.class_depth = *override_depths; }
         if (!served_speculation_) { return; }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
@@ -438,17 +444,15 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         product::apply_context_classes(*served_speculation_, options_.artifact_path,
                                        {.activations = runtime::served_activations(engine_options),
                                         .kv          = std::string(kv_cache_storage_layout(kv))});
-        if (options_.class_depth) {
-            served_speculation_->engine.class_depth = *options_.class_depth;
-            for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
-                const std::uint32_t k = (*options_.class_depth)[i];
-                auto& c               = served_speculation_->classes[i];
-                if (k != SpeculativeOptions::kNoClassBound &&
-                    k < static_cast<std::uint32_t>(c.depth)) {
-                    c.depth = static_cast<std::int32_t>(k);
-                }
-                c.reason = "--spec-class-depth " + spec::class_depths_label(*options_.class_depth) +
-                           " (was: " + c.reason + ")";
+        if (override_depths) {
+            product::apply_class_override(*served_speculation_, *override_depths);
+        }
+        // The bounds were decided for the default choice: under --spec-select thinking a request
+        // at another depth is not bounded (spec::class_bounds_apply), the conservative side.
+        if (options_.per_request_speculation) {
+            for (auto& c : served_speculation_->classes) {
+                c.reason += "; default choice only (--spec-select thinking: a request at another "
+                            "depth is not bounded)";
             }
         }
         speculative.class_depth = served_speculation_->engine.class_depth;

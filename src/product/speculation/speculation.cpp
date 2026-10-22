@@ -428,6 +428,30 @@ void apply_context_classes(ServedSpeculation& served, const std::optional<std::s
     }
 }
 
+std::array<std::uint32_t, spec::kContextClasses>
+clamp_class_override(const std::array<std::uint32_t, spec::kContextClasses>& bounds,
+                     std::uint32_t window) {
+    auto out = bounds;
+    for (std::uint32_t& k : out) {
+        if (k >= window) { k = SpeculativeOptions::kNoClassBound; }
+    }
+    return out;
+}
+
+void apply_class_override(ServedSpeculation& served,
+                          const std::array<std::uint32_t, spec::kContextClasses>& bounds) {
+    served.engine.class_depth = bounds;
+    const std::int32_t pick   = std::max(served.menu.primary.config.k, 0);
+    const std::string label   = spec::class_depths_label(bounds);
+    for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
+        auto& c  = served.classes[i];
+        c.depth  = bounds[i] == SpeculativeOptions::kNoClassBound
+                       ? pick
+                       : std::min(pick, static_cast<std::int32_t>(bounds[i]));
+        c.reason = "--spec-class-depth " + label + " (auto: " + c.reason + ")";
+    }
+}
+
 nlohmann::json context_classes_json(const ServedSpeculation& served) {
     auto out = nlohmann::json::array();
     for (std::size_t i = 0; i < spec::kContextClasses; ++i) {

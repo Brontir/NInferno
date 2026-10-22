@@ -19,8 +19,10 @@ namespace ninferno::runtime {
 
 // The activation bits as the byte class names them: "exact" under ActivationMode::Exact;
 // "fast-a4" when a recorded use's effective policy (models::effective_policy) allows four bits
-// and the device has what the W4A4 route needs (ops route_requires); else "fast-a8". Pure:
-// `allow_a4_recorded`: some use of the artifact records AllowA4.
+// and the W4A4 route can run (route_admits' weight-free half: the use's activation divisor, the
+// device's features, this build's W4A4 kernels); else "fast-a8". Whether a call of a given width
+// then takes W4A4 is the route's own choice: "fast-a4" says four bits are admitted. Pure:
+// `allow_a4_recorded`: some use of the artifact records AllowA4 with its divisor.
 [[nodiscard]] std::string_view activation_bits(ActivationMode mode, bool allow_a4_recorded,
                                                bool w4a4_device) noexcept;
 // The same for the artifact and device of `options` (an unreadable artifact or device: no A4).
