@@ -31,19 +31,42 @@ const DecodeConstants& decode_constants(const ModelFacts& model) noexcept {
     return model.moe() ? kMoeDecode : kDenseDecode;
 }
 
+const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route) noexcept {
+    for (const PrefillEta& row : kPrefillEta) {
+        if (row.moe == moe && row.generation == generation && row.route == route) { return &row; }
+    }
+    return nullptr;
+}
+
 // The prefill efficiency of (kind, generation, route): its own row, else its kind's on the
-// transfer generation, else the dense row of either; `transferred` when not its own.
+// transfer generation; a route its kind has no row for takes its kind's int8 row times the dense
+// rows' ratio of the two routes (the route's cost is the kernels', not the model kind's); else the
+// dense row. `transferred` when not its own.
 double prefill_eta(bool moe, std::string_view generation, Route route, bool& transferred) noexcept {
     const Route base = route == Route::Fp4 ? Route::Int8 : route;
     transferred      = route == Route::Fp4;
-    const std::pair<bool, std::string_view> order[] = {
-        {moe, generation}, {moe, kTransferGeneration}, {false, generation}, {false, kTransferGeneration}};
-    for (const auto& [kind, gen] : order) {
-        for (const PrefillEta& row : kPrefillEta) {
-            if (row.moe == kind && row.generation == gen && row.route == base) {
-                transferred = transferred || gen != generation || kind != moe;
-                return row.eta;
+    for (const std::string_view gen : {generation, kTransferGeneration}) {
+        if (const PrefillEta* row = prefill_row(moe, gen, base)) {
+            transferred = transferred || gen != generation;
+            return row->eta;
+        }
+    }
+    for (const std::string_view gen : {generation, kTransferGeneration}) {
+        const PrefillEta* own_int8 = prefill_row(moe, gen, Route::Int8);
+        if (own_int8 == nullptr) { continue; }
+        for (const std::string_view dense_gen : {gen, generation, kTransferGeneration}) {
+            const PrefillEta* dense_route = prefill_row(false, dense_gen, base);
+            const PrefillEta* dense_int8  = prefill_row(false, dense_gen, Route::Int8);
+            if (dense_route != nullptr && dense_int8 != nullptr) {
+                transferred = true;
+                return own_int8->eta * dense_route->eta / dense_int8->eta;
             }
+        }
+    }
+    for (const std::string_view gen : {generation, kTransferGeneration}) {
+        if (const PrefillEta* row = prefill_row(false, gen, base)) {
+            transferred = true;
+            return row->eta;
         }
     }
     transferred = true;

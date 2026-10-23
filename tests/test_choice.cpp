@@ -255,6 +255,16 @@ void decides_by_generation(const json& fixture) {
     const ch::Speed v = ch::speed_of(t.model, volta, t.quants[0], c, 1, 2048);
     check(v.decode_per_stream > 0 && std::isfinite(v.decode_per_stream) && v.prefill > 0,
           "Volta prices finitely");
+    // An MoE's exact prefill: its int8 efficiency times the dense rows' BF16-to-int8 ratio, so the
+    // exact route costs an MoE what it costs a dense model (about -72 % on Blackwell, not -35 %).
+    const json& m35       = fixture.at("models").at("Qwen3.6-35B-A3B");
+    const ch::ModelFacts moe = model_of(m35);
+    const ch::CardFacts bw = card_of(fixture.at("cards").at("RTX 5070 Ti"));
+    const ch::QuantOption q = quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"));
+    ch::Candidate fast, exact;
+    exact.activations = ActivationMode::Exact;
+    const double ratio = ch::speed_of(moe, bw, q, exact, 1, 2048).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
+    check(ratio > 0.25 && ratio < 0.32, "an MoE's exact prefill at the dense routes' ratio");
 }
 
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
