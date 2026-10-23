@@ -141,9 +141,11 @@ What the design guarantees once complete:
    schedule (drafts accepted, rounds run, requests runnable) are not observations of the machine.
    A planner reports the points of its search to a caller that times them, and reads nothing back
    (the stopwatch, `planning_stopwatch.h`, is included only by the ResourceManager).
-   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads and timers
-   out of the text of the decision files it lists; what those files include is not checked (see
-   the known gaps and [Runtime observations](#runtime-observations)).
+   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads, timers,
+   environment reads and free-memory queries out of the text of the decision files it lists (the
+   plan ladder and the projection selector among them; one lab dump of the problems reached is
+   allowed by name); what those files include is not checked (see the known gaps and
+   [Runtime observations](#runtime-observations)).
 4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
