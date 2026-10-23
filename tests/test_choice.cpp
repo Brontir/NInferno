@@ -184,6 +184,11 @@ void chooses(const json& fixture) {
             check(a.scored != nullptr, "every alternative scored");
         }
         check(named == 4, "the chosen value once per axis (quant, kv, activations, state)");
+        bool exact = false;
+        for (const ch::Alternative& a : alts) {
+            if (a.axis == ch::Axis::Activations && a.value == "exact") { exact = true; }
+        }
+        check(exact, "exact is an alternative (its FP32 state follows it)");
     }
     {
         // RTX 2080 Ti: BF16 and FP8 KV read slowly on Turing; INT8 stays.
