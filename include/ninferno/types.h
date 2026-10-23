@@ -77,8 +77,10 @@ inline constexpr std::string_view kKvCacheStorageNames = "bf16|int8|fp8|nvfp4|k8
 // How the linear-attention layers keep their recurrent state between calls (--state-dtype).
 // - FP32: --activations exact, and the families without an automatic choice.
 // - BF16: half the bytes of every state slot and cached state image (Qwen 3.5 GDN layers). The
-//   recurrence still runs in FP32 registers and rounds only the state it stores, so the rounding
-//   does not feed back within a call; across calls it does, which is why it is opt-in.
+//   recurrence still runs in FP32 registers and rounds the state to the storage when it stores it
+//   and at every 16-token chunk end of a prefill call, so the rounding feeds back, which is why it
+//   is opt-in. On the chunk grid a prefill cut stays neutral: the call before it stores the state
+//   one call carries past that point.
 // - FP16: the same bytes as BF16 with an 11-bit significand instead of 8:
 //   eight times finer rounding where the state stays inside FP16's range,
 //   which the decayed GDN state does (stores saturate at 65504). The automatic choice of the

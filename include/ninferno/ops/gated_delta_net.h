@@ -42,9 +42,11 @@ namespace ninferno::ops {
  * criterion, not the oracle. The chunked route fuses normalization into preparation and stores
  * one private BF16 Q/K packet per Q/K head. FP32 control matrices and residuals feed native TF32
  * products; readout and state updates use BF16 MMA operands with FP32 accumulators. The master
- * state remains FP32 throughout. Scratch capacity is independent of normalize_qk.
+ * state is FP32 within a chunk; a BF16 or FP16 state is rounded to its storage at every chunk end.
+ * Scratch capacity is independent of normalize_qk.
  * The chunked route cuts a call into 16-token chunks from its first token, so its bytes depend on
- * where calls start: a split of one call in two is byte-equal only at a multiple of 16 tokens.
+ * where calls start: a split of one call in two is byte-equal only at a multiple of 16 tokens, and
+ * there with every state storage.
  * Under the invariant route profile (ScopedInvariantRoutes, --activations exact) every call, of
  * any T, takes the recurrent kernel instead: one transition per token, the one decode and verify
  * use, so a split anywhere and a call per token give the same outputs and state; it needs no
