@@ -85,6 +85,11 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
                                    {"reason", speculation->reason},
                                    {"fallback", speculation->fallback}};
     }
+    // The board it runs on, beside the fingerprint and not part of it.
+    if (!metadata.device_pci_bus_id.empty()) {
+        meta["device_pci_bus_id"] = metadata.device_pci_bus_id;
+        meta["device_uuid"]       = metadata.device_uuid;
+    }
     return Json{{"id", model_id},
                 {"object", "model"},
                 {"created", created},

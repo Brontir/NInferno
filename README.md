@@ -191,8 +191,17 @@ table, so give `--spec-load` too.
 | `--spec-load L:D,...\|none` | with `auto`: the measured table | from `L` requests at once, drafts at most `D` deep (`0`: none) |
 | `--kv-dtype bf16\|fp8` | per model family and GPU | a smaller KV cache holds a longer context (`fp8` before RTX 40 is emulated, slower); Qwen also `int8\|nvfp4\|k8v4` |
 | `--activations exact\|fast` | `fast` | `exact`: the same output whatever the load and the drafts |
-| `--device N` | `0` | the GPU |
+| `--device N` | `0` | the GPU, counted in PCI bus order as nvidia-smi does (or `pci:BUSID`, `GPU-UUID`) |
 | `--host H` `--port N` `--api-key-file F` | `127.0.0.1:8080`, no key (or `$NINFERNO_API_KEY`) | `--host 0.0.0.0` with a key opens it to the network |
+
+> **Changed: which GPU runs on a host with several.** The default GPU and `--device N` used to
+> follow CUDA's enumeration, `FASTEST_FIRST` unless `CUDA_DEVICE_ORDER` said otherwise: on a host
+> with an RTX 3060 on PCI bus 01 and an RTX 4090 on bus 02, GPU 0 was the 4090. Now both count
+> GPUs in PCI bus order, as `nvidia-smi` does, so GPU 0 there is the 3060. To pin a card whatever
+> the order, name it: `--device GPU-<uuid>` (from `nvidia-smi -L`) or
+> `--device pci:0000:02:00.0`. At startup, a host with more than one GPU logs which one runs
+> (`device | 2 GPUs visible; using 0000:01:00.0 ...`). MIG instances are not named by `--device`:
+> choose one with `CUDA_VISIBLE_DEVICES=MIG-<uuid>`, and the process runs on it by default.
 
 ```bash
 ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \

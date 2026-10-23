@@ -1,5 +1,6 @@
 #include "ninferno_bench_support.h"
 
+#include "core/device_class.h"
 #include "ninferno/engine.h"
 
 #include <cuda_profiler_api.h>
@@ -134,6 +135,13 @@ int main(int argc, char** argv) {
     if (options.help_requested) {
         std::cout << ninferno::bench::usage_text(argc > 0 ? argv[0] : "ninferno_bench");
         return 0;
+    }
+    // As ninferno-serve takes --device: N counts GPUs in PCI bus order.
+    try {
+        options.device = ninferno::select_device(options.device_selector);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "ninferno_bench: " << error.what() << '\n';
+        return 2;
     }
 
     try {

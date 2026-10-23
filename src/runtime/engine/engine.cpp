@@ -184,6 +184,12 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
 // cannot convert) leaves the fingerprint "unreadable" and says why in the taint.
 void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
                            const EngineOptions& resolved, const MemorySummary& memory) {
+    // Which board: beside the fingerprint, not in it (core/device_identity.h).
+    try {
+        const DeviceIdentity& board     = device_class(resolved.device).identity;
+        load.metadata.device_pci_bus_id = pci_bus_id_text(board);
+        load.metadata.device_uuid       = uuid_text(board);
+    } catch (const std::exception&) {}
     std::string why;
     try {
         fingerprint_decisions_or_throw(load, requested, resolved, memory);

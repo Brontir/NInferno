@@ -108,7 +108,9 @@ int test_cli_contract() {
     failures += expect(parsed.speculative.draft_tokens == 5, "MTP window");
     failures += expect(parsed.speculative.proposal_head == ninferno::ProposalHead::Optimized,
                        "optimized proposal head");
-    failures += expect(parsed.device == 1 && !parsed.use_cuda_graph, "device and graph settings");
+    failures += expect(parsed.device_selector.kind == ninferno::DeviceSelector::Kind::Index &&
+                           parsed.device_selector.index == 1 && !parsed.use_cuda_graph,
+                       "device and graph settings");
     failures += expect(parsed.profile_measured, "profile-measured flag");
     failures +=
         expect(parsed.output == qb::OutputFormat::Json && parsed.output_file == "report.json",

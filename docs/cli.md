@@ -64,9 +64,18 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 
 ### Context and memory
 
+> **Changed: which GPU runs on a host with several.** The default GPU and `--device N` used to
+> follow CUDA's enumeration, `FASTEST_FIRST` unless `CUDA_DEVICE_ORDER` said otherwise: on a host
+> with an RTX 3060 on PCI bus 01 and an RTX 4090 on bus 02, GPU 0 was the 4090. Now both count
+> GPUs in PCI bus order, as `nvidia-smi` does, so GPU 0 there is the 3060. To pin a card whatever
+> the order, name it: `--device GPU-<uuid>` (from `nvidia-smi -L`) or
+> `--device pci:0000:02:00.0`. At startup, a host with more than one GPU logs which one runs
+> (`device | 2 GPUs visible; using 0000:01:00.0 ...`). MIG instances are not named by `--device`:
+> choose one with `CUDA_VISIBLE_DEVICES=MIG-<uuid>`, and the process runs on it by default.
+
 | Option | Default | Meaning |
 |---|---|---|
-| `--device N` | `0` | CUDA device index. |
+| `--device N\|pci:BUSID\|GPU-UUID` | `0` | The GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. |
 | `--max-context N` | `2048` | Per-sequence logical context ceiling. |
 | `--kv-capacity N\|auto` | `--max-context` (`2048`) | Shared Main Text KV pool size. `auto` takes the plan ladder's pool rung the free GPU memory fits. Must be at least `--max-context`. |
 | `--prefill-chunk N` | `1024` | Text-prefill chunk. Positive multiple of 128. |
@@ -452,7 +461,7 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 | `--corpus FILE` | built in | Prompt corpus. |
 | `--decode-wait auto\|spin\|block` | `spin` | How the tune's engines wait for their rounds ([decode round pacing](#decode-round-pacing)). |
 | `--cuda-sync MODE`, `--route-table FILE`, `--route-dir DIR`, `--drafter-registry FILE` | `spin`, the shipped tables, the compiled-in registry | The CUDA synchronization schedule, the route tables the tune's engines run (a lab tunes against tables under test) and the drafter registry; recorded in the settings when given, the files by content (one that cannot be read is refused). |
-| `--device N` | `0` | CUDA device. |
+| `--device N\|pci:BUSID\|GPU-UUID` | `0` | The GPU, as `ninferno` takes it: N counts GPUs in PCI bus order. |
 | `--out PROFILE` | `<model>.ninferno.spec_profile.json` | Where the profile goes. Serving reads it only when named: `ninferno-serve ... --spec-profile PROFILE` (likewise `ninferno` and the Gemma 4 app); a named tune that does not serve (unreadable, or another artifact, GPU class or drafters) refuses start-up. |
 | `--profile PROFILE` | `<model>.ninferno.spec_profile.json` | With `--load`: the tune whose choices the load bounds are measured for. |
 | `--publish FILE --applies-to REPO,... --measured-on TEXT [--gpu-class CLASS] [--requires LIST]` | none | Also write a registry entry (`tools/spec/registry_add.py` adds it). |

@@ -1,6 +1,7 @@
 #include "serve/request_log.h"
 #include "serve/plan_report.h"
 #include "core/sha256.h"
+#include "core/device_class.h"
 #include "product/logging/pretty_format.h"
 #include "product/activation_options.h"
 #include "product/speculative_options.h"
@@ -57,16 +58,6 @@ std::filesystem::path normalized_absolute_path(const std::string& value) {
 std::string cuda_version_string(int version) {
     if (version <= 0) { return {}; }
     return std::to_string(version / 1000) + '.' + std::to_string((version % 1000) / 10);
-}
-
-std::string cuda_uuid_string(const cudaUUID_t& uuid) {
-    std::ostringstream out;
-    out << "GPU-" << std::hex << std::setfill('0');
-    for (int i = 0; i < 16; ++i) {
-        if (i == 4 || i == 6 || i == 8 || i == 10) { out << '-'; }
-        out << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(uuid.bytes[i]));
-    }
-    return out.str();
 }
 
 Json tool_call_parse_json(const ninferno::ToolCallParseDiagnostics& diagnostics) {
@@ -590,6 +581,7 @@ std::string format_server_start_json(
     record["environment"] =
         Json{{"device", environment.device},
              {"gpu_name", environment.gpu_name},
+             {"gpu_pci_bus_id", environment.gpu_pci_bus_id},
              {"gpu_uuid", environment.gpu_uuid},
              {"total_device_memory_bytes", environment.total_device_memory_bytes},
              {"compute_capability_major", environment.compute_capability_major},
@@ -870,10 +862,14 @@ ServerLogEnvironment query_server_log_environment(int device) {
     if (cudaDriverGetVersion(&driver_version) == cudaSuccess) {
         environment.cuda_driver_version = cuda_version_string(driver_version);
     }
+    try {
+        const DeviceIdentity identity = query_device_identity(device);
+        environment.gpu_pci_bus_id    = pci_bus_id_text(identity);
+        environment.gpu_uuid          = uuid_text(identity);
+    } catch (const std::runtime_error&) { (void)cudaGetLastError(); }
     cudaDeviceProp properties{};
     if (cudaGetDeviceProperties(&properties, device) == cudaSuccess) {
         environment.gpu_name                  = properties.name;
-        environment.gpu_uuid                  = cuda_uuid_string(properties.uuid);
         environment.total_device_memory_bytes = properties.totalGlobalMem;
         environment.compute_capability_major  = properties.major;
         environment.compute_capability_minor  = properties.minor;

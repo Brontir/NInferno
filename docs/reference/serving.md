@@ -512,6 +512,7 @@ effective `max_model_len` (the `--max-context` ceiling) and a `meta` object in t
 | `decision_fingerprint` | the engine's [decision fingerprint](../maintainer/deterministic-decisions.md#fingerprint), `nf1-` and 16 hex digits |
 | `decision_manifest` | its plan manifest, `nm1-` and 16 hex digits |
 | `speculation` | what the server runs since startup: `config`, `selection`, `reason`, `fallback` ([per-request record](#per-request-record)) |
+| `device_pci_bus_id`, `device_uuid` | the board the engine runs on (`0000:01:00.0`, `GPU-…`), beside the fingerprint and not part of it |
 
 `GET /v1/models/{id}` returns the same object for the single configured alias and `404` for any
 other id.
@@ -1529,7 +1530,7 @@ contract.
 | `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
-| `--device N` | CUDA device index | `0` |
+| `--device N\|pci:BUSID\|GPU-UUID` | the GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. | `0` |
 
 ### Network and access
 
@@ -1707,7 +1708,7 @@ Serve writes human-readable operational records to stderr as
 rung's `max_context`, `kv_tokens`, `cached_device_states`, `prefill_chunk`, `step`, `survival`,
 `bytes` and `needed_bytes`, the device, weight and free bytes, the margins `base_margin_bytes`,
 `reserve_bytes` and `allowance_bytes`, `top_shortfall_bytes`, `next_shortfall_bytes`,
-`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment (GPU name, `gpu_pci_bus_id`, `gpu_uuid`; schema 31 added environment.gpu_pci_bus_id), and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, the plan ladder's rung (`plan_level`), requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |

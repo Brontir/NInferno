@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -158,6 +159,14 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->chip_from_pci     = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->facts             = machine_facts_of(*out);
     out->features.mma_slow = board_mma_slow(out->facts, prop.major, prop.minor, out->chip);
+    // A driver that cannot say which board (a paravirtual or vGPU one) leaves it unknown, sorted
+    // last; the engine still starts.
+    try {
+        out->identity = query_device_identity(device);
+    } catch (const std::runtime_error&) {
+        (void)cudaGetLastError();
+        out->identity = {.pci_domain = 0xFFFFFFFFu};
+    }
     return out;
 }
 
@@ -634,6 +643,82 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
     return d;
 }
+
+DeviceIdentity query_device_identity(int device) {
+    char bus_id[32] = {};
+    check(cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device), "cudaDeviceGetPCIBusId", device);
+    std::optional<DeviceIdentity> identity = parse_pci_bus_id(bus_id);
+    if (!identity) {
+        throw std::runtime_error(std::string("device class: unreadable PCI bus id \"") + bus_id +
+                                 "\" for device " + std::to_string(device));
+    }
+    // A UUID the driver does not report stays zero: the PCI address still orders the board.
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, device) == cudaSuccess) {
+        for (std::size_t i = 0; i < identity->uuid.size(); ++i) {
+            identity->uuid[i] = static_cast<std::uint8_t>(prop.uuid.bytes[i]);
+        }
+    } else {
+        (void)cudaGetLastError();
+    }
+    return *identity;
+}
+
+std::vector<DeviceIdentity> visible_device_identities() {
+    int count = 0;
+    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return {};
+    }
+    std::vector<DeviceIdentity> identities;
+    for (int device = 0; device < count; ++device) {
+        try {
+            identities.push_back(query_device_identity(device));
+        } catch (const std::runtime_error&) {
+            (void)cudaGetLastError();
+            identities.push_back({.pci_domain = 0xFFFFFFFFu});
+        }
+    }
+    return identities;
+}
+
+int resolve_device(int requested) {
+    if (requested != kDefaultDevice) { return requested; }
+    const std::vector<DeviceIdentity> identities = visible_device_identities();
+    const int device                             = resolve_device(requested, identities);
+    return device == kDefaultDevice ? 0 : device;
+}
+
+int select_device(const DeviceSelector& selector) {
+    const std::vector<DeviceIdentity> identities = visible_device_identities();
+    if (identities.empty()) { return 0; }
+    if (const auto device = select_device(selector, identities)) { return *device; }
+    std::string visible;
+    const std::vector<int> order = canonical_device_order(identities);
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        visible += (i == 0 ? "" : ", ") + std::to_string(i) + " = " +
+                   identity_text(identities[static_cast<std::size_t>(order[i])]);
+    }
+    throw std::invalid_argument("--device " + device_selector_text(selector) +
+                                " names no visible GPU; visible in PCI bus order: " + visible);
+}
+
+std::string visible_devices_note(int device, const DeviceSelector& selector) {
+    const std::vector<DeviceIdentity> identities = visible_device_identities();
+    if (identities.size() < 2 || device < 0 || device >= static_cast<int>(identities.size())) {
+        return "";
+    }
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, device) != cudaSuccess) { (void)cudaGetLastError(); }
+    const std::string how = selector.kind == DeviceSelector::Kind::Default
+                                ? "first in PCI order; --device to choose"
+                                : "--device " + device_selector_text(selector);
+    return std::to_string(identities.size()) + " GPUs visible; using " +
+           pci_bus_id_text(identities[static_cast<std::size_t>(device)]) + ' ' + prop.name + " (" +
+           how + ")";
+}
+
+const DeviceIdentity& device_identity() { return device_class().identity; }
 
 const DeviceClass& device_class() {
     if (t_substitute != nullptr) { return *t_substitute; }

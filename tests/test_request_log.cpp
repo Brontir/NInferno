@@ -149,6 +149,7 @@ int main() {
     ServerLogEnvironment environment;
     environment.device                    = 0;
     environment.gpu_name                  = "NVIDIA GeForce RTX 5090";
+    environment.gpu_pci_bus_id            = "0000:01:00.0";
     environment.gpu_uuid                  = "GPU-00000000-0000-0000-0000-000000000000";
     environment.total_device_memory_bytes = 32000000000ULL;
     environment.compute_capability_major  = 12;
@@ -164,6 +165,10 @@ int main() {
                       "server record artifact type mismatch");
     failures += check(server.at("schema_version") == kRequestLogSchemaVersion,
                       "server record schema mismatch");
+    // Schema 31: environment.gpu_pci_bus_id beside gpu_uuid.
+    failures += check(kRequestLogSchemaVersion == 31 &&
+                          server.at("environment").at("gpu_pci_bus_id") == "0000:01:00.0",
+                      "schema 31: the GPU's PCI bus id missing");
     failures += check(server.at("event") == "server_start", "server event mismatch");
     failures += check(server.at("server").at("public_model_id") == "deployment-alias",
                       "resolved public model id missing");
@@ -174,8 +179,8 @@ int main() {
               "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
-    // Schema 30 (29 is held by the GPU-identity change): the plan ladder's rung, as
-    // plan_summary_json writes it, in server_start and plan_level in request_start.
+    // Schema 30: the plan ladder's rung, as plan_summary_json writes it, in server_start and
+    // plan_level in request_start.
     {
         ninferno::MemorySummary laddered      = memory;
         laddered.plan.rung                    = 3;
@@ -189,7 +194,7 @@ int main() {
             "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias",
             load, laddered, environment, std::uint64_t{123456}));
         const Json& plan                      = planned.at("plan");
-        failures += check(kRequestLogSchemaVersion == 30 && plan.at("rung") == 3 &&
+        failures += check(kRequestLogSchemaVersion >= 30 && plan.at("rung") == 3 &&
                               plan.at("rungs") == 40 && plan.at("selected_rung") == 2 &&
                               plan.at("reserve") == "kept" &&
                               plan.at("chosen").at("max_context") == 196608 &&
@@ -273,6 +278,8 @@ int main() {
         "server sampling overrides lost omission state");
     failures += check(server.at("environment").at("gpu_name") == "NVIDIA GeForce RTX 5090",
                       "GPU name missing");
+    failures += check(server.at("environment").at("gpu_pci_bus_id") == "0000:01:00.0",
+                      "GPU PCI bus id missing");
     failures +=
         check(server.at("memory").at("workspace").at("capacity_bytes") == 500 &&
                   server.at("memory").at("vision_workspace").at("general_capacity_bytes") == 300 &&

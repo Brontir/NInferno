@@ -44,7 +44,7 @@ Run `./build/apps/ninferno-perplexity --help` for the complete command surface. 
 | `--text FILE` | none | Score one UTF-8 file. |
 | `--context N` | `4096` | Window size in tokens. |
 | `--stride N` | `2048` | Targets scored per window, `1..context-1` (`--context` is at least 2). |
-| `--device N` | `0` | CUDA device index. |
+| `--device N\|pci:BUSID\|GPU-UUID` | `0` | The GPU: N counts GPUs in PCI bus order, as nvidia-smi does. |
 | `--kv-dtype bf16\|int8\|fp8\|nvfp4\|k8v4` | `fp8` | Main KV representation. |
 | `--activations exact\|fast\|int8` | `fast` | Activation precision (as the server's `--activations`). |
 | `--state-dtype f32\|bf16\|f16` | `f32` | Recurrent-state storage (the values of the server's `--state-dtype`; no automatic choice here). |

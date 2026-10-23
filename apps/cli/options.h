@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_identity.h"
 #include "ninferno/types.h"
 #include "product/logging/logging.h"
 
@@ -23,7 +24,8 @@ struct Options {
     std::uint32_t max_context    = 2048;
     KvCapacityPolicy kv_capacity = KvCapacityPolicy::explicit_capacity(2048);
     std::uint32_t prefill_chunk  = 1024;
-    int device                   = 0;
+    DeviceSelector device_selector; // --device; main sets `device` from it (select_device)
+    int device = kDefaultDevice;
 
     // --kv-dtype auto (or omitted): the model family chooses (EngineOptions::kv_cache_automatic).
     std::optional<KvCacheStorage> kv_cache;

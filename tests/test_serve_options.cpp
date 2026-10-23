@@ -62,6 +62,35 @@ int main() {
                   "--json without --plan or --plan with --prepare-only is accepted");
     }
 
+    // --device: N counts GPUs in PCI bus order; a PCI address or a UUID names one board.
+    {
+        using Kind = ninferno::DeviceSelector::Kind;
+        failures +=
+            check(parse({"ninferno-serve", "model.ninferno"}).device_selector.kind == Kind::Default,
+                  "--device absent is the default GPU");
+        const auto index = parse({"ninferno-serve", "model.ninferno", "--device", "1"});
+        failures +=
+            check(index.device_selector.kind == Kind::Index && index.device_selector.index == 1,
+                  "--device 1 is the second GPU in PCI order");
+        const auto pci =
+            parse({"ninferno-serve", "model.ninferno", "--device", "pci:0000:41:00.0"});
+        failures += check(pci.device_selector.kind == Kind::Pci &&
+                              pci.device_selector.address.pci_bus == 0x41,
+                          "--device pci:0000:41:00.0 names a PCI address");
+        const auto uuid = parse({"ninferno-serve", "model.ninferno", "--device",
+                                 "GPU-00112233-4455-6677-8899-AABBCCDDEEFF"});
+        failures += check(uuid.device_selector.kind == Kind::Uuid &&
+                              uuid.device_selector.address.uuid[15] == 0xFF,
+                          "--device GPU-<uuid> names a UUID in either case");
+        for (const char* bad : {"-1", "x", "pci:1", "GPU-0011", "1.5", ""}) {
+            bool refused = false;
+            try {
+                (void)parse({"ninferno-serve", "model.ninferno", "--device", bad});
+            } catch (const std::invalid_argument&) { refused = true; }
+            failures += check(refused, "a malformed --device is refused");
+        }
+    }
+
     const ServeOptions defaults = parse({"ninferno-serve", "model.ninferno"});
     failures += check(defaults.allow_prefix_reuse, "prefix reuse is not enabled by default");
     failures +=

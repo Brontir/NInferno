@@ -41,11 +41,12 @@ struct Options {
 };
 
 void print_usage(const char* executable) {
-    std::cout << "usage: " << executable
-              << " [--artifact <model.ninferno>] [--device <id>] [--context <tokens>]"
-                 " [--warmup <n>] [--reps <n>] [--draft-tokens <1..15>]"
-                 " [--batch <1..8>]"
-                 " [--proposal-head full|optimized] [--no-cuda-graph]\n";
+    std::cout
+        << "usage: " << executable
+        << " [--artifact <model.ninferno>] [--device <N|pci:BUSID|GPU-UUID>] [--context <tokens>]"
+           " [--warmup <n>] [--reps <n>] [--draft-tokens <1..15>]"
+           " [--batch <1..8>]"
+           " [--proposal-head full|optimized] [--no-cuda-graph]\n";
 }
 
 std::uint32_t parse_u32(const char* text, const char* label) {
@@ -70,7 +71,9 @@ Options parse_options(int argc, char** argv) {
         if (argument == "--artifact") {
             options.artifact = value("--artifact");
         } else if (argument == "--device") {
-            options.device = std::stoi(value("--device"));
+            // As ninferno-serve takes it: N counts GPUs in PCI bus order.
+            options.device =
+                ninferno::select_device(ninferno::parse_device_option(value("--device")));
         } else if (argument == "--context") {
             options.context_tokens = parse_u32(value("--context"), "context");
         } else if (argument == "--warmup") {
@@ -99,7 +102,6 @@ Options parse_options(int argc, char** argv) {
             throw std::invalid_argument("unknown argument: " + std::string(argument));
         }
     }
-    if (options.device < 0) { throw std::invalid_argument("--device must be nonnegative"); }
     if (options.warmup < 1) {
         throw std::invalid_argument("--warmup must be positive so measured rounds are steady");
     }

@@ -8,7 +8,9 @@
 // Each ordinal is queried once and cached for the life of the process; a lookup is a
 // cudaGetDevice() and an index, cheap enough for a launch path. The cache is per ordinal, so a
 // multi-GPU host sees each card's own facts as long as the caller's device is current
-// (DeviceContext binds it, and Ops run on the bound device).
+// (DeviceContext binds it, and Ops run on the bound device). An ordinal is this process's name for
+// a board only; what outlives the process or chooses among GPUs reads DeviceClass::identity
+// (core/device_identity.h).
 //
 // Capability gates compare the feature set, never a compute-capability inequality: sm_120 is
 // numerically above sm_100 and lacks its tensor-core instructions, and "== 120" misses sm_121.
@@ -26,6 +28,7 @@
 // memory) and compares ranges.
 
 #include "core/machine_facts.h"
+#include "core/device_identity.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -100,6 +103,7 @@ struct DeviceClass {
     std::uint32_t pci_device_id = 0; // PCI product id (0x2B85: RTX 5090); 0 when unreadable
     std::string chip;                // "gb202"; the architecture ("sm120") when the chip is unknown
     bool chip_from_pci = false;      // chip named by the PCI id's block, not guessed by SM count
+    DeviceIdentity identity; // which board (PCI address, UUID): logs and ordering, never a key
 
     int max_threads_per_sm              = 0;
     int max_blocks_per_sm               = 0;
@@ -253,6 +257,35 @@ template <class Measured, std::size_t Extent>
 // report the device or the ordinal is invalid.
 [[nodiscard]] const DeviceClass& device_class();
 [[nodiscard]] const DeviceClass& device_class(int device);
+
+// The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,
+// without the rest of the class (no NVML, no kernel probe). Throws std::runtime_error when CUDA
+// cannot report the PCI address; a UUID it cannot report stays zero. DeviceClass::identity keeps
+// an unreadable board as unknown (domain 0xFFFFFFFF) instead of failing the start.
+[[nodiscard]] DeviceIdentity query_device_identity(int device);
+
+// Every ordinal's identity, entry i for ordinal i. A board CUDA cannot report is sorted last
+// (domain 0xFFFFFFFF), so it is never the default.
+[[nodiscard]] std::vector<DeviceIdentity> visible_device_identities();
+
+// The ordinal EngineOptions::device names (resolve_device in core/device_identity.h over the
+// visible boards): an explicit ordinal as given, kDefaultDevice the first visible board in PCI
+// order, whatever CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER made of the enumeration. 0 when CUDA
+// reports no device, which DeviceContext then refuses as it refuses any ordinal there.
+[[nodiscard]] int resolve_device(int requested);
+
+// The ordinal of the visible board a --device selector names (select_device in
+// core/device_identity.h). 0 when CUDA reports no device (DeviceContext refuses it, as above);
+// throws std::invalid_argument listing the visible GPUs when none matches.
+[[nodiscard]] int select_device(const DeviceSelector& selector);
+
+// The startup line for a host with more than one visible GPU ("" with one): how many, and which
+// one runs (its PCI bus id and name) and why, so a changed default is never silent.
+[[nodiscard]] std::string visible_devices_note(int device, const DeviceSelector& selector);
+
+// The board the current device's facts were read from, for the decision fingerprint to print
+// beside its hash (never hashed: two boards of one chip type share a fingerprint).
+[[nodiscard]] const DeviceIdentity& device_identity();
 
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
