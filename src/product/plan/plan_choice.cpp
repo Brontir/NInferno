@@ -81,6 +81,8 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     }
     // The Qwen 3.5 families' Gated DeltaNet state takes --state-dtype; Nemotron-H keeps FP32.
     out.recurrent = m.recurrent_layers != 0 && m.model_type.rfind("qwen3_5", 0) == 0;
+    // FP8 sliding rings: Gemma 4 and the dense decoders (types.h sliding_kv_cache).
+    out.fp8_ring = m.model_type == "gemma4_text" || m.model_type == "dense_decoder";
     return out;
 }
 

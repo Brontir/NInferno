@@ -53,6 +53,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
 // and says why).
 struct ServedAxes {
     std::optional<KvCacheStorage> kv;
+    std::optional<KvCacheStorage> ring;
     std::optional<ActivationMode> activations;
     std::optional<RecurrentStateStorage> state;
 };
