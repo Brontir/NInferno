@@ -262,14 +262,19 @@ external entry replaced entirely is not).
   request drafting at that launch's width.
 - A choice that needs another drafter runs the default configuration, and the startup log says so.
 - A request may name its own draft depth in the `"ninferno"` extension object (Chat Completions,
-  Responses and Messages alike): `"ninferno": {"draft_tokens": K}`.
+  Responses and Messages alike), under `--spec auto` and an explicit `--spec` alike:
+  `"ninferno": {"draft_tokens": K}`.
   - `0` decodes that request plainly. `1` up to the deepest depth the server captured at startup
-    drafts K tokens a round; a deeper K or any K above 0 on a plain server is HTTP 400
-    (`draft_depth_out_of_range`), and K outside 0..15 or another member is HTTP 400 too.
-  - It keeps the watchdog floor and the step-down below K of the configuration the server would
-    have chosen for the request. A K the server did not capture verifies at the next captured
-    depth above it, drafting at that width, as a mixed batch does.
-  - The output is the same as without it under greedy `exact` decoding (the target verifies every
+    drafts K tokens a round. A deeper K, or any K above 0 on a plain server, is HTTP 400
+    (`draft_depth_out_of_range`) before any work; K outside 0..15 or another member is HTTP 400
+    (`invalid_draft_tokens`, `unknown_parameter`).
+  - Its watchdog floor is the one measured at depth K (the highest among the profile's entries at
+    K, else interpolated between the measured depths around it); a tripped request steps down
+    through the profile's shallower depths. Without a profile it takes the engine's floor.
+  - A K the server did not capture drafts and verifies at the next captured depth above it, as a
+    mixed batch does. `--spec-load` bounds still cap the depth of a busy step, and a prompt past
+    the profile's `context_limit` still decodes plainly.
+  - Under greedy `exact` decoding the output is the same as without it (the target verifies every
     token); only the speed changes. The request record and `timings.speculation` show
     `selection: request`.
 

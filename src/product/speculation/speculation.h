@@ -164,6 +164,13 @@ served_head_fallback(const std::filesystem::path& artifact, int device, bool per
 // shallower depths a trip steps it down to (SpeculationMenu::step_down).
 [[nodiscard]] RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,
                                                      const spec::MenuChoice& choice);
+// The speculation of a request that names its own draft depth (ninferno.draft_tokens) in an
+// engine serving `menu`: 0 decodes it plainly; a depth drafts that many tokens with the watchdog
+// floor of that depth (the highest the menu measured at it, else shallower_floor over the
+// menu's entries) and the menu's shallower depths as its step-down. A plain menu gives the
+// engine's default floor (`engine_floor`) and no step-down.
+[[nodiscard]] RequestSpeculation request_speculation_at(const spec::SpeculationMenu& menu,
+                                                        std::uint32_t depth, double engine_floor);
 
 // The Engine's load bounds (SpeculativeOptions::load) for a profile's table on an engine whose
 // deepest captured depth is `window` (SpeculativeOptions: the largest of draft_tokens and

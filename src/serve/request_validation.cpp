@@ -84,9 +84,12 @@ NinfernoExtension parse_ninferno_extension(const RequestJson& body) {
             bad_request("ninferno.draft_tokens must be an integer in " + range,
                         "ninferno.draft_tokens", "invalid_draft_tokens");
         }
-        if (value.is_number_unsigned() ? value.get<std::uint64_t>() > kMaximumRequestDraftTokens
-                                       : value.get<std::int64_t>() < 0 ||
-                                             value.get<std::int64_t>() > kMaximumRequestDraftTokens) {
+        const bool out_of_range =
+            value.is_number_unsigned()
+                ? value.get<std::uint64_t>() > kMaximumRequestDraftTokens
+                : (value.get<std::int64_t>() < 0 ||
+                   value.get<std::int64_t>() > std::int64_t{kMaximumRequestDraftTokens});
+        if (out_of_range) {
             bad_request("ninferno.draft_tokens must be in " + range + ": 0 decodes the request "
                         "plainly, a depth drafts that many tokens a round",
                         "ninferno.draft_tokens", "invalid_draft_tokens");
