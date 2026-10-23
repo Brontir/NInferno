@@ -167,10 +167,12 @@ inline constexpr QuantKldPoint kQuantKld[] = {{0, 0, ""}}; // filled from the me
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
 inline constexpr std::uint32_t kRequestPrompt = 2048;
 inline constexpr std::uint32_t kRequestAnswer = 512;
-// A request's fixed time beside its prefill and decode (HTTP, the template, tokenization, the first
-// step's setup): fitted on the mixed workload of the RTX 4090 (15 runs of 8 sampled tasks: 9.4 % ->
-// 3.6 % rms). One card: it enters the estimates shown, never a decision (principle 4).
-inline constexpr double kRequestFixedSeconds = 0.135;
+// No fixed time per request: a mixed workload (8 sampled example tasks, 96-512 answer tokens) left
+// 0.135 s a request unexplained on the RTX 4090's host and none on the 4070 Ti's (with it the 4070
+// Ti's estimates went from +3 % to +8 %): it is the host's (launch and HTTP latency), which no GPU
+// fact predicts. Measured against that workload, one stream: the 4070 Ti within 5 % (Gemma 4 12B,
+// a family the fit never saw, +5 %); the 4090 2-7 % fast on the larger models and 15 % fast on the
+// fastest (Qwen3.5-4B, Qwen3.6-35B-A3B: 240-250 tok/s).
 
 // ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
 //

@@ -192,10 +192,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.accuracy    = accuracy_of(model, quant, c, card);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
-        // The decision leaves out the fixed time (one card's constant: estimates only).
-        Task decision          = task;
-        decision.fixed_seconds = 0;
-        s.decision_seconds     = request_seconds(model, ref->card, quant, c, decision);
+        s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -274,7 +271,7 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const double middle = task.prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
-    return task.fixed_seconds + task.prompt / speed.prefill + task.answer / speed.decode_per_stream;
+    return task.prompt / speed.prefill + task.answer / speed.decode_per_stream;
 }
 
 std::optional<Reference> reference_of(const CardFacts& card) {
