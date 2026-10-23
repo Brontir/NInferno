@@ -90,6 +90,7 @@ struct Pins {
     std::optional<KvCacheStorage> ring;
     std::optional<RecurrentStateStorage> state;
     std::optional<ActivationMode> activations;
+    std::optional<std::uint32_t> chunk; // --prefill-chunk
 };
 
 // The storages that follow the KV codec and the activations (the owner's rule, 23.10): the sliding
@@ -109,6 +110,7 @@ struct Candidate {
     KvCacheStorage ring = KvCacheStorage::BFloat16;
     RecurrentStateStorage state = RecurrentStateStorage::FP32;
     ActivationMode activations = ActivationMode::Fast;
+    std::uint32_t chunk = kDefaultChunk; // the widest prefill chunk (the ladder may narrow it)
 };
 
 // ---- The three estimates.
