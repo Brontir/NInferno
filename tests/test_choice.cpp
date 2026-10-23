@@ -269,7 +269,7 @@ void decides_by_generation(const json& fixture) {
         const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
         const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
         check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
-        check(ra->decides, "Ada's factors rest on two lab cards: the worth decides");
+        check(ra->decides == ch::kKldTwoCards, "Ada decides once the accuracy terms rest on two cards");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
@@ -361,11 +361,11 @@ void weighs_the_quantizations(const json& fixture) {
     const ch::Choice choice = ch::choose(with6.model, with6.card, with6.quants,
                                          ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
                                          oracle(with6, 20e9));
-    check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
+    if (ch::kKldTwoCards) check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
               choice.why.find("best worth among the quantizations") != std::string::npos,
           "Ada: the quantizations by worth (Q6_K)");
     for (const ch::Alternative& a : ch::explain(choice, with6.quants)) {
-        if (a.axis == ch::Axis::Quant && a.value == "Q8_0") {
+        if (ch::kKldTwoCards && a.axis == ch::Axis::Quant && a.value == "Q8_0") {
             check(a.why_code == "lower_worth", "Q8_0 fits and lost on worth, not on the rule");
         }
     }
@@ -391,7 +391,7 @@ void chooses_the_chunk(const json& fixture) {
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    check(ada.chosen && chosen(ada).candidate.chunk == 2048, "Ada, an MoE: chunk 2048 for a 2048-token prompt");
+    if (ch::kKldTwoCards) check(ada.chosen && chosen(ada).candidate.chunk == 2048, "Ada, an MoE: chunk 2048 for a 2048-token prompt");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
     check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
