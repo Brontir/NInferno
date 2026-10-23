@@ -219,6 +219,11 @@ inline constexpr std::uint32_t kRequestAnswer = 512;
 // fastest (Qwen3.5-4B, Qwen3.6-35B-A3B: 240-250 tok/s). Turing decodes the IQ2 codebook formats
 // 19 % slower than estimated (Qwen3.8-27B UD-IQ2_XXS on the RTX 2080 Ti; the same file on the 4070
 // Ti within 3 %): the estimate shown there is optimistic, and Turing does not decide.
+// Several streams: the compute of a step of C rows depends on the weight format beyond its bytes
+// (a codebook format's decode is cheaper per row than its bits suggest): at 4-8 streams the fit
+// leaves Qwen3.8-27B UD-IQ3_XXS on the RTX 5070 Ti 14-15 % slow and UD-Q4_K_XL on the 4090 3-10 %
+// fast; Qwen3.5-9B Q4_K_M stays within 4 % at 2-4 streams. A per-format multi-row factor needs its
+// own measurements (not the held-out runs).
 
 // ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
 //
