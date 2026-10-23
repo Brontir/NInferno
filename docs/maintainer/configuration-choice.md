@@ -59,9 +59,12 @@ Until a measured KLD curve over the quantizations exists, the quantization is th
 (`runtime/engine/quant_rule.h`: the largest that fits, not below 3.5 bits per weight unless nothing
 above fits) and the worth picks the KV codec and the activation mode at it.
 
-The ring and the recurrent state follow the KV codec and the activations (`coupled_storages`):
-today the engine's own defaults (BF16 rings; FP16 state under fast, FP32 under exact). Their other
-values are scored beside the chosen candidate (never chosen) so that `explain` can show them.
+The ring and the recurrent state follow the KV codec and the activations (`coupled_storages`, the
+owner's rule): the sliding rings in the KV cache's kind (FP8 under any narrower KV codec where the
+family's rings take FP8: Gemma 4 and the dense decoders; else BF16), the recurrent state one step
+finer than the KV cache (FP32 under BF16 KV, FP16 under a narrower one, FP32 under exact). A flag
+(`--sliding-kv-dtype`, `--state-dtype`) pins either. Their other values are scored beside the
+chosen candidate (never chosen) so that `explain` can show them.
 
 ## Explaining
 
