@@ -370,16 +370,11 @@ std::string tune_refusal_on(const fs::path& tune, const std::string& artifact_id
                             const GpuStat* gpu) {
     // The tune itself first: unreadable, another artifact, or a drafter replaced since.
     if (auto why = spec::tune_refusal(tune, artifact_id); !why.empty()) { return why; }
-    if (gpu == nullptr || gpu->cc_major <= 0) {
-        return tune.string() + ": the GPU it would run on is unknown here";
-    }
     // The server keys a tune by "<chip>:<sms>sm": boards of one chip differ in SM count (RTX 5090
-    // and RTX PRO 6000, RTX 4090 and L40), so without the count (NVML gave none, or a MIG slice)
-    // the class is unknown here.
-    if (gpu->sms <= 0) {
-        return tune.string() + ": the SM count of GPU " + std::to_string(gpu->index) +
-               " is unknown here";
-    }
+    // and RTX PRO 6000, RTX 4090 and L40), so on a GPU unknown here or without the count (NVML
+    // gave none, or a MIG slice) the class is not judged here: the server names its GPU's class
+    // from CUDA and refuses to start with a named tune of another.
+    if (gpu == nullptr || gpu->cc_major <= 0 || gpu->sms <= 0) { return ""; }
     const std::string chip = gpu_chip(gpu->pci_device_id, gpu->cc_major, gpu->cc_minor, gpu->sms);
     // The class the server keys a tune by (device_class's id(), its similarity chain's front).
     return spec::tune_refusal(tune, artifact_id, gpu_class_id(chip, gpu->sms));
@@ -465,32 +460,39 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
             spec.argv.push_back("--activations");
             spec.argv.push_back("exact");
         }
-        // Speculation is the product's measured choice unless the request names one (ninferno-serve
-        // alone decodes plainly without --spec).
+        // Speculation: the one the request names, else the published profile's (--spec auto,
+        // ninferno-serve's default too), named so that the command line says it.
         spec.argv.push_back("--spec");
         spec.argv.push_back(request.spec.empty() ? "auto" : request.spec);
-        // A tune of this artifact (the UI's /api/tune writes one beside it), for a model started
-        // by its artifact path: named, since the server reads none by itself, and only when it
-        // would serve (a named tune that does not refuses to start): a stale one is passed over
-        // with a note in the log. Checked against the GPU the request runs on (tune_refusal_on):
-        // one not known well enough here passes the tune over too.
+        // A tune of this artifact (/api/tune writes one beside it) is a measurement of this
+        // machine: it runs only when the start asks for it (spec_profile), never by itself, as
+        // the server reads one only when named. Asked for, one that does not serve refuses the
+        // start: here when NVML names the class of the GPU the request runs on (tune_refusal_on),
+        // else by the server, which refuses to start with a named tune that does not serve.
         std::error_code ec;
         const fs::path tune = spec::default_profile_path(model);
-        if (fs::path(model).extension() == ".ninferno" && fs::is_regular_file(tune, ec)) {
+        const bool by_path  = fs::path(model).extension() == ".ninferno";
+        if (request.spec_profile) {
+            if (!by_path) {
+                throw std::invalid_argument("spec_profile: a tune is made for a converted model, "
+                                            "started by its .ninferno path");
+            }
             std::string why;
             try {
                 why = tune_refusal_on(tune, spec::artifact_id_hex(model), gpu);
             } catch (const std::exception& e) {
                 why = std::string("the model's id is unreadable: ") + e.what();
             }
-            if (why.empty()) {
-                spec.argv.push_back("--spec-profile");
-                spec.argv.push_back(tune.string());
-            } else {
-                spec.notes.push_back("the tune beside the model is passed over (" + why +
-                                     "); the published profile runs: calibrate again if "
-                                     "it is stale");
+            if (!why.empty()) {
+                throw std::invalid_argument("spec_profile: the tune does not serve here: " + why);
             }
+            spec.argv.push_back("--spec-profile");
+            spec.argv.push_back(tune.string());
+        } else if (by_path && fs::is_regular_file(tune, ec)) {
+            spec.notes.push_back("the tune beside the model (" + tune.string() +
+                                 ") is not named: a start names it only when it asks for it "
+                                 "(POST /api/launch with \"spec_profile\": true; the page's Start "
+                                 "does not ask for it yet)");
         }
     }
     if (request.gpu >= 0) {
@@ -1165,7 +1167,8 @@ Json App::local_json() {
                        {"modified", iso_time(fs::last_write_time(path, ec))},
                        {"original_gib", gib2(original)},
                        {"running", running.contains(path.string())},
-                       // Calibrated on this machine (spec-tune wrote it), else a registry profile.
+                       // A tune made on this machine (spec-tune wrote it): a start names it only
+                       // when it asks for it (spec_profile).
                        {"own_profile", fs::exists(spec::default_profile_path(path), ec)}});
     };
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
@@ -1643,6 +1646,7 @@ void App::install(httplib::Server& server) {
         out.precision   = body.value("precision", std::string());
         out.kv_dtype        = body.value("kv_dtype", std::string());
         out.hub             = body.value("hub", std::string());
+        out.spec_profile    = body.value("spec_profile", false);
         return out;
     };
     server.Post("/api/launch",
@@ -1669,8 +1673,8 @@ void App::install(httplib::Server& server) {
                     } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
                 });
     // Speculation tuned on this GPU at the user's request: spec-tune's quick pass writes
-    // <artifact>.spec_profile.json, which this UI names (--spec-profile) when it starts the model
-    // again, in place of a profile borrowed from a similar chip.
+    // <artifact>.spec_profile.json. A measurement of this machine steers nothing by itself: a
+    // start names it (--spec-profile) only when it asks for it (/api/launch spec_profile).
     server.Post("/api/tune", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             const Json body = Json::parse(req.body);

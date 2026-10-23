@@ -93,7 +93,8 @@ struct ResolvedSpeculation {
 // device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a
 // caller without a device such as the UI): unreadable, tuned for another artifact, GPU or
 // drafters, or a drafter replaced since. Empty when it would serve. For a tune found rather than
-// named (the UI's, spec-tune --load's own beside the artifact): passed over with a note.
+// named (spec-tune --load's own beside the artifact): passed over with a note; for the one a UI
+// start asks for (spec_profile): that start is refused.
 [[nodiscard]] std::string tune_refusal(const std::filesystem::path& tune,
                                        const std::string& artifact_id,
                                        const std::string& gpu_class = {});
