@@ -81,9 +81,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
   `src/runtime/engine/decision_fingerprint.h`): it hashes the device facts (of the clocks, the
   reference facts the decisions read: source, reference and memory clock, bus width, share and
-  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id or a laptop row without
-  the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
-  stock one and two laptops of one name from two OEMs alike), the host's
+  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id, a laptop row without
+  the bottom of its range or a whole board on another memory than its id's row (another bus
+  width, a slower memory clock), and as observed otherwise, so an overclocked board fingerprints as
+  a stock one and two laptops of one name from two OEMs alike), the host's
   logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
   build, not at configure), the requested options (the decode pacing and the maintainer options
   among them; no environment variable decides), the route table, dense- and MoE-tune files,

@@ -404,6 +404,21 @@ int facts_reach_their_section() {
     failures += check(rt::observed_of(unknown).empty() &&
                           rt::observed_of(sample_device()).size() == driver.size(),
                       "observed: the driver's values only on the verified table");
+    // A board on another memory than its row's (an RTX 4070 with GDDR6 under the GDDR6X board's
+    // id): the driver's memory clock priced it, so the driver's values are inputs too.
+    DeviceClass variant      = sample_device();
+    variant.major            = 8;
+    variant.minor            = 9;
+    variant.sms              = 46;
+    variant.pci_device_id    = 0x2786;
+    variant.chip             = "ad104";
+    variant.memory_bus_bits  = 192;
+    variant.memory_clock_khz = 10001000;
+    variant.sm_clock_khz     = 2475000;
+    variant.facts            = ninferno::machine_facts_of(variant);
+    failures += check(variant.facts.driver_read && rt::observed_of(variant).empty() &&
+                          collect(variant).contains("driver.memory_clock_khz"),
+                      "facts: a board on another memory than its row's reads the driver's");
     failures += check(rt::facts_of(sample_device(), {}, 13020, kHost) != collect(sample_device()),
                       "facts: build features reach the section");
     failures += check(rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 12080,

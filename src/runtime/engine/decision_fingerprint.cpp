@@ -257,8 +257,9 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["machine.share"]               = bits(m.share);
     out["machine.mma_slow"]            = flag(m.mma_slow);
     // The driver's values are inputs only where they fed a fact (MachineFacts::driver_read: an
-    // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them);
-    // a verified board, a MIG slice or a laptop priced at its range's bottom never reads them.
+    // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them, a
+    // board on another memory than its row's prices its memory by them); a verified board, a MIG
+    // slice or a laptop priced at its range's bottom never reads them.
     if (m.driver_read) { driver_into(out, d); }
     out["driver_version"] = number(driver_version);
     features_into(out, "feature.", d.features);
