@@ -55,9 +55,16 @@ above the quality floor before any quantization below it. A narrower KV codec is
 its own: at a step where the largest quantization fits only with it, that pair is taken before the
 next step.
 
-Until a measured KLD curve over the quantizations exists, the quantization is the quant rule's
-(`runtime/engine/quant_rule.h`: the largest that fits, not below 3.5 bits per weight unless nothing
-above fits) and the worth picks the KV codec and the activation mode at it.
+The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF against Q8_0:
+Q6_K 0.0062, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0283, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
+0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
+models (marked as not measured). On a GPU generation that decides, the plan weighs the quantizations
+of the quant rule's tier (`runtime/engine/quant_rule.h`: the own context per stream it reached, the
+same side of the 3.5-bit floor) by the worth of each one's own choice, and the rule line says which
+was the largest (`rule_code` `best_worth`). On the RTX 4090 and 4070 Ti, Qwen3.5-9B takes
+UD-Q5_K_XL where the largest that fits is UD-Q8_K_XL or Q8_0: Q8_0 costs about 26 % more time per
+request than Q6_K for 0.003 KLD, and Q4_K_M saves 20 % for 0.012 more. Elsewhere the rule's largest
+stands.
 
 The ring and the recurrent state follow the KV codec and the activations (`coupled_storages`, the
 owner's rule): the sliding rings in the KV cache's kind (FP8 under any narrower KV codec where the
