@@ -159,6 +159,9 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.sources["chat_template"] = !load.chat_template_source.empty()
                                       ? load.chat_template_source
                                       : runtime::chat_template_source(requested.chat_template_path);
+    for (auto& [key, value] : runtime::context_cost_sources_of(load.context_cost)) {
+        in.sources[key] = std::move(value);
+    }
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
                                    load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);

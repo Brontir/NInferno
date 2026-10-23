@@ -1,7 +1,8 @@
 #pragma once
 
 // The boards NInferno's per-card data was measured on (route tables, R8 decode tables, small-T
-// bands, measured gates), by their published figures: compute capability, SMs, L2 MiB, DRAM GB/s.
+// bands, measured gates, context-cost machines), by their published figures: compute capability,
+// SMs, L2 MiB, DRAM GB/s.
 // Data keyed by one of these carries to any other board through board_distance; a table names
 // the board it ran on instead of a chip, whose boards differ (core/device_class.h: Board).
 

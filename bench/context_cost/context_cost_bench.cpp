@@ -2,6 +2,7 @@
 #include "model_context_fixture.h"
 
 #include "core/device.h"
+#include "core/device_class.h"
 #include "runtime/engine/context_cache/context_cost.h"
 
 #include <nlohmann/json.hpp>
@@ -353,9 +354,9 @@ int main(int argc, char** argv) {
     }
 
     try {
-        const Hardware hardware          = inspect_hardware(options.measurement.device);
-        const std::string hardware_class = ninferno::runtime::context_cost_hardware_class(
-            hardware.gpu, hardware.major, hardware.minor);
+        const Hardware hardware = inspect_hardware(options.measurement.device);
+        // The runtime finds a machine along the device's class chain, never by its name.
+        const std::string gpu_class = ninferno::device_class(options.measurement.device).id();
         std::optional<cost::ArtifactProfile> artifact;
         if (options.suite != Suite::Transfer) {
             artifact = cost::inspect_artifact(options.measurement.artifact);
@@ -379,11 +380,11 @@ int main(int argc, char** argv) {
         accepted      = accepted && (!prefill_fit || prefill_fit->accepted);
 
         Json report{
-            {"schema_version", 3},
+            {"schema_version", 4},
             {"artifact_type", "ninferno_context_cost_calibration"},
             {"accepted", accepted},
             {"hardware", Json{{"gpu", hardware.gpu},
-                              {"hardware_class", hardware_class},
+                              {"gpu_class", gpu_class},
                               {"compute_capability", std::to_string(hardware.major) + "." +
                                                          std::to_string(hardware.minor)},
                               {"cuda_runtime", hardware.runtime},
@@ -472,7 +473,7 @@ int main(int argc, char** argv) {
                 provenance["transfer_warmup"]      = options.measurement.transfer_warmup;
                 provenance["transfer_repetitions"] = options.measurement.transfer_repetitions;
                 ninferno::runtime::upsert_context_transfer_cost_atomic(
-                    options.preset_output, hardware_class, runtime_transfer_cost(*transfer_fits),
+                    options.preset_output, gpu_class, runtime_transfer_cost(*transfer_fits),
                     provenance.dump());
             }
             if (prefill_fit) {
@@ -485,10 +486,7 @@ int main(int argc, char** argv) {
                 provenance["max_context"]         = options.measurement.max_context;
                 provenance["prefill_repetitions"] = options.measurement.prefill_repetitions;
                 ninferno::runtime::upsert_context_prefill_cost_atomic(
-                    options.preset_output,
-                    ninferno::runtime::ContextCostIdentity{
-                        .hardware_class    = hardware_class,
-                        .prefill_signature = prefill_samples->load.prefill_signature},
+                    options.preset_output, gpu_class, prefill_samples->load.prefill_signature,
                     runtime_prefill_cost(*prefill_fit), provenance.dump());
             }
             std::cerr << "wrote preset " << options.preset_output.string() << '\n';

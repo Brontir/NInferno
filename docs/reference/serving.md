@@ -220,12 +220,25 @@ For `C=--max-concurrency` and `H=--device-state-slots`, total Device StateImage 
 
 ### Context-cost presets
 
-Context-cost coefficients resolve once at startup from generic defaults, matching compiled values,
-and optional transfer or prefill entries from `--context-cost-presets FILE`. Prefill entries match
-the hardware and a signature derived from the actual Text/Vision configuration, bindings and Uses.
-A new representation without a matching measurement uses generic prefill coefficients. A malformed
-file aborts startup. The operational context-cost record and JSONL `server_start` identify the
-selected source.
+Context-cost coefficients resolve once at startup from generic defaults, the compiled machine of
+the device's GPU class, and optional transfer or prefill entries from `--context-cost-presets FILE`.
+A machine is keyed by a GPU class key (`gb202:170sm`, `gb202`, `sm120` or `*`) and found along the
+device's class chain, never by the name the driver gives the card. The compiled machines are keyed
+by the boards they were measured on (RTX 5090 `gb202:170sm`, RTX 4090 `ad102:128sm`, RTX 3090
+`ga102:82sm`, RTX 2080 Ti `tu102:68sm`); a board whose chain names none takes the machine of the
+nearest measured board within the carry distance of measured data, as measured (an RTX 4090 D the
+RTX 4090's), and a farther board, or one of another instruction set, the generic defaults. Prefill
+entries match the machine and a signature derived from the actual Text/Vision configuration,
+bindings and Uses; a new representation without a matching measurement uses the machine's class
+prefill, else the generic one. A malformed file, or one of an older schema (`schema_version` 4
+keys a machine by `gpu_class`), aborts startup. The operational context-cost record and JSONL
+`server_start` (`engine.context_cost`: `transfer_source`, `prefill_source`, `gpu_class`, `machine`,
+`prefill_signature`, `preset_path`) identify the selected source (a carried machine's `machine`
+adds the board distance: `carried from ad102:128sm at 0.17`). The decision fingerprint records the
+machine as `sources.context_cost.machine` (`own <key>`, `carried from <key>` or `generic`) and the
+two sources as `sources.context_cost.transfer` and `sources.context_cost.prefill`; a carried
+machine that still prices the transfer or the prefill is the taint `carried_context_cost` (one an
+external entry replaced entirely is not).
 
 ## 3. Speculative decoding
 

@@ -55,7 +55,14 @@ This page states the rule and its target. The engine does not meet all of it yet
   always 256 at those widths the 4090 up to 30 %);
 - choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
   `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
-  and spread gates): the nearest measured board, not a rule over facts;
+  and spread gates, the context-cost machine of a class no compiled machine names): the nearest
+  measured board, not a rule over facts. The context-cost machine is found by the device's class
+  chain (`gb202:170sm`, never the driver's name), carried as measured within the carry distance
+  (no SM-count ratio rescales it) and otherwise the declared generic defaults; the fingerprint
+  names which (`sources.context_cost.machine`: `own <key>`, `carried from <key>`, `generic`; the
+  logs add a carried machine's distance) and where each component came from
+  (`sources.context_cost.transfer`, `.prefill`), and a carried machine that still prices one of
+  them is the taint `carried_context_cost`;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
@@ -89,7 +96,8 @@ This page states the rule and its target. The engine does not meet all of it yet
   build, not at configure), the requested options (the decode pacing and the maintainer options
   among them; no environment variable decides), the route table, dense- and MoE-tune files,
   context-cost presets, a `--chat-template` file, speculation profile and drafter registry by
-  content, the artifact and a
+  content, the compiled context-cost machine the device's class resolved to (own, carried or
+  generic) and the source of its transfer and prefill, the artifact and a
   separate drafter by their source identity (their artifact ids are observed), the plan startup resolved without the free memory (KV and state storage,
   speculative windows, route breakpoints, decode steps per round) and the violations of this page
   present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to

@@ -529,10 +529,10 @@ std::string format_server_start_json(
                                                            context_cost.transfer_source)},
                                    {"prefill_source", ninferno::context_cost_preset_source_name(
                                                           context_cost.prefill_source)},
-                                   {"hardware_class", context_cost.hardware_class},
+                                   {"gpu_class", context_cost.gpu_class},
+                                   {"machine", context_cost.machine},
                                    {"prefill_signature", context_cost.prefill_signature},
-                                   {"preset_path", context_cost.preset_path.string()},
-                                   {"similar_to", context_cost.similar_to}}},
+                                   {"preset_path", context_cost.preset_path.string()}}},
              {"context_cache",
               Json{{"enabled", cache.enabled},
                    {"device_state_slots", cache.device_state_slots.value()},
