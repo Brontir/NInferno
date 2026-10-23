@@ -281,6 +281,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     out.inputs.device  = device;
     out.inputs.gpu     = gpu;
     out.inputs.options = engine_options_of(options);
+    out.inputs.pins    = pins_of(options);
     out.inputs.ask     = product::SpeculationAsk{.automatic   = options.speculation_from_profile,
                                                  .given       = options.speculative,
                                                  .thinking    = options.enable_thinking.value_or(true),

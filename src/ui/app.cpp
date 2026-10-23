@@ -947,6 +947,9 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.options        = options.options;
     inputs.ask            = options.ask;
     inputs.ask.model_repo = repo;
+    // The launch pins the KV codec the user chose and --activations exact; the rest is chosen.
+    inputs.pins = product::ChoicePins{.kv          = !launch.kv_dtype.empty() && launch.kv_dtype != "auto",
+                                      .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
     // attached, its MTP layers are.
     const product::SpeculationSubject subject = product::planned_subject(
@@ -996,9 +999,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // The configuration choice at those weights (product/plan/plan_choice.h): what the launch
     // leaves automatic is chosen there, and what every other value would change. The launch pins
     // the KV codec the user chose and --activations exact.
-    const product::ChoicePins pins{.kv          = !launch.kv_dtype.empty() && launch.kv_dtype != "auto",
-                                   .activations = launch.exact};
-    if (const auto served = product::choose_at_weights(planned_at, inputs, pins, planned_label)) {
+    if (const auto served = product::choose_at_weights(planned_at, inputs, inputs.pins, planned_label)) {
         doc["choice"] = product::choice_json(*served);
     }
     std::lock_guard lock(sizes_mutex_);

@@ -375,6 +375,11 @@ int main(int argc, char** argv) {
                     ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
             } catch (const std::exception&) {}
             inputs.subject                            = &subject;
+            inputs.pins                               = {.kv          = cli.kv_cache.has_value(),
+                                                         .activations = cli.activations_given,
+                                                         .state       = cli.recurrent_state.has_value(),
+                                                         .ring        = cli.sliding_kv_given,
+                                                         .chunk       = true};
             const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
             const std::string source                  = cli.artifact_path.string();
             // The configuration choice for the axes left automatic, as a start would take it.

@@ -341,11 +341,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         (out.pick->tier == runtime::QuantPickTier::Own ||
          out.pick->tier == runtime::QuantPickTier::OwnStepped ||
          out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
-        const ChoicePins pins{.kv          = !inputs.options.kv_cache_automatic,
-                              .activations = inputs.options.activations == ActivationMode::Exact,
-                              .state       = !inputs.options.recurrent_state_automatic,
-                              .ring        = false,
-                              .chunk       = !inputs.options.prefill_chunk_automatic};
+        const ChoicePins& pins = inputs.pins;
         std::optional<std::size_t> best;
         double best_worth = 0;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
