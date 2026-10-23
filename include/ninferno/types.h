@@ -1772,6 +1772,9 @@ struct LoadSummary {
     std::string cuda_sync_mode;
     std::vector<std::string> weight_formats;
     std::string prefill_signature;
+    // The served chat template as the decision fingerprint names it: "artifact", or the
+    // --chat-template file by the bytes the served Frontend compiled.
+    std::string chat_template_source;
     std::string gpu_class;   // the device class the route data is keyed by, e.g. "gb202:170sm"
     std::string route_table; // what the per-GPU-class route table is: loaded, absent, or refused
     // The device facts guessed or unreported, with the conservative choice taken (device_fact_notes).

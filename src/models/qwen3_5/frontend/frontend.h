@@ -121,6 +121,9 @@ public:
                         bool quoted_reasoning_close_is_text    = false) const;
     [[nodiscard]] const StopPolicy& default_stop_policy() const noexcept;
     [[nodiscard]] const ModelSamplingDefaults& sampling_defaults() const noexcept;
+    // What the decision fingerprint calls this Frontend's chat template: "artifact", or the
+    // --chat-template file named by the bytes it compiled ("<file name> sha256:<hex>").
+    [[nodiscard]] const std::string& chat_template_source() const noexcept;
     // Constrained decoding: presented bytes and control-token flags of every token id in
     // [0, token_domain), the default stop tokens and the reasoning-section terminator.
     [[nodiscard]] structured::GrammarVocabulary grammar_vocabulary(std::uint32_t token_domain) const;

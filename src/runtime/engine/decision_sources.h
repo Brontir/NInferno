@@ -24,4 +24,11 @@ namespace ninferno::runtime {
 [[nodiscard]] std::string
 context_cost_presets_source(const std::filesystem::path& presets) noexcept;
 
+// A --chat-template file, which turns a request's messages into the prompt's tokens:
+// "<file name> sha256:<hex of its bytes>", "artifact" for an empty path (the artifact's own
+// template, which its source identity covers), "unreadable" when it cannot be read. A constructed
+// Engine names the bytes its served Frontend compiled instead (LoadSummary::chat_template_source,
+// the same form); this reading of the path stands in for a plan built without a Frontend.
+[[nodiscard]] std::string chat_template_source(const std::filesystem::path& chat_template) noexcept;
+
 } // namespace ninferno::runtime

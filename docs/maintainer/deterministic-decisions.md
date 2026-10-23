@@ -88,7 +88,8 @@ This page states the rule and its target. The engine does not meet all of it yet
   logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
   build, not at configure), the requested options (the decode pacing and the maintainer options
   among them; no environment variable decides), the route table, dense- and MoE-tune files,
-  context-cost presets, speculation profile and drafter registry by content, the artifact and a
+  context-cost presets, a `--chat-template` file, speculation profile and drafter registry by
+  content, the artifact and a
   separate drafter by their source identity (their artifact ids are observed), the plan startup resolved without the free memory (KV and state storage,
   speculative windows, route breakpoints, decode steps per round) and the violations of this page
   present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to

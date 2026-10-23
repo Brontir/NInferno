@@ -828,6 +828,22 @@ int file_sources() {
     failures += check(rt::context_cost_presets_source(dir / "missing.json") == "unreadable",
                       "presets: a missing file is unreadable");
 
+    // --chat-template FILE: the prompt's tokens follow its content, not its path.
+    const auto chat_template = dir / "template.jinja";
+    write_file(chat_template, "{{ messages[0].content }}");
+    const std::string template_a = rt::chat_template_source(chat_template);
+    write_file(chat_template, "<|im_start|>{{ messages[0].content }}");
+    const std::string template_b = rt::chat_template_source(chat_template);
+    failures += check(template_a.starts_with("template.jinja sha256:") && template_a != template_b,
+                      "chat template: named by file name and content: " + template_a);
+    failures +=
+        check(with_source("chat_template", template_a) != with_source("chat_template", template_b),
+              "chat template: a changed file moves the fingerprint");
+    failures += check(rt::chat_template_source({}) == "artifact",
+                      "chat template: none given is the artifact's");
+    failures += check(rt::chat_template_source(dir / "missing.jinja") == "unreadable",
+                      "chat template: a missing file is unreadable");
+
     // The MoE tuner's cache, read only while --moe-tune times.
     const auto cache = dir / "moe_tune.json";
     ninferno::ops::set_moe_tune(ninferno::TuneMode::Off, dir);
