@@ -157,6 +157,11 @@ What the design guarantees once complete:
    - the corpus, by hash;
    - under `fast`, the lane count, because the bytes at T ≤ 16 depend on the batch.
 
+   A `fast-a4` byte class means four-bit activations are allowed in the artifact and runnable on
+   the card (runtime `served_activations`), under the route table of chip facts in force when the
+   factor was measured; a later table that splits decode W4A4 by chip changes which bytes run, and
+   the entries must then be re-keyed.
+
    Every card runs the same request schedule. The cards must come from two generations, or
    take different routes, so that their agreement means something. The constant records the
    relative tolerance its cards must agree within. When they disagree, the constant depends on

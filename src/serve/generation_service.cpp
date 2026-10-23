@@ -2,6 +2,7 @@
 
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
+#include "runtime/engine/served_bytes.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -298,6 +299,7 @@ void mark_fit_fallback(SpeculativeOptions& speculative, std::string_view label) 
 
 std::string speculation_fallback(const GenerationMetrics& metrics, std::string_view startup) {
     if (metrics.speculative_context_plain) { return "context_plain"; }
+    if (metrics.speculative_class_plain) { return "class_plain"; }
     if (metrics.speculative_load_plain) { return "load_plain"; }
     if (metrics.speculative_watchdog_tripped) { return "watchdog_plain"; }
     if (metrics.speculative_step_downs != 0) { return "step_down"; }
@@ -417,6 +419,14 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             speculative.load = product::engine_load(*options_.speculation_load,
                                                     product::speculative_window(speculative));
         }
+        // --spec-class-depth: the bounds as given (an explicit --spec too), replacing --spec
+        // auto's, clamped to this candidate's captured depths so they only lower (a fallback
+        // candidate shallower than a bound takes it as no bound rather than refuse to start).
+        const auto override_depths =
+            options_.class_depth
+                ? std::optional(product::clamp_class_override(*options_.class_depth, speculative))
+                : std::nullopt;
+        if (override_depths) { speculative.class_depth = *override_depths; }
         if (!served_speculation_) { return; }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
@@ -424,6 +434,27 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         served_speculation_->engine.load        = speculative.load;
         served_speculation_->engine.draft_width = speculative.draft_width;
+        // The depth per context class for the bytes this Engine runs, resolved as the Engine
+        // resolves them (runtime/engine/served_bytes.h).
+        KvCacheStorage kv = engine_options.kv_cache;
+        try {
+            kv = runtime::resolved_kv_cache(engine_options);
+        } catch (const std::exception&) {}
+        product::apply_context_classes(*served_speculation_, options_.artifact_path,
+                                       {.activations = runtime::served_activations(engine_options),
+                                        .kv          = std::string(kv_cache_storage_layout(kv))});
+        if (override_depths) {
+            product::apply_class_override(*served_speculation_, *override_depths);
+        }
+        // The bounds were decided for the default choice: under --spec-select thinking a request
+        // at another depth is not bounded (spec::class_bounds_apply), the conservative side.
+        if (options_.per_request_speculation) {
+            for (auto& c : served_speculation_->classes) {
+                c.reason += "; default choice only (--spec-select thinking: a request at another "
+                            "depth is not bounded)";
+            }
+        }
+        speculative.class_depth = served_speculation_->engine.class_depth;
     };
     bound_load(engine_options.speculative);
     engine_options.context_cache            = options_.context_cache;
@@ -439,6 +470,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         dry.speculation = engine_options.speculative.backend == SpeculativeBackend::None
                               ? std::string("plain")
                               : product::speculation_label(engine_options.speculative);
+        if (served_speculation_) {
+            dry.speculation_classes = product::context_classes_json(*served_speculation_);
+        }
         if (dry.plan.rung == 0 && served_speculation_) {
             ninferno::EngineOptions plain = engine_options;
             plain.speculative             = SpeculativeOptions{};
@@ -676,6 +710,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                               : "profile " + served_speculation_->source,
                        .fallback  = fell_back ? "fit_fallback" : "none",
         };
+        startup_speculation_.classes = product::context_classes_json(*served_speculation_);
     } else if (!speculation_plain_reason_.empty()) {
         startup_speculation_ = {.selection = "startup",
                                 .reason    = speculation_plain_reason_,
@@ -1024,6 +1059,8 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_trips_held            = result.speculative.shared_trip_deferrals;
     outcome.metrics.speculative_load_plain            = result.speculative.load_plain;
     outcome.metrics.speculative_context_plain         = result.speculative.context_plain;
+    outcome.metrics.speculative_class_plain           = result.speculative.class_plain;
+    outcome.metrics.speculative_class_depth           = result.speculative.class_depth;
     outcome.metrics.speculative_watchdog_tripped      = result.speculative.watchdog_tripped;
     outcome.metrics.speculative_watchdog_round        = result.speculative.watchdog_round;
     outcome.metrics.speculative_step_downs            = result.speculative.step_downs;

@@ -45,6 +45,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::spec {
@@ -180,11 +181,66 @@ struct ClassDepth {
 // definition, whatever `factors` says of it). No cost, an unreliable or unpriced fit
 // (RoundCost::fit, "mma emulated") or an unknown factor of another class: the deepest captured
 // depth up to kUnsureDepth for Short and Mid, 0 for Long and Huge, labelled "estimate: none
-// (<why>)". No caller yet: routing a request by class is the next step.
+// (<why>)". The server serves served_class_depths below instead (it never speculates past the
+// profile's measured pick).
 [[nodiscard]] std::array<ClassDepth, kContextClasses>
 class_depths(const std::optional<RoundCost>& cost, double a, double d,
              std::span<const std::int32_t> captured,
              const std::array<ClassFactor, kContextClasses>& factors, std::int32_t factor_depth,
              double margin = kClassMargin);
+
+// The served depth per context class (G2, PR-b): what --spec auto runs a request at once its
+// context reaches a class, from the profile's measured pick and the class's acceptance factor.
+// Unlike class_depths it never speculates deeper than the profile measured, and where anything is
+// unknown it keeps what runs today (the profile's pick), so it only ever lowers a depth, and only
+// on data:
+//
+// - Short runs the profile's pick (`pick`, basis measured).
+// - Mid, Long and Huge run at most the class before (a longer prompt never drafts deeper than a
+//   shorter one). An unknown factor keeps that depth: the profile's pick (basis "no estimate"), or
+//   the lower depth a shorter class took (basis "bounded by <that class>").
+// - A known factor f (basis modeled): the profile measured `measured_tokens` per round at `pick`;
+//   the class accepts f times its drafts there, T_c = 1 + (measured_tokens - 1) f. Each draft of a
+//   round is taken as accepted with one probability a_c given the ones before it (a geometric
+//   block, no decay term: no constant fitted on cards), the a_c that gives T_c at `pick`
+//   (first_draft_acceptance with decay 1). A round at depth k then yields tokens_per_round(a_c, 1,
+//   k) tokens and costs floor_k plain-decode tokens (the profile's watchdog floor at k, its
+//   measured break-even: `floors`, the pick and its step-down depths); its speed over plain decode
+//   is their ratio. The class runs the depth up to the cap with the highest ratio (ties: the
+//   deeper), or plain decode when no ratio passes 1. A factor of 1 or more keeps the cap. Without
+//   a decay along the block a shallower depth's drafts look no better than the deep ones' average,
+//   so the rule lowers less than a decaying block would (the conservative side for "only down").
+// - The floors were measured at the profile's own context (spec-tune's prompts), not at the
+//   class's: a longer context costs a round more than its floor says, so the rule errs towards
+//   keeping depth there; a modeled reason says "floor from profile context".
+// - The rule must reproduce the profile's own pick: at factor 1 the highest ratio must be at
+//   `pick` and pass 1. Otherwise (a floor raised from another GPU, say), or with no measured floor
+//   at the pick or no tokens per round over 1, every class keeps the cap ("no estimate").
+//
+// The profile's measurements and the registry's factors only: no timing on site, no card names,
+// no fitted constant. A depth of 0 is plain decode.
+enum class ClassBasis : std::uint8_t { Measured, Modeled, NoEstimate, Bounded };
+// "measured", "modeled", "no estimate", "bounded".
+[[nodiscard]] const char* class_basis_name(ClassBasis basis) noexcept;
+
+struct DepthFloor {
+    std::int32_t depth = 0;
+    double floor       = 0; // a round's cost in plain-decode tokens; <= 1: not measured
+};
+
+struct ServedClassDepth {
+    std::int32_t depth = 0;
+    ClassBasis basis   = ClassBasis::NoEstimate;
+    // Bounded: the shorter class whose lower depth this one keeps.
+    ContextClass bounded_by = ContextClass::Short;
+    std::string reason;
+};
+
+// The basis as reports show it: class_basis_name, and "bounded by <class>" for Bounded.
+[[nodiscard]] std::string class_basis_label(const ServedClassDepth& depth);
+
+[[nodiscard]] std::array<ServedClassDepth, kContextClasses>
+served_class_depths(std::int32_t pick, double measured_tokens, std::span<const DepthFloor> floors,
+                    const std::array<ClassFactor, kContextClasses>& factors);
 
 } // namespace ninferno::spec

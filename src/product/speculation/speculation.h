@@ -12,11 +12,14 @@
 
 #include "ninferno/types.h"
 #include "spec/config.h"
+#include "spec/context_class.h"
 #include "spec/engine_support.h"
+#include "spec/load_model.h"
 #include "spec/manifest.h"
 #include "spec/menu.h"
 #include "spec/profile.h"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -69,7 +72,62 @@ struct ServedSpeculation {
     // Set when the profile's choice did not fit the requested context on this device and its fit
     // fallback runs instead: why (the Engine's refusal). Logged as a warning.
     std::string fit_fallback;
+
+    // What the depth per context class is decided from (apply_context_classes): the registry
+    // model the artifact's manifest names, the primary's drafter kind and source ("component:
+    // <name>" or the separate drafter's source identity; empty: none), and the tokens per round
+    // the profile measured at the primary's depth (0: not measured, or the primary is not the
+    // profile's choice).
+    struct ClassInputs {
+        std::string model, drafter_kind, drafter_source;
+        double tokens_per_round = 0;
+    } class_inputs;
+
+    // The depth per context class (Short, Mid, Long, Huge) and why; engine.class_depth carries the
+    // bounds below the primary's depth. Before apply_context_classes: every class at the profile's
+    // pick, "no estimate".
+    std::array<spec::ServedClassDepth, spec::kContextClasses> classes{};
 };
+
+// The byte class a server runs, as the registry's context-class keys spell it
+// (spec::served_byte_class): runtime::served_activations ("exact", "fast-a8" or "fast-a4") and the
+// layout name of runtime::resolved_kv_cache, both as the Engine resolves them.
+struct ServedBytes {
+    std::string activations;
+    std::string kv;
+};
+
+// The depth per context class of `served` (spec::served_class_depths) from the registry's
+// context-class factors (`factors`; spec::served_factor) for the served model (`target`: the
+// artifact's source identity, nullopt when it has none), drafter, depth, `bytes` and one lane:
+// Short keeps the profile's pick, a longer class only lowers it and only where its factor is known.
+// Fills served.classes and served.engine.class_depth (kNoClassBound where a class keeps the pick).
+// A plain menu: nothing. Deterministic: registry data and the profile's measurements only.
+void apply_context_classes(ServedSpeculation& served, const std::optional<std::string>& target,
+                           const ServedBytes& bytes, const spec::ContextFactors& factors);
+// The same for the artifact at `artifact` with the factors this binary carries.
+void apply_context_classes(ServedSpeculation& served, const std::filesystem::path& artifact,
+                           const ServedBytes& bytes);
+// Class bounds as `engine` can run them: a bound at or past its window (speculative_window)
+// bounds nothing and becomes kNoClassBound; any other is rounded down to the deepest depth the
+// engine captures (draft_tokens, request_draft_tokens) at most the bound, or 0 (plain) when none
+// is, since a launch drafts at its captured window's width. So --spec-class-depth only ever lowers
+// and every fallback candidate (a shallower depth, the head) takes it without a refusal, and the
+// depth reported is the one that runs. Non-increasing bounds stay non-increasing.
+[[nodiscard]] std::array<std::uint32_t, spec::kContextClasses>
+clamp_class_override(const std::array<std::uint32_t, spec::kContextClasses>& bounds,
+                     const SpeculativeOptions& engine);
+// served.classes after --spec-class-depth `bounds` (already clamped): each class at the depth the
+// engine runs, min(the primary's depth, bound) (the primary's where a class is unbounded), the
+// override named in its reason.
+void apply_class_override(ServedSpeculation& served,
+                          const std::array<std::uint32_t, spec::kContextClasses>& bounds);
+
+// The context classes as reports carry them (/v1/models meta.speculation.classes, the startup
+// log): [{class, below_tokens (null for huge), for_depth, depth, basis, reason}]. for_depth: the
+// default choice's depth the bounds were decided for; a request on another menu choice
+// (--spec-select thinking at another depth) is not bounded (spec::class_bounds_apply).
+[[nodiscard]] nlohmann::json context_classes_json(const ServedSpeculation& served);
 
 // nullopt when the artifact came with no speculation profile for this GPU. `thinking` is the
 // server's thinking default: the profile's default for it is the engine's default (primary)

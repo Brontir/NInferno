@@ -208,6 +208,7 @@ int options_reach_their_section() {
              o.speculative.load = {{2, 1, ninferno::DFlashDraftWidth::Default}};
          }},
         {"speculative.context_limit", [](EngineOptions& o) { o.speculative.context_limit = 8192; }},
+        {"speculative.class_depth", [](EngineOptions& o) { o.speculative.class_depth[2] = 3; }},
         {"speculative.watchdog_window",
          [](EngineOptions& o) { o.speculative.watchdog_window = 8; }},
         {"speculative.watchdog_min_rounds",

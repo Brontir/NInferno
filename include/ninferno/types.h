@@ -2,6 +2,7 @@
 
 #include "ninferno/option_enums.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -302,6 +303,18 @@ struct SpeculativeOptions {
     // decode pays for it once per token, so past some length the rounds cost more than their
     // tokens save. 0: none.
     std::uint32_t context_limit = 0;
+    // The depth bound per context class, by the tokens a request's context holds (Short < 1024,
+    // Mid < 8192, Long < 24576, Huge the rest; spec/context_class.h): a request drafts at most
+    // class_depth[class] drafts, at 0 it decodes plainly. Applied when its prompt is admitted
+    // (beside context_limit) and again before each decode step, as its context grows into a longer
+    // class: a request's depth only falls (onto a step-down depth it then judges by that floor;
+    // at 0 it decodes plainly for the rest of the request). Non-increasing by class, each bound
+    // kNoClassBound (none) or at most the engine's window. --spec auto fills it from the
+    // registry's context-class factors (src/product/speculation, spec::served_class_depths); the
+    // shared Program every Engine family decodes through applies it.
+    static constexpr std::uint32_t kNoClassBound = 0xffffffffU;
+    std::array<std::uint32_t, 4> class_depth{kNoClassBound, kNoClassBound, kNoClassBound,
+                                             kNoClassBound};
     std::uint32_t watchdog_window     = 32;
     std::uint32_t watchdog_min_rounds = 16;
     // The acceptance floor is a break-even against plain decode of one request. A request whose
@@ -1281,6 +1294,12 @@ struct SpeculativeStats {
     // Its prompt held more tokens than the context bound (SpeculativeOptions::context_limit):
     // a request that would have drafted decoded plainly from its first token.
     bool context_plain = false;
+    // A context-class bound (SpeculativeOptions::class_depth) turned it plain (class_plain), at
+    // admission or when its context grew into a longer class, or lowered its depth: the last
+    // depth a bound lowered it to (class_depth; 0: none, or plain). A request a bound turned plain
+    // keeps its checkpoints from before the switch, not its endpoint (as load_plain).
+    bool class_plain          = false;
+    std::uint32_t class_depth = 0;
     // The acceptance watchdog's verdict (SpeculativeOptions::acceptance_floor): the round it
     // tripped at and the rolling tokens per round it saw. From then on the request drafts no
     // more (fallback_steps beside drafting rows, else plain_steps).

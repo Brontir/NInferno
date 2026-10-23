@@ -6,6 +6,7 @@
 #include "product/sampling_options.h"
 #include "product/speculative_options.h"
 #include "serve/request_validation.h"
+#include "spec/context_class.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -56,6 +57,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--ngram-draft-tokens N [--ngram-min-match M]] "
            "[--drafter DRAFTER.ninferno] [--draft-width block|drafts] "
            "[--spec auto [--spec-select fixed|thinking]] [--spec-load LANES:DEPTH,...|none] "
+           "[--spec-class-depth S,M,L,H|none] "
            "[--spec-profile TUNE.json] "
            "[--spec-shared-floor F] "
            "[--default-max-tokens N] [--default-thinking-budget N] [--repetition-stop N] "
@@ -179,6 +181,10 @@ std::string serve_usage_text(const char* argv0) {
            "       default, tuned on the whole mixed corpus, for every request\n"
            "       (--spec-select fixed, the default); --spec-select thinking runs each\n"
            "       request at the profile's default for its own thinking flag.\n"
+           "       --spec-class-depth bounds the draft depth per context class (short <1K, mid "
+           "<8K,\n"
+           "       long <24K, huge; a depth or none each) instead of --spec auto's, for --spec "
+           "too\n"
            "       --spec-load bounds speculation under decode load instead of the profile's\n"
            "       table: 2:7,3:3,5:0 caps a step of 2+ rows at 7 drafts per row, of 3+ rows\n"
            "       at 3, and turns speculation off from 5 rows (none: no bound); 2:7:drafts\n"
@@ -424,6 +430,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.per_request_speculation = value == "thinking";
         } else if (arg == "--spec-load") {
             options.speculation_load = spec::parse_load(require_value("--spec-load"));
+        } else if (arg == "--spec-class-depth") {
+            options.class_depth = spec::parse_class_depths(require_value("--spec-class-depth"));
         } else if (arg == "--spec-profile") {
             options.spec_profile = require_value("--spec-profile");
         } else if (arg == "--spec-shared-floor") {
@@ -565,6 +573,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (options.speculation_load && !options.speculation_from_profile &&
         options.speculative.backend == SpeculativeBackend::None) {
         throw std::invalid_argument("--spec-load bounds speculation: it needs --spec");
+    }
+    if (options.class_depth && !options.speculation_from_profile &&
+        options.speculative.backend == SpeculativeBackend::None) {
+        throw std::invalid_argument("--spec-class-depth bounds speculation: it needs --spec");
     }
     if (options.port <= 0 || options.port > 65535) {
         throw std::invalid_argument("--port must be in [1,65535]");

@@ -105,27 +105,6 @@ bool known_route(std::string_view route) {
     return false;
 }
 
-ContextClass class_of(std::int64_t prompt_tokens) noexcept {
-    if (prompt_tokens < kContextBounds[0]) { return ContextClass::Short; }
-    if (prompt_tokens < kContextBounds[1]) { return ContextClass::Mid; }
-    if (prompt_tokens < kContextBounds[2]) { return ContextClass::Long; }
-    return ContextClass::Huge;
-}
-
-const char* class_name(ContextClass c) noexcept {
-    switch (c) {
-    case ContextClass::Short:
-        return "short";
-    case ContextClass::Mid:
-        return "mid";
-    case ContextClass::Long:
-        return "long";
-    case ContextClass::Huge:
-        return "huge";
-    }
-    return "unknown";
-}
-
 ContextFactors parse_context_factors(const Json& object) {
     if (!object.is_object()) { refuse("not an object"); }
     ContextFactors out;
@@ -368,6 +347,78 @@ ClassFactor factor(const ContextFactors& factors, const AcceptanceKey& key, Cont
                        " from their mean, tolerance " + percent(best->tolerance) + ")");
     }
     return ClassFactor{mean, {}};
+}
+
+ClassFactor served_factor(const ContextFactors& factors, AcceptanceKey key, ContextClass c) {
+    std::optional<ClassFactor> first;
+    std::optional<double> lowest;
+    for (const auto& entry : factors.entries) {
+        if (entry.key.model != key.model) { continue; }
+        key.sampling    = entry.key.sampling;
+        key.corpus      = entry.key.corpus;
+        ClassFactor got = factor(factors, key, c);
+        if (got.value) { lowest = lowest ? std::min(*lowest, *got.value) : *got.value; }
+        if (!first) { first = std::move(got); }
+    }
+    if (lowest) { return ClassFactor{lowest, {}}; }
+    if (first) { return ClassFactor{std::nullopt, first->reason}; }
+    return factor(factors, key, c);
+}
+
+std::array<std::uint32_t, kContextClasses> parse_class_depths(std::string_view text) {
+    std::array<std::uint32_t, kContextClasses> out{};
+    out.fill(kNoClassBound);
+    if (text == "none") { return out; }
+    const auto bad = [&] {
+        return std::invalid_argument("--spec-class-depth takes four comma-separated depths or "
+                                     "\"none\" (short,mid,long,huge), not rising: '" +
+                                     std::string(text) + "'");
+    };
+    std::size_t i     = 0;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t end = text.find(',', start);
+        const auto part =
+            text.substr(start, end == std::string_view::npos ? text.size() - start : end - start);
+        if (i >= kContextClasses || part.empty()) { throw bad(); }
+        if (part != "none") {
+            std::uint32_t v = 0;
+            for (const char ch : part) {
+                if (ch < '0' || ch > '9' || v > 1000) { throw bad(); }
+                v = v * 10 + static_cast<std::uint32_t>(ch - '0');
+            }
+            out[i] = v;
+        }
+        ++i;
+        if (end == std::string_view::npos) { break; }
+        start = end + 1;
+    }
+    if (i != kContextClasses) { throw bad(); }
+    for (std::size_t c = 1; c < kContextClasses; ++c) {
+        if (out[c] > out[c - 1]) { throw bad(); }
+    }
+    return out;
+}
+
+std::string class_depths_label(const std::array<std::uint32_t, kContextClasses>& bounds) {
+    if (std::all_of(bounds.begin(), bounds.end(),
+                    [](std::uint32_t k) { return k == kNoClassBound; })) {
+        return "none";
+    }
+    std::string out;
+    for (const std::uint32_t k : bounds) {
+        out += (out.empty() ? "" : ",") +
+               (k == kNoClassBound ? std::string("none") : std::to_string(k));
+    }
+    return out;
+}
+
+Json served_byte_class(std::string_view activations, std::string_view kv) {
+    const bool exact = activations == "exact";
+    return Json{{"activations", std::string(activations)},
+                {"kv", std::string(kv)},
+                {"summation", exact ? "exact" : "fast"},
+                {"parity", exact ? "exact" : "none"}};
 }
 
 } // namespace ninferno::spec

@@ -310,6 +310,60 @@ The profile therefore bounds speculation under load, in its `load` table.
   run (an MTP pick or fit fallback, `block` on Qwen 3.5) is dropped with a note in the startup log
   rather than refused.
 
+### Depth by context class
+
+Acceptance falls as the context grows, so a depth that pays on a short prompt can lose to plain
+decode on a long one. Under `--spec auto` the server bounds the depth per context class, by the
+tokens a request's context holds: Short (under 1024), Mid (under 8192), Long (under 24576) and
+Huge (the rest).
+
+- **Short** always runs the profile's measured pick.
+- **Mid, Long and Huge** only go down from it, and only where the registry knows the class's
+  acceptance factor (its accepted drafts per round over Short's) for this model and drafter: an
+  entry keyed by the artifact's source identity, the drafter, the depth, the byte class
+  (activations, KV storage) and one lane, measured on two cards of different generations that
+  agree. An unknown factor keeps the profile's pick. A longer class never drafts deeper than a
+  shorter one: when a shorter class went down, a longer class with an unknown factor keeps that
+  lower depth (basis `bounded by <class>`, say Huge `bounded by long`).
+- **The depth from a factor.** The profile measured T tokens per round at its pick K. A class with
+  factor f accepts f times as many drafts there: 1 + (T - 1) f tokens per round. That gives the
+  per-draft acceptance, taking every draft of a round as accepted with that one probability given
+  the ones before it (no decay term, so no constant fitted on cards; it lowers less than a decaying
+  block would). Each depth k up to K then yields its tokens per round and costs its watchdog floor
+  (the measured break-even, in plain-decode tokens per round). The class runs the depth with the highest ratio
+  of the two, or decodes plainly when no ratio passes 1. The rule applies only when it reproduces
+  the profile's own pick at factor 1; otherwise every class keeps the pick ("no estimate").
+- **Which requests.** The bounds are decided for the default choice (its depth is `for_depth` in
+  the report). A request that starts on another menu choice (`--spec-select thinking` at another
+  depth) is not bounded: the conservative side, and each class's reason says so under
+  `--spec-select thinking`.
+- **Floors.** The floors were measured at the profile's own prompts, not at each class's context,
+  so a modeled reason says "floor from profile context".
+- **In a request.** A prompt's class bounds its depth at admission. Before each decode step, a
+  context that has grown into a longer class takes that class's bound. The depth only falls: onto a
+  step-down depth, judged by that depth's floor, or to plain decode for the rest of the request.
+  Every Engine family applies the bounds (Qwen 3.5, the dense and MoE decoders such as gpt-oss and
+  Muse, Gemma 4, Nemotron-H): they all decode through the one Program.
+- **Reports.** The startup log has one `speculation | class <name> | depth <k> | <basis> |
+  <reason>` line per class. `meta.speculation.classes` in `GET /v1/models` and
+  `speculation_classes` in `--plan --json` list `{class, below_tokens, for_depth, depth, basis,
+  reason}`:
+  `basis` is `measured` (Short), `modeled` (a known factor), `no estimate` or `bounded by
+  <class>`. The bounds are part of
+  the decision fingerprint (`speculative.class_depth`). A request a bound lowered logs
+  `class_depth`; one it turned plain logs `class_plain` (fallback `class_plain`) and, like a
+  `load_plain` request, keeps its checkpoints from before the switch but not its endpoint: its
+  drafter state stops at the switch, and a continuation from that endpoint would draft from it.
+- **Override.** `--spec-class-depth S,M,L,H` (each a depth or `none`; `none` alone: no bound)
+  replaces the bounds, for an explicit `--spec` too; the startup log names the bounds the started
+  Engine runs, clamped (`speculation | class bounds ...`). It applies to every
+  candidate startup tries (the fit fallback, shallower depths, the model's MTP head), each clamped
+  to that candidate's captured depths: a bound at or past the window bounds nothing, any other
+  rounds down to the deepest captured depth within it (or plain), since a launch drafts at its
+  captured window's width; so the override only lowers. A shallower fallback depth carries no
+  measurement of its own, so the classes keep it ("no estimate"). The report shows the depth the engine runs, the smaller of the served depth and the
+  bound.
+
 ### Graphs and workspace
 
 The startup log's `load` field shows the bounds in force. `speculation | graphs` lists each captured
@@ -363,9 +417,10 @@ and on a server plain since startup:
 | `selection` | how: `fixed` or `thinking` (`--spec-select`), `explicit` (`--spec`), `startup` (`--spec auto` runs nothing) |
 | `reason` | why that choice, or why the server is plain |
 | `note` | what the profile would have run, and the fit fallback's refusal, when there is one |
-| `fallback` | the first that applies: `context_plain` (the prompt passed the profile's `context_limit`: plain from the first token), `load_plain` (a load bound of 0), `watchdog_plain` (the acceptance watchdog stopped drafting), `step_down` (the watchdog went shallower), `fit_fallback` (the profile's choice did not fit at startup; a fallback runs), `startup_plain` (nothing that drafts fit at startup), `none` |
+| `fallback` | the first that applies: `context_plain` (the prompt passed the profile's `context_limit`: plain from the first token), `class_plain` (a context-class bound turned it plain), `load_plain` (a load bound of 0), `watchdog_plain` (the acceptance watchdog stopped drafting), `step_down` (the watchdog went shallower), `fit_fallback` (the profile's choice did not fit at startup; a fallback runs), `startup_plain` (nothing that drafts fit at startup), `none` |
 
-`GET /v1/models` shows the startup part before any request (`meta.speculation`), and the startup
+`GET /v1/models` shows the startup part before any request (`meta.speculation`, with the depth
+per context class in `classes` under `--spec auto`: [Depth by context class](#depth-by-context-class)), and the startup
 log has one line with it: `speculation | serves <config> (<selection>) | fallback <fallback> |
 <reason>`. The UI keeps the last speculation warning of a server's log beside it.
 

@@ -1,6 +1,7 @@
 #include "runtime/engine/model_instance.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/plan_ladder.h"
+#include "runtime/engine/served_bytes.h"
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
 #include "artifact/formats.h"
@@ -247,14 +248,7 @@ EngineOptions normalize_engine_options(EngineOptions options) {
         options.recurrent_state_automatic = false;
     }
     if (options.kv_cache_automatic) {
-        // The device's compute capability decides FP8 rows (automatic_kv_cache); a host without
-        // the device keeps the family's storage, which the load then reports or refuses.
-        int compute_capability = 1000;
-        try {
-            compute_capability = device_class(options.device).compute_capability();
-        } catch (const std::exception&) {}
-        options.kv_cache =
-            automatic_kv_cache(artifact_model_type(options.artifact_path), compute_capability);
+        options.kv_cache           = resolved_kv_cache(options); // served_bytes.h
         options.kv_cache_automatic = false;
     }
     switch (options.purpose) {

@@ -34,6 +34,26 @@ namespace ninferno::models::qwen3_5::detail {
     return true;
 }
 
+// The context-class bounds (SpeculativeOptions::class_depth): non-increasing by class, each
+// kNoClassBound, 0 or a depth the engine captures (draft_tokens or one of request_draft_tokens).
+// A launch runs at the smallest captured window that covers its rows and every row drafts at the
+// launch's width, so an uncaptured bound would draft at the next wider depth, not the bound.
+[[nodiscard]] inline bool speculation_class_depth_valid(const SpeculativeOptions& options) {
+    const auto captured = [&](std::uint32_t k) {
+        return k == options.draft_tokens ||
+               std::find(options.request_draft_tokens.begin(), options.request_draft_tokens.end(),
+                         k) != options.request_draft_tokens.end();
+    };
+    std::uint32_t previous = SpeculativeOptions::kNoClassBound;
+    for (const std::uint32_t k : options.class_depth) {
+        if (k > previous || (k != SpeculativeOptions::kNoClassBound && k != 0 && !captured(k))) {
+            return false;
+        }
+        previous = k;
+    }
+    return true;
+}
+
 // The load bound of a step of `rows` rows: the entry with the largest lanes at most `rows`, or
 // the largest uint32 (no bound) below the first entry.
 [[nodiscard]] inline std::uint32_t speculation_load_bound(const std::vector<SpeculationLoad>& load,

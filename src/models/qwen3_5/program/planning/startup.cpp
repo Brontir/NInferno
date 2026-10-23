@@ -14,6 +14,7 @@
 #include "models/qwen3_5/execution/workspace.h"
 #include "core/device.h"
 #include "core/units.h"
+#include "spec/context_bounds.h"
 #include "spec/engine_support.h"
 #include "ninferno/ops/gated_delta_net.h"
 #include "ninferno/ops/candidate_selector.h"
@@ -931,6 +932,14 @@ void validate_program_options(const EngineOptions& options, std::uint64_t max_po
             "speculative load bounds need ascending lanes from 2, depths within the window and "
             "no speculating bound after a bound of 0");
     }
+    static_assert(SpeculativeOptions::kNoClassBound == spec::kNoClassBound &&
+                  std::tuple_size_v<decltype(SpeculativeOptions::class_depth)> ==
+                      spec::kContextClasses);
+    if (!speculation_class_depth_valid(options.speculative)) {
+        throw std::invalid_argument(
+            "speculative context-class bounds must not rise with the class and each must be 0 or "
+            "a captured draft depth");
+    }
     switch (options.speculative.backend) {
     case SpeculativeBackend::None:
         if (options.speculative.draft_tokens != 0 ||
@@ -1030,6 +1039,7 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
     impl->step_down           = inputs.step_down;
     impl->load                = inputs.load;
     impl->context_limit       = inputs.context_limit;
+    impl->class_depth             = inputs.class_depth;
     impl->watchdog_window     = inputs.watchdog_window;
     impl->watchdog_min_rounds = inputs.watchdog_min_rounds;
     impl->shared_trip_floor   = inputs.shared_trip_floor;
@@ -1196,6 +1206,7 @@ make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
         .step_down               = options.speculative.step_down,
         .load                    = options.speculative.load,
         .context_limit           = options.speculative.context_limit,
+        .class_depth             = options.speculative.class_depth,
         .watchdog_window         = options.speculative.watchdog_window,
         .watchdog_min_rounds     = options.speculative.watchdog_min_rounds,
         .shared_trip_floor       = options.speculative.shared_trip_floor,
