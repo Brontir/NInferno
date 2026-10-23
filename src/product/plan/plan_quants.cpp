@@ -346,15 +346,19 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         double best_worth = 0;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
             const QuantRow& row = out.rows[i];
-            if (!row.candidate.supported || row.fit.state != runtime::QuantFitState::Own ||
-                row.fit.own_context < out.pick->target_context ||
+            // Every supported row on the tier's side of the floor, scored at its own choice: a
+            // narrower KV codec may bring a row the rule's resolved options left short to the target.
+            if (!row.candidate.supported ||
                 out.pick->below_floor != (runtime::quant_rank_bits(row.candidate) <
                                           runtime::kPlanQualityFloorBits)) {
                 continue;
             }
             const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
                                                   inputs, pins, row.listing.quant);
-            if (!served || !served->choice.chosen) { continue; }
+            if (!served || !served->choice.chosen ||
+                served->choice.context < out.pick->target_context) {
+                continue;
+            }
             const double worth = served->choice.scored[*served->choice.chosen].worth;
             if (!best || worth > best_worth + choice::kWorthTie ||
                 (std::abs(worth - best_worth) <= choice::kWorthTie &&
