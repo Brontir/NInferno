@@ -85,18 +85,20 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "gb20x", Route::Int8, 0.118},   // RTX 5070 Ti, 35B-A3B
 };
 
-// What the exact route's compute costs a decode step over the int8 route's flops at the int8 peak
-// (run_sw.sh, 9B at a 22K prompt: exact decode 61.7 against 85.3 tok/s on the RTX 2080 Ti, 69.9
-// against 80.6 on the 4070 Ti).
+// What the exact route's compute costs a decode step over the int8 route's flops at the int8 peak,
+// its FP32 state's bytes apart (run_sw.sh, 9B at a 22K prompt: exact decode 61.7 against 85.3
+// tok/s on the RTX 2080 Ti; 69.9 against 80.6 on the 4070 Ti, 127.9 against 150.2 on the 4090).
+// Ada: the mean of the 4070 Ti's 2.98 and the 4090's 3.52, the two within 20 %.
 struct RouteFactor {
     std::string_view generation;
     double factor;
 };
 
-inline constexpr RouteFactor kExactComputeFactor[] = {{"turing", 4.68}, {"ada", 2.41}};
+inline constexpr RouteFactor kExactComputeFactor[] = {{"turing", 4.28}, {"ada", 3.25}};
 
 // What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
-// same card): Turing reads BF16 and FP8 without native support.
+// same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti
+// and the 4090 (BF16 1.03 / 1.09, FP8 1.03 / 1.08, K8V4 1.01 / 1.04, NVFP4 1.25 / 1.22: within 6 %).
 struct KvReadFactor {
     std::string_view generation;
     KvCacheStorage kv;
@@ -106,8 +108,8 @@ struct KvReadFactor {
 inline constexpr KvReadFactor kKvReadFactor[] = {
     {"turing", KvCacheStorage::BFloat16, 3.38},      {"turing", KvCacheStorage::Fp8E4M3Row256, 2.26},
     {"turing", KvCacheStorage::Fp8KeyNvfp4Value, 3.12}, {"turing", KvCacheStorage::Nvfp4Group16, 3.75},
-    {"ada", KvCacheStorage::BFloat16, 1.03},         {"ada", KvCacheStorage::Fp8E4M3Row256, 1.03},
-    {"ada", KvCacheStorage::Fp8KeyNvfp4Value, 1.01},  {"ada", KvCacheStorage::Nvfp4Group16, 1.25},
+    {"ada", KvCacheStorage::BFloat16, 1.06},         {"ada", KvCacheStorage::Fp8E4M3Row256, 1.055},
+    {"ada", KvCacheStorage::Fp8KeyNvfp4Value, 1.025}, {"ada", KvCacheStorage::Nvfp4Group16, 1.235},
 };
 
 // ---- Accuracy.
@@ -175,8 +177,8 @@ struct ReferenceCard {
 
 inline constexpr ReferenceCard kReferenceCards[] = {
     // RTX 4070 Ti (60 SMs, 2610 MHz, 504 GB/s: 3.22 B a SM-clock) and RTX 4090 (128, 2520,
-    // 1008: 3.13). The KV and exact factors were measured on the 4070 Ti only so far.
-    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, false, false, "RTX 4070 Ti, RTX 4090"},
+    // 1008: 3.13); the KV and exact factors measured on both (2026-10-23).
+    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090"},
 };
 
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,
