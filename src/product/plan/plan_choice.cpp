@@ -116,6 +116,11 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs, const ChoicePins& pins,
                                               const std::string& label) {
     if (!facts.model.known()) { return std::nullopt; }
+    // The KV codec, activations and state change the output bytes: the choice reads an idle card of
+    // the device's class, never the free memory now (another process's share); the start's ladder
+    // still takes the rung the free memory allows (docs/maintainer/deterministic-decisions.md).
+    DryRunInputs idle  = inputs;
+    idle.device.free_bytes.reset();
     ServedChoice out;
     const choice::ModelFacts model = choice_model_of(facts);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
@@ -156,7 +161,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.task.concurrency = std::max<std::uint32_t>(o.max_concurrency, 1);
     const runtime::QuantAsk ask = quant_ask_of(inputs, facts.model.native_context);
     const auto own = [&](const choice::Candidate& c) -> std::uint32_t {
-        const DryRunInputs pinned        = inputs_with(inputs, c);
+        const DryRunInputs pinned        = inputs_with(idle, c);
         const PlannedSpeculation planned = plan_model(facts, pinned);
         return own_context_of(facts, pinned, planned);
     };

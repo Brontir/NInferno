@@ -298,7 +298,19 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const double middle = task.prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, task.prompt);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
-    return task.prompt / speed.prefill + task.answer / speed.decode_per_stream;
+    // The prompt runs as whole chunks and a final partial one, each at its own rate (an MoE's
+    // prefill depends on how full a chunk is).
+    const std::uint32_t chunk = std::max<std::uint32_t>(candidate.chunk, 1);
+    const std::uint32_t whole = task.prompt / chunk * chunk;
+    const std::uint32_t rest  = task.prompt - whole;
+    double prefill_seconds    = 0;
+    if (whole > 0) {
+        prefill_seconds += whole / speed_of(model, card, quant, candidate, task.concurrency, middle, chunk).prefill;
+    }
+    if (rest > 0) {
+        prefill_seconds += rest / speed_of(model, card, quant, candidate, task.concurrency, middle, rest).prefill;
+    }
+    return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 
 std::optional<Reference> reference_of(const CardFacts& card) {
@@ -601,7 +613,9 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
-            } else if (axis == Axis::Quant && choice.quant_by_worth) {
+            } else if (axis == Axis::Quant && choice.quant_by_worth &&
+                       (quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits) ==
+                           (quants[c.quant].bits_per_weight >= kQuantFloorBits)) {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             } else if (axis == Axis::Quant) {

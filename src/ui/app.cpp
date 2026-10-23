@@ -948,7 +948,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.ask            = options.ask;
     inputs.ask.model_repo = repo;
     // The launch pins the KV codec the user chose and --activations exact; the rest is chosen.
-    inputs.pins = product::ChoicePins{.kv          = !launch.kv_dtype.empty() && launch.kv_dtype != "auto",
+    // The exact preset also pins BF16 KV (launch_options resolves it, the launch passes it).
+    inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
     // attached, its MTP layers are.
