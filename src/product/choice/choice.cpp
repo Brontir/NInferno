@@ -309,6 +309,11 @@ std::optional<Reference> reference_of(const CardFacts& card) {
     return std::nullopt;
 }
 
+bool weighs_quantizations(const CardFacts& card) {
+    const auto ref = reference_of(card);
+    return ref && ref->decides && quant_curve();
+}
+
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
                      const CardFacts& card) {
     Accuracy out;
