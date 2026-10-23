@@ -26,7 +26,10 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 
-# One entry per decision file or per directory pattern (relative to the repository root).
+# One entry per decision file or per directory pattern (relative to the repository root): the
+# runtime, planner, speculation and product files here, and every rule file of the ops (routes,
+# plans, dispatchers, policies, tuners) from tools/audit/selection_files.txt, the list the
+# selection scan (selection_static_check.py) reads too.
 decision_patterns=(
   src/core/host_cpu_quota.h
   src/core/machine_facts.cpp
@@ -45,23 +48,20 @@ decision_patterns=(
   'src/runtime/engine/context_cache/*.cpp'
   'src/models/qwen3_5/program/planning/*.h'
   'src/models/qwen3_5/program/planning/*.cpp'
-  src/ops/prefill_routes.cpp
-  src/ops/route_table.cpp
   src/runtime/engine/process_options_lease.h
   src/product/engine_flags.h
-  src/ops/generic/route_table.h
-  src/ops/wrapper/candidate_selector.cpp
-  src/ops/candidate_selector/bf16/candidate_selector_path_plan.cpp
-  src/ops/candidate_selector/bf16/candidate_selector_path_plan.h
-  'src/ops/common/*route*.h'
-  'src/ops/linear/*/*_dispatch.cpp'
-  'src/ops/linear/*/*_policy.h'
-  src/ops/softmax_attention/dense/causal_cache/plan_rules.h
-  'src/ops/softmax_attention/dense/causal_cache/*/*_policy.h'
-  'src/ops/sparse_moe/*/*_plan.cpp'
   'src/spec/*.h'
   'src/spec/*.cpp'
 )
+shopt -s globstar
+while IFS= read -r line; do
+  line=${line%%#*}
+  line=$(echo "$line" | xargs)
+  [[ -n $line ]] && decision_patterns+=("$line")
+done < tools/audit/selection_files.txt
+# The timed tuners (--dense-tune / --moe-tune on) include the tuning timer: the files
+# selection_static_allow.txt lets call TuneTimer, a listed gap of the pillar, and only that header.
+tuner_files=$(awk '!/^[[:space:]]*#/ && $2 == "TuneTimer" { print $1 }' tools/audit/selection_static_allow.txt)
 monitor_file=src/runtime/engine/context_cache/planning_stopwatch.h
 monitor_user=src/runtime/engine/context_cache/resource_manager.h
 
@@ -78,6 +78,8 @@ names+='|QueryPerformanceCounter|GetTickCount|timeGetTime|globaltimer|clock64|(^
 names+='|nvml[A-Z]'
 forbidden="$(include_of "$clock_headers|$monitor_header")|$names"
 forbidden_for_monitor_user="$(include_of "$clock_headers")|$names"
+tuner_clock_headers=${clock_headers//'|core/tune_timer\.h'/}
+forbidden_for_tuner="$(include_of "$tuner_clock_headers|$monitor_header")|$names"
 
 # The file's code lines as "line:text": `//` comment lines and the lines of /* */ blocks are left
 # out (a comment may name what the monitor measures); every other line is read, whatever it
@@ -142,6 +144,21 @@ self_test() {
     echo "self-test: the monitor's own user may not include the stopwatch"
     return 1
   fi
+  # A tuner may include the tuning timer and nothing else of the clocks.
+  printf '%s\n' '#include "core/tune_timer.h"' > "$dir/tuner.h"
+  printf '%s\n' '#include <chrono>' > "$dir/tuner_clock.h"
+  if ! check_file "$dir/tuner.h" "$forbidden_for_tuner" > /dev/null; then
+    echo "self-test: a tuner's timer include was flagged"
+    return 1
+  fi
+  if check_file "$dir/tuner_clock.h" "$forbidden_for_tuner" > /dev/null; then
+    echo "self-test: a tuner's clock include passed"
+    return 1
+  fi
+  if check_file "$dir/tuner.h" "$forbidden" > /dev/null; then
+    echo "self-test: the tuning timer passed outside a tuner"
+    return 1
+  fi
 }
 
 self_test
@@ -161,9 +178,12 @@ for pattern in "${decision_patterns[@]}"; do
   done
 done
 
+# A file both lists name is checked once.
+mapfile -t decision_files < <(printf '%s\n' "${decision_files[@]}" | sort -u)
 for file in "${decision_files[@]}"; do
   pattern=$forbidden
   [[ $file == "$monitor_user" ]] && pattern=$forbidden_for_monitor_user
+  grep -qxF "$file" <<< "$tuner_files" && pattern=$forbidden_for_tuner
   check_file "$file" "$pattern" || bad=1
 done
 if [[ $bad -ne 0 ]]; then

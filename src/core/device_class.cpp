@@ -602,6 +602,8 @@ ScopedDeviceClass::ScopedDeviceClass(DeviceClass substitute)
 
 ScopedDeviceClass::~ScopedDeviceClass() { t_substitute = previous_; }
 
+const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
+
 DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor, int sms,
                                    std::size_t l2_bytes, std::size_t global_bytes) {
     DeviceClass d;
@@ -614,9 +616,11 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.pci_device_id = pci_device_id;
     d.chip          = gpu_chip(pci_device_id, major, minor, sms);
     d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
-    d.features      = device_features_for(major, minor);
-    // board_mma_slow as the query sets it (the table's row, else the chip's); `facts` itself stays
-    // empty until a test asks for it.
+    // As the query: the architecture's row and this build's in common (a GPU newer than the build
+    // runs the build's code), so a choice never names a kernel the build compiled empty, and
+    // board_mma_slow (the table's row, else the chip's). `facts` itself stays empty until a test
+    // asks for it.
+    d.features      = common_features(device_features_for(major, minor), build_features());
     d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
     // The architecture's limits (CUDA programming guide, compute capability tables).
     const int cc           = major * 10 + minor;

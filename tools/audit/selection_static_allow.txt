@@ -1,0 +1,17 @@
+# Calls the selection rules still make that docs/maintainer/deterministic-decisions.md rules out
+# (principle 8), with their counts: <file> <call> <count>. selection_static_check.py fails on a
+# call not covered here and on an entry whose count the source no longer reaches.
+# TODO: each line is one of the pillar's known gaps; remove it in the change that closes it.
+
+# NINFERNO_ROUTE_RECORD: appends the shapes the generic path sees to a file (a lab tool; it moves
+# no choice, which test_selector_properties checks).
+src/ops/generic/generic_gemm.cpp getenv 1
+# The shipped route tables, read from routes/ (transition: "Route tables ... remain only as a transition").
+src/ops/route_table.cpp ifstream 1
+
+# The dense and MoE tuners: timing on the user's machine (--dense-tune / --moe-tune), their cache
+# files (gap: "the dense tuner's user cache, local spec-tune ... still steer choices").
+src/ops/generic/generic_tune.cpp TuneTimer 3
+src/ops/generic/generic_tune.cpp read_cache_file 2
+src/ops/moe/moe_tune.cpp TuneTimer 2
+src/ops/moe/moe_tune.cpp read_cache_file 1

@@ -59,7 +59,18 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
-- no CI property checks invariance yet;
+- CI checks properties of the generic projection selector only (`ctest -L cpu`; the `selection`
+  workflow builds the full and base route sets, and the sm_70 and sm_75 sets are built on their
+  stands, their digests checked against their golden files): determinism, no environment, tuner
+  cache or clock input, capability safety, one summation order under the exact and prefill
+  profiles, per-board digests. Its known violations are listed, with the boards they hold on, in
+  `tests/ops/linear/selector_properties_known.txt`: on a board the PCI-ID table does not know,
+  driver clocks move the speed profile; ggml's matrix kernel serves prefill widths although its
+  stream-k is not token-invariant. The tuner-cache check cannot reach the tuner on a CPU (it
+  reads the cache only for a weight in device memory): a run without a GPU skips it and asserts
+  that the tuner refuses every problem. The shape tables, MoE, attention and
+  speculation choices have no property check, and the rules' remaining timer and file reads are
+  listed in `tools/audit/selection_static_allow.txt`;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
 - the speed labels and the kernel hash on constants do not exist yet;

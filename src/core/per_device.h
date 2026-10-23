@@ -7,6 +7,7 @@
 // an over-48-KiB kernel without its opt-in and fails with an invalid argument).
 
 #include "core/device.h"
+#include "core/device_class.h"
 
 #include <cuda_runtime.h>
 
@@ -19,8 +20,15 @@ namespace ninferno {
 
 inline constexpr int kMaxDevices = 64;
 
-// The calling thread's current CUDA device.
+// The calling thread's current CUDA device. Inside a ScopedDeviceClass (core/device_class.h) it is
+// the substituted class's `device` field (0 unless the test sets it; an out-of-range value reads as
+// 0) and asks the runtime nothing, so a substituted board's choices need no GPU and fill the
+// per-device caches of that ordinal, the slot a real device of that ordinal would use. They keep
+// what they first read, which is why a test evaluates one substituted board per process.
 inline int current_device_ordinal() {
+    if (const DeviceClass* substitute = substituted_device_class()) {
+        return substitute->device >= 0 && substitute->device < kMaxDevices ? substitute->device : 0;
+    }
     int device = 0;
     CUDA_CHECK(cudaGetDevice(&device));
     if (device < 0 || device >= kMaxDevices) {

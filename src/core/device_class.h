@@ -255,13 +255,19 @@ template <class Measured, std::size_t Extent>
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
-// from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
-// limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
-// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
+// from the PCI id or the SM count, the architecture's features this build carries (build_features),
+// board_mma_slow, and the per-block and per-SM limits of the architecture. Its driver clocks are 0
+// and its `facts` empty (FactSource::None): a test that wants the table's facts sets
+// `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
 // class, on GPUs this machine lacks.
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,
                                                  std::size_t global_bytes);
+
+// The class a ScopedDeviceClass substitutes on this thread; null outside one. The per-device
+// caches (core/per_device.h) key on its ordinal, so a substituted board's choices need no device
+// and are the same on a machine without a GPU.
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
 
 // While alive, device_class() (the current device's form) answers `substitute` on this thread;
 // device_class(int) still queries the ordinal. For tests: a consumer that cached what it read of

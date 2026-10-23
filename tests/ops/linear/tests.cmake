@@ -97,13 +97,30 @@ ninferno_add_op_test(ninferno_route_classes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_classes.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
+# The generic path's choices on sixteen substituted boards against selector_golden/<board>.txt:
 # a selector change shows line by line; a refactor must leave every file as it was.
 ninferno_add_op_test(ninferno_selector_golden_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+
+# Properties of those choices over the golden boards and synthetic ones of every compute capability
+# 7.0..12.1 (selector_boards.h): determinism, no environment or clock input, capability safety, one
+# summation order under the exact and prefill profiles, and per-board digests (selector_digest/)
+# meant to replace the golden files. Known violations: selector_properties_known.txt.
+ninferno_add_op_test(ninferno_selector_properties_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_properties.cpp"
+  LIBRARIES ninferno_linear_test_support)
+target_compile_definitions(ninferno_selector_properties_test PRIVATE
+  NINFERNO_SELECTOR_DIGEST_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_digest"
+  NINFERNO_SELECTOR_PROPERTIES_KNOWN="${CMAKE_CURRENT_LIST_DIR}/selector_properties_known.txt")
+
+# Selection checks that substitute the board and need no GPU (ctest -L cpu; CI runs them).
+set_tests_properties(ninferno_route_classes_test ninferno_selector_golden_test
+  ninferno_selector_properties_test PROPERTIES LABELS cpu)
+# 224 board runs: about 3 minutes on 16 cores, a quarter hour on a 4-core CI runner.
+set_tests_properties(ninferno_selector_properties_test PROPERTIES TIMEOUT 3600)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
