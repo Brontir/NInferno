@@ -364,14 +364,17 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             if (&s == &chosen) {
                 alt.why_not = "";
             } else if (!s.fits) {
+                alt.why_code = "no_fit";
                 alt.why_not = "does not hold the asked context (" + std::to_string(s.own_context) +
                               " each)";
             } else if (axis == Axis::Quant) {
+                alt.why_code = "quant_rule";
                 alt.why_not = quants[s.candidate.quant].bits_per_weight >
                                       quants[c.quant].bits_per_weight
                                   ? "does not fit"
                                   : "smaller: the rule takes the largest that fits";
             } else {
+                alt.why_code = "lower_worth";
                 alt.why_not = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             }
             out.push_back(std::move(alt));

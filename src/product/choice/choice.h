@@ -185,6 +185,8 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr; // nullptr: not a candidate (pinned away or not allowed)
     std::string why_not;            // "" for the chosen value
+    // The same as a code for a caller's words: "" (chosen), no_fit, lower_worth, quant_rule.
+    std::string why_code;
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice,
                                                const std::vector<QuantOption>& quants);

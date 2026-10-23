@@ -195,7 +195,10 @@ Json choice_json(const ServedChoice& served) {
     Json alternatives = Json::array();
     for (const choice::Alternative& a : choice::explain(served.choice, served.quants)) {
         if (a.why_not.empty()) { continue; }
-        Json row = {{"axis", std::string(choice::axis_name(a.axis))}, {"value", a.value}, {"why_not", a.why_not}};
+        Json row = {{"axis", std::string(choice::axis_name(a.axis))},
+                    {"value", a.value},
+                    {"why_not", a.why_not},
+                    {"why_code", a.why_code}};
         if (a.scored != nullptr) {
             row.update(estimates_json(*a.scored));
             row["worth_delta"] = round_to(a.scored->worth - s.worth, 4);
