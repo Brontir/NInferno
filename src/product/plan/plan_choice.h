@@ -29,6 +29,7 @@ struct ChoicePins {
     bool activations = false; // --activations given
     bool state       = false; // --state-dtype given
     bool ring        = false; // --sliding-kv-dtype given
+    bool chunk       = false; // --prefill-chunk given
 };
 
 struct ServedChoice {
@@ -58,6 +59,7 @@ struct StartAxes {
     std::optional<KvCacheStorage> ring;
     std::optional<RecurrentStateStorage> state;
     std::optional<ActivationMode> activations;
+    std::optional<std::uint32_t> chunk; // the widest prefill chunk
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 // The axes set on a start's Engine options (the KV codec then no longer automatic, the state

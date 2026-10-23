@@ -47,7 +47,8 @@ Json estimates_json(const choice::Scored& s) {
 }
 
 Json candidate_json(const choice::Candidate& c) {
-    return {{"kv", std::string(kv_cache_storage_name(c.kv))},
+    return {{"chunk", c.chunk},
+            {"kv", std::string(kv_cache_storage_name(c.kv))},
             {"ring", std::string(kv_cache_storage_name(c.ring))},
             {"state", std::string(recurrent_state_storage_name(c.state))},
             {"activations", activation_name(c.activations)}};
@@ -107,6 +108,7 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
     out.options.recurrent_state             = c.state;
     out.options.recurrent_state_automatic   = false;
     out.options.activations                 = c.activations;
+    out.options.prefill_chunk               = c.chunk; // the widest: the ladder may narrow it
     return out;
 }
 
@@ -149,6 +151,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     if (pins.activations) { p.activations = o.activations; }
     if (pins.state) { p.state = o.recurrent_state; }
     if (pins.ring) { p.ring = o.sliding_kv_cache; }
+    if (pins.chunk) { p.chunk = o.prefill_chunk; }
 
     out.task.concurrency = std::max<std::uint32_t>(o.max_concurrency, 1);
     const runtime::QuantAsk ask = quant_ask_of(inputs, facts.model.native_context);
@@ -161,7 +164,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     std::vector<std::pair<choice::Candidate, std::uint32_t>> seen;
     const choice::OwnContextFn cached = [&](const choice::Candidate& c) {
         for (const auto& [k, v] : seen) {
-            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state) { return v; }
+            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state && k.chunk == c.chunk) { return v; }
         }
         const std::uint32_t v = own(c);
         seen.emplace_back(c, v);
@@ -198,6 +201,7 @@ StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
     if (!pins.activations) { out.activations = s.candidate.activations; }
     if (!pins.state && has(choice::Axis::State)) { out.state = s.candidate.state; }
     if (!pins.ring && has(choice::Axis::Ring)) { out.ring = s.candidate.ring; }
+    if (!pins.chunk) { out.chunk = s.candidate.chunk; }
     return out;
 }
 
@@ -212,6 +216,7 @@ void apply_start_axes(EngineOptions& options, const StartAxes& axes) {
         options.recurrent_state_automatic = false;
     }
     if (axes.ring) { options.sliding_kv_cache = *axes.ring; }
+    if (axes.chunk) { options.prefill_chunk = *axes.chunk; } // the widest; still automatic
 }
 
 std::optional<ServedChoice>

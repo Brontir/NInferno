@@ -381,7 +381,8 @@ int main(int argc, char** argv) {
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
                                                      .activations = cli.activations_given,
                                                      .state       = cli.recurrent_state.has_value(),
-                                                     .ring        = cli.sliding_kv_given};
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
             const auto served = product::choose_at_weights(facts, inputs, pins);
             if (cli.plan_json) {
                 nlohmann::json doc =
@@ -400,7 +401,8 @@ int main(int argc, char** argv) {
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
                                                      .activations = cli.activations_given,
                                                      .state       = cli.recurrent_state.has_value(),
-                                                     .ring        = cli.sliding_kv_given};
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
             if (!(pins.kv && pins.activations && pins.state && pins.ring)) {
                 ninferno::product::SpeculationAsk ask;
                 ask.automatic = false;
