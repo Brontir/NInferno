@@ -4,13 +4,14 @@
 #include "core/cache_file.h"
 #include "core/device_class.h"
 #include "core/file_io.h"
+#include "core/measured_boards.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
-#include <cmath>
+#include <cstdio>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -188,11 +189,23 @@ Json parse_document(std::string_view text, std::string_view source_name) {
 }
 
 const ContextCostMachinePreset* find_machine(const std::vector<ContextCostMachinePreset>& presets,
-                                             std::string_view hardware_class) noexcept {
+                                             std::string_view gpu_class) noexcept {
     const auto found = std::find_if(presets.begin(), presets.end(), [&](const auto& preset) {
-        return preset.hardware_class == hardware_class;
+        return preset.gpu_class == gpu_class;
     });
     return found == presets.end() ? nullptr : &*found;
+}
+
+// The machine of the first key of `class_chain` that has one; null when none does.
+const ContextCostMachinePreset*
+find_along_chain(const std::vector<ContextCostMachinePreset>& presets,
+                 const std::vector<std::string>& class_chain) noexcept {
+    for (const std::string& key : class_chain) {
+        if (const ContextCostMachinePreset* machine = find_machine(presets, key)) {
+            return machine;
+        }
+    }
+    return nullptr;
 }
 
 const ContextPrefillPreset* find_prefill(const ContextCostMachinePreset& machine,
@@ -204,85 +217,39 @@ const ContextPrefillPreset* find_prefill(const ContextCostMachinePreset& machine
     return found == machine.prefill.end() ? nullptr : &*found;
 }
 
-// "sm89" of "nvidia-geforce-rtx-4090-sm89" ("" when the class carries none).
-std::string_view architecture_of(std::string_view hardware_class) noexcept {
-    const auto at = hardware_class.rfind("-sm");
-    return at == std::string_view::npos ? std::string_view() : hardware_class.substr(at + 1);
-}
+// The compiled machine a device resolves to.
+struct MachineChoice {
+    const ContextCostMachinePreset* machine = nullptr; // null: the generic defaults
+    bool carried                            = false;
+    double distance                         = 0.0; // board_distance of a carried machine
+};
 
-// Compute capability of "sm86" ({8, 6}; "sm120" {12, 0}), or {0, 0}.
-std::pair<int, int> compute_capability(std::string_view architecture) noexcept {
-    if (architecture.size() < 4 || architecture.substr(0, 2) != "sm") { return {0, 0}; }
-    int value = 0;
-    for (const char c : architecture.substr(2)) {
-        if (c < '0' || c > '9') { return {0, 0}; }
-        value = value * 10 + (c - '0');
+// The device's own machine (the first key of its class chain a compiled machine names), else the
+// one measured on the board nearest it within measured::kCarryDistance (ties: the earlier), as
+// measured, else none. Board distance is infinite between instruction sets and FP32-accumulate
+// rates, so a machine never carries to another architecture's kind.
+MachineChoice choose_machine(const std::vector<ContextCostMachinePreset>& presets,
+                             const ContextCostIdentity& identity) noexcept {
+    if (const ContextCostMachinePreset* own = find_along_chain(presets, identity.class_chain)) {
+        return {.machine = own};
     }
-    return {value / 10, value % 10};
+    const ContextCostMachinePreset* nearest =
+        nearest_measured(std::span<const ContextCostMachinePreset>(presets), identity.board,
+                         measured::kCarryDistance);
+    if (nearest == nullptr) { return {}; }
+    return {.machine  = nearest,
+            .carried  = true,
+            .distance = board_distance(identity.board, nearest->board)};
 }
 
-// The same major and the same feature row (sm_80 and sm_86, sm_121 and sm_120), as
-// gpu_similar_chips borrows across them.
-bool sibling_architecture(std::string_view a, std::string_view b) noexcept {
-    const auto [a_major, a_minor] = compute_capability(a);
-    const auto [b_major, b_minor] = compute_capability(b);
-    if (a_major == 0 || a_major != b_major || a_minor == b_minor) { return false; }
-    const DeviceFeatures fa = device_features_for(a_major, a_minor);
-    const DeviceFeatures fb = device_features_for(b_major, b_minor);
-    return has_features(fa, fb) && has_features(fb, fa);
-}
-
-// The compiled preset nearest to the device by SM count on a log scale (ties: the larger card),
-// for a machine no preset names: of its own architecture, else of a sibling architecture
-// (`sibling` set; its prefill only, since the host links belong to the machine); nullptr
-// without one.
-const ContextCostMachinePreset*
-similar_machine(const std::vector<ContextCostMachinePreset>& presets,
-                const ContextCostIdentity& identity, bool& sibling) noexcept {
-    sibling                 = false;
-    const auto architecture = architecture_of(identity.hardware_class);
-    if (identity.sms == 0 || architecture.empty()) { return nullptr; }
-    const auto nearest = [&](const auto& admits) {
-        const ContextCostMachinePreset* best = nullptr;
-        double best_distance                 = 0.0;
-        for (const auto& preset : presets) {
-            if (preset.sms == 0 || !admits(architecture_of(preset.hardware_class))) { continue; }
-            const double distance =
-                std::abs(std::log2(static_cast<double>(preset.sms) / identity.sms));
-            if (best == nullptr || distance < best_distance ||
-                (distance == best_distance && preset.sms > best->sms)) {
-                best          = &preset;
-                best_distance = distance;
-            }
-        }
-        return best;
-    };
-    if (const auto* own = nearest([&](std::string_view a) { return a == architecture; })) {
-        return own;
-    }
-    const auto* other =
-        nearest([&](std::string_view a) { return sibling_architecture(a, architecture); });
-    sibling = other != nullptr;
-    return other;
-}
-
-std::uint64_t scaled_cost(std::uint64_t value, double scale) noexcept {
-    const double out = std::round(static_cast<double>(value) * scale);
-    if (out >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())) {
-        return std::numeric_limits<std::uint64_t>::max();
-    }
-    return std::max<std::uint64_t>(1, static_cast<std::uint64_t>(out));
-}
-
-// A prefill measured on another card, for one with `scale` times its per-SM work.
-ContextPrefillCost scaled_prefill(const ContextPrefillCost& cost, double scale) noexcept {
-    return {
-        .chunk_ns              = scaled_cost(cost.chunk_ns, scale),
-        .token_ns_q32          = scaled_cost(cost.token_ns_q32, scale),
-        .attention_pair_ns_q32 = scaled_cost(cost.attention_pair_ns_q32, scale),
-        .vision_item_ns        = scaled_cost(cost.vision_item_ns, scale),
-        .vision_patch_ns_q32   = scaled_cost(cost.vision_patch_ns_q32, scale),
-    };
+// ContextCostSummary::machine: "own <key>", "carried from <key> at <distance>" (two decimals, as
+// measured_boards.h quotes distances; context_cost_sources_of drops them), or "generic".
+std::string machine_label(const MachineChoice& choice) {
+    if (choice.machine == nullptr) { return "generic"; }
+    if (!choice.carried) { return "own " + choice.machine->gpu_class; }
+    char distance[32];
+    std::snprintf(distance, sizeof(distance), "%.2f", choice.distance);
+    return "carried from " + choice.machine->gpu_class + " at " + distance;
 }
 
 void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
@@ -291,8 +258,8 @@ void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
         const ContextCostMachinePreset& machine = presets[machine_index];
         const std::string machine_context =
             std::string(context) + ".machines[" + std::to_string(machine_index) + "]";
-        if (machine.hardware_class.empty()) {
-            throw std::invalid_argument(machine_context + ".hardware_class is empty");
+        if (machine.gpu_class.empty()) {
+            throw std::invalid_argument(machine_context + ".gpu_class is empty");
         }
         if (machine.transfer) {
             validate_transfer(*machine.transfer, machine_context + ".transfer");
@@ -304,9 +271,9 @@ void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
             throw std::invalid_argument(machine_context + " contains no cost data");
         }
         for (std::size_t prior = 0; prior < machine_index; ++prior) {
-            if (presets[prior].hardware_class == machine.hardware_class) {
-                throw std::invalid_argument("duplicate context-cost hardware_class: " +
-                                            machine.hardware_class);
+            if (presets[prior].gpu_class == machine.gpu_class) {
+                throw std::invalid_argument("duplicate context-cost gpu_class: " +
+                                            machine.gpu_class);
             }
         }
         for (std::size_t prefill_index = 0; prefill_index < machine.prefill.size();
@@ -320,7 +287,7 @@ void validate_presets(const std::vector<ContextCostMachinePreset>& presets,
             for (std::size_t prior = 0; prior < prefill_index; ++prior) {
                 if (machine.prefill[prior].prefill_signature == prefill.prefill_signature) {
                     throw std::invalid_argument(
-                        "duplicate context-cost prefill identity: " + machine.hardware_class + "/" +
+                        "duplicate context-cost prefill identity: " + machine.gpu_class + "/" +
                         prefill.prefill_signature);
                 }
             }
@@ -344,7 +311,7 @@ Json parse_provenance(std::string_view provenance_json) {
 
 Json load_or_create_document(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
-        return Json{{"schema_version", 3},
+        return Json{{"schema_version", 4},
                     {"artifact_type", "ninferno_context_cost_presets"},
                     {"machines", Json::array()}};
     }
@@ -353,15 +320,13 @@ Json load_or_create_document(const std::filesystem::path& path) {
     return parse_document(text, path.string());
 }
 
-Json& find_or_append_machine(Json& document, std::string_view hardware_class) {
+Json& find_or_append_machine(Json& document, std::string_view gpu_class) {
     for (Json& machine : document.at("machines")) {
-        if (machine.at("hardware_class").get_ref<const std::string&>() == hardware_class) {
-            return machine;
-        }
+        if (machine.at("gpu_class").get_ref<const std::string&>() == gpu_class) { return machine; }
     }
     document.at("machines")
-        .push_back(Json{
-            {"hardware_class", hardware_class}, {"transfer", nullptr}, {"prefill", Json::array()}});
+        .push_back(
+            Json{{"gpu_class", gpu_class}, {"transfer", nullptr}, {"prefill", Json::array()}});
     return document.at("machines").back();
 }
 
@@ -513,20 +478,11 @@ std::uint64_t price_context_transfer_requirements(
     return total;
 }
 
-std::string context_cost_hardware_class(std::string_view gpu_name, int major, int minor) {
-    std::string slug;
-    slug.reserve(gpu_name.size() + 20);
-    for (const unsigned char character : gpu_name) {
-        if (std::isalnum(character)) {
-            slug.push_back(static_cast<char>(std::tolower(character)));
-        } else if (!slug.empty() && slug.back() != '-') {
-            slug.push_back('-');
-        }
-    }
-    while (!slug.empty() && slug.back() == '-') { slug.pop_back(); }
-    if (slug.empty()) { slug = "gpu"; }
-    if (slug != "nvidia" && !slug.starts_with("nvidia-")) { slug.insert(0, "nvidia-"); }
-    return slug + "-sm" + std::to_string(major) + std::to_string(minor);
+ContextCostIdentity context_cost_identity(const DeviceClass& device,
+                                          std::string prefill_signature) {
+    return {.class_chain       = device.class_chain(),
+            .board             = board_of(device),
+            .prefill_signature = std::move(prefill_signature)};
 }
 
 ContextMachineCostModel generic_context_machine_cost_model() {
@@ -540,7 +496,7 @@ std::vector<ContextCostMachinePreset> parse_context_cost_presets(std::string_vie
     require_exact_members(document, {"schema_version", "artifact_type", "machines"}, {},
                           source_name);
     if (require_u64(document.at("schema_version"), std::string(source_name) + ".schema_version") !=
-        3) {
+        4) {
         throw std::invalid_argument("unsupported context-cost preset schema_version in " +
                                     std::string(source_name));
     }
@@ -561,15 +517,14 @@ std::vector<ContextCostMachinePreset> parse_context_cost_presets(std::string_vie
         const Json& machine = machines[machine_index];
         const std::string context =
             std::string(source_name) + ".machines[" + std::to_string(machine_index) + "]";
-        require_exact_members(machine, {"hardware_class", "transfer", "prefill"},
+        require_exact_members(machine, {"gpu_class", "transfer", "prefill"},
                               {"transfer_provenance"}, context);
         if (machine.contains("transfer_provenance") &&
             !machine.at("transfer_provenance").is_object()) {
             throw std::invalid_argument(context + ".transfer_provenance must be an object");
         }
         ContextCostMachinePreset parsed{
-            .hardware_class =
-                require_nonempty_string(machine.at("hardware_class"), context + ".hardware_class"),
+            .gpu_class = require_nonempty_string(machine.at("gpu_class"), context + ".gpu_class"),
         };
         if (!machine.at("transfer").is_null()) {
             parsed.transfer = parse_transfer(machine.at("transfer"), context + ".transfer");
@@ -611,7 +566,8 @@ ResolvedContextMachineCost
 resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compiled,
                              const ContextCostIdentity& identity,
                              const std::filesystem::path& external_preset_path) {
-    if (identity.hardware_class.empty() || identity.prefill_signature.empty()) {
+    if (identity.class_chain.empty() || identity.class_chain.front().empty() ||
+        identity.prefill_signature.empty()) {
         throw std::invalid_argument("context-cost identity contains an empty component");
     }
 
@@ -619,43 +575,24 @@ resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compil
                                   .prefill  = generic_context_prefill_cost()};
     ContextCostPresetSource transfer_source = ContextCostPresetSource::GenericDefault;
     ContextCostPresetSource prefill_source  = ContextCostPresetSource::GenericDefault;
-    std::string similar_to;
 
     validate_presets(compiled, "compiled context-cost defaults");
-    const ContextCostMachinePreset* machine = find_machine(compiled, identity.hardware_class);
-    if (machine == nullptr) {
-        bool sibling = false;
-        if (const ContextCostMachinePreset* similar =
-                similar_machine(compiled, identity, sibling)) {
-            similar_to = similar->hardware_class;
-            if (similar->transfer && !sibling) {
-                model.transfer  = *similar->transfer;
-                transfer_source = ContextCostPresetSource::SimilarMachine;
-            }
-            const ContextPrefillPreset* prefill =
-                find_prefill(*similar, identity.prefill_signature);
-            const ContextPrefillCost* base =
-                prefill != nullptr ? &prefill->cost
-                                   : (similar->class_prefill ? &*similar->class_prefill : nullptr);
-            if (base != nullptr) {
-                model.prefill =
-                    scaled_prefill(*base, static_cast<double>(similar->sms) / identity.sms);
-                prefill_source = ContextCostPresetSource::SimilarMachine;
-            }
-        }
-    }
-    if (machine != nullptr) {
+    const MachineChoice choice = choose_machine(compiled, identity);
+    if (const ContextCostMachinePreset* machine = choice.machine) {
+        const ContextCostPresetSource source = choice.carried
+                                                   ? ContextCostPresetSource::CarriedMachine
+                                                   : ContextCostPresetSource::CompiledDefault;
         if (machine->transfer) {
             model.transfer  = *machine->transfer;
-            transfer_source = ContextCostPresetSource::CompiledDefault;
+            transfer_source = source;
         }
         if (const ContextPrefillPreset* prefill =
                 find_prefill(*machine, identity.prefill_signature)) {
             model.prefill  = prefill->cost;
-            prefill_source = ContextCostPresetSource::CompiledDefault;
+            prefill_source = source;
         } else if (machine->class_prefill) {
             model.prefill  = *machine->class_prefill;
-            prefill_source = ContextCostPresetSource::CompiledDefault;
+            prefill_source = source;
         }
     }
 
@@ -664,7 +601,7 @@ resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compil
             parse_context_cost_presets(read_file(external_preset_path, "context-cost preset file"),
                                        external_preset_path.string());
         if (const ContextCostMachinePreset* machine =
-                find_machine(external, identity.hardware_class)) {
+                find_along_chain(external, identity.class_chain)) {
             if (machine->transfer) {
                 model.transfer  = *machine->transfer;
                 transfer_source = ContextCostPresetSource::External;
@@ -683,51 +620,46 @@ resolve_context_machine_cost(const std::vector<ContextCostMachinePreset>& compil
             {
                 .transfer_source   = transfer_source,
                 .prefill_source    = prefill_source,
-                .hardware_class    = identity.hardware_class,
+                .gpu_class         = identity.class_chain.front(),
+                .machine           = machine_label(choice),
                 .prefill_signature = identity.prefill_signature,
                 .preset_path       = external_preset_path,
-                .similar_to        = transfer_source == ContextCostPresetSource::SimilarMachine ||
-                                      prefill_source == ContextCostPresetSource::SimilarMachine
-                                         ? similar_to
-                                         : std::string(),
             },
     };
 }
 
 void upsert_context_transfer_cost_atomic(const std::filesystem::path& path,
-                                         std::string_view hardware_class,
+                                         std::string_view gpu_class,
                                          const std::array<ContextTransferCost, 3>& transfer,
                                          std::string_view provenance_json) {
     if (path.empty()) { throw std::invalid_argument("context-cost preset output is empty"); }
-    if (hardware_class.empty()) {
-        throw std::invalid_argument("context-cost hardware_class is empty");
-    }
+    if (gpu_class.empty()) { throw std::invalid_argument("context-cost gpu_class is empty"); }
     validate_transfer(transfer, "context-cost transfer");
     Json document                  = load_or_create_document(path);
-    Json& machine                  = find_or_append_machine(document, hardware_class);
+    Json& machine                  = find_or_append_machine(document, gpu_class);
     machine["transfer"]            = transfer_json(transfer);
     machine["transfer_provenance"] = parse_provenance(provenance_json);
     write_document_atomic(path, document);
 }
 
 void upsert_context_prefill_cost_atomic(const std::filesystem::path& path,
-                                        const ContextCostIdentity& identity,
+                                        std::string_view gpu_class,
+                                        std::string_view prefill_signature,
                                         const ContextPrefillCost& prefill,
                                         std::string_view provenance_json) {
     if (path.empty()) { throw std::invalid_argument("context-cost preset output is empty"); }
-    if (identity.hardware_class.empty() || identity.prefill_signature.empty()) {
+    if (gpu_class.empty() || prefill_signature.empty()) {
         throw std::invalid_argument("context-cost identity contains an empty component");
     }
     validate_prefill(prefill, "context-cost prefill");
     Json document = load_or_create_document(path);
-    Json& machine = find_or_append_machine(document, identity.hardware_class);
-    Json replacement{{"prefill_signature", identity.prefill_signature},
+    Json& machine = find_or_append_machine(document, gpu_class);
+    Json replacement{{"prefill_signature", prefill_signature},
                      {"coefficients", prefill_json(prefill)},
                      {"provenance", parse_provenance(provenance_json)}};
     Json& entries    = machine.at("prefill");
     const auto found = std::find_if(entries.begin(), entries.end(), [&](const Json& value) {
-        return value.at("prefill_signature").get_ref<const std::string&>() ==
-               identity.prefill_signature;
+        return value.at("prefill_signature").get_ref<const std::string&>() == prefill_signature;
     });
     if (found == entries.end()) {
         entries.push_back(std::move(replacement));

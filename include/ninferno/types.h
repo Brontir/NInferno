@@ -1710,9 +1710,9 @@ enum class ContextCostPresetSource : std::uint8_t {
     GenericDefault,
     CompiledDefault,
     External,
-    // A measured machine of the same architecture, the nearest by SM count, its prefill scaled by
-    // the SM ratio (ContextCostSummary::similar_to names it).
-    SimilarMachine,
+    // The compiled machine of the nearest measured board within the carry distance, as measured
+    // (ContextCostSummary::machine names it).
+    CarriedMachine,
 };
 
 [[nodiscard]] inline constexpr const char*
@@ -1724,8 +1724,8 @@ context_cost_preset_source_name(ContextCostPresetSource source) noexcept {
         return "compiled-default";
     case ContextCostPresetSource::External:
         return "external";
-    case ContextCostPresetSource::SimilarMachine:
-        return "similar-machine";
+    case ContextCostPresetSource::CarriedMachine:
+        return "carried-machine";
     }
     return "unknown";
 }
@@ -1733,10 +1733,14 @@ context_cost_preset_source_name(ContextCostPresetSource source) noexcept {
 struct ContextCostSummary {
     ContextCostPresetSource transfer_source = ContextCostPresetSource::GenericDefault;
     ContextCostPresetSource prefill_source  = ContextCostPresetSource::GenericDefault;
-    std::string hardware_class;
+    // The device's class id ("gb202:170sm"): presets are found along its class chain.
+    std::string gpu_class;
+    // The compiled machine the device's class resolved to: "own <key>" (a key of its class chain),
+    // "carried from <key> at <board distance>" (the nearest measured board), or "generic". The
+    // distance is for the logs; the decision fingerprint records the key alone.
+    std::string machine;
     std::string prefill_signature;
     std::filesystem::path preset_path;
-    std::string similar_to; // the machine a SimilarMachine source stands in with ("" otherwise)
 };
 
 // Static facts about the loaded model, independent of the current request context and memory

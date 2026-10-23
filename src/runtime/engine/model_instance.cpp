@@ -520,11 +520,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     }
     const models::qwen3_5::detail::ModelExecution& execution = *loaded.execution;
     StartupPhaseScope planning(options.startup_observer, StartupPhase::TargetFinalize);
+    // Keyed by the device's class and board facts, never its driver name.
     auto context_cost = resolve_context_machine_cost(
-        {.hardware_class =
-             context_cost_hardware_class(device.props.name, device.props.major, device.props.minor),
-         .prefill_signature = summary.prefill_signature,
-         .sms               = static_cast<std::uint32_t>(device.props.multiProcessorCount)},
+        context_cost_identity(device.device_class(), summary.prefill_signature),
         options.context_cost.preset_path);
     EngineOptions resolved = options;
     ContextResolution context{

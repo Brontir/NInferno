@@ -100,7 +100,8 @@ int main() {
     load.context_cost         = {
                 .transfer_source   = ninferno::ContextCostPresetSource::External,
                 .prefill_source    = ninferno::ContextCostPresetSource::CompiledDefault,
-                .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
+                .gpu_class         = "gb202:170sm",
+                .machine           = "own gb202:170sm",
                 .prefill_signature = "example-prefill-signature",
                 .preset_path       = "local-costs.json",
     };
@@ -244,8 +245,8 @@ int main() {
     failures += check(
         server.at("engine").at("context_cost").at("transfer_source") == "external" &&
             server.at("engine").at("context_cost").at("prefill_source") == "compiled-default" &&
-            server.at("engine").at("context_cost").at("hardware_class") ==
-                "nvidia-geforce-rtx-5090-sm120" &&
+            server.at("engine").at("context_cost").at("gpu_class") == "gb202:170sm" &&
+            server.at("engine").at("context_cost").at("machine") == "own gb202:170sm" &&
             server.at("engine").at("context_cost").at("preset_path") == "local-costs.json",
         "resolved context-cost layers missing");
     failures += check(server.at("engine").at("prefix_reuse") == true, "prefix-reuse state missing");
