@@ -1928,6 +1928,9 @@ const DEPTH = 0.25, SHORT = 512;
 // measured at one; several streams decode plainly in the estimate).
 // The engine's choice for what the launch leaves automatic, and what another value of each axis would
 // change (the server's choice model: estimates, not measurements).
+// The panel stays open across the page's re-renders (the GPU's numbers redraw it every few seconds).
+let choiceOpen = false;
+document.addEventListener("toggle", e => { if (e.target && e.target.classList && e.target.classList.contains("choice")) choiceOpen = e.target.open; }, true);
 function choicePanel(doc) {
   const c = doc && doc.choice, b = c && c.chosen, rows = choiceRows(doc);
   if (!b) return "";
@@ -1944,7 +1947,7 @@ function choicePanel(doc) {
       <td class="num ${cls(r.dtime, false)}">${pct(r.dtime)}</td><td class="num ${cls(r.dkld, false)}">${kld(r.dkld)}</td>
       <td class="sub">${esc(t("why_" + r.why) || r.why)}</td></tr>`).join("");
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis"))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}</div>` +
-    (rows.length ? `<details class="choice"><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th>KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
+    (rows.length ? `<details class="choice" ${choiceOpen ? "open" : ""}><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th>KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
 }
 function specGain() { const sp = specOf(); return parallel === 1 && sp && sp.speedup > 1 ? sp.speedup : 1; }
 function interp(table, n) {
@@ -2196,7 +2199,9 @@ function renderBody() {
     const h = sel.hub || found.hub.find(x => x.id === sel.repo);
     const unsupported = h && ["none", "format"].includes(h.support);
     const q = quantSel, ctxNow = ctxEff();
-    const depth = Math.max(SHORT, Math.round(ctxNow * DEPTH));
+    // The depth the server's estimates take (the same for every row), else a quarter of the context.
+    const estAny = (sel.plan && sel.plan.quants || []).map(rowEstimate).find(Boolean);
+    const depth = estAny ? estAny.depth : Math.max(SHORT, Math.round(ctxNow * DEPTH));
     const asked = {ctx: ctxValue > 0 ? ctxLabel(ctxValue) : t("ctxAutoWord"), par: parallel};
     if (stale) html += `<div class="note"><span class="sup spin">…</span> ${t("planning")}</div>`;
     else if (sel.planErr) html += `<div class="note err">${esc(t("planFailed"))}: ${esc(sel.planErr)}</div>`;
