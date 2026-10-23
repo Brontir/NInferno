@@ -213,7 +213,7 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, tie_context, quant_rule, default, coupled
+    std::string why_code; // "" (chosen), no_fit, lower_worth, tie_context, tie_order, quant_rule, default, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice,
                                                const std::vector<QuantOption>& quants);

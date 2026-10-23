@@ -319,9 +319,11 @@ std::optional<Reference> reference_of(const CardFacts& card) {
         if (r.generation != gen) { continue; }
         Reference out;
         out.card = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
-        out.decides = r.kv_two_cards && r.exact_two_cards;
-        if (!out.decides) {
+        out.decides = r.kv_two_cards && r.exact_two_cards && kKldTwoCards;
+        if (!r.kv_two_cards || !r.exact_two_cards) {
             out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card";
+        } else if (!kKldTwoCards) {
+            out.why = "the accuracy terms rest on one lab card";
         }
         return out;
     }
@@ -643,9 +645,14 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = "the family's default stands (no decision constants for this generation)";
-            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
+            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
+                       (s.own_context != chosen.own_context ||
+                        quants[s.candidate.quant].weight_bytes != quants[c.quant].weight_bytes)) {
                 alt.why_code = "tie_context";
                 alt.why_not  = "the same worth: the chosen keeps more context per stream (or fewer weight bytes)";
+            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
+                alt.why_code = "tie_order";
+                alt.why_not  = "the same in every respect (fast and int8 take one route on these weights): the listing's order";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
