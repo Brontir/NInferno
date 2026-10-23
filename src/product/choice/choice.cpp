@@ -465,8 +465,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     const Scored& c = out.scored[*chosen];
     const bool quant_by_worth = out.by_worth && quant_curve();
     out.why = quants[c.candidate.quant].label +
-              (quant_by_worth ? ": the best worth among the quantizations whose every stream holds "
-                              : ": the largest quantization whose every stream holds ") +
+              (quant_ids.size() == 1 ? " (the one quantization): every stream holds "
+               : quant_by_worth      ? ": the best worth among the quantizations whose every stream holds "
+                                     : ": the largest quantization whose every stream holds ") +
               std::to_string(settled) + " tokens" +
               (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
               "; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
