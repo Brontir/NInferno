@@ -218,6 +218,29 @@ void chooses(const json& fixture) {
               "pins kept; exact couples the FP32 state");
     }
     {
+        // The state one step finer than the KV cache: BF16 KV under fast takes the FP32 state; a
+        // ring follows the KV codec where the family's rings take FP8.
+        const Bench b = nine_b(fixture, "RTX 4070 Ti");
+        ch::Pins pins;
+        pins.kv = KvCacheStorage::BFloat16;
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                        pins, task, oracle(b, 9.6e9));
+        check(c.chosen && chosen(c).candidate.state == RecurrentStateStorage::FP32, "BF16 KV: the FP32 state");
+        ch::ModelFacts sliding = b.model;
+        sliding.window   = 1024;
+        sliding.fp8_ring = true;
+        ch::Pins none;
+        check(ch::coupled_storages(sliding, KvCacheStorage::Fp8E4M3Row256, ActivationMode::Fast, none).ring ==
+                  KvCacheStorage::Fp8E4M3Row256 &&
+              ch::coupled_storages(sliding, KvCacheStorage::BFloat16, ActivationMode::Fast, none).ring ==
+                  KvCacheStorage::BFloat16,
+              "the ring follows the KV codec");
+        sliding.fp8_ring = false;
+        check(ch::coupled_storages(sliding, KvCacheStorage::Fp8E4M3Row256, ActivationMode::Fast, none).ring ==
+                  KvCacheStorage::BFloat16,
+              "a family whose rings take no FP8 keeps BF16 rings");
+    }
+    {
         // Below the floor only when nothing above it fits; nothing fits: no choice.
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
         const ch::Choice low = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
