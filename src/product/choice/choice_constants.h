@@ -162,8 +162,10 @@ inline constexpr KldTerm kKldTerms[] = {
     {Axis::Kv, "k8v4", 0.00532, 0.9777, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
     {Axis::Kv, "nvfp4", 0.00981, 0.9710, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
     {Axis::Activations, "int8", 0.00388, 0.9851, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23 (fast = int8)"},
-    {Axis::State, "f16", 0.0018, 0.981, "Qwen3.8-27B 16K stepwise decode (docs/reference/serving.md)"},
-    {Axis::State, "bf16", 0.0052, 0.970, "Qwen3.8-27B 16K stepwise decode (docs/reference/serving.md)"},
+    // The state's own share under fast: the root of (fast with the state)^2 - (fast with FP32)^2,
+    // 0.003981 and 0.004220 against 0.00388 (top-1 98.49 % and 98.47 %).
+    {Axis::State, "f16", 0.00089, 0.9849, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    {Axis::State, "bf16", 0.00166, 0.9847, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
 };
 
 // The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
@@ -204,7 +206,9 @@ inline constexpr std::uint32_t kRequestAnswer = 512;
 // Ti's estimates went from +3 % to +8 %): it is the host's (launch and HTTP latency), which no GPU
 // fact predicts. Measured against that workload, one stream: the 4070 Ti within 5 % (Gemma 4 12B,
 // a family the fit never saw, +5 %); the 4090 2-7 % fast on the larger models and 15 % fast on the
-// fastest (Qwen3.5-4B, Qwen3.6-35B-A3B: 240-250 tok/s).
+// fastest (Qwen3.5-4B, Qwen3.6-35B-A3B: 240-250 tok/s). Turing decodes the IQ2 codebook formats
+// 19 % slower than estimated (Qwen3.8-27B UD-IQ2_XXS on the RTX 2080 Ti; the same file on the 4070
+// Ti within 3 %): the estimate shown there is optimistic, and Turing does not decide.
 
 // ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
 //
