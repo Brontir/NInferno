@@ -10,15 +10,17 @@
 //   speed      the seconds of a typical request at it (decode and prefill, choice_constants.h);
 //   accuracy   its KLD against the exact reference (choice_constants.h's measured terms).
 //
-// The candidates are the quantizations x KV codecs x activation modes the model, the card and the
-// user's pins allow; the ring and the recurrent state follow the KV codec and the activations
-// (coupled_storages), and their other values are scored beside the chosen one to explain them. A
-// candidate fits when each stream holds the asked context of its own; the quantization is the
-// quant rule's (the largest that fits, choice_constants.h); among the KV codecs and activation
-// modes the largest worth -ln(T) - lambda KLD wins, T priced on the generation's reference card
-// (choice_constants.h: what a decision may read), or the family's defaults where the generation's
-// constants do not rest on two lab cards. Every candidate keeps the estimates on the board itself
-// for a caller to show (explain).
+// The candidates are the quantizations x KV codecs x activation modes x prefill chunks (an MoE's)
+// the model, the card and the user's pins allow; the ring and the recurrent state follow the KV
+// codec and the activations (coupled_storages), and their other values are scored beside the
+// chosen one to explain them. A candidate fits when each stream holds the asked context of its
+// own. Where the generation's constants and the accuracy terms rest on two lab cards (Gates), the
+// largest worth -ln(T) - lambda KLD wins among the quantizations (within the quant rule's floor
+// tier), KV codecs and activation modes, T priced on the generation's reference card
+// (choice_constants.h: what a decision may read); else the quantization is the quant rule's (the
+// largest that fits) with the family's defaults. An MoE's chunk is the fastest on the reference
+// card where its shares rest on two lab cards (it has no accuracy term). Every candidate keeps the
+// estimates on the board itself for a caller to show (explain).
 //
 // Pure: no CUDA, no files, no clock.
 
@@ -120,7 +122,7 @@ struct Candidate {
                              const CardFacts& card) noexcept;
 
 struct Speed {
-    double decode_per_stream = 0; // tokens a second each stream decodes at the context asked
+    double decode_per_stream = 0; // tokens a second each stream decodes at the context given
     double prefill           = 0; // prompt tokens a second
     bool transferred         = false; // a constant came from another generation (kTransferGeneration)
 };
@@ -137,17 +139,25 @@ struct Speed {
                                      const QuantOption& quant, const Candidate& candidate,
                                      const Task& task);
 
-// The reference card a decision prices on for a board's generation (choice_constants.h), and
-// whether its constants decide (both factor sets on two lab cards). nullopt: no reference card.
+// Which measured constant sets rest on two lab cards (choice_constants.h) and so may decide. The
+// defaults are the constants'; a caller never sets them (a test opens them to check what they gate).
+struct Gates {
+    bool accuracy  = kKldTwoCards;      // the accuracy terms and the quantization curve
+    bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
+};
+
+// The reference card a decision prices on for a board's generation (choice_constants.h), whether
+// the worth decides there (both factor sets and the accuracy terms on two lab cards), and whether an
+// MoE's chunk does (its shares on two). nullopt: no reference card.
 struct Reference {
     CardFacts card;
     bool decides = false;
-    std::string why; // "" when it decides, else why the family's defaults stand
+    bool chunk_decides = false;
+    std::string why; // "" when the worth decides, else why the family's defaults stand
 };
-[[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card);
-// Whether the worth weighs the quantizations on this card: its generation decides and a measured
-// quantization curve exists (else the quant rule's largest stands).
-[[nodiscard]] bool weighs_quantizations(const CardFacts& card);
+[[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+// Whether the worth weighs the quantizations on this card (else the quant rule's largest stands).
+[[nodiscard]] bool weighs_quantizations(const CardFacts& card, const Gates& gates = {});
 
 struct Term {
     Axis axis;
@@ -159,9 +169,8 @@ struct Term {
 };
 
 struct Accuracy {
-    double kld = 0; // root sum square of the terms
+    double kld = 0; // the quantization's term plus the root sum square of the switches'
     std::vector<Term> terms;
-    bool quant_known = false; // a KLD for the quantization itself (else the quant rule picks it)
 };
 
 [[nodiscard]] Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant,
@@ -188,8 +197,8 @@ struct Choice {
     std::vector<Scored> scored;        // every candidate in enumeration order, then the variants
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
     std::uint32_t context = 0;         // the own context per stream the choice settled on
-    bool by_worth = false;             // the worth decided (else the family's defaults stood)
-    bool quant_by_worth = false;       // the worth weighed the quantizations too (a measured curve)
+    bool by_worth = false;             // the worth decided (else the rule and the family's defaults)
+    bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
     std::string why;                   // one line: what decided it
 };
 
@@ -205,7 +214,8 @@ struct Allowed {
 
 [[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card,
                             const std::vector<QuantOption>& quants, const Allowed& allowed,
-                            const Pins& pins, const Task& task, const OwnContextFn& own_context);
+                            const Pins& pins, const Task& task, const OwnContextFn& own_context,
+                            const Gates& gates = {});
 
 // What each other value of an axis would change against the chosen candidate (the others kept).
 struct Alternative {
