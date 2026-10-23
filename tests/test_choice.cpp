@@ -290,6 +290,21 @@ void decides_by_generation(const json& fixture) {
     check(ratio > 0.25 && ratio < 0.32, "an MoE's exact prefill at the dense routes' ratio");
 }
 
+// Without decision constants the quantization is ranked among the family's defaults only: Q8_0
+// fitting only with NVFP4 KV does not displace Q4_K_M at the default INT8 KV (the 2080 Ti: no
+// reference card).
+void ranks_eligible_only(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 2080 Ti");
+    ch::Task task;
+    // Q8_0 + 32K of NVFP4 KV fits, Q8_0 + 32K of INT8 KV does not.
+    const double budget = b.quants[1].weight_bytes + 33000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Nvfp4Group16);
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                    {}, task, oracle(b, budget));
+    check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" &&
+              chosen(c).candidate.kv == KvCacheStorage::Int8Group64 && c.context == 32768,
+          "defaults only: Q4_K_M at INT8, not Q8_0 at NVFP4");
+}
+
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
 void steps_before_the_floor(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
@@ -332,6 +347,7 @@ int main() {
     chooses(fixture);
     decides_by_generation(fixture);
     steps_before_the_floor(fixture);
+    ranks_eligible_only(fixture);
     explains_the_state(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
