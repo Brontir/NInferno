@@ -131,7 +131,7 @@ struct ChunkShare {
 inline constexpr ChunkShare kMoeChunkShare[] = {
     {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
 // The shares decide an MoE's chunk on a generation with a reference card (by speed alone: a chunk has
-// no accuracy term, so kKldTwoCards does not hold it).
+// no accuracy term, so the accuracy terms' cards do not hold it).
 inline constexpr bool kMoeChunkTwoCards = true; // RTX 4070 Ti and 4090
 inline constexpr std::uint32_t kDefaultChunk = 1024;
 inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
@@ -152,32 +152,42 @@ enum class Axis : std::uint8_t { Quant, Kv, Ring, State, Activations, Chunk };
     return "?";
 }
 
-// One measured switch: its KLD and top-1 agreement against the exact reference.
+// One measured switch: its KLD and top-1 agreement against the exact reference
+// (ninferno-perplexity --quick: every call a prefill of 17 tokens or more), on `generation` ("": a
+// model constant, the same on each generation it was measured on), and the lab cards behind it. A
+// term on an axis the worth decides (KV, activations) decides only on two cards (principle 4);
+// the coupled storages' terms (state, ring) only price the candidates they follow.
 struct KldTerm {
     Axis axis;
     std::string_view value; // the flag's spelling (--kv-dtype int8, --state-dtype f16, ...)
+    std::string_view generation;
     double kld;
     double top1;
+    int cards;
     std::string_view source;
 };
 
 inline constexpr std::string_view kKldFamily = "qwen3_5_text"; // the family the terms were measured on
 
-// Whether the accuracy terms (the switches' and the quantization curve) rest on two lab cards of
-// different generations (principle 4: a model constant). The worth decides only then; until the
-// second card's run confirms them, the family's defaults stand everywhere.
-inline constexpr bool kKldTwoCards = false; // the RTX 5070 Ti; the RTX 4070 Ti's run pending
-
 inline constexpr KldTerm kKldTerms[] = {
-    {Axis::Kv, "int8", 0.00099, 0.9914, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
-    {Axis::Kv, "fp8", 0.00300, 0.9861, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
-    {Axis::Kv, "k8v4", 0.00532, 0.9777, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
-    {Axis::Kv, "nvfp4", 0.00981, 0.9710, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
-    {Axis::Activations, "int8", 0.00388, 0.9851, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23 (fast = int8)"},
+    // The KV codecs: a model constant. RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the
+    // mean: int8 0.00099 / 0.00092, fp8 0.00300 / 0.00260, k8v4 0.00532 / 0.00535, nvfp4 0.00981 /
+    // 0.00983 (within 13 %, the order the same).
+    {Axis::Kv, "int8", "", 0.00095, 0.9914, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {Axis::Kv, "fp8", "", 0.00280, 0.9861, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {Axis::Kv, "k8v4", "", 0.00534, 0.9777, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {Axis::Kv, "nvfp4", "", 0.00982, 0.9710, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    // The int8 activations (fast = int8 on these weights): not a model constant. Which calls take
+    // int8 is the generation's routes (its route tables and the generic path's cost model), so the
+    // same artifact loses 7.6 times as much on Ada: RTX 4070 Ti 0.0294 (top-1 95.77 %), RTX 4090
+    // 0.0302 (95.75 %), against 0.00388 (98.51 %) on the RTX 5070 Ti.
+    {Axis::Activations, "int8", "ada", 0.0298, 0.9576, 2, "Qwen3.5-9B Q4_K_M, RTX 4070 Ti and RTX 4090, 2026-10-24"},
+    {Axis::Activations, "int8", "gb20x", 0.00388, 0.9851, 1, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
     // The state's own share under fast: the root of (fast with the state)^2 - (fast with FP32)^2,
-    // 0.003981 and 0.004220 against 0.00388 (top-1 98.49 % and 98.47 %).
-    {Axis::State, "f16", 0.00089, 0.9849, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
-    {Axis::State, "bf16", 0.00166, 0.9847, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    // 0.003981 and 0.004220 against 0.00388 (top-1 98.49 % and 98.47 %). On Ada under its 0.0294
+    // fast term the share is within the run's noise (f16 0.0015, bf16 below zero).
+    {Axis::State, "f16", "", 0.00089, 0.9849, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    {Axis::State, "bf16", "", 0.00166, 0.9847, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
 };
 
 // The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
@@ -193,6 +203,7 @@ struct QuantKldPoint {
 
 inline constexpr std::string_view kQuantKldSource =
     "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti, 2026-10-23";
+inline constexpr int kQuantKldCards = 1; // the RTX 4070 Ti's run pending
 // Bits per weight as the plan counts them (the weight bytes over the parameters); perplexity and
 // top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD 0.068
 // above 0.028).

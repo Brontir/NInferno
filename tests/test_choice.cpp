@@ -269,7 +269,8 @@ void decides_by_generation(const json& fixture) {
         const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
         const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
         check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
-        check(ra->decides == ch::kKldTwoCards && ch::reference_of(a.card, {true, true})->decides,
+        check(ra->decides == ch::accuracy_decides("ada") && ch::reference_of(a.card, {true, true})->decides &&
+                  !ch::reference_of(a.card, {false, true})->decides,
               "Ada decides once the accuracy terms rest on two cards");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
@@ -387,11 +388,19 @@ void weighs_the_quantizations(const json& fixture) {
         }
     }
     check(codes == 3, "Q8_0, IQ3_XXS and FP8 KV explained");
-    // The constants' own gates: the accuracy terms rest on one card until kKldTwoCards.
+    // The constants' own gates: the worth decides once the accuracy terms rest on two cards.
     const ch::Choice gated = ch::choose(with6.model, with6.card, with6.quants,
                                         ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
                                         oracle(with6, 20e9));
-    check(gated.by_worth == ch::kKldTwoCards, "the worth decides only with the accuracy gate open");
+    check(gated.by_worth == ch::accuracy_decides("ada"), "the worth decides only with the accuracy terms on two cards");
+    // A family the terms were not measured on keeps the rule and its defaults.
+    Bench gemma = with6;
+    gemma.model.family = "gemma4_text";
+    const ch::Choice other = ch::choose(gemma.model, gemma.card, gemma.quants,
+                                        ch::allowed_axes(gemma.model, KvCacheStorage::Fp8E4M3Row256), {}, task,
+                                        oracle(gemma, 20e9), open);
+    check(!other.by_worth && other.why.find("measured on qwen3_5_text") != std::string::npos,
+          "another family: the rule's largest and its defaults");
     // Two quantizations alike in every respect: a tie, broken by the listing's order.
     Bench twins           = b;
     twins.quants          = {b.quants[0], b.quants[0]};
@@ -483,6 +492,35 @@ void steps_before_the_floor(const json& fixture) {
           "16K at Q4_K_M before 32K below the floor");
 }
 
+// The int8 activations' term is the generation's: which calls take int8 is its routes. Ada (two
+// cards) 0.0298, Blackwell (one card) 0.00388, Turing (none) the axis's worst. With the terms open
+// on Ada, fast's 0.03 KLD is worth more than exact's +34 % time: Qwen3.5-9B Q4_K_M takes exact.
+void activations_by_generation(const json& fixture) {
+    ch::Candidate c;
+    c.kv    = KvCacheStorage::Int8Group64;
+    c.state = RecurrentStateStorage::FP16;
+    const auto act = [&](const char* card) {
+        const Bench b = nine_b(fixture, card);
+        for (const ch::Term& t : ch::accuracy_of(b.model, b.quants[0], c, b.card).terms) {
+            if (t.axis == ch::Axis::Activations) { return t; }
+        }
+        return ch::Term{};
+    };
+    check(std::abs(act("RTX 4090").kld - 0.0298) < 1e-9 && act("RTX 4090").measured, "Ada: its own term");
+    check(std::abs(act("RTX 5070 Ti").kld - 0.00388) < 1e-9, "Blackwell: its own term");
+    check(!act("RTX 2080 Ti").measured && act("RTX 2080 Ti").kld >= 0.0298, "Turing: the axis's worst");
+    std::string why;
+    check(!ch::accuracy_decides("gb20x", &why) && why.find("one lab card") != std::string::npos,
+          "Blackwell's activations rest on one card");
+    const Bench b = nine_b(fixture, "RTX 4090");
+    ch::Task task;
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                         {}, task, oracle(b, 9.6e9), {true, true});
+    check(choice.chosen && chosen(choice).candidate.activations == ActivationMode::Exact,
+          "Ada with the terms open: exact over fast");
+    if (choice.chosen) { std::cout << choice.why << '\n'; }
+}
+
 // Contradictory pins say so instead of "nothing fits".
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
@@ -530,6 +568,7 @@ int main() {
     coarse_quant_keeps_kv(fixture);
     explains_the_state(fixture);
     contradictory_pins(fixture);
+    activations_by_generation(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

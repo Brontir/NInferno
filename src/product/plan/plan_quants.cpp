@@ -342,7 +342,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     // A GPU generation that decides weighs the quantizations by worth within the rule's tier: the
     // rows that keep the same own context per stream on the same side of the floor, each at its own
     // choice (product/plan/plan_choice.h). Elsewhere the rule's largest stands.
-    if (out.pick && choice::weighs_quantizations(choice_card_of(inputs.gpu)) &&
+    if (out.pick && choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&
         (out.pick->tier == runtime::QuantPickTier::Own ||
          out.pick->tier == runtime::QuantPickTier::OwnStepped ||
          out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
