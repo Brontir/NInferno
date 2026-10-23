@@ -402,6 +402,13 @@ ok(Math.abs(cr[1].dkld + 0.0044) < 1e-12, "exact: the KLD difference");
 eq([cr[2].fits, cr[2].ddecode, cr[2].dkld, cr[2].why], [false, null, null, "no_fit"], "an alternative that does not fit has no speeds");
 eq(H.choiceRows({choice: {chosen: null}}), [], "no choice: no rows");
 eq(H.choiceRows(null), [], "no document");
+// The worth's pick within the rule's tier: its own words, naming the largest that fits.
+{
+  const doc = {rule_code: "best_worth", rule_params: {quant: "Q6_K", largest: "Q8_0", tier: "own", automatic: true, concurrency: 1, card_gb: 24},
+               pick: {quant: "Q6_K", tier: "own", target_context: 32768}};
+  const en = H.ruleText(doc, {ctx: 0, par: 1, native: 262144}, words("en"));
+  ok(en.startsWith("Q6_K, the best balance of speed and accuracy") && en.includes("the largest that fits is Q8_0"), "best_worth in words");
+}
 // The choice belongs to the quantization it was made at: the panel and the pick's speed only there.
 const atQ4 = {choice: {chosen: {quant: "Q4_K_M"}}};
 ok(H.choiceFor(atQ4, "Q4_K_M") && !H.choiceFor(atQ4, "Q8_0") && H.choiceFor(atQ4, ""), "a choice is for its quantization");

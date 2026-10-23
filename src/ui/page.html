@@ -1005,7 +1005,7 @@ Object.assign(T.en, {
   quantTip:"The weights' format as the repository publishes it; ★ is the largest that fits the chosen context × requests on this card (the server's plan), ✓ is downloaded",
   cardGb:"{gb} GB",cardThisGb:"this {gb} card",cardThis:"this card",
   ruleAt:"{ctx} × {n}",ruleAtAuto:"auto context (≈ {ctx}) × {n}",ruleAtAutoBare:"auto context × {n}",
-  rule_largest_fits:"{quant}, the largest that fits {card} at {at}",rule_none_fits:"Nothing fits {card} at {at}",ruleSmallest:"(not even {quant})",
+  rule_largest_fits:"{quant}, the largest that fits {card} at {at}",rule_best_worth:"{quant}, the best balance of speed and accuracy {card} at {at} (the largest that fits is {largest})",rule_none_fits:"Nothing fits {card} at {at}",ruleSmallest:"(not even {quant})",
   rule_none_served:"The engine runs none of this repository's quantizations",
   tier_own:"each request has its own {ctx}",tier_own_stepped:"each request has its own {ctx}; {want} each fits no quantization",
   tier_shared:"{ctx} shared by {n}: no quantization gives each request its own {want}",
@@ -1052,7 +1052,7 @@ Object.assign(T.ru, {
   quantTip:"Формат весов, как его публикует репозиторий; ★ — самый большой квант, который влезает при выбранных контексте × запросах на эту карту (расчёт сервера), ✓ — уже скачано",
   cardGb:"{gb} ГБ",cardThisGb:"эту карту на {gb}",cardThis:"эту карту",
   ruleAt:"{ctx} × {n}",ruleAtAuto:"авто-контексте (≈ {ctx}) × {n}",ruleAtAutoBare:"авто-контексте × {n}",
-  rule_largest_fits:"{quant} — самый большой квант, который влезает на {card} при {at}",rule_none_fits:"Ничего не влезает на {card} при {at}",ruleSmallest:"(даже {quant})",
+  rule_largest_fits:"{quant} — самый большой квант, который влезает на {card} при {at}",rule_best_worth:"{quant} — лучший баланс скорости и точности на {card} при {at} (самый большой, что влезает, — {largest})",rule_none_fits:"Ничего не влезает на {card} при {at}",ruleSmallest:"(даже {quant})",
   rule_none_served:"Движок не запускает ни один квант этого репозитория",
   tier_own:"у каждого запроса свои {ctx}",tier_own_stepped:"у каждого запроса свои {ctx}; по {want} на каждый не влезает ни один квант",
   tier_shared:"{ctx} на всех {n}: ни один квант не даёт каждому запросу свои {want}",
@@ -1636,7 +1636,7 @@ const cardGbText = (gb, tr) => gb > 0 ? tr("cardGb", {gb}) : "";
 function ruleText(doc, ask, tr) {
   if (!doc) return "";
   const c = doc.rule_code || "", v = doc.rule_params || {};
-  if (!["largest_fits", "none_fits", "none_served"].includes(c)) return doc.rule || "";
+  if (!["largest_fits", "best_worth", "none_fits", "none_served"].includes(c)) return doc.rule || "";
   if (c === "none_served") return tr("rule_none_served");
   const n = v.concurrency || ask.par || 1, gb = cardGbOf(doc);
   const card = gb > 0 ? tr("cardThisGb", {gb: cardGbText(gb, tr)}) : tr("cardThis");
@@ -1651,7 +1651,10 @@ function ruleText(doc, ask, tr) {
   const want = planTok(Math.min(ask.native > 0 ? ask.native : PLAN_USEFUL_CTX, PLAN_USEFUL_CTX));
   const target = pick.target_context > 0 ? planTok(pick.target_context) : ctx;
   const words = RULE_TIERS.includes(tier) ? tr("tier_" + tier, {ctx, n, want, target}) : "";
-  return tr("rule_largest_fits", {quant: v.quant || pick.quant || doc.chosen || "", card, at}) + (words ? ": " + words : "");
+  const quant = v.quant || pick.quant || doc.chosen || "";
+  const head = c === "best_worth" ? tr("rule_best_worth", {quant, largest: v.largest || "", card, at})
+                                  : tr("rule_largest_fits", {quant, card, at});
+  return head + (words ? ": " + words : "");
 }
 // What a row shows: the state and the dot's class (full: own, tight: shared, desk: desktop, no,
 // unknown, off: unsupported), the star (the pick), the words and the tooltip, the planned context
