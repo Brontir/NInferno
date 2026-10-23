@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string_view>
+#include <vector>
 
 namespace ninferno::product::choice {
 
@@ -114,6 +115,38 @@ double worst_term(Axis axis) noexcept {
         if (term.axis == axis) { worst = std::max(worst, term.kld); }
     }
     return worst;
+}
+
+bool quant_curve() noexcept { return !kQuantKldSource.empty(); }
+
+// The interpolated quantization term at `bits` (choice_constants.h kQuantKld), and the measured
+// point when `label` is one. log KLD is linear in bits between the two measured points around
+// `bits`; past the measured range, the nearest pair's slope; at or above the reference's bits, 0.
+double quant_kld(double bits, std::string_view label, bool& measured) {
+    measured = false;
+    double reference_bits = 0;
+    std::vector<const QuantKldPoint*> points;
+    for (const QuantKldPoint& p : kQuantKld) {
+        if (!label.empty() && p.label == label) {
+            measured = true;
+            return p.kld;
+        }
+        if (p.kld <= 0) {
+            reference_bits = std::max(reference_bits, p.bits_per_weight);
+        } else {
+            points.push_back(&p);
+        }
+    }
+    if (bits >= reference_bits || points.empty()) { return 0; }
+    if (points.size() == 1) { return points.front()->kld; }
+    std::sort(points.begin(), points.end(),
+              [](const QuantKldPoint* a, const QuantKldPoint* b) { return a->bits_per_weight < b->bits_per_weight; });
+    std::size_t i = 0;
+    while (i + 2 < points.size() && points[i + 1]->bits_per_weight <= bits) { ++i; }
+    const QuantKldPoint& lo = *points[i];
+    const QuantKldPoint& hi = *points[i + 1];
+    const double t = (bits - lo.bits_per_weight) / (hi.bits_per_weight - lo.bits_per_weight);
+    return std::exp(std::log(lo.kld) + t * (std::log(hi.kld) - std::log(lo.kld)));
 }
 
 bool qwen_family(const ModelFacts& model) noexcept {
@@ -267,9 +300,17 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         out.terms.push_back({axis, std::move(value), kld, measured, other_family && kld > 0,
                              std::move(source)});
     };
-    // The quantization: no measured curve yet (choice_constants.h).
-    add(Axis::Quant, quant.label, 0, false, "no measured curve: the quant rule picks");
-    out.quant_known = false;
+    // The quantization: the measured curve (choice_constants.h), or none (the quant rule picks).
+    if (quant_curve()) {
+        bool measured   = false;
+        const double q  = quant_kld(quant.bits_per_weight, quant.label, measured);
+        add(Axis::Quant, quant.label, q, measured && !other_family,
+            measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
+        out.quant_known = true;
+    } else {
+        add(Axis::Quant, quant.label, 0, false, "no measured curve: the quant rule picks");
+        out.quant_known = false;
+    }
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {
@@ -381,20 +422,28 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     for (const bool above_floor : {true, false}) {
         for (const std::uint32_t context : task.contexts) {
             std::optional<std::size_t> quant;
+            // With a measured curve and a reference card the worth weighs the quantizations too:
+            // the best eligible candidate of any quantization at or (in the second pass) below the
+            // floor. Else the quant rule's: the largest.
+            const bool by_quant_worth = out.by_worth && quant_curve();
             for (const Scored& s : out.scored) {
                 const QuantOption& q = quants[s.candidate.quant];
                 if (!eligible(s) || s.own_context < context ||
                     (q.bits_per_weight >= kQuantFloorBits) != above_floor) {
                     continue;
                 }
-                if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
+                if (by_quant_worth) {
+                    quant = s.candidate.quant; // any: the worth below ranks across them
+                } else if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
                     quant = s.candidate.quant;
                 }
             }
             if (!quant) { continue; }
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
-                if (!eligible(s) || s.own_context < context || s.candidate.quant != *quant) { continue; }
+                if (!eligible(s) || s.own_context < context) { continue; }
+                if ((quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits) != above_floor) { continue; }
+                if (!by_quant_worth && s.candidate.quant != *quant) { continue; }
                 if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
             }
             if (chosen) {
@@ -414,7 +463,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     out.context = settled;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    out.why = quants[c.candidate.quant].label + ": the largest quantization whose every stream holds " +
+    const bool quant_by_worth = out.by_worth && quant_curve();
+    out.why = quants[c.candidate.quant].label +
+              (quant_by_worth ? ": the best worth among the quantizations whose every stream holds "
+                              : ": the largest quantization whose every stream holds ") +
               std::to_string(settled) + " tokens" +
               (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
               "; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
