@@ -989,7 +989,7 @@ Object.assign(T.en, {
   unsupLabel:"The engine does not run it",lowQuality:"⚠ quality drops below 3 bits",
   quantChanged:"A different quantization was picked: {from} → {to} ({why})",quantWhyMore:"{ask} needs more memory",quantWhyRoom:"{ask} leaves room for a larger one",
   busyGpu:"{models} already runs on this GPU: stop it first, or this start may not fit",
-  poolHolds:"The cache holds {n} × {ctx}",largestFits:"Largest that fits",
+  poolHolds:"The cache holds {n} × {ctx}",largestFits:"Largest that fits",bestWorthPick:"The best balance of speed and accuracy",
   planning:"Planning…",planFailed:"Could not plan; the list is shown without the fit",ruleLabel:"Choice",
   planEstNote:"Fit and memory: the server's plan, an estimate; the server decides at start.",
   ctxPlanTip:"The context each request gets in the plan\nauto → N: what Auto gives on this card",
@@ -1036,7 +1036,7 @@ Object.assign(T.ru, {
   unsupLabel:"Движок это не запускает",lowQuality:"⚠ качество падает: меньше 3 бит",
   quantChanged:"Выбран другой квант: {from} → {to} ({why})",quantWhyMore:"для {ask} нужно больше памяти",quantWhyRoom:"при {ask} влезает квант побольше",
   busyGpu:"На этой видеокарте уже работает {models}: сначала остановите, иначе запуск может не влезть",
-  poolHolds:"Кеша хватает на {n} × {ctx}",largestFits:"Самый большой, что влезает",
+  poolHolds:"Кеша хватает на {n} × {ctx}",largestFits:"Самый большой, что влезает",bestWorthPick:"Лучший баланс скорости и точности",
   planning:"Считаем…",planFailed:"Не удалось посчитать; список показан без оценки, влезет ли",ruleLabel:"Выбор",
   planEstNote:"Влезет ли и сколько памяти — расчёт сервера, это оценка; окончательно решает сервер при запуске.",
   ctxPlanTip:"Контекст каждого запроса по расчёту\nавто → N: сколько даёт Авто на этой карте",
@@ -2249,7 +2249,7 @@ function renderBody() {
       const warns = stale ? "" : [st.lowq ? `<span class="lowq">${esc(st.lowTip)}</span>` : "",
         ["no", "desktop"].includes(st.state) ? `<span class="lowq">⚠ ${esc(st.warn)}</span>` : "",
         busyGpu ? `<span class="err">${esc(busyGpu)}</span>` : ""].filter(Boolean).join(" · ");
-      html += `<div class="pick ${stale ? "stale" : ""}"><div class="pickmain"><div class="sub">${st.star && !stale ? t("largestFits") : t("selected")}</div>
+      html += `<div class="pick ${stale ? "stale" : ""}"><div class="pickmain"><div class="sub">${st.star && !stale ? t(sel.plan && sel.plan.rule_code === "best_worth" ? "bestWorthPick" : "largestFits") : t("selected")}</div>
         <div class="big">${st.star ? '<span class="star">★</span> ' : ""}${esc(quantLabel(q, sel.repo))} · ${q.size_gib.toFixed(1)} GiB</div>
         <div class="sub">${status}</div>
         ${warns ? `<div class="sub">${warns}</div>` : ""}
