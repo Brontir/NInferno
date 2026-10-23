@@ -2474,7 +2474,8 @@ int test_resolve() {
         } catch (const std::exception&) { refused = true; }
         failures += check(!refused && r.named_tune_refused.empty(), "a named tune that serves");
     }
-    // The same check for a tune found rather than named (the UI's, spec-tune --load's own).
+    // The same check for a tune found rather than named (spec-tune --load's own) and for the one a
+    // UI start asks for.
     failures += check(tune_refusal(named, "aaaa", "gb202:170sm").empty() &&
                           tune_refusal(named, "aaaa").empty(),
                       "a tune found beside the artifact that would serve");

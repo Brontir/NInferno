@@ -518,6 +518,7 @@ logged or exported only; (b) moves only scheduling or latency, not the bytes of 
 | Mask fill order, constrained DFlash drafting | `src/runtime/contract/token_mask.h` → `src/models/qwen3_5/program/decode.cpp` | declared mask time by constraint class, reasoning gate and draft shape, no clock |
 | Device mask-release wait bound | `src/ops/kernel/sampling_device.cuh` | (c), open: ends a request |
 | Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), opt-in by option (`--dense-tune`, `--moe-tune`), off by default |
+| Local speculation tune (`ninferno spec-tune`, `ninferno-ui`'s calibrate action) | `src/spec/manifest.cpp` (`resolve_speculation`), `src/ui/app.cpp` (`make_launch`) | (c), opt-in: read only when named (`--spec-profile`; `ninferno-ui` names it only for a start that asks, `spec_profile`, never by itself), taint `local_spec_tune` |
 | Free memory after warm-up | `src/runtime/engine/model_instance.cpp` | (c), open (gaps above) |
 | Acceptance watchdog | `src/spec/watchdog.h` | counts of the request's own drafts, not a timing |
 | Planning, transfer, phase, request and mask-host timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/structured/request_constraint.cpp`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
