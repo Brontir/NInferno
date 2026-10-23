@@ -144,6 +144,9 @@ struct Reference {
     std::string why; // "" when it decides, else why the family's defaults stand
 };
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card);
+// Whether the worth weighs the quantizations on this card: its generation decides and a measured
+// quantization curve exists (else the quant rule's largest stands).
+[[nodiscard]] bool weighs_quantizations(const CardFacts& card);
 
 struct Term {
     Axis axis;
