@@ -2,7 +2,7 @@
 
 // The configuration choice: one rule for every place that picks how a model is served when the
 // user leaves it to the engine (ninferno-serve without the flags, --plan --no-load, ninferno-ui's
-// /api/plan). From facts only (the model's shape, the card's rates, the user's task), no
+// /api/plan). From facts only (the model's shape, the card's generation, the user's task), no
 // measurement on the user's machine:
 //
 //   memory     the own context each stream holds at a configuration (the plan without the
@@ -12,10 +12,13 @@
 //
 // The candidates are the quantizations x KV codecs x activation modes the model, the card and the
 // user's pins allow; the ring and the recurrent state follow the KV codec and the activations
-// (coupled_storages). A candidate fits when each stream holds the asked context of its own; among
-// those that fit, the largest worth -ln(T) - lambda KLD wins (choice_constants.h: the trade). The
-// result keeps every candidate scored, so a caller shows what each other value of an axis would
-// change (explain).
+// (coupled_storages), and their other values are scored beside the chosen one to explain them. A
+// candidate fits when each stream holds the asked context of its own; the quantization is the
+// quant rule's (the largest that fits, choice_constants.h); among the KV codecs and activation
+// modes the largest worth -ln(T) - lambda KLD wins, T priced on the generation's reference card
+// (choice_constants.h: what a decision may read), or the family's defaults where the generation's
+// constants do not rest on two lab cards. Every candidate keeps the estimates on the board itself
+// for a caller to show (explain).
 //
 // Pure: no CUDA, no files, no clock.
 
@@ -37,7 +40,7 @@ namespace ninferno::product::choice {
 struct CardFacts {
     int major = 0, minor = 0;   // compute capability
     int sms = 0;                // multiprocessors
-    double clock_hz = 0;        // reference SM clock
+    double clock_hz = 0;        // reference SM clock (the PCI-ID table's)
     double dram_bytes_per_s = 0;
     bool fp4 = false;           // FP4 tensor cores (NVFP4 weights run W4A4)
 };
@@ -52,8 +55,8 @@ struct ModelFacts {
     // Per-token and per-lane bytes of the state a step reads, by storage
     // (runtime::plan_kv_bytes_per_token, plan_ring_bytes_per_token, plan_state_bytes).
     std::function<std::uint64_t(KvCacheStorage)> kv_bytes_per_token;
-    std::function<std::uint64_t(KvCacheStorage)> ring_bytes_per_token; // 0: no sliding layers
-    std::function<std::uint64_t(RecurrentStateStorage)> state_bytes;    // 0: no recurrent layers
+    std::function<std::uint64_t(KvCacheStorage)> ring_bytes_per_token; // unset: no sliding layers
+    std::function<std::uint64_t(RecurrentStateStorage)> state_bytes;    // unset: no recurrent layers
     std::uint32_t window = 0;         // the sliding window (0: none)
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
@@ -69,9 +72,10 @@ struct QuantOption {
     bool nvfp4             = false; // NVFP4 weights
 };
 
-// What the user asks: the context each stream holds of its own, the streams, the request shape.
+// What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
+// one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape.
 struct Task {
-    std::uint32_t context     = 32768;
+    std::vector<std::uint32_t> contexts = {32768};
     std::uint32_t concurrency = 1;
     std::uint32_t prompt      = kRequestPrompt;
     std::uint32_t answer      = kRequestAnswer;
@@ -117,7 +121,7 @@ struct Speed {
     bool transferred         = false; // a constant came from another generation (kTransferGeneration)
 };
 
-// Decode at `context` tokens in the window with `concurrency` rows, and prefill.
+// Decode at `context` tokens in the window with `concurrency` rows, and prefill, on `card`.
 [[nodiscard]] Speed speed_of(const ModelFacts& model, const CardFacts& card,
                              const QuantOption& quant, const Candidate& candidate,
                              std::uint32_t concurrency, double context);
@@ -127,6 +131,15 @@ struct Speed {
 [[nodiscard]] double request_seconds(const ModelFacts& model, const CardFacts& card,
                                      const QuantOption& quant, const Candidate& candidate,
                                      const Task& task);
+
+// The reference card a decision prices on for a board's generation (choice_constants.h), and
+// whether its constants decide (both factor sets on two lab cards). nullopt: no reference card.
+struct Reference {
+    CardFacts card;
+    bool decides = false;
+    std::string why; // "" when it decides, else why the family's defaults stand
+};
+[[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card);
 
 struct Term {
     Axis axis;
@@ -151,29 +164,35 @@ struct Accuracy {
 struct Scored {
     Candidate candidate;
     std::uint32_t own_context = 0; // the longest context each stream holds of its own (0: none)
-    bool fits = false;             // own_context >= the task's
-    Speed speed;
+    bool fits = false;             // own_context >= the context the choice settled on
+    Speed speed;                   // on the board (an estimate to show)
     Accuracy accuracy;
-    double seconds = 0; // request_seconds
-    double worth   = 0; // -ln(seconds) - lambda kld
+    double seconds = 0;            // request_seconds on the board (an estimate to show)
+    double decision_seconds = 0;   // request_seconds on the reference card (0: none)
+    double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
+    bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
 };
 
 // The own context per stream a candidate holds (the plan without the weights), 0 when none.
 using OwnContextFn = std::function<std::uint32_t(const Candidate&)>;
 
 struct Choice {
-    std::vector<Scored> scored;        // every candidate, in enumeration order
+    std::vector<Scored> scored;        // every candidate in enumeration order, then the variants
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
+    std::uint32_t context = 0;         // the own context per stream the choice settled on
+    bool by_worth = false;             // the worth decided (else the family's defaults stood)
     std::string why;                   // one line: what decided it
 };
 
 // The axes' values the model and the card allow (a family's KV codecs, int8 activations only on
-// Qwen 3.5/3.6), before the pins.
+// Qwen 3.5/3.6), before the pins, and the family's automatic KV codec on this card
+// (runtime::plan_family_storage).
 struct Allowed {
     std::vector<KvCacheStorage> kv;
     std::vector<ActivationMode> activations;
+    KvCacheStorage automatic_kv = KvCacheStorage::BFloat16;
 };
-[[nodiscard]] Allowed allowed_axes(const ModelFacts& model, const CardFacts& card);
+[[nodiscard]] Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv);
 
 [[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card,
                             const std::vector<QuantOption>& quants, const Allowed& allowed,
@@ -183,10 +202,9 @@ struct Allowed {
 struct Alternative {
     Axis axis;
     std::string value;
-    const Scored* scored = nullptr; // nullptr: not a candidate (pinned away or not allowed)
-    std::string why_not;            // "" for the chosen value
-    // The same as a code for a caller's words: "" (chosen), no_fit, lower_worth, quant_rule.
-    std::string why_code;
+    const Scored* scored = nullptr;
+    std::string why_not;  // "" for the chosen value
+    std::string why_code; // "" (chosen), no_fit, lower_worth, quant_rule, default, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice,
                                                const std::vector<QuantOption>& quants);

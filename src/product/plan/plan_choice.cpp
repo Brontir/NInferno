@@ -118,9 +118,13 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     quant.bits_per_weight = facts.model.params > 0 ? quant.weight_bytes * 8 / facts.model.params : 0;
     const auto& formats   = facts.shape.weight_formats;
     quant.nvfp4      = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
-    quant.int8_route = formats.empty() || facts.shape.kquant ||
+    // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
+    // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
+    quant.int8_route = formats.empty() ||
                        std::any_of(formats.begin(), formats.end(), [](const std::string& f) {
-                           return f != "bf16" && f != "fp32" && f != "int32" && f != "f16";
+                           return f != "bf16" && f != "fp32" && f != "int32" && f != "f16" &&
+                                  f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
+                                  f != "ggml_q2_0";
                        });
     out.quants = {quant};
 
@@ -149,13 +153,15 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         seen.emplace_back(c, v);
         return v;
     };
-    const choice::Allowed allowed = choice::allowed_axes(model, card);
-    for (const std::uint32_t target : runtime::quant_own_targets(ask)) {
-        out.task.context   = target;
-        out.target_context = target;
-        out.choice = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
-        if (out.choice.chosen) { break; }
-    }
+    // The family's automatic KV codec on this card (the default where the generation's constants
+    // do not decide).
+    const auto storage =
+        runtime::plan_family_storage(facts.model.model_type, inputs.device.compute_capability);
+    const choice::Allowed allowed =
+        choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
+    out.task.contexts  = runtime::quant_own_targets(ask);
+    out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
+    out.target_context = out.choice.context;
     return out;
 }
 
@@ -178,12 +184,14 @@ std::string choice_line(const ServedChoice& served) {
 
 Json choice_json(const ServedChoice& served) {
     Json out = {{"task",
-                 {{"context", served.task.context},
+                 {{"context", served.choice.context},
+                  {"contexts", served.task.contexts},
                   {"concurrency", served.task.concurrency},
                   {"prompt", served.task.prompt},
                   {"answer", served.task.answer},
                   {"accuracy_weight", served.task.accuracy_weight}}},
-                {"why", served.choice.why}};
+                {"why", served.choice.why},
+                {"by_worth", served.choice.by_worth}};
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;

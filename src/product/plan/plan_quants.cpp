@@ -308,6 +308,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             q.bits_per_weight = row.candidate.bits_per_weight;
             q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
                                 q.label.find("nvfp4") != std::string::npos;
+            // The ternary and two-bit GGML blocks keep BF16 activations (kept_block_policy).
+            for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
+                if (q.label.find(a16) != std::string::npos) { q.int8_route = false; }
+            }
             choice::Candidate c;
             c.kv          = row.planned.plan.kv_cache;
             c.state       = row.planned.plan.recurrent;

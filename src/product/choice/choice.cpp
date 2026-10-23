@@ -18,10 +18,12 @@ std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
 }
 
-// The generation row's tensor rate per SM and clock for a route (Fp4: twice the int8 rate).
+// The generation row's tensor rate per SM and clock for a route (Fp4: twice the int8 rate). A
+// generation without an int8 MMA (Volta) takes its BF16 rate for the int8 route's compute.
 double peak(const CardFacts& card, Route route) noexcept {
     const GenerationRow& row = generation_row(card.major, card.minor);
-    const double rate = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * row.s8 : row.s8;
+    const double s8          = row.s8 > 0 ? row.s8 : row.bf16;
+    const double rate        = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * s8 : s8;
     return card.sms * card.clock_hz * rate;
 }
 
@@ -29,18 +31,18 @@ const DecodeConstants& decode_constants(const ModelFacts& model) noexcept {
     return model.moe() ? kMoeDecode : kDenseDecode;
 }
 
-// The prefill efficiency of (kind, generation, route): its own row, else the transfer generation's,
-// else the dense row of either; `transferred` when not its own.
+// The prefill efficiency of (kind, generation, route): its own row, else its kind's on the
+// transfer generation, else the dense row of either; `transferred` when not its own.
 double prefill_eta(bool moe, std::string_view generation, Route route, bool& transferred) noexcept {
     const Route base = route == Route::Fp4 ? Route::Int8 : route;
     transferred      = route == Route::Fp4;
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
-        for (const bool kind : {moe, false}) {
-            for (const PrefillEta& row : kPrefillEta) {
-                if (row.moe == kind && row.generation == gen && row.route == base) {
-                    transferred = transferred || gen != generation || kind != moe;
-                    return row.eta;
-                }
+    const std::pair<bool, std::string_view> order[] = {
+        {moe, generation}, {moe, kTransferGeneration}, {false, generation}, {false, kTransferGeneration}};
+    for (const auto& [kind, gen] : order) {
+        for (const PrefillEta& row : kPrefillEta) {
+            if (row.moe == kind && row.generation == gen && row.route == base) {
+                transferred = transferred || gen != generation || kind != moe;
+                return row.eta;
             }
         }
     }
@@ -91,10 +93,6 @@ double worst_term(Axis axis) noexcept {
     return worst;
 }
 
-std::string_view state_name(RecurrentStateStorage state) noexcept {
-    return recurrent_state_storage_name(state);
-}
-
 bool qwen_family(const ModelFacts& model) noexcept {
     return model.family == "qwen3_5_text" || model.family == "qwen3_5_moe_text";
 }
@@ -126,6 +124,22 @@ std::string fixed(double value, int digits) {
     std::ostringstream out;
     out << std::fixed << std::setprecision(digits) << value;
     return out.str();
+}
+
+Scored score(const ModelFacts& model, const CardFacts& card, const std::optional<Reference>& ref,
+             const QuantOption& quant, const Candidate& c, const Task& task,
+             const OwnContextFn& own_context) {
+    Scored s;
+    s.candidate   = c;
+    s.own_context = own_context ? own_context(c) : 0;
+    s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0);
+    s.accuracy    = accuracy_of(model, quant, c, card);
+    s.seconds     = request_seconds(model, card, quant, c, task);
+    if (ref) {
+        s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
+        s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
+    }
+    return s;
 }
 
 } // namespace
@@ -184,7 +198,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         transferred = true;
     }
     const double step     = k.step_seconds + bytes / (k.eta_dram * card.dram_bytes_per_s) + compute;
-    out.decode_per_stream = step > 0 ? 1 / step : 0;
+    out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
 
     bool prefill_transferred = false;
     const double eta = prefill_eta(model.moe(), gen, route, prefill_transferred);
@@ -199,6 +213,21 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
     return task.prompt / speed.prefill + task.answer / speed.decode_per_stream;
+}
+
+std::optional<Reference> reference_of(const CardFacts& card) {
+    const std::string_view gen = generation_of(card);
+    for (const ReferenceCard& r : kReferenceCards) {
+        if (r.generation != gen) { continue; }
+        Reference out;
+        out.card = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
+        out.decides = r.kv_two_cards && r.exact_two_cards;
+        if (!out.decides) {
+            out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card";
+        }
+        return out;
+    }
+    return std::nullopt;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
@@ -232,7 +261,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         }
     }
     if (model.recurrent) {
-        const std::string state{state_name(candidate.state)};
+        const std::string state{recurrent_state_storage_name(candidate.state)};
         if (candidate.state == RecurrentStateStorage::FP32) {
             add(Axis::State, state, 0, true, "the reference");
         } else if (const KldTerm* term = measured_term(Axis::State, state)) {
@@ -257,8 +286,9 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     return out;
 }
 
-Allowed allowed_axes(const ModelFacts& model, const CardFacts& /*card*/) {
+Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv) {
     Allowed out;
+    out.automatic_kv = automatic_kv;
     if (qwen_family(model)) {
         out.kv = {KvCacheStorage::BFloat16, KvCacheStorage::Int8Group64, KvCacheStorage::Fp8E4M3Row256,
                   KvCacheStorage::Fp8KeyNvfp4Value, KvCacheStorage::Nvfp4Group16};
@@ -267,6 +297,9 @@ Allowed allowed_axes(const ModelFacts& model, const CardFacts& /*card*/) {
         out.kv          = {KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256};
         out.activations = {ActivationMode::Fast, ActivationMode::Exact};
     }
+    if (std::find(out.kv.begin(), out.kv.end(), automatic_kv) == out.kv.end()) {
+        out.kv.push_back(automatic_kv);
+    }
     return out;
 }
 
@@ -274,6 +307,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
               const Allowed& allowed, const Pins& pins, const Task& task,
               const OwnContextFn& own_context) {
     Choice out;
+    const std::optional<Reference> ref = reference_of(card);
+    out.by_worth = ref && ref->decides;
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
         quant_ids.push_back(*pins.quant);
@@ -294,52 +329,100 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                     *pins.state != RecurrentStateStorage::FP32) {
                     continue;
                 }
-                Scored s;
                 const Coupled coupled = coupled_storages(model, kv, mode, pins);
-                s.candidate   = {q, kv, coupled.ring, coupled.state, mode};
-                s.own_context = own_context ? own_context(s.candidate) : 0;
-                s.fits        = s.own_context >= task.context && task.context > 0;
-                s.speed       = speed_of(model, card, quants[q], s.candidate, task.concurrency,
-                                         task.prompt + task.answer / 2.0);
-                s.accuracy    = accuracy_of(model, quants[q], s.candidate, card);
-                s.seconds     = request_seconds(model, card, quants[q], s.candidate, task);
-                s.worth       = -std::log(s.seconds) - task.accuracy_weight * s.accuracy.kld;
-                out.scored.push_back(std::move(s));
+                out.scored.push_back(score(model, card, ref, quants[q],
+                                           {q, kv, coupled.ring, coupled.state, mode}, task,
+                                           own_context));
             }
         }
     }
-    // The quantization: the rule's (the largest that fits, not below the floor bits unless none
-    // above it fits), then the best worth among its candidates. With a measured quant curve the
-    // worth alone would decide (choice_constants.h).
+    // The family's defaults: the automatic KV codec and --activations fast, unless pinned.
+    const KvCacheStorage default_kv          = pins.kv.value_or(allowed.automatic_kv);
+    const ActivationMode default_activations = pins.activations.value_or(ActivationMode::Fast);
+    // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
+    // every step before any quantization below them (the quant rule's tiers).
+    std::optional<std::size_t> chosen;
+    std::uint32_t settled = 0;
+    bool above_floor_settled = true;
     for (const bool above_floor : {true, false}) {
-        std::optional<std::size_t> quant;
-        for (const Scored& s : out.scored) {
-            const QuantOption& q = quants[s.candidate.quant];
-            if (!s.fits || (q.bits_per_weight >= kQuantFloorBits) != above_floor) { continue; }
-            if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
-                quant = s.candidate.quant;
+        for (const std::uint32_t context : task.contexts) {
+            std::optional<std::size_t> quant;
+            for (const Scored& s : out.scored) {
+                const QuantOption& q = quants[s.candidate.quant];
+                if (s.own_context < context || (q.bits_per_weight >= kQuantFloorBits) != above_floor) {
+                    continue;
+                }
+                if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
+                    quant = s.candidate.quant;
+                }
+            }
+            if (!quant) { continue; }
+            for (std::size_t i = 0; i < out.scored.size(); ++i) {
+                const Scored& s = out.scored[i];
+                if (s.own_context < context || s.candidate.quant != *quant) { continue; }
+                if (out.by_worth) {
+                    if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
+                } else if (s.candidate.kv == default_kv && s.candidate.activations == default_activations) {
+                    chosen = i;
+                }
+            }
+            if (chosen) {
+                settled             = context;
+                above_floor_settled = above_floor;
+                break;
             }
         }
-        if (!quant) { continue; }
-        for (std::size_t i = 0; i < out.scored.size(); ++i) {
-            const Scored& s = out.scored[i];
-            if (!s.fits || s.candidate.quant != *quant) { continue; }
-            if (!out.chosen || better(s, i, out.scored[*out.chosen], *out.chosen, quants)) {
-                out.chosen = i;
-            }
-        }
-        const Scored& c = out.scored[*out.chosen];
-        out.why = quants[*quant].label + ": the largest quantization whose every stream holds " +
-                  std::to_string(task.context) + " tokens" +
-                  (above_floor ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
-                  "; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
-                  activation_name(c.candidate.activations) + ": the best worth at it (" +
-                  fixed(c.seconds, 2) + " s a " + std::to_string(task.prompt) + "+" +
-                  std::to_string(task.answer) + "-token request, KLD " + fixed(c.accuracy.kld, 4) + ")";
+        if (chosen) { break; }
+    }
+    if (!chosen) {
+        out.why = "no candidate holds " + std::to_string(task.contexts.empty() ? 0 : task.contexts.back()) +
+                  " tokens for each of " + std::to_string(task.concurrency) + " streams";
         return out;
     }
-    out.why = "no candidate holds " + std::to_string(task.context) + " tokens for each of " +
-              std::to_string(task.concurrency) + " streams";
+    out.chosen  = chosen;
+    out.context = settled;
+    for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
+    const Scored& c = out.scored[*chosen];
+    out.why = quants[c.candidate.quant].label + ": the largest quantization whose every stream holds " +
+              std::to_string(settled) + " tokens" +
+              (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
+              "; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
+              activation_name(c.candidate.activations) +
+              (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
+                                  " reference card (" + fixed(c.decision_seconds, 2) + " s a " +
+                                  std::to_string(task.prompt) + "+" + std::to_string(task.answer) +
+                                  "-token request there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                            : ": the family's defaults (" +
+                                  (ref ? ref->why : std::string(generation_of(card)) + " has no reference card") +
+                                  ")");
+    // The coupled storages' other values beside the chosen (to explain them; never chosen).
+    std::vector<Candidate> variants;
+    if (model.recurrent && !pins.state) {
+        for (const RecurrentStateStorage st :
+             {RecurrentStateStorage::FP32, RecurrentStateStorage::FP16, RecurrentStateStorage::BF16}) {
+            if (st == c.candidate.state ||
+                (c.candidate.activations == ActivationMode::Exact && st != RecurrentStateStorage::FP32)) {
+                continue;
+            }
+            Candidate v = c.candidate;
+            v.state     = st;
+            variants.push_back(v);
+        }
+    }
+    if (model.window > 0 && !pins.ring) {
+        for (const KvCacheStorage ring : {KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256}) {
+            if (ring == c.candidate.ring) { continue; }
+            Candidate v = c.candidate;
+            v.ring      = ring;
+            variants.push_back(v);
+        }
+    }
+    for (const Candidate& v : variants) {
+        Scored s  = score(model, card, ref, quants[v.quant], v, task, own_context);
+        s.variant = true;
+        s.fits    = s.own_context >= settled;
+        out.scored.push_back(std::move(s));
+    }
     return out;
 }
 
@@ -348,34 +431,56 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     if (!choice.chosen) { return out; }
     const Scored& chosen = choice.scored[*choice.chosen];
     const Candidate& c   = chosen.candidate;
+    const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
+        switch (axis) {
+        case Axis::Quant: return quants[s.candidate.quant].label;
+        case Axis::Kv: return std::string(kv_cache_storage_name(s.candidate.kv));
+        case Axis::Ring: return std::string(kv_cache_storage_name(s.candidate.ring));
+        case Axis::State: return std::string(recurrent_state_storage_name(s.candidate.state));
+        case Axis::Activations: return activation_name(s.candidate.activations);
+        }
+        return "";
+    };
     const auto same_but = [&](const Candidate& x, Axis axis) {
         return (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
-               (axis == Axis::Activations || x.activations == c.activations);
+               (axis == Axis::Activations || x.activations == c.activations) &&
+               (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
     };
-    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations}) {
+    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::State, Axis::Ring}) {
+        const bool coupled = axis == Axis::State || axis == Axis::Ring;
         for (const Scored& s : choice.scored) {
+            if (s.variant != coupled && &s != &chosen) { continue; }
             if (!same_but(s.candidate, axis)) { continue; }
+            if (coupled && &s == &chosen) {
+                // The chosen value of a coupled axis is listed only when it has a variant beside.
+                const bool any = std::any_of(choice.scored.begin(), choice.scored.end(), [&](const Scored& v) {
+                    return v.variant && same_but(v.candidate, axis);
+                });
+                if (!any) { continue; }
+            }
             Alternative alt;
             alt.axis   = axis;
             alt.scored = &s;
-            alt.value  = axis == Axis::Quant ? quants[s.candidate.quant].label
-                         : axis == Axis::Kv  ? std::string(kv_cache_storage_name(s.candidate.kv))
-                                             : activation_name(s.candidate.activations);
+            alt.value  = value_of(s, axis);
             if (&s == &chosen) {
-                alt.why_not = "";
+                // the chosen value
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
-                alt.why_not = "does not hold the asked context (" + std::to_string(s.own_context) +
-                              " each)";
+                alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
             } else if (axis == Axis::Quant) {
                 alt.why_code = "quant_rule";
-                alt.why_not = quants[s.candidate.quant].bits_per_weight >
-                                      quants[c.quant].bits_per_weight
-                                  ? "does not fit"
-                                  : "smaller: the rule takes the largest that fits";
+                alt.why_not  = quants[s.candidate.quant].bits_per_weight > quants[c.quant].bits_per_weight
+                                   ? "does not fit"
+                                   : "smaller: the rule takes the largest that fits";
+            } else if (coupled) {
+                alt.why_code = "coupled";
+                alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
+            } else if (!choice.by_worth) {
+                alt.why_code = "default";
+                alt.why_not  = "the family's default stands (no decision constants for this generation)";
             } else {
                 alt.why_code = "lower_worth";
-                alt.why_not = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             }
             out.push_back(std::move(alt));
         }
