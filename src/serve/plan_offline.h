@@ -45,4 +45,18 @@ struct HubQuantChoice {
 largest_fitting_hub_quant(const ServeOptions& options,
                           const std::function<void(const std::string&)>& log);
 
+// The axes a start leaves to the engine (--kv-dtype auto, no --activations, no --state-dtype),
+// chosen for the artifact at `options.artifact_path` on this GPU by the configuration choice
+// (product/plan/plan_choice.h): the KV codec, the activation mode and the recurrent state with
+// the best worth that keeps the asked context per stream. Its line goes to `log`. nullopt: every
+// axis pinned, no GPU facts, the shape unknown, or nothing fits (the start then plans as before
+// and says why).
+struct ServedAxes {
+    std::optional<KvCacheStorage> kv;
+    std::optional<ActivationMode> activations;
+    std::optional<RecurrentStateStorage> state;
+};
+[[nodiscard]] std::optional<ServedAxes>
+choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log);
+
 } // namespace ninferno::serve

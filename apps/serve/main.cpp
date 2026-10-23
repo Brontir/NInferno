@@ -206,6 +206,15 @@ int main(int argc, char** argv) {
             logger->info("model | prepared {}", options.artifact_path);
             return 0;
         }
+        // The axes the user left to the engine (--kv-dtype auto, no --activations, no
+        // --state-dtype): the configuration choice for this artifact on this GPU
+        // (product/choice/choice.h through serve/plan_offline.h).
+        if (const auto axes = ninferno::serve::choose_served_axes(
+                options, [&](const std::string& line) { logger->info("choice | {}", line); })) {
+            if (axes->kv) { options.kv_cache = axes->kv; }
+            if (axes->activations) { options.activations = *axes->activations; }
+            if (axes->state) { options.recurrent_state = axes->state; }
+        }
         // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
         // bound or served.
         if (options.plan_only) {

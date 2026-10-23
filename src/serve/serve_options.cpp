@@ -417,6 +417,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--sliding-kv-dtype must be bf16 or fp8");
             }
             options.sliding_kv_cache = parse_kv_dtype(value.c_str());
+            options.sliding_kv_given = true;
         } else if (arg == "--state-dtype") {
             const std::string value = require_value("--state-dtype");
             const auto storage      = parse_recurrent_state_storage(value);
@@ -424,6 +425,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
             options.activations = product::parse_activation_mode(require_value("--activations"));
+            options.activations_given = true;
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor =
                 parse_float_in(require_value("--rope-yarn-factor"), "rope-yarn-factor", 1.0F, 64.0F);

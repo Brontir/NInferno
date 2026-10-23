@@ -95,6 +95,10 @@ struct ServeOptions {
     // --activations exact|fast (ninferno/types.h): BF16 activations on every quantized linear, or
     // the width-dependent routes. The default is the product's one (kDefaultActivationMode).
     ActivationMode activations = kDefaultActivationMode;
+    // Whether --activations and --sliding-kv-dtype were given: the configuration choice
+    // (product/choice/choice.h) picks what the user left automatic.
+    bool activations_given = false;
+    bool sliding_kv_given  = false;
     float rope_yarn_factor     = 1.0F; // --rope-yarn-factor (EngineOptions::rope_yarn_factor)
     SpeculativeOptions speculative;
     // --spec auto (the default without an explicit --spec, --draft-tokens, --drafter or

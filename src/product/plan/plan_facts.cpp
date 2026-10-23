@@ -246,6 +246,7 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     s.experts           = moe ? static_cast<int>(g.experts) : 0;
     s.experts_per_token = moe ? static_cast<int>(g.experts_used) : 0;
     s.builtin_mtp       = g.mtp;
+    s.tied_embeddings   = g.tied;
 
     if (g.layers != 0 && g.hidden != 0) {
         const double hidden    = g.hidden;

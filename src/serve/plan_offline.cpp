@@ -4,6 +4,7 @@
 #include "convert/acquire.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "serve/generation_service.h"
@@ -259,6 +260,14 @@ ModelRead read_model(const ServeOptions& options) {
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
                                      const std::vector<product::QuantListing>& listing);
 
+// The axes the user pinned with flags (the configuration choice picks the others).
+product::ChoicePins pins_of(const ServeOptions& options) {
+    return {.kv          = options.kv_cache.has_value(),
+            .activations = options.activations_given,
+            .state       = options.recurrent_state.has_value(),
+            .ring        = options.sliding_kv_given};
+}
+
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
@@ -359,6 +368,13 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
                                              quants ? &*quants : nullptr);
     out.fits = planned.plan.fits;
+    // The configuration choice at the chosen weights: what the start would pick for the axes left
+    // automatic, and what every other value would change.
+    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options))) {
+        out.json["choice"] = product::choice_json(*served);
+        out.text += product::choice_line(*served) + "
+";
+    }
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
         product::DryRunInputs now                = planning.inputs;
@@ -570,6 +586,48 @@ largest_fitting_hub_quant(const ServeOptions& options,
     }
     if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
     return choice_of(row, plan, options, log);
+}
+
+std::optional<ServedAxes>
+choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
+    const product::ChoicePins pins = pins_of(options);
+    if (pins.kv && pins.activations && pins.state) { return std::nullopt; }
+    runtime::PlanDeviceFacts device;
+    spec::GpuKey gpu;
+    try {
+        device = product::plan_device_of_cuda(
+            options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
+        gpu = spec::gpu_identity(options.device).key;
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("choice | not planned (no GPU facts: ") + e.what() + ")"); }
+        return std::nullopt;
+    }
+    ServeOptions at_artifact  = options;
+    at_artifact.model_source  = options.artifact_path;
+    std::optional<product::ServedChoice> served;
+    try {
+        const ModelRead model   = read_model(at_artifact);
+        Planning planning       = planning_of(at_artifact, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        served                  = product::choose_at_weights(model.facts, planning.inputs, pins);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("choice | not planned: ") + e.what()); }
+        return std::nullopt;
+    }
+    if (!served) { return std::nullopt; }
+    if (log) { log(product::choice_line(*served).substr(9)); }
+    if (!served->choice.chosen) { return std::nullopt; }
+    const product::choice::Candidate& c = served->choice.scored[*served->choice.chosen].candidate;
+    ServedAxes out;
+    if (!pins.kv) { out.kv = c.kv; }
+    if (!pins.activations) { out.activations = c.activations; }
+    // A recurrent state the choice set (the Qwen 3.5 families; its accuracy names the state term).
+    const auto& terms = served->choice.scored[*served->choice.chosen].accuracy.terms;
+    const bool recurrent = std::any_of(terms.begin(), terms.end(), [](const product::choice::Term& t) {
+        return t.axis == product::choice::Axis::State;
+    });
+    if (!pins.state && recurrent) { out.state = c.state; }
+    return out;
 }
 
 } // namespace ninferno::serve
