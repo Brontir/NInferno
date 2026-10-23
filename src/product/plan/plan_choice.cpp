@@ -176,6 +176,13 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.task.contexts  = runtime::quant_own_targets(ask);
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
+    const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
+    out.depth                 = std::max<std::uint32_t>(512, asked / 4);
+    if (out.choice.chosen) {
+        out.decode_at_depth = choice::speed_of(model, card, quant, out.choice.scored[*out.choice.chosen].candidate,
+                                               out.task.concurrency, out.depth)
+                                  .decode_per_stream;
+    }
     return out;
 }
 
@@ -261,6 +268,8 @@ Json choice_json(const ServedChoice& served) {
     const choice::Scored& s = served.choice.scored[*served.choice.chosen];
     Json chosen             = candidate_json(s.candidate);
     chosen["quant"]         = served.quants[s.candidate.quant].label;
+    chosen["depth"]         = served.depth;
+    chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
     chosen.update(estimates_json(s));
     out["chosen"]    = chosen;
     Json alternatives = Json::array();
