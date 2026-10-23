@@ -6,6 +6,7 @@
 #include "runtime/engine/quant_rule.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -114,7 +115,7 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
 
 std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs, const ChoicePins& pins,
-                                              const std::string& label) {
+                                              const std::string& label, OwnContext memory) {
     if (!facts.model.known()) { return std::nullopt; }
     // The KV codec, activations and state change the output bytes: the choice reads an idle card of
     // the device's class, never the free memory now (another process's share); the start's ladder
@@ -160,8 +161,17 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
 
     out.task.concurrency = std::max<std::uint32_t>(o.max_concurrency, 1);
     const runtime::QuantAsk ask = quant_ask_of(inputs, facts.model.native_context);
+    const std::vector<std::uint32_t> steps = runtime::quant_own_targets(ask);
     const auto own = [&](const choice::Candidate& c) -> std::uint32_t {
-        const DryRunInputs pinned        = inputs_with(idle, c);
+        if (memory == OwnContext::Unbounded) { return std::numeric_limits<std::uint32_t>::max(); }
+        const DryRunInputs pinned = inputs_with(idle, c);
+        if (memory == OwnContext::Steps) {
+            // The first of Auto's steps it holds of its own (steps are tried longest first).
+            for (const std::uint32_t step : steps) {
+                if (holds_own_context(facts, pinned, step)) { return step; }
+            }
+            return 0;
+        }
         const PlannedSpeculation planned = plan_model(facts, pinned);
         return own_context_of(facts, pinned, planned);
     };
@@ -181,7 +191,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         runtime::plan_family_storage(facts.model.model_type, inputs.device.compute_capability);
     const choice::Allowed allowed =
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
-    out.task.contexts  = runtime::quant_own_targets(ask);
+    out.task.contexts  = steps;
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();

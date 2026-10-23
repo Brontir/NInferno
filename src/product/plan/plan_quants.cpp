@@ -254,6 +254,11 @@ std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& i
     return best;
 }
 
+bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       std::uint32_t context) {
+    return own_plan(plan_model(facts, at_context(inputs, context)).plan);
+}
+
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
                       const DryRunInputs& inputs) {
     QuantPlan out;
@@ -342,19 +347,33 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
          out.pick->tier == runtime::QuantPickTier::OwnStepped ||
          out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
         const ChoicePins& pins = inputs.pins;
-        std::optional<std::size_t> best;
-        double best_worth = 0;
+        // Every supported row on the tier's side of the floor, scored at its own choice: a narrower
+        // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
+        // the order of the best worth their weights could reach (no memory planned: a bound); the
+        // memory is planned (one plan a step) only while a row's bound can still beat the best.
+        std::vector<std::pair<double, std::size_t>> bounds;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
             const QuantRow& row = out.rows[i];
-            // Every supported row on the tier's side of the floor, scored at its own choice: a
-            // narrower KV codec may bring a row the rule's resolved options left short to the target.
             if (!row.candidate.supported ||
                 out.pick->below_floor != (runtime::quant_rank_bits(row.candidate) <
                                           runtime::kPlanQualityFloorBits)) {
                 continue;
             }
+            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis), inputs,
+                                                 pins, row.listing.quant, OwnContext::Unbounded);
+            if (bound && bound->choice.chosen) {
+                bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
+            }
+        }
+        std::stable_sort(bounds.begin(), bounds.end(),
+                         [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::optional<std::size_t> best;
+        double best_worth = 0;
+        for (const auto& [bound, i] : bounds) {
+            if (best && bound < best_worth - choice::kWorthTie) { break; }
+            const QuantRow& row = out.rows[i];
             const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
-                                                  inputs, pins, row.listing.quant);
+                                                  inputs, pins, row.listing.quant, OwnContext::Steps);
             if (!served || !served->choice.chosen ||
                 served->choice.context < out.pick->target_context) {
                 continue;

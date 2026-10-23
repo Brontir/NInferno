@@ -163,6 +163,10 @@ struct QuantPlan {
 [[nodiscard]] std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& inputs,
                                            const PlannedSpeculation& served);
 
+// Whether every stream of `inputs` holds `context` of its own (the plan at that pinned context).
+[[nodiscard]] bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                     std::uint32_t context);
+
 // JSON pieces of "ninferno-dry-plan/1" (docs/reference/serving.md, "The plan without the
 // weights").
 [[nodiscard]] nlohmann::json plan_json(const runtime::DryRunPlan& plan, bool ladder);
