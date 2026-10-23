@@ -214,6 +214,7 @@ int main(int argc, char** argv) {
             if (axes->kv) { options.kv_cache = axes->kv; }
             if (axes->activations) { options.activations = *axes->activations; }
             if (axes->state) { options.recurrent_state = axes->state; }
+            if (axes->ring) { options.sliding_kv_cache = *axes->ring; }
         }
         // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
         // bound or served.

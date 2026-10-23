@@ -59,6 +59,7 @@ struct ModelFacts {
     std::function<std::uint64_t(RecurrentStateStorage)> state_bytes;    // unset: no recurrent layers
     std::uint32_t window = 0;         // the sliding window (0: none)
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
+    bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -91,9 +92,10 @@ struct Pins {
     std::optional<ActivationMode> activations;
 };
 
-// The default storages the engine couples to the KV codec and the activations: the sliding rings
-// in BF16 (types.h sliding_kv_cache) and the recurrent state in FP16 under fast, FP32 under exact
-// (model_instance.cpp). Pinned values stay.
+// The storages that follow the KV codec and the activations (the owner's rule, 23.10): the sliding
+// rings in the KV cache's kind (FP8 under any narrower KV codec where the family's rings take FP8,
+// else BF16), the recurrent state one step finer than the KV cache (FP32 under BF16 KV, FP16 under
+// a narrower one; FP32 under exact, which refuses a rounded state). Pinned values stay.
 struct Coupled {
     KvCacheStorage ring;
     RecurrentStateStorage state;

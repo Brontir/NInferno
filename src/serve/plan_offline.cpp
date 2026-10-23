@@ -628,6 +628,11 @@ choose_served_axes(const ServeOptions& options, const std::function<void(const s
         return t.axis == product::choice::Axis::State;
     });
     if (!pins.state && recurrent) { out.state = c.state; }
+    // The rings follow the KV codec where the family's take FP8.
+    const bool sliding = std::any_of(terms.begin(), terms.end(), [](const product::choice::Term& t) {
+        return t.axis == product::choice::Axis::Ring;
+    });
+    if (!pins.ring && sliding) { out.ring = c.ring; }
     return out;
 }
 

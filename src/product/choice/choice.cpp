@@ -167,12 +167,15 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
 
 } // namespace
 
-Coupled coupled_storages(const ModelFacts& model, KvCacheStorage /*kv*/, ActivationMode activations,
+Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationMode activations,
                          const Pins& pins) noexcept {
     Coupled out{KvCacheStorage::BFloat16, RecurrentStateStorage::FP32};
-    out.ring = pins.ring.value_or(KvCacheStorage::BFloat16);
+    const bool narrow_kv = kv != KvCacheStorage::BFloat16;
+    out.ring = pins.ring.value_or(model.window > 0 && model.fp8_ring && narrow_kv
+                                      ? KvCacheStorage::Fp8E4M3Row256
+                                      : KvCacheStorage::BFloat16);
     if (model.recurrent) {
-        out.state = pins.state.value_or(activations == ActivationMode::Exact
+        out.state = pins.state.value_or(activations == ActivationMode::Exact || !narrow_kv
                                             ? RecurrentStateStorage::FP32
                                             : RecurrentStateStorage::FP16);
     }
@@ -432,7 +435,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
             variants.push_back(v);
         }
     }
-    if (model.window > 0 && !pins.ring) {
+    if (model.window > 0 && model.fp8_ring && !pins.ring) {
         for (const KvCacheStorage ring : {KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256}) {
             if (ring == c.candidate.ring) { continue; }
             Candidate v = c.candidate;
