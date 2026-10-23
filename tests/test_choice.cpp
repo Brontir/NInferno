@@ -118,7 +118,7 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "decode " << decodes << " points: rms " << decode_rms * 100 << " %, worst "
               << decode_worst * 100 << " %; prefill " << prefills << ": rms " << prefill_rms * 100
               << " %, worst " << prefill_worst * 100 << " %\n";
-    check(decodes == 49, "the fixture's 49 decode points");
+    check(decodes == 49 && prefills == 15, "the fixture's 49 decode points and 15 prefill points");
     check(decode_rms < 0.055 && decode_worst < 0.16, "decode within the fit's error");
     check(prefill_rms < 0.025 && prefill_worst < 0.06, "prefill within the fit's error");
 }
@@ -269,7 +269,8 @@ void decides_by_generation(const json& fixture) {
         const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
         const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
         check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
-        check(ra->decides == ch::kKldTwoCards, "Ada decides once the accuracy terms rest on two cards");
+        check(ra->decides == ch::kKldTwoCards && ch::reference_of(a.card, {true, true})->decides,
+              "Ada decides once the accuracy terms rest on two cards");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
@@ -351,6 +352,11 @@ void weighs_the_quantizations(const json& fixture) {
     check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
     q.bits_per_weight = 9.0;
     check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
+    q.bits_per_weight = (6.77 + 8.65) / 2; // above Q6_K: a straight line to 0 at Q8_0's bits
+    check(std::abs(quant_term(q).kld - 0.00623 / 2) < 1e-9, "between Q6_K and Q8_0: halfway to 0");
+    q.label           = "Q8_0";
+    q.bits_per_weight = 8.5; // another model's Q8_0: its own reference
+    check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
     Bench with6 = b;
     ch::QuantOption q6 = b.quants[0];
     q6.label           = "Q6_K";
@@ -358,17 +364,50 @@ void weighs_the_quantizations(const json& fixture) {
     q6.weight_bytes    = b.quants[0].weight_bytes * 6.77 / b.quants[0].bits_per_weight;
     with6.quants.push_back(q6);
     ch::Task task;
+    const ch::Gates open{true, true};
     const ch::Choice choice = ch::choose(with6.model, with6.card, with6.quants,
                                          ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
-                                         oracle(with6, 20e9));
-    if (ch::kKldTwoCards) check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
+                                         oracle(with6, 20e9), open);
+    check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
               choice.why.find("best worth among the quantizations") != std::string::npos,
           "Ada: the quantizations by worth (Q6_K)");
+    int codes = 0;
     for (const ch::Alternative& a : ch::explain(choice, with6.quants)) {
-        if (ch::kKldTwoCards && a.axis == ch::Axis::Quant && a.value == "Q8_0") {
+        if (a.axis == ch::Axis::Quant && a.value == "Q8_0") {
             check(a.why_code == "lower_worth", "Q8_0 fits and lost on worth, not on the rule");
+            ++codes;
+        }
+        if (a.axis == ch::Axis::Quant && a.value == "IQ3_XXS") {
+            check(a.why_code == "quant_rule", "a quantization below the floor: the rule's tiers, not the worth");
+            ++codes;
+        }
+        if (a.axis == ch::Axis::Kv && a.value == "fp8") {
+            check(a.why_code == "lower_worth", "FP8 KV: the same cost, less accurate");
+            ++codes;
         }
     }
+    check(codes == 3, "Q8_0, IQ3_XXS and FP8 KV explained");
+    // The constants' own gates: the accuracy terms rest on one card until kKldTwoCards.
+    const ch::Choice gated = ch::choose(with6.model, with6.card, with6.quants,
+                                        ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
+                                        oracle(with6, 20e9));
+    check(gated.by_worth == ch::kKldTwoCards, "the worth decides only with the accuracy gate open");
+    // Two quantizations alike in every respect: a tie, broken by the listing's order.
+    Bench twins           = b;
+    twins.quants          = {b.quants[0], b.quants[0]};
+    twins.quants[1].label = "Q4_K_M copy";
+    const ch::Choice tie = ch::choose(twins.model, twins.card, twins.quants,
+                                      ch::allowed_axes(twins.model, KvCacheStorage::Int8Group64), {}, task,
+                                      oracle(twins, 20e9), open);
+    int ties = 0;
+    for (const ch::Alternative& a : ch::explain(tie, twins.quants)) {
+        if (a.axis == ch::Axis::Quant && a.value == "Q4_K_M copy") {
+            check(a.why_code == "tie_order" && a.why_not.find("int8") == std::string::npos,
+                  "an equal quantization: the listing's order");
+            ++ties;
+        }
+    }
+    check(ties == 1, "the equal quantization explained");
     // Without decision constants (Turing) the rule's largest stands.
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     Bench t6      = t;
@@ -379,7 +418,8 @@ void weighs_the_quantizations(const json& fixture) {
 }
 
 // The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
-// and the tie goes to the narrower: more context); on Blackwell (no reference card) the default.
+// and the tie goes to the narrower: more context), by speed alone (a chunk has no accuracy term, so
+// the accuracy gate does not hold it); on Blackwell (no reference card) the default.
 void chooses_the_chunk(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
@@ -391,7 +431,24 @@ void chooses_the_chunk(const json& fixture) {
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    if (ch::kKldTwoCards) check(ada.chosen && chosen(ada).candidate.chunk == 2048, "Ada, an MoE: chunk 2048 for a 2048-token prompt");
+    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed,
+          "Ada, an MoE: chunk 2048 for a 2048-token prompt");
+    int chunks = 0;
+    for (const ch::Alternative& a : ch::explain(ada, b.quants)) {
+        if (a.axis == ch::Axis::Chunk && a.value == "4096") {
+            check(a.why_code == "tie_context", "chunk 4096: as fast for this prompt, less context");
+            ++chunks;
+        }
+        if (a.axis == ch::Axis::Chunk && a.value == "1024") {
+            check(a.why_code == "lower_worth", "chunk 1024: slower");
+            ++chunks;
+        }
+    }
+    check(chunks == 2, "both other chunks explained");
+    ch::Pins wide;
+    wide.chunk = 4096;
+    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), wide, task, own);
+    check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
     check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
@@ -416,14 +473,30 @@ void steps_before_the_floor(const json& fixture) {
     task.contexts = {32768, 16384, 8192};
     // Q4_K_M leaves room for 20K tokens of INT8 KV, IQ3_XXS for far more: 16K at Q4_K_M wins.
     const double budget = b.quants[0].weight_bytes + 20000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
-    // KV pinned to INT8: a narrower codec would itself reach 32K at Q4_K_M (the KV codec is a
-    // memory lever too; that is the rule's first step).
+    // KV pinned to INT8: where the worth decides, a narrower codec would itself reach 32K at
+    // Q4_K_M (the KV codec is a memory lever too).
     ch::Pins pins;
     pins.kv = KvCacheStorage::Int8Group64;
     const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                     pins, task, oracle(b, budget));
     check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" && c.context == 16384,
           "16K at Q4_K_M before 32K below the floor");
+}
+
+// Contradictory pins say so instead of "nothing fits".
+void contradictory_pins(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4070 Ti");
+    ch::Pins pins;
+    pins.activations = ActivationMode::Exact;
+    pins.state       = RecurrentStateStorage::FP16;
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                    pins, ch::Task{}, oracle(b, 20e9));
+    check(!c.chosen && c.why.find("refuses") != std::string::npos, "exact with a pinned FP16 state: refused");
+    pins       = {};
+    pins.quant = 7;
+    const ch::Choice out = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                      pins, ch::Task{}, oracle(b, 20e9));
+    check(!out.chosen && out.why.find("not among") != std::string::npos, "a pinned quantization out of range");
 }
 
 // The coupled storages are explained: the recurrent state's other values beside the chosen.
@@ -456,6 +529,7 @@ int main() {
     chooses_the_chunk(fixture);
     coarse_quant_keeps_kv(fixture);
     explains_the_state(fixture);
+    contradictory_pins(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

@@ -117,8 +117,6 @@ double worst_term(Axis axis) noexcept {
     return worst;
 }
 
-bool quant_curve() noexcept { return !kQuantKldSource.empty(); }
-
 // An MoE's prefill share at a chunk (kMoeChunkShare, linear in log2 of the tokens each expert takes).
 double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
     const double x = static_cast<double>(chunk) * model.experts_per_token / std::max(model.experts, 1);
@@ -138,12 +136,18 @@ double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
 
 // The interpolated quantization term at `bits` (choice_constants.h kQuantKld), and the measured
 // point when `label` is one. log KLD is linear in bits between the two measured points around
-// `bits`; past the measured range, the nearest pair's slope; at or above the reference's bits, 0.
+// `bits`; below the measured range, the lowest pair's slope; above it, a straight line to 0 at the
+// reference's bits; at or above them, 0. The reference's own label is 0 on any model (the curve is
+// against it).
 double quant_kld(double bits, std::string_view label, bool same_family, bool& measured) {
     measured = false;
     double reference_bits = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
+        if (p.kld <= 0 && p.label == label) {
+            measured = same_family && std::abs(p.bits_per_weight - bits) < 0.05;
+            return 0;
+        }
         // A label's point is the measured file's: the same family at the same bits (another model's
         // Q4_K_M has other bits per weight and takes the interpolation).
         if (same_family && !label.empty() && p.label == label &&
@@ -161,6 +165,9 @@ double quant_kld(double bits, std::string_view label, bool same_family, bool& me
     if (points.size() == 1) { return points.front()->kld; }
     std::sort(points.begin(), points.end(),
               [](const QuantKldPoint* a, const QuantKldPoint* b) { return a->bits_per_weight < b->bits_per_weight; });
+    if (const QuantKldPoint& top = *points.back(); bits > top.bits_per_weight) {
+        return top.kld * (reference_bits - bits) / (reference_bits - top.bits_per_weight);
+    }
     std::size_t i = 0;
     while (i + 2 < points.size() && points[i + 1]->bits_per_weight <= bits) { ++i; }
     const QuantKldPoint& lo = *points[i];
@@ -313,16 +320,17 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 
-std::optional<Reference> reference_of(const CardFacts& card) {
+std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates) {
     const std::string_view gen = generation_of(card);
     for (const ReferenceCard& r : kReferenceCards) {
         if (r.generation != gen) { continue; }
         Reference out;
-        out.card = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
-        out.decides = r.kv_two_cards && r.exact_two_cards && kKldTwoCards;
+        out.card          = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
+        out.decides       = r.kv_two_cards && r.exact_two_cards && gates.accuracy;
+        out.chunk_decides = gates.moe_chunk;
         if (!r.kv_two_cards || !r.exact_two_cards) {
             out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card";
-        } else if (!kKldTwoCards) {
+        } else if (!gates.accuracy) {
             out.why = "the accuracy terms rest on one lab card";
         }
         return out;
@@ -330,9 +338,9 @@ std::optional<Reference> reference_of(const CardFacts& card) {
     return std::nullopt;
 }
 
-bool weighs_quantizations(const CardFacts& card) {
-    const auto ref = reference_of(card);
-    return ref && ref->decides && quant_curve();
+bool weighs_quantizations(const CardFacts& card, const Gates& gates) {
+    const auto ref = reference_of(card, gates);
+    return ref && ref->decides;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
@@ -343,17 +351,11 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         out.terms.push_back({axis, std::move(value), kld, measured, other_family && kld > 0,
                              std::move(source)});
     };
-    // The quantization: the measured curve (choice_constants.h), or none (the quant rule picks).
-    if (quant_curve()) {
-        bool measured   = false;
-        const double q  = quant_kld(quant.bits_per_weight, quant.label, !other_family, measured);
-        add(Axis::Quant, quant.label, q, measured && !other_family,
-            measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
-        out.quant_known = true;
-    } else {
-        add(Axis::Quant, quant.label, 0, false, "no measured curve: the quant rule picks");
-        out.quant_known = false;
-    }
+    // The quantization: the measured curve (choice_constants.h).
+    bool measured  = false;
+    const double q = quant_kld(quant.bits_per_weight, quant.label, !other_family, measured);
+    add(Axis::Quant, quant.label, q, measured,
+        measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {
@@ -429,11 +431,20 @@ Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv) {
 
 Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<QuantOption>& quants,
               const Allowed& allowed, const Pins& pins, const Task& task,
-              const OwnContextFn& own_context) {
+              const OwnContextFn& own_context, const Gates& gates) {
     Choice out;
-    const std::optional<Reference> ref = reference_of(card);
+    if (pins.quant && *pins.quant >= quants.size()) {
+        out.why = "the pinned quantization is not among the options";
+        return out;
+    }
+    if (pins.activations == ActivationMode::Exact && model.recurrent && pins.state &&
+        *pins.state != RecurrentStateStorage::FP32) {
+        out.why = "--activations exact refuses the rounded recurrent state pinned";
+        return out;
+    }
+    const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = ref && ref->decides;
-    out.quant_by_worth = out.by_worth && quant_curve();
+    out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
         quant_ids.push_back(*pins.quant);
@@ -446,8 +457,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
     const std::vector<ActivationMode> modes =
         pins.activations ? std::vector<ActivationMode>{*pins.activations} : allowed.activations;
-    // The chunk: pinned, else an MoE's measured widths (only the default eligible until the shares
-    // rest on two lab cards), else the default.
+    // The chunk: pinned, else an MoE's measured widths (only the default eligible unless the
+    // shares decide), else the default.
     std::vector<std::uint32_t> chunks;
     if (pins.chunk) {
         chunks = {*pins.chunk};
@@ -456,7 +467,6 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     } else {
         chunks = {kDefaultChunk};
     }
-    const bool chunk_decides          = kMoeChunkTwoCards;
     const std::uint32_t default_chunk = pins.chunk.value_or(kDefaultChunk);
     for (const std::size_t q : quant_ids) {
         for (const KvCacheStorage kv : kvs) {
@@ -479,11 +489,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     const KvCacheStorage default_kv          = pins.kv.value_or(allowed.automatic_kv);
     const ActivationMode default_activations = pins.activations.value_or(ActivationMode::Fast);
     // A candidate the selection may take: any under the worth; only the family's defaults else.
+    // The chunk is free where its shares decide (it has no accuracy term: the worth among chunks is
+    // their speed on the reference card), else the default.
     const auto eligible = [&](const Scored& s) {
-        const bool chunk_ok = (out.by_worth && chunk_decides) || s.candidate.chunk == default_chunk;
+        const bool chunk_ok = out.chunk_by_speed || s.candidate.chunk == default_chunk;
         return chunk_ok && (out.by_worth || (s.candidate.kv == default_kv &&
                                              s.candidate.activations == default_activations));
     };
+    const auto above = [&](const Scored& s) { return quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits; };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
     // every step before any quantization below them (the quant rule's tiers).
     std::optional<std::size_t> chosen;
@@ -491,29 +504,20 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     bool above_floor_settled = true;
     for (const bool above_floor : {true, false}) {
         for (const std::uint32_t context : task.contexts) {
+            // Under the worth, the best eligible candidate of any quantization at or (in the second
+            // pass) below the floor; else among the quant rule's (the largest) candidates.
             std::optional<std::size_t> quant;
-            // With a measured curve and a reference card the worth weighs the quantizations too:
-            // the best eligible candidate of any quantization at or (in the second pass) below the
-            // floor. Else the quant rule's: the largest.
-            const bool by_quant_worth = out.by_worth && quant_curve();
             for (const Scored& s : out.scored) {
-                const QuantOption& q = quants[s.candidate.quant];
-                if (!eligible(s) || s.own_context < context ||
-                    (q.bits_per_weight >= kQuantFloorBits) != above_floor) {
-                    continue;
-                }
-                if (by_quant_worth) {
-                    quant = s.candidate.quant; // any: the worth below ranks across them
-                } else if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
+                if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
+                if (!quant || larger_quant(quants[s.candidate.quant], s.candidate.quant, quants[*quant], *quant)) {
                     quant = s.candidate.quant;
                 }
             }
             if (!quant) { continue; }
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
-                if (!eligible(s) || s.own_context < context) { continue; }
-                if ((quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits) != above_floor) { continue; }
-                if (!by_quant_worth && s.candidate.quant != *quant) { continue; }
+                if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
+                if (!out.by_worth && s.candidate.quant != *quant) { continue; }
                 if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
             }
             if (chosen) {
@@ -533,10 +537,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     out.context = settled;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    const bool quant_by_worth = out.by_worth && quant_curve();
     out.why = quants[c.candidate.quant].label +
               (quant_ids.size() == 1 ? " (the one quantization): every stream holds "
-               : quant_by_worth      ? ": the best worth among the quantizations whose every stream holds "
+               : out.by_worth        ? ": the best worth among the quantizations whose every stream holds "
                                      : ": the largest quantization whose every stream holds ") +
               std::to_string(settled) + " tokens" +
               (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
@@ -548,7 +551,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                                   "-token request there, KLD " + fixed(c.accuracy.kld, 4) + ")"
                             : ": the family's defaults (" +
                                   (ref ? ref->why : std::string(generation_of(card)) + " has no reference card") +
-                                  ")");
+                                  ")") +
+              (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
+                                        ": the fastest prefill on the reference card"
+                                  : "");
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {
@@ -585,6 +591,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     if (!choice.chosen) { return out; }
     const Scored& chosen = choice.scored[*choice.chosen];
     const Candidate& c   = chosen.candidate;
+    const auto above = [&](const Scored& s) { return quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits; };
     const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
         switch (axis) {
         case Axis::Quant: return quants[s.candidate.quant].label;
@@ -626,25 +633,26 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
-            } else if (axis == Axis::Quant && choice.quant_by_worth &&
-                       (quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits) ==
-                           (quants[c.quant].bits_per_weight >= kQuantFloorBits)) {
-                alt.why_code = "lower_worth";
-                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
-            } else if (axis == Axis::Quant) {
+            } else if (axis == Axis::Quant && (!choice.by_worth || above(s) != above(chosen))) {
+                // The rule decided it: no worth, or the other side of the floor (the rule's tiers).
                 alt.why_code = "quant_rule";
-                alt.why_not  = quants[s.candidate.quant].bits_per_weight > quants[c.quant].bits_per_weight
-                                   ? "does not fit"
-                                   : "smaller: the rule takes the largest that fits";
+                if (above(s) != above(chosen)) {
+                    alt.why_not = above(s) ? "does not fit"
+                                           : "below " + fixed(kQuantFloorBits, 1) +
+                                                 " bits per weight: only when nothing above fits";
+                } else {
+                    alt.why_not = quants[s.candidate.quant].bits_per_weight > quants[c.quant].bits_per_weight
+                                      ? "does not fit"
+                                      : "smaller: the rule takes the largest that fits";
+                }
             } else if (coupled) {
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
-            } else if (axis == Axis::Chunk && !kMoeChunkTwoCards) {
+            } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
-                alt.why_not  = "the default chunk stands (the MoE chunk shares rest on one lab card)";
-            } else if (!choice.by_worth) {
-                alt.why_code = "default";
-                alt.why_not  = "the family's default stands (no decision constants for this generation)";
+                alt.why_not  = axis == Axis::Chunk
+                                   ? "the default chunk stands (no measured chunk shares decide here)"
+                                   : "the family's default stands (no decision constants for this generation)";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        (s.own_context != chosen.own_context ||
                         quants[s.candidate.quant].weight_bytes != quants[c.quant].weight_bytes)) {
@@ -652,7 +660,9 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
                 alt.why_not  = "the same worth: the chosen keeps more context per stream (or fewer weight bytes)";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
                 alt.why_code = "tie_order";
-                alt.why_not  = "the same in every respect (fast and int8 take one route on these weights): the listing's order";
+                alt.why_not  = axis == Axis::Activations
+                                   ? "the same in every respect (fast and int8 take one route on these weights): the listing's order"
+                                   : "the same in every respect for this request: the listing's order";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";

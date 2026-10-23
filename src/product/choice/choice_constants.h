@@ -130,6 +130,8 @@ struct ChunkShare {
 
 inline constexpr ChunkShare kMoeChunkShare[] = {
     {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
+// The shares decide an MoE's chunk on a generation with a reference card (by speed alone: a chunk has
+// no accuracy term, so kKldTwoCards does not hold it).
 inline constexpr bool kMoeChunkTwoCards = true; // RTX 4070 Ti and 4090
 inline constexpr std::uint32_t kDefaultChunk = 1024;
 inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
@@ -180,9 +182,9 @@ inline constexpr KldTerm kKldTerms[] = {
 
 // The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
 // --quick, the same corpus), by bits per weight. Another quantization or model takes the
-// interpolation in log KLD over bits per weight between the two nearest points (past the ends, the
-// nearest pair's slope), marked as not measured; at or above Q8_0's bits it is the reference (0).
-// Empty: no curve, and the quantization is the quant rule's pick.
+// interpolation in log KLD over bits per weight between the two nearest points (below them, the
+// lowest pair's slope; above Q6_K, a straight line to 0 at Q8_0's bits), marked as not measured; at
+// or above Q8_0's bits, and any model's Q8_0, it is the reference (0).
 struct QuantKldPoint {
     double bits_per_weight;
     double kld;
