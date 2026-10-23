@@ -16,9 +16,10 @@
 # The check reads each listed file's own text, not what its includes pull in: the Qwen3.5 planning
 # files reach program_impl.h, whose CUDA event timers time rounds for telemetry. Decision code
 # outside the list that still reads a timing is a known gap of the page above:
-# models/qwen3_5/program/round_pacing.h and decode.cpp (the decode wait, mask fill order,
-# constrained DFlash drafting, the 30 s draft-arrival deadline), structured/request_constraint.cpp
-# (measured mask-row time) and ops/kernel/sampling_device.cuh (the mask-release wait bound).
+# models/qwen3_5/program/round_pacing.h and decode.cpp (the decode wait, the 30 s draft-arrival
+# deadline) and ops/kernel/sampling_device.cuh (the mask-release wait bound). The mask fill order
+# and constrained DFlash drafting follow the declared mask times of runtime/contract/token_mask.h,
+# listed below; structured/request_constraint.cpp times its mask rows for telemetry only.
 #
 # Every entry must name at least one file: a pattern that matches nothing fails, so a renamed or
 # moved decision file cannot drop out of the check unseen. A self-test of planted violations runs
@@ -50,6 +51,7 @@ decision_patterns=(
   src/runtime/engine/scheduler.h
   src/runtime/engine/warmup_widths.cpp
   src/runtime/engine/warmup_widths.h
+  src/runtime/contract/token_mask.h
   'src/runtime/engine/context_cache/*.h'
   'src/runtime/engine/context_cache/*.cpp'
   'src/models/qwen3_5/program/planning/*.h'

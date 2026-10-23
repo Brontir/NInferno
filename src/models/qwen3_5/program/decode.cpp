@@ -518,27 +518,44 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
     // step (and its mask work would read as lag).
     const bool timed_round              = round_pacing.has_value() && !masks.any();
     // Masks are computed while the launched kernels run, and the samplers wait for them only up to
-    // a bound (kTokenMaskReleaseWaitNs). A unit whose masks are slow to compute (a deeply nested
-    // grammar takes hundreds of milliseconds a row, an MTP row a column per draft) computes and
-    // releases them before its launch: the round waits for the host either way, and no sampler
-    // waits on the release.
-    std::uint64_t mask_cost_ns = 0;
-    std::uint64_t drafted_cost_ns = 0; // the same with DFlash rows masked over every draft column
-    for (std::size_t i = 0; i < speculative.size; ++i) {
-        mask_cost_ns += masks.fill_cost_ns(speculative.rows[i], mtp ? draft_window + 1U : 1U);
-        drafted_cost_ns += masks.fill_cost_ns(speculative.rows[i], draft_window + 1U);
-    }
-    for (std::size_t i = 0; i < plain.size; ++i) {
-        mask_cost_ns += masks.fill_cost_ns(plain.rows[i], 1U);
-        drafted_cost_ns += masks.fill_cost_ns(plain.rows[i], 1U);
-    }
-    const bool masks_first              = mask_cost_ns > ops::kTokenMaskReleaseWaitNs / 8U;
-    // A constrained DFlash row drafts when its masks over every draft column are cheap: the
-    // drafts reach the host mid-round and the masks follow them along the grammar while the target
-    // verifies (fill_dflash_draft_masks). Otherwise it runs with a zero draft extent, its single
-    // column masked.
-    dflash_masks_follow_drafts = !mtp && speculative.size != 0 && masks.any() &&
-                                 drafted_cost_ns <= ops::kTokenMaskReleaseWaitNs / 8U;
+    // a bound (kTokenMaskReleaseWaitNs). A unit whose masks are declared slow (a client's free
+    // grammar outside its reasoning, runtime::MaskRowClass; an MTP row fills a column per draft)
+    // computes and releases them before its launch: the round waits for the host either way, and
+    // no sampler waits on the release. Nothing is timed: runtime::plan_step_masks prices each
+    // constrained row at its declared time per mask row times the rows it fills, so the choice
+    // follows from the step's constraints, their committed tokens and the draft shape.
+    static_assert(runtime::kLaunchMaskOverlapNs == ops::kTokenMaskReleaseWaitNs / 8U,
+                  "the declared overlap is an eighth of the samplers' wait bound");
+    static_assert(
+        runtime::masks_overlap_launch(std::uint64_t{kMaximumConcurrency} *
+                                      std::max(kDFlashDecodeMaximumWidth, kMtpDecodeMaximumWidth) *
+                                      runtime::kShapedMaskRowNs),
+        "a step of shaped grammars overlaps its masks at the widest launch");
+    std::array<runtime::StepMaskRow, kMaximumConcurrency> constrained_rows{};
+    std::size_t constrained_count = 0;
+    const auto add_constrained    = [&](const LaunchRows& part, bool speculative_part) {
+        for (std::size_t i = 0; i < part.size; ++i) {
+            if (masks.active(part.rows[i])) {
+                constrained_rows[constrained_count++] = runtime::StepMaskRow{
+                    .row_class = masks.row_class(part.rows[i]), .speculative = speculative_part};
+            }
+        }
+    };
+    add_constrained(speculative, true);
+    add_constrained(plain, false);
+    // A constrained DFlash row drafts when its step's masks over every draft column are declared
+    // cheap: the drafts reach the host mid-round and the masks follow them along the grammar while
+    // the target verifies (fill_dflash_draft_masks). Otherwise it runs with a zero draft extent,
+    // its single column masked (counted in its constraint_fallback_steps). Under greedy decoding
+    // and `exact` activations the target's verify decides the bytes either way (decode/verify
+    // parity). A sampled row draws on other RNG keys with drafts (accept, correction) than without
+    // (bonus), and under `fast` the verify width can move the logits, so there its bytes follow
+    // this choice, and with it the constraints of its step.
+    const runtime::StepMaskPlan mask_plan = runtime::plan_step_masks(
+        std::span<const runtime::StepMaskRow>(constrained_rows.data(), constrained_count), mtp,
+        speculative.size != 0, draft_window);
+    const bool masks_first              = mask_plan.masks_first;
+    dflash_masks_follow_drafts          = mask_plan.dflash_masks_follow_drafts;
     const std::uint32_t requested_steps = timed_round ? round_pacing->steps() : 1U;
     const bool follows_round            = !round_after_other_work;
     round_after_other_work              = !timed_round;
@@ -1090,17 +1107,24 @@ void ProgramImpl::launch_dflash(const LaunchRows& part, runtime::MaskedUnit& mas
     const std::uint32_t k               = window.drafts;
     const std::uint32_t width           = k + 1U;
     std::uint32_t maximum_frontier      = 0;
-    // DFlash drafts appear on the host only mid-round: a constrained row drafts when its masks
-    // follow the drafts (fill_dflash_draft_masks), else it runs with a zero draft extent, its
-    // single verify column masked exactly.
-    const auto extent_of = [&](std::size_t row, const SequenceState& sequence) {
+    // The drafts a row may verify: none once its drafting stopped, else the window's, its budget's
+    // and the capacity's least.
+    const auto drafts_of = [&](std::size_t row, const SequenceState& sequence) {
         const std::uint32_t max_by_budget = part.budgets[row].generated_tokens_remaining > 1
                                                 ? part.budgets[row].generated_tokens_remaining - 1U
                                                 : 0U;
-        return (masks.active(part.rows[row]) && !dflash_masks_follow_drafts) ||
-                       requests[part.lanes[row]].drafting_stopped
+        return requests[part.lanes[row]].drafting_stopped
                    ? 0U
                    : std::min({k, max_by_budget, capacity - sequence.execution_frontier - 1U});
+    };
+    // DFlash drafts appear on the host only mid-round: a constrained row drafts when its masks
+    // follow the drafts (fill_dflash_draft_masks), else it runs with a zero draft extent, its
+    // single verify column masked exactly.
+    const auto masks_withhold_drafts = [&](std::size_t row) {
+        return masks.active(part.rows[row]) && !dflash_masks_follow_drafts;
+    };
+    const auto extent_of = [&](std::size_t row, const SequenceState& sequence) {
+        return masks_withhold_drafts(row) ? 0U : drafts_of(row, sequence);
     };
     std::uint32_t maximum_target_tokens = 1;
     for (std::size_t row = 0; row < part.size; ++row) {
@@ -1170,6 +1194,9 @@ void ProgramImpl::launch_dflash(const LaunchRows& part, runtime::MaskedUnit& mas
         const RequestControl& request     = requests[part.lanes[row]];
         const std::uint32_t frontier      = sequence.execution_frontier;
         const std::uint32_t extent        = extent_of(row, sequence);
+        if (masks_withhold_drafts(row) && drafts_of(row, sequence) != 0U) {
+            requests[part.lanes[row]].speculative_stats.constraint_fallback_steps += 1;
+        }
         dflash_host_ingress->anchors[row] = sequence.ledger.back();
         dflash_host_ingress->execution_frontiers[row] =
             checked_i32(frontier, "DFlash batch frontier");

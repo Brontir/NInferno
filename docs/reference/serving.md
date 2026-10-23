@@ -364,7 +364,8 @@ fit either, the refusal is plain decode's and says `--spec auto` was refused fir
 
 The configuration each request ran is in its request-log record (`speculative.config`, `family`,
 `selection`, `reason`, `note`, `floor`, `fallback`, `context_plain`, `plain_steps`, `wide_rounds`,
-`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`)
+`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`,
+`constraint_fallback_steps`)
 and in the OpenAI Chat `timings.speculation` object. Anthropic messages and OpenAI Responses carry
 `config`, `selection`, `reason`, `fallback` and `note` as `usage.ninferno.speculation`, an
 extension key strict clients ignore. Every request carries them, also under an explicit `--spec`
@@ -415,6 +416,21 @@ Notes:
   concurrency measured. Its second and third columns therefore run the same configuration and
   differ by run-to-run noise (up to 2.4 %), as do the RTX 5090 row's at C=1 and C=2, below its
   table's first bound (3 lanes).
+
+### Constrained output
+
+A constrained request (a JSON Schema or `json_object` response, a forced or strict tool call, a
+choice, a regex, a structural tag) speculates like any other: the server computes its token masks
+while the round runs, and a DFlash row's masks follow its drafts. A client's EBNF grammar
+(`grammar`, `guided_grammar`, `structured_outputs.grammar`, or a `{"type": "grammar"}` format
+anywhere in `structured_outputs.structural_tag`) may be nested and ambiguous without bound, so its
+mask time is declared at the samplers' whole wait bound: a decode step that holds one computes its
+masks before the round, and its constrained DFlash rows verify without drafts
+(`constraint_fallback_steps` in the request log; MTP rows still draft). Inside a reasoning section
+the grammar is not consulted yet, so such a request keeps its drafts until its reasoning ends. The
+tool-call markup the server renders counts as shaped, Gemma 4's argument grammar included. The
+choice follows from the step's constraints, the tokens they committed and the draft depth; nothing
+is timed ([deterministic decisions](../maintainer/deterministic-decisions.md)).
 
 ### Stop and usage with speculation
 
@@ -1707,7 +1723,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v30 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v31 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1785,7 +1801,9 @@ Details:
   recorded only under a thinking budget and was 0 otherwise.
 - `request_done.timings_seconds` contains `prepare`, `ttft`, `vision`, `prefill`, `decode`, and
   `total` as full-precision JSON numbers. Its `speculative` object contains `backend`,
-  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps`, and
+  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps` (of them
+  `constraint_fallback_steps`: DFlash rounds a constrained request verified without drafts because
+  its step computed its masks before the round, [constrained output](#constrained-output)), and
   `accepted_per_position`. Rates can be derived downstream from raw token counts and seconds instead
   of rounded stderr strings.
 - For `server_start.memory`, `workspace.capacity_bytes` is the only physical workspace allocation.

@@ -190,7 +190,7 @@ int main() {
             "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias",
             load, laddered, environment, std::uint64_t{123456}));
         const Json& plan                      = planned.at("plan");
-        failures += check(kRequestLogSchemaVersion == 30 && plan.at("rung") == 3 &&
+        failures += check(kRequestLogSchemaVersion >= 30 && plan.at("rung") == 3 &&
                               plan.at("rungs") == 40 && plan.at("selected_rung") == 2 &&
                               plan.at("reserve") == "kept" &&
                               plan.at("chosen").at("max_context") == 196608 &&
@@ -508,6 +508,10 @@ int main() {
                                                    .injected_tokens       = 19,
                                                    .applied               = true};
 
+    // One DFlash round its step's declared mask time ran without drafts. Only DFlash rounds count
+    // it; the record serializes it whatever this fixture's backend (MTP).
+    outcome.metrics.speculative_constraint_fallback_steps = 1;
+
     const Json done = Json::parse(format_request_done_json("serve-test", 3000, context, outcome));
     failures += check(done.at("materialization").at("initial_predicted_total_ns") == 500000 &&
                           done.at("materialization").at("first_improvement_ns") == 2000 &&
@@ -565,6 +569,11 @@ int main() {
         check(done.at("speculative").at("draft_window") == 3, "speculative draft window missing");
     failures += check(done.at("speculative").at("fallback_steps") == 2,
                       "speculative fallback count missing");
+    // Schema 31: the rounds a constrained request verified without drafts because its step's
+    // declared mask time filled the masks before the launch.
+    failures += check(kRequestLogSchemaVersion == 31 &&
+                          done.at("speculative").at("constraint_fallback_steps") == 1,
+                      "schema 31: constraint_fallback_steps missing");
     failures +=
         check(done.at("speculative").at("accepted_per_position") == Json::array({290, 240, 190}),
               "speculative position counts missing");

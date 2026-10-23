@@ -83,9 +83,10 @@ public:
     [[nodiscard]] ops::SamplingConfig config(std::size_t row,
                                              const ops::SamplingConfig& base) const noexcept;
 
-    // The predicted host time of an active row's masks over `columns` columns (row_cost_ns()).
-    [[nodiscard]] std::uint64_t fill_cost_ns(std::size_t row, std::size_t columns) const noexcept {
-        return active(row) ? source_->row_cost_ns(row) * columns : 0U;
+    // What an active row's constraint declares about the host time of its mask rows
+    // (TokenMaskSource::row_class(), plan_step_masks()); nothing measured.
+    [[nodiscard]] MaskRowClass row_class(std::size_t row) const noexcept {
+        return active(row) ? source_->row_class(row) : MaskRowClass::Shaped;
     }
 
     // Host side, after launch: compute an active row's masks. drafts.size()+1 must not exceed the

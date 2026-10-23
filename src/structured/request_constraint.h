@@ -92,8 +92,15 @@ public:
 
     [[nodiscard]] bool violated() const noexcept { return violated_; }
 
-    // The slowest mask row fill_round has computed, in nanoseconds (a round's time over its rows).
-    [[nodiscard]] std::uint64_t slowest_row_ns() const noexcept { return slowest_row_ns_; }
+    // The next mask rows are a client's free grammar's (declares_free_grammar), which the engine
+    // prices at runtime::MaskRowClass::FreeGrammar: before the first token (Pending), in the Gap
+    // and in the constrained text the matcher computes them. Inside a reasoning section a row only
+    // copies the no-stop mask, so it is not, until a committed token passes the terminator. A
+    // pure function of the spec and the committed tokens; no decision reads how long a row took
+    // (mask_host_seconds in stats() is telemetry).
+    [[nodiscard]] bool free_grammar_rows() const noexcept {
+        return declares_free_grammar(*compiled_) && gate_.mode != ConstraintGate::Mode::Reasoning;
+    }
     [[nodiscard]] OutputConstraintStats stats() const;
     [[nodiscard]] std::uint32_t mask_words() const noexcept { return view_.mask_words; }
 
@@ -129,7 +136,6 @@ private:
     std::string violation_;
     std::uint64_t masked_positions_ = 0;
     std::uint64_t mask_host_ns_     = 0;
-    std::uint64_t slowest_row_ns_   = 0;
 };
 
 } // namespace ninferno::structured
