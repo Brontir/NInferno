@@ -1618,9 +1618,10 @@ not take at startup.
   `--max-context`), so the guarantee holds within one server: another `--max-context` can change
   the last bits. A model with no BF16-activation route for a layer refuses `exact` at startup.
 - `fast`: on wide calls NVFP4 activations in four bits and, for integer weights recorded `AllowA8`
-  (every GGUF block format: Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS
-  and the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the
-  output head; `kept_block_policy`), int8 activations. The answer can depend on the load.
+  (the GGUF block formats Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS and
+  the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the output
+  head; `kept_block_policy`), int8 activations. The ternary and two-bit TQ1_0, TQ2_0, Q1_0 and
+  Q2_0 keep BF16 activations. The answer can depend on the load.
 - `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
   int8 activations where its route has them and none takes four, whatever the artifact recorded:
   the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
