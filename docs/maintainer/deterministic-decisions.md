@@ -453,6 +453,15 @@ given up). Within a tier the most bits per weight, then the bytes, then the labe
 The own context is probed at declared pinned contexts with the same plan, never measured. The rule
 reads the idle-card free memory, so the same card type gets the same quantization.
 
+### The configuration choice
+
+The KV codec and the activation mode a start leaves automatic, and the speeds the plan shows, come
+from `src/product/choice` ([Configuration choice](configuration-choice.md)). The decision (B1)
+prices its candidates on the generation's reference card, a declared constant per generation,
+never on the board: the board's clock and bandwidth enter only the estimates shown. It decides only
+where its constants rest on two lab cards of the generation; elsewhere the family's defaults stand.
+The quantization stays the rule above until a measured KLD curve over the quantizations exists.
+
 ### The fingerprint
 
 The plan section records `rung`, `rungs` and the rung's `max_context`, `prefill_chunk`, `kv_tokens`

@@ -10,7 +10,7 @@ without the flags, `ninferno-serve --plan --no-load`, and ninferno-ui's `/api/pl
 | Kind | What | Where from |
 |---|---|---|
 | Model facts | layers by kind, KV heads and widths, window, recurrent state, experts, active parameters, weight bytes per quantization | config.json / GGUF header / artifact (`product/plan/plan_facts.h`) |
-| Card facts | compute capability, SMs, reference clock, DRAM rate, FP4 tensor cores, free memory | PCI-ID facts (`core/data/gpu_facts.json`), `core/generation.h` |
+| Card facts | compute capability, SMs, reference clock, DRAM rate, FP4 tensor cores, free memory | PCI-ID facts (`core/data/gpu_facts.json`), `core/generation.h`; the clock and the DRAM rate feed only the estimates shown, never a decision (below) |
 | Task | context each stream holds of its own, streams, a typical request (prompt, answer tokens) | the user (defaults 32K, 1, 2048 + 512) |
 | Pins | `--quant`, `--kv-dtype`, `--activations`, `--state-dtype`, `--sliding-kv-dtype` | the user's flags |
 | Constants | decode and prefill efficiencies per generation and kind, KV read and exact-route factors, KLD terms, the accuracy weight | measured once on the lab's stands (`choice_constants.h` names each source) |
@@ -40,12 +40,28 @@ KLD is worth 2.5 % of a request's time). Where two candidates cost about the sam
 one wins; where one is much faster, it wins. Ties: the longer own context, then fewer weight bytes,
 then the listing's order.
 
+**What a decision reads.** The KV codec and the activation precision change the output bytes (tier
+B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
+bandwidth. So T is priced on the generation's *reference card* (`kReferenceCards`: the mean of the
+generation's lab cards), never on the board itself: every board of a generation decides the same,
+and a board's own facts feed only the estimates a caller shows. The reference card decides only
+where the KV read factors and the exact-route factor were measured on two lab cards of the
+generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
+`--activations fast`), and the choice says so. Today: Ada (RTX 4070 Ti and 4090: KV factors within
+6 %, exact within 20 %). Blackwell and Turing have one lab card each.
+
+**Auto's steps.** Each own-context step (`quant_own_targets`: min(native, 32K), 16K, 8K) is tried
+above the quality floor before any quantization below it. A narrower KV codec is a memory lever of
+its own: at a step where the largest quantization fits only with it, that pair is taken before the
+next step.
+
 Until a measured KLD curve over the quantizations exists, the quantization is the quant rule's
 (`runtime/engine/quant_rule.h`: the largest that fits, not below 3.5 bits per weight unless nothing
 above fits) and the worth picks the KV codec and the activation mode at it.
 
 The ring and the recurrent state follow the KV codec and the activations (`coupled_storages`):
-today the engine's own defaults (BF16 rings; FP16 state under fast, FP32 under exact).
+today the engine's own defaults (BF16 rings; FP16 state under fast, FP32 under exact). Their other
+values are scored beside the chosen candidate (never chosen) so that `explain` can show them.
 
 ## Explaining
 
