@@ -2127,6 +2127,23 @@ and the same flags get the same file. `--plan --no-load` on a live GPU builds it
 idle card too, and reports the free memory now beside it (`device.free_now_bytes`, `fits_now`, and a
 `now |` line when the pick would not start right now).
 
+**The configuration choice.** The axes a start leaves automatic (`--kv-dtype auto`, no
+`--activations`, no `--state-dtype`) are chosen for the model on this GPU by one rule
+([Configuration choice](../maintainer/configuration-choice.md)): among the KV codecs and activation
+modes that keep the asked context per stream, the one with the best worth `-ln(T) - 25 KLD`, T a
+typical request's seconds (2048 prompt tokens, 512 answer tokens) priced on the GPU generation's
+reference card, KLD the measured deviation from the exact reference. Where the generation has no
+reference card on two lab cards (today: every one but Ada), the family's defaults stand. A start
+logs it before the plan:
+
+```text
+choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill, KLD 0.0044 (estimates) | Q4_K_M: the largest quantization whose every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
+```
+
+Pinned flags stay as given; the line then says what the choice kept. `--plan --no-load` prints the
+same line and adds `choice` to its JSON; ninferno-ui shows it with what each other value would
+change.
+
 **JSON** (`--plan --no-load --json`, ninferno-ui `/api/plan`), schema `ninferno-dry-plan/1`:
 
 | Field | Content |
@@ -2136,10 +2153,11 @@ idle card too, and reports the free memory now beside it (`device.free_now_bytes
 | `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (the class reserve the selection keeps beside the free memory, for the growth of what Windows holds), `desktop_bytes` (the desktop's declared share an idle card's free memory lacks); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
 | `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
 | `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
-| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned); a single quantization's row when one was named; empty for a single model |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned), `estimate` (`null` when not planned, else the choice model's speeds at the plan's storages: `decode_tok_s` one stream of the asked ones at `depth` tokens in its window, a quarter of the asked context or of Auto's first step and the same for every row, `prefill_tok_s`, `request_seconds` of a `prompt` + `answer` token request, `transferred` a constant taken from another GPU generation); a single quantization's row when one was named; empty for a single model |
 | `chosen` | the rule's quantization, `null` when none fits or there is no listing |
 | `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
 | `rule` | the rule's line (English, for a terminal) |
+| `choice` | CHOICE: the configuration choice at the chosen quantization's weights |
 | `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
 
 PLAN:
@@ -2160,6 +2178,21 @@ PLAN:
 | `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`) |
 | `ladder` | every rung, top first, as `chosen` |
 | `speculation` | SPEC: the speculation the plan was made with |
+
+CHOICE:
+
+| Field | Content |
+|---|---|
+| `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
+| `why` | the decision in one line (English) |
+| `by_worth` | `true` when the worth decided; `false` when the family's defaults stood (no reference card on two lab cards for this generation) |
+| `chosen` | `null` when nothing fits; else `kv`, `ring`, `state`, `activations`, and ESTIMATES |
+| `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
+
+ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
+measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
+on another family), `worth`.
 
 SPEC:
 
