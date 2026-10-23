@@ -1278,8 +1278,14 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         // below moves the plan to a lower rung under it, so only the probe is repeated.
         std::size_t graph_shortfall_bytes = 0;
         for (std::uint32_t pass = 0;; ++pass) {
+            // A capacity outcome, not a program error: ninferno-serve's fallbacks (a shallower or
+            // no drafter, a smaller pool) recover from a CapacityError only.
             if (pass > kMaximumWarmUpPasses) {
-                throw std::logic_error("the kernel warm-up's plan did not settle");
+                throw CapacityError(
+                    "the kernel warm-up's plan did not settle in " + std::to_string(pass) +
+                    " passes (rung " + std::to_string(chosen.rung + 1U) + " of " +
+                    std::to_string(served.rungs.size()) + ", " + gib_text(last_measured) +
+                    " of Device memory free beside its reserves)");
             }
             const std::size_t free_now = current_free_device_bytes();
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
