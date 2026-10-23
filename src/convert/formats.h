@@ -116,10 +116,10 @@ struct KeptEncoding {
 // The activation policy of a kept integer encoding whose every 32 values are int8 codes times a
 // scale (and a min; Q6_K, IQ2_XS, IQ2_S a scale per 16): the generic W4A8 route computes it on int8
 // tensor cores against int8 activations with a scale per 32 values (ggml Q4_0, Q4_1, Q5_0, Q5_1,
-// IQ4_NL, IQ4_XS, Q4_K, Q5_K, Q6_K, u4_g128_zp, and Q8_0 and the codebook i-quants IQ3_XXS, IQ3_S,
-// IQ2_XXS, IQ2_XS, IQ2_S, whose signed grid values are the codes; these last also decode through
-// the R8 dp4a route), MXFP4 (E2M1 codes widen to int8 exactly) and Q3_K (R8 decode only; from 17
-// tokens it runs A16): AllowA8. Under --activations exact the engine runs every one of them with
+// IQ4_NL, IQ4_XS, Q2_K..Q6_K, u4_g128_zp, and Q8_0 and the codebook i-quants IQ3_XXS, IQ3_S,
+// IQ2_XXS, IQ2_XS, IQ2_S, IQ1_S, IQ1_M, whose signed grid values are the codes; these last also
+// decode through the R8 dp4a route) and MXFP4 (E2M1 codes widen to int8 exactly): AllowA8 (the
+// formats w4a8_supports names). Under --activations exact the engine runs every one of them with
 // BF16 activations. Every other format: A16Only (keep_published then leaves the recipe's policy).
 [[nodiscard]] ActivationPolicy kept_block_policy(QType format) noexcept;
 
