@@ -632,6 +632,9 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = "the family's default stands (no decision constants for this generation)";
+            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
+                alt.why_code = "tie_context";
+                alt.why_not  = "the same worth: the chosen keeps more context per stream (or fewer weight bytes)";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
