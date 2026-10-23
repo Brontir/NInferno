@@ -289,16 +289,16 @@ void decides_by_generation(const json& fixture) {
     const double ratio = ch::speed_of(moe, bw, q, exact, 1, 2048).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
     check(ratio > 0.25 && ratio < 0.32, "an MoE's exact prefill at the dense routes' ratio");
     // An MoE's prefill grows with the tokens each expert takes from a chunk: Qwen3.6-35B-A3B (256
-    // experts, 8 a token) takes 32 a chunk of 1024 and 64 of 2048 (shares 0.788, 0.939).
+    // experts, 8 a token) takes 32 a chunk of 1024 and 64 of 2048 (shares 0.813, 0.952).
     ch::Candidate wide;
     wide.chunk = 2048;
     const double grows = ch::speed_of(moe, bw, q, wide, 1, 2048).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
-    check(std::abs(grows - 0.939 / 0.788) < 1e-6, "an MoE's prefill at chunk 2048");
+    check(std::abs(grows - 0.952 / 0.813) < 1e-6, "an MoE's prefill at chunk 2048");
     const ch::Speed dense_wide = ch::speed_of(t.model, volta, t.quants[0], wide, 1, 2048);
     check(dense_wide.prefill == v.prefill, "a dense model's prefill does not take the chunk");
-    // A 256-token prompt fills 256 of the chunk: 8 tokens per expert, below the curve's first point.
+    // A 256-token prompt fills 256 of the chunk: 8 tokens per expert.
     const double short_prompt = ch::speed_of(moe, bw, q, fast, 1, 2048, 256).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
-    check(std::abs(short_prompt - 0.617 / 0.788) < 1e-6, "a short prompt fills only its own tokens of the chunk");
+    check(std::abs(short_prompt - 0.409 / 0.813) < 1e-6, "a short prompt fills only its own tokens of the chunk");
 }
 
 // Without decision constants the quantization is ranked among the family's defaults only: Q8_0
@@ -369,6 +369,25 @@ void weighs_the_quantizations(const json& fixture) {
     check(rule.chosen && t6.quants[chosen(rule).candidate.quant].label == "Q8_0", "Turing: the rule's largest (Q8_0)");
 }
 
+// The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
+// and the tie goes to the narrower: more context); on Blackwell (no reference card) the default.
+void chooses_the_chunk(const json& fixture) {
+    const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+    Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+    b.model.recurrent = true;
+    ch::Task task;
+    const auto own = [&b](const ch::Candidate& c) -> std::uint32_t {
+        // The workspace grows with the chunk: a wider one holds a little less context.
+        const double room = 20e9 - b.quants[0].weight_bytes - 4e6 * c.chunk;
+        return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
+    };
+    const ch::Choice ada = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
+    check(ada.chosen && chosen(ada).candidate.chunk == 2048, "Ada, an MoE: chunk 2048 for a 2048-token prompt");
+    b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
+    const ch::Choice bw = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
+    check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
+}
+
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
 void steps_before_the_floor(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
@@ -413,6 +432,7 @@ int main() {
     steps_before_the_floor(fixture);
     ranks_eligible_only(fixture);
     weighs_the_quantizations(fixture);
+    chooses_the_chunk(fixture);
     explains_the_state(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
