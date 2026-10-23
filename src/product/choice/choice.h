@@ -125,10 +125,11 @@ struct Speed {
     bool transferred         = false; // a constant came from another generation (kTransferGeneration)
 };
 
-// Decode at `context` tokens in the window with `concurrency` rows, and prefill, on `card`.
+// Decode at `context` tokens in the window with `concurrency` rows, and prefill of a `prompt`
+// (0: long enough to fill every chunk), on `card`.
 [[nodiscard]] Speed speed_of(const ModelFacts& model, const CardFacts& card,
                              const QuantOption& quant, const Candidate& candidate,
-                             std::uint32_t concurrency, double context);
+                             std::uint32_t concurrency, double context, std::uint32_t prompt = 0);
 
 // One request of `prompt` tokens in and `answer` out on one stream of `concurrency`: the prompt at
 // the prefill rate, the answer at the decode rate at the middle of its window.
@@ -188,6 +189,7 @@ struct Choice {
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided (else the family's defaults stood)
+    bool quant_by_worth = false;       // the worth weighed the quantizations too (a measured curve)
     std::string why;                   // one line: what decided it
 };
 

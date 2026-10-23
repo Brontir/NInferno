@@ -296,6 +296,9 @@ void decides_by_generation(const json& fixture) {
     check(std::abs(grows - 0.939 / 0.788) < 1e-6, "an MoE's prefill at chunk 2048");
     const ch::Speed dense_wide = ch::speed_of(t.model, volta, t.quants[0], wide, 1, 2048);
     check(dense_wide.prefill == v.prefill, "a dense model's prefill does not take the chunk");
+    // A 256-token prompt fills 256 of the chunk: 8 tokens per expert, below the curve's first point.
+    const double short_prompt = ch::speed_of(moe, bw, q, fast, 1, 2048, 256).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
+    check(std::abs(short_prompt - 0.617 / 0.788) < 1e-6, "a short prompt fills only its own tokens of the chunk");
 }
 
 // Without decision constants the quantization is ranked among the family's defaults only: Q8_0
@@ -331,6 +334,8 @@ void weighs_the_quantizations(const json& fixture) {
     ch::QuantOption q = b.quants[0];
     q.label           = "Q4_K_M";
     check(std::abs(quant_term(q).kld - 0.0193) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
+    q.bits_per_weight = 4.9; // another model's Q4_K_M: interpolated, not the 9B's point
+    check(!quant_term(q).measured && quant_term(q).kld > 0.0193, "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
     const double mid  = std::exp(std::log(0.0193) + (5.5 - 5.16) / (5.97 - 5.16) * (std::log(0.01058) - std::log(0.0193)));
@@ -350,6 +355,11 @@ void weighs_the_quantizations(const json& fixture) {
     check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
               choice.why.find("best worth among the quantizations") != std::string::npos,
           "Ada: the quantizations by worth (Q6_K)");
+    for (const ch::Alternative& a : ch::explain(choice, with6.quants)) {
+        if (a.axis == ch::Axis::Quant && a.value == "Q8_0") {
+            check(a.why_code == "lower_worth", "Q8_0 fits and lost on worth, not on the rule");
+        }
+    }
     // Without decision constants (Turing) the rule's largest stands.
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     Bench t6      = t;

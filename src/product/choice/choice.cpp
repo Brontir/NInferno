@@ -139,12 +139,15 @@ double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
 // The interpolated quantization term at `bits` (choice_constants.h kQuantKld), and the measured
 // point when `label` is one. log KLD is linear in bits between the two measured points around
 // `bits`; past the measured range, the nearest pair's slope; at or above the reference's bits, 0.
-double quant_kld(double bits, std::string_view label, bool& measured) {
+double quant_kld(double bits, std::string_view label, bool same_family, bool& measured) {
     measured = false;
     double reference_bits = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
-        if (!label.empty() && p.label == label) {
+        // A label's point is the measured file's: the same family at the same bits (another model's
+        // Q4_K_M has other bits per weight and takes the interpolation).
+        if (same_family && !label.empty() && p.label == label &&
+            std::abs(p.bits_per_weight - bits) < 0.05) {
             measured = true;
             return p.kld;
         }
@@ -205,7 +208,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     Scored s;
     s.candidate   = c;
     s.own_context = own_context ? own_context(c) : 0;
-    s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0);
+    s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0,
+                             task.prompt);
     s.accuracy    = accuracy_of(model, quant, c, card);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
@@ -241,7 +245,8 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 }
 
 Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-               const Candidate& candidate, std::uint32_t concurrency, double context) {
+               const Candidate& candidate, std::uint32_t concurrency, double context,
+               std::uint32_t prompt) {
     Speed out;
     const DecodeConstants& k  = decode_constants(model);
     const std::string_view gen = generation_of(card);
@@ -280,7 +285,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double eta = prefill_eta(model.moe(), gen, route, prefill_transferred);
     out.prefill      = eta * peak(card, route) / (2 * params);
     if (model.moe() && model.experts_per_token > 0) {
-        out.prefill *= chunk_share(model, candidate.chunk) / chunk_share(model, kDefaultChunk);
+        // A prompt shorter than the chunk fills only its own tokens.
+        const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
+        out.prefill *= chunk_share(model, filled) / chunk_share(model, kDefaultChunk);
     }
     out.transferred  = transferred || prefill_transferred;
     return out;
@@ -289,7 +296,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
 double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                        const Candidate& candidate, const Task& task) {
     const double middle = task.prompt + task.answer / 2.0;
-    const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle);
+    const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, task.prompt);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
     return task.prompt / speed.prefill + task.answer / speed.decode_per_stream;
 }
@@ -325,7 +332,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // The quantization: the measured curve (choice_constants.h), or none (the quant rule picks).
     if (quant_curve()) {
         bool measured   = false;
-        const double q  = quant_kld(quant.bits_per_weight, quant.label, measured);
+        const double q  = quant_kld(quant.bits_per_weight, quant.label, !other_family, measured);
         add(Axis::Quant, quant.label, q, measured && !other_family,
             measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
         out.quant_known = true;
@@ -400,7 +407,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
               const OwnContextFn& own_context) {
     Choice out;
     const std::optional<Reference> ref = reference_of(card);
-    out.by_worth = ref && ref->decides;
+    out.by_worth       = ref && ref->decides;
+    out.quant_by_worth = out.by_worth && quant_curve();
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
         quant_ids.push_back(*pins.quant);
@@ -593,6 +601,9 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
+            } else if (axis == Axis::Quant && choice.quant_by_worth) {
+                alt.why_code = "lower_worth";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             } else if (axis == Axis::Quant) {
                 alt.why_code = "quant_rule";
                 alt.why_not  = quants[s.candidate.quant].bits_per_weight > quants[c.quant].bits_per_weight
