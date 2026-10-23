@@ -36,12 +36,18 @@ struct ServedChoice {
     double decode_at_depth      = 0;
 };
 
+// How a choice plans each candidate's memory: its exact own context per stream (the longest it
+// holds: what a caller shows), only whether it holds each of Auto's steps (one plan a step: enough
+// to pick), or not at all (every candidate fits: the best worth the weights could reach, a bound).
+enum class OwnContext : std::uint8_t { Exact, Steps, Unbounded };
+
 // The choice at `facts`' own weights with `inputs`' options, the pinned axes kept. nullopt: the
 // model's shape is unknown (nothing to plan).
 [[nodiscard]] std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                                             const DryRunInputs& inputs,
                                                             const ChoicePins& pins,
-                                                            const std::string& label = "");
+                                                            const std::string& label = "",
+                                                            OwnContext memory = OwnContext::Exact);
 
 // What a start takes from a choice: the axes the user left automatic, each where the model has it
 // (a recurrent state, sliding rings). One mapping for ninferno-serve and the CLI.
