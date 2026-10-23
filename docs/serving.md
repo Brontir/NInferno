@@ -108,7 +108,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--max-concurrency N` | `1` | requests generated at once, `1..8` |
 | `--max-pending-requests N` | `16` | requests allowed to wait for admission |
 | `--pending-timeout-ms N` | `600000` (10 min) | longest wait before admission |
-| `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short) |
+| `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short); omitted, an MoE may take a wider one from the configuration choice |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` is chosen for the model on your GPU ([configuration choice](maintainer/configuration-choice.md); the start logs it on a `choice \|` line) |
 | `--activations exact\|fast\|int8` | chosen (`fast`) | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it). Omitted, the configuration choice picks it (`fast` unless `exact` costs little) |
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | `auto` | speculative decoding backend |
