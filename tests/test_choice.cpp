@@ -159,14 +159,14 @@ const ch::Scored& chosen(const ch::Choice& c) { return c.scored[*c.chosen]; }
 
 void chooses(const json& fixture) {
     ch::Task task;
-    task.context = 32768;
+    task.contexts = {32768};
     {
         // Q8_0 does not leave 32K here; Q4_K_M is the largest that fits. Fast beats exact (+26 %
         // time for 0.0044 KLD); INT8 KV beats FP8 (same cost, more accurate) and, by a hair, BF16
         // (on top of fast, INT8 KV adds about nothing: measured 0.00388 -> 0.00403 with the FP16
         // state).
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         {}, task, oracle(b, 9.6e9));
         check(c.chosen.has_value(), "4070 Ti: a choice");
         if (c.chosen) {
@@ -183,19 +183,19 @@ void chooses(const json& fixture) {
             if (a.why_not.empty()) { ++named; }
             check(a.scored != nullptr, "every alternative scored");
         }
-        check(named == 3, "the chosen value once per axis (quant, kv, activations)");
+        check(named == 4, "the chosen value once per axis (quant, kv, activations, state)");
     }
     {
         // RTX 2080 Ti: BF16 and FP8 KV read slowly on Turing; INT8 stays.
         const Bench b = nine_b(fixture, "RTX 2080 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         {}, task, oracle(b, 9.0e9));
         check(c.chosen && chosen(c).candidate.kv == KvCacheStorage::Int8Group64, "2080 Ti: INT8 KV");
     }
     {
         // A big card: Q8_0 fits, so the rule takes it.
         const Bench b = nine_b(fixture, "RTX 5070 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         {}, task, oracle(b, 14e9));
         check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q8_0", "5070 Ti: Q8_0 fits");
     }
@@ -205,7 +205,7 @@ void chooses(const json& fixture) {
         ch::Pins pins;
         pins.activations = ActivationMode::Exact;
         pins.kv          = KvCacheStorage::BFloat16;
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.activations == ActivationMode::Exact &&
                   chosen(c).candidate.kv == KvCacheStorage::BFloat16 &&
@@ -215,14 +215,71 @@ void chooses(const json& fixture) {
     {
         // Below the floor only when nothing above it fits; nothing fits: no choice.
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
-        const ch::Choice low = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice low = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                           {}, task, oracle(b, 4.4e9));
         check(low.chosen && b.quants[chosen(low).candidate.quant].label == "IQ3_XXS",
               "below the floor when nothing above fits");
-        const ch::Choice none = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, b.card),
+        const ch::Choice none = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                            {}, task, oracle(b, 1e9));
         check(!none.chosen, "nothing fits: no choice");
     }
+}
+
+// What a decision may read: every board of a generation prices on its reference card, so the
+// 4070 Ti and the 4090 decide the same; the family's defaults stand where the constants rest on one
+// lab card or the generation has no reference card. Volta (no int8 MMA) still prices finitely.
+void decides_by_generation(const json& fixture) {
+    const Bench a = nine_b(fixture, "RTX 4070 Ti");
+    const Bench b = nine_b(fixture, "RTX 4090");
+    const auto ra = ch::reference_of(a.card), rb = ch::reference_of(b.card);
+    check(ra && rb, "Ada has a reference card");
+    if (ra && rb) {
+        ch::Task task;
+        ch::Candidate c;
+        c.kv = KvCacheStorage::Int8Group64;
+        c.state = RecurrentStateStorage::FP16;
+        const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
+        const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
+        check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
+        check(!ra->decides && ra->why.find("one lab card") != std::string::npos,
+              "Ada's factors rest on one lab card: the family's defaults");
+    }
+    const Bench t = nine_b(fixture, "RTX 2080 Ti");
+    check(!ch::reference_of(t.card), "Turing has no reference card");
+    ch::CardFacts volta{7, 0, 80, 1.53e9, 900e9, false};
+    ch::Candidate c;
+    const ch::Speed v = ch::speed_of(t.model, volta, t.quants[0], c, 1, 2048);
+    check(v.decode_per_stream > 0 && std::isfinite(v.decode_per_stream) && v.prefill > 0,
+          "Volta prices finitely");
+}
+
+// Auto's steps: every own-context step above the floor bits before any quantization below them.
+void steps_before_the_floor(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4070 Ti");
+    ch::Task task;
+    task.contexts = {32768, 16384, 8192};
+    // Q4_K_M leaves room for 20K tokens of INT8 KV, IQ3_XXS for far more: 16K at Q4_K_M wins.
+    const double budget = b.quants[0].weight_bytes + 20000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                    {}, task, oracle(b, budget));
+    check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" && c.context == 16384,
+          "16K at Q4_K_M before 32K below the floor");
+}
+
+// The coupled storages are explained: the recurrent state's other values beside the chosen.
+void explains_the_state(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4070 Ti");
+    ch::Task task;
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                    {}, task, oracle(b, 9.6e9));
+    int states = 0, coupled = 0;
+    for (const ch::Alternative& a : ch::explain(c, b.quants)) {
+        if (a.axis == ch::Axis::State) {
+            ++states;
+            if (a.why_code == "coupled") { ++coupled; }
+        }
+    }
+    check(states == 3 && coupled == 2, "the state: the chosen f16 and its two other values");
 }
 
 } // namespace
@@ -232,6 +289,9 @@ int main() {
     const json fixture = json::parse(in);
     reproduces_the_measurements(fixture);
     chooses(fixture);
+    decides_by_generation(fixture);
+    steps_before_the_floor(fixture);
+    explains_the_state(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

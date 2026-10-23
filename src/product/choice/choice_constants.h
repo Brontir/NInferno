@@ -152,6 +152,33 @@ inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 
 inline constexpr std::uint32_t kRequestPrompt = 2048;
 inline constexpr std::uint32_t kRequestAnswer = 512;
 
+// ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
+//
+// The KV codec and the activation precision change the output bytes (tier B1): they read only
+// discrete facts, the artifact and the options, never a board's clock or bandwidth. So the choice
+// prices its candidates on the generation's reference card below, never on the board it runs on:
+// every board of a generation decides the same, and a board's own facts only feed the estimates it
+// shows (speed_of on CardFacts). A reference card is the mean of the generation's lab cards (SMs,
+// reference clock, DRAM bytes per SM and clock). Its constants decide only where they rest on two
+// lab cards of the generation (principle 4): the KV read factors and the exact-route factor each
+// name whether they do. A generation without such a row, or whose factors rest on one card, keeps
+// the family's defaults (the engine's automatic KV codec, --activations fast).
+struct ReferenceCard {
+    std::string_view generation;
+    int sms;
+    double clock_hz;
+    double dram_bytes_per_s;
+    bool kv_two_cards;    // kKvReadFactor's rows of the generation fitted on two lab cards
+    bool exact_two_cards; // kExactComputeFactor's row likewise
+    std::string_view cards;
+};
+
+inline constexpr ReferenceCard kReferenceCards[] = {
+    // RTX 4070 Ti (60 SMs, 2610 MHz, 504 GB/s: 3.22 B a SM-clock) and RTX 4090 (128, 2520,
+    // 1008: 3.13). The KV and exact factors were measured on the 4070 Ti only so far.
+    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, false, false, "RTX 4070 Ti, RTX 4090"},
+};
+
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,
 // then the fewer bytes of weights, then the listing's order).
 inline constexpr double kWorthTie = 1e-9;
