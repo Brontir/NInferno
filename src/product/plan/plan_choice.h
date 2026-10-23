@@ -43,7 +43,8 @@ struct ServedChoice {
 // model's shape is unknown (nothing to plan).
 [[nodiscard]] std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                                             const DryRunInputs& inputs,
-                                                            const ChoicePins& pins);
+                                                            const ChoicePins& pins,
+                                                            const std::string& label = "");
 
 // The inputs with a candidate's KV codec, ring, state and activation mode pinned.
 [[nodiscard]] DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c);

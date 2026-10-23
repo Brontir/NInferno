@@ -107,13 +107,14 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
 }
 
 std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
-                                              const DryRunInputs& inputs, const ChoicePins& pins) {
+                                              const DryRunInputs& inputs, const ChoicePins& pins,
+                                              const std::string& label) {
     if (!facts.model.known()) { return std::nullopt; }
     ServedChoice out;
     const choice::ModelFacts model = choice_model_of(facts);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     choice::QuantOption quant;
-    quant.label           = "own weights";
+    quant.label           = label.empty() ? "the model's weights" : label;
     quant.weight_bytes    = static_cast<double>(facts.model.weight_bytes);
     quant.bits_per_weight = facts.model.params > 0 ? quant.weight_bytes * 8 / facts.model.params : 0;
     const auto& formats   = facts.shape.weight_formats;
