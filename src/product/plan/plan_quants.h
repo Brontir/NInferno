@@ -105,10 +105,12 @@ struct QuantRow {
     std::uint32_t launch_context = 0;
     bool largest                 = false; // the rule's pick
     // The choice model's speed at the plan's storages (product/choice/choice.h): one stream of the
-    // asked ones decoding a typical request (choice::kRequestPrompt + kRequestAnswer tokens), and
-    // the request's seconds. Not set for a row not planned.
+    // asked ones decoding at `estimate_depth` tokens in its window (a quarter of the context it
+    // holds, at least 512: an empty context flatters decode), the prefill, and the seconds of a
+    // typical request (choice::kRequestPrompt + kRequestAnswer tokens). Not set for a row not planned.
     std::optional<choice::Speed> estimate;
-    double request_seconds = 0;
+    std::uint32_t estimate_depth = 0;
+    double request_seconds       = 0;
 };
 
 struct QuantPlan {

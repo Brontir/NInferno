@@ -315,8 +315,11 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             c.activations = inputs.options.activations;
             choice::Task task;
             task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
-            row.estimate        = choice::speed_of(model, card, q, c, task.concurrency,
-                                                   task.prompt + task.answer / 2.0);
+            const std::uint32_t context = row.fit.own_context != 0 ? row.fit.own_context
+                                          : ask.context != 0       ? ask.context
+                                                                   : row.planned.plan.axes.context_ceiling;
+            row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
+            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth);
             row.request_seconds = choice::request_seconds(model, card, q, c, task);
         }
         candidates.push_back(row.candidate);
@@ -594,6 +597,7 @@ Json quant_plan_json(const QuantPlan& plan) {
         if (row.estimate) {
             item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
                                 {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
+                                {"depth", row.estimate_depth},
                                 {"request_seconds", round_to(row.request_seconds, 0.001)},
                                 {"prompt", choice::kRequestPrompt},
                                 {"answer", choice::kRequestAnswer},
