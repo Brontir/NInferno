@@ -594,7 +594,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
 std::optional<product::StartAxes>
 choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
     const product::ChoicePins pins = pins_of(options);
-    if (pins.kv && pins.activations && pins.state && pins.ring) { return std::nullopt; }
+    if (pins.kv && pins.activations && pins.state && pins.ring && pins.chunk) { return std::nullopt; }
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
     try {

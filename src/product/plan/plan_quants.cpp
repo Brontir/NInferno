@@ -368,7 +368,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         std::stable_sort(bounds.begin(), bounds.end(),
                          [](const auto& a, const auto& b) { return a.first > b.first; });
         std::optional<std::size_t> best;
-        double best_worth = 0;
+        double best_worth           = 0;
+        std::uint32_t best_context  = 0;
         for (const auto& [bound, i] : bounds) {
             if (best && bound < best_worth - choice::kWorthTie) { break; }
             const QuantRow& row = out.rows[i];
@@ -382,14 +383,24 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             if (!best || worth > best_worth + choice::kWorthTie ||
                 (std::abs(worth - best_worth) <= choice::kWorthTie &&
                  runtime::quant_ranks_above(row.candidate, out.rows[*best].candidate))) {
-                best       = i;
-                best_worth = worth;
+                best         = i;
+                best_worth   = worth;
+                best_context = served->choice.context;
             }
         }
         if (best && *best != out.pick->index) {
             out.largest_index = out.pick->index;
             out.pick->index   = *best;
             out.by_worth      = true;
+            // The launch keeps the own context per stream the row's choice reached (several
+            // streams under an automatic context: never a pool they silently share), as the rule's
+            // pick does: its preliminary plan was made at the family's defaults.
+            QuantRow& row = out.rows[*best];
+            if (ask.automatic && ask.concurrency > 1 && best_context != 0) {
+                row.launch_context = best_context;
+            }
+            row.fit.state       = runtime::QuantFitState::Own;
+            row.fit.own_context = std::max(row.fit.own_context, best_context);
         }
     }
     if (out.pick) {
