@@ -50,23 +50,24 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 | Gate | Holds | Closed: what stands |
 |---|---|---|
 | `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
-| each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' terms (a model constant), the generation's own int8-activation term, the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
+| each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
 | `kKldFamily` | the family the accuracy terms were measured on (Qwen 3.5 dense) | another family keeps the rule and its defaults |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
 
-The int8 activations' term is not a model constant. Which calls take int8 under `fast` is the
-generation's routes (its route tables and the generic path's cost model): the same Qwen3.5-9B
-Q4_K_M artifact loses 0.0298 KLD on Ada (RTX 4070 Ti 0.0294, RTX 4090 0.0302; top-1 95.8 %) and
-0.0039 on Blackwell (RTX 5070 Ti; 98.5 %). So the term is kept per generation, and a generation
-without its own row takes the axis's worst. The KV codecs' terms agree across the two
-generations within 13 % and are a model constant. The state's and the ring's terms only price
-the candidates they follow (they are not decided), so they do not gate.
+The KV codecs' terms, the int8 activations' term and the quantization curve agree across the two
+generations measured (RTX 5070 Ti and RTX 4070 Ti / 4090: KV within 13 %, the curve within 2 %,
+activations 0.0039 / 0.0040) and are model constants on two cards. The activations' term became
+one only with ggml's MMQ prefill summing its q8_1 blocks from the codes: before, the boards that
+prefill on it (RTX 4090, 4070 Ti, 2080 Ti) lost 0.030 KLD (top-1 95.8 %) on the min-term formats of
+Qwen3.5-9B Q4_K_M, 7.6 times the W4A8 tiles' 0.0039. A generation's own row (`KldTerm::generation`)
+overrides the constant where a generation's routes differ. The state's and the ring's terms only
+price the candidates they follow (they are not decided), so they do not gate.
 
-Today the quantization curve rests on the RTX 5070 Ti alone (the RTX 4070 Ti's run pending), so
-the worth decides nowhere yet; the test checks what opening it does. With it open, Ada decides,
-and on Qwen3.5-9B Q4_K_M fast's 0.030 KLD outweighs exact's time (+34 % on the RTX 4090's mixed
-workload; `lambda` 25 sets the break-even at 0.012): exact. The chunk shares rest on two Ada
-cards, so an MoE's chunk is decided on Ada now.
+Today Ada decides (its reference card's factors and every term above rest on two cards); Blackwell
+and Turing keep the family's defaults (their factors rest on one card). On Qwen3.5-9B Q4_K_M fast's
+0.004 KLD is worth less than exact's time (+34 % on the RTX 4090's mixed workload; `lambda` 25 sets
+the break-even at 0.012): fast. The chunk shares rest on two Ada cards, so an MoE's chunk is decided
+on Ada too.
 
 **What a decision reads.** The KV codec and the activation precision change the output bytes (tier
 B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
@@ -85,7 +86,7 @@ that pair is taken before the next step; under the family's defaults only the au
 counts.
 
 The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF against Q8_0:
-Q6_K 0.0062, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0283, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
+Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
 0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
 models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
 any model's Q8_0 is its own reference (0). Where the worth decides, the plan weighs the quantizations
