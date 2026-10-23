@@ -313,6 +313,38 @@ void ranks_eligible_only(const json& fixture) {
           "defaults only: Q4_K_M at INT8, not Q8_0 at NVFP4");
 }
 
+// The quantization curve: a measured label takes its point; other bits per weight interpolate in
+// log KLD; at or above Q8_0's bits it is the reference. On Ada (a deciding generation) the worth
+// weighs the quantizations: Q8_0's accuracy outweighs Q4_K_M's speed (KLD 0.019 = 48 % of a
+// request's time at lambda 25).
+void weighs_the_quantizations(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4090");
+    ch::Candidate c;
+    c.kv    = KvCacheStorage::Int8Group64;
+    c.state = RecurrentStateStorage::FP16;
+    const auto quant_term = [&](const ch::QuantOption& q) {
+        for (const ch::Term& t : ch::accuracy_of(b.model, q, c, b.card).terms) {
+            if (t.axis == ch::Axis::Quant) { return t; }
+        }
+        return ch::Term{};
+    };
+    ch::QuantOption q = b.quants[0];
+    q.label           = "Q4_K_M";
+    check(std::abs(quant_term(q).kld - 0.0193) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
+    q.label           = "custom";
+    q.bits_per_weight = 5.5;
+    const double mid  = std::exp(std::log(0.0193) + (5.5 - 5.16) / (5.97 - 5.16) * (std::log(0.01058) - std::log(0.0193)));
+    check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
+    q.bits_per_weight = 9.0;
+    check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
+    ch::Task task;
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                         {}, task, oracle(b, 20e9));
+    check(choice.chosen && b.quants[chosen(choice).candidate.quant].label == "Q8_0" &&
+              choice.why.find("best worth among the quantizations") != std::string::npos,
+          "Ada: the quantizations by worth (Q8_0)");
+}
+
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
 void steps_before_the_floor(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
@@ -356,6 +388,7 @@ int main() {
     decides_by_generation(fixture);
     steps_before_the_floor(fixture);
     ranks_eligible_only(fixture);
+    weighs_the_quantizations(fixture);
     explains_the_state(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
