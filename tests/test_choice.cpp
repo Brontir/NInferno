@@ -397,6 +397,18 @@ void chooses_the_chunk(const json& fixture) {
     check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
 }
 
+// A coarse quantization does not make a switch's error free: the quantization's term adds on top
+// of the switches' root sum square, so on Ada a ~3-bit model still keeps INT8 KV over K8V4.
+void coarse_quant_keeps_kv(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    b.quants = {b.quants[2]}; // IQ3_XXS-like, 3.1 bits: a large interpolated quantization term
+    ch::Task task;
+    task.contexts = {8192};
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                    {}, task, oracle(b, 20e9));
+    check(c.chosen && chosen(c).candidate.kv == KvCacheStorage::Int8Group64, "a coarse quantization keeps INT8 KV");
+}
+
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
 void steps_before_the_floor(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
@@ -442,6 +454,7 @@ int main() {
     ranks_eligible_only(fixture);
     weighs_the_quantizations(fixture);
     chooses_the_chunk(fixture);
+    coarse_quant_keeps_kv(fixture);
     explains_the_state(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

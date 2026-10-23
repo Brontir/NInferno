@@ -391,9 +391,20 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         add(Axis::Activations, "fp4", worst_term(Axis::Activations), false,
             "not measured: the axis's worst");
     }
-    double sum = 0;
-    for (const Term& term : out.terms) { sum += term.kld * term.kld; }
-    out.kld = std::sqrt(sum);
+    // The switches' terms were measured against one quantization and combine as the root of the
+    // sum of their squares (the product default: measured 0.0040, root sum square 0.0044); how the
+    // quantization's own error combines with them is not measured, so it adds on top (the
+    // conservative side: a coarse quantization never makes a switch's error look free).
+    double sum   = 0;
+    double quant = 0;
+    for (const Term& term : out.terms) {
+        if (term.axis == Axis::Quant) {
+            quant += term.kld;
+        } else {
+            sum += term.kld * term.kld;
+        }
+    }
+    out.kld = quant + std::sqrt(sum);
     return out;
 }
 

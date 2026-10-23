@@ -21,8 +21,9 @@
 //
 // Accuracy. KLD against the exact reference (--activations exact, BF16 KV, FP32 state) on the
 // fixed corpus (ninferno-perplexity --quick, eval/corpora/perplexity-1m), one term per switch;
-// terms combine as the root of the sum of their squares (the product default measured 0.0040,
-// the root sum square of its terms 0.0044, their plain sum 0.0067).
+// the switches' terms combine as the root of the sum of their squares (the product default
+// measured 0.0040, the root sum square of its terms 0.0044, their plain sum 0.0067); the
+// quantization's own term adds on top (its combination with them is not measured).
 //
 // The trade. One number, kAccuracyWeight: a configuration's worth is -ln(T) - lambda KLD, T the
 // seconds of a typical request (kRequestPrompt tokens in, kRequestAnswer out). lambda 25 makes
