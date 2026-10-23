@@ -441,10 +441,13 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
         }
         return "";
     };
+    // The chosen candidate but for `axis`: a main axis keeps the other main axes (its coupled
+    // storages follow it: exact takes the FP32 state), a coupled one keeps everything else.
     const auto same_but = [&](const Candidate& x, Axis axis) {
-        return (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
-               (axis == Axis::Activations || x.activations == c.activations) &&
-               (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
+        const bool main = (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
+                          (axis == Axis::Activations || x.activations == c.activations);
+        if (axis != Axis::State && axis != Axis::Ring) { return main; }
+        return main && (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
     };
     for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::State, Axis::Ring}) {
         const bool coupled = axis == Axis::State || axis == Axis::Ring;
