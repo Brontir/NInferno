@@ -148,6 +148,20 @@ inline constexpr KldTerm kKldTerms[] = {
     {Axis::State, "bf16", 0.0052, 0.970, "Qwen3.8-27B 16K stepwise decode (docs/reference/serving.md)"},
 };
 
+// The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
+// --quick, the same corpus), by bits per weight. Another quantization or model takes the
+// interpolation in log KLD over bits per weight between the two nearest points (past the ends, the
+// nearest pair's slope), marked as not measured; at or above Q8_0's bits it is the reference (0).
+// Empty: no curve, and the quantization is the quant rule's pick.
+struct QuantKldPoint {
+    double bits_per_weight;
+    double kld;
+    std::string_view label;
+};
+
+inline constexpr std::string_view kQuantKldSource = "";
+inline constexpr QuantKldPoint kQuantKld[] = {{0, 0, ""}}; // filled from the measured curve
+
 // ---- The trade.
 
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
