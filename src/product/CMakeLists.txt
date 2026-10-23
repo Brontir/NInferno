@@ -43,6 +43,14 @@ add_library(ninferno_product_plan STATIC
   plan/plan_quants.cpp
 )
 ninferno_internal_includes(ninferno_product_plan)
+
+# The configuration choice (choice/choice.h): memory, speed and accuracy of every candidate
+# configuration from facts, and the one rule that picks among them. Pure.
+add_library(ninferno_product_choice STATIC
+  choice/choice.cpp
+)
+ninferno_internal_includes(ninferno_product_choice)
+target_link_libraries(ninferno_product_choice PUBLIC ninferno_core)
 target_link_libraries(ninferno_product_plan
   PUBLIC ninferno_runtime_support ninferno_product_speculation ninferno_spec ninferno::json
   PRIVATE ninferno_convert ninferno_artifact ninferno_core ninferno::cudart)

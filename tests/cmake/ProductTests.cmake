@@ -154,3 +154,13 @@ ninferno_add_test(ninferno_plan_bytes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bytes.cpp"
   LIBRARIES ninferno_product_plan ninferno_model_runtime ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# The configuration choice: the speed model reproduces the stand measurements its constants were
+# fitted on (tests/fixtures/choice/speed_measured.json), and the rule picks, keeps the pins and
+# explains. CPU.
+ninferno_add_test(ninferno_choice_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_choice.cpp"
+  LIBRARIES ninferno_product_choice ninferno_core ninferno::json)
+target_include_directories(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(ninferno_choice_test PRIVATE
+  NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
