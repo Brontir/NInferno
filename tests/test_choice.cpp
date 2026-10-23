@@ -246,8 +246,7 @@ void decides_by_generation(const json& fixture) {
         const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
         const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
         check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
-        check(!ra->decides && ra->why.find("one lab card") != std::string::npos,
-              "Ada's factors rest on one lab card: the family's defaults");
+        check(ra->decides, "Ada's factors rest on two lab cards: the worth decides");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
