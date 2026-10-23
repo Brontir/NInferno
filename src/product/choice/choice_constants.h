@@ -177,8 +177,22 @@ struct QuantKldPoint {
     std::string_view label;
 };
 
-inline constexpr std::string_view kQuantKldSource = "";
-inline constexpr QuantKldPoint kQuantKld[] = {{0, 0, ""}}; // filled from the measured curve
+inline constexpr std::string_view kQuantKldSource =
+    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti, 2026-10-23";
+// Bits per weight as the plan counts them (the weight bytes over the parameters); perplexity and
+// top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD 0.068
+// above 0.028).
+inline constexpr QuantKldPoint kQuantKld[] = {
+    {8.65, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
+    {6.77, 0.00623, "Q6_K"},       // ppl 4.9714, top-1 0.9765
+    {5.97, 0.01058, "Q5_K_M"},     // ppl 4.9665, top-1 0.9686
+    {5.16, 0.01930, "Q4_K_M"},     // ppl 4.9997, top-1 0.9512
+    {4.69, 0.02831, "IQ4_XS"},     // ppl 5.0727, top-1 0.9407
+    {4.24, 0.06796, "Q3_K_M"},     // ppl 5.0292, top-1 0.9040
+    {3.64, 0.10682, "UD-IQ3_XXS"}, // ppl 5.2870, top-1 0.8733
+    {3.31, 0.16138, "UD-IQ2_M"},   // ppl 5.5968, top-1 0.8420
+    {2.90, 0.33445, "UD-IQ2_XXS"}, // ppl 6.4693, top-1 0.7684
+};
 
 // ---- The trade.
 
@@ -223,8 +237,8 @@ inline constexpr ReferenceCard kReferenceCards[] = {
 // then the fewer bytes of weights, then the listing's order).
 inline constexpr double kWorthTie = 1e-9;
 
-// Until a measured KLD curve over the quantizations is wired in, the quantization is the rule's
-// pick (runtime/engine/quant_rule.h: the largest that fits, not below its floor bits unless none
-// does); the other axes are chosen by worth at that quantization.
+// With the quantization curve, a generation that decides weighs the quantizations by worth too; one
+// that does not keeps the quant rule's pick (runtime/engine/quant_rule.h: the largest that fits, not
+// below its floor bits unless none does).
 
 } // namespace ninferno::product::choice
