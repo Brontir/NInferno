@@ -344,17 +344,17 @@ void weighs_the_quantizations(const json& fixture) {
     };
     ch::QuantOption q = b.quants[0];
     q.label           = "Q4_K_M";
-    check(std::abs(quant_term(q).kld - 0.0193) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
     q.bits_per_weight = 4.9; // another model's Q4_K_M: interpolated, not the 9B's point
-    check(!quant_term(q).measured && quant_term(q).kld > 0.0193, "a label at other bits: interpolated");
+    check(!quant_term(q).measured && quant_term(q).kld > 0.01925, "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
-    const double mid  = std::exp(std::log(0.0193) + (5.5 - 5.16) / (5.97 - 5.16) * (std::log(0.01058) - std::log(0.0193)));
+    const double mid  = std::exp(std::log(0.01925) + (5.5 - 5.16) / (5.97 - 5.16) * (std::log(0.01061) - std::log(0.01925)));
     check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
     q.bits_per_weight = 9.0;
     check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
     q.bits_per_weight = (6.77 + 8.65) / 2; // above Q6_K: a straight line to 0 at Q8_0's bits
-    check(std::abs(quant_term(q).kld - 0.00623 / 2) < 1e-9, "between Q6_K and Q8_0: halfway to 0");
+    check(std::abs(quant_term(q).kld - 0.00629 / 2) < 1e-9, "between Q6_K and Q8_0: halfway to 0");
     q.label           = "Q8_0";
     q.bits_per_weight = 8.5; // another model's Q8_0: its own reference
     check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
@@ -492,9 +492,9 @@ void steps_before_the_floor(const json& fixture) {
           "16K at Q4_K_M before 32K below the floor");
 }
 
-// The int8 activations' term is the generation's: which calls take int8 is its routes. Ada (two
-// cards) 0.0298, Blackwell (one card) 0.00388, Turing (none) the axis's worst. With the terms open
-// on Ada, fast's 0.03 KLD is worth more than exact's +34 % time: Qwen3.5-9B Q4_K_M takes exact.
+// The int8 activations' term is a model constant (since ggml's MMQ prefill sums its blocks from
+// the codes): the same on every generation. With it Ada decides, and fast's 0.004 KLD is worth less
+// than exact's +34 % time: Qwen3.5-9B Q4_K_M keeps fast.
 void activations_by_generation(const json& fixture) {
     ch::Candidate c;
     c.kv    = KvCacheStorage::Int8Group64;
@@ -506,18 +506,16 @@ void activations_by_generation(const json& fixture) {
         }
         return ch::Term{};
     };
-    check(std::abs(act("RTX 4090").kld - 0.0298) < 1e-9 && act("RTX 4090").measured, "Ada: its own term");
-    check(std::abs(act("RTX 5070 Ti").kld - 0.00388) < 1e-9, "Blackwell: its own term");
-    check(!act("RTX 2080 Ti").measured && act("RTX 2080 Ti").kld >= 0.0298, "Turing: the axis's worst");
-    std::string why;
-    check(!ch::accuracy_decides("gb20x", &why) && why.find("one lab card") != std::string::npos,
-          "Blackwell's activations rest on one card");
+    for (const char* card : {"RTX 4090", "RTX 5070 Ti", "RTX 2080 Ti"}) {
+        check(std::abs(act(card).kld - 0.00394) < 1e-9 && act(card).measured, std::string(card) + ": the model constant");
+    }
+    check(ch::accuracy_decides("ada"), "Ada: every term the worth decides by rests on two cards");
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Task task;
     const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                         {}, task, oracle(b, 9.6e9), {true, true});
-    check(choice.chosen && chosen(choice).candidate.activations == ActivationMode::Exact,
-          "Ada with the terms open: exact over fast");
+                                         {}, task, oracle(b, 9.6e9));
+    check(choice.by_worth && choice.chosen && chosen(choice).candidate.activations == ActivationMode::Fast,
+          "Ada decides: fast over exact");
     if (choice.chosen) { std::cout << choice.why << '\n'; }
 }
 

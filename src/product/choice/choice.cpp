@@ -335,7 +335,7 @@ bool accuracy_decides(std::string_view generation, std::string* why) {
         }
     }
     const KldTerm* act = measured_term(Axis::Activations, "int8", generation);
-    if (act == nullptr || act->generation != generation) {
+    if (act == nullptr) {
         return say("the int8 activations' accuracy on " + std::string(generation) + " is not measured");
     }
     if (act->cards < 2) {
@@ -418,9 +418,9 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     if (route == Route::Bf16) {
         add(Axis::Activations, "bf16", 0, true, "the reference");
     } else if (route == Route::Int8) {
-        // The generation's own row; another generation's routes are not its (the axis's worst).
+        // The generation's own row, else the model constant's; none: the axis's worst.
         const KldTerm* term = measured_term(Axis::Activations, "int8", gen);
-        if (term != nullptr && term->generation == gen) {
+        if (term != nullptr) {
             add(Axis::Activations, "int8", term->kld, true, std::string(term->source));
         } else {
             add(Axis::Activations, "int8", worst_term(Axis::Activations), false,
