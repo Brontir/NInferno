@@ -395,16 +395,16 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // sum of their squares (the product default: measured 0.0040, root sum square 0.0044); how the
     // quantization's own error combines with them is not measured, so it adds on top (the
     // conservative side: a coarse quantization never makes a switch's error look free).
-    double sum   = 0;
-    double quant = 0;
+    double switches = 0;
+    double own      = 0;
     for (const Term& term : out.terms) {
         if (term.axis == Axis::Quant) {
-            quant += term.kld;
+            own += term.kld;
         } else {
-            sum += term.kld * term.kld;
+            switches += term.kld * term.kld;
         }
     }
-    out.kld = quant + std::sqrt(sum);
+    out.kld = own + std::sqrt(switches);
     return out;
 }
 
