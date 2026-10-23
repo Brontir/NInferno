@@ -578,6 +578,12 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         cache.host_state_slots       = 0;
         cache.host_kv_capacity_bytes = 0;
     }
+    // The pinning a rung declares (rung_cost): the Host tier as the options and the platform
+    // configure it. The fit below sizes an automatic tier to what the host can pin now
+    // (MemAvailable, observed); were its page tables the rung's, host memory pressure would move
+    // the ladder and the fingerprint with it.
+    const std::uint64_t declared_host_kv_bytes    = cache.host_kv_capacity_bytes;
+    const std::uint32_t declared_host_state_slots = cache.host_state_slots;
     if (host_tier.automatic && (cache.host_state_slots != 0 || cache.host_kv_capacity_bytes != 0)) {
         if (const std::optional<HostMemory> memory = read_host_memory()) {
             EngineOptions probe                     = resolved;
@@ -690,11 +696,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 out.bytes      = curve.reservation_bytes(pages);
                 out.held_bytes = graphs_held ? out.bytes : 0;
                 if (cache.enabled) {
+                    // The declared tier, never less than the fitted one: an automatic tier the
+                    // host cannot pin in full pins less than the rung reserved for.
                     const std::uint64_t pinned =
-                        cache.host_kv_capacity_bytes +
-                        (cache.host_state_slots != 0
+                        declared_host_kv_bytes +
+                        (declared_host_state_slots != 0
                              ? static_cast<std::uint64_t>(planner.host_state_image_bytes()) *
-                                   cache.host_state_slots
+                                   declared_host_state_slots
                              : 0ULL);
                     out.pin_bytes = pinned >> 9; // 2 MiB of page tables per pinned GiB
                 }
