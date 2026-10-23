@@ -315,8 +315,8 @@ void ranks_eligible_only(const json& fixture) {
 
 // The quantization curve: a measured label takes its point; other bits per weight interpolate in
 // log KLD; at or above Q8_0's bits it is the reference. On Ada (a deciding generation) the worth
-// weighs the quantizations: Q8_0's accuracy outweighs Q4_K_M's speed (KLD 0.019 = 48 % of a
-// request's time at lambda 25).
+// weighs the quantizations: Q6_K, not the largest (Q8_0: +26 % time for -0.003 KLD) nor the
+// fastest above the floor (Q4_K_M: -20 % time for +0.012 KLD).
 void weighs_the_quantizations(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;
@@ -337,12 +337,26 @@ void weighs_the_quantizations(const json& fixture) {
     check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
     q.bits_per_weight = 9.0;
     check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
+    Bench with6 = b;
+    ch::QuantOption q6 = b.quants[0];
+    q6.label           = "Q6_K";
+    q6.bits_per_weight = 6.77;
+    q6.weight_bytes    = b.quants[0].weight_bytes * 6.77 / b.quants[0].bits_per_weight;
+    with6.quants.push_back(q6);
     ch::Task task;
-    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                         {}, task, oracle(b, 20e9));
-    check(choice.chosen && b.quants[chosen(choice).candidate.quant].label == "Q8_0" &&
+    const ch::Choice choice = ch::choose(with6.model, with6.card, with6.quants,
+                                         ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
+                                         oracle(with6, 20e9));
+    check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
               choice.why.find("best worth among the quantizations") != std::string::npos,
-          "Ada: the quantizations by worth (Q8_0)");
+          "Ada: the quantizations by worth (Q6_K)");
+    // Without decision constants (Turing) the rule's largest stands.
+    const Bench t = nine_b(fixture, "RTX 2080 Ti");
+    Bench t6      = t;
+    t6.quants.push_back(q6);
+    const ch::Choice rule = ch::choose(t6.model, t6.card, t6.quants, ch::allowed_axes(t6.model, KvCacheStorage::Int8Group64),
+                                       {}, task, oracle(t6, 20e9));
+    check(rule.chosen && t6.quants[chosen(rule).candidate.quant].label == "Q8_0", "Turing: the rule's largest (Q8_0)");
 }
 
 // Auto's steps: every own-context step above the floor bits before any quantization below them.
