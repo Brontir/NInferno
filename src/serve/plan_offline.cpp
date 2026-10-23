@@ -589,10 +589,10 @@ largest_fitting_hub_quant(const ServeOptions& options,
     return choice_of(row, plan, options, log);
 }
 
-std::optional<ServedAxes>
+std::optional<product::StartAxes>
 choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
     const product::ChoicePins pins = pins_of(options);
-    if (pins.kv && pins.activations && pins.state) { return std::nullopt; }
+    if (pins.kv && pins.activations && pins.state && pins.ring) { return std::nullopt; }
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
     try {
@@ -600,11 +600,11 @@ choose_served_axes(const ServeOptions& options, const std::function<void(const s
             options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
         gpu = spec::gpu_identity(options.device).key;
     } catch (const std::exception& e) {
-        if (log) { log(std::string("choice | not planned (no GPU facts: ") + e.what() + ")"); }
+        if (log) { log(std::string("not planned (no GPU facts: ") + e.what() + ")"); }
         return std::nullopt;
     }
-    ServeOptions at_artifact  = options;
-    at_artifact.model_source  = options.artifact_path;
+    ServeOptions at_artifact = options;
+    at_artifact.model_source = options.artifact_path;
     std::optional<product::ServedChoice> served;
     try {
         const ModelRead model   = read_model(at_artifact);
@@ -612,28 +612,13 @@ choose_served_axes(const ServeOptions& options, const std::function<void(const s
         planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
         served                  = product::choose_at_weights(model.facts, planning.inputs, pins);
     } catch (const std::exception& e) {
-        if (log) { log(std::string("choice | not planned: ") + e.what()); }
+        if (log) { log(std::string("not planned: ") + e.what()); }
         return std::nullopt;
     }
     if (!served) { return std::nullopt; }
     if (log) { log(product::choice_line(*served).substr(9)); }
     if (!served->choice.chosen) { return std::nullopt; }
-    const product::choice::Candidate& c = served->choice.scored[*served->choice.chosen].candidate;
-    ServedAxes out;
-    if (!pins.kv) { out.kv = c.kv; }
-    if (!pins.activations) { out.activations = c.activations; }
-    // A recurrent state the choice set (the Qwen 3.5 families; its accuracy names the state term).
-    const auto& terms = served->choice.scored[*served->choice.chosen].accuracy.terms;
-    const bool recurrent = std::any_of(terms.begin(), terms.end(), [](const product::choice::Term& t) {
-        return t.axis == product::choice::Axis::State;
-    });
-    if (!pins.state && recurrent) { out.state = c.state; }
-    // The rings follow the KV codec where the family's take FP8.
-    const bool sliding = std::any_of(terms.begin(), terms.end(), [](const product::choice::Term& t) {
-        return t.axis == product::choice::Axis::Ring;
-    });
-    if (!pins.ring && sliding) { out.ring = c.ring; }
-    return out;
+    return product::start_axes(*served, pins);
 }
 
 } // namespace ninferno::serve

@@ -127,12 +127,14 @@ Options parse_options(int argc, char** argv) {
                 throw std::invalid_argument("--sliding-kv-dtype must be bf16 or fp8");
             }
             options.sliding_kv_cache = parse_kv_dtype(text);
+            options.sliding_kv_given = true;
         } else if (arg == "--state-dtype") {
             const auto storage = parse_recurrent_state_storage(value(arg));
             if (!storage) { throw std::invalid_argument("--state-dtype must be f32, bf16 or f16"); }
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
-            options.activations = product::parse_activation_mode(value(arg));
+            options.activations       = product::parse_activation_mode(value(arg));
+            options.activations_given = true;
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor = parse_float_in(value(arg), "rope-yarn-factor", 1.0F, 64.0F);
         } else if (arg == "--spec") {
