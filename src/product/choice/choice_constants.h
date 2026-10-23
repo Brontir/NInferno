@@ -161,6 +161,11 @@ struct KldTerm {
 
 inline constexpr std::string_view kKldFamily = "qwen3_5_text"; // the family the terms were measured on
 
+// Whether the accuracy terms (the switches' and the quantization curve) rest on two lab cards of
+// different generations (principle 4: a model constant). The worth decides only then; until the
+// second card's run confirms them, the family's defaults stand everywhere.
+inline constexpr bool kKldTwoCards = false; // the RTX 5070 Ti; the RTX 4070 Ti's run pending
+
 inline constexpr KldTerm kKldTerms[] = {
     {Axis::Kv, "int8", 0.00099, 0.9914, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
     {Axis::Kv, "fp8", 0.00300, 0.9861, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
