@@ -32,7 +32,11 @@ std::string gib(std::uint64_t bytes) {
     return text;
 }
 
-double round_to(double x, double step) { return std::round(x / step) * step; }
+// Rounded to a step (0.1, 0.01, ...): by the step's inverse, so 61.4 prints as 61.4.
+double round_to(double x, double step) {
+    const double inverse = std::round(1.0 / step);
+    return inverse >= 1 ? std::round(x * inverse) / inverse : std::round(x / step) * step;
+}
 
 std::string context_text(const EngineOptions& options) {
     return options.max_context_automatic ? std::string("auto") : grouped(options.max_context);

@@ -963,6 +963,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     } catch (const std::exception&) {}
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
+    std::string planned_label           = quant;
     if (quant.empty()) {
         const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
         const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
@@ -976,6 +977,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
+        if (chosen != nullptr) { planned_label = chosen->listing.quant; }
     } else {
         // One quantization: its row of the table (the same states, sizes and codes), and its plan.
         std::vector<product::QuantListing> one;
@@ -996,7 +998,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // the KV codec the user chose and --activations exact.
     const product::ChoicePins pins{.kv          = !launch.kv_dtype.empty() && launch.kv_dtype != "auto",
                                    .activations = launch.exact};
-    if (const auto served = product::choose_at_weights(planned_at, inputs, pins)) {
+    if (const auto served = product::choose_at_weights(planned_at, inputs, pins, planned_label)) {
         doc["choice"] = product::choice_json(*served);
     }
     std::lock_guard lock(sizes_mutex_);

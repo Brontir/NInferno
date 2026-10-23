@@ -370,7 +370,9 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     out.fits = planned.plan.fits;
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
-    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options))) {
+    std::string label = model.quant;
+    if (quants && quants->chosen) { label = quants->rows[*quants->chosen].listing.quant; }
+    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options), label)) {
         out.json["choice"] = product::choice_json(*served);
         out.text += product::choice_line(*served) + "\n";
     }
