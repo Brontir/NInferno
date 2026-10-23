@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specBasisText", "launchSettingsOf",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specBasisText", "launchSettingsOf",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -402,6 +402,10 @@ ok(Math.abs(cr[1].dkld + 0.0044) < 1e-12, "exact: the KLD difference");
 eq([cr[2].fits, cr[2].ddecode, cr[2].dkld, cr[2].why], [false, null, null, "no_fit"], "an alternative that does not fit has no speeds");
 eq(H.choiceRows({choice: {chosen: null}}), [], "no choice: no rows");
 eq(H.choiceRows(null), [], "no document");
+// The choice belongs to the quantization it was made at: the panel and the pick's speed only there.
+const atQ4 = {choice: {chosen: {quant: "Q4_K_M"}}};
+ok(H.choiceFor(atQ4, "Q4_K_M") && !H.choiceFor(atQ4, "Q8_0") && H.choiceFor(atQ4, ""), "a choice is for its quantization");
+ok(!H.choiceFor({choice: {chosen: null}}, "Q4_K_M") && !H.choiceFor(null, "Q4_K_M"), "no choice: for none");
 for (const lang of ["en", "ru"]) for (const k of ["choiceHead", "choiceLine", "choiceAlt", "estBasis", "why_no_fit", "why_lower_worth", "why_quant_rule", "ax_kv", "ax_activations", "ax_quant"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
