@@ -50,12 +50,23 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 | Gate | Holds | Closed: what stands |
 |---|---|---|
 | `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
-| `kKldTwoCards` | the accuracy terms and the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
+| each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' terms (a model constant), the generation's own int8-activation term, the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
+| `kKldFamily` | the family the accuracy terms were measured on (Qwen 3.5 dense) | another family keeps the rule and its defaults |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
 
-Today the accuracy terms rest on the RTX 5070 Ti alone (`kKldTwoCards` false): the worth decides
-nowhere yet, and what follows about it is what opening that gate does (the test checks it with the
-gates opened). The chunk shares rest on two Ada cards, so an MoE's chunk is decided on Ada now.
+The int8 activations' term is not a model constant. Which calls take int8 under `fast` is the
+generation's routes (its route tables and the generic path's cost model): the same Qwen3.5-9B
+Q4_K_M artifact loses 0.0298 KLD on Ada (RTX 4070 Ti 0.0294, RTX 4090 0.0302; top-1 95.8 %) and
+0.0039 on Blackwell (RTX 5070 Ti; 98.5 %). So the term is kept per generation, and a generation
+without its own row takes the axis's worst. The KV codecs' terms agree across the two
+generations within 13 % and are a model constant. The state's and the ring's terms only price
+the candidates they follow (they are not decided), so they do not gate.
+
+Today the quantization curve rests on the RTX 5070 Ti alone (the RTX 4070 Ti's run pending), so
+the worth decides nowhere yet; the test checks what opening it does. With it open, Ada decides,
+and on Qwen3.5-9B Q4_K_M fast's 0.030 KLD outweighs exact's time (+34 % on the RTX 4090's mixed
+workload; `lambda` 25 sets the break-even at 0.012): exact. The chunk shares rest on two Ada
+cards, so an MoE's chunk is decided on Ada now.
 
 **What a decision reads.** The KV codec and the activation precision change the output bytes (tier
 B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or

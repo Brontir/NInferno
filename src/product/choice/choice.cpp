@@ -101,11 +101,15 @@ double kv_read_factor(std::string_view generation, KvCacheStorage kv, bool& tran
     return 1.0;
 }
 
-const KldTerm* measured_term(Axis axis, std::string_view value) noexcept {
+// The measured term of (axis, value) on `generation`: its own row, else the model constant's.
+const KldTerm* measured_term(Axis axis, std::string_view value, std::string_view generation) noexcept {
+    const KldTerm* constant = nullptr;
     for (const KldTerm& term : kKldTerms) {
-        if (term.axis == axis && term.value == value) { return &term; }
+        if (term.axis != axis || term.value != value) { continue; }
+        if (term.generation == generation) { return &term; }
+        if (term.generation.empty()) { constant = &term; }
     }
-    return nullptr;
+    return constant;
 }
 
 // The worst measured term of an axis: an unmeasured value never counts as more accurate.
@@ -320,33 +324,58 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 
+bool accuracy_decides(std::string_view generation, std::string* why) {
+    const auto say = [&](std::string text) {
+        if (why) { *why = std::move(text); }
+        return false;
+    };
+    for (const KldTerm& term : kKldTerms) {
+        if (term.axis == Axis::Kv && term.cards < 2) {
+            return say("the KV codecs' accuracy terms rest on one lab card");
+        }
+    }
+    const KldTerm* act = measured_term(Axis::Activations, "int8", generation);
+    if (act == nullptr || act->generation != generation) {
+        return say("the int8 activations' accuracy on " + std::string(generation) + " is not measured");
+    }
+    if (act->cards < 2) {
+        return say("the int8 activations' accuracy on " + std::string(generation) + " rests on one lab card");
+    }
+    if (kQuantKldCards < 2) { return say("the quantization curve rests on one lab card"); }
+    return true;
+}
+
 std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates) {
     const std::string_view gen = generation_of(card);
     for (const ReferenceCard& r : kReferenceCards) {
         if (r.generation != gen) { continue; }
         Reference out;
         out.card          = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
-        out.decides       = r.kv_two_cards && r.exact_two_cards && gates.accuracy;
+        std::string accuracy_why;
+        const bool accuracy =
+            gates.accuracy ? *gates.accuracy : accuracy_decides(gen, &accuracy_why);
+        out.decides       = r.kv_two_cards && r.exact_two_cards && accuracy;
         out.chunk_decides = gates.moe_chunk;
         if (!r.kv_two_cards || !r.exact_two_cards) {
             out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card";
-        } else if (!gates.accuracy) {
-            out.why = "the accuracy terms rest on one lab card";
+        } else if (!accuracy) {
+            out.why = accuracy_why.empty() ? "the accuracy terms rest on one lab card" : accuracy_why;
         }
         return out;
     }
     return std::nullopt;
 }
 
-bool weighs_quantizations(const CardFacts& card, const Gates& gates) {
+bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
     const auto ref = reference_of(card, gates);
-    return ref && ref->decides;
+    return ref && ref->decides && model.family == kKldFamily;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
                      const CardFacts& card) {
     Accuracy out;
-    const bool other_family = model.family != kKldFamily;
+    const bool other_family    = model.family != kKldFamily;
+    const std::string_view gen = generation_of(card);
     const auto add = [&](Axis axis, std::string value, double kld, bool measured, std::string source) {
         out.terms.push_back({axis, std::move(value), kld, measured, other_family && kld > 0,
                              std::move(source)});
@@ -360,7 +389,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {
         add(Axis::Kv, kv, 0, true, "the reference");
-    } else if (const KldTerm* term = measured_term(Axis::Kv, kv)) {
+    } else if (const KldTerm* term = measured_term(Axis::Kv, kv, gen)) {
         add(Axis::Kv, kv, term->kld, true, std::string(term->source));
     } else {
         add(Axis::Kv, kv, worst_term(Axis::Kv), false, "not measured: the axis's worst");
@@ -370,7 +399,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         if (candidate.ring == KvCacheStorage::BFloat16) {
             add(Axis::Ring, ring, 0, true, "the reference");
         } else {
-            const KldTerm* proxy = measured_term(Axis::Kv, ring);
+            const KldTerm* proxy = measured_term(Axis::Kv, ring, gen);
             add(Axis::Ring, ring, proxy ? proxy->kld : worst_term(Axis::Kv), false,
                 "not measured: the KV codec's term stands in");
         }
@@ -379,7 +408,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         const std::string state{recurrent_state_storage_name(candidate.state)};
         if (candidate.state == RecurrentStateStorage::FP32) {
             add(Axis::State, state, 0, true, "the reference");
-        } else if (const KldTerm* term = measured_term(Axis::State, state)) {
+        } else if (const KldTerm* term = measured_term(Axis::State, state, gen)) {
             add(Axis::State, state, term->kld, true, std::string(term->source));
         } else {
             add(Axis::State, state, worst_term(Axis::State), false, "not measured: the axis's worst");
@@ -389,8 +418,14 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     if (route == Route::Bf16) {
         add(Axis::Activations, "bf16", 0, true, "the reference");
     } else if (route == Route::Int8) {
-        const KldTerm* term = measured_term(Axis::Activations, "int8");
-        add(Axis::Activations, "int8", term->kld, true, std::string(term->source));
+        // The generation's own row; another generation's routes are not its (the axis's worst).
+        const KldTerm* term = measured_term(Axis::Activations, "int8", gen);
+        if (term != nullptr && term->generation == gen) {
+            add(Axis::Activations, "int8", term->kld, true, std::string(term->source));
+        } else {
+            add(Axis::Activations, "int8", worst_term(Axis::Activations), false,
+                "not measured on " + std::string(gen) + ": the axis's worst");
+        }
     } else {
         add(Axis::Activations, "fp4", worst_term(Axis::Activations), false,
             "not measured: the axis's worst");
@@ -443,7 +478,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         return out;
     }
     const std::optional<Reference> ref = reference_of(card, gates);
-    out.by_worth       = ref && ref->decides;
+    out.by_worth       = weighs_quantizations(model, card, gates);
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
@@ -550,7 +585,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                                   std::to_string(task.prompt) + "+" + std::to_string(task.answer) +
                                   "-token request there, KLD " + fixed(c.accuracy.kld, 4) + ")"
                             : ": the family's defaults (" +
-                                  (ref ? ref->why : std::string(generation_of(card)) + " has no reference card") +
+                                  (!ref               ? std::string(generation_of(card)) + " has no reference card"
+                                   : !ref->decides    ? ref->why
+                                                      : "the accuracy terms were measured on " +
+                                                            std::string(kKldFamily) + ", not " + model.family) +
                                   ")") +
               (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                         ": the fastest prefill on the reference card"
