@@ -572,10 +572,10 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
         for (const Scored& s : choice.scored) {
             if (s.variant != coupled && &s != &chosen) { continue; }
             if (!same_but(s.candidate, axis)) { continue; }
-            if (coupled && &s == &chosen) {
-                // The chosen value of a coupled axis is listed only when it has a variant beside.
+            if (&s == &chosen) {
+                // The chosen value of an axis is listed only when the axis has another value beside.
                 const bool any = std::any_of(choice.scored.begin(), choice.scored.end(), [&](const Scored& v) {
-                    return v.variant && same_but(v.candidate, axis);
+                    return &v != &chosen && v.variant == coupled && same_but(v.candidate, axis);
                 });
                 if (!any) { continue; }
             }
