@@ -71,6 +71,13 @@ constexpr int kQuantizeThreads = 128;
 constexpr std::size_t kActivationSlack = 128 * sizeof(block_q8_1_mmq);
 
 // Token c of x (BF16, at x + c * ldx) -> ggml's q8_1 tiles in the scale/sum layout of the format.
+// A block's sum is its codes' (d * sum q), not the raw values' as in ggml's quantizer: the formats
+// that read it (Q4_0, Q4_1, Q5_1, Q4_K, Q5_K, Q2_K) subtract an offset times it from the codes' dot,
+// two large terms whose difference is the product, so both must see the same activation or the
+// quantization noise of the dot stays uncancelled. The W4A8 tiles' activation (W4a8Activation::sums)
+// does the same. Qwen3.5-9B Q4_K_M under --activations fast (ninferno-perplexity --quick against
+// exact, RTX 4090, MMQ prefill): KLD 0.0302 -> 0.0040, top-1 95.75 % -> 98.44 %, the speed the same
+// (5.66k -> 5.67k tok/s); the W4A8 tiles on the RTX 5070 Ti 0.0039.
 template <mmq_q8_1_ds_layout ds_layout>
 __global__ void quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx,
                                 block_q8_1_mmq* __restrict__ y, int k, int columns) {
@@ -98,14 +105,6 @@ __global__ void quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx,
     for (int offset = vals_per_scale / 8; offset > 0; offset >>= 1) {
         amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, offset, WARP_SIZE));
     }
-    float sum = 0.0f;
-    if (ds_layout != MMQ_Q8_1_DS_LAYOUT_D4) {
-        sum = xi.x + xi.y + xi.z + xi.w;
-#pragma unroll
-        for (int offset = vals_per_sum / 8; offset > 0; offset >>= 1) {
-            sum += __shfl_xor_sync(0xFFFFFFFF, sum, offset, WARP_SIZE);
-        }
-    }
     // An all-zero group stores zero codes and a zero scale (ggml divides by amax).
     const float d_inv = amax > 0.0f ? 127.0f / amax : 0.0f;
     char4 q;
@@ -114,6 +113,16 @@ __global__ void quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx,
     q.z           = static_cast<signed char>(roundf(xi.z * d_inv));
     q.w           = static_cast<signed char>(roundf(xi.w * d_inv));
     const float d = amax / 127.0f;
+    float sum     = 0.0f;
+    if (ds_layout != MMQ_Q8_1_DS_LAYOUT_D4) {
+        // The codes' sum is an integer below 2^24: exact in FP32 whatever the shuffle order.
+        sum = static_cast<float>(q.x + q.y + q.z + q.w);
+#pragma unroll
+        for (int offset = vals_per_sum / 8; offset > 0; offset >>= 1) {
+            sum += __shfl_xor_sync(0xFFFFFFFF, sum, offset, WARP_SIZE);
+        }
+        sum *= d;
+    }
     // The layouts that keep the scale or the sums in fp16 clamp them to its range: a block of
     // large activations (32 SwiGLU outputs of a few thousand) sums past 65504, and an infinite sum
     // turns the dot of every format that reads it into NaN, for the token's whole row and every
