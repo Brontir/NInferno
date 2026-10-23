@@ -3,7 +3,7 @@
 start: a mixed workload of sampled example tasks, timed, against what the engine itself estimates.
 
     python3 tools/bench/choice_check.py --serve build/apps/ninferno-serve MODEL [--concurrency C]
-        [--seed S] [--count N] [--max-context N] [-- extra ninferno-serve flags]
+        [--seed S] [--count N] [--max-context N] [extra ninferno-serve flags]
 
 1. `ninferno-serve MODEL --plan --no-load --json` (with the same flags): the choice's estimates for this
    GPU (`choice.chosen`: decode tokens a second per stream and prefill tokens a second).
@@ -85,9 +85,8 @@ def main():
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--count", type=int, default=8)
     ap.add_argument("--port", type=int, default=18979)
-    ap.add_argument("flags", nargs=argparse.REMAINDER, help="-- then extra ninferno-serve flags")
-    a = ap.parse_args()
-    extra = [f for f in a.flags if f != "--"]
+    a, flags = ap.parse_known_args()  # the rest goes to ninferno-serve as given
+    extra = [f for f in flags if f != "--"]
     common = [a.model, "--max-context", str(a.max_context), "--max-concurrency", str(a.concurrency), *extra]
 
     plan = json.loads(subprocess.run([a.serve, *common, "--plan", "--no-load", "--json"], check=True,
