@@ -140,11 +140,18 @@ struct Speed {
                                      const Task& task);
 
 // Which measured constant sets rest on two lab cards (choice_constants.h) and so may decide. The
-// defaults are the constants'; a caller never sets them (a test opens them to check what they gate).
+// defaults are the constants'; a caller never sets them (a test opens or closes them to check what
+// they gate).
 struct Gates {
-    bool accuracy  = kKldTwoCards;      // the accuracy terms and the quantization curve
+    // The accuracy terms the worth decides by (the KV codecs', the generation's activations', the
+    // quantization curve): nullopt, from their cards (accuracy_decides).
+    std::optional<bool> accuracy;
     bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
 };
+
+// Whether the accuracy terms the worth decides by rest on two lab cards on `generation`; `why` says
+// which does not.
+[[nodiscard]] bool accuracy_decides(std::string_view generation, std::string* why = nullptr);
 
 // The reference card a decision prices on for a board's generation (choice_constants.h), whether
 // the worth decides there (both factor sets and the accuracy terms on two lab cards), and whether an
@@ -156,15 +163,18 @@ struct Reference {
     std::string why; // "" when the worth decides, else why the family's defaults stand
 };
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
-// Whether the worth weighs the quantizations on this card (else the quant rule's largest stands).
-[[nodiscard]] bool weighs_quantizations(const CardFacts& card, const Gates& gates = {});
+// Whether the worth decides for `model` on this card: its generation decides and the accuracy
+// terms were measured on its family (kKldFamily); else the quant rule's largest and the family's
+// defaults stand.
+[[nodiscard]] bool weighs_quantizations(const ModelFacts& model, const CardFacts& card,
+                                        const Gates& gates = {});
 
 struct Term {
     Axis axis;
     std::string value;
     double kld = 0;
     bool measured = true;    // false: a stand-in (the axis's worst measured term, or a proxy)
-    bool transferred = false; // measured on another family (kKldFamily)
+    bool transferred = false; // measured on another family (kKldFamily) or generation
     std::string source;
 };
 
