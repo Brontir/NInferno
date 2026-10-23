@@ -2186,7 +2186,7 @@ CHOICE:
 | `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
 | `why` | the decision in one line (English) |
 | `by_worth` | `true` when the worth decided; `false` when the family's defaults stood (no reference card on two lab cards for this generation) |
-| `chosen` | `null` when nothing fits; else `quant` (the quantization it was made at), `kv`, `ring`, `state`, `activations`, and ESTIMATES |
+| `chosen` | `null` when nothing fits; else `quant` (the quantization it was made at), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
 | `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
 
 ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
