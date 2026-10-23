@@ -113,21 +113,25 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 };
 
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x
-// experts per token / experts): its share of the saturated rate, Gemma 4 26B-A4B UD-IQ2_XXS at a
-// 22K prompt (run_chunk.sh, RTX 4070 Ti, 2026-10-23: 4314, 5514, 6567, 6987, 6994 tok/s at chunks
-// 256 to 4096; decode unchanged). The prefill efficiencies above were fitted at kDefaultChunk. A
-// dense model's prefill moves under 5 % from 512 tokens on (Gemma 4 12B, Qwen3.8 27B): its chunk
-// stays the default. The chunk decides only where the shares rest on two lab cards (principle 4).
+// experts per token / experts), one curve across models and cards: its share of the saturated rate
+// (run_chunk.sh at a 22K prompt, 2026-10-23/24; decode unchanged at every chunk):
+//   tokens per expert       8      16     32     64     128
+//   Gemma 4 26B, 4070 Ti    -      0.617  0.788  0.939  0.999   (4314 ... 6994 tok/s)
+//   Gemma 4 26B, 4090       -      0.664  0.848  0.984  1.0     (8645 ... 13026)
+//   Qwen3.6 35B, 4090       0.409  0.625  0.802  0.932  1.0     (6287 ... 15389)
+// The mean below; the three within 6 % of it. The prefill efficiencies above were fitted at
+// kDefaultChunk. A dense model's prefill moves under 5 % from 512 tokens on (Gemma 4 12B, Qwen3.8
+// 27B): its chunk stays the default.
 struct ChunkShare {
     double tokens_per_expert;
     double share;
 };
 
 inline constexpr ChunkShare kMoeChunkShare[] = {
-    {16, 0.617}, {32, 0.788}, {64, 0.939}, {128, 0.999}, {256, 1.0}};
-inline constexpr bool kMoeChunkTwoCards = false; // one lab card (the RTX 4070 Ti) so far
+    {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
+inline constexpr bool kMoeChunkTwoCards = true; // RTX 4070 Ti and 4090
 inline constexpr std::uint32_t kDefaultChunk = 1024;
-inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048};
+inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
 
 // ---- Accuracy.
 

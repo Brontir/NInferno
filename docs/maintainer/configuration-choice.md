@@ -74,11 +74,13 @@ finer than the KV cache (FP32 under BF16 KV, FP16 under a narrower one, FP32 und
 chosen candidate (never chosen) so that `explain` can show them.
 
 **The prefill chunk.** An MoE's prefill grows with the tokens each expert takes from a chunk
-(chunk x experts per token / experts): Gemma 4 26B-A4B on the RTX 4070 Ti went 4314, 5514, 6567,
-6987, 6994 tok/s at chunks 256 to 4096, decode unchanged; a dense model moves under 5 % from 512
-tokens on. So an MoE's candidates take the chunks 1024 and 2048 (the widest: the ladder may still
-narrow it), priced by `kMoeChunkShare`; the default (1024) stands until those shares rest on two lab
-cards.
+(chunk x experts per token / experts), along one curve across models and cards: Gemma 4 26B-A4B on
+the RTX 4070 Ti and 4090 and Qwen3.6-35B-A3B on the 4090 lie within 6 % of `kMoeChunkShare`
+(0.635, 0.813, 0.952, 1.0 at 16, 32, 64, 128 tokens per expert); decode does not move. A dense
+model's prefill moves under 5 % from 512 tokens on. So an MoE's candidates take the chunks 1024,
+2048 and 4096 (the widest: the ladder may still narrow it); a prompt fills only its own tokens of
+a chunk, so with the default 2048-token request the 2048 chunk is the widest that pays, and a
+wider one only costs workspace.
 
 ## Explaining
 
