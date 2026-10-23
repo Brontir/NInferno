@@ -119,6 +119,23 @@ double worst_term(Axis axis) noexcept {
 
 bool quant_curve() noexcept { return !kQuantKldSource.empty(); }
 
+// An MoE's prefill share at a chunk (kMoeChunkShare, linear in log2 of the tokens each expert takes).
+double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
+    const double x = static_cast<double>(chunk) * model.experts_per_token / std::max(model.experts, 1);
+    const std::size_t n = std::size(kMoeChunkShare);
+    if (x <= kMoeChunkShare[0].tokens_per_expert) { return kMoeChunkShare[0].share; }
+    for (std::size_t i = 1; i < n; ++i) {
+        const ChunkShare& lo = kMoeChunkShare[i - 1];
+        const ChunkShare& hi = kMoeChunkShare[i];
+        if (x <= hi.tokens_per_expert) {
+            const double t = std::log2(x / lo.tokens_per_expert) /
+                             std::log2(hi.tokens_per_expert / lo.tokens_per_expert);
+            return lo.share + t * (hi.share - lo.share);
+        }
+    }
+    return kMoeChunkShare[n - 1].share;
+}
+
 // The interpolated quantization term at `bits` (choice_constants.h kQuantKld), and the measured
 // point when `label` is one. log KLD is linear in bits between the two measured points around
 // `bits`; past the measured range, the nearest pair's slope; at or above the reference's bits, 0.
@@ -262,6 +279,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     bool prefill_transferred = false;
     const double eta = prefill_eta(model.moe(), gen, route, prefill_transferred);
     out.prefill      = eta * peak(card, route) / (2 * params);
+    if (model.moe() && model.experts_per_token > 0) {
+        out.prefill *= chunk_share(model, candidate.chunk) / chunk_share(model, kDefaultChunk);
+    }
     out.transferred  = transferred || prefill_transferred;
     return out;
 }
@@ -388,6 +408,18 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
     const std::vector<ActivationMode> modes =
         pins.activations ? std::vector<ActivationMode>{*pins.activations} : allowed.activations;
+    // The chunk: pinned, else an MoE's measured widths (only the default eligible until the shares
+    // rest on two lab cards), else the default.
+    std::vector<std::uint32_t> chunks;
+    if (pins.chunk) {
+        chunks = {*pins.chunk};
+    } else if (model.moe()) {
+        chunks.assign(std::begin(kMoeChunks), std::end(kMoeChunks));
+    } else {
+        chunks = {kDefaultChunk};
+    }
+    const bool chunk_decides          = kMoeChunkTwoCards;
+    const std::uint32_t default_chunk = pins.chunk.value_or(kDefaultChunk);
     for (const std::size_t q : quant_ids) {
         for (const KvCacheStorage kv : kvs) {
             for (const ActivationMode mode : modes) {
@@ -397,9 +429,11 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                     continue;
                 }
                 const Coupled coupled = coupled_storages(model, kv, mode, pins);
-                out.scored.push_back(score(model, card, ref, quants[q],
-                                           {q, kv, coupled.ring, coupled.state, mode}, task,
-                                           own_context));
+                for (const std::uint32_t chunk : chunks) {
+                    out.scored.push_back(score(model, card, ref, quants[q],
+                                               {q, kv, coupled.ring, coupled.state, mode, chunk},
+                                               task, own_context));
+                }
             }
         }
     }
@@ -408,8 +442,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     const ActivationMode default_activations = pins.activations.value_or(ActivationMode::Fast);
     // A candidate the selection may take: any under the worth; only the family's defaults else.
     const auto eligible = [&](const Scored& s) {
-        return out.by_worth ||
-               (s.candidate.kv == default_kv && s.candidate.activations == default_activations);
+        const bool chunk_ok = (out.by_worth && chunk_decides) || s.candidate.chunk == default_chunk;
+        return chunk_ok && (out.by_worth || (s.candidate.kv == default_kv &&
+                                             s.candidate.activations == default_activations));
     };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
     // every step before any quantization below them (the quant rule's tiers).
@@ -519,6 +554,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
         case Axis::Ring: return std::string(kv_cache_storage_name(s.candidate.ring));
         case Axis::State: return std::string(recurrent_state_storage_name(s.candidate.state));
         case Axis::Activations: return activation_name(s.candidate.activations);
+        case Axis::Chunk: return std::to_string(s.candidate.chunk);
         }
         return "";
     };
@@ -526,11 +562,12 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     // storages follow it: exact takes the FP32 state), a coupled one keeps everything else.
     const auto same_but = [&](const Candidate& x, Axis axis) {
         const bool main = (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
-                          (axis == Axis::Activations || x.activations == c.activations);
+                          (axis == Axis::Activations || x.activations == c.activations) &&
+                          (axis == Axis::Chunk || x.chunk == c.chunk);
         if (axis != Axis::State && axis != Axis::Ring) { return main; }
         return main && (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
     };
-    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::State, Axis::Ring}) {
+    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::Chunk, Axis::State, Axis::Ring}) {
         const bool coupled = axis == Axis::State || axis == Axis::Ring;
         for (const Scored& s : choice.scored) {
             if (s.variant != coupled && &s != &chosen) { continue; }
@@ -559,6 +596,9 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (coupled) {
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
+            } else if (axis == Axis::Chunk && !kMoeChunkTwoCards) {
+                alt.why_code = "default";
+                alt.why_not  = "the default chunk stands (the MoE chunk shares rest on one lab card)";
             } else if (!choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = "the family's default stands (no decision constants for this generation)";

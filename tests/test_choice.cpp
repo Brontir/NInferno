@@ -288,6 +288,14 @@ void decides_by_generation(const json& fixture) {
     exact.activations = ActivationMode::Exact;
     const double ratio = ch::speed_of(moe, bw, q, exact, 1, 2048).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
     check(ratio > 0.25 && ratio < 0.32, "an MoE's exact prefill at the dense routes' ratio");
+    // An MoE's prefill grows with the tokens each expert takes from a chunk: Qwen3.6-35B-A3B (256
+    // experts, 8 a token) takes 32 a chunk of 1024 and 64 of 2048 (shares 0.788, 0.939).
+    ch::Candidate wide;
+    wide.chunk = 2048;
+    const double grows = ch::speed_of(moe, bw, q, wide, 1, 2048).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
+    check(std::abs(grows - 0.939 / 0.788) < 1e-6, "an MoE's prefill at chunk 2048");
+    const ch::Speed dense_wide = ch::speed_of(t.model, volta, t.quants[0], wide, 1, 2048);
+    check(dense_wide.prefill == v.prefill, "a dense model's prefill does not take the chunk");
 }
 
 // Without decision constants the quantization is ranked among the family's defaults only: Q8_0
