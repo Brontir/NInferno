@@ -109,8 +109,8 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--max-pending-requests N` | `16` | requests allowed to wait for admission |
 | `--pending-timeout-ms N` | `600000` (10 min) | longest wait before admission |
 | `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short) |
-| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` picks per model family |
-| `--activations exact\|fast\|int8` | `fast` | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it) |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` is chosen for the model on your GPU ([configuration choice](maintainer/configuration-choice.md); the start logs it on a `choice \|` line) |
+| `--activations exact\|fast\|int8` | chosen (`fast`) | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it). Omitted, the configuration choice picks it (`fast` unless `exact` costs little) |
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | `auto` | speculative decoding backend |
 | `--draft-tokens N` | profile's depth, else 3 (MTP) or 7 (DFlash) | draft depth, `1..15` |
 | `--vision` | off | accept image input (Qwen3.5, 3.6, 3.8, Gemma 4 26B-A4B and 31B) and video input (Qwen); a GGUF needs its `mmproj` file beside it |

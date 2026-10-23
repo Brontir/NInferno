@@ -1,6 +1,8 @@
 #include "product/plan/plan_choice.h"
 
 #include "runtime/engine/plan_dry_run.h"
+#include "product/speculation/speculation.h"
+#include "spec/gpu_identity.h"
 #include "runtime/engine/quant_rule.h"
 
 #include <algorithm>
@@ -129,6 +131,15 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                   f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
                                   f != "ggml_q2_0";
                        });
+    // A quantization named by its listing's label (a hub row: the facts' header may be another
+    // row's) takes its route from the label, as the quant table's estimate does.
+    if (!label.empty()) {
+        quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
+        quant.int8_route = true;
+        for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
+            if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
+        }
+    }
     out.quants = {quant};
 
     choice::Pins p;
@@ -166,6 +177,54 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
     return out;
+}
+
+StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
+    StartAxes out;
+    if (!served.choice.chosen) { return out; }
+    const choice::Scored& s = served.choice.scored[*served.choice.chosen];
+    const auto has          = [&](choice::Axis axis) {
+        return std::any_of(s.accuracy.terms.begin(), s.accuracy.terms.end(),
+                                    [axis](const choice::Term& t) { return t.axis == axis; });
+    };
+    if (!pins.kv) { out.kv = s.candidate.kv; }
+    if (!pins.activations) { out.activations = s.candidate.activations; }
+    if (!pins.state && has(choice::Axis::State)) { out.state = s.candidate.state; }
+    if (!pins.ring && has(choice::Axis::Ring)) { out.ring = s.candidate.ring; }
+    return out;
+}
+
+void apply_start_axes(EngineOptions& options, const StartAxes& axes) {
+    if (axes.kv) {
+        options.kv_cache           = *axes.kv;
+        options.kv_cache_automatic = false;
+    }
+    if (axes.activations) { options.activations = *axes.activations; }
+    if (axes.state) {
+        options.recurrent_state           = *axes.state;
+        options.recurrent_state_automatic = false;
+    }
+    if (axes.ring) { options.sliding_kv_cache = *axes.ring; }
+}
+
+std::optional<ServedChoice>
+choose_for_artifact(const std::filesystem::path& artifact, int device, const EngineOptions& options,
+                    const SpeculationAsk& ask, const std::string& spec_profile,
+                    const ChoicePins& pins, std::string* why) {
+    try {
+        DryRunInputs inputs;
+        inputs.device  = plan_device_of_cuda(device, true, runtime::plan_automatic_fit(options));
+        inputs.gpu     = spec::gpu_identity(device).key;
+        inputs.options = options;
+        inputs.ask     = ask;
+        const PlanSourceFacts facts       = plan_facts_of_artifact(artifact);
+        const SpeculationSubject subject = speculation_subject(artifact, inputs.gpu, spec_profile);
+        inputs.subject                    = &subject;
+        return choose_at_weights(facts, inputs, pins);
+    } catch (const std::exception& e) {
+        if (why != nullptr) { *why = e.what(); }
+        return std::nullopt;
+    }
 }
 
 std::string choice_line(const ServedChoice& served) {

@@ -368,6 +368,11 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     // The family's defaults: the automatic KV codec and --activations fast, unless pinned.
     const KvCacheStorage default_kv          = pins.kv.value_or(allowed.automatic_kv);
     const ActivationMode default_activations = pins.activations.value_or(ActivationMode::Fast);
+    // A candidate the selection may take: any under the worth; only the family's defaults else.
+    const auto eligible = [&](const Scored& s) {
+        return out.by_worth ||
+               (s.candidate.kv == default_kv && s.candidate.activations == default_activations);
+    };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
     // every step before any quantization below them (the quant rule's tiers).
     std::optional<std::size_t> chosen;
@@ -378,7 +383,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
             std::optional<std::size_t> quant;
             for (const Scored& s : out.scored) {
                 const QuantOption& q = quants[s.candidate.quant];
-                if (s.own_context < context || (q.bits_per_weight >= kQuantFloorBits) != above_floor) {
+                if (!eligible(s) || s.own_context < context ||
+                    (q.bits_per_weight >= kQuantFloorBits) != above_floor) {
                     continue;
                 }
                 if (!quant || larger_quant(q, s.candidate.quant, quants[*quant], *quant)) {
@@ -388,12 +394,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
             if (!quant) { continue; }
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
-                if (s.own_context < context || s.candidate.quant != *quant) { continue; }
-                if (out.by_worth) {
-                    if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
-                } else if (s.candidate.kv == default_kv && s.candidate.activations == default_activations) {
-                    chosen = i;
-                }
+                if (!eligible(s) || s.own_context < context || s.candidate.quant != *quant) { continue; }
+                if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
             }
             if (chosen) {
                 settled             = context;

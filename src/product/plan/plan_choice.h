@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -45,6 +46,27 @@ struct ServedChoice {
                                                             const DryRunInputs& inputs,
                                                             const ChoicePins& pins,
                                                             const std::string& label = "");
+
+// What a start takes from a choice: the axes the user left automatic, each where the model has it
+// (a recurrent state, sliding rings). One mapping for ninferno-serve and the CLI.
+struct StartAxes {
+    std::optional<KvCacheStorage> kv;
+    std::optional<KvCacheStorage> ring;
+    std::optional<RecurrentStateStorage> state;
+    std::optional<ActivationMode> activations;
+};
+[[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
+// The axes set on a start's Engine options (the KV codec then no longer automatic, the state
+// likewise).
+void apply_start_axes(EngineOptions& options, const StartAxes& axes);
+
+// The choice for an artifact on disk a process starts on CUDA device `device` with `options` (its
+// Engine options as built, the speculation `ask` as given): the artifact's facts, the device's
+// own. nullopt with `why` when the device or the artifact cannot be read.
+[[nodiscard]] std::optional<ServedChoice>
+choose_for_artifact(const std::filesystem::path& artifact, int device, const EngineOptions& options,
+                    const SpeculationAsk& ask, const std::string& spec_profile,
+                    const ChoicePins& pins, std::string* why);
 
 // The inputs with a candidate's KV codec, ring, state and activation mode pinned.
 [[nodiscard]] DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c);
