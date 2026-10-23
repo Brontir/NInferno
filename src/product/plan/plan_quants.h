@@ -11,6 +11,7 @@
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_speculation.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "product/choice/choice.h"
 #include "runtime/engine/quant_rule.h"
 
 #include <nlohmann/json.hpp>
@@ -103,6 +104,11 @@ struct QuantRow {
     // 0 (automatic) otherwise.
     std::uint32_t launch_context = 0;
     bool largest                 = false; // the rule's pick
+    // The choice model's speed at the plan's storages (product/choice/choice.h): one stream of the
+    // asked ones decoding a typical request (choice::kRequestPrompt + kRequestAnswer tokens), and
+    // the request's seconds. Not set for a row not planned.
+    std::optional<choice::Speed> estimate;
+    double request_seconds = 0;
 };
 
 struct QuantPlan {

@@ -1,5 +1,7 @@
 #include "product/plan/plan_quants.h"
 
+#include "product/plan/plan_choice.h"
+
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -295,6 +297,28 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }
+        if (row.planned.plan.planned) {
+            // The speed of a typical request at the storages this row's plan serves with.
+            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const choice::ModelFacts model = choice_model_of(facts);
+            const choice::CardFacts card   = choice_card_of(inputs.gpu);
+            choice::QuantOption q;
+            q.label           = row.listing.quant;
+            q.weight_bytes    = static_cast<double>(row.weight_bytes);
+            q.bits_per_weight = row.candidate.bits_per_weight;
+            q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
+                                q.label.find("nvfp4") != std::string::npos;
+            choice::Candidate c;
+            c.kv          = row.planned.plan.kv_cache;
+            c.state       = row.planned.plan.recurrent;
+            c.ring        = inputs.options.sliding_kv_cache;
+            c.activations = inputs.options.activations;
+            choice::Task task;
+            task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
+            row.estimate        = choice::speed_of(model, card, q, c, task.concurrency,
+                                                   task.prompt + task.answer / 2.0);
+            row.request_seconds = choice::request_seconds(model, card, q, c, task);
+        }
         candidates.push_back(row.candidate);
         fits.push_back(row.fit);
         out.rows.push_back(std::move(row));
@@ -567,6 +591,16 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"fits_shared", row.fit.state == runtime::QuantFitState::Shared},
                         {"largest", row.largest}};
         item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
+        if (row.estimate) {
+            item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
+                                {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
+                                {"request_seconds", round_to(row.request_seconds, 0.001)},
+                                {"prompt", choice::kRequestPrompt},
+                                {"answer", choice::kRequestAnswer},
+                                {"transferred", row.estimate->transferred}};
+        } else {
+            item["estimate"] = nullptr;
+        }
         rows.push_back(std::move(item));
     }
     Json pick = nullptr;
