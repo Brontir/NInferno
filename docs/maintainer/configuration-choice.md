@@ -66,6 +66,13 @@ finer than the KV cache (FP32 under BF16 KV, FP16 under a narrower one, FP32 und
 (`--sliding-kv-dtype`, `--state-dtype`) pins either. Their other values are scored beside the
 chosen candidate (never chosen) so that `explain` can show them.
 
+**The prefill chunk.** An MoE's prefill grows with the tokens each expert takes from a chunk
+(chunk x experts per token / experts): Gemma 4 26B-A4B on the RTX 4070 Ti went 4314, 5514, 6567,
+6987, 6994 tok/s at chunks 256 to 4096, decode unchanged; a dense model moves under 5 % from 512
+tokens on. So an MoE's candidates take the chunks 1024 and 2048 (the widest: the ladder may still
+narrow it), priced by `kMoeChunkShare`; the default (1024) stands until those shares rest on two lab
+cards.
+
 ## Explaining
 
 `explain` lists, for each axis, every other value with the chosen candidate's other axes kept: its
