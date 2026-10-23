@@ -265,7 +265,8 @@ product::ChoicePins pins_of(const ServeOptions& options) {
     return {.kv          = options.kv_cache.has_value(),
             .activations = options.activations_given,
             .state       = options.recurrent_state.has_value(),
-            .ring        = options.sliding_kv_given};
+            .ring        = options.sliding_kv_given,
+            .chunk       = options.prefill_chunk_explicit};
 }
 
 struct Planning {
