@@ -153,6 +153,10 @@ inline constexpr KldTerm kKldTerms[] = {
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
 inline constexpr std::uint32_t kRequestPrompt = 2048;
 inline constexpr std::uint32_t kRequestAnswer = 512;
+// A request's fixed time beside its prefill and decode (HTTP, the template, tokenization, the first
+// step's setup): fitted on the mixed workload of the RTX 4090 (15 runs of 8 sampled tasks: 9.4 % ->
+// 3.6 % rms). One card: it enters the estimates shown, never a decision (principle 4).
+inline constexpr double kRequestFixedSeconds = 0.135;
 
 // ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
 //
