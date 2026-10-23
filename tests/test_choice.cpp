@@ -378,7 +378,7 @@ void chooses_the_chunk(const json& fixture) {
     ch::Task task;
     const auto own = [&b](const ch::Candidate& c) -> std::uint32_t {
         // The workspace grows with the chunk: a wider one holds a little less context.
-        const double room = 20e9 - b.quants[0].weight_bytes - 4e6 * c.chunk;
+        const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
