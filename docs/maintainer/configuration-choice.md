@@ -29,8 +29,10 @@ Nothing is measured on the user's machine.
   three models: 5.2 % rms decode, 2.0 % prefill (`tests/fixtures/choice/speed_measured.json`; the
   test holds the code to it).
 - **Accuracy.** KLD against the exact reference (`--activations exact`, BF16 KV, FP32 state) per
-  switch, measured with `ninferno-perplexity`; terms combine as the root of the sum of squares
-  (the product default: measured 0.0040, root sum square 0.0044, plain sum 0.0067). A value with no
+  switch, measured with `ninferno-perplexity`; the switches' terms combine as the root of the sum
+  of squares (the product default: measured 0.0040, root sum square 0.0044, plain sum 0.0067), and
+  the quantization's own term adds on top: how it combines with them is not measured, and under a
+  root sum square a coarse quantization (0.2) made a KV codec's error look free. A value with no
   measurement takes its axis's worst measured term, never zero.
 
 ## The rule
