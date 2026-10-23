@@ -177,12 +177,13 @@ inline constexpr KldTerm kKldTerms[] = {
     {Axis::Kv, "fp8", "", 0.00280, 0.9861, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
     {Axis::Kv, "k8v4", "", 0.00534, 0.9777, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
     {Axis::Kv, "nvfp4", "", 0.00982, 0.9710, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
-    // The int8 activations (fast = int8 on these weights): not a model constant. Which calls take
-    // int8 is the generation's routes (its route tables and the generic path's cost model), so the
-    // same artifact loses 7.6 times as much on Ada: RTX 4070 Ti 0.0294 (top-1 95.77 %), RTX 4090
-    // 0.0302 (95.75 %), against 0.00388 (98.51 %) on the RTX 5070 Ti.
-    {Axis::Activations, "int8", "ada", 0.0298, 0.9576, 2, "Qwen3.5-9B Q4_K_M, RTX 4070 Ti and RTX 4090, 2026-10-24"},
-    {Axis::Activations, "int8", "gb20x", 0.00388, 0.9851, 1, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti, 2026-10-23"},
+    // The int8 activations (fast = int8 on these weights): a model constant once ggml's MMQ
+    // prefill sums its q8_1 blocks from the codes (ops/generic/ggml_mmq/ggml_mmq.cu). Before that
+    // fix the boards that prefill on MMQ (RTX 4090, 4070 Ti, 2080 Ti) lost 7.6 times as much on
+    // the min-term formats (Q4_K_M 0.0302 / 0.0294 / 0.0297, top-1 95.8 %); with it the RTX 4090
+    // 0.00400 (98.44 %), the RTX 5070 Ti (W4A8 tiles) 0.00388 (98.51 %); Q6_K 0.00394 on the 4090,
+    // Q8_0 0.0051 / 0.0049 on the 4090 / 5070 Ti.
+    {Axis::Activations, "int8", "", 0.00394, 0.9848, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4090 (code-sum MMQ), 2026-10-24"},
     // The state's own share under fast: the root of (fast with the state)^2 - (fast with FP32)^2,
     // 0.003981 and 0.004220 against 0.00388 (top-1 98.49 % and 98.47 %). On Ada under its 0.0294
     // fast term the share is within the run's noise (f16 0.0015, bf16 below zero).
@@ -202,21 +203,22 @@ struct QuantKldPoint {
 };
 
 inline constexpr std::string_view kQuantKldSource =
-    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti, 2026-10-23";
-inline constexpr int kQuantKldCards = 1; // the RTX 4070 Ti's run pending
-// Bits per weight as the plan counts them (the weight bytes over the parameters); perplexity and
-// top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD 0.068
-// above 0.028).
+    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean";
+inline constexpr int kQuantKldCards = 2;
+// Bits per weight as the plan counts them (the weight bytes over the parameters); the two cards'
+// KLD (within 2 % at every point: the exact route's bytes do not depend on the card), perplexity
+// and top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD
+// 0.068 above 0.028).
 inline constexpr QuantKldPoint kQuantKld[] = {
     {8.65, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
-    {6.77, 0.00623, "Q6_K"},       // ppl 4.9714, top-1 0.9765
-    {5.97, 0.01058, "Q5_K_M"},     // ppl 4.9665, top-1 0.9686
-    {5.16, 0.01930, "Q4_K_M"},     // ppl 4.9997, top-1 0.9512
-    {4.69, 0.02831, "IQ4_XS"},     // ppl 5.0727, top-1 0.9407
-    {4.24, 0.06796, "Q3_K_M"},     // ppl 5.0292, top-1 0.9040
-    {3.64, 0.10682, "UD-IQ3_XXS"}, // ppl 5.2870, top-1 0.8733
-    {3.31, 0.16138, "UD-IQ2_M"},   // ppl 5.5968, top-1 0.8420
-    {2.90, 0.33445, "UD-IQ2_XXS"}, // ppl 6.4693, top-1 0.7684
+    {6.77, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
+    {5.97, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
+    {5.16, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
+    {4.69, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
+    {4.24, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
+    {3.64, 0.10710, "UD-IQ3_XXS"}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
+    {3.31, 0.16145, "UD-IQ2_M"},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
+    {2.90, 0.33460, "UD-IQ2_XXS"}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
 };
 
 // ---- The trade.
@@ -235,8 +237,9 @@ inline constexpr std::uint32_t kRequestAnswer = 512;
 // Several streams: the compute of a step of C rows depends on the weight format beyond its bytes
 // (a codebook format's decode is cheaper per row than its bits suggest): at 4-8 streams the fit
 // leaves Qwen3.8-27B UD-IQ3_XXS on the RTX 5070 Ti 14-15 % slow and UD-Q4_K_XL on the 4090 3-10 %
-// fast; Qwen3.5-9B Q4_K_M stays within 4 % at 2-4 streams. A per-format multi-row factor needs its
-// own measurements (not the held-out runs).
+// fast; Qwen3.5-9B Q4_K_M stays within 4 % at 2-4 streams. Not the format alone: Qwen3.5-9B in
+// eight formats (Q8_0 ... UD-IQ2_XXS, RTX 5070 Ti, 1-8 streams, run_fmt 2026-10-24) stays within
+// 10 % at every stream count (UD-IQ3_XXS 0.93 at 8), so no per-format factor.
 
 // ---- What a decision may read (docs/maintainer/deterministic-decisions.md).
 //
