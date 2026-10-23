@@ -299,6 +299,15 @@ void decides_by_generation(const json& fixture) {
     // A 256-token prompt fills 256 of the chunk: 8 tokens per expert.
     const double short_prompt = ch::speed_of(moe, bw, q, fast, 1, 2048, 256).prefill / ch::speed_of(moe, bw, q, fast, 1, 2048).prefill;
     check(std::abs(short_prompt - 0.409 / 0.813) < 1e-6, "a short prompt fills only its own tokens of the chunk");
+    // A 1280-token prompt at chunk 1024: one whole chunk and a 256-token call, each at its rate.
+    ch::Task t1280;
+    t1280.prompt = 1280;
+    t1280.answer = 1;
+    const double whole = ch::speed_of(moe, bw, q, fast, 1, 1280, 1024).prefill;
+    const double rest  = ch::speed_of(moe, bw, q, fast, 1, 1280, 256).prefill;
+    const double dec   = ch::speed_of(moe, bw, q, fast, 1, 1280.5, 1280).decode_per_stream;
+    check(std::abs(ch::request_seconds(moe, bw, q, fast, t1280) - (1024 / whole + 256 / rest + 1 / dec)) < 1e-9,
+          "the final partial chunk at its own rate");
 }
 
 // Without decision constants the quantization is ranked among the family's defaults only: Q8_0
