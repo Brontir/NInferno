@@ -13,6 +13,7 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -961,6 +962,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         }
     } catch (const std::exception&) {}
     Json doc;
+    product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     if (quant.empty()) {
         const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
         const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
@@ -972,7 +974,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         } else {
             planned = product::plan_model(*facts, inputs);
         }
-        doc = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
+        doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
+        planned_at = at;
     } else {
         // One quantization: its row of the table (the same states, sizes and codes), and its plan.
         std::vector<product::QuantListing> one;
@@ -986,6 +989,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         const product::PlannedSpeculation planned =
             row.planned.plan.planned ? row.planned : product::plan_model(at, inputs);
         doc = product::dry_plan_document(at, repo + ":" + quant, "hub", inputs, planned, &plan);
+        planned_at = at;
+    }
+    // The configuration choice at those weights (product/plan/plan_choice.h): what the launch
+    // leaves automatic is chosen there, and what every other value would change. The launch pins
+    // the KV codec the user chose and --activations exact.
+    const product::ChoicePins pins{.kv          = !launch.kv_dtype.empty() && launch.kv_dtype != "auto",
+                                   .activations = launch.exact};
+    if (const auto served = product::choose_at_weights(planned_at, inputs, pins)) {
+        doc["choice"] = product::choice_json(*served);
     }
     std::lock_guard lock(sizes_mutex_);
     if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
