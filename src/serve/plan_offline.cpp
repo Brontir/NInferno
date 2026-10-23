@@ -372,8 +372,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     // automatic, and what every other value would change.
     if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options))) {
         out.json["choice"] = product::choice_json(*served);
-        out.text += product::choice_line(*served) + "
-";
+        out.text += product::choice_line(*served) + "\n";
     }
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
