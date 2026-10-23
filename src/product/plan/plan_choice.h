@@ -23,15 +23,6 @@ namespace ninferno::product {
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
 
-// The axes the user pinned with flags (what is not pinned the choice picks).
-struct ChoicePins {
-    bool kv          = false; // --kv-dtype other than auto
-    bool activations = false; // --activations given
-    bool state       = false; // --state-dtype given
-    bool ring        = false; // --sliding-kv-dtype given
-    bool chunk       = false; // --prefill-chunk given
-};
-
 struct ServedChoice {
     std::vector<choice::QuantOption> quants; // the one quantization planned
     choice::Task task;

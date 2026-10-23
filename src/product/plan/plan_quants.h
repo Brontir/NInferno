@@ -43,8 +43,19 @@ struct QuantListing {
 [[nodiscard]] std::optional<std::uint64_t> checkpoint_converted_bytes(const nlohmann::json& config,
                                                                       std::uint64_t bytes);
 
+// The axes the user pinned with flags (what is not pinned the configuration choice picks:
+// product/plan/plan_choice.h), as the command line or the launch gave them, never inferred from the
+// resolved options.
+struct ChoicePins {
+    bool kv          = false; // --kv-dtype other than auto
+    bool activations = false; // --activations given
+    bool state       = false; // --state-dtype given
+    bool ring        = false; // --sliding-kv-dtype given
+    bool chunk       = false; // --prefill-chunk given
+};
+
 // What a dry run plans with: the device, its profile key, the Engine options the server builds,
-// the speculation asked for and the subject it is resolved for.
+// the speculation asked for and the subject it is resolved for, and the axes the user pinned.
 struct DryRunInputs {
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
@@ -52,6 +63,7 @@ struct DryRunInputs {
     SpeculationAsk ask;
     const SpeculationSubject* subject = nullptr;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
+    ChoicePins pins;
 };
 
 // The rule's ask from the inputs: the context (automatic or pinned), the streams, the model's own.
