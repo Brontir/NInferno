@@ -81,6 +81,7 @@ struct Task {
     std::uint32_t prompt      = kRequestPrompt;
     std::uint32_t answer      = kRequestAnswer;
     double accuracy_weight    = kAccuracyWeight;
+    double fixed_seconds      = kRequestFixedSeconds; // a request's fixed time (estimates only)
 };
 
 // What the user pinned with flags; the choice keeps it.
@@ -129,7 +130,8 @@ struct Speed {
                              std::uint32_t concurrency, double context);
 
 // One request of `prompt` tokens in and `answer` out on one stream of `concurrency`: the prompt at
-// the prefill rate, the answer at the decode rate at the middle of its window.
+// the prefill rate, the answer at the decode rate at the middle of its window, and the task's fixed
+// time.
 [[nodiscard]] double request_seconds(const ModelFacts& model, const CardFacts& card,
                                      const QuantOption& quant, const Candidate& candidate,
                                      const Task& task);
