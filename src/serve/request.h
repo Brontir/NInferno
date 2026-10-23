@@ -239,6 +239,8 @@ struct GenerationRequest {
     std::optional<std::uint32_t> thinking_budget;
     std::optional<ninferno::ReasoningEffort> reasoning_effort;
     std::optional<bool> preserve_thinking;
+    // ninferno.draft_tokens: this request's draft depth (0: plain decode); unset: the server's.
+    std::optional<std::uint32_t> draft_tokens;
     std::string chat_template_kwargs_json;
     ninferno::PromptContinuationMode continuation =
         ninferno::PromptContinuationMode::NewAssistantTurn;

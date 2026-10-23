@@ -221,6 +221,15 @@ int test_budgets_and_nonsemantic_hints() {
     hints["client_metadata"] = nullptr;
     failures += check(parse_openai_responses_create_request(hints, limits()).prompt.model == "m",
                       "null client_metadata is neutral");
+
+    Json depth        = base;
+    depth["ninferno"] = Json{{"draft_tokens", 0}};
+    failures += check(parse_openai_responses_create_request(depth, limits())
+                              .prompt.generation.draft_tokens == 0U,
+                      "ninferno.draft_tokens reaches the request (0: plain)");
+    failures += check(!parse_openai_responses_create_request(base, limits())
+                           .prompt.generation.draft_tokens,
+                      "no ninferno extension names no depth");
     return failures;
 }
 

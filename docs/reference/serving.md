@@ -261,7 +261,17 @@ external entry replaced entirely is not).
 - Requests of different depths share batches. A step verifies at the deepest request's depth, each
   request drafting at that launch's width.
 - A choice that needs another drafter runs the default configuration, and the startup log says so.
-- The `"ninferno"` request extension object has no members; any member is HTTP 400.
+- A request may name its own draft depth in the `"ninferno"` extension object (Chat Completions,
+  Responses and Messages alike): `"ninferno": {"draft_tokens": K}`.
+  - `0` decodes that request plainly. `1` up to the deepest depth the server captured at startup
+    drafts K tokens a round; a deeper K or any K above 0 on a plain server is HTTP 400
+    (`draft_depth_out_of_range`), and K outside 0..15 or another member is HTTP 400 too.
+  - It keeps the watchdog floor and the step-down below K of the configuration the server would
+    have chosen for the request. A K the server did not capture verifies at the next captured
+    depth above it, drafting at that width, as a mixed batch does.
+  - The output is the same as without it under greedy `exact` decoding (the target verifies every
+    token); only the speed changes. The request record and `timings.speculation` show
+    `selection: request`.
 
 ### Break-even floor
 
