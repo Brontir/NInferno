@@ -264,8 +264,12 @@ void steps_before_the_floor(const json& fixture) {
     task.contexts = {32768, 16384, 8192};
     // Q4_K_M leaves room for 20K tokens of INT8 KV, IQ3_XXS for far more: 16K at Q4_K_M wins.
     const double budget = b.quants[0].weight_bytes + 20000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
+    // KV pinned to INT8: a narrower codec would itself reach 32K at Q4_K_M (the KV codec is a
+    // memory lever too; that is the rule's first step).
+    ch::Pins pins;
+    pins.kv = KvCacheStorage::Int8Group64;
     const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                    {}, task, oracle(b, budget));
+                                    pins, task, oracle(b, budget));
     check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" && c.context == 16384,
           "16K at Q4_K_M before 32K below the floor");
 }
