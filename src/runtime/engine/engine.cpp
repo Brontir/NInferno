@@ -458,7 +458,14 @@ Engine::compile_output_constraint(const OutputConstraintSpec& spec) const {
     }
     structured::ConstraintCompiler& compiler = impl_->constraint_compiler();
     if (spec.kind != OutputConstraintKind::ToolCalls) {
-        return std::make_shared<const OutputConstraint>(compiler.compile(spec), &compiler);
+        if (!spec.engine_rendered) {
+            return std::make_shared<const OutputConstraint>(compiler.compile(spec), &compiler);
+        }
+        // Only the tool-call markup rendered below is the Engine's own: a caller's structural tag
+        // keeps its EBNF formats priced as free grammars (structured::declares_free_grammar).
+        OutputConstraintSpec caller = spec;
+        caller.engine_rendered      = false;
+        return std::make_shared<const OutputConstraint>(compiler.compile(caller), &compiler);
     }
     // Tool calls are model markup: the Frontend renders it as a structural tag after every strict
     // argument schema passed the same support policy as a response_format schema.
@@ -480,6 +487,7 @@ Engine::compile_output_constraint(const OutputConstraintSpec& spec) const {
     }
     OutputConstraintSpec rendered = spec;
     rendered.kind                 = OutputConstraintKind::StructuralTag;
+    rendered.engine_rendered      = true;
     rendered.tools.clear();
     // With an answer schema the text answer is that JSON: the markup alternative is calls only.
     const ToolCallRequirement requirement =

@@ -10,9 +10,20 @@ This page states the rule and its target. The engine does not meet all of it yet
   still takes its split count from the free-memory-sized context, so the drafts and how many are
   accepted can follow free memory; under greedy decoding the emitted bytes do not (the target's
   verify decides them). The target's causal attention splits follow each token's position only;
-- a constrained row's measured mask time decides whether its masks are filled before launch and
-  whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
-  wait cannot change bytes or batches;
+- the decode wait (spin or block) follows measured host lag; the wait cannot change bytes or
+  batches;
+- the constrained-decoding mask times are declared, not fitted (`runtime/contract/token_mask.h`):
+  1 ms a mask row for a grammar the engine shapes or a regex, the samplers' whole 1.5 s wait bound
+  for a client's EBNF grammar (also a `grammar` format in a client's structural tag), against the
+  187.5 ms a step may compute while its kernels run. A step that holds an EBNF row fills its masks
+  before its launch and its constrained DFlash rows verify without drafts, so under sampling or
+  `fast` a constrained DFlash row's bytes follow the constraints of its step's other rows and where
+  their committed tokens stand (under greedy `exact` decoding the target's verify decides them
+  either way). Inside a reasoning section an EBNF row copies a fixed mask and counts as shaped: a
+  round whose drafts cross the terminator computes up to 15 grammar rows while its kernels run, as
+  the measured rule's first slow round did. The Engine's tool-call markup counts as shaped, Gemma
+  4's argument grammar included. The two times await calibration against the responses'
+  `constraint_mask_ms` over `constraint_masked_n` on lab hosts;
 - a token mask the device does not see released within its wall-clock wait bound ends the request;
 - wall-clock bounds decide whether a request or the server goes on (outcome, not bytes): a queued
   request expires after `--pending-timeout-ms` (also during media preparation), a DFlash round
@@ -496,12 +507,12 @@ logged or exported only; (b) moves only scheduling or latency, not the bytes of 
 | Queue expiry (`--pending-timeout-ms`) | `src/runtime/engine/engine_core.h` (submit, admission head and backfill), `src/models/qwen3_5/frontend/media_cache.cpp` | (b), expires a waiting request, no bytes |
 | DFlash draft arrival, 30 s | `src/models/qwen3_5/program/decode.cpp` (`fill_dflash_draft_masks`) | (b), fails a stuck round, no bytes |
 | Second transient CUDA error within 5 minutes | `src/runtime/engine/engine_core.h` (`kTransientCudaErrorWindow`) | (b), restarts the server instead of going on |
-| Mask fill order, constrained DFlash drafting | `src/structured/request_constraint.cpp` → `src/models/qwen3_5/program/decode.cpp` | (c), open |
+| Mask fill order, constrained DFlash drafting | `src/runtime/contract/token_mask.h` → `src/models/qwen3_5/program/decode.cpp` | declared mask time by constraint class, reasoning gate and draft shape, no clock |
 | Device mask-release wait bound | `src/ops/kernel/sampling_device.cuh` | (c), open: ends a request |
 | Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), opt-in by option (`--dense-tune`, `--moe-tune`), off by default |
 | Free memory after warm-up | `src/runtime/engine/model_instance.cpp` | (c), open (gaps above) |
 | Acceptance watchdog | `src/spec/watchdog.h` | counts of the request's own drafts, not a timing |
-| Planning, transfer, phase and request timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
+| Planning, transfer, phase, request and mask-host timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/structured/request_constraint.cpp`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
 
 ## Review checklist
 

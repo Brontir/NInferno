@@ -703,6 +703,10 @@ struct OutputConstraintSpec {
     // (response_format beside tools). The output is then either the calls or that JSON, nothing
     // else; empty means no such alternative.
     std::string answer_schema;
+    // StructuralTag only: the Engine rendered it from a ToolCalls spec, so an EBNF format inside is
+    // the model's own argument syntax, not a client's free grammar. compile_output_constraint sets
+    // it, and clears it on every spec it did not render.
+    bool engine_rendered = false;
     // JSON kinds only: forbid insignificant whitespace. Otherwise a bounded whitespace run is
     // admitted between JSON tokens.
     bool compact_json = false;
@@ -1259,6 +1263,11 @@ struct SpeculativeStats {
     std::uint64_t drafted_tokens  = 0;
     std::uint64_t accepted_tokens = 0;
     std::uint64_t fallback_steps  = 0;
+    // Of fallback_steps, the DFlash rounds this constrained request verified without the drafts
+    // it could have verified: its step filled its masks before the launch, because the host time
+    // the step's constraints declare for them is too long to overlap the kernels (a client's EBNF
+    // grammar past its reasoning in the step). Declared, never measured.
+    std::uint64_t constraint_fallback_steps = 0;
     std::vector<std::uint64_t> accepted_per_position;
     // Rounds this request verified below its depth because the step's load bound capped it
     // (SpeculativeOptions::load); they do not feed its watchdog.

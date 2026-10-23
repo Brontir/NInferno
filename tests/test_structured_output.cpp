@@ -1,6 +1,8 @@
 // Host-side structured-output contracts: JSON Schema support policy, grammar compilation, the
-// per-request mask rows used by speculative verification, the reasoning gate and violation
-// handling. CPU only; uses a synthetic byte-level vocabulary.
+// per-request mask rows used by speculative verification, the reasoning gate, violation handling,
+// and the declared mask-row class with the step rule it feeds (runtime/contract/token_mask.h).
+// CPU only; uses a synthetic byte-level vocabulary.
+#include "runtime/contract/token_mask.h"
 #include "structured/constraint.h"
 #include "structured/request_constraint.h"
 #include "structured/schema_support.h"
@@ -9,6 +11,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -390,7 +393,6 @@ void speculative_rows_contract(const ConstraintCompiler& compiler) {
     std::vector<std::uint32_t> again(rows.size());
     request.fill_round(drafts, again.data(), words);
     check(again == rows, "fill_round restores the matcher");
-    check(request.slowest_row_ns() > 0, "fill_round records its slowest row");
 
     // A draft the grammar rejects: later rows repeat the last consumable row.
     const std::vector<TokenId> bad = {kObjectOpenQuote, 'x', 'y'};
@@ -562,6 +564,165 @@ void violation_contract(const ConstraintCompiler& compiler) {
     check(faulted.violated() && !faulted.stats().violation.empty(), "device fault is reported");
 }
 
+// A step's mask time is declared, never measured. A client's EBNF grammar, as a grammar or as a
+// format of its structural tag, declares free-grammar rows (runtime::MaskRowClass::FreeGrammar)
+// outside a reasoning section; every other constraint, the Engine's own tool-call markup among
+// them, and a free grammar inside its reasoning declare shaped ones. The class follows the spec
+// and the committed tokens only: no round a request computes moves it. The step rule the Program
+// applies (runtime::plan_step_masks): a step of shaped rows overlaps its masks with its launch
+// even at the widest shape, so its constrained DFlash rows draft; one free-grammar row, also
+// beside shaped ones, fills the step's masks before its launch and stops their DFlash drafts.
+void mask_row_class_contract(const ConstraintCompiler& compiler) {
+    using runtime::MaskRowClass;
+    using runtime::StepMaskRow;
+    const auto class_of = [](const RequestConstraint& request) {
+        return runtime::mask_row_class(request.free_grammar_rows());
+    };
+
+    OutputConstraintSpec grammar;
+    grammar.kind       = OutputConstraintKind::Grammar;
+    grammar.definition = R"EBNF(root ::= "call(" arg ("," arg)* ")"
+arg ::= [0-9]+)EBNF";
+    check(declares_free_grammar(grammar) && declares_free_grammar(*compiler.compile(grammar)),
+          "an EBNF grammar declares shaped mask rows");
+
+    // A client's structural tag around an EBNF format holds a free grammar; the same tag rendered
+    // by the Engine (Gemma 4's tool-call markup holds its argument grammar) does not, and the
+    // compile cache keeps the two apart.
+    OutputConstraintSpec client_tag;
+    client_tag.kind       = OutputConstraintKind::StructuralTag;
+    client_tag.definition = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"grammar","grammar":"root ::= [0-9]+"},"end":"</t>"}})";
+    OutputConstraintSpec engine_tag = client_tag;
+    engine_tag.engine_rendered      = true;
+    check(declares_free_grammar(client_tag) && declares_free_grammar(*compiler.compile(client_tag)),
+          "a client's structural tag around an EBNF format declares shaped mask rows");
+    check(!declares_free_grammar(engine_tag) &&
+              !declares_free_grammar(*compiler.compile(engine_tag)) &&
+              declares_free_grammar(*compiler.compile(client_tag)),
+          "the Engine's tool-call markup declares free-grammar mask rows, or shares the client's "
+          "compiled tag");
+
+    OutputConstraintSpec object;
+    object.kind = OutputConstraintKind::JsonObject;
+    OutputConstraintSpec choice;
+    choice.kind    = OutputConstraintKind::Choice;
+    choice.choices = {"yes", "no"};
+    OutputConstraintSpec regex;
+    regex.kind       = OutputConstraintKind::Regex;
+    regex.definition = "[0-9]{3}-[a-z]+";
+    // A structural tag of other formats is shaped, also where a value in its JSON Schema reads
+    // like a grammar format.
+    OutputConstraintSpec schema_tag;
+    schema_tag.kind       = OutputConstraintKind::StructuralTag;
+    schema_tag.definition = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"json_schema","json_schema":{"type":"object","properties":{"k":{
+        "type":"object","default":{"type":"grammar","grammar":"root ::= [0-9]+"}}}}},
+        "end":"</t>"}})";
+    check(!declares_free_grammar(schema_tag),
+          "a JSON Schema value in a structural tag declares free-grammar mask rows");
+
+    OutputConstraintSpec schema = schema_spec(Json::parse(R"({"type":"object",
+        "properties":{"k":{"type":"boolean"}},"required":["k"],"additionalProperties":false})"));
+    for (const OutputConstraintSpec* spec : {&object, &choice, &regex, &schema}) {
+        check(!declares_free_grammar(*spec) && !declares_free_grammar(*compiler.compile(*spec)),
+              "kind " + std::to_string(static_cast<int>(spec->kind)) +
+                  " declares free-grammar mask rows");
+    }
+
+    // No round a request computes moves its class, nor does a commit outside a reasoning section.
+    RequestConstraint free_request(compiler.compile(grammar), false);
+    RequestConstraint shaped_request(compiler.compile(schema), false);
+    const std::size_t words = free_request.mask_words();
+    std::vector<std::uint32_t> rows(4 * words);
+    const std::vector<TokenId> drafts = {'c', 'a', 'l'};
+    for (int round = 0; round < 3; ++round) {
+        free_request.fill_round(drafts, rows.data(), words);
+        shaped_request.fill_round({}, rows.data(), words);
+        check(class_of(free_request) == MaskRowClass::FreeGrammar &&
+                  class_of(shaped_request) == MaskRowClass::Shaped,
+              "a request's mask row class moved after round " + std::to_string(round));
+    }
+    free_request.commit(bytes_of("call(1"));
+    check(class_of(free_request) == MaskRowClass::FreeGrammar, "a commit moved the class");
+
+    // Inside a reasoning section a free grammar's rows copy the no-stop mask: shaped, also over a
+    // round whose drafts cross the terminator, until a committed token passes it.
+    RequestConstraint reasoning(compiler.compile(grammar), true);
+    std::vector<std::uint32_t> crossing(4 * words);
+    const std::vector<TokenId> across = {'x', kThinkClose, 'c'};
+    reasoning.fill_round(across, crossing.data(), words);
+    check(class_of(reasoning) == MaskRowClass::Shaped,
+          "a free grammar inside its reasoning declares free-grammar mask rows");
+    const TokenId thought[] = {'x'};
+    reasoning.commit(thought);
+    check(class_of(reasoning) == MaskRowClass::Shaped, "a reasoning token moved the class");
+    const TokenId terminator[] = {kThinkClose};
+    reasoning.commit(terminator);
+    check(class_of(reasoning) == MaskRowClass::FreeGrammar,
+          "a free grammar past its reasoning terminator declares shaped mask rows");
+
+    // A model that opens its reasoning itself: the grammar's rows before its first token, none in
+    // the reasoning it opened, the grammar's again from the gap after its terminator.
+    GrammarVocabulary words_with_open       = vocabulary();
+    words_with_open.token_bytes[kThinkOpen] = "<think>";
+    words_with_open.reasoning_open          = "<think>";
+    const ConstraintCompiler opening(words_with_open);
+    RequestConstraint self_opened(opening.compile(grammar), false, true);
+    check(class_of(self_opened) == MaskRowClass::FreeGrammar,
+          "a free grammar before its first token declares shaped mask rows");
+    const TokenId opener[] = {kThinkOpen};
+    self_opened.commit(opener);
+    check(class_of(self_opened) == MaskRowClass::Shaped,
+          "a free grammar in the reasoning it opened declares free-grammar mask rows");
+    self_opened.commit(terminator);
+    check(!self_opened.violated() && class_of(self_opened) == MaskRowClass::FreeGrammar,
+          "a free grammar in the gap after its reasoning declares shaped mask rows");
+
+    // The step rule. The Program's widest launch verifies 15 drafts a row
+    // (kDFlashDecodeMaximumDrafts and kMtpDecodeMaximumDrafts; decode.cpp asserts the same at
+    // kMaximumConcurrency rows).
+    constexpr std::uint32_t kWidestDrafts = 15;
+    const StepMaskRow shaped_row{.row_class = class_of(shaped_request), .speculative = true};
+    std::vector<StepMaskRow> step(kMaximumConcurrency, shaped_row);
+    const runtime::StepMaskPlan dflash = runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(dflash.mask_ns == kMaximumConcurrency * runtime::kShapedMaskRowNs &&
+              dflash.drafted_ns == kMaximumConcurrency * 16U * runtime::kShapedMaskRowNs &&
+              !dflash.masks_first && dflash.dflash_masks_follow_drafts,
+          "a DFlash step of shaped rows at the widest launch fills its masks first or does not "
+          "draft");
+    const runtime::StepMaskPlan mtp = runtime::plan_step_masks(step, true, true, kWidestDrafts);
+    check(mtp.mask_ns == kMaximumConcurrency * 16U * runtime::kShapedMaskRowNs &&
+              !mtp.masks_first && !mtp.dflash_masks_follow_drafts,
+          "an MTP step of shaped rows at the widest launch fills its masks first");
+
+    // A plain free-grammar row beside drafting shaped rows: the step's masks come first and its
+    // DFlash rows verify without drafts. Inside its reasoning the same request lets them draft.
+    step.back() = StepMaskRow{.row_class = class_of(free_request), .speculative = false};
+    const runtime::StepMaskPlan beside = runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(beside.masks_first && !beside.dflash_masks_follow_drafts,
+          "a free-grammar row beside drafting shaped rows overlaps the step's masks");
+    RequestConstraint thinking(compiler.compile(grammar), true);
+    step.back().row_class = class_of(thinking);
+    const runtime::StepMaskPlan reasoning_step =
+        runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(!reasoning_step.masks_first && reasoning_step.dflash_masks_follow_drafts,
+          "a free grammar inside its reasoning stops its step's DFlash drafts");
+
+    // Nothing drafts without a speculative row, and a step without a constrained row has no masks.
+    const std::vector<StepMaskRow> plain_only = {
+        StepMaskRow{.row_class = MaskRowClass::Shaped, .speculative = false}};
+    check(!runtime::plan_step_masks(plain_only, false, false, kWidestDrafts)
+               .dflash_masks_follow_drafts,
+          "a step without a speculative row drafts its constrained rows");
+    const runtime::StepMaskPlan none = runtime::plan_step_masks({}, false, true, kWidestDrafts);
+    check(none.mask_ns == 0 && !none.masks_first && !none.dflash_masks_follow_drafts,
+          "a step without a constrained row plans masks");
+    check(runtime::masks_overlap_launch(runtime::kLaunchMaskOverlapNs) &&
+              !runtime::masks_overlap_launch(runtime::kLaunchMaskOverlapNs + 1),
+          "the overlap bound is not inclusive");
+}
+
 void visible_special_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind                   = OutputConstraintKind::Regex;
@@ -723,6 +884,7 @@ int main() {
     reasoning_gate_contract(compiler);
     self_opened_reasoning_contract();
     violation_contract(compiler);
+    mask_row_class_contract(compiler);
     visible_special_contract(compiler);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " structured output (" << failures
               << " failures)\n";

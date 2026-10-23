@@ -291,6 +291,7 @@ Json speculative_json(const GenerationMetrics& metrics) {
              {"drafted_tokens", metrics.speculative_draft_tokens},
              {"accepted_tokens", metrics.speculative_accepted_tokens},
              {"fallback_steps", metrics.speculative_fallback_steps},
+             {"constraint_fallback_steps", metrics.speculative_constraint_fallback_steps},
              {"plain_steps", metrics.speculative_plain_steps},
              {"wide_rounds", metrics.speculative_wide_rounds},
              {"ungraphed_rounds", metrics.speculative_ungraphed},
