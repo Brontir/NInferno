@@ -260,6 +260,7 @@ Json choice_json(const ServedChoice& served) {
     }
     const choice::Scored& s = served.choice.scored[*served.choice.chosen];
     Json chosen             = candidate_json(s.candidate);
+    chosen["quant"]         = served.quants[s.candidate.quant].label;
     chosen.update(estimates_json(s));
     out["chosen"]    = chosen;
     Json alternatives = Json::array();
