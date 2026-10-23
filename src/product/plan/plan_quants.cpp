@@ -323,9 +323,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             c.activations = inputs.options.activations;
             choice::Task task;
             task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
-            const std::uint32_t context = row.fit.own_context != 0 ? row.fit.own_context
-                                          : ask.context != 0       ? ask.context
-                                                                   : row.planned.plan.axes.context_ceiling;
+            const std::uint32_t context =
+                ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
             row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
             row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth);
             row.request_seconds = choice::request_seconds(model, card, q, c, task);
