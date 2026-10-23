@@ -121,7 +121,11 @@ struct QuantPlan {
     // "UD-Q6_K_XL: the largest that fits on this RTX 4090 (24 GB) at auto context (49,152 each)
     // x 1 stream" or why none (English, the CLI); `rule_code` and `rule_params` the same as data.
     std::string rule;
-    std::string rule_code; // largest_fits | none_fits | none_served
+    std::string rule_code; // largest_fits | best_worth | none_fits | none_served
+    // The worth picked the quantization within the rule's tier (product/choice: a GPU generation
+    // that decides and the measured quantization curve); `largest` is then the rule's own pick.
+    bool by_worth = false;
+    std::optional<std::size_t> largest_index;
     nlohmann::json rule_params = nlohmann::json::object();
 };
 

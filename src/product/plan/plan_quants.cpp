@@ -334,6 +334,45 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         out.rows.push_back(std::move(row));
     }
     out.pick = runtime::largest_fitting_quant(candidates, fits, ask);
+    // A GPU generation that decides weighs the quantizations by worth within the rule's tier: the
+    // rows that keep the same own context per stream on the same side of the floor, each at its own
+    // choice (product/plan/plan_choice.h). Elsewhere the rule's largest stands.
+    if (out.pick && choice::weighs_quantizations(choice_card_of(inputs.gpu)) &&
+        (out.pick->tier == runtime::QuantPickTier::Own ||
+         out.pick->tier == runtime::QuantPickTier::OwnStepped ||
+         out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
+        const ChoicePins pins{.kv          = !inputs.options.kv_cache_automatic,
+                              .activations = inputs.options.activations == ActivationMode::Exact,
+                              .state       = !inputs.options.recurrent_state_automatic,
+                              .ring        = false,
+                              .chunk       = !inputs.options.prefill_chunk_automatic};
+        std::optional<std::size_t> best;
+        double best_worth = 0;
+        for (std::size_t i = 0; i < out.rows.size(); ++i) {
+            const QuantRow& row = out.rows[i];
+            if (!row.candidate.supported || row.fit.state != runtime::QuantFitState::Own ||
+                row.fit.own_context < out.pick->target_context ||
+                out.pick->below_floor != (runtime::quant_rank_bits(row.candidate) <
+                                          runtime::kPlanQualityFloorBits)) {
+                continue;
+            }
+            const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                                  inputs, pins, row.listing.quant);
+            if (!served || !served->choice.chosen) { continue; }
+            const double worth = served->choice.scored[*served->choice.chosen].worth;
+            if (!best || worth > best_worth + choice::kWorthTie ||
+                (std::abs(worth - best_worth) <= choice::kWorthTie &&
+                 runtime::quant_ranks_above(row.candidate, out.rows[*best].candidate))) {
+                best       = i;
+                best_worth = worth;
+            }
+        }
+        if (best && *best != out.pick->index) {
+            out.largest_index = out.pick->index;
+            out.pick->index   = *best;
+            out.by_worth      = true;
+        }
+    }
     if (out.pick) {
         out.chosen                        = out.pick->index;
         out.rows[out.pick->index].largest = true;
@@ -367,14 +406,22 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
         const std::uint32_t context = row.launch_context != 0    ? row.launch_context
                                       : row.fit.own_context != 0 ? row.fit.own_context
                                                                  : row.fit.context;
-        mutable_plan.rule_code      = "largest_fits";
+        mutable_plan.rule_code      = plan.by_worth ? "best_worth" : "largest_fits";
         params["quant"]             = row.listing.quant;
+        if (plan.by_worth && plan.largest_index) {
+            params["largest"] = plan.rows[*plan.largest_index].listing.quant;
+        }
         params["tier"]              = std::string(runtime::quant_pick_tier_name(k.tier));
         params["planned_context"]   = context;
         params["below_floor"]       = k.below_floor;
         params["low_quality"]       = k.low_quality;
-        std::string line = row.listing.quant + ": the largest that fits on " + where + " at " +
-                           context_words + " × " + stream_text;
+        std::string line =
+            row.listing.quant +
+            (plan.by_worth && plan.largest_index
+                 ? ": the best balance of speed and accuracy (the largest that fits is " +
+                       plan.rows[*plan.largest_index].listing.quant + ") on "
+                 : ": the largest that fits on ") +
+            where + " at " + context_words + " × " + stream_text;
         switch (k.tier) {
         case runtime::QuantPickTier::Own:
         case runtime::QuantPickTier::OwnStepped:
