@@ -60,6 +60,10 @@ struct Format {
     int k_multiple;
 };
 
+// check_mmq_code_sums: ggml's matrix kernel against the FP64 oracle of the int8 activation,
+// relative L2 (set from the RTX 5070 Ti's runs with the code sums and with the raw sums, below).
+constexpr double kMmqCodeSumAgreement = 1.0;
+
 const Format kFormats[] = {
     {"q4", QType::Q4_G64_FP16, 1, 1},
     {"q5", QType::Q5_G64_FP16, 1, 1},
@@ -1219,6 +1223,93 @@ int check_mmq_outlier_block(const Format& f) {
     return 0;
 }
 
+// ggml's matrix kernel on Q4_K / Q5_K where the offset term carries the product: centred weights
+// (m = sc and dmin = 7.5 d, so w = d sc (q - 7.5)) against activation blocks of one outlier (60)
+// among values of 2 +- 1, as a layer's input with a few large channels. The codes' dot and the
+// offset term are then both large and only their difference is the product, so both must see the
+// int8 activation: the oracle is the FP64 product of the independently decoded weights and the
+// activation quantized per 32 values (quantize_a8). With the block sum of the raw values (ggml's own
+// quantizer) the quantization noise of the dot stayed in the product.
+int check_mmq_code_sums(const Format& f) {
+    const std::int32_t n = 256, k = 2048, t = 64;
+    const generic::Route mmq{generic::Family::GgmlMmq, 0};
+    HostWeight host               = make_weight(f.qtype, n, k, 61U);
+    const std::size_t block_bytes = f.qtype == QType::GGML_Q4_K ? 144 : 176;
+    auto& bytes                   = host.packed.payload;
+    for (std::size_t b = 0; b + block_bytes <= bytes.size(); b += block_bytes) {
+        // The 12 scale bytes after d and dmin: m_j = sc_j for every sub-block.
+        std::uint8_t* sc = bytes.data() + b + 4;
+        for (int j = 0; j < 4; ++j) { sc[4 + j] = sc[j]; }
+        for (int j = 8; j < 12; ++j) { sc[j] = static_cast<std::uint8_t>((sc[j] & 0x0FU) * 0x11U); }
+        const float d = quantized_weight::detail::f16_to_f32(quantized_weight::detail::load_u16_le(bytes, b));
+        quantized_weight::detail::store_u16_le(bytes, b + 2,
+                                               quantized_weight::detail::f32_to_f16(
+                                                   (f.qtype == QType::GGML_Q4_K ? 7.5F : 15.5F) * d));
+    }
+    DeviceWeight device = upload_weight(host);
+    const Weight& weight = device.weight;
+    const auto policy    = ops::LinearPolicy::AllowA8;
+    if (!generic::route_admits(mmq, weight, policy)) {
+        std::cout << f.name << " ggml_mmq code sums: not admitted on this device\n";
+        return 0;
+    }
+    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+    std::mt19937 rng(67U);
+    std::uniform_real_distribution<float> u(-1.0F, 1.0F);
+    for (std::size_t i = 0; i < activation.size(); ++i) {
+        activation[i] = f32_to_bf16(i % 32 == 5 ? 60.0F : 2.0F + u(rng));
+    }
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(std::max<std::size_t>({generic::route_workspace_bytes(mmq, k, t),
+                                                 generic::ggml_mmq_workspace_bytes(k, n, t), 256}));
+    const auto run = [&](generic::Route route) {
+        DeviceBuffer out(static_cast<std::size_t>(n) * t * 2);
+        Tensor tx(x.p, DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {n, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &weight;
+        call.rows            = n;
+        call.epilogue        = generic::Epilogue::Store;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = n;
+        workspace.reset();
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "code-sum run");
+        return download_bf16(out.p, static_cast<std::size_t>(n) * t);
+    };
+    const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
+    const auto got                = run(mmq);
+    if (generic::ggml_mmq_fallback_count() != fallbacks) {
+        std::cerr << f.name << " ggml_mmq code sums: ran A16, not ggml_mmq\n";
+        return 1;
+    }
+    std::vector<std::int32_t> rows(static_cast<std::size_t>(n));
+    for (std::int32_t i = 0; i < n; ++i) { rows[static_cast<std::size_t>(i)] = i; }
+    const std::vector<float> w = weight_rows(host, rows);
+    std::vector<float> xq(activation.size());
+    for (std::size_t i = 0; i < xq.size(); ++i) { xq[i] = bf16_to_f32(activation[i]); }
+    quantize_a8(xq, k);
+    std::vector<double> oracle(static_cast<std::size_t>(n) * t);
+    cpu_linear_gemm_fp64(w.data(), xq.data(), oracle.data(), n, k, t);
+    double err = 0.0, norm = 0.0;
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        const double a = bf16_to_f32(got[i]);
+        err += (a - oracle[i]) * (a - oracle[i]);
+        norm += oracle[i] * oracle[i];
+    }
+    const double rel = std::sqrt(err / norm);
+    std::cout << f.name << " ggml_mmq code sums: rel_l2 to the int8 activation's FP64 oracle " << rel
+              << "\n";
+    if (!(rel < kMmqCodeSumAgreement)) {
+        std::cerr << f.name << " ggml_mmq on centred weights: rel_l2 " << rel << " to the oracle (at most "
+                  << kMmqCodeSumAgreement << ")\n";
+        return 1;
+    }
+    return 0;
+}
+
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
 // the generic W4A8 from 17 tokens on every build, decode and verify widths unchanged; the same
 // weight under AllowA4 (it carries its activation divisor) keeps W4A4 where the build has it and
@@ -1752,6 +1843,13 @@ int main() {
     for (const Format& f : kFormats) {
         if (!on_build(f) || !generic::ggml_mmq_format(f.qtype)) continue;
         failures += check_mmq_outlier_block(f);
+    }
+    // 2f. The q8_1 block sums from the codes: ggml's matrix kernel on the K-quants against the int8
+    // activation's oracle.
+    for (const Format& f : kFormats) {
+        const bool k_quant = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K;
+        if (!on_build(f) || !k_quant || !generic::ggml_mmq_format(f.qtype)) continue;
+        failures += check_mmq_code_sums(f);
     }
 
     // 3. Every compiled route qualified on one awkward shape per format and epilogue.
