@@ -1451,6 +1451,18 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
     for (const auto& file : chosen) {
         const auto name = ascii_lower(file.path);
         if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one
+        // part leaves the others unlinked, and the listing above sees only what is there.
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+        std::smatch match;
+        if (std::regex_match(file.path, match, split)) {
+            const int parts = std::stoi(match[2].str());
+            for (int part = 1; part <= parts; ++part) {
+                char suffix[32];
+                std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
+                if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
+            }
+        }
         // Every shard a safetensors index names.
         if (name.ends_with("model.safetensors.index.json")) {
             try {
