@@ -519,6 +519,9 @@ def main() -> int:
             for name in parts:
                 del hub.repos["org/qwen-gguf2"]["files"][name]
                 hub.repos["org/qwen-gguf2"]["lfs"].discard(name)
+            # The fetches at the new commit above moved the cache's ref to it: back to the commit
+            # the kept download is of, as before them.
+            (repo2 / "refs" / "main").write_text(old2)
             refetched2 = again2("--refetch")
             case("--refetch with the download kept converts the new commit, removes the old conversion",
                  refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
