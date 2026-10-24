@@ -403,10 +403,16 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         out.terms.push_back({axis, std::move(value), kld, measured, transferred, std::move(source)});
     };
     // The quantization: the measured curve (choice_constants.h).
+    // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
+    // (choose: quant_by_worth needs every candidate's bits).
     bool measured  = false;
-    const double q = quant_kld(quant.bits_per_weight, quant.label, !other_curve, measured);
+    const double q = quant.bits_per_weight > 0
+                         ? quant_kld(quant.bits_per_weight, quant.label, !other_curve, measured)
+                         : 0.0;
     add(Axis::Quant, quant.label, q, measured,
-        measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
+        quant.bits_per_weight <= 0 ? std::string("unknown bits per weight: not weighed")
+        : measured ? std::string(kQuantKldSource)
+                   : "interpolated by bits per weight on " + std::string(kQuantKldSource));
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {
@@ -501,7 +507,11 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
-    out.quant_by_worth = weighs_quantizations(model, card, gates);
+    // The quantizations are weighed only where every candidate's bits place it on the curve.
+    out.quant_by_worth = weighs_quantizations(model, card, gates) &&
+                         std::all_of(quants.begin(), quants.end(), [](const QuantOption& q) {
+                             return !q.supported || q.bits_per_weight > 0;
+                         });
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
