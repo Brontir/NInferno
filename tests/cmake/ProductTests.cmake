@@ -20,6 +20,15 @@ ninferno_add_test(ninferno_product_speculation_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_product_speculation.cpp"
   LIBRARIES ninferno_product_speculation)
 
+# The plan facts a GGUF header, a config.json and an artifact's text config give the plan without
+# the weights (each family's layers, KV heads, recurrent state, experts, weight basis), and the
+# named boards of gpu_facts.json: no GPU.
+ninferno_add_test(ninferno_plan_facts_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_facts.cpp"
+  LIBRARIES ninferno_product_plan ninferno_convert ninferno_core)
+
+target_include_directories(ninferno_plan_facts_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ninferno_add_test(ninferno_pretty_logging_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_pretty_logging.cpp"
   LIBRARIES ninferno_product_logging)
@@ -91,6 +100,16 @@ ninferno_add_test(ninferno_ui_test
   LIBRARIES ninferno_ui ninferno_convert)
 target_include_directories(ninferno_ui_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+# ninferno-ui's page: the plan helpers (context text, the /api/plan request, a plan row's state)
+# over synthetic ninferno-dry-plan/1 documents, and the page script parses. Needs Node.js; without
+# it the test is not registered.
+find_program(NINFERNO_NODE node)
+if(NINFERNO_NODE)
+  add_test(NAME ninferno_ui_page_plan_test
+    COMMAND ${NINFERNO_NODE} ${CMAKE_CURRENT_LIST_DIR}/../ui_page/test_page_plan.mjs
+            ${PROJECT_SOURCE_DIR}/src/ui/page.html)
+endif()
+
 # The release check: version order, manifests, the daily cache and its switches, against a
 # manifest served on loopback. No network.
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -108,3 +127,30 @@ set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77
 ninferno_add_test(ninferno_tool_maintainer_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"
   LIBRARIES ninferno_ops ninferno_core)
+
+# The plan without the weights: the dry run's ladder is a start's (the shared seams), total and
+# monotone over synthetic models x cards x contexts x streams x codecs, the largest quantization
+# that fits, the family table and ninferno-serve's options agree, the speculation follows the
+# start's order. CPU, no network.
+ninferno_add_test(ninferno_plan_dry_run_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_dry_run.cpp"
+  LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_dry_run_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# Every setup docs/performance/data/bench.jsonl measured through ninferno-serve fits the plan
+# without the weights on its named board (facts: tests/fixtures/plan/bench_models.json).
+ninferno_add_test(ninferno_plan_bench_fits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bench_fits.cpp"
+  LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_bench_fits_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(ninferno_plan_bench_fits_test PRIVATE
+  NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+# The plan without the weights takes a start's bytes: every family's state shape from a config.json
+# or a GGUF header is the family planner's, and a dry-run rung's bytes are the start planner's
+# (sequence_bytes.h) to the byte but for the estimated workspace, over concurrencies, speculation,
+# codecs, contexts, chunks and cached states. CPU.
+ninferno_add_test(ninferno_plan_bytes_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bytes.cpp"
+  LIBRARIES ninferno_product_plan ninferno_model_runtime ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR}/src)

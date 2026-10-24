@@ -23,4 +23,10 @@ inline constexpr std::uint32_t kMaximumMtpDraftTokens = 7;
 make_program_execution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
                        std::int32_t public_tokens, ActivationMode activations);
 
+// The shape of the persistent state the NemotronH `config` lays out
+// (models/qwen3_5/program/planning/sequence_bytes.h, plan_persistent_layout): the attention
+// layers' pool and the MTP head's, the Mamba2 states; `public_tokens` the ids a request may carry
+// or sample.
+[[nodiscard]] StateShape state_shape(const Config& config, std::int32_t public_tokens);
+
 } // namespace ninferno::models::nemotron_h

@@ -37,6 +37,11 @@ struct ServeOptions {
     // serving (GenerationService::plan); --json prints it as JSON.
     bool plan_only = false;
     bool plan_json = false;
+    // --no-load (with --plan): plan without loading or downloading the weights and without a GPU,
+    // from the model's header or config (serve/plan_offline.h); --plan-device NAME plans for a
+    // named board of the PCI-ID table instead of the CUDA device.
+    bool plan_no_load = false;
+    std::string plan_device;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
@@ -49,6 +54,11 @@ struct ServeOptions {
     // 0 (no --max-context): automatic, the context of the plan ladder's rung the free Device
     // memory picks (EngineOptions::max_context_automatic); the Engine reports the rung.
     std::uint32_t max_context          = 0;
+    // --max-context-cap N: the context stays automatic (the free memory picks the rung, stepping
+    // down on a busy card as without it) but at most N tokens. The quantization a GGUF hub
+    // repository is fetched at without --quant sets it to the context each of several streams
+    // was planned to keep (serve/plan_offline.h), as ninferno-ui's launch passes it. 0: none.
+    std::uint32_t max_context_cap = 0;
     // Unset --kv-capacity: automatic with an automatic context, else max_context tokens.
     KvCapacityPolicy kv_capacity       = KvCapacityPolicy::automatic();
     std::uint32_t max_concurrency      = 1;

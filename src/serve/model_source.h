@@ -31,6 +31,9 @@ struct ModelSource {
     std::string commit; // the snapshot served (Hub)
     std::string recipe; // the conversion (Checkpoint, Hub)
     bool converted = false; // converted by this start
+    // Under an automatic context with several streams, the own context per stream the hub GGUF
+    // quantization was chosen for (serve/plan_offline.h): the start pins --max-context to it.
+    std::uint32_t planned_context = 0;
     double convert_seconds = 0.0;
 };
 

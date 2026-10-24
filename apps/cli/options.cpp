@@ -57,6 +57,8 @@ std::string usage_text(const char* argv0) {
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(product::kEngineFlagsUsage) +
            "       [--drafter-registry FILE]\n"
+           "       [--plan --no-load [--json] [--plan-device NAME]]  the plan without the\n"
+           "       weights at these options (an estimate), then exit; no --prompt needed\n"
            "\n"
            "Streams answer content to stdout and reasoning plus diagnostics to stderr.\n"
            "Structured message content accepts text, image/image_url, and video/video_url parts;\n"
@@ -194,6 +196,14 @@ Options parse_options(int argc, char** argv) {
             options.drafter_registry = value(arg);
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(value(arg));
+        } else if (arg == "--plan") {
+            options.plan_only = true;
+        } else if (arg == "--no-load") {
+            options.plan_no_load = true;
+        } else if (arg == "--json") {
+            options.plan_json = true;
+        } else if (arg == "--plan-device") {
+            options.plan_device = value(arg);
         } else {
             throw std::invalid_argument("unknown argument: " + std::string(arg));
         }
@@ -203,9 +213,16 @@ Options parse_options(int argc, char** argv) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
     }
 
+    if (options.plan_only != options.plan_no_load) {
+        throw std::invalid_argument("--plan plans without the weights here: pass --plan --no-load "
+                                    "(ninferno-serve --plan loads them)");
+    }
+    if ((options.plan_json || !options.plan_device.empty()) && !options.plan_only) {
+        throw std::invalid_argument("--json and --plan-device need --plan --no-load");
+    }
     const bool has_prompt   = !options.prompt.empty();
     const bool has_messages = !options.messages_path.empty();
-    if (has_prompt == has_messages) {
+    if (!options.plan_only && has_prompt == has_messages) {
         throw std::invalid_argument("pass exactly one of --prompt or --messages");
     }
     if (options.prefill_chunk % 128 != 0) {

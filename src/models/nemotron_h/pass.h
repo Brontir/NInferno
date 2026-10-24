@@ -24,7 +24,8 @@ namespace ninferno::models::nemotron_h {
 //
 // A speculative verify passes `records` (at the call's row length): the Mamba2 layers then only
 // read their slots and record every column (Mamba2 layer i at record layer i, in the planes
-// mamba2_records_spec names), and replay_fold later commits the accepted columns.
+// the persistent layout names: models/qwen3_5/program/planning/sequence_bytes.cpp), and replay_fold
+// later commits the accepted columns.
 struct Bindings {
     std::span<const ops::Gemma4KvLayer> attention; // one per attention layer, by its index
     LinearAttentionStatePool* mamba = nullptr;     // one pool layer per Mamba2 layer
@@ -32,12 +33,6 @@ struct Bindings {
     std::int32_t batch = 1;
     const GdnReplayRecords* records = nullptr;
 };
-
-// The replay records of a Mamba2 stack, in the Program's record planes: conv = the conv inputs
-// (xBC before the convolution) [C, width, rows], value = the conv outputs [C, 1, width, rows],
-// key = dt [H, 1, width, rows] (the gate plane is unused).
-[[nodiscard]] GdnReplayRecordSpec mamba2_records_spec(const Config& c, std::int32_t rows,
-                                                      std::int32_t width);
 
 // One NoPE attention sub-layer (the trunk's and the MTP head's): input [H, T] (normed), keys and
 // values appended through `kv`, the output projection added into residual [H, T] in its epilogue.

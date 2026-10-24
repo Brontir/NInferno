@@ -45,219 +45,18 @@ namespace {
 using execution::dimension;
 namespace workspace = execution::workspace;
 
-constexpr std::size_t kArenaAlign = 256ULL;
-
-// A DFlash drafter's sliding-layer ring keeps Int8Group64 K/V at D128 (about half the bytes of
-// every StateImage slot's ring): on an RTX 5090, Qwen3.6-35B-A3B with DFlash decodes 0.7-2.4 %
-// faster at 1-8 concurrent requests with 0.6 GiB less runtime. DFlash2 keeps BF16: an int8 ring
-// takes it off the fused materialization onto the per-layer path (Qwen3.8-27B: +2.8 % at one
-// request, -2.7 % at four, -0.6 % at eight with 31K contexts).
-bool dflash_local_int8(std::int64_t head_dim, bool dflash2) {
-    return head_dim == 128 && !dflash2;
-}
-
 enum class GdnWorkspacePath : std::uint8_t {
     Prefill,
     Snapshot,
     ReplayRecord,
 };
 
-std::int32_t checked_i32(std::uint64_t value, const char* label) {
-    if (value == 0 ||
-        value > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-        throw std::overflow_error(label);
-    }
-    return static_cast<std::int32_t>(value);
-}
-
-template <class ProfileAllowance>
-std::size_t graph_topology_allowance(const std::vector<GraphExecutionProfile>& profiles,
-                                     ProfileAllowance&& profile_allowance, const char* label) {
-    std::vector<std::pair<std::uint32_t, std::size_t>> classes;
-    for (const GraphExecutionProfile profile : profiles) {
-        const std::size_t allowance = profile_allowance(profile);
-        const auto existing = std::find_if(classes.begin(), classes.end(), [&](const auto& entry) {
-            return entry.first == profile.topology_class;
-        });
-        if (existing == classes.end()) {
-            classes.emplace_back(profile.topology_class, allowance);
-        } else {
-            existing->second = std::max(existing->second, allowance);
-        }
-    }
-
-    std::size_t total = 0;
-    for (const auto& [topology_class, allowance] : classes) {
-        (void)topology_class;
-        total = checked_add(total, allowance, label);
-    }
-    return total;
-}
-
-TensorLayout add_tensor(LayoutBuilder& builder, DType dtype,
-                        std::initializer_list<std::int32_t> shape, const char* label) {
-    return builder.add_tensor(dtype, shape, kArenaAlign, label);
-}
-
 PersistentLayout persistent_layout(const execution::Parameters& parameters,
                                    const SequencePlanImpl& plan) {
-    const auto& config     = parameters.model.config().text;
-
-    if (!plan.context_cache.device_state_slots) {
-        throw std::logic_error("Qwen3.5 context cache options are not normalized");
-    }
-    const std::int32_t state_image_slots = checked_i32(
-        static_cast<std::uint64_t>(plan.max_concurrency) + *plan.context_cache.device_state_slots,
-        "Qwen3.5 StateImage slot count exceeds int32");
-    const auto effective_prefill_chunk =
-        static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-    const std::uint32_t logical_pages      = paged_kv_capacity_pages(plan.capacity);
-    const std::uint32_t physical_pages = plan.main_page_groups;
-    const std::uint64_t mtp_extra_pages    = plan.features.mtp()
-                                                 ? static_cast<std::uint64_t>(plan.max_concurrency) *
-                                                    paged_kv_pages(plan.draft_window - 1U)
-                                                 : 0ULL;
-    const std::uint32_t mtp_physical_pages = static_cast<std::uint32_t>(
-        checked_i32(static_cast<std::uint64_t>(physical_pages) + mtp_extra_pages,
-                    "MTP Paged KV physical pages exceed int32"));
-    LayoutBuilder builder;
-    PersistentLayout out;
-    out.decoder = qwen3_5::plan_decoder_state(
-        builder, qwen3_5::DecoderStateSpec{
-                     .full_attention_layers     = config.full_attention_layers,
-                     .mtp_layers                = 1,
-                     .capacity                  = plan.capacity,
-                     .kv_heads                  = dimension(config.attention->num_key_value_heads),
-                     .attention_head_dim        = dimension(config.attention->head_dim),
-                     .kv_storage                = plan.kv_storage,
-                     .enable_mtp                = plan.features.mtp(),
-                     .kv_table_rows             = static_cast<std::int32_t>(plan.max_concurrency),
-                     .text_physical_page_groups = physical_pages,
-                     .mtp_physical_page_groups  = mtp_physical_pages,
-                 });
-    qwen3_5::StateImageSpec state_image_spec{
-        .linear =
-            {
-                .layers        = config.linear_attention_layers,
-                .conv_channels = (config.gdn ? dimension(config.gdn->conv_channels()) : 0),
-                .conv_width  = (config.gdn ? dimension(config.gdn->linear_conv_kernel_dim - 1) : 0),
-                .value_heads = (config.gdn ? dimension(config.gdn->linear_num_value_heads) : 0),
-                .value_head_dim  = (config.gdn ? dimension(config.gdn->linear_value_head_dim) : 0),
-                .key_head_dim    = (config.gdn ? dimension(config.gdn->linear_key_head_dim) : 0),
-                .slot_count      = state_image_slots,
-                .conv_dtype      = DType::BF16,
-                .recurrent_dtype = plan.recurrent_state_dtype,
-            },
-        .hidden = dimension(config.hidden_size),
-    };
-    {
-        const auto* draft =
-            parameters.model.config().draft ? &*parameters.model.config().draft : nullptr;
-        if (plan.features.masked_draft()) {
-            state_image_spec.dflash_local = qwen3_5::DFlashLocalStateSpec{
-                .layers   = draft->local_layer_count(),
-                .capacity = draft->sliding_window.value_or(0),
-                .kv_heads = dimension(draft->attention.num_key_value_heads),
-                .head_dim = dimension(draft->attention.head_dim),
-                .int8 = dflash_local_int8(draft->attention.head_dim, draft->dflash2.has_value()),
-            };
-        }
-    }
-    out.state_images = qwen3_5::plan_state_image_device_pool(builder, state_image_spec);
-    if (plan.speculative_backend != SpeculativeBackend::None) {
-        out.replay_records = plan_gdn_replay_records(
-            builder,
-            GdnReplayRecordSpec{
-                .layers          = dimension(config.linear_attention_layers),
-                .record_capacity = static_cast<std::int32_t>(plan.max_concurrency),
-                .width           = static_cast<std::int32_t>(plan.draft_window + 1U),
-                .conv_channels   = (config.gdn ? dimension(config.gdn->conv_channels()) : 0),
-                .qk_heads        = (config.gdn ? dimension(config.gdn->linear_num_key_heads) : 0),
-                .value_heads     = (config.gdn ? dimension(config.gdn->linear_num_value_heads) : 0),
-                .key_dim         = (config.gdn ? dimension(config.gdn->linear_key_head_dim) : 0),
-                .value_dim       = (config.gdn ? dimension(config.gdn->linear_value_head_dim) : 0),
-            });
-    }
-    {
-        const auto* draft =
-            parameters.model.config().draft ? &*parameters.model.config().draft : nullptr;
-        if (plan.features.masked_draft()) {
-            DFlashPersistentLayout& dflash = out.dflash.emplace();
-            if (draft->full_layer_count() != 0) {
-                // A DFlash drafter's full layers keep per-token G64 int8 K/V at D128 (half the
-                // bytes of BF16 K + FP16 V plus 1/32 for scales), like its sliding ring: with
-                // both, Qwen3.6-35B-A3B on an RTX 4090 with four 40K requests holds ~129K
-                // tokens instead of 90K and its ~30K rounds stop collapsing (516 / 112 -> 655
-                // tok/s), while an RTX 5090 is flat at 1-8 requests. DFlash2 keeps BF16 (the
-                // int8 full-layer cache was not evaluated for it).
-                const bool drafter_int8 =
-                    !draft->dflash2.has_value() && draft->attention.head_dim == 128;
-                const PagedKVStorageLayout full_storage = paged_kv_storage_layout(
-                    drafter_int8 ? KvCacheStorage::Int8Group64 : KvCacheStorage::BFloat16,
-                    dimension(draft->attention.head_dim));
-                KVPageGeometry full_geometry{
-                    .page_tokens        = kPagedKVPageSize,
-                    .device_plane_order = PagedKVPlaneOrder::HeadMajor,
-                    .planes =
-                        {
-                            {full_storage.key.data_dtype, full_storage.key.data_leading_extent,
-                             dimension(draft->attention.num_key_value_heads), 256},
-                            {full_storage.value.data_dtype, full_storage.value.data_leading_extent,
-                             dimension(draft->attention.num_key_value_heads), 256},
-                        },
-                };
-                // A layer's planes in PagedKVCache::layer_view order: K, V, then the scales.
-                if (full_storage.key.has_scale()) {
-                    full_geometry.planes.push_back(
-                        {full_storage.key.scale_dtype, full_storage.key.scale_leading_extent,
-                         dimension(draft->attention.num_key_value_heads), 256});
-                }
-                if (full_storage.value.has_scale()) {
-                    full_geometry.planes.push_back(
-                        {full_storage.value.scale_dtype, full_storage.value.scale_leading_extent,
-                         dimension(draft->attention.num_key_value_heads), 256});
-                }
-                const auto planes = full_geometry.planes;
-                for (std::uint32_t layer = 1; layer < draft->full_layer_count(); ++layer) {
-                    full_geometry.planes.insert(full_geometry.planes.end(), planes.begin(),
-                                                planes.end());
-                }
-                dflash.full = qwen3_5::PagedKVCacheLayout{
-                    .pages = plan_device_kv_page_pool(
-                        builder, DeviceKVPagePoolSpec{.page_group_count = physical_pages,
-                                                      .geometry = std::move(full_geometry)}),
-                    .execution_tables = plan_kv_execution_tables(
-                        builder,
-                        KVExecutionTableSpec{
-                            .logical_page_capacity = logical_pages,
-                            .table_rows = static_cast<std::int32_t>(plan.max_concurrency),
-                        }),
-                    .layers        = draft->full_layer_count(),
-                    .max_context   = plan.capacity,
-                    .kv_heads      = dimension(draft->attention.num_key_value_heads),
-                    .layer_storage = full_storage,
-                };
-            }
-            dflash.prefill_features = add_tensor(
-                builder, DType::BF16,
-                {dimension(config.hidden_size * std::uint64_t(draft->target_layer_ids.size())),
-                 effective_prefill_chunk},
-                "DFlash prefill target features");
-            dflash.prefill_positions = add_tensor(builder, DType::I32, {effective_prefill_chunk},
-                                                  "DFlash prefill target positions");
-            dflash.pending_features  = add_tensor(
-                builder, DType::BF16,
-                {dimension(config.hidden_size * std::uint64_t(draft->target_layer_ids.size())),
-                  static_cast<std::int32_t>(plan.draft_window + 1U),
-                  static_cast<std::int32_t>(plan.max_concurrency)},
-                "DFlash pending target features");
-        }
-    }
-
-    plan_program_buffers(builder, plan, plan.model->traits(), out);
-    out.kv_payload_bytes =
-        out.decoder.kv_payload_bytes() + (out.dflash ? out.dflash->kv_payload_bytes() : 0);
-    return out;
+    return plan_persistent_layout(
+        qwen3_5_state_shape(parameters.model.config(),
+                            dimension(parameters.model.resources().public_token_count)),
+        plan);
 }
 
 WorkspacePlan build_workspace_plan(const execution::Parameters& parameters,
@@ -790,10 +589,10 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
         options.max_context > parameters.model.config().draft->max_position_embeddings) {
         throw std::invalid_argument("max_context exceeds the selected draft position capacity");
     }
-    if (options.sliding_kv_cache != KvCacheStorage::BFloat16) {
-        throw std::invalid_argument(
-            "Qwen 3.5 has no sliding-window layers (--sliding-kv-dtype is for their rings)");
-    }
+    validate_state_storage(
+        qwen3_5_state_shape(parameters.model.config(),
+                            dimension(parameters.model.resources().public_token_count)),
+        options);
     validate_program_options(options, parameters.model.config().text.max_position_embeddings,
                              kMaximumMtpDraftTokens, true);
     if (!options.speculative.drafter.empty()) {
@@ -838,20 +637,6 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
                                                            std::uint32_t main_page_groups);
 
 } // namespace
-
-void validate_ring_decoder_storage(const EngineOptions& options, std::string_view family) {
-    const auto bf16_or_fp8 = [](KvCacheStorage storage) {
-        return storage == KvCacheStorage::BFloat16 || storage == KvCacheStorage::Fp8E4M3Row256;
-    };
-    if (!bf16_or_fp8(options.kv_cache)) {
-        throw std::invalid_argument(std::string(family) +
-                                    " keeps keys and values in BF16 or FP8 (--kv-dtype bf16|fp8)");
-    }
-    if (!bf16_or_fp8(options.sliding_kv_cache)) {
-        throw std::invalid_argument(std::string(family) + " keeps its sliding rings in BF16 or FP8 "
-                                                          "(--sliding-kv-dtype bf16|fp8)");
-    }
-}
 
 void validate_program_options(const EngineOptions& options, std::uint64_t max_positions,
                               std::uint32_t maximum_mtp_draft_tokens, bool mtp_copy_rounds) {
@@ -968,141 +753,14 @@ void validate_program_options(const EngineOptions& options, std::uint64_t max_po
     }
 }
 
-void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
-                          const ModelTraits& traits, PersistentLayout& out) {
-    const auto effective_prefill_chunk =
-        static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-    out.round = qwen3_5::begin_round_state_layout(
-        builder, qwen3_5::RoundStateSpec{.hidden         = traits.hidden,
-                                         .output_rows    = traits.output_rows,
-                                         .batch_capacity = plan.max_concurrency,
-                                         .draft_window   = plan.draft_window,
-                                         .backend        = plan.speculative_backend,
-                                         .causal_scoring = plan.causal_scoring});
-    out.prefill_hidden = add_tensor(builder, DType::BF16, {traits.hidden, effective_prefill_chunk},
-                                    "step prefill hidden");
-    if (plan.causal_scoring) {
-        out.score_hidden = add_tensor(builder, DType::BF16,
-                                      {traits.hidden, static_cast<std::int32_t>(kCausalScoreTile)},
-                                      "causal score hidden staging");
-    }
-    qwen3_5::complete_round_state_layout(builder, out.round);
-    if (!plan.causal_scoring) {
-        out.token_counts =
-            add_tensor(builder, DType::I32,
-                       {traits.public_tokens, static_cast<std::int32_t>(plan.max_concurrency)},
-                       "sampling token counts");
-        const auto config_words = static_cast<std::int32_t>(
-            (sizeof(ops::SamplingConfig) + sizeof(std::int32_t) - 1) / sizeof(std::int32_t));
-        out.sampling_config = add_tensor(
-            builder, DType::I32, {config_words, static_cast<std::int32_t>(plan.max_concurrency)},
-            "sampling config");
-    }
-    out.bytes = builder.finish(kArenaAlign, "persistent layout");
-}
-
 namespace {
 
 std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlanningInputs& inputs,
                                                            std::uint32_t main_page_groups) {
-    if (main_page_groups == 0) {
-        throw std::invalid_argument("Main KV physical page count must be positive");
-    }
-    auto impl                 = std::make_unique<SequencePlanImpl>();
-    impl->model               = inputs.model;
-    impl->capacity            = inputs.capacity;
-    impl->main_page_groups    = main_page_groups;
-    impl->kv_capacity         = static_cast<std::uint32_t>(checked_i32(
-        static_cast<std::uint64_t>(main_page_groups) * static_cast<std::uint32_t>(kPagedKVPageSize),
-        "resolved Paged KV capacity exceeds int32"));
-    impl->max_concurrency     = inputs.max_concurrency;
-    impl->prefill_chunk       = inputs.prefill_chunk;
-    impl->draft_window        = inputs.draft_window;
-    impl->launch_windows      = inputs.launch_windows;
-    impl->launch_window_min_batch = inputs.launch_window_min_batch;
-    impl->launch_window_batches   = inputs.launch_window_batches;
-    impl->speculative_batch_limit = inputs.speculative_batch_limit;
-    impl->default_draft_depth = inputs.default_draft_depth;
-    impl->speculative_backend = inputs.speculative_backend;
-    impl->proposal_head       = inputs.proposal_head;
-    impl->draft_width         = inputs.draft_width;
-    impl->acceptance_floor    = inputs.acceptance_floor;
-    impl->step_down           = inputs.step_down;
-    impl->load                = inputs.load;
-    impl->context_limit       = inputs.context_limit;
-    impl->watchdog_window     = inputs.watchdog_window;
-    impl->watchdog_min_rounds = inputs.watchdog_min_rounds;
-    impl->shared_trip_floor   = inputs.shared_trip_floor;
-    impl->ngram_draft_tokens      = inputs.ngram_draft_tokens;
-    impl->ngram_min_match         = inputs.ngram_min_match;
-    impl->kv_lease_window         = inputs.kv_lease_window;
-    impl->decode_pacing           = inputs.decode_pacing;
-    impl->features            = inputs.features;
-    impl->use_cuda_graph      = inputs.use_cuda_graph;
-    impl->causal_scoring      = inputs.causal_scoring;
-    impl->device              = inputs.device;
-    impl->multiprocessor_count = inputs.multiprocessor_count;
-    impl->context_cache       = inputs.context_cache;
-    impl->kv_storage          = inputs.kv_storage;
-    impl->ring_storage        = inputs.ring_storage;
-    impl->recurrent_state_dtype   = inputs.recurrent_state_dtype;
-    impl->persistent          = impl->model->persistent_layout(*impl);
-    impl->workspace           = impl->model->workspace_plan(*impl);
-    if (impl->use_cuda_graph && !inputs.graph_memory_held) {
-        // Definitions remain per execution profile, but only one executable is instantiated for
-        // each reachable node-topology class: the allowance is a bound per instantiated class.
-        // Measured (ninferno-serve's startup ledger: allowance - (free after startup - planned
-        // slack); every graph is captured at startup, memory does not grow while serving): an
-        // ordinary class takes 2-9 MiB, an MTP or DFlash class 3-7 MiB, whatever the visible
-        // length (Qwen 3.6 35B MTP C=8 at 262,144 tokens: 34 MiB in all; Qwen 3.8 27B DFlash2
-        // depths 5/11/15 at C=8: 370 MiB for 64 classes; Gemma 4 26B MTP C=8: 103 MiB). The bounds
-        // keep about twice the largest. The driver and module state every engine materializes
-        // besides (7-31 MiB) is the automatic KV headroom's (kDefaultKvCapacityHeadroomBytes).
-        // Every generation engine captures the plain decode graphs (a speculative engine runs a
-        // request whose acceptance watchdog tripped through them).
-        constexpr std::uint64_t kOrdinaryClassBytes    = 12ULL * kMiB;
-        constexpr std::uint64_t kSpeculativeClassBytes = 16ULL * kMiB;
-        impl->graph_allowance_bytes = checked_mul(kOrdinaryClassBytes, impl->max_concurrency,
-                                                  "ordinary exact-b graph allowance");
-        // One set of speculative graphs per launch window, for the speculative batches it runs
-        // under the load bounds (launch_window_batches: at most the widest speculative launch,
-        // below a bound of 0; a depth only a bound asks from that bound's lanes; a window deeper
-        // than every bound from a step's rows on, not at that many rows).
-        impl->launch_window_graph_bytes.assign(impl->launch_windows.size(), 0);
-        for (std::size_t w = 0; w < impl->launch_windows.size(); ++w) {
-            const std::uint32_t window = impl->launch_windows[w];
-            const std::uint32_t mask   = impl->launch_window_batches.at(w);
-            const std::uint32_t last   = impl->speculative_batch_limit;
-            std::size_t& window_bytes  = impl->launch_window_graph_bytes[w];
-            if (impl->speculative_backend == SpeculativeBackend::Mtp) {
-                const auto profiles = mtp_graph_profiles(impl->capacity, window);
-                const std::size_t per_batch_allowance = graph_topology_allowance(
-                    profiles, [](GraphExecutionProfile) { return kSpeculativeClassBytes; },
-                    "MTP graph allowance");
-                std::uint32_t batches = 0;
-                for (std::uint32_t batch_size = 1; batch_size <= last; ++batch_size) {
-                    batches += window_runs_batch(mask, batch_size) ? 1U : 0U;
-                }
-                window_bytes =
-                    checked_mul(per_batch_allowance, batches, "MTP exact-b graph allowance");
-            } else {
-                for (std::uint32_t batch_size = 1; batch_size <= last; ++batch_size) {
-                    if (!window_runs_batch(mask, batch_size)) { continue; }
-                    const auto profiles = dflash_graph_profiles(
-                        impl->speculative_backend, impl->capacity, window, batch_size);
-                    window_bytes = checked_add(
-                        window_bytes,
-                        graph_topology_allowance(
-                            profiles, [](GraphExecutionProfile) { return kSpeculativeClassBytes; },
-                            "DFlash graph allowance"),
-                        "DFlash exact-b graph allowance");
-                }
-            }
-            impl->graph_allowance_bytes =
-                checked_add(impl->graph_allowance_bytes, window_bytes, "speculative graphs");
-        }
-    }
-
+    auto impl        = sequence_plan_shell(inputs, main_page_groups);
+    impl->persistent = impl->model->persistent_layout(*impl);
+    impl->workspace  = impl->model->workspace_plan(*impl);
+    plan_graph_allowance(*impl, inputs.graph_memory_held);
     impl->device_reservation_bytes = checked_add(
         checked_add(impl->persistent.bytes, impl->workspace.capacity, "sequence memory plan"),
         impl->graph_allowance_bytes, "sequence graph allowance");
@@ -1121,104 +779,65 @@ PersistentLayout qwen3_5_persistent_layout(const execution::Parameters& paramete
     return persistent_layout(parameters, plan);
 }
 
+StateShape qwen3_5_state_shape(const qwen3_5::Config& config, std::int32_t public_tokens) {
+    const auto& text = config.text;
+    StateShape out{
+        .family           = StateFamily::Qwen35,
+        .full_layers      = text.full_attention_layers,
+        .kv_heads         = text.attention ? dimension(text.attention->num_key_value_heads) : 0,
+        .head_dim         = text.attention ? dimension(text.attention->head_dim) : 0,
+        .recurrent_layers = text.linear_attention_layers,
+        .hidden           = dimension(text.hidden_size),
+        .output_rows      = dimension(text.vocab_size),
+        .public_tokens    = public_tokens,
+    };
+    if (text.gdn) {
+        out.value_heads = dimension(text.gdn->linear_num_value_heads);
+        out.value_dim   = dimension(text.gdn->linear_value_head_dim);
+        out.key_heads   = dimension(text.gdn->linear_num_key_heads);
+        out.key_dim     = dimension(text.gdn->linear_key_head_dim);
+        out.conv_kernel = dimension(text.gdn->linear_conv_kernel_dim);
+    }
+    if (config.draft) {
+        const DraftConfig& draft = *config.draft;
+        const std::int32_t features =
+            dimension(text.hidden_size * std::uint64_t(draft.target_layer_ids.size()));
+        out.drafter = DrafterStateShape{
+            .full_layers          = draft.full_layer_count(),
+            .local_layers         = draft.local_layer_count(),
+            .window               = draft.sliding_window.value_or(0),
+            .kv_heads             = dimension(draft.attention.num_key_value_heads),
+            .head_dim             = dimension(draft.attention.head_dim),
+            .feature_rows         = features,
+            .prefill_feature_rows = features,
+            .dflash2              = draft.dflash2.has_value(),
+        };
+    }
+    return out;
+}
+
 WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
                                      const SequencePlanImpl& plan) {
     return build_workspace_plan(parameters, plan);
 }
 
-namespace {
-// The recurrent state's element type a --state-dtype names.
-DType recurrent_state_dtype(RecurrentStateStorage storage) {
-    switch (storage) {
-    case RecurrentStateStorage::BF16:
-        return DType::BF16;
-    case RecurrentStateStorage::FP16:
-        return DType::FP16;
-    case RecurrentStateStorage::FP32:
-        break;
-    }
-    return DType::FP32;
-}
-
-// The copy window an automatic ngram_draft_tokens takes: the MTP backend's widest window on a
-// family whose round runs copy rounds, where it is deeper than every draft depth; else none.
-EngineOptions resolve_copy_window(const ModelExecution& model, const EngineOptions& options) {
-    EngineOptions out = options;
-    if (out.speculative.ngram_draft_tokens != SpeculativeOptions::kCopyWindowAuto) { return out; }
-    std::uint32_t deepest = out.speculative.draft_tokens;
-    for (const std::uint32_t k : out.speculative.request_draft_tokens) {
-        deepest = std::max(deepest, k);
-    }
-    const bool runs = out.speculative.backend == SpeculativeBackend::Mtp &&
-                      model.traits().copy_rounds && deepest < kMtpDecodeMaximumDrafts &&
-                      out.speculative.ngram_min_match != 0;
-    out.speculative.ngram_draft_tokens = runs ? kMtpDecodeMaximumDrafts : 0U;
-    return out;
-}
-} // namespace
-
 std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
 make_sequence_planner_impl(const ModelExecution& model, DeviceContext& device,
-                           const EngineOptions& requested, bool graph_memory_held) {
-    const EngineOptions options = resolve_copy_window(model, requested);
+                           const EngineOptions& options, bool graph_memory_held) {
     model.validate_options(device, options);
-    std::vector<std::uint32_t> launch_windows;
-    std::vector<std::uint32_t> launch_window_min_batch;
-    for (const LaunchWindowShape& window :
-         launch_window_shapes(options.speculative, options.max_concurrency)) {
-        launch_windows.push_back(window.drafts);
-        launch_window_min_batch.push_back(window.min_batch);
-    }
-    const std::uint32_t batch_limit =
-        launch_windows.empty()
-            ? 0U
-            : speculative_batch_limit(options.speculative.load, options.max_concurrency);
-    SequencePlanningInputs inputs{
-        .model                   = &model,
-        .capacity                = options.max_context,
-        .max_concurrency         = options.max_concurrency,
-        .prefill_chunk           = std::min(options.prefill_chunk, options.max_context),
-        .draft_window            = launch_windows.empty() ? 0U : launch_windows.back(),
-        .launch_windows          = launch_windows,
-        .launch_window_min_batch = launch_window_min_batch,
-        .launch_window_batches =
-            launch_window_batches(launch_windows, launch_window_min_batch, options.speculative.load,
-                                  options.max_concurrency, batch_limit),
-        .speculative_batch_limit = batch_limit,
-        .default_draft_depth     = options.speculative.draft_tokens,
-        .speculative_backend     = options.speculative.backend,
-        .kv_storage              = options.kv_cache,
-        .ring_storage            = options.sliding_kv_cache,
-        .recurrent_state_dtype   = recurrent_state_dtype(options.recurrent_state),
-        .proposal_head           = options.speculative.proposal_head,
-        .draft_width             = options.speculative.draft_width,
-        .acceptance_floor        = options.speculative.acceptance_floor,
-        .step_down               = options.speculative.step_down,
-        .load                    = options.speculative.load,
-        .context_limit           = options.speculative.context_limit,
-        .watchdog_window         = options.speculative.watchdog_window,
-        .watchdog_min_rounds     = options.speculative.watchdog_min_rounds,
-        .shared_trip_floor       = options.speculative.shared_trip_floor,
-        .ngram_draft_tokens      = options.speculative.ngram_draft_tokens,
-        .ngram_min_match         = options.speculative.ngram_min_match,
-        .kv_lease_window         = options.kv_lease_window,
-        .decode_pacing           = options.pacing,
-        .features                = models::load_options(options),
-        .use_cuda_graph          = options.use_cuda_graph,
-        .causal_scoring          = options.purpose == EnginePurpose::CausalScoring,
-        .device                  = options.device,
-        .multiprocessor_count    = device.multiprocessor_count(),
-        .context_cache           = options.context_cache,
-        .graph_memory_held       = graph_memory_held,
-    };
-    const std::uint32_t logical_pages = paged_kv_capacity_pages(inputs.capacity);
-    const std::uint32_t minimum_pages = std::max(logical_pages, inputs.max_concurrency);
-    const std::uint64_t maximum_pages64 =
-        static_cast<std::uint64_t>(inputs.max_concurrency) * logical_pages;
-    if (maximum_pages64 > std::numeric_limits<std::uint32_t>::max()) {
-        throw std::overflow_error("maximum Main KV page count exceeds uint32");
-    }
-    const auto maximum_pages = static_cast<std::uint32_t>(maximum_pages64);
+    return make_sequence_planner_impl(model, options, device.multiprocessor_count(),
+                                      graph_memory_held);
+}
+
+std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
+make_sequence_planner_impl(const ModelExecution& model, const EngineOptions& options,
+                           std::int32_t multiprocessor_count, bool graph_memory_held) {
+    SequencePlanningInputs inputs = sequence_planning_inputs(
+        options, model.traits().copy_rounds, multiprocessor_count, graph_memory_held);
+    inputs.model                  = &model;
+    const SequencePageRange range = sequence_page_range(inputs.capacity, inputs.max_concurrency);
+    const std::uint32_t minimum_pages = range.minimum;
+    const std::uint32_t maximum_pages = range.maximum;
 
     auto planner     = std::make_unique<qwen3_5::detail::SequencePlannerImpl>();
     planner->inputs  = inputs;

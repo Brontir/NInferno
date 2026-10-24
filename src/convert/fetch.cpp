@@ -953,12 +953,15 @@ std::string gguf_group(const std::string& path) {
     return std::regex_match(path, match, split) ? match[1].str() : path;
 }
 
-// Quantization preference when the user names none: lossless into the engine first (NVFP4,
-// MXFP4), then the near-lossless and larger types.
+// Quantization preference when the user names none and no GPU picks one (ninferno-serve takes
+// the largest that fits its GPU before it fetches: serve/plan_offline.h; --prepare-only and
+// ninferno-convert come here): lossless into the engine first (NVFP4, MXFP4), then the
+// near-lossless and larger types the engine serves (8 bits or fewer); BF16 and F16, which it does
+// not, last.
 int gguf_rank(const std::string& name) {
     static const std::vector<std::string> order = {
-        "nvfp4", "mxfp4", "q8_0",  "bf16",  "f16",   "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m",
-        "q4_k_s", "iq4_xs", "iq4_nl", "q4_0", "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k"};
+        "nvfp4",  "mxfp4", "q8_0", "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "iq4_xs",
+        "iq4_nl", "q4_0",  "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k",   "bf16",   "f16"};
     const auto text = ascii_lower(name);
     for (std::size_t i = 0; i < order.size(); ++i) {
         if (text.find(order[i]) != std::string::npos) { return static_cast<int>(i); }
@@ -970,6 +973,17 @@ constexpr const char* kFrontend[] = {"config.json",           "tokenizer.json",
                                      "tokenizer_config.json", "chat_template.jinja",
                                      "generation_config.json", "preprocessor_config.json",
                                      "video_preprocessor_config.json"};
+
+// Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors, and a
+// checkpoint may keep a part in its own model_<part>.safetensors that the index names (Qwen3.5's
+// MTP layers: model_mtp.safetensors); when they are there, other top-level files are a second copy
+// in another layout (Mistral repositories also ship consolidated.safetensors, as large as the
+// model). The fetch takes those files (choose_files) and the listing counts them (list_quants).
+bool transformers_weight_file(const std::string& path) {
+    return path == "model.safetensors" ||
+           ((path.starts_with("model-") || path.starts_with("model_")) &&
+            path.ends_with(".safetensors"));
+}
 
 std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions& options,
                                      const std::string& repo) {
@@ -1013,22 +1027,13 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
         for (const auto& file : listing.files) {
             if (file.path == "model.safetensors.index.json") { out.push_back(file); }
         }
-        // Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors,
-        // and a checkpoint may keep a part in its own model_<part>.safetensors that the index
-        // names (Qwen3.5's MTP layers: model_mtp.safetensors); when they are there, other
-        // top-level files are a second copy in another layout (Mistral repositories also ship
-        // consolidated.safetensors, as large as the model).
-        const auto transformers_named = [](const std::string& path) {
-            return path == "model.safetensors" ||
-                   ((path.starts_with("model-") || path.starts_with("model_")) &&
-                    path.ends_with(".safetensors"));
-        };
+        // Transformers-named weights, when there are any (transformers_weight_file).
         const bool named = std::any_of(safetensors.begin(), safetensors.end(), [&](const auto* f) {
-            return transformers_named(f->path);
+            return transformers_weight_file(f->path);
         });
         for (const auto* file : safetensors) {
             if (file->path.find('/') == std::string::npos &&
-                (!named || transformers_named(file->path))) {
+                (!named || transformers_weight_file(file->path))) {
                 out.push_back(*file);
             }
         }
@@ -1852,12 +1857,14 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::map<std::string, std::size_t> index; // group key -> out position
     RepoQuant weights;
     weights.format = "safetensors";
+    std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
         // An importance matrix (imatrix*.gguf) or another file too small to be a model.
         if (name.find("imatrix") != std::string::npos) { continue; }
+        // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
-            file.size < (256ULL << 20)) {
+            file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
@@ -1891,10 +1898,26 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             quant.bytes  = file.size;
             quant.files.push_back(file.path);
             out.push_back(std::move(quant));
-        } else if (name.ends_with(".safetensors") && name.find("mtp") == std::string::npos &&
-                   name.find("visual") == std::string::npos) {
-            weights.bytes += file.size;
-            weights.files.push_back(file.path);
+        } else if (name.ends_with(".safetensors") && name.find("visual") == std::string::npos &&
+                   file.path.find('/') == std::string::npos) {
+            // The top-level weights, as the fetch takes them (subdirectories hold originals and
+            // other formats: gpt-oss's original/model.safetensors).
+            top_level.push_back(&file);
+        }
+    }
+    // Of them, the Transformers-named ones when there are any, as choose_files takes them.
+    const bool named = std::any_of(top_level.begin(), top_level.end(), [](const auto* f) {
+        return transformers_weight_file(f->path);
+    });
+    for (const auto* file : top_level) {
+        if (!named || transformers_weight_file(file->path)) {
+            weights.bytes += file->size;
+            weights.files.push_back(file->path);
+            // A part of its own for the MTP layers (model_mtp.safetensors): fetched and converted
+            // with the model, loaded only under MTP.
+            if (ascii_lower(file->path).find("mtp") != std::string::npos) {
+                weights.mtp_bytes += file->size;
+            }
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
