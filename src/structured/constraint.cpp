@@ -35,13 +35,15 @@ struct SharedVocabulary {
 class CompiledConstraint {
 public:
     CompiledConstraint(xgrammar::CompiledGrammar compiled,
-                       std::shared_ptr<const SharedVocabulary> shared, bool visible)
+                       std::shared_ptr<const SharedVocabulary> shared, bool visible, bool free_rows)
         : grammar(std::move(compiled)), vocabulary(std::move(shared)),
-          special_tokens_visible(visible), memory_bytes(grammar.MemorySizeBytes()) {}
+          special_tokens_visible(visible), free_grammar(free_rows),
+          memory_bytes(grammar.MemorySizeBytes()) {}
 
     xgrammar::CompiledGrammar grammar;
     std::shared_ptr<const SharedVocabulary> vocabulary;
     bool special_tokens_visible = false;
+    bool free_grammar           = false; // declares_free_grammar() of its spec
     std::size_t memory_bytes    = 0;
 };
 
@@ -166,6 +168,7 @@ std::string cache_key(const OutputConstraintSpec& spec) {
     key.push_back(spec.compact_json ? 'c' : 'w');
     key.push_back(spec.follows_reasoning ? 'r' : 'n');
     key.push_back(spec.special_tokens_visible ? 'v' : 'h');
+    key.push_back(spec.engine_rendered ? 'e' : 'u');
     key.push_back('\0');
     key += spec.definition;
     if (!spec.answer_schema.empty()) {
@@ -209,6 +212,34 @@ std::string bound_structural_tag_whitespace(const std::string& definition, int r
     return tag.dump();
 }
 
+// Whether a structural tag holds a format of type "grammar" (an EBNF definition) anywhere in its
+// format tree. The client's JSON Schemas (the "json_schema" of a json_schema or qwen_xml_parameter
+// format, the "schema" of a legacy structure) are not format nodes. A definition that is not JSON
+// holds none; xgrammar rejects it.
+bool structural_tag_holds_grammar(const std::string& definition) {
+    const nlohmann::ordered_json tag = nlohmann::ordered_json::parse(definition, nullptr, false);
+    if (tag.is_discarded()) { return false; }
+    const auto holds = [](const auto& self, const nlohmann::ordered_json& node) -> bool {
+        if (node.is_array()) {
+            return std::any_of(node.begin(), node.end(), [&](const nlohmann::ordered_json& value) {
+                return self(self, value);
+            });
+        }
+        if (!node.is_object()) { return false; }
+        if (const auto type = node.find("type"); type != node.end() && *type == "grammar") {
+            return true;
+        }
+        for (const auto& entry : node.items()) {
+            if (entry.key() != "json_schema" && entry.key() != "schema" &&
+                self(self, entry.value())) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return holds(holds, tag);
+}
+
 struct Variant {
     xgrammar::TokenizerInfo info;
     std::unique_ptr<xgrammar::GrammarCompiler> compiler;
@@ -224,6 +255,16 @@ std::string_view ConstraintVocabularyView::presented(TokenId token) const noexce
     const auto index = static_cast<std::size_t>(token);
     if (vocabulary->special[index] && !special_tokens_visible) { return {}; }
     return vocabulary->token_bytes[index];
+}
+
+bool declares_free_grammar(const OutputConstraintSpec& spec) {
+    if (spec.kind == OutputConstraintKind::Grammar) { return true; }
+    return spec.kind == OutputConstraintKind::StructuralTag && !spec.engine_rendered &&
+           structural_tag_holds_grammar(spec.definition);
+}
+
+bool declares_free_grammar(const CompiledConstraint& compiled) noexcept {
+    return compiled.free_grammar;
 }
 
 ConstraintVocabularyView vocabulary_view(const CompiledConstraint& compiled) noexcept {
@@ -420,8 +461,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         // Regex-to-FSM lowering reports its own degradations (for example an ignored lookahead)
         // during compilation.
         reject_warnings();
-        return std::make_shared<const CompiledConstraint>(std::move(*compiled), shared,
-                                                          spec.special_tokens_visible);
+        return std::make_shared<const CompiledConstraint>(
+            std::move(*compiled), shared, spec.special_tokens_visible, declares_free_grammar(spec));
     }
 };
 

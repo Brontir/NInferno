@@ -220,12 +220,25 @@ For `C=--max-concurrency` and `H=--device-state-slots`, total Device StateImage 
 
 ### Context-cost presets
 
-Context-cost coefficients resolve once at startup from generic defaults, matching compiled values,
-and optional transfer or prefill entries from `--context-cost-presets FILE`. Prefill entries match
-the hardware and a signature derived from the actual Text/Vision configuration, bindings and Uses.
-A new representation without a matching measurement uses generic prefill coefficients. A malformed
-file aborts startup. The operational context-cost record and JSONL `server_start` identify the
-selected source.
+Context-cost coefficients resolve once at startup from generic defaults, the compiled machine of
+the device's GPU class, and optional transfer or prefill entries from `--context-cost-presets FILE`.
+A machine is keyed by a GPU class key (`gb202:170sm`, `gb202`, `sm120` or `*`) and found along the
+device's class chain, never by the name the driver gives the card. The compiled machines are keyed
+by the boards they were measured on (RTX 5090 `gb202:170sm`, RTX 4090 `ad102:128sm`, RTX 3090
+`ga102:82sm`, RTX 2080 Ti `tu102:68sm`); a board whose chain names none takes the machine of the
+nearest measured board within the carry distance of measured data, as measured (an RTX 4090 D the
+RTX 4090's), and a farther board, or one of another instruction set, the generic defaults. Prefill
+entries match the machine and a signature derived from the actual Text/Vision configuration,
+bindings and Uses; a new representation without a matching measurement uses the machine's class
+prefill, else the generic one. A malformed file, or one of an older schema (`schema_version` 4
+keys a machine by `gpu_class`), aborts startup. The operational context-cost record and JSONL
+`server_start` (`engine.context_cost`: `transfer_source`, `prefill_source`, `gpu_class`, `machine`,
+`prefill_signature`, `preset_path`) identify the selected source (a carried machine's `machine`
+adds the board distance: `carried from ad102:128sm at 0.17`). The decision fingerprint records the
+machine as `sources.context_cost.machine` (`own <key>`, `carried from <key>` or `generic`) and the
+two sources as `sources.context_cost.transfer` and `sources.context_cost.prefill`; a carried
+machine that still prices the transfer or the prefill is the taint `carried_context_cost` (one an
+external entry replaced entirely is not).
 
 ## 3. Speculative decoding
 
@@ -351,7 +364,8 @@ fit either, the refusal is plain decode's and says `--spec auto` was refused fir
 
 The configuration each request ran is in its request-log record (`speculative.config`, `family`,
 `selection`, `reason`, `note`, `floor`, `fallback`, `context_plain`, `plain_steps`, `wide_rounds`,
-`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`)
+`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`,
+`constraint_fallback_steps`)
 and in the OpenAI Chat `timings.speculation` object. Anthropic messages and OpenAI Responses carry
 `config`, `selection`, `reason`, `fallback` and `note` as `usage.ninferno.speculation`, an
 extension key strict clients ignore. Every request carries them, also under an explicit `--spec`
@@ -402,6 +416,21 @@ Notes:
   concurrency measured. Its second and third columns therefore run the same configuration and
   differ by run-to-run noise (up to 2.4 %), as do the RTX 5090 row's at C=1 and C=2, below its
   table's first bound (3 lanes).
+
+### Constrained output
+
+A constrained request (a JSON Schema or `json_object` response, a forced or strict tool call, a
+choice, a regex, a structural tag) speculates like any other: the server computes its token masks
+while the round runs, and a DFlash row's masks follow its drafts. A client's EBNF grammar
+(`grammar`, `guided_grammar`, `structured_outputs.grammar`, or a `{"type": "grammar"}` format
+anywhere in `structured_outputs.structural_tag`) may be nested and ambiguous without bound, so its
+mask time is declared at the samplers' whole wait bound: a decode step that holds one computes its
+masks before the round, and its constrained DFlash rows verify without drafts
+(`constraint_fallback_steps` in the request log; MTP rows still draft). Inside a reasoning section
+the grammar is not consulted yet, so such a request keeps its drafts until its reasoning ends. The
+tool-call markup the server renders counts as shaped, Gemma 4's argument grammar included. The
+choice follows from the step's constraints, the tokens they committed and the draft depth; nothing
+is timed ([deterministic decisions](../maintainer/deterministic-decisions.md)).
 
 ### Stop and usage with speculation
 
@@ -1562,7 +1591,7 @@ contract.
 | `--concurrent-prefill` | admit waiting requests while others prefill: the prefilling requests take chunks in turn (a later request's first token comes sooner, an earlier long prompt's later); output unchanged | off |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below | `auto` |
 | `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8` | `bf16` |
-| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds only what it stores. Omitted, these families take `f16` under `--activations fast` (the startup's capacity line says "state f16") and `f32` under `--activations exact`. The rounding carries from call to call, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
+| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds the state to the storage when it stores it and at every 16-token chunk end of a prefill call, so a prefill cut on the chunk grid (a prefill chunk size, a cache capture or restore) leaves the bytes as they are. Omitted, these families take `f16` under `--activations fast` (the startup's capacity line says "state f16") and `f32` under `--activations exact`. One wide call and the same tokens one call each still round differently, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
 | `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
@@ -1591,8 +1620,10 @@ not take at startup.
   `--max-context`), so the guarantee holds within one server: another `--max-context` can change
   the last bits. A model with no BF16-activation route for a layer refuses `exact` at startup.
 - `fast`: on wide calls NVFP4 activations in four bits and, for integer weights recorded `AllowA8`
-  (GGUF Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/Q4_K/Q5_K/Q6_K, u4; not the output head), int8
-  activations. The answer can depend on the load.
+  (the GGUF block formats Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS and
+  the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the output
+  head; `kept_block_policy`), int8 activations. The ternary and two-bit TQ1_0, TQ2_0, Q1_0 and
+  Q2_0 keep BF16 activations. The answer can depend on the load.
 - `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
   int8 activations where its route has them and none takes four, whatever the artifact recorded:
   the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
@@ -1696,7 +1727,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v30 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v31 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1774,7 +1805,9 @@ Details:
   recorded only under a thinking budget and was 0 otherwise.
 - `request_done.timings_seconds` contains `prepare`, `ttft`, `vision`, `prefill`, `decode`, and
   `total` as full-precision JSON numbers. Its `speculative` object contains `backend`,
-  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps`, and
+  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps` (of them
+  `constraint_fallback_steps`: DFlash rounds a constrained request verified without drafts because
+  its step computed its masks before the round, [constrained output](#constrained-output)), and
   `accepted_per_position`. Rates can be derived downstream from raw token counts and seconds instead
   of rounded stderr strings.
 - For `server_start.memory`, `workspace.capacity_bytes` is the only physical workspace allocation.

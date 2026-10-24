@@ -1984,9 +1984,9 @@ private:
             }
         }
 
-        [[nodiscard]] std::uint64_t row_cost_ns(std::size_t row) const noexcept override {
+        [[nodiscard]] MaskRowClass row_class(std::size_t row) const noexcept override {
             const structured::RequestConstraint* state = constraint(row);
-            return state != nullptr ? state->slowest_row_ns() : 0U;
+            return mask_row_class(state != nullptr && state->free_grammar_rows());
         }
 
         void fault(std::size_t row) noexcept override {

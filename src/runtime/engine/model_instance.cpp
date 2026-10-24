@@ -503,11 +503,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     }
     const models::qwen3_5::detail::ModelExecution& execution = *loaded.execution;
     StartupPhaseScope planning(options.startup_observer, StartupPhase::TargetFinalize);
+    // Keyed by the device's class and board facts, never its driver name.
     auto context_cost = resolve_context_machine_cost(
-        {.hardware_class =
-             context_cost_hardware_class(device.props.name, device.props.major, device.props.minor),
-         .prefill_signature = summary.prefill_signature,
-         .sms               = static_cast<std::uint32_t>(device.props.multiProcessorCount)},
+        context_cost_identity(device.device_class(), summary.prefill_signature),
         options.context_cost.preset_path);
     EngineOptions resolved = options;
     ContextResolution context{
@@ -552,6 +550,12 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         cache.host_state_slots       = 0;
         cache.host_kv_capacity_bytes = 0;
     }
+    // The pinning a rung declares (rung_cost): the Host tier as the options and the platform
+    // configure it. The fit below sizes an automatic tier to what the host can pin now
+    // (MemAvailable, observed); were its page tables the rung's, host memory pressure would move
+    // the ladder and the fingerprint with it.
+    const std::uint64_t declared_host_kv_bytes    = cache.host_kv_capacity_bytes;
+    const std::uint32_t declared_host_state_slots = cache.host_state_slots;
     if (host_tier.automatic && (cache.host_state_slots != 0 || cache.host_kv_capacity_bytes != 0)) {
         if (const std::optional<HostMemory> memory = read_host_memory()) {
             EngineOptions probe                     = resolved;
@@ -661,11 +665,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 out.bytes      = curve.reservation_bytes(pages);
                 out.held_bytes = graphs_held ? out.bytes : 0;
                 if (cache.enabled) {
+                    // The declared tier, never less than the fitted one: an automatic tier the
+                    // host cannot pin in full pins less than the rung reserved for.
                     const std::uint64_t pinned =
-                        cache.host_kv_capacity_bytes +
-                        (cache.host_state_slots != 0
+                        declared_host_kv_bytes +
+                        (declared_host_state_slots != 0
                              ? static_cast<std::uint64_t>(planner.host_state_image_bytes()) *
-                                   cache.host_state_slots
+                                   declared_host_state_slots
                              : 0ULL);
                     out.pin_bytes = pinned >> 9; // 2 MiB of page tables per pinned GiB
                 }
@@ -1195,8 +1201,14 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         // below moves the plan to a lower rung under it, so only the probe is repeated.
         std::size_t graph_shortfall_bytes = 0;
         for (std::uint32_t pass = 0;; ++pass) {
+            // A capacity outcome, not a program error: ninferno-serve's fallbacks (a shallower or
+            // no drafter, a smaller pool) recover from a CapacityError only.
             if (pass > kMaximumWarmUpPasses) {
-                throw std::logic_error("the kernel warm-up's plan did not settle");
+                throw CapacityError(
+                    "the kernel warm-up's plan did not settle in " + std::to_string(pass) +
+                    " passes (rung " + std::to_string(chosen.rung + 1U) + " of " +
+                    std::to_string(served.rungs.size()) + ", " + gib_text(last_measured) +
+                    " of Device memory free beside its reserves)");
             }
             const std::size_t free_now = current_free_device_bytes();
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
@@ -1287,6 +1299,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     planning.complete();
     StartupPhaseScope frontend(options.startup_observer, StartupPhase::FrontendInitialize);
     models::qwen3_5::Frontend served_frontend = loaded.make_frontend(resolved.max_context);
+    loaded.summary.chat_template_source       = served_frontend.chat_template_source();
     frontend.complete();
     const DecodeRoundShape round_shape{.experts           = loaded.routed_experts,
                                        .experts_per_token = loaded.experts_per_token};

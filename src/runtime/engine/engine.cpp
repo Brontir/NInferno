@@ -154,6 +154,14 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     for (auto& [key, value] : ops::moe_tune_sources()) { in.sources[key] = std::move(value); }
     in.sources["context_cost.presets"] =
         runtime::context_cost_presets_source(requested.context_cost.preset_path);
+    // The bytes the served Frontend compiled, not a later read of the path; a plan built without a
+    // Frontend names the file as it reads now.
+    in.sources["chat_template"] = !load.chat_template_source.empty()
+                                      ? load.chat_template_source
+                                      : runtime::chat_template_source(requested.chat_template_path);
+    for (auto& [key, value] : runtime::context_cost_sources_of(load.context_cost)) {
+        in.sources[key] = std::move(value);
+    }
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
                                    load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);
@@ -453,7 +461,14 @@ Engine::compile_output_constraint(const OutputConstraintSpec& spec) const {
     }
     structured::ConstraintCompiler& compiler = impl_->constraint_compiler();
     if (spec.kind != OutputConstraintKind::ToolCalls) {
-        return std::make_shared<const OutputConstraint>(compiler.compile(spec), &compiler);
+        if (!spec.engine_rendered) {
+            return std::make_shared<const OutputConstraint>(compiler.compile(spec), &compiler);
+        }
+        // Only the tool-call markup rendered below is the Engine's own: a caller's structural tag
+        // keeps its EBNF formats priced as free grammars (structured::declares_free_grammar).
+        OutputConstraintSpec caller = spec;
+        caller.engine_rendered      = false;
+        return std::make_shared<const OutputConstraint>(compiler.compile(caller), &compiler);
     }
     // Tool calls are model markup: the Frontend renders it as a structural tag after every strict
     // argument schema passed the same support policy as a response_format schema.
@@ -475,6 +490,7 @@ Engine::compile_output_constraint(const OutputConstraintSpec& spec) const {
     }
     OutputConstraintSpec rendered = spec;
     rendered.kind                 = OutputConstraintKind::StructuralTag;
+    rendered.engine_rendered      = true;
     rendered.tools.clear();
     // With an answer schema the text answer is that JSON: the markup alternative is calls only.
     const ToolCallRequirement requirement =

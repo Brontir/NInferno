@@ -16,7 +16,7 @@ namespace ninferno::models::qwen3_5::runtime_support {
 //     a static segment that itself starts on the grid, at least kNeutralMinTokens before the
 //     segment's end: the calls on both sides stay on the grid and at least 17 tokens long, so they
 //     take the prefill routes and cut the scan into the same absolute chunks (see
-//     execution::prefill_call_end).
+//     execution::prefill_call_end), at whose ends the scan rounds a BF16 or FP16 state anyway.
 // A capture or restore frontier anywhere else changes the bytes of the tokens after it.
 inline constexpr std::uint32_t kNeutralGridTokens = 64;
 inline constexpr std::uint32_t kNeutralMinTokens  = 17;
