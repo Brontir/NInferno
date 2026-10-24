@@ -86,6 +86,8 @@ def main():
     ap.add_argument("--count", type=int, default=8)
     ap.add_argument("--port", type=int, default=18979)
     a, flags = ap.parse_known_args()  # the rest goes to ninferno-serve as given
+    if not 1 <= a.count <= len(TASKS):
+        ap.error(f"--count takes 1..{len(TASKS)} (the task mix's size)")
     extra = [f for f in flags if f != "--"]
     # Plain decoding unless the caller names a speculation: the plan and the server see the same
     # flags (a drafter's weights and KV change the plan, its speed the time).
