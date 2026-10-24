@@ -158,6 +158,7 @@ enum class Axis : std::uint8_t { Quant, Kv, Ring, State, Activations, Chunk };
 // term on an axis the worth decides (KV, activations) decides only on two cards (principle 4);
 // the coupled storages' terms (state, ring) only price the candidates they follow.
 struct KldTerm {
+    std::string_view family; // the model_type it was measured on
     Axis axis;
     std::string_view value; // the flag's spelling (--kv-dtype int8, --state-dtype f16, ...)
     std::string_view generation;
@@ -167,33 +168,44 @@ struct KldTerm {
     std::string_view source;
 };
 
-// The families the switches' terms (KV codecs, activations, state) were measured on: the worth
-// decides the KV codec, the activations and the chunk for them. Another family keeps its defaults.
-inline constexpr std::string_view kKldFamilies[] = {"qwen3_5_text"};
+// The family a model without terms of its own borrows them from, for the estimates shown only (the
+// worth never decides on borrowed terms: each family's switches move it differently, Qwen 3.5 MoE's
+// INT8 KV costs 3.4 times dense's).
+inline constexpr std::string_view kKldDefaultFamily = "qwen3_5_text";
 // The family the quantization curve was measured on: the worth weighs the quantizations for it;
 // another family the switches decide for keeps the quant rule's largest.
 inline constexpr std::string_view kQuantKldFamily = "qwen3_5_text";
 
 inline constexpr KldTerm kKldTerms[] = {
-    // The KV codecs: a model constant. RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the
-    // mean: int8 0.00099 / 0.00092, fp8 0.00300 / 0.00260, k8v4 0.00532 / 0.00535, nvfp4 0.00981 /
-    // 0.00983 (within 13 %, the order the same).
-    {Axis::Kv, "int8", "", 0.00095, 0.9914, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
-    {Axis::Kv, "fp8", "", 0.00280, 0.9861, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
-    {Axis::Kv, "k8v4", "", 0.00534, 0.9777, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
-    {Axis::Kv, "nvfp4", "", 0.00982, 0.9710, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    // Qwen 3.5 dense (Qwen3.5-9B Q4_K_M). The KV codecs: a model constant. RTX 5070 Ti (2026-10-23)
+    // and RTX 4070 Ti (2026-10-24), the mean: int8 0.00099 / 0.00092, fp8 0.00300 / 0.00260, k8v4
+    // 0.00532 / 0.00535, nvfp4 0.00981 / 0.00983 (within 13 %, the order the same).
+    {"qwen3_5_text", Axis::Kv, "int8", "", 0.00095, 0.9914, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {"qwen3_5_text", Axis::Kv, "fp8", "", 0.00280, 0.9861, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {"qwen3_5_text", Axis::Kv, "k8v4", "", 0.00534, 0.9777, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
+    {"qwen3_5_text", Axis::Kv, "nvfp4", "", 0.00982, 0.9710, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4070 Ti"},
     // The int8 activations (fast = int8 on these weights): a model constant once ggml's MMQ
     // prefill sums its q8_1 blocks from the codes (ops/generic/ggml_mmq/ggml_mmq.cu). Before that
     // fix the boards that prefill on MMQ (RTX 4090, 4070 Ti, 2080 Ti) lost 7.6 times as much on
     // the min-term formats (Q4_K_M 0.0302 / 0.0294 / 0.0297, top-1 95.8 %); with it the RTX 4090
     // 0.00400 (98.44 %), the RTX 5070 Ti (W4A8 tiles) 0.00388 (98.51 %); Q6_K 0.00394 on the 4090,
     // Q8_0 0.0051 / 0.0049 on the 4090 / 5070 Ti.
-    {Axis::Activations, "int8", "", 0.00394, 0.9848, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4090 (code-sum MMQ), 2026-10-24"},
+    {"qwen3_5_text", Axis::Activations, "int8", "", 0.00394, 0.9848, 2, "Qwen3.5-9B Q4_K_M, RTX 5070 Ti and RTX 4090 (code-sum MMQ), 2026-10-24"},
     // The state's own share under fast: the root of (fast with the state)^2 - (fast with FP32)^2,
     // 0.003981 and 0.004220 against 0.00388 (top-1 98.49 % and 98.47 %). On Ada under its 0.0294
     // fast term the share is within the run's noise (f16 0.0015, bf16 below zero).
-    {Axis::State, "f16", "", 0.00089, 0.9849, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
-    {Axis::State, "bf16", "", 0.00166, 0.9847, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    {"qwen3_5_text", Axis::State, "f16", "", 0.00089, 0.9849, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    {"qwen3_5_text", Axis::State, "bf16", "", 0.00166, 0.9847, 1, "Qwen3.5-9B Q4_K_M under fast, RTX 5070 Ti, 2026-10-23"},
+    // Qwen 3.5 MoE (Qwen3.6-35B-A3B UD-IQ3_XXS, with the MMQ fix), RTX 4090 and RTX 5070 Ti
+    // (2026-10-24), the mean: int8 0.00320 / 0.00338, fp8 0.00427 / 0.00426, k8v4 0.00695 / 0.00701,
+    // nvfp4 0.00923 / 0.00936, fast 0.00496 / 0.00484 (within 6 %); the state's share under fast
+    // 0.00117 / 0.00135.
+    {"qwen3_5_moe_text", Axis::Kv, "int8", "", 0.00329, 0.9786, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti"},
+    {"qwen3_5_moe_text", Axis::Kv, "fp8", "", 0.00426, 0.9751, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti"},
+    {"qwen3_5_moe_text", Axis::Kv, "k8v4", "", 0.00698, 0.9665, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti"},
+    {"qwen3_5_moe_text", Axis::Kv, "nvfp4", "", 0.00930, 0.9608, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti"},
+    {"qwen3_5_moe_text", Axis::Activations, "int8", "", 0.00490, 0.9735, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti (code-sum MMQ)"},
+    {"qwen3_5_moe_text", Axis::State, "f16", "", 0.00126, 0.9737, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS under fast, RTX 4090 and RTX 5070 Ti"},
 };
 
 // The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
