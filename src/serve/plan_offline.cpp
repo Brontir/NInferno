@@ -172,7 +172,8 @@ std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quan
 
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
 // With `vision`, a GGUF model's facts count the projector the start fetches beside it.
-ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision) {
+ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision,
+                   bool template_given = false) {
     ModelRead out;
     out.kind                          = "hub";
     out.source                        = spec;
@@ -188,7 +189,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             facts = convert::hub_support_facts(spec, ask);
         } catch (const std::exception&) {}
         if (facts) {
-            if (!options.chat_template_path.empty()) { facts->chat_template = true; } // --chat-template
+            if (template_given) { facts->chat_template = true; } // --chat-template
             const auto support = convert::model_support(*facts);
             if (support.verdict == convert::Verdict::Unsupported ||
                 support.verdict == convert::Verdict::NeedsToken) {
@@ -300,7 +301,8 @@ ModelRead read_model(const ServeOptions& options) {
     if (!convert::is_repository_spec(name)) {
         throw std::runtime_error("'" + name + "' is neither a file or directory nor a hub id");
     }
-    return read_hub(name, options.quant, options.enable_vision);
+    return read_hub(name, options.quant, options.enable_vision,
+                    !options.chat_template_path.empty());
 }
 
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
@@ -520,7 +522,8 @@ largest_fitting_hub_quant(const ServeOptions& options,
 
     ModelRead model;
     try {
-        model = read_hub(options.model_source, "", options.enable_vision);
+        model = read_hub(options.model_source, "", options.enable_vision,
+                         !options.chat_template_path.empty());
     } catch (const std::exception& e) {
         // The hub cannot be reached: a quantization already here that fits is served (each
         // cached file planned from its own header); otherwise the choice is the user's, never a
