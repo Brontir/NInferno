@@ -207,12 +207,14 @@ inline constexpr KldTerm kKldTerms[] = {
     {"qwen3_5_moe_text", Axis::Activations, "int8", "", 0.00490, 0.9735, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS, RTX 4090 and RTX 5070 Ti (code-sum MMQ)"},
     {"qwen3_5_moe_text", Axis::State, "f16", "", 0.00126, 0.9737, 2, "Qwen3.6-35B-A3B UD-IQ3_XXS under fast, RTX 4090 and RTX 5070 Ti"},
     // Dense decoders (Qwen3-8B Q4_K_M, causal scoring of the dense family, det/score-all-families),
-    // RTX 4070 Ti and RTX 5070 Ti (2026-10-24): FP8 KV 0.004947 / 0.004945 (top-1 97.54 / 97.58 %),
-    // fast 0.001254 / 0.001215 (98.58 / 98.61 %): model constants (within 3 %). Together 0.00546 /
+    // two Ada cards, RTX 4070 Ti and RTX 4090, and the RTX 5070 Ti (2026-10-24/25): FP8 KV 0.004947
+    // on both Ada cards (the exact route's bytes), 0.004945 on Blackwell (top-1 97.54 / 97.58 %);
+    // fast 0.001254 / 0.001236 on Ada, 0.001215 on Blackwell (98.58 / 98.61 %): model constants
+    // (within 3 %), on two cards of the generation that decides (Ada). Together 0.00546 /
     // 0.00540 against the root sum square 0.0051: the switches combine as the Qwen terms do. No
     // sliding window here: FP8 rings of a windowed dense model (gpt-oss) are not covered by these.
-    {"dense_decoder", Axis::Kv, "fp8", "", 0.00495, 0.9756, 2, "Qwen3-8B Q4_K_M, RTX 4070 Ti and RTX 5070 Ti, 2026-10-24"},
-    {"dense_decoder", Axis::Activations, "int8", "", 0.00123, 0.9860, 2, "Qwen3-8B Q4_K_M, RTX 4070 Ti and RTX 5070 Ti, 2026-10-24"},
+    {"dense_decoder", Axis::Kv, "fp8", "", 0.00495, 0.9756, 2, "Qwen3-8B Q4_K_M, RTX 4070 Ti and RTX 4090 (and RTX 5070 Ti), 2026-10-25"},
+    {"dense_decoder", Axis::Activations, "int8", "", 0.00124, 0.9860, 2, "Qwen3-8B Q4_K_M, RTX 4070 Ti and RTX 4090 (and RTX 5070 Ti), 2026-10-25"},
 };
 
 // The quantization's own term: KLD against Q8_0 under the exact reference route (ninferno-perplexity
