@@ -1707,9 +1707,17 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
     fetch.hub = hub;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
     if (quant.empty()) {
-        const bool native = std::any_of(listing.begin(), listing.end(), [](const Json& q) {
-            return q.value("format", std::string()) == "ninferno";
-        });
+        // Without a quantization the fetch takes top-level safetensors weights when there are any
+        // (convert/fetch.cpp choose_files), else the published artifact: the plan reads the same.
+        const auto is_format = [](const char* format) {
+            return [format](const Json& q) {
+                return !q.value("drafter", false) && q.value("format", std::string()) == format;
+            };
+        };
+        const bool safetensors =
+            std::any_of(listing.begin(), listing.end(), is_format("safetensors"));
+        const bool native =
+            !safetensors && std::any_of(listing.begin(), listing.end(), is_format("ninferno"));
         bool read         = false;
         try {
             {
@@ -1728,7 +1736,8 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 // model_mtp.safetensors: loaded only under MTP), as the server's plan counts them.
                 std::uint64_t weights = 0, mtp = 0;
                 for (const auto& q : listing) {
-                    if (!q.value("drafter", false) && q.value("bytes", 0ULL) > weights) {
+                    if (!q.value("drafter", false) && q.value("bytes", 0ULL) > weights &&
+                        (!safetensors || q.value("format", std::string()) == "safetensors")) {
                         weights = q.value("bytes", 0ULL);
                         mtp     = q.value("mtp_bytes", 0ULL);
                     }
