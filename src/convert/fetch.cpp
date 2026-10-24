@@ -1430,6 +1430,44 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 
 } // namespace
 
+bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
+                          const std::string& repo) {
+    std::error_code ec;
+    if (!fs::is_directory(snapshot, ec)) { return false; }
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        if (entry.is_regular_file(ec)) { // a link to a blob not yet downloaded is not
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string()});
+        }
+    }
+    std::vector<RemoteFile> chosen;
+    try {
+        chosen = choose_files(listing, options, repo);
+    } catch (const std::exception&) {
+        return false; // no model there for options.quant
+    }
+    bool weights = false;
+    for (const auto& file : chosen) {
+        const auto name = ascii_lower(file.path);
+        if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        // Every shard a safetensors index names.
+        if (name.ends_with("model.safetensors.index.json")) {
+            try {
+                std::ifstream in(snapshot / file.path);
+                const auto index = Json::parse(in);
+                for (const auto& [tensor, shard] : index.at("weight_map").items()) {
+                    if (!fs::is_regular_file(snapshot / shard.get<std::string>(), ec)) { return false; }
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+    }
+    return weights;
+}
+
+
 std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
     if (hub_offline()) { return std::nullopt; }
     auto [repo, revision] = split_spec(spec, options);
