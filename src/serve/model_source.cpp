@@ -6,9 +6,6 @@
 #include "convert/cache.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
-#include "core/units.h"
-
-#include <cuda_runtime.h>
 
 #include <algorithm>
 #include <chrono>
@@ -41,41 +38,21 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Recipes whose artifact is about as large as the checkpoint's weights (nothing quantized).
-bool keeps_weights(const std::string& recipe) {
-    return recipe == "dense_published" || recipe == "moe_published" || recipe == "dense_bf16" ||
-           recipe == "qwen3_5_bf16";
-}
-
-// What a served model needs beside its weights at the least: a context's KV cache, the
-// workspaces and the CUDA graphs (a tenth of the device, at least 1 GiB).
-std::uint64_t serving_reserve(std::size_t total) {
-    return std::max<std::uint64_t>(total / 10, kGiB);
-}
-
-// Before a hub model is downloaded: weights kept as published that exceed the device's free
-// memory cannot be served on it, whatever the context.
-void check_device(const convert::FetchPlan& plan, const std::string& recipe, int device) {
-    if (!keeps_weights(recipe)) { return; }
-    std::size_t free = 0, total = 0;
-    if (cudaSetDevice(device) != cudaSuccess || cudaMemGetInfo(&free, &total) != cudaSuccess) {
-        cudaGetLastError();
-        return; // the Engine reports the device itself
-    }
-    if (plan.total_bytes + serving_reserve(total) <= free) { return; }
-    const bool moe  = recipe == "moe_published";
-    const bool qwen = recipe.starts_with("qwen3_5_");
-    throw std::runtime_error(
-        plan.repo + " as published is " + format_gib(plan.total_bytes) + " of weights; GPU " +
-        std::to_string(device) + " has " + format_gib(free) + " free of " + format_gib(total) +
-        ", and serving needs " + format_gib(serving_reserve(total)) +
-        " beside the weights, so it "
-        "cannot be served here (nothing was downloaded). Options: a quantized release of "
-        "the model (GGUF, FP8, NVFP4, MXFP4), --recipe " +
-        (qwen  ? std::string("qwen3_5_q8 (8-bit, about half the size)")
-         : moe ? std::string("moe_q8")
-               : std::string("dense_q8 (8-bit, about half the size) or --recipe dense_nvfp4")) +
-        ", or a GPU with more free memory.");
+// Before a hub model is downloaded with its quantization named (--quant) or not chosen by the
+// rule (a safetensors repository): whether it fits this GPU now, by the plan without weights (the
+// same memory plan the start makes). A model the plan cannot read is left to the start.
+void check_fits(const ServeOptions& options) {
+    OfflinePlan plan;
+    try {
+        plan = plan_without_load(options);
+    } catch (const std::exception&) { return; }
+    if (plan.fits) { return; }
+    throw std::runtime_error(options.model_source + " does not fit GPU " +
+                             std::to_string(options.device) + " (nothing was downloaded): " +
+                             plan.reason +
+                             ". Options: a smaller quantization (--quant), a shorter context "
+                             "(--max-context), fewer requests (--max-concurrency), or a GPU with "
+                             "more free memory.");
 }
 
 } // namespace
@@ -123,12 +100,15 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // A GGUF repository without --quant: the largest quantization that fits the asked context x
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
+    bool fitted = false;
     if (options.quant.empty() && !options.prepare_only) {
         if (const auto choice = largest_fitting_hub_quant(options, log)) {
             acquire.fetch.quant = choice->quant;
             out.planned_context = choice->launch_context;
+            fitted              = true;
         }
     }
+    if (!fitted && !options.prepare_only) { check_fits(options); }
     acquire.fetch.log      = log;
     acquire.convert.recipe = options.recipe;
     acquire.convert.log    = log;
@@ -154,13 +134,6 @@ ModelSource resolve_model_source(const ServeOptions& options,
         };
     }
     acquire.vision = options.enable_vision;
-    if (!options.prepare_only) {
-        const int device        = options.device;
-        acquire.before_download = [device](const convert::FetchPlan& plan,
-                                           const std::string& recipe) {
-            check_device(plan, recipe, device);
-        };
-    }
     auto acquired       = convert::acquire_model(name, std::move(acquire));
     out.kind            = ModelSource::Kind::Hub;
     out.artifact_path   = acquired.artifact.string();

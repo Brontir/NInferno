@@ -82,7 +82,8 @@ For a hub id:
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
-too small.
+too small. Whether the weights fit is the plan without the weights at the asked context and
+streams on this GPU's free memory (the same plan the start makes), with `--quant` named too.
 
 A fuller example for a converted file:
 
