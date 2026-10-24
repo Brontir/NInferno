@@ -297,6 +297,11 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     std::uint64_t total_windows       = 0;
     for (auto& source : corpus.streams) {
         std::vector<ninferno::TokenId> tokens = engine.tokenize_text(source.text);
+        if (const char* dump = std::getenv("NINFERNO_DUMP_TOKENS"); dump != nullptr && *dump) {
+            std::ofstream out(dump, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(tokens.data()),
+                      static_cast<std::streamsize>(tokens.size() * sizeof(tokens[0])));
+        }
         if (tokens.size() < 2) {
             throw std::runtime_error("stream tokenized to fewer than two tokens: " + source.id);
         }
