@@ -269,8 +269,9 @@ void decides_by_generation(const json& fixture) {
         const double sa = ch::request_seconds(a.model, ra->card, a.quants[0], c, task);
         const double sb = ch::request_seconds(b.model, rb->card, b.quants[0], c, task);
         check(sa == sb && sa > 0, "the 4070 Ti and the 4090 price a decision alike");
-        check(ra->decides == ch::accuracy_decides("ada") && ch::reference_of(a.card, {true, true})->decides &&
-                  !ch::reference_of(a.card, {false, true})->decides,
+        check(ra->decides && ch::accuracy_decides("ada", "qwen3_5_text") &&
+                  ch::decides_switches(a.model, a.card, {true, true}) &&
+                  !ch::decides_switches(a.model, a.card, {false, true}),
               "Ada decides once the accuracy terms rest on two cards");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
@@ -392,14 +393,15 @@ void weighs_the_quantizations(const json& fixture) {
     const ch::Choice gated = ch::choose(with6.model, with6.card, with6.quants,
                                         ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
                                         oracle(with6, 20e9));
-    check(gated.by_worth == ch::accuracy_decides("ada"), "the worth decides only with the accuracy terms on two cards");
+    check(gated.by_worth == ch::accuracy_decides("ada", "qwen3_5_text"),
+          "the worth decides only with the accuracy terms on two cards");
     // A family the terms were not measured on keeps the rule and its defaults.
     Bench gemma = with6;
     gemma.model.family = "gemma4_text";
     const ch::Choice other = ch::choose(gemma.model, gemma.card, gemma.quants,
                                         ch::allowed_axes(gemma.model, KvCacheStorage::Fp8E4M3Row256), {}, task,
                                         oracle(gemma, 20e9), open);
-    check(!other.by_worth && other.why.find("measured on qwen3_5_text") != std::string::npos,
+    check(!other.by_worth && other.why.find("no accuracy terms were measured on gemma4_text") != std::string::npos,
           "another family: the rule's largest and its defaults");
     // Two quantizations alike in every respect: a tie, broken by the listing's order.
     Bench twins           = b;
@@ -509,13 +511,46 @@ void activations_by_generation(const json& fixture) {
     for (const char* card : {"RTX 4090", "RTX 5070 Ti", "RTX 2080 Ti"}) {
         check(std::abs(act(card).kld - 0.00394) < 1e-9 && act(card).measured, std::string(card) + ": the model constant");
     }
-    check(ch::accuracy_decides("ada"), "Ada: every term the worth decides by rests on two cards");
+    check(ch::accuracy_decides("ada", "qwen3_5_text"), "Ada: every term the worth decides by rests on two cards");
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Task task;
     const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                          {}, task, oracle(b, 9.6e9));
     check(choice.by_worth && choice.chosen && chosen(choice).candidate.activations == ActivationMode::Fast,
           "Ada decides: fast over exact");
+    if (choice.chosen) { std::cout << choice.why << '\n'; }
+}
+
+// Qwen 3.5 MoE has switch terms of its own (INT8 KV 0.0033, 3.4 times dense's) on two cards and no
+// quantization curve: on Ada the worth decides its KV codec and activations, the quant rule its
+// quantization.
+void moe_family(const json& fixture) {
+    const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+    Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {}};
+    b.quants.push_back(quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS")));
+    ch::QuantOption larger = b.quants[0];
+    larger.label           = "Q4_K_M";
+    larger.bits_per_weight = 4.9;
+    larger.weight_bytes    = b.quants[0].weight_bytes * 4.9 / b.quants[0].bits_per_weight;
+    b.quants.push_back(larger);
+    ch::Candidate c;
+    c.kv = KvCacheStorage::Int8Group64;
+    double kv_term = -1;
+    bool transferred = true;
+    for (const ch::Term& t : ch::accuracy_of(b.model, b.quants[0], c, b.card).terms) {
+        if (t.axis == ch::Axis::Kv) {
+            kv_term     = t.kld;
+            transferred = t.transferred;
+        }
+    }
+    check(std::abs(kv_term - 0.00329) < 1e-9 && !transferred, "MoE: its own INT8 KV term");
+    check(ch::accuracy_decides("ada", "qwen3_5_moe_text"), "MoE: its switch terms on two cards");
+    ch::Task task;
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+                                         {}, task, oracle(b, 40e9));
+    check(choice.by_worth && !choice.quant_by_worth && choice.chosen &&
+              b.quants[chosen(choice).candidate.quant].label == "Q4_K_M",
+          "MoE on Ada: the switches by worth, the quantization by the rule (the largest)");
     if (choice.chosen) { std::cout << choice.why << '\n'; }
 }
 
@@ -567,6 +602,7 @@ int main() {
     explains_the_state(fixture);
     contradictory_pins(fixture);
     activations_by_generation(fixture);
+    moe_family(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

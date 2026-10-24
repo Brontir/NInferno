@@ -143,29 +143,30 @@ struct Speed {
 // defaults are the constants'; a caller never sets them (a test opens or closes them to check what
 // they gate).
 struct Gates {
-    // The accuracy terms the worth decides by (the KV codecs', the generation's activations', the
-    // quantization curve): nullopt, from their cards (accuracy_decides).
+    // The accuracy terms the worth decides by (a family's KV codecs' and activations', the
+    // quantization curve): nullopt, from their cards (accuracy_decides, kQuantKldCards).
     std::optional<bool> accuracy;
     bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
 };
 
-// Whether the accuracy terms the worth decides by rest on two lab cards on `generation`; `why` says
-// which does not.
-[[nodiscard]] bool accuracy_decides(std::string_view generation, std::string* why = nullptr);
+// Whether the switches' terms the worth decides by (the KV codecs' and the int8 activations') were
+// measured on `family` and rest on two lab cards on `generation`; `why` says which does not.
+[[nodiscard]] bool accuracy_decides(std::string_view generation, std::string_view family,
+                                    std::string* why = nullptr);
 
 // The reference card a decision prices on for a board's generation (choice_constants.h), whether
-// the worth decides there (both factor sets and the accuracy terms on two lab cards), and whether an
-// MoE's chunk does (its shares on two). nullopt: no reference card.
+// the generation's speed factors decide (both factor sets on two lab cards), and whether an MoE's
+// chunk does (its shares on two). nullopt: no reference card.
 struct Reference {
     CardFacts card;
     bool decides = false;
     bool chunk_decides = false;
-    std::string why; // "" when the worth decides, else why the family's defaults stand
+    std::string why; // "" when the factors decide, else why the family's defaults stand
 };
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
-// generation decides and the switches' terms were measured on its family (kKldFamilies); else the
-// family's defaults stand.
+// generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
+// else the family's defaults stand.
 [[nodiscard]] bool decides_switches(const ModelFacts& model, const CardFacts& card,
                                     const Gates& gates = {});
 // Whether the worth also weighs the quantizations: the curve was measured on its family
@@ -178,7 +179,7 @@ struct Term {
     std::string value;
     double kld = 0;
     bool measured = true;    // false: a stand-in (the axis's worst measured term, or a proxy)
-    bool transferred = false; // measured on another family (kKldFamilies, kQuantKldFamily)
+    bool transferred = false; // measured on another family (kKldDefaultFamily, kQuantKldFamily)
     std::string source;
 };
 
