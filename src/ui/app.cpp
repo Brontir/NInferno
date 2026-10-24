@@ -1640,7 +1640,11 @@ void App::advance_updates() {
                     sw.reverted = true;
                     try {
                         sw.serve = processes_.start(sw.back);
-                    } catch (const std::exception&) { sw.done = true; }
+                    } catch (const std::exception& again) {
+                        update.error += std::string("; it did not start on the old one either (") +
+                                        again.what() + ")";
+                        sw.done = true;
+                    }
                 }
                 continue;
             }
@@ -1661,7 +1665,11 @@ void App::advance_updates() {
             sw.reverted = true;
             try {
                 sw.serve = processes_.start(sw.back);
-            } catch (const std::exception&) { sw.done = true; }
+            } catch (const std::exception& again) {
+                update.error += std::string("; it did not start on the old one either (") +
+                                again.what() + ")";
+                sw.done = true;
+            }
         }
         if (!all) { continue; }
         if (std::any_of(update.switches.begin(), update.switches.end(),
@@ -1835,6 +1843,11 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     std::uint64_t freed = 0;
+    // Its speculation manifest names the drafters converted for it (read before the sidecars go).
+    std::string manifest;
+    if (std::ifstream in(spec::manifest_path(path)); in) {
+        manifest.assign(std::istreambuf_iterator<char>(in), {});
+    }
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
     const auto prefix = path.filename().string();
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
@@ -1855,6 +1868,23 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     if (!repo_dir.empty()) {
+        // Its commit's directory holding no conversion but the drafters its manifest names:
+        // removed whole, as the converter removes a replaced conversion (acquire.cpp). Another
+        // quantization of the commit keeps it.
+        const auto commit_dir = path.parent_path();
+        if (commit_dir.parent_path() == repo_dir / "ninferno") {
+            bool others = false;
+            for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
+                if (entry.path().extension() == ".ninferno" &&
+                    manifest.find(entry.path().filename().string()) == std::string::npos) {
+                    others = true;
+                }
+            }
+            if (!others) {
+                freed += tree_bytes(commit_dir);
+                fs::remove_all(commit_dir, ec);
+            }
+        }
         bool left = false;
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".ninferno" &&

@@ -164,6 +164,12 @@ def main() -> int:
             status, body = call("/api/moved", {"repo": "org/m-GGUF", "ref": "main", "commit": OLD,
                                                "action": "refetch"})
             case("the update starts on the user's answer", status == 200 and len(body["ids"]) == 1, body)
+            # A drafter converted for the old conversion, named by its speculation manifest (a
+            # stand-in file: the listing above would take it for a model).
+            old_dir = olds["m"].parent
+            (old_dir / "dflash-m.ninferno").write_bytes(b"old drafter")
+            (old_dir / (NAME + ".speculation.json")).write_text(
+                json.dumps({"drafters": [{"artifact": str(old_dir / "dflash-m.ninferno")}]}))
             status, body = call("/api/moved", {"repo": "org/m-GGUF", "ref": "main", "commit": OLD,
                                                "action": "refetch"})
             case("a second answer while it runs is refused", status == 400, body)
@@ -178,6 +184,8 @@ def main() -> int:
                  wait(lambda: (update("m") or {}).get("state") == "done")
                  and serves().count(str(new)) == 1 and not olds["m"].exists() and new.exists(),
                  [update("m"), serves()])
+            case("the old commit's drafters removed with it",
+                 not olds["m"].parent.exists(), sorted(p.name for p in olds["m"].parent.glob("*")))
 
             # The failing update: the new conversion does not start; back on the old one, once.
             status, body = call("/api/moved", {"repo": "org/f-GGUF", "ref": "main", "commit": OLD,
