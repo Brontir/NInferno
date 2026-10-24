@@ -2,6 +2,7 @@
 
 #include "artifact/source_identity.h"
 #include "convert/acquire.h"
+#include "convert/cache.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "convert/support.h"
@@ -274,6 +275,13 @@ ModelRead read_model(const ServeOptions& options) {
     out.source = name;
     if (fs::exists(name, error)) {
         const fs::path path(name);
+        // A checkpoint or GGUF file the engine does not run is not planned (convert/support.h).
+        if (convert::is_convertible(name)) {
+            if (const auto support = convert::model_support(convert::local_support_facts(path));
+                support.verdict == convert::Verdict::Unsupported) {
+                throw std::runtime_error(name + " cannot be run: " + support.reason);
+            }
+        }
         if (fs::is_directory(path)) {
             if (!fs::exists(path / "config.json")) {
                 throw std::runtime_error(name + " has no config.json to plan from");
