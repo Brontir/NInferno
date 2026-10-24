@@ -2211,7 +2211,11 @@ void App::install(httplib::Server& server) {
         reply_json(res, out);
     });
     server.Post("/api/hf", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!is_loopback_host(req.remote_addr)) {
+        // A proxy (nginx, Caddy) connects over loopback for every browser: a forwarded request is
+        // not from this machine.
+        const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
+                             req.has_header("X-Real-IP");
+        if (!is_loopback_host(req.remote_addr) || proxied) {
             reply_error(res, 403, "the Hugging Face token is set on the machine ninferno-ui runs on");
             return;
         }
@@ -2221,6 +2225,18 @@ void App::install(httplib::Server& server) {
                 (void)convert::hub_account(token, {}); // refused: not saved
             }
             convert::save_hub_token(token);
+            // What the hub answered under the old token (gated listings, searches, headers).
+            {
+                std::lock_guard lock(sizes_mutex_);
+                listings_.clear();
+                archs_.clear();
+                searches_.clear();
+                configs_.clear();
+                kv_.clear();
+                kv_failed_.clear();
+                plan_facts_.clear();
+                plans_.clear();
+            }
             const auto now = convert::hub_token();
             reply_json(res, {{"token", !now.value.empty()}, {"source", now.source}});
         } catch (const std::exception& error) { reply_error(res, 400, error.what()); }

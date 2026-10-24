@@ -1504,11 +1504,20 @@ $("diskrun").onclick = async () => {
   $("disknote").textContent = "";
   try {
     const j = await api(`/api/disk?path=${encodeURIComponent(path)}`);
-    if (j.support === "none") { $("disknote").textContent = fill(t("diskBad"), {reason: j.note || ""}); return; }
+    // Only a model the engine runs alone starts (a drafter runs beside its model).
+    if (j.support !== "full") { $("disknote").textContent = fill(t("diskBad"), {reason: j.note || t("sup_" + j.support) || ""}); return; }
     // The engine decides the rest, as a start without settings does.
     launch(path, "", $("diskrun"), {ctx: 0, cap: 0, par: 1, kv: "", spec: "auto"}, []);
   } catch (e) { $("disknote").textContent = fill(t("diskBad"), {reason: e.message}); }
 };
+// Another token: what the hub answered under the old one is asked again (the server dropped it).
+function hfChanged() {
+  for (const k of Object.keys(archKnown)) delete archKnown[k];
+  archAsked.clear();
+  refreshHf();
+  const q = $("q").value.trim();
+  if (found.hub.length || q) search(q);
+}
 // The Hugging Face token gated models need (/api/hf): whose it is, or a field to give one.
 async function refreshHf() {
   let j;
@@ -1519,7 +1528,7 @@ async function refreshHf() {
     const env = j.source && !j.source.includes("/") && !j.source.includes("\\");
     line.innerHTML = `<span data-tip="${esc(env ? fill(t("hfEnv"), {source: j.source}) : fill(t("hfFile"), {path: j.path}))}">${esc(fill(t("hfAs"), {account: j.account || "…"}))}</span>`
       + (env ? "" : ` <button id="hfremove">${esc(t("hfRemove"))}</button>`);
-    if (!env) $("hfremove").onclick = async () => { await api("/api/hf", {token: ""}).catch(() => {}); refreshHf(); };
+    if (!env) $("hfremove").onclick = async () => { await api("/api/hf", {token: ""}).catch(() => {}); hfChanged(); };
     return;
   }
   line.innerHTML = `<span>${esc(j.error ? fill(t("hfBad"), {error: j.error}) : t("hfNone"))}</span>`
@@ -1528,7 +1537,7 @@ async function refreshHf() {
   $("hfsave").onclick = async () => {
     const token = $("hftoken").value.trim();
     if (!token) return;
-    try { await api("/api/hf", {token}); refreshHf(); }
+    try { await api("/api/hf", {token}); hfChanged(); }
     catch (e) { line.querySelector("span").textContent = fill(t("hfBad"), {error: e.message}); }
   };
 }

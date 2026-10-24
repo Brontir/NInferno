@@ -95,7 +95,9 @@ ModelSource resolve_model_source(const ServeOptions& options,
         if (convert::is_convertible(name)) {
             // Whether the engine runs it: the converter's rule set, before converting
             // (convert/support.h).
-            if (const auto support = convert::model_support(convert::local_support_facts(name));
+            auto facts = convert::local_support_facts(name);
+            if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
+            if (const auto support = convert::model_support(facts);
                 support.verdict == convert::Verdict::Unsupported) {
                 throw std::runtime_error(name + " cannot be run: " + support.reason);
             }
