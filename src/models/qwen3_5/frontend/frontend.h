@@ -113,9 +113,9 @@ public:
     [[nodiscard]] PreparedPrompt prepare_tokens(std::vector<TokenId> token_ids,
                                                 bool allow_prefix_identity = true) const;
     [[nodiscard]] std::vector<TokenId> tokenize_text(std::string_view text) const;
-    // The token a document starts with when the tokenizer adds one (tokenizer_config.json
-    // add_bos_token, true by default when a bos_token is named, as transformers reads it): Gemma
-    // 4's <bos>. nullopt for a tokenizer that adds none (Qwen).
+    // The token a document starts with when the tokenizer adds one, as transformers encodes a
+    // text with its special tokens (add_bos_token, else the tokenizer class's default, else the
+    // tokenizer.json template): Gemma 4's <bos>. nullopt for one that adds none (Qwen, gpt-oss).
     [[nodiscard]] std::optional<TokenId> document_start_token() const;
     [[nodiscard]] MediaCacheSummary media_cache_summary() const;
     [[nodiscard]] OutputSession

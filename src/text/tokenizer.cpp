@@ -1788,6 +1788,16 @@ std::optional<std::string> Tokenizer::id_to_token(int id) const {
 
 std::size_t Tokenizer::vocab_size() const noexcept { return impl_->max_id_plus_one; }
 
+std::vector<int> Tokenizer::template_prefix() const {
+    std::vector<int> out;
+    if (!impl_->has_template) { return out; }
+    for (const auto& [is_sequence, special] : impl_->template_single) {
+        if (is_sequence) { break; }
+        out.insert(out.end(), special.begin(), special.end());
+    }
+    return out;
+}
+
 std::span<const AddedToken> Tokenizer::added_tokens() const noexcept { return impl_->added; }
 
 bool Tokenizer::is_special_token(int id) const noexcept {

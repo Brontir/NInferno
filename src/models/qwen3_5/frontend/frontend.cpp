@@ -758,26 +758,43 @@ ModelSamplingDefaults checkpoint_sampling(std::string_view generation_config_jso
                                  .source       = "transformers defaults"};
 }
 
-// The BOS token the tokenizer adds at a document's start (tokenizer_config.json add_bos_token;
-// absent, true when a bos_token is named, as transformers 5 reads it), when it is one token of
-// this vocabulary.
+// The one token a document starts with, as transformers' tokenizer encodes a text with its special
+// tokens: tokenizer_config.json add_bos_token when it says; absent, the class's own default
+// (LlamaTokenizer, CodeLlamaTokenizer and GemmaTokenizer, fast or not, add their bos_token:
+// Gemma 4 names GemmaTokenizer and no add_bos_token), else what the tokenizer.json
+// TemplateProcessing puts in front (none for gpt-oss: a ByteLevel post_processor and the
+// generic PreTrainedTokenizerFast). nullopt when that is nothing, or not one token of this
+// vocabulary.
 namespace {
 
 std::optional<TokenId> adds_document_start(std::string_view tokenizer_config_json,
                                            const text::TokenCodec& tokenizer) {
     const Json config = parse_resource_json(tokenizer_config_json, "tokenizer_config.json");
-    const auto bos    = config.find("bos_token");
-    if (bos == config.end() || bos->is_null()) { return std::nullopt; }
-    const auto add = config.find("add_bos_token");
-    if (add != config.end() && add->is_boolean() && !add->get<bool>()) { return std::nullopt; }
-    const std::string content = bos->is_string() ? bos->get<std::string>()
-                                : bos->is_object() && bos->contains("content")
-                                    ? bos->at("content").get<std::string>()
-                                    : std::string();
-    if (content.empty()) { return std::nullopt; }
-    const std::optional<int> id = tokenizer.token_id(content);
-    if (!id) { return std::nullopt; }
-    return static_cast<TokenId>(*id);
+    const auto bos_id = [&]() -> std::optional<TokenId> {
+        const auto bos = config.find("bos_token");
+        if (bos == config.end() || bos->is_null()) { return std::nullopt; }
+        const std::string content = bos->is_string() ? bos->get<std::string>()
+                                    : bos->is_object() && bos->contains("content")
+                                        ? bos->at("content").get<std::string>()
+                                        : std::string();
+        if (content.empty()) { return std::nullopt; }
+        const std::optional<int> id = tokenizer.token_id(content);
+        if (!id) { return std::nullopt; }
+        return static_cast<TokenId>(*id);
+    };
+    if (const auto add = config.find("add_bos_token"); add != config.end() && add->is_boolean()) {
+        return add->get<bool>() ? bos_id() : std::nullopt;
+    }
+    static constexpr std::string_view kAddsBos[] = {"LlamaTokenizer", "LlamaTokenizerFast",
+                                                    "CodeLlamaTokenizer", "CodeLlamaTokenizerFast",
+                                                    "GemmaTokenizer", "GemmaTokenizerFast"};
+    const std::string cls = config.value("tokenizer_class", std::string());
+    if (std::find(std::begin(kAddsBos), std::end(kAddsBos), cls) != std::end(kAddsBos)) {
+        return bos_id();
+    }
+    const std::vector<int> prefix = tokenizer.template_prefix();
+    if (prefix.size() == 1) { return static_cast<TokenId>(prefix.front()); }
+    return std::nullopt;
 }
 
 } // namespace
