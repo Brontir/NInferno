@@ -1,5 +1,6 @@
 #include "serve/model_source.h"
 #include "artifact/source_identity.h"
+#include "serve/plan_offline.h"
 
 #include "convert/acquire.h"
 #include "convert/cache.h"
@@ -118,7 +119,16 @@ ModelSource resolve_model_source(const ServeOptions& options,
                                  "(org/name[@revision])");
     }
     convert::AcquireOptions acquire;
-    acquire.fetch.quant    = options.quant;
+    acquire.fetch.quant = options.quant;
+    // A GGUF repository without --quant: the largest quantization that fits the asked context x
+    // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
+    // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
+    if (options.quant.empty() && !options.prepare_only) {
+        if (const auto choice = largest_fitting_hub_quant(options, log)) {
+            acquire.fetch.quant = choice->quant;
+            out.planned_context = choice->launch_context;
+        }
+    }
     acquire.fetch.log      = log;
     acquire.convert.recipe = options.recipe;
     acquire.convert.log    = log;

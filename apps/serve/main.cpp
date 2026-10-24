@@ -5,6 +5,7 @@
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
 #include "serve/model_source.h"
+#include "serve/plan_offline.h"
 #include "serve/plan_report.h"
 #include "serve/serve_options.h"
 #include "spec/registry.h"
@@ -178,11 +179,25 @@ int main(int argc, char** argv) {
     bool serving = false;
 
     try {
+        // --plan --no-load: the plan from the model's header or config and the device's facts,
+        // on stdout; no weights are loaded or downloaded and no GPU is needed.
+        if (options.plan_only && options.plan_no_load) {
+            const ninferno::serve::OfflinePlan plan = ninferno::serve::plan_without_load(options);
+            std::cout << (options.plan_json ? plan.json.dump(1) + '\n' : plan.text);
+            std::cout.flush();
+            return plan.fits ? 0 : 2;
+        }
         // The model named on the command line, as an artifact: fetched and converted first when
         // it is a hub id or a checkpoint (serve/model_source.h).
         const ninferno::serve::ModelSource source = ninferno::serve::resolve_model_source(
             options, [&](const std::string& line) { logger->info("model | {}", line); });
         options.artifact_path = source.artifact_path;
+        // The quantization was chosen for each stream's own context: the start keeps it as the
+        // ceiling of its automatic context (a busy card still steps down a rung).
+        if (source.planned_context != 0 && options.max_context == 0 &&
+            options.max_context_cap == 0) {
+            options.max_context_cap = source.planned_context;
+        }
         if (source.kind == ninferno::serve::ModelSource::Kind::Hub &&
             !options.model_id_override.has_value()) {
             options.model_id_override = source.repo; // served under its hub id
@@ -190,6 +205,17 @@ int main(int argc, char** argv) {
         if (options.prepare_only) {
             logger->info("model | prepared {}", options.artifact_path);
             return 0;
+        }
+        // The axes the user left to the engine (--kv-dtype auto, no --activations, no
+        // --state-dtype): the configuration choice for this artifact on this GPU
+        // (product/choice/choice.h through serve/plan_offline.h).
+        if (const auto axes = ninferno::serve::choose_served_axes(
+                options, [&](const std::string& line) { logger->info("choice | {}", line); })) {
+            if (axes->kv) { options.kv_cache = axes->kv; }
+            if (axes->activations) { options.activations = *axes->activations; }
+            if (axes->state) { options.recurrent_state = axes->state; }
+            if (axes->ring) { options.sliding_kv_cache = *axes->ring; }
+            if (axes->chunk) { options.prefill_chunk = *axes->chunk; } // the widest; not explicit
         }
         // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
         // bound or served.

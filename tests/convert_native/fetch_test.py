@@ -83,6 +83,8 @@ def main() -> int:
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
     hub.repos["org/ggufhead"]["no_sizes"] = True
+    # A small vision projector without a quantization in its name, beside a model.
+    hub.add_repo("org/smallproj", {"m-Q4_0.gguf": blob(MIB, 52), "mmproj-model.gguf": blob(MIB, 53)})
     hub.repos["files"] = {"files": {"plain.bin": blob(5 * MIB, 20)}, "lfs": set(), "commit": "", "gated": False}
 
     server, base = fetch_server.start(hub)
@@ -299,6 +301,25 @@ def main() -> int:
                  and first.get("bytes") == MIB and ranges == [f"bytes=0-{MIB - 1}"])
             whole = head("Q8_0", 8 * MIB)
             case("gguf head of a short file", whole.get("size") == 2 * MIB and whole.get("bytes") == 2 * MIB)
+
+            # The listing a plan reads counts what the fetch takes: the Transformers-named weights with
+            # their MTP part, not a second copy beside them (consolidated.safetensors); a small
+            # projector is listed.
+            def listed(spec):
+                environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
+                environment["HF_ENDPOINT"] = base
+                result = subprocess.run([str(probe), spec, "--list", "0", str(work / "cache-list")],
+                                        capture_output=True, text=True, env=environment)
+                return json.loads(result.stdout) if result.returncode == 0 else []
+
+            rows = listed("org/tiny")
+            weights_row = [r for r in rows if r["format"] == "safetensors"]
+            case("listed weights are the fetched ones",
+                 len(weights_row) == 1 and "consolidated.safetensors" not in weights_row[0]["files"]
+                 and sorted(weights_row[0]["files"]) == ["model.safetensors", "model_mtp.safetensors"]
+                 and weights_row[0]["mtp_bytes"] == len(mtp))
+            case("a small projector is listed",
+                 any("mmproj-model.gguf" in r["files"] for r in listed("org/smallproj")))
 
         # 11. A plain URL, then its cached copy.
         url = base + "/files/plain.bin"

@@ -220,6 +220,25 @@ void test_launch() {
     request.max_context                 = 32768;
     request.spec                        = "mtp";
     request.precision                   = "exact";
+    {
+        // Under Auto the planned own context is the automatic context's ceiling.
+        LaunchRequest capped   = request;
+        capped.max_context     = 0;
+        capped.max_context_cap = 49152;
+        const auto capped_argv = make_launch(options, capped).argv;
+        const auto at = std::find(capped_argv.begin(), capped_argv.end(), "--max-context-cap");
+        check(at != capped_argv.end() && at + 1 != capped_argv.end() && *(at + 1) == "49152" &&
+                  std::find(capped_argv.begin(), capped_argv.end(), "--max-context") ==
+                      capped_argv.end(),
+              "a planned context launches as --max-context-cap");
+        LaunchRequest both   = request;
+        both.max_context_cap = 49152;
+        bool refused         = false;
+        try {
+            (void)make_launch(options, both);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "max_context with max_context_cap is refused");
+    }
     const auto spec                     = make_launch(options, request);
     const std::vector<std::string> want = {"/opt/ninferno/bin/ninferno-serve",
                                            "unsloth/Qwen3.5-9B-GGUF",
@@ -525,6 +544,31 @@ void test_catalog() {
     check(estimate(catalog, fitted, gb203, small_sizes).recommended, "16 GB: recommended with IQ3");
     check(with_fitting_quant(*qwen, blackwell, listings).sources.size() == qwen->sources.size(),
           "32 GB: nothing added when a source fits");
+    // The plan without the weights decides where it can say: it refuses IQ3 and keeps IQ2 (the
+    // weights against the budget would take IQ3), and where it cannot (nullopt) the budget stands.
+    const QuantFits planned = [](const std::string&,
+                                 const nlohmann::json& q) -> std::optional<bool> {
+        const std::string label = q.value("quant", std::string());
+        if (label == "UD-IQ3_XXS") { return false; }
+        if (label == "UD-IQ2_M") { return true; }
+        return std::nullopt;
+    };
+    const auto by_plan = with_fitting_quant(*qwen, gb203, listings, planned);
+    check(by_plan.sources.size() == qwen->sources.size() + 1 &&
+              by_plan.sources.back().quant == "UD-IQ2_M",
+          "16 GB: the plan's fit decides which quant is added");
+    const QuantFits unknown = [](const std::string&, const nlohmann::json&) -> std::optional<bool> {
+        return std::nullopt;
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown).sources.back().quant == "UD-IQ3_XXS",
+          "16 GB: without the plan's word the weights against the budget decide");
+    // The rule's pick, where the repository is planned, is the quant the catalog adds.
+    const QuantPickOf rule = [](const std::string&) -> std::optional<std::string> {
+        return std::string("UD-IQ2_M");
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown, rule).sources.back().quant ==
+              "UD-IQ2_M",
+          "16 GB: the rule's pick is added");
 
     // The chat proxy names the served model when the page sends none, and keeps one it sends.
     check(first_model_id(R"({"object":"list","data":[{"id":"qwen3.5-4b","object":"model"}]})") ==
@@ -709,6 +753,23 @@ void test_catalog() {
             (void)make_launch(refetch_options, refetch);
         } catch (const std::invalid_argument&) { refused = true; }
         check(refused, "a serve start does not refetch");
+    }
+    // The Vision projector a start fetches and the plan charges: one choice from the listing, every
+    // part of a split one.
+    {
+        using ninferno::convert::best_projector;
+        using Names = std::vector<std::string>;
+        check(best_projector({"m-Q4_K_M.gguf", "mmproj-F16.gguf", "mmproj-model-bf16.gguf",
+                              "mmproj-F32.gguf"}) == Names{"mmproj-model-bf16.gguf"} &&
+                  best_projector({"mmproj-F16.gguf", "mmproj-F32.gguf"}) ==
+                      Names{"mmproj-F32.gguf"} &&
+                  best_projector({"sub/mmproj-b.gguf", "sub/mmproj-a.gguf"}) ==
+                      Names{"sub/mmproj-a.gguf"} &&
+                  best_projector({"mmproj-BF16-00002-of-00002.gguf", "mmproj-F16.gguf",
+                                  "mmproj-BF16-00001-of-00002.gguf"}) ==
+                      Names{"mmproj-BF16-00001-of-00002.gguf", "mmproj-BF16-00002-of-00002.gguf"} &&
+                  best_projector({"m-Q4_K_M.gguf", "README.md"}).empty(),
+              "the projector: BF16, F32, F16, then any; ties to the first name; all its parts");
     }
     // KV per token from GGUF metadata: a plain stack, a hybrid one, a sliding-window one.
     {
@@ -1057,7 +1118,21 @@ void test_http() {
     res = client.Post("/api/tune", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");
-    for (const char* query : {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx"}) {
+    // The plan without the weights: its parameters as ninferno-serve takes them, refused with 400;
+    // offline the repository's shape cannot be read (502 with the reason, never a guess).
+    for (const char* query : {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9",
+                              "/api/plan?repo=a/b&par=0", "/api/plan?repo=a/b&kv=fp16",
+                              "/api/plan?repo=a/b&spec=eagle", "/api/quants?repo=a/b&gpu=0&ctx=-5",
+                              "/api/catalog?gpu=0&ctx=abc", "/api/catalog?gpu=0&par=12"}) {
+        res = client.Get(query);
+        check(res && res->status == 400 && res->body.find("\"error\"") != std::string::npos,
+              std::string("a bad plan parameter answered 400: ") + query);
+    }
+    res = client.Get("/api/plan?repo=a/b&ctx=auto&par=4&kv=auto&spec=auto");
+    check(res && res->status == 502 && res->body.find("\"error\"") != std::string::npos,
+          "offline: the plan says it cannot read the repository");
+    for (const char* query :
+         {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx", "/api/plan?repo=..%2Fx"}) {
         res = client.Get(query);
         check(res && res->status == 400 &&
                   res->body.find("repo must be org/name") != std::string::npos,
