@@ -1,6 +1,13 @@
 #include "core/removed_environment.h"
 #include "options.h"
 #include "spec_tune.h"
+
+#include "artifact/source_identity.h"
+#include "product/plan/plan_choice.h"
+#include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
+#include "product/plan/plan_speculation.h"
+#include "spec/gpu_identity.h"
 #include "core/command_line.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
@@ -335,6 +342,91 @@ int main(int argc, char** argv) {
         // consumer and must not reserve an extra Device StateImage or run terminal capture.
         engine_options.context_cache.disable();
         engine_options.startup_observer                     = startup_log.observer();
+        // --plan --no-load: the plan from the artifact's own facts, as ninferno-serve's.
+        if (cli.plan_only) {
+            namespace product = ninferno::product;
+            ninferno::runtime::PlanDeviceFacts device;
+            ninferno::spec::GpuKey gpu;
+            if (!cli.plan_device.empty()) {
+                std::string why;
+                const auto board = product::plan_device_of_board(cli.plan_device, &why);
+                if (!board) { throw std::runtime_error("--plan-device: " + why); }
+                device = *board;
+                gpu    = product::gpu_key_of(device);
+            } else {
+                device = product::plan_device_of_cuda(
+                    cli.device, true, ninferno::runtime::plan_automatic_fit(engine_options));
+                gpu    = ninferno::spec::gpu_identity(cli.device).key;
+            }
+            const product::PlanSourceFacts facts =
+                product::plan_facts_of_artifact(cli.artifact_path);
+            const product::SpeculationSubject subject =
+                product::speculation_subject(cli.artifact_path, gpu, cli.spec_profile);
+            product::DryRunInputs inputs;
+            inputs.device              = device;
+            inputs.gpu                 = gpu;
+            inputs.options             = engine_options;
+            inputs.ask                 = product::SpeculationAsk{.automatic = !cli.spec_explicit,
+                                                                 .given     = cli.speculative,
+                                                                 .thinking  = cli.enable_thinking.value_or(true)};
+            inputs.options.speculative = cli.speculative;
+            try {
+                inputs.ask.source_identity =
+                    ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
+            } catch (const std::exception&) {}
+            inputs.subject                            = &subject;
+            inputs.pins                               = {.kv          = cli.kv_cache.has_value(),
+                                                         .activations = cli.activations_given,
+                                                         .state       = cli.recurrent_state.has_value(),
+                                                         .ring        = cli.sliding_kv_given,
+                                                         .chunk       = true};
+            const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
+            const std::string source                  = cli.artifact_path.string();
+            // The configuration choice for the axes left automatic, as a start would take it.
+            const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
+                                                     .activations = cli.activations_given,
+                                                     .state       = cli.recurrent_state.has_value(),
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
+            const auto served = product::choose_at_weights(facts, inputs, pins);
+            if (cli.plan_json) {
+                nlohmann::json doc =
+                    product::dry_plan_document(facts, source, "artifact", inputs, planned, nullptr);
+                if (served) { doc["choice"] = product::choice_json(*served); }
+                std::cout << doc.dump(1) << '\n';
+            } else {
+                std::cout << product::render_dry_plan_text(facts, source, inputs, planned, nullptr);
+                if (served) { std::cout << product::choice_line(*served) << '\n'; }
+            }
+            return planned.plan.fits ? 0 : 2;
+        }
+        // The axes the user left to the engine: the configuration choice for this artifact on this
+        // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it.
+        {
+            const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
+                                                     .activations = cli.activations_given,
+                                                     .state       = cli.recurrent_state.has_value(),
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
+            if (!(pins.kv && pins.activations && pins.state && pins.ring)) {
+                ninferno::product::SpeculationAsk ask;
+                ask.automatic = false;
+                ask.given     = engine_options.speculative;
+                ask.thinking  = cli.enable_thinking.value_or(true);
+                std::string why;
+                const auto served = ninferno::product::choose_for_artifact(
+                    cli.artifact_path, cli.device, engine_options, ask, cli.spec_profile, pins, &why);
+                if (served) {
+                    logger->info("{}", ninferno::product::choice_line(*served));
+                    if (served->choice.chosen) {
+                        ninferno::product::apply_start_axes(
+                            engine_options, ninferno::product::start_axes(*served, pins));
+                    }
+                } else if (!why.empty()) {
+                    logger->info("choice | not planned: {}", why);
+                }
+            }
+        }
 
         // A profile's choice that does not fit the requested context on this device gives way as
         // the server's does (GenerationService): to the profile's fit fallback
@@ -351,7 +443,8 @@ int main(int argc, char** argv) {
                 namespace product = ninferno::product;
                 const std::string reason =
                     product::fit_refusal(product::speculation_label(engine_options.speculative),
-                                         engine_options.max_context, refused.what());
+                                         engine_options.max_context, refused.what(),
+                                         engine_options.max_context_automatic);
                 std::optional<ninferno::Engine> built;
                 // Builds the Engine with `speculative` (the given settings kept): true when it
                 // fits.

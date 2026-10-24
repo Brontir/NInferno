@@ -30,17 +30,6 @@ void project_add(DeviceArena& work, const Tensor& x, const Projection& p, Tensor
 
 } // namespace
 
-GdnReplayRecordSpec mamba2_records_spec(const Config& c, std::int32_t rows, std::int32_t width) {
-    return {.layers          = static_cast<std::int32_t>(c.count(Block::Mamba)),
-            .record_capacity = rows,
-            .width           = width,
-            .conv_channels   = c.mamba.conv_channels(),
-            .qk_heads        = 1,
-            .value_heads     = 1,
-            .key_dim         = c.mamba.geometry.heads,
-            .value_dim       = c.mamba.conv_channels()};
-}
-
 Pass::Pass(const Model& model, DeviceContext& device)
     : model_(model), c_(model.config()), device_(device) {}
 

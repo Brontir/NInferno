@@ -953,12 +953,15 @@ std::string gguf_group(const std::string& path) {
     return std::regex_match(path, match, split) ? match[1].str() : path;
 }
 
-// Quantization preference when the user names none: lossless into the engine first (NVFP4,
-// MXFP4), then the near-lossless and larger types.
+// Quantization preference when the user names none and no GPU picks one (ninferno-serve takes
+// the largest that fits its GPU before it fetches: serve/plan_offline.h; --prepare-only and
+// ninferno-convert come here): lossless into the engine first (NVFP4, MXFP4), then the
+// near-lossless and larger types the engine serves (8 bits or fewer); BF16 and F16, which it does
+// not, last.
 int gguf_rank(const std::string& name) {
     static const std::vector<std::string> order = {
-        "nvfp4", "mxfp4", "q8_0",  "bf16",  "f16",   "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m",
-        "q4_k_s", "iq4_xs", "iq4_nl", "q4_0", "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k"};
+        "nvfp4",  "mxfp4", "q8_0", "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "iq4_xs",
+        "iq4_nl", "q4_0",  "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k",   "bf16",   "f16"};
     const auto text = ascii_lower(name);
     for (std::size_t i = 0; i < order.size(); ++i) {
         if (text.find(order[i]) != std::string::npos) { return static_cast<int>(i); }
@@ -1892,7 +1895,10 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             quant.files.push_back(file.path);
             out.push_back(std::move(quant));
         } else if (name.ends_with(".safetensors") && name.find("mtp") == std::string::npos &&
-                   name.find("visual") == std::string::npos) {
+                   name.find("visual") == std::string::npos &&
+                   file.path.find('/') == std::string::npos) {
+            // The top-level weights, as the fetch takes them (subdirectories hold originals and
+            // other formats: gpt-oss's original/model.safetensors).
             weights.bytes += file.size;
             weights.files.push_back(file.path);
         }

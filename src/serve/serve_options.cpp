@@ -32,9 +32,11 @@ using product::parse_u64;
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
-           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] [--with-drafters] "
+           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
+           "[--plan-device NAME]]] [--with-drafters] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
-           "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
+           "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
+           "[--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
            "[--prefill-chunk N] [--kv-lease-window N] [--log-stats-interval-ms N] "
@@ -84,7 +86,15 @@ std::string serve_usage_text(const char* argv0) {
            "       --plan prints the memory plan ladder these options give (every rung's bytes),\n"
            "       the rung the free GPU memory picks now and what would get more, then exits\n"
            "       without serving (the weights are loaded to size the rungs, then released);\n"
-           "       --json prints it as JSON.\n"
+           "       --json prints it as JSON. --no-load plans without loading or downloading\n"
+           "       the weights and without a GPU, from the model's header or config (an\n"
+           "       estimate: the start is the authority); for a GGUF hub repository without\n"
+           "       --quant it lists every quantization and the largest that fits.\n"
+           "       --plan-device NAME plans for a named board instead (\"RTX 4090\", 0x2684,\n"
+           "       then ,headless or ,display and ,linux or ,wddm).\n"
+           "       Without --quant a GGUF hub repository is fetched at the largest\n"
+           "       quantization that fits --max-context x --max-concurrency on this GPU (an\n"
+           "       idle card of its class), and refused before the download when none does.\n"
            "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
            "       download); a checkpoint's are attached without it.\n"
            "       --default-max-tokens defaults to " +
@@ -110,6 +120,10 @@ std::string serve_usage_text(const char* argv0) {
            "       --health-stall-ms (default 60000; 0 off): /health is 503 while the engine has "
            "work and makes no progress that long\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
+           "       --max-context-cap N keeps the context automatic (the free memory picks the "
+           "rung, a busy card steps down) but at most N tokens; not with --max-context. A GGUF "
+           "repository fetched without --quant for several slots sets it to the context each "
+           "slot was planned to keep of its own\n"
            "       --max-context defaults to automatic: the free GPU memory picks the first rung "
            "that fits of a declared plan ladder (the same for the same model, options and card "
            "type): the model's own context (max_position_embeddings) for every slot, then the "
@@ -298,6 +312,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (options.max_context == 0) {
                 throw std::invalid_argument("--max-context must be positive");
             }
+        } else if (arg == "--max-context-cap") {
+            options.max_context_cap = count("--max-context-cap");
+            if (options.max_context_cap == 0) {
+                throw std::invalid_argument("--max-context-cap must be positive");
+            }
         } else if (arg.starts_with("--moe-offload")) {
             // MoE expert offload (--moe-offload, --moe-offload-compute, --moe-offload-threads)
             // was removed; its options are refused by name rather than as unknown.
@@ -398,6 +417,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--sliding-kv-dtype must be bf16 or fp8");
             }
             options.sliding_kv_cache = parse_kv_dtype(value.c_str());
+            options.sliding_kv_given = true;
         } else if (arg == "--state-dtype") {
             const std::string value = require_value("--state-dtype");
             const auto storage      = parse_recurrent_state_storage(value);
@@ -405,6 +425,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
             options.activations = product::parse_activation_mode(require_value("--activations"));
+            options.activations_given = true;
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor =
                 parse_float_in(require_value("--rope-yarn-factor"), "rope-yarn-factor", 1.0F, 64.0F);
@@ -512,6 +533,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_only = true;
         } else if (arg == "--json") {
             options.plan_json = true;
+        } else if (arg == "--no-load") {
+            options.plan_no_load = true;
+        } else if (arg == "--plan-device") {
+            options.plan_device = require_value("--plan-device");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
         } else if (arg == "--log-level") {
@@ -525,6 +550,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     // more slots take an automatic capacity, which the Engine bounds by the context's pages below
     // and every slot's full context above (--max-concurrency x --max-context when that fits, else
     // the most that does), so a server does not run fewer requests than it admits.
+    if (options.max_context != 0 && options.max_context_cap != 0) {
+        throw std::invalid_argument("--max-context-cap caps an automatic context: pass it or "
+                                    "--max-context, not both");
+    }
     if (!kv_capacity_explicit) {
         options.kv_capacity = options.max_context == 0 || options.max_concurrency > 1
                                   ? KvCapacityPolicy::automatic()
@@ -541,6 +570,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.plan_json && !options.plan_only) {
         throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.plan_no_load && !options.plan_only) {
+        throw std::invalid_argument("--no-load plans without the weights: it needs --plan");
+    }
+    if (!options.plan_device.empty() && !options.plan_no_load) {
+        throw std::invalid_argument("--plan-device names a board to plan for: it needs --plan "
+                                    "--no-load");
     }
     if (options.plan_only && options.prepare_only) {
         throw std::invalid_argument("--plan and --prepare-only exclude each other");

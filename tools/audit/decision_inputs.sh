@@ -60,6 +60,11 @@ decision_patterns=(
   src/ops/route_table.cpp
   src/runtime/engine/process_options_lease.h
   src/product/engine_flags.h
+  src/product/choice/choice.cpp
+  src/product/choice/choice.h
+  src/product/choice/choice_constants.h
+  src/product/plan/plan_choice.cpp
+  src/product/plan/plan_choice.h
   src/ops/generic/route_table.h
   src/ops/wrapper/candidate_selector.cpp
   src/ops/candidate_selector/bf16/candidate_selector_path_plan.cpp

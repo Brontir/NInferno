@@ -9,6 +9,7 @@ target_link_libraries(ninferno PRIVATE
   ninferno_product_logging
   ninferno_product_prompt_input
   ninferno_product_speculation
+  ninferno_product_plan
   ninferno::cudart)
 
 add_executable(ninferno-ui ui/main.cpp)
