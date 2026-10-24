@@ -783,7 +783,8 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"bytes", q.bytes},
                         {"files", q.files},
                         {"bits", q.bits},
-                        {"drafter", q.drafter}});
+                        {"drafter", q.drafter},
+                        {"mtp_bytes", q.mtp_bytes}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
     listings_[hub_key(repo, hub)] = list;
@@ -1720,15 +1721,20 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 }
                 const Json config     = convert::fetch_config(source, fetch);
                 out                   = to_json(kv_model_of_config(config));
-                std::uint64_t weights = 0;
+                // The largest listed weights, with their MTP part (a checkpoint's
+                // model_mtp.safetensors: loaded only under MTP), as the server's plan counts them.
+                std::uint64_t weights = 0, mtp = 0;
                 for (const auto& q : listing) {
-                    if (!q.value("drafter", false)) {
-                        weights = std::max<std::uint64_t>(weights, q.value("bytes", 0ULL));
+                    if (!q.value("drafter", false) && q.value("bytes", 0ULL) > weights) {
+                        weights = q.value("bytes", 0ULL);
+                        mtp     = q.value("mtp_bytes", 0ULL);
                     }
                 }
-                std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] =
+                auto facts =
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
+                facts.model.mtp_bytes = mtp;
+                std::lock_guard lock(sizes_mutex_);
+                plan_facts_[hub_key(repo, hub)] = std::move(facts);
                 configs_[hub_key(repo, hub)] = config;
                 read                         = true;
             }

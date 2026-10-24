@@ -200,7 +200,10 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     }
     // No --quant: a revision with top-level safetensors weights is fetched as them, whatever GGUF
     // files it also holds (convert/fetch.cpp choose_files), so the plan is theirs.
-    if (quant.empty() && weights != nullptr) { header = nullptr; }
+    if (quant.empty() && weights != nullptr) {
+        header = nullptr;
+        native = nullptr; // and not as a published .ninferno beside them
+    }
     if (header != nullptr) {
         out.gguf    = true;
         out.quant   = header->quant;
