@@ -247,6 +247,21 @@ void chooses(const json& fixture) {
                                           {}, task, oracle(b, 4.4e9));
         check(low.chosen && b.quants[chosen(low).candidate.quant].label == "IQ3_XXS",
               "below the floor when nothing above fits");
+        // Unknown bits rank at or above the floor, as in the quant rule: unlabelled weights that
+        // fit come before known ones below the floor (the IQ3_XXS above), whatever their size.
+        Bench unknown           = b;
+        ch::QuantOption unnamed = b.quants[2]; // IQ3_XXS's bytes, less a little
+        unnamed.label           = "unnamed";
+        unnamed.bits_per_weight = 0;
+        unnamed.weight_bytes *= 0.98;
+        unknown.quants.push_back(unnamed);
+        const ch::Choice unlabelled =
+            ch::choose(unknown.model, unknown.card, unknown.quants,
+                       ch::allowed_axes(unknown.model, KvCacheStorage::Int8Group64), {}, task,
+                       oracle(unknown, 4.4e9));
+        check(unlabelled.chosen &&
+                  unknown.quants[chosen(unlabelled).candidate.quant].label == "unnamed",
+              "unknown bits rank at or above the floor");
         const ch::Choice none = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                            {}, task, oracle(b, 1e9));
         check(!none.chosen, "nothing fits: no choice");
