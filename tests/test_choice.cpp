@@ -262,6 +262,9 @@ void chooses(const json& fixture) {
         check(unlabelled.chosen &&
                   unknown.quants[chosen(unlabelled).candidate.quant].label == "unnamed",
               "unknown bits rank at or above the floor");
+        // Unknown bits have no place on the quantization curve: the rule picks the quantization.
+        check(!unlabelled.quant_by_worth && low.quant_by_worth,
+              "unknown bits: the quantization is the rule's, not the worth's");
         const ch::Choice none = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                            {}, task, oracle(b, 1e9));
         check(!none.chosen, "nothing fits: no choice");
