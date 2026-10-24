@@ -18,8 +18,8 @@ inline constexpr float kNormEps = 1.0e-6F;
 struct Arguments {
     const __nv_bfloat16 *q, *k, *v;
     const float *g, *beta;
-    // FP32, BF16 or FP16 (GdnStateStorage): the recurrence keeps FP32 registers and rounds only
-    // the state it hands back.
+    // FP32, BF16 or FP16 (GdnStateStorage): the recurrence keeps FP32 registers within a chunk
+    // and rounds them to the storage at every chunk end, the state it hands back included.
     const void* state_in;
     void* state_out;
     __nv_bfloat16* out;

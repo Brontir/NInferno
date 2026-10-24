@@ -54,6 +54,13 @@ row in the table has it.
 - **A laptop row, or a device whose SM count differs from the row's**, is *extrapolated*. A laptop
   takes the bottom of its boost range (above). A MIG slice (fewer SMs) also gets `share` = its SMs
   over the board's, and its bandwidth scales by it.
+- **A board on another memory than its row's** (one id, two boards: an RTX 4070 with GDDR6 under
+  the GDDR6X board's id, an 8 GB RTX 3060 on a 128-bit bus) is *extrapolated* and priced at the
+  driver's memory: the bus width it reports when that differs from the row's, and its memory clock
+  on the 2^(1/16) grid when that is more than half a grid step (2.2 %) below the row's. A faster
+  memory clock (an overclock) is not read, so such a board keeps the row's; a board on a faster
+  memory than its row's (a GTX 1650 with GDDR6) is priced as the row. A value no memory has (a bus
+  that is not a whole number of 32-bit channels, a clock under 100 MHz) is as good as unreported.
 - **An unknown id** takes the driver's SM and memory clocks rounded to the nearest 2^(k/16), and
   keeps the bus width. The source is *extrapolated*. With no clocks reported it is *none*, there is
   no roofline, and the cost model stands aside.
@@ -63,7 +70,8 @@ and the speculation load model (`GpuKey`) read `DeviceClass::facts`. Nothing rea
 `DeviceClass::sm_clock_khz`, `memory_clock_khz` or `memory_bus_bits` for a decision. The decision
 fingerprint records the facts (`facts.machine.*`: source, reference and memory clock, bus width,
 share, `mma_slow`); the driver's values enter it (`facts.driver.*`) only when they fed a fact
-(`MachineFacts::driver_read`: an unknown id, a laptop row without `boost_min_mhz`), and are observed
+(`MachineFacts::driver_read`: an unknown id, a laptop row without `boost_min_mhz`, a board on
+another memory than its row's), and are observed
 (the manifest's `observed.driver.*`) otherwise: a verified board, a MIG slice and a laptop priced at
 its range's bottom fingerprint alike whatever their driver reports.
 

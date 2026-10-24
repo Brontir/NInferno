@@ -41,6 +41,10 @@ struct GenerationMetrics {
     std::uint64_t speculative_draft_tokens    = 0;
     std::uint64_t speculative_accepted_tokens = 0;
     std::uint64_t speculative_fallback_steps  = 0;
+    // Of those, the DFlash rounds a constrained request verified without drafts because its
+    // step's declared mask time filled the masks before the launch (a client's EBNF grammar past
+    // its reasoning).
+    std::uint64_t speculative_constraint_fallback_steps = 0;
     std::vector<std::uint64_t> speculative_accepted_per_position;
     // The speculation this request ran: its configuration ("plain" when none), how that was chosen
     // ("fixed", "thinking" by --spec auto's profile; "explicit" by --spec; "startup" when --spec

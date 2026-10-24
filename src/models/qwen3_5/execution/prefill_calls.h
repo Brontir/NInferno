@@ -14,25 +14,32 @@ namespace ninferno::models::qwen3_5::execution {
 // at least kPrefillMinTokens is computed by the prefill routes whatever the chunk size.
 inline constexpr std::uint32_t kPrefillMinTokens = 17;
 
-// The early stop lands on an absolute grid of the Gated DeltaNet scan's chunks. The chunked scan
-// cuts a call into 16-token chunks counted from the call's first token (the last one padded) and
-// folds each into the state as one block, so a call boundary that divides a chunk changes the bytes
-// after it; a boundary on this grid, a multiple of the 16-token chunk, is the only kind the chunk
-// size cannot move a token across. Under --activations exact the scan runs token by token and any
-// boundary is neutral for it (ops/linear_attention/gated_delta_net/gated_delta_net.cpp).
+// The early stop lands on a grid of the Gated DeltaNet scan's chunks counted from the call's first
+// token. The chunked scan cuts a call into 16-token chunks counted from that token (the last one
+// padded) and folds each into the state as one block, so a call boundary that divides a chunk
+// changes the bytes after it; a boundary a multiple of the 16-token chunk after the call's start
+// is the only kind the chunk size cannot move a token across. Every call of a segment is a
+// multiple of 16 tokens long but the last (--prefill-chunk is a multiple of 128, the stop a
+// multiple of this grid), so every boundary stays on the chunk grid of the segment's start: on the
+// absolute grid where the segment starts on it, and on the segment's own where it starts off it (a
+// turn's rewrite frontier). A BF16 or FP16 state is rounded at every chunk end, so the call before
+// such a boundary stores the state one call carries past it. Under --activations exact the scan
+// runs token by token and any boundary is neutral for it
+// (ops/linear_attention/gated_delta_net/gated_delta_net.cpp).
 inline constexpr std::uint32_t kPrefillGridTokens = 64;
 
 // Absolute end of the next prefill call over [cursor, end) when at most `chunk` fit in one call.
-// A call that would leave 1..16 tokens before `end` ends instead on the last grid point that
-// leaves at least kPrefillMinTokens, when that keeps it at least kPrefillMinTokens long itself.
+// A call that would leave 1..16 tokens before `end` ends instead on the last grid point after
+// `cursor` that leaves at least kPrefillMinTokens, when that keeps it at least kPrefillMinTokens
+// long itself.
 [[nodiscard]] constexpr std::uint32_t prefill_call_end(std::uint32_t chunk, std::uint32_t cursor,
                                                        std::uint32_t end) noexcept {
     const std::uint32_t left  = end - cursor;
     const std::uint32_t count = left < chunk ? left : chunk;
     const std::uint32_t rest  = left - count;
-    if (rest != 0 && rest < kPrefillMinTokens && end >= kPrefillMinTokens) {
+    if (rest != 0 && rest < kPrefillMinTokens && left >= kPrefillMinTokens) {
         const std::uint32_t early =
-            (end - kPrefillMinTokens) / kPrefillGridTokens * kPrefillGridTokens;
+            cursor + (left - kPrefillMinTokens) / kPrefillGridTokens * kPrefillGridTokens;
         if (early > cursor && early - cursor >= kPrefillMinTokens) { return early; }
     }
     return cursor + count;

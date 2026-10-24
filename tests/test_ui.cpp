@@ -1,8 +1,10 @@
 // ninferno-ui without a GPU or a network: who may talk to it, the launch command it builds, the
 // catalog's estimates, the process pool, and the HTTP routes behind the access checks.
 
+#include "artifact/fixture.h"
 #include "convert/acquire.h"
 #include "core/sys.h"
+#include "spec/fingerprint.h"
 #include "spec/profile.h"
 #include "ui/access.h"
 #include "ui/app.h"
@@ -260,7 +262,8 @@ void test_launch() {
           "GPU binding by PCI order");
     check(spec.model == "unsloth/Qwen3.5-9B-GGUF:Q4_K_M", "display name");
 
-    // No speculation named: the measured choice (--spec auto), never ninferno-serve's plain default.
+    // No speculation named: the published profile's choice, --spec auto (ninferno-serve's default
+    // too), named on the command line.
     {
         LaunchRequest unnamed = request;
         unnamed.spec          = "";
@@ -270,28 +273,76 @@ void test_launch() {
               "a launch without a named speculation runs --spec auto");
     }
 
-    // A stale tune beside a model started by its artifact path is not named (the server would
-    // refuse it): a note in the log says why.
+    // A tune beside a model started by its artifact path is a measurement of this machine: never
+    // named by itself, even one that would serve (a note says so); named when the start asks for
+    // it (spec_profile), and then only one that serves on the request's GPU: one that does not
+    // refuses the start, as ninferno-serve refuses a named tune that does not serve. On a GPU
+    // whose class NVML does not name, only the tune itself is checked here; the server judges it.
     {
-        namespace fs     = std::filesystem;
-        const TempDir scratch("ninferno_ui_stale_tune");
-        const auto& dir  = scratch.path();
-        const auto model = dir / "m.ninferno";
-        std::ofstream(model) << "not an artifact";
-        std::ofstream(fs::path(model) += ".spec_profile.json") << "{}";
+        const ninferno::test::artifact_fixture::Fixture fixture;
+        fixture.write();
+        const auto tune = ninferno::spec::default_profile_path(fixture.entry);
+        ninferno::spec::Profile tuned;
+        tuned.key.artifact_id = ninferno::spec::artifact_id_hex(fixture.entry);
+        tuned.key.gpu         = "gb202:170sm";
+        ninferno::spec::write_profile(tune, tuned);
+        GpuStat rtx5090;
+        rtx5090.index         = 1;
+        rtx5090.cc_major      = 12;
+        rtx5090.cc_minor      = 0;
+        rtx5090.pci_device_id = 0x2B85;
+        rtx5090.sms           = 170;
+
         LaunchRequest local = request;
-        local.model         = ninferno::utf8_path(model);
+        local.model         = ninferno::utf8_path(fixture.entry);
         local.prepare_only  = false;
-        const auto stale    = make_launch(options, local);
-        check(std::find(stale.argv.begin(), stale.argv.end(), "--spec-profile") ==
-                      stale.argv.end() &&
-                  stale.notes.size() == 1 && stale.notes[0].find("stale") != std::string::npos,
-              "a stale tune beside the model is a note, not --spec-profile");
+
+        const auto named = [](const LaunchSpec& launch) {
+            const auto at = std::find(launch.argv.begin(), launch.argv.end(), "--spec-profile");
+            if (at == launch.argv.end() || at + 1 == launch.argv.end()) { return std::string(); }
+            return *(at + 1);
+        };
+        const auto refusal = [&](const LaunchRequest& asked, const GpuStat* on) {
+            try {
+                (void)make_launch(options, asked, on);
+            } catch (const std::invalid_argument& error) { return std::string(error.what()); }
+            return std::string();
+        };
+        const auto unasked = make_launch(options, local, &rtx5090);
+        check(named(unasked).empty() && unasked.notes.size() == 1 &&
+                  unasked.notes[0].find("\"spec_profile\": true") != std::string::npos,
+              "a tune that would serve is not named by itself: a note says how a start asks");
+        local.spec_profile = true;
+        const auto asked   = make_launch(options, local, &rtx5090);
+        check(same_path(named(asked), ninferno::utf8_path(tune)) && asked.notes.empty(),
+              "a start that asks for the tune names it");
+        GpuStat other = rtx5090;
+        other.sms     = 188;
+        check(refusal(local, &other).find("another") != std::string::npos,
+              "asked for, a tune of another GPU class refuses the start");
+        GpuStat mig = rtx5090;
+        mig.sms     = 0;
+        check(same_path(named(make_launch(options, local, nullptr)), ninferno::utf8_path(tune)) &&
+                  same_path(named(make_launch(options, local, &mig)), ninferno::utf8_path(tune)),
+              "asked for on a GPU whose class is unknown here, the server judges the tune");
+        LaunchRequest hub = local;
+        hub.model         = "org/m";
+        check(refusal(hub, &rtx5090).find(".ninferno path") != std::string::npos,
+              "asked for, a model not started by its artifact path refuses the start");
+        std::ofstream(tune) << "{}";
+        check(!refusal(local, &rtx5090).empty() && !refusal(local, nullptr).empty(),
+              "asked for, a stale tune refuses the start, on an unknown GPU too");
+        std::filesystem::remove(tune);
+        check(refusal(local, &rtx5090).find("no profile") != std::string::npos,
+              "asked for, a missing tune refuses the start");
+        local.spec_profile = false;
+        check(make_launch(options, local, &rtx5090).notes.empty(),
+              "no tune beside the model: no note");
     }
 
-    // A tune beside the model is named only for the GPU class it was made on, as the server keys
-    // it ("<chip>:<sms>sm"); without the SM count the chip decides; an unknown GPU or chip passes
-    // it over (the published profile runs rather than a refused start).
+    // A tune beside the model serves only on the GPU class it was made on, as the server keys it
+    // ("<chip>:<sms>sm"); on a GPU unknown here or without the SM count (a MIG slice), only the
+    // tune itself is checked: the server names its GPU's class from CUDA and judges the rest.
     {
         namespace fs   = std::filesystem;
         const TempDir scratch("ninferno_ui_tune_gpu");
@@ -312,16 +363,18 @@ void test_launch() {
         GpuStat other = rtx5090;
         other.sms     = 188;
         check(tune_refusal_on(tune, "aaaa", &other).find("another") != std::string::npos,
-              "a tune of another SM count of the chip is passed over");
+              "a tune of another SM count of the chip is refused");
         other.pci_device_id = 0x2C02; // RTX 5080: gb203
         other.sms           = 0;
-        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
-              "without the SM count, a tune of another chip is passed over");
-        other.pci_device_id = 0x2B85;
-        check(tune_refusal_on(tune, "aaaa", &other).find("unknown") != std::string::npos,
-              "without the SM count, even a tune of the same chip is passed over");
-        check(tune_refusal_on(tune, "aaaa", nullptr).find("unknown") != std::string::npos,
-              "an unknown GPU passes the tune over");
+        check(tune_refusal_on(tune, "aaaa", &other).empty() &&
+                  !tune_refusal_on(tune, "bbbb", &other).empty(),
+              "without the SM count, only the tune itself is checked here");
+        other.sms      = 84;
+        other.cc_major = 0;
+        check(tune_refusal_on(tune, "aaaa", nullptr).empty() &&
+                  tune_refusal_on(tune, "aaaa", &other).empty() &&
+                  !tune_refusal_on(tune, "bbbb", nullptr).empty(),
+              "on a GPU unknown here, only the tune itself is checked here");
         // The GPU a launch runs on: by NVML's index; none named, the only one, else none.
         std::vector<GpuStat> stats(2);
         stats[0].index = 0;
@@ -669,6 +722,23 @@ void test_catalog() {
               "with its download still there, the usual path asks the hub");
         fs::remove_all(root);
     }
+    // The Vision projector a start fetches and the plan charges: one choice from the listing, every
+    // part of a split one.
+    {
+        using ninferno::convert::best_projector;
+        using Names = std::vector<std::string>;
+        check(best_projector({"m-Q4_K_M.gguf", "mmproj-F16.gguf", "mmproj-model-bf16.gguf",
+                              "mmproj-F32.gguf"}) == Names{"mmproj-model-bf16.gguf"} &&
+                  best_projector({"mmproj-F16.gguf", "mmproj-F32.gguf"}) ==
+                      Names{"mmproj-F32.gguf"} &&
+                  best_projector({"sub/mmproj-b.gguf", "sub/mmproj-a.gguf"}) ==
+                      Names{"sub/mmproj-a.gguf"} &&
+                  best_projector({"mmproj-BF16-00002-of-00002.gguf", "mmproj-F16.gguf",
+                                  "mmproj-BF16-00001-of-00002.gguf"}) ==
+                      Names{"mmproj-BF16-00001-of-00002.gguf", "mmproj-BF16-00002-of-00002.gguf"} &&
+                  best_projector({"m-Q4_K_M.gguf", "README.md"}).empty(),
+              "the projector: BF16, F32, F16, then any; ties to the first name; all its parts");
+    }
     // KV per token from GGUF metadata: a plain stack, a hybrid one, a sliding-window one.
     {
         const nlohmann::json dense{
@@ -1003,6 +1073,16 @@ void test_http() {
     check(res && res->status == 415, "form POST refused");
     res = client.Post("/api/launch", "{\"model\":\"--help\"}", "application/json");
     check(res && res->status == 400, "bad model refused");
+    // The tune beside a model only by request, and only for a converted model's artifact.
+    res = client.Post("/api/launch", R"({"model":"org/m","spec_profile":true})",
+                      "application/json");
+    check(res && res->status == 400 &&
+              res->body.find("started by its .ninferno path") != std::string::npos,
+          "spec_profile for a model not converted here answered 400");
+    res = client.Post("/api/launch", R"({"model":"org/m","spec_profile":"yes"})",
+                      "application/json");
+    check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
+          "spec_profile is a boolean");
     res = client.Post("/api/tune", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");

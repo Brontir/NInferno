@@ -149,7 +149,8 @@ prefill  = chunks * chunk_ns + suffix_tokens * token_ns + attention_pairs * atte
 physical `cudaMemcpy*` calls implied by the page geometry. For a suffix `S` after prefix `B`,
 `attention_pairs = B*S + S*(S+1)/2`; `chunks` is the sum of `ceil(segment_tokens/prefill_chunk)` over
 the prefill schedule's capture/rewrite segments. Resource kind, KV dtype and speculative backend do
-not select coefficients. The prefill result is keyed by hardware class and the actual Text/Vision
+not select coefficients. Both results are keyed by the measuring device's GPU class id
+(`DeviceClass::id`, `gb202:170sm`), the prefill result also by the actual Text/Vision
 `prefill_signature`.
 
 A fit is accepted when training and held-out p95 relative error are at most 35% (transfer) or 15%
@@ -163,8 +164,11 @@ Defaults compiled into the binary live in
 [`context_cost_defaults.cpp`](../src/runtime/engine/context_cache/context_cost_defaults.cpp). A preset
 file is selected at run time with `EngineOptions.context_cost.preset_path` or
 `ninferno-serve --context-cost-presets FILE`, with no rebuild. Resolution starts from generic
-numerical coefficients, then applies matching compiled values, then matching external values; a
-malformed explicit file is an error and a missing entry keeps the preceding layer. The `--json`
+numerical coefficients, then applies the compiled machine of the first key of the device's class
+chain that has one (else the one of the nearest measured board within
+`measured::kCarryDistance`, as measured), then the external entry of the first key of the chain
+that has one; a malformed explicit file is an error and a missing entry keeps the preceding layer.
+A compiled machine records the board it was measured on (`core/measured_boards.h`). The `--json`
 report is provenance only, never a runtime input.
 
 ## Op benchmarks

@@ -10,6 +10,7 @@
 #include "models/qwen3_5/frontend/tokenizer.h"
 #include "text/unicode.h"
 #include "support/files.h"
+#include "core/sha256.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1568,6 +1569,12 @@ int test_template_file_execution() {
     const auto same     = embedded.prepare(input);
     failures += check(FrontendFactory::inspect(same).token_ids == expected,
                       "embedded and external copies of the same template rendered differently");
+    // The decision fingerprint's name for the template is the compiled bytes, not the file as it
+    // reads after startup; the artifact's own template is "artifact".
+    failures += check(overridden.chat_template_source() ==
+                              ninferno::named_bytes_sha256(file.path, source) &&
+                          embedded.chat_template_source() == "artifact",
+                      "the served template is not named by the bytes it compiled");
     const auto rejects_system = make_frontend(
         resources("{% for m in messages %}{% if m.role == 'system' %}{{ raise_exception('template "
                   "declines system') }}{% endif %}{% endfor %}ok"),

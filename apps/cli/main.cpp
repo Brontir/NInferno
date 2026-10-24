@@ -279,8 +279,10 @@ int main(int argc, char** argv) {
 
     try {
 
+        // --plan --no-load runs no request: it needs no prompt.
         ninferno::PromptInput input =
-            cli.messages_path.empty()
+            cli.plan_only ? ninferno::PromptInput{}
+            : cli.messages_path.empty()
                 ? ninferno::product::prompt_from_text(cli.prompt, cli.enable_thinking)
                 : ninferno::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
                                                         cli.enable_vision);

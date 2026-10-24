@@ -1240,6 +1240,16 @@ int test_aggregate_response() {
                           context_plain["context_plain"] == true &&
                           context_plain["note"] == "fit fallback: x",
                       "timings.speculation names a request's own fallback and the note");
+    // A constrained DFlash request whose steps computed their masks before the round (a client's
+    // EBNF grammar) verified those rounds without drafts.
+    GenerationOutcome masked                             = sample_outcome();
+    masked.metrics.speculative_config                    = "dflash:7";
+    masked.metrics.speculative_selection                 = "explicit";
+    masked.metrics.speculative_constraint_fallback_steps = 3;
+    const Json masked_speculation =
+        Json::parse(make_chat_completion_response(identity(), masked))["timings"]["speculation"];
+    failures += check(masked_speculation["constraint_fallback_steps"] == 3,
+                      "timings.speculation counts the rounds a constraint ran without drafts");
 
     outcome.text.clear();
     outcome.tool_calls.push_back(ninferno::GeneratedToolCall{

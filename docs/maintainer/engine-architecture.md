@@ -558,7 +558,7 @@ Capacity queries consume the per-layer parameters, Uses, and device capacity inf
 sequentially exclusive scratch takes the peak, and data that stays live across stages counts for its full lifetime. The Vision handoff is retained until the last consumer in Text
 and the selected MTP, and speculative pending features and verify records are retained until the corresponding commit boundary.
 
-Prefill cost selects measured values by a `prefill_signature` derived from the hardware class and the actual Text/Vision configuration, bindings, and Uses;
+Prefill cost selects measured values by the device's GPU class (along its class chain, else the nearest measured board within the carry distance) and a `prefill_signature` derived from the actual Text/Vision configuration, bindings, and Uses;
 when no match exists a generic cost is used. The cost is used for planning choices, while physical feasibility is still determined by the Program's actual layout and occupancy.
 
 Serve warmup uses the same public Engine execution path, but its request-level context cache is fixed off. Warmup may establish the runtime state of

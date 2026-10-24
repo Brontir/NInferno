@@ -310,8 +310,7 @@ void RequestConstraint::fill_round(std::span<const TokenId> drafts, std::uint32_
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                        std::chrono::steady_clock::now() - started)
                                        .count());
-    mask_host_ns_ += elapsed;
-    slowest_row_ns_ = std::max<std::uint64_t>(slowest_row_ns_, elapsed / rows);
+    mask_host_ns_ += elapsed; // telemetry only (stats().mask_host_seconds)
 }
 
 void RequestConstraint::commit(std::span<const TokenId> tokens) noexcept {

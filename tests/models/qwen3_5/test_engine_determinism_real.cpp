@@ -8,7 +8,10 @@
 // Every Engine, the scorer included, runs --activations exact (ActivationMode::Exact): the
 // contracts below are those of the exact mode. Under fast (NINFERNO_DET_ACTIVATIONS=fast) a wide
 // call encodes NVFP4 activations in four bits, the answer depends on the batch width, and the gap
-// bound does not hold.
+// bound does not hold. Under exact the batch, the prefix cache, the chunk and the Host tier do not
+// reach the bytes (position-keyed splits, the token-serial Gated DeltaNet, BF16 activations), so
+// the phases marked D below hold bytes there (exact_bytes()): a divergence is a bug, not a near-tie
+// to score. specoff stays D (a drafter's verify widths).
 //
 // Phases (MTP K=3, int8 KV, CUDA graphs, the "Matrix-min" configuration):
 //   solo     B  one request repeated alone, greedy and seeded sampling.
@@ -248,6 +251,9 @@ ninferno::ActivationMode probe_activations() {
     throw std::invalid_argument("NINFERNO_DET_ACTIVATIONS must be exact or fast");
 }
 
+// The D phases' contract under the probe's activations: bytes under exact, a near-tie under fast.
+bool exact_bytes() { return probe_activations() == ninferno::ActivationMode::Exact; }
+
 ninferno::EngineOptions generation_options(const std::string& artifact, std::uint32_t concurrency,
                                          bool cache, bool speculate = true) {
     ninferno::EngineOptions options;
@@ -433,7 +439,8 @@ void phase_batch(Probe& probe, Report& report) {
                 compare(report, "batch",
                         "C=" + std::to_string(c) + (seeded ? " seeded" : " greedy") + " p" +
                             std::to_string(which[i]),
-                        seeded ? solo_seeded[which[i]] : solo[which[i]], got, false, seeded);
+                        seeded ? solo_seeded[which[i]] : solo[which[i]], got, exact_bytes(),
+                        seeded);
             }
         }
     }
@@ -510,10 +517,10 @@ void phase_aba(Probe& probe, Report& report) {
                      {"result", "BUG: no prefix reuse"}});
         ++report.bugs;
     }
-    compare(report, "aba", "A cold vs A after B (cache hit)", a1, a2, false);
-    compare(report, "aba", "A after B vs A after B,A,B", a2, a3, false);
-    compare(report, "aba", "A after A (warm) vs A after B", a4, a2, false);
-    compare(report, "aba", "B after A vs B after A,B,A", b1, b2, false);
+    compare(report, "aba", "A cold vs A after B (cache hit)", a1, a2, exact_bytes());
+    compare(report, "aba", "A after B vs A after B,A,B", a2, a3, exact_bytes());
+    compare(report, "aba", "A after A (warm) vs A after B", a4, a2, exact_bytes());
+    compare(report, "aba", "B after A vs B after A,B,A", b1, b2, exact_bytes());
 }
 
 // Determinism under constrained decoding: one json_schema request repeated on a fresh Engine. The first
@@ -576,9 +583,9 @@ void phase_cachecold(Probe& probe, Report& report) {
         const Run cold = generate(engine, probe.prompts[p], request(probe.tokens, true));
         const Run warm = generate(engine, probe.prompts[p], request(probe.tokens, true));
         compare(report, "cachecold", "p" + std::to_string(p) + " cache off vs cache on, cold",
-                off[p], cold, false);
+                off[p], cold, exact_bytes());
         compare(report, "cachecold", "p" + std::to_string(p) + " cache on: cold vs warm", cold,
-                warm, false);
+                warm, exact_bytes());
     }
 }
 
@@ -636,7 +643,7 @@ void phase_boundary(Probe& probe, Report& report) {
                      {"reused_prompt_tokens", with_reuse[i].reused},
                      {"prompt_ids_known", !with_reuse[i].prompt.empty()}});
         compare(report, "boundary", label, without_reuse[i], with_reuse[i],
-                /*byte_contract=*/false);
+                /*byte_contract=*/exact_bytes());
     }
 }
 
@@ -685,7 +692,7 @@ void phase_twins(Probe& probe, Report& report) {
                     compare(report, "twins",
                             "C=" + std::to_string(c) + (seeded ? " seeded" : " greedy") + " p" +
                                 std::to_string(p) + " row 0 vs row " + std::to_string(i),
-                            rows[0], rows[i], false, seeded);
+                            rows[0], rows[i], exact_bytes(), seeded);
                 }
             }
         }
@@ -765,7 +772,8 @@ void phase_chunks(Probe& probe, Report& report) {
                              {"check", label + " acceptance"},
                              {"unchunked_spec_rounds", unchunked[i].spec_rounds},
                              {"chunked_spec_rounds", chunked.spec_rounds}});
-                compare(report, "chunks", label + " vs unchunked", unchunked[i], chunked, false);
+                compare(report, "chunks", label + " vs unchunked", unchunked[i], chunked,
+                        exact_bytes());
             }
         }
     }
@@ -842,8 +850,8 @@ void phase_pollute(Probe& probe, Report& report) {
                           result.finish_reason, result.reused_prompt_tokens,
                           result.speculative.rounds};
             compare(report, "pollute",
-                    "(d) one-token batch row " + std::to_string(i) + " vs fresh solo", solo[i],
-                    row, false);
+                    "(d) one-token batch row " + std::to_string(i) + " vs fresh solo", solo[i], row,
+                    exact_bytes());
         }
     }
 }
@@ -1053,9 +1061,9 @@ void phase_hosttier(Probe& probe, Report& report) {
             hits += second_pass[i].reused > 0 ? 1U : 0U;
             const std::string tag = "trial " + std::to_string(trial) + " case " + std::to_string(i);
             compare(report, "hosttier", tag + " first pass vs cache off", cold[i], first_pass[i],
-                    false);
-            compare(report, "hosttier", tag + " second pass vs cache off", cold[i],
-                    second_pass[i], false);
+                    exact_bytes());
+            compare(report, "hosttier", tag + " second pass vs cache off", cold[i], second_pass[i],
+                    exact_bytes());
         }
         report.line({{"phase", "hosttier"},
                      {"check", "trial " + std::to_string(trial) + " reuse"},
@@ -1067,7 +1075,7 @@ void phase_hosttier(Probe& probe, Report& report) {
     }
     for (std::size_t i = 0; i < cases.size(); ++i) {
         compare(report, "hosttier", "case " + std::to_string(i) + " second pass: trial 0 vs 1",
-                second_passes[0][i], second_passes[1][i], false);
+                second_passes[0][i], second_passes[1][i], exact_bytes());
     }
 }
 

@@ -1,5 +1,6 @@
 #include "models/qwen3_5/frontend/frontend.h"
 
+#include "core/sha256.h"
 #include "core/units.h"
 
 #include "models/qwen3_5/frontend/resources.h"
@@ -215,9 +216,12 @@ void validate_tokenizer_config(const FrontendResources& resources, TokenizerConf
     }
 }
 
+// `source_name` receives what the decision fingerprint calls the template: "artifact", or the
+// override file named by the bytes this call read and compiled.
 fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resources,
                                                const std::filesystem::path& override_path,
-                                               TokenizerConfigPolicy policy) {
+                                               TokenizerConfigPolicy policy,
+                                               std::string& source_name) {
     validate_tokenizer_config(resources, policy);
     nlohmann::ordered_json tokens = nlohmann::ordered_json::object();
     const auto config             = nlohmann::ordered_json::parse(resources.tokenizer_config_json);
@@ -253,6 +257,8 @@ fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resource
             throw std::invalid_argument("cannot read chat template: " + name);
         }
     }
+    source_name =
+        override_path.empty() ? std::string("artifact") : named_bytes_sha256(override_path, source);
     return fi::CompiledChatTemplate::resolve(source, std::move(name), std::move(tokens));
 }
 
@@ -756,7 +762,7 @@ class Frontend::Impl {
 public:
     Impl(const FrontendResources& resources, FrontendOptions options)
         : chat_template(compile_chat_template(resources, options.chat_template_path,
-                                              options.tokenizer_config)),
+                                              options.tokenizer_config, chat_template_source)),
           tokenizer(resources.tokenizer),
           processor(!options.vision_enabled                       ? fi::ProcessorOptions{}
                     : options.vision_style == VisionStyle::Gemma4 ? fi::ProcessorOptions{}
@@ -874,6 +880,8 @@ public:
         }
     }
 
+    // Declared first: compiling chat_template names its source here (compile_chat_template).
+    std::string chat_template_source;
     fi::CompiledChatTemplate chat_template;
     std::shared_ptr<const text::TokenCodec> tokenizer;
     std::shared_ptr<const OutputConventions> output;
@@ -956,6 +964,10 @@ Frontend::~Frontend()                              = default;
 
 const ModelSamplingDefaults& Frontend::sampling_defaults() const noexcept {
     return impl_->sampling;
+}
+
+const std::string& Frontend::chat_template_source() const noexcept {
+    return impl_->chat_template_source;
 }
 
 Frontend make_frontend(const FrontendResources& resources, FrontendOptions options) {
