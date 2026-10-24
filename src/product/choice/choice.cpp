@@ -180,6 +180,10 @@ double quant_kld(double bits, std::string_view label, bool same_family, bool& me
     return std::exp(std::log(lo.kld) + t * (std::log(hi.kld) - std::log(lo.kld)));
 }
 
+bool switches_measured(std::string_view family) noexcept {
+    return std::find(std::begin(kKldFamilies), std::end(kKldFamilies), family) != std::end(kKldFamilies);
+}
+
 bool qwen_family(const ModelFacts& model) noexcept {
     return model.family == "qwen3_5_text" || model.family == "qwen3_5_moe_text";
 }
@@ -366,23 +370,28 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
     return std::nullopt;
 }
 
-bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
+bool decides_switches(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
     const auto ref = reference_of(card, gates);
-    return ref && ref->decides && model.family == kKldFamily;
+    return ref && ref->decides && switches_measured(model.family);
+}
+
+bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
+    return decides_switches(model, card, gates) && model.family == kQuantKldFamily;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
                      const CardFacts& card) {
     Accuracy out;
-    const bool other_family    = model.family != kKldFamily;
+    const bool other_family    = !switches_measured(model.family);
+    const bool other_curve     = model.family != kQuantKldFamily;
     const std::string_view gen = generation_of(card);
     const auto add = [&](Axis axis, std::string value, double kld, bool measured, std::string source) {
-        out.terms.push_back({axis, std::move(value), kld, measured, other_family && kld > 0,
-                             std::move(source)});
+        const bool transferred = (axis == Axis::Quant ? other_curve : other_family) && kld > 0;
+        out.terms.push_back({axis, std::move(value), kld, measured, transferred, std::move(source)});
     };
     // The quantization: the measured curve (choice_constants.h).
     bool measured  = false;
-    const double q = quant_kld(quant.bits_per_weight, quant.label, !other_family, measured);
+    const double q = quant_kld(quant.bits_per_weight, quant.label, !other_curve, measured);
     add(Axis::Quant, quant.label, q, measured,
         measured ? std::string(kQuantKldSource) : "interpolated by bits per weight on " + std::string(kQuantKldSource));
 
@@ -478,7 +487,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         return out;
     }
     const std::optional<Reference> ref = reference_of(card, gates);
-    out.by_worth       = weighs_quantizations(model, card, gates);
+    out.by_worth       = decides_switches(model, card, gates);
+    out.quant_by_worth = weighs_quantizations(model, card, gates);
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     std::vector<std::size_t> quant_ids;
     if (pins.quant) {
@@ -552,7 +562,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
                 if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!out.by_worth && s.candidate.quant != *quant) { continue; }
+                if (!out.quant_by_worth && s.candidate.quant != *quant) { continue; }
                 if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
             }
             if (chosen) {
@@ -574,7 +584,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     const Scored& c = out.scored[*chosen];
     out.why = quants[c.candidate.quant].label +
               (quant_ids.size() == 1 ? " (the one quantization): every stream holds "
-               : out.by_worth        ? ": the best worth among the quantizations whose every stream holds "
+               : out.quant_by_worth  ? ": the best worth among the quantizations whose every stream holds "
                                      : ": the largest quantization whose every stream holds ") +
               std::to_string(settled) + " tokens" +
               (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
@@ -588,7 +598,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                                   (!ref               ? std::string(generation_of(card)) + " has no reference card"
                                    : !ref->decides    ? ref->why
                                                       : "the accuracy terms were measured on " +
-                                                            std::string(kKldFamily) + ", not " + model.family) +
+                                                            std::string(kKldFamilies[0]) + ", not " + model.family) +
                                   ")") +
               (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                         ": the fastest prefill on the reference card"
@@ -671,7 +681,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
-            } else if (axis == Axis::Quant && (!choice.by_worth || above(s) != above(chosen))) {
+            } else if (axis == Axis::Quant && (!choice.quant_by_worth || above(s) != above(chosen))) {
                 // The rule decided it: no worth, or the other side of the floor (the rule's tiers).
                 alt.why_code = "quant_rule";
                 if (above(s) != above(chosen)) {
