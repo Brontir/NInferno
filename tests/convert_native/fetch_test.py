@@ -460,6 +460,39 @@ def main() -> int:
                  and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in result.stdout
                  and "chat_template.jinja" in notes and "generation_config.json" in notes
                  and "tokenizer.json" not in notes)
+
+            # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
+            # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),
+            # with a notice; an unreachable hub serves them too; --refetch converts the new commit
+            # and removes the old conversion (the old download stays in the hub cache).
+            old2 = "c0ffee0123456789abcdef0123456789abcdef01"
+            hub.repos["org/qwen-gguf2"]["history"] = {old2}
+            hub.repos["org/qwen-gguf2"]["commit"] = "e" * 40
+            repo2 = work / "cache-e2e" / "models--org--qwen-gguf2"
+
+            def again2(*extra, env=environment):
+                run = subprocess.run([str(native), "--fetch", "org/qwen-gguf2", "--cache",
+                                      str(work / "cache-e2e"), *extra], cwd=repository,
+                                     capture_output=True, text=True, env=env)
+                if run.returncode:
+                    errors.append(f"--fetch org/qwen-gguf2 {extra}:\n{run.stderr[-1500:]}")
+                return run.returncode, run.stdout + run.stderr
+
+            reset()
+            kept_notice = again2()
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("a moved branch with its download kept: the weights here, pinned, with a notice",
+                 kept_notice[0] == 0 and "org/qwen-gguf2@main is now eeeeeeeeeeee" in kept_notice[1]
+                 and "(downloaded)" in kept_notice[1] and not downloads
+                 and not (repo2 / "ninferno" / ("e" * 40)).exists())
+            unreachable2 = again2(env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("an unreachable hub serves the download kept, said",
+                 unreachable2[0] == 0 and "could not ask the hub whether org/qwen-gguf2@main moved"
+                 in unreachable2[1])
+            refetched2 = again2("--refetch")
+            case("--refetch with the download kept converts the new commit, removes the old conversion",
+                 refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and not (repo2 / "ninferno" / old2).exists() and (repo2 / "snapshots" / old2).exists())
             if result.returncode:
                 errors.append(result.stderr[-2000:])
 

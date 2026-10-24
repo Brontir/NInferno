@@ -136,6 +136,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.repository     = fs::current_path();
     acquire.log            = log;
     if (options.with_drafters) { acquire.with_drafters = true; }
+    acquire.keep_replaced = options.keep_replaced;
     acquire.moved_ref = options.refetch            ? convert::MovedRef::Refetch
                         : options.accept_converted ? convert::MovedRef::Accept
                                                    : convert::MovedRef::Notice;
