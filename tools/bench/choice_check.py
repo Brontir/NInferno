@@ -104,10 +104,15 @@ def main():
     if not chosen:
         sys.exit("the plan has no configuration choice: " + json.dumps(plan.get("choice")))
     decode, prefill = chosen["decode_tok_s"], chosen["prefill_tok_s"]
+    # A hub model starts the quantization the plan priced (a start may otherwise keep another one
+    # already in the cache): the timings and the estimates are then of the same weights.
+    pin = []
+    if not Path(a.model).exists() and not any(f == "--quant" or f.startswith("--quant=") for f in extra)             and chosen.get("quant"):
+        pin = ["--quant", chosen["quant"]]
 
     log = Path(f"choice_check_{a.port}.log")
     with log.open("w") as out:
-        server = subprocess.Popen([a.serve, *common, "--port", str(a.port)], stdout=out,
+        server = subprocess.Popen([a.serve, *common, *pin, "--port", str(a.port)], stdout=out,
                                   stderr=subprocess.STDOUT)
     try:
         if not healthy(a.port, server):
