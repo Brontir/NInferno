@@ -13,6 +13,7 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "convert/cache.h"
 #include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
@@ -2170,6 +2171,59 @@ void App::install(httplib::Server& server) {
         try {
             reply_json(res, moved_json());
         } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
+    });
+    // A model on disk the user names (a GGUF file, a checkpoint folder, an artifact): whether the
+    // engine runs it, by the converter's rule set, before it is converted and started.
+    server.Get("/api/disk", [](const httplib::Request& req, httplib::Response& res) {
+        const fs::path path = req.get_param_value("path");
+        std::error_code ec;
+        if (path.empty() || !fs::exists(path, ec)) {
+            reply_error(res, 404, "no such file or folder: " + path.string());
+            return;
+        }
+        if (path.extension() == ".ninferno") {
+            reply_json(res, {{"support", "full"}, {"kind", "artifact"}});
+            return;
+        }
+        if (!convert::is_convertible(path)) {
+            reply_json(res, {{"support", "none"},
+                             {"note", "neither a GGUF file nor a Hugging Face checkpoint folder "
+                                      "(config.json and safetensors weights)"}});
+            return;
+        }
+        const auto support = convert::model_support(convert::local_support_facts(path));
+        reply_json(res, {{"support", support_level(support)},
+                         {"note", support.reason},
+                         {"kind", fs::is_directory(path, ec) ? "checkpoint" : "gguf"}});
+    });
+    // The Hugging Face token gated repositories need: whether one is set, where it comes from and
+    // whose account it is; set or removed from this machine only, where `hf auth login` keeps it.
+    server.Get("/api/hf", [this](const httplib::Request&, httplib::Response& res) {
+        const auto token = convert::hub_token();
+        Json out{{"token", !token.value.empty()},
+                 {"source", token.source},
+                 {"path", convert::hub_token_path().string()}};
+        if (!token.value.empty() && !options_.offline) {
+            try {
+                out["account"] = convert::hub_account(token.value, {});
+            } catch (const std::exception& error) { out["error"] = error.what(); }
+        }
+        reply_json(res, out);
+    });
+    server.Post("/api/hf", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!is_loopback_host(req.remote_addr)) {
+            reply_error(res, 403, "the Hugging Face token is set on the machine ninferno-ui runs on");
+            return;
+        }
+        try {
+            const auto token = Json::parse(req.body).value("token", std::string());
+            if (!token.empty() && !options_.offline) {
+                (void)convert::hub_account(token, {}); // refused: not saved
+            }
+            convert::save_hub_token(token);
+            const auto now = convert::hub_token();
+            reply_json(res, {{"token", !now.value.empty()}, {"source", now.source}});
+        } catch (const std::exception& error) { reply_error(res, 400, error.what()); }
     });
     server.Post("/api/moved", [this](const httplib::Request& req, httplib::Response& res) {
         try {

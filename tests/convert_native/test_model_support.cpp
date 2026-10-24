@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -137,6 +138,23 @@ int main(int argc, char** argv) {
                "Llama 3.2 1B's whole config.json: " + ok.reason);
         f.config["mlp_bias"] = true;
         expect(says(of(f), Verdict::Unsupported, "mlp_bias"), "a field the converter refuses");
+    }
+    // A checkpoint folder on disk: its config.json and its template files.
+    {
+        std::ifstream in(std::string(argv[1]) + "/tests/convert_native/fixtures/dense_rope.json");
+        const auto config = Json::parse(in).at("llama32_1b").at("config");
+        const auto dir    = std::filesystem::temp_directory_path() / "ninferno_model_support_disk";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        std::ofstream(dir / "config.json") << config.dump();
+        std::ofstream(dir / "tokenizer_config.json") << R"({"bos_token": "<s>"})";
+        expect(says(of(cv::local_support_facts(dir)), Verdict::Unsupported, "no chat template"),
+               "a folder without a template");
+        std::ofstream(dir / "chat_template.jinja") << "{{ messages }}";
+        const auto ok = of(cv::local_support_facts(dir));
+        expect(ok.verdict == Verdict::Supported && ok.reason.empty(),
+               "a folder with config.json and a template: " + ok.reason);
+        std::filesystem::remove_all(dir);
     }
     // The hub search's answer for one model: its facts.
     {

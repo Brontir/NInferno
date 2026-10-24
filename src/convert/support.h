@@ -60,6 +60,10 @@ struct Support {
 [[nodiscard]] std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                                                             const FetchOptions& options);
 
+// The facts of a model on disk: a checkpoint directory (config.json, its tokenizer files and
+// template, its safetensors' dtypes) or a GGUF file (its header).
+[[nodiscard]] SupportFacts local_support_facts(const std::filesystem::path& path);
+
 // The facts a hub search answer carries for one model (an /api/models item with config, gguf,
 // safetensors, pipeline_tag, library_name and tags expanded).
 [[nodiscard]] SupportFacts search_support_facts(const nlohmann::json& item);

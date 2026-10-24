@@ -6,6 +6,7 @@
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
 #include "convert/pyjson.h"
+#include "convert/safetensors.h"
 #include "core/ascii.h"
 #include "core/sys.h"
 #include "spec/registry.h"
@@ -47,6 +48,10 @@ bool has_chat_template(const Json& tokenizer_config) {
            ((t->is_string() && !t->get<std::string>().empty()) ||
             (t->is_array() && !t->empty()));
 }
+
+constexpr const char* kGated =
+    "the repository is gated: accept its terms on the hub and give a Hugging Face read token "
+    "($HF_TOKEN, `hf auth login`, or the UI's settings)";
 
 // The engine families (spec::engine_for_architecture).
 constexpr const char* kEngines[] = {"qwen3_5", "gemma4", "nemotron_h", "dense"};
@@ -151,13 +156,13 @@ Support model_support(const SupportFacts& facts) {
         }
         if (arch == "dflash" || arch == "gemma4-assistant") { role = "drafter"; }
         if (facts.needs_token) {
-            return {Verdict::NeedsToken, role, "the repository is gated: set HF_TOKEN"};
+            return {Verdict::NeedsToken, role, kGated};
         }
     } else {
         const auto arch = architecture_of(facts.config);
         if (arch.empty()) {
             if (facts.needs_token) {
-                return {Verdict::NeedsToken, "", "the repository is gated: set HF_TOKEN"};
+                return {Verdict::NeedsToken, "", kGated};
             }
             return {Verdict::Unknown, "", "no config.json architecture"};
         }
@@ -182,7 +187,7 @@ Support model_support(const SupportFacts& facts) {
             unchecked = "config.json fields not checked (the hub's part of it only)";
         }
         if (facts.needs_token) {
-            return {Verdict::NeedsToken, role, "the repository is gated: set HF_TOKEN"};
+            return {Verdict::NeedsToken, role, kGated};
         }
     }
     // A drafter or a projector takes its model's tokenizer and template.
@@ -198,7 +203,7 @@ SupportFacts search_support_facts(const Json& item) {
     // A gated repository answers its files only with a token.
     if (const auto gated = item.find("gated");
         gated != item.end() && !gated->is_null() && !(gated->is_boolean() && !gated->get<bool>())) {
-        out.needs_token = sys::env("HF_TOKEN").empty() && sys::env("HUGGING_FACE_HUB_TOKEN").empty();
+        out.needs_token = hub_token().value.empty();
     }
     out.library  = item.value("library_name", std::string());
     for (const auto& tag : item.value("tags", Json::array())) {
@@ -230,6 +235,64 @@ SupportFacts search_support_facts(const Json& item) {
             out.chat_template = true;
         }
     }
+    return out;
+}
+
+namespace {
+
+// A GGUF file's facts from its header (the first bytes, read longer until the metadata fits).
+void read_gguf_facts(const fs::path& path, SupportFacts& out) {
+    out.gguf = true;
+    try {
+        const std::uint64_t size = fs::file_size(path);
+        for (const std::uint64_t want : {8ULL << 20, 64ULL << 20, 512ULL << 20}) {
+            const std::uint64_t n = std::min(want, size);
+            std::string bytes(static_cast<std::size_t>(n), '\0');
+            std::ifstream in(path, std::ios::binary);
+            in.read(bytes.data(), static_cast<std::streamsize>(n));
+            try {
+                const auto file = parse_gguf_head(reinterpret_cast<const std::byte*>(bytes.data()),
+                                                  bytes.size(), size, path.string());
+                const auto* arch = file.find("general.architecture");
+                out.gguf_architecture =
+                    arch && arch->is_string() ? arch->get<std::string>() : std::string();
+                out.chat_template = file.has("tokenizer.chat_template");
+                if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
+                                            file.has("general.source.huggingface.repository"))) {
+                    out.chat_template.reset();
+                }
+                return;
+            } catch (const GgufTruncated&) {
+                if (n == size) { throw; }
+            }
+        }
+    } catch (const std::exception& error) { out.gguf_error = error.what(); }
+}
+
+} // namespace
+
+SupportFacts local_support_facts(const fs::path& path) {
+    SupportFacts out;
+    std::error_code ec;
+    if (!fs::is_directory(path, ec)) {
+        if (ascii_lower(path.extension().string()) == ".gguf") { read_gguf_facts(path, out); }
+        return out;
+    }
+    if (std::ifstream in(path / "config.json"); in) {
+        out.config      = Json::parse(in, nullptr, false);
+        out.full_config = out.config.is_object();
+    }
+    bool template_found = fs::exists(path / "chat_template.jinja", ec);
+    if (std::ifstream in(path / "tokenizer_config.json"); in) {
+        template_found = template_found || has_chat_template(Json::parse(in, nullptr, false));
+    }
+    out.chat_template = template_found;
+    try {
+        std::set<std::string> dtypes;
+        const Checkpoint weights(path); // held by name: tensors() refers into it
+        for (const auto& [name, tensor] : weights.tensors()) { dtypes.insert(tensor.dtype_name); }
+        out.weight_dtypes.assign(dtypes.begin(), dtypes.end());
+    } catch (const std::exception&) {} // the conversion reads them
     return out;
 }
 
