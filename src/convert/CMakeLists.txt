@@ -22,6 +22,7 @@ add_library(ninferno_convert STATIC
   gguf_resources.cpp
   fetch.cpp
   drafters.cpp
+  support.cpp
   acquire.cpp
 )
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)

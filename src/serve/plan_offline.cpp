@@ -3,8 +3,10 @@
 #include "artifact/source_identity.h"
 #include "convert/acquire.h"
 #include "convert/drafters.h"
+#include "convert/cache.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -177,6 +179,24 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     out.kind                          = "hub";
     out.source                        = spec;
     convert::FetchOptions fetch       = fetch_options();
+    // A model the engine does not run is not planned: the converter's own rules, from what the
+    // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
+    // the listing below to fail or plan.
+    {
+        auto ask  = fetch;
+        ask.quant = quant;
+        std::optional<convert::SupportFacts> facts;
+        try {
+            facts = convert::hub_support_facts(spec, ask);
+        } catch (const std::exception&) {}
+        if (facts) {
+            const auto support = convert::model_support(*facts);
+            if (support.verdict == convert::Verdict::Unsupported ||
+                support.verdict == convert::Verdict::NeedsToken) {
+                throw std::runtime_error(spec + " cannot be run: " + support.reason);
+            }
+        }
+    }
     const auto quants                 = convert::list_quants(spec, fetch);
     out.repo                          = convert::split_spec(spec, fetch).first;
     const convert::RepoQuant* header  = nullptr;
@@ -262,6 +282,13 @@ ModelRead read_model(const ServeOptions& options) {
     out.source = name;
     if (fs::exists(name, error)) {
         const fs::path path(name);
+        // A checkpoint or GGUF file the engine does not run is not planned (convert/support.h).
+        if (convert::is_convertible(name)) {
+            if (const auto support = convert::model_support(convert::local_support_facts(path));
+                support.verdict == convert::Verdict::Unsupported) {
+                throw std::runtime_error(name + " cannot be run: " + support.reason);
+            }
+        }
         if (fs::is_directory(path)) {
             if (!fs::exists(path / "config.json")) {
                 throw std::runtime_error(name + " has no config.json to plan from");

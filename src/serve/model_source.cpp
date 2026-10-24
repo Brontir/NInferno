@@ -3,6 +3,7 @@
 #include "serve/plan_offline.h"
 
 #include "convert/acquire.h"
+#include "convert/support.h"
 #include "convert/cache.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
@@ -92,6 +93,12 @@ ModelSource resolve_model_source(const ServeOptions& options,
                                             "--model " + name + " --recipe NAME --out FILE)");
         }
         if (convert::is_convertible(name)) {
+            // Whether the engine runs it: the converter's rule set, before converting
+            // (convert/support.h).
+            if (const auto support = convert::model_support(convert::local_support_facts(name));
+                support.verdict == convert::Verdict::Unsupported) {
+                throw std::runtime_error(name + " cannot be run: " + support.reason);
+            }
             if (log) { log("checkpoint " + name); }
             const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);
             out.kind            = ModelSource::Kind::Checkpoint;
