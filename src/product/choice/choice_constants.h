@@ -286,7 +286,7 @@ inline constexpr ReferenceCard kReferenceCards[] = {
 };
 
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,
-// then the fewer bytes of weights, then the listing's order).
+// then the fewer bytes of weights, then the smaller quantization label, then the listing's order).
 inline constexpr double kWorthTie = 1e-9;
 
 // With the quantization curve, a generation that decides weighs the quantizations by worth too; one

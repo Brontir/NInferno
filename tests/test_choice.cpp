@@ -403,7 +403,7 @@ void weighs_the_quantizations(const json& fixture) {
                                         oracle(gemma, 20e9), open);
     check(!other.by_worth && other.why.find("no accuracy terms were measured on gemma4_text") != std::string::npos,
           "another family: the rule's largest and its defaults");
-    // Two quantizations alike in every respect: a tie, broken by the listing's order.
+    // Two quantizations alike in every respect: a tie, broken by the smaller label.
     Bench twins           = b;
     twins.quants          = {b.quants[0], b.quants[0]};
     twins.quants[1].label = "Q4_K_M copy";
@@ -414,7 +414,7 @@ void weighs_the_quantizations(const json& fixture) {
     for (const ch::Alternative& a : ch::explain(tie, twins.quants)) {
         if (a.axis == ch::Axis::Quant && a.value == "Q4_K_M copy") {
             check(a.why_code == "tie_order" && a.why_not.find("int8") == std::string::npos,
-                  "an equal quantization: the listing's order");
+                  "an equal quantization: the smaller label");
             ++ties;
         }
     }
