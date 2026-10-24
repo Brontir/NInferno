@@ -544,10 +544,16 @@ def main() -> int:
             case("a --vision start pins only to a snapshot with the projector",
                  without == ("true", "false") and with_projector == "true")
             (repo2 / "refs" / "main").write_text(old2)
+            # The old commit holds another conversion too (of a quantization not downloaded here):
+            # the one --refetch replaces is the model the old snapshot serves, the other stays.
+            other = repo2 / "ninferno" / old2 / "model-Q4_0.qwen3_5_bf16.ninferno"
+            other.write_bytes(b"x")
+            Path(str(other) + ".conversion.json").write_text("{}")
             refetched2 = again2("--refetch")
             case("--refetch with the download kept converts the new commit, removes the old conversion",
                  refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
-                 and not (repo2 / "ninferno" / old2).exists() and (repo2 / "snapshots" / old2).exists())
+                 and not (repo2 / "ninferno" / old2 / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and other.exists() and (repo2 / "snapshots" / old2).exists())
             if result.returncode:
                 errors.append(result.stderr[-2000:])
 

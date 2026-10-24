@@ -523,10 +523,18 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         if (!options.keep_replaced) {
                             if (kept) {
                                 replaced.artifact = *kept;
-                            } else if (auto old = converted_artifact(commit_dir,
-                                                                     options.fetch.quant,
-                                                                     convert_options.recipe)) {
-                                replaced.artifact = *old;
+                            } else {
+                                // The conversion of the model the old snapshot serves (of several
+                                // a commit may hold, the one this start's selection takes).
+                                auto quant = options.fetch.quant;
+                                if (quant.empty()) {
+                                    quant = snapshot_quant_label(
+                                        repo_dir / "snapshots" / held_commit, options.fetch, repo);
+                                }
+                                if (auto old = converted_artifact(commit_dir, quant,
+                                                                  convert_options.recipe)) {
+                                    replaced.artifact = *old;
+                                }
                             }
                         }
                         kept.reset();
