@@ -114,14 +114,18 @@ def main():
             sys.exit(f"ninferno-serve did not start (see {log})")
         tasks = random.Random(a.seed).sample(TASKS, a.count)
         ask(a.port, [{"role": "user", "content": "Hi"}], 8)  # untimed warm-up
-        rows, lock = [], threading.Lock()
+        rows, errors, lock = [], [], threading.Lock()
 
         def worker(w):
-            for i in range(len(tasks)):
-                name, cap, cut = tasks[(i + w) % len(tasks)]
-                p, g, s = ask(a.port, messages_of(name, cut), cap)
+            try:
+                for i in range(len(tasks)):
+                    name, cap, cut = tasks[(i + w) % len(tasks)]
+                    p, g, s = ask(a.port, messages_of(name, cut), cap)
+                    with lock:
+                        rows.append((name, p, g, s))
+            except Exception as error:  # a failed stream fails the run, not just its thread
                 with lock:
-                    rows.append((name, p, g, s))
+                    errors.append(f"stream {w}: {error}")
 
         started = time.perf_counter()
         threads = [threading.Thread(target=worker, args=(w,)) for w in range(a.concurrency)]
@@ -130,6 +134,8 @@ def main():
         for t in threads:
             t.join()
         wall = time.perf_counter() - started
+        if errors:
+            sys.exit("; ".join(errors))
     finally:
         server.terminate()
         server.wait()
