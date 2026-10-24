@@ -200,7 +200,9 @@ SupportFacts search_support_facts(const Json& item) {
         }
     }
     if (const auto s = item.find("safetensors"); s != item.end() && s->is_object()) {
-        for (const auto& [dtype, count] : s->value("parameters", Json::object()).items()) {
+        // Held by name: items() of a temporary outlives it in a range-for.
+        const auto parameters = s->value("parameters", Json::object());
+        for (const auto& [dtype, count] : parameters.items()) {
             out.weight_dtypes.push_back(dtype);
         }
     }
