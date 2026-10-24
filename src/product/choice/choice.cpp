@@ -15,6 +15,12 @@ namespace {
 
 constexpr double kQuantFloorBits = 3.5; // runtime/engine/quant_rule.h kPlanQualityFloorBits
 
+// At or above the quality floor: unknown bits (0: no label bits, no parameter count) rank so, as in
+// the quant rule (largest_fitting_quant).
+bool at_or_above_floor(const QuantOption& quant) {
+    return quant.bits_per_weight == 0 || quant.bits_per_weight >= kQuantFloorBits;
+}
+
 std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
 }
@@ -548,7 +554,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         return chunk_ok && (out.by_worth || (s.candidate.kv == default_kv &&
                                              s.candidate.activations == default_activations));
     };
-    const auto above = [&](const Scored& s) { return quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits; };
+    const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
     // every step before any quantization below them (the quant rule's tiers).
     std::optional<std::size_t> chosen;
@@ -649,7 +655,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     if (!choice.chosen) { return out; }
     const Scored& chosen = choice.scored[*choice.chosen];
     const Candidate& c   = chosen.candidate;
-    const auto above = [&](const Scored& s) { return quants[s.candidate.quant].bits_per_weight >= kQuantFloorBits; };
+    const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
     const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
         switch (axis) {
         case Axis::Quant: return quants[s.candidate.quant].label;
