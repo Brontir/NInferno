@@ -301,8 +301,9 @@ def main() -> int:
             whole = head("Q8_0", 8 * MIB)
             case("gguf head of a short file", whole.get("size") == 2 * MIB and whole.get("bytes") == 2 * MIB)
 
-            # The listing a plan reads counts what the fetch takes: the Transformers-named weights,
-            # not a second copy beside them (consolidated.safetensors); a small projector is listed.
+            # The listing a plan reads counts what the fetch takes: the Transformers-named weights with
+            # their MTP part, not a second copy beside them (consolidated.safetensors); a small
+            # projector is listed.
             def listed(spec):
                 environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
                 environment["HF_ENDPOINT"] = base
@@ -314,7 +315,8 @@ def main() -> int:
             weights_row = [r for r in rows if r["format"] == "safetensors"]
             case("listed weights are the fetched ones",
                  len(weights_row) == 1 and "consolidated.safetensors" not in weights_row[0]["files"]
-                 and weights_row[0]["files"] == ["model.safetensors"])
+                 and sorted(weights_row[0]["files"]) == ["model.safetensors", "model_mtp.safetensors"]
+                 and weights_row[0]["mtp_bytes"] == len(mtp))
             case("a small projector is listed",
                  any("mmproj-model.gguf" in r["files"] for r in listed("org/smallproj")))
 

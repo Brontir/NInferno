@@ -1898,8 +1898,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             quant.bytes  = file.size;
             quant.files.push_back(file.path);
             out.push_back(std::move(quant));
-        } else if (name.ends_with(".safetensors") && name.find("mtp") == std::string::npos &&
-                   name.find("visual") == std::string::npos &&
+        } else if (name.ends_with(".safetensors") && name.find("visual") == std::string::npos &&
                    file.path.find('/') == std::string::npos) {
             // The top-level weights, as the fetch takes them (subdirectories hold originals and
             // other formats: gpt-oss's original/model.safetensors).
@@ -1914,6 +1913,11 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         if (!named || transformers_weight_file(file->path)) {
             weights.bytes += file->size;
             weights.files.push_back(file->path);
+            // A part of its own for the MTP layers (model_mtp.safetensors): fetched and converted
+            // with the model, loaded only under MTP.
+            if (ascii_lower(file->path).find("mtp") != std::string::npos) {
+                weights.mtp_bytes += file->size;
+            }
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }

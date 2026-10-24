@@ -237,6 +237,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     if (weights != nullptr) {
         out.facts = product::plan_facts_of_config(convert::fetch_config(spec, fetch),
                                                   weights->bytes, runtime::WeightBasis::FileSize);
+        out.facts.model.mtp_bytes = weights->mtp_bytes;
         out.listing.clear();
         return out;
     }
