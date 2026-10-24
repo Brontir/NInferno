@@ -151,17 +151,21 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     return out;
 }
 
-// The listing's vision projector the start fetches beside a GGUF model under --vision (the same
-// choice: convert::best_projector), nullptr when there is none.
-const convert::RepoQuant* listed_projector(const std::vector<convert::RepoQuant>& quants) {
+// The bytes of the vision projector the start fetches beside a GGUF model under --vision (the same
+// choice: convert::best_projector, every part of a split one); 0 when there is none.
+std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quants) {
     std::vector<std::string> names;
     for (const auto& q : quants) { names.insert(names.end(), q.files.begin(), q.files.end()); }
-    const auto best = convert::best_projector(names);
-    if (!best) { return nullptr; }
+    const auto parts = convert::best_projector(names);
+    std::uint64_t bytes = 0;
     for (const auto& q : quants) {
-        if (std::find(q.files.begin(), q.files.end(), *best) != q.files.end()) { return &q; }
+        // A projector file is a listing entry of its own (a sidecar), its bytes its own.
+        if (q.files.size() == 1 &&
+            std::find(parts.begin(), parts.end(), q.files.front()) != parts.end()) {
+            bytes += q.bytes;
+        }
     }
-    return nullptr;
+    return bytes;
 }
 
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
@@ -208,9 +212,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                     convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                              head.bytes.size(), head.size, head.path);
                 out.facts = product::plan_facts_of_gguf(file, header->bytes);
-                if (const convert::RepoQuant* projector = listed_projector(quants); vision && projector) {
-                    out.facts.model.vision_bytes = projector->bytes;
-                }
+                if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
                 return out;
             } catch (const convert::GgufTruncated&) { continue; }
         }

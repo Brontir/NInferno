@@ -669,18 +669,22 @@ void test_catalog() {
               "with its download still there, the usual path asks the hub");
         fs::remove_all(root);
     }
-    // The Vision projector a start fetches and the plan charges: one choice from the listing.
+    // The Vision projector a start fetches and the plan charges: one choice from the listing, every
+    // part of a split one.
     {
         using ninferno::convert::best_projector;
+        using Names = std::vector<std::string>;
         check(best_projector({"m-Q4_K_M.gguf", "mmproj-F16.gguf", "mmproj-model-bf16.gguf",
-                              "mmproj-F32.gguf"}) ==
-                      std::optional<std::string>("mmproj-model-bf16.gguf") &&
+                              "mmproj-F32.gguf"}) == Names{"mmproj-model-bf16.gguf"} &&
                   best_projector({"mmproj-F16.gguf", "mmproj-F32.gguf"}) ==
-                      std::optional<std::string>("mmproj-F32.gguf") &&
+                      Names{"mmproj-F32.gguf"} &&
                   best_projector({"sub/mmproj-b.gguf", "sub/mmproj-a.gguf"}) ==
-                      std::optional<std::string>("sub/mmproj-a.gguf") &&
-                  !best_projector({"m-Q4_K_M.gguf", "README.md"}),
-              "the projector: BF16, F32, F16, then any; ties to the first name");
+                      Names{"sub/mmproj-a.gguf"} &&
+                  best_projector({"mmproj-BF16-00002-of-00002.gguf", "mmproj-F16.gguf",
+                                  "mmproj-BF16-00001-of-00002.gguf"}) ==
+                      Names{"mmproj-BF16-00001-of-00002.gguf", "mmproj-BF16-00002-of-00002.gguf"} &&
+                  best_projector({"m-Q4_K_M.gguf", "README.md"}).empty(),
+              "the projector: BF16, F32, F16, then any; ties to the first name; all its parts");
     }
     // KV per token from GGUF metadata: a plain stack, a hybrid one, a sliding-window one.
     {

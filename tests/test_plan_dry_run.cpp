@@ -754,7 +754,8 @@ void test_rule() {
         }
     }
     // Several streams under an automatic context: a row launched at its own context per stream
-    // shows the plan at that context (each stream its own), not the shared pool it would get.
+    // shows the launch's plan (--max-context-cap at that context: still automatic, the step-down
+    // rungs kept), not the uncapped pool the streams would share.
     {
         pr::DryRunInputs inputs;
         inputs.device                 = device;
@@ -766,8 +767,9 @@ void test_rule() {
             if (r.launch_context == 0) { continue; }
             const rt::DryRunRung* chosen = r.planned.plan.chosen();
             check(chosen != nullptr && chosen->rung.max_context <= r.launch_context &&
-                      r.planned.plan.private_contexts(),
-                  r.listing.quant + ": the plan shown is the launch's, each stream its own");
+                      r.planned.plan.axes.context_automatic &&
+                      r.planned.plan.axes.context_ceiling == r.launch_context,
+                  r.listing.quant + ": the plan shown is the launch's, capped at its context");
         }
     }
     // On a 24 GB card at 32K x 1 a 27B fits at Q6_K, not at Q8_0 (the lab's 4090).

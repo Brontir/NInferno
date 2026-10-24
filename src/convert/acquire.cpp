@@ -51,20 +51,20 @@ std::optional<fs::path> gguf_projector(const FetchResult& fetched, const FetchOp
     for (const auto& quant : list_quants(fetched.repo + "@" + fetched.commit, listing)) {
         names.insert(names.end(), quant.files.begin(), quant.files.end());
     }
-    const auto best = best_projector(names);
-    if (!best) { return std::nullopt; }
+    const auto parts = best_projector(names);
+    if (parts.empty()) { return std::nullopt; }
     auto small     = fetch;
-    small.include  = {*best};
+    small.include  = parts; // every part of a split projector: the converter reads them all
     small.quant.clear();
     small.revision = fetched.commit;
     const auto files = fetch_model(fetched.repo, small);
     for (const auto& file : files.files) {
-        if (file.path == *best) {
+        if (file.path == parts.front()) {
             if (log) { log("vision projector " + fetched.repo + "/" + file.path); }
             return files.snapshot / file.path;
         }
     }
-    throw std::runtime_error(fetched.repo + ": the vision projector " + *best +
+    throw std::runtime_error(fetched.repo + ": the vision projector " + parts.front() +
                              " is listed but was not fetched");
 }
 
@@ -317,7 +317,13 @@ bool recipe_has_vision(const std::string& recipe) {
             recipe.find("dflash") == std::string::npos);
 }
 
-std::optional<std::string> best_projector(const std::vector<std::string>& files) {
+std::vector<std::string> best_projector(const std::vector<std::string>& files) {
+    // A split projector's parts (<name>-00001-of-0000N.gguf) are one projector, named by its group.
+    static const std::regex split(R"((.*)-\d{5}-of-\d{5}\.gguf)", std::regex::icase);
+    const auto group = [](const std::string& file) {
+        std::smatch match;
+        return std::regex_match(file, match, split) ? match[1].str() : file;
+    };
     std::optional<std::string> best;
     int best_rank = 99;
     for (const auto& file : files) {
@@ -327,7 +333,13 @@ std::optional<std::string> best_projector(const std::vector<std::string>& files)
             best_rank = r;
         }
     }
-    return best;
+    std::vector<std::string> parts;
+    if (!best) { return parts; }
+    for (const auto& file : files) {
+        if (group(file) == group(*best)) { parts.push_back(file); }
+    }
+    std::sort(parts.begin(), parts.end());
+    return parts;
 }
 
 std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem::path& gguf) {
