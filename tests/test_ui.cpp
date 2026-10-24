@@ -716,6 +716,21 @@ void test_catalog() {
         const auto ud = kept_artifact(root, "org/m-GGUF", "", "UD-Q4_K_M", "");
         check(ud && ud->filename() == "m-UD-Q4_K_M.qwen3_5_bf16.ninferno",
               "a kept artifact by its exact label beside a longer one");
+        // The same of --vision conversions (<gguf-stem>.vision.<recipe>).
+        const auto vision = root / "models--org--v-GGUF";
+        fs::create_directories(vision / "refs");
+        fs::create_directories(vision / "ninferno/c0ffee");
+        std::ofstream(vision / "refs/main") << "c0ffee
+";
+        for (const char* name : {"v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+                                 "v-UD-Q4_K_M.vision.qwen3_5_bf16.ninferno"}) {
+            std::ofstream(vision / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(vision / "ninferno/c0ffee" / (std::string(name) + ".conversion.json"))
+                << "{}";
+        }
+        const auto vq4 = kept_artifact(root, "org/v-GGUF", "", "Q4_K_M", "");
+        check(vq4 && vq4->filename() == "v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+              "a kept --vision artifact by its exact label beside a longer one");
         check(!kept_artifact(root, "org/m-GGUF", "", "", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "IQ2_XXS", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", "other_recipe") &&

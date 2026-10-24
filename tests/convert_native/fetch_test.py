@@ -501,6 +501,24 @@ def main() -> int:
                  and (repo2 / "snapshots" / ("e" * 40) / "model-Q4_0.gguf").exists())
             del hub.repos["org/qwen-gguf2"]["files"]["model-Q4_0.gguf"]
             hub.repos["org/qwen-gguf2"]["lfs"].discard("model-Q4_0.gguf")
+            # A split quantization whose download stopped after its first part: the old snapshot
+            # holds one part of two, so nothing pins to the old commit; both parts are fetched at
+            # the new one.
+            parts = {f"model-Q5_K_M-0000{i}-of-00002.gguf": blob(MIB, 70 + i) for i in (1, 2)}
+            for name, data in parts.items():
+                hub.repos["org/qwen-gguf2"]["files"][name] = data
+                hub.repos["org/qwen-gguf2"]["lfs"].add(name)
+                hub.blobs[hub.sha(data)] = data
+            first_part = repo2 / "snapshots" / old2 / "model-Q5_K_M-00001-of-00002.gguf"
+            first_part.write_bytes(parts["model-Q5_K_M-00001-of-00002.gguf"])
+            split_partial = again2("--quant", "Q5_K_M", "--fetch-only")
+            case("a split quantization with one part kept: fetched whole at the new commit, not pinned",
+                 split_partial[0] == 0 and "the weights here are of" not in split_partial[1]
+                 and all((repo2 / "snapshots" / ("e" * 40) / name).exists() for name in parts))
+            first_part.unlink()
+            for name in parts:
+                del hub.repos["org/qwen-gguf2"]["files"][name]
+                hub.repos["org/qwen-gguf2"]["lfs"].discard(name)
             refetched2 = again2("--refetch")
             case("--refetch with the download kept converts the new commit, removes the old conversion",
                  refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()

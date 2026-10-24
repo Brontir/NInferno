@@ -295,6 +295,11 @@ DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
 std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std::string& quant,
                                            const std::string& recipe) {
     const int width = quant_width_tag(quant);
+    // The GGUF's label of a conversion's stem; a --vision conversion is <gguf-stem>.vision.
+    const auto label = [](std::string stem) {
+        if (stem.ends_with(".vision")) { stem.resize(stem.size() - std::string_view(".vision").size()); }
+        return gguf_quant_label(stem + ".gguf");
+    };
     std::vector<fs::path> found;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
@@ -307,7 +312,7 @@ std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std
         if (!recipe.empty() && base.substr(dot + 1) != recipe) { continue; }
         const bool matches =
             quant.empty() ||
-            (width > 0 ? quant_label_bits(gguf_quant_label(stem + ".gguf")) == width
+            (width > 0 ? quant_label_bits(label(stem)) == width
                        : ascii_lower(stem).find(ascii_lower(quant)) != std::string::npos);
         if (matches) { found.push_back(path); }
     }
@@ -318,7 +323,7 @@ std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std
         for (const auto& path : found) {
             const auto base = path.stem().string();
             const auto stem = base.substr(0, base.rfind('.'));
-            if (ascii_lower(gguf_quant_label(stem + ".gguf")) == ascii_lower(quant)) {
+            if (ascii_lower(label(stem)) == ascii_lower(quant)) {
                 exact.push_back(path);
             }
         }
