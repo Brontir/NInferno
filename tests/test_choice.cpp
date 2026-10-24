@@ -419,6 +419,16 @@ void weighs_the_quantizations(const json& fixture) {
         }
     }
     check(ties == 1, "the equal quantization explained");
+    // Listed the other way round, the tie still goes to the smaller label, as the quant rule's.
+    Bench swapped           = twins;
+    swapped.quants          = {twins.quants[1], twins.quants[0]};
+    for (const ch::Gates& g : {open, ch::Gates{false, true}}) {
+        const ch::Choice c = ch::choose(swapped.model, swapped.card, swapped.quants,
+                                        ch::allowed_axes(swapped.model, KvCacheStorage::Int8Group64), {}, task,
+                                        oracle(swapped, 20e9), g);
+        check(c.chosen && swapped.quants[chosen(c).candidate.quant].label == "Q4_K_M",
+              "an equal quantization: the smaller label wherever it is listed");
+    }
     // Without decision constants (Turing) the rule's largest stands.
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     Bench t6      = t;
