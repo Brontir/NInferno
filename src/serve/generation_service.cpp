@@ -2,6 +2,7 @@
 
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
+#include "serve/request_validation.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -773,6 +774,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         const std::invalid_argument error("Vision is disabled for this server");
         throw_invalid_input(error, "vision_disabled");
     }
+    if (request.draft_tokens) { check_draft_depth(*request.draft_tokens); }
     prepared.lifetime = acquire_request_lifetime(deadline_policy);
 
     try {
@@ -820,7 +822,8 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             request_options.execution.thinking.budget.reset();
             prepared.thinking_budget.reset();
         }
-        choose_speculation(prepared.enable_thinking, request_options, prepared);
+        choose_speculation(prepared.enable_thinking, request.draft_tokens, request_options,
+                           prepared);
         prepared.prompt_tokens = static_cast<int>(prompt.summary().prompt_tokens);
         prepared.preparation   = prompt.preparation_stats();
         prepared.prepare_seconds =
@@ -839,10 +842,42 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
     return prepared;
 }
 
-void GenerationService::choose_speculation(bool thinking, ninferno::RequestOptions& request_options,
+void GenerationService::check_draft_depth(std::uint32_t depth) const {
+    const std::uint32_t window = product::speculative_window(engine_->options().speculative);
+    if (depth <= window) { return; }
+    bad_request(window == 0 ? "ninferno.draft_tokens: this server decodes plainly (no drafter is "
+                              "loaded), so only 0 is accepted"
+                            : "ninferno.draft_tokens must be at most " + std::to_string(window) +
+                                  ", the deepest draft depth this server captured at startup",
+                "ninferno.draft_tokens", "draft_depth_out_of_range");
+}
+
+void GenerationService::choose_speculation(bool thinking, std::optional<std::uint32_t> draft_tokens,
+                                           ninferno::RequestOptions& request_options,
                                            PreparedRequest& prepared) const {
     prepared.speculation_fallback = startup_speculation_.fallback;
     prepared.plan_level           = plan_level_;
+    if (draft_tokens) {
+        // The request's own depth (prepare_impl refused one past the window before any work): the
+        // watchdog floor measured at that depth and the menu's shallower depths below it.
+        const SpeculativeOptions& engine = engine_->options().speculative;
+        RequestSpeculation speculation =
+            served_speculation_ ? product::request_speculation_at(served_speculation_->menu,
+                                                                  *draft_tokens,
+                                                                  engine.acceptance_floor)
+                                : RequestSpeculation{.draft_tokens     = *draft_tokens,
+                                                     .acceptance_floor = engine.acceptance_floor};
+        if (*draft_tokens == 0) { speculation.acceptance_floor = 0.0; }
+        SpeculativeOptions label       = engine;
+        label.draft_tokens             = *draft_tokens;
+        prepared.speculation_config    = *draft_tokens == 0 ? "plain" : product::speculation_label(label);
+        prepared.speculation_selection = "request";
+        prepared.speculation_reason    = "ninferno.draft_tokens";
+        prepared.speculation_fallback  = "none";
+        prepared.speculation_floor     = speculation.acceptance_floor;
+        request_options.execution.speculation = std::move(speculation);
+        return;
+    }
     if (!served_speculation_) {
         prepared.speculation_config    = startup_speculation_.config;
         prepared.speculation_selection = startup_speculation_.selection;

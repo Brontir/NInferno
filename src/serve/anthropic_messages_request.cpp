@@ -1188,7 +1188,7 @@ AnthropicMessagesRequest parse_anthropic_messages_request(const Json& body,
     result.thinking_display =
         parse_common_prompt(body, limits, result.generation, ParsePurpose::Messages);
     parse_generation_fields(body, result.generation);
-    check_ninferno_extension(body);
+    result.generation.draft_tokens = parse_ninferno_extension(body).draft_tokens;
     // What the parser reads, plus standard fields with no local effect (metadata, service_tier).
     static constexpr std::string_view kKnown[] = {"cache_control", "chat_template_kwargs",
                                                   "container",     "max_tokens",

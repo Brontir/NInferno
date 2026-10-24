@@ -1357,7 +1357,7 @@ OpenAIResponsesCreateRequest parse_openai_responses_create_request(const Json& b
     parsed.prompt.system_head_candidate =
         cache_policy.auto_system_shared_prefix &&
         cache_policy.automatic != OpenAIPromptCacheAutomatic::Disabled;
-    check_ninferno_extension(body);
+    parsed.prompt.generation.draft_tokens = parse_ninferno_extension(body).draft_tokens;
     OpenAIResponsesCreateRequest out;
     out.prompt              = std::move(parsed.prompt);
     out.tools               = std::move(parsed.wire_tools);

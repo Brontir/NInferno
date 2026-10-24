@@ -146,6 +146,41 @@ int main() {
                           "shallower_floor: measured, interpolated, scaled, none; floors of 1 or "
                           "less are no measurement");
 
+        // A request that names its own depth (ninferno.draft_tokens): the floor measured at that
+        // depth, else interpolated; the menu's shallower depths as its step-down; 0 is plain.
+        using ninferno::product::request_speculation_at;
+        ninferno::spec::SpeculationMenu menu;
+        menu.mode                   = ninferno::spec::Mode::Mtp;
+        menu.primary.config         = {.mode = ninferno::spec::Mode::Mtp, .k = 5};
+        menu.primary.floor          = 2.4;
+        menu.thinking               = menu.primary;
+        menu.overall.config         = {.mode = ninferno::spec::Mode::Mtp, .k = 2};
+        menu.overall.floor          = 1.5;
+        menu.non_thinking           = menu.overall;
+        const auto at5              = request_speculation_at(menu, 5, 9.0);
+        const auto at3              = request_speculation_at(menu, 3, 9.0);
+        const auto at7              = request_speculation_at(menu, 7, 9.0);
+        const auto at0              = request_speculation_at(menu, 0, 9.0);
+        ninferno::spec::SpeculationMenu plain;
+        const auto plain3           = request_speculation_at(plain, 3, 1.7);
+        failures += check(at5.draft_tokens == 5 && near(at5.acceptance_floor, 2.4) &&
+                              at5.step_down.size() == 1 && at5.step_down[0].draft_tokens == 2 &&
+                              near(at5.step_down[0].acceptance_floor, 1.5),
+                          "a menu depth keeps its own floor and steps down to the shallower one");
+        failures += check(at3.draft_tokens == 3 &&
+                              near(at3.acceptance_floor, shallower_floor({{5, 2.4}, {2, 1.5}}, 3)) &&
+                              at3.acceptance_floor < at5.acceptance_floor &&
+                              at3.step_down.size() == 1 && at3.step_down[0].draft_tokens == 2,
+                          "a depth between menu depths takes the interpolated floor, not the "
+                          "deeper choice's");
+        failures += check(at7.draft_tokens == 7 && at7.acceptance_floor > at5.acceptance_floor &&
+                              at7.step_down.size() == 2 && at7.step_down[0].draft_tokens == 5,
+                          "a deeper depth scales the floor up and steps down through every menu depth");
+        failures += check(at0.draft_tokens == 0 && at0.step_down.empty(), "depth 0 is plain decode");
+        failures += check(plain3.draft_tokens == 3 && near(plain3.acceptance_floor, 1.7) &&
+                              plain3.step_down.empty(),
+                          "a plain menu (explicit --spec) gives the engine's floor");
+
         const auto choice = [](ninferno::spec::Mode mode, std::int32_t k, const char* drafter,
                                double floor) {
             ninferno::spec::Choice c;

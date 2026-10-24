@@ -66,16 +66,37 @@ std::optional<bool> nullable_bool(const RequestJson& object, const char* key,
     return object.at(key).get<bool>();
 }
 
-void check_ninferno_extension(const RequestJson& body) {
-    if (!body.contains("ninferno") || body.at("ninferno").is_null()) { return; }
+NinfernoExtension parse_ninferno_extension(const RequestJson& body) {
+    NinfernoExtension out;
+    if (!body.contains("ninferno") || body.at("ninferno").is_null()) { return out; }
     const RequestJson& extension = body.at("ninferno");
     if (!extension.is_object()) { bad_request("ninferno must be an object", "ninferno"); }
-    // No member is defined at present (ninferno.spec_family, a per-request speculation family, was
-    // removed with the prompt classifier).
     for (auto it = extension.begin(); it != extension.end(); ++it) {
-        bad_request("unknown ninferno member: " + it.key(), "ninferno." + it.key(),
-                    "unknown_parameter");
+        if (it.key() != "draft_tokens") {
+            bad_request("unknown ninferno member: " + it.key(), "ninferno." + it.key(),
+                        "unknown_parameter");
+        }
     }
+    if (extension.contains("draft_tokens") && !extension.at("draft_tokens").is_null()) {
+        const RequestJson& value = extension.at("draft_tokens");
+        const std::string range  = "[0," + std::to_string(kMaximumRequestDraftTokens) + "]";
+        if (!value.is_number_integer()) {
+            bad_request("ninferno.draft_tokens must be an integer in " + range,
+                        "ninferno.draft_tokens", "invalid_draft_tokens");
+        }
+        const bool out_of_range =
+            value.is_number_unsigned()
+                ? value.get<std::uint64_t>() > kMaximumRequestDraftTokens
+                : (value.get<std::int64_t>() < 0 ||
+                   value.get<std::int64_t>() > std::int64_t{kMaximumRequestDraftTokens});
+        if (out_of_range) {
+            bad_request("ninferno.draft_tokens must be in " + range + ": 0 decodes the request "
+                        "plainly, a depth drafts that many tokens a round",
+                        "ninferno.draft_tokens", "invalid_draft_tokens");
+        }
+        out.draft_tokens = static_cast<std::uint32_t>(value.get<std::int64_t>());
+    }
+    return out;
 }
 
 bool valid_tool_name(std::string_view name, std::size_t maximum_length) noexcept {

@@ -996,7 +996,7 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
     output.generation.preserve_thinking         = template_options.preserve_thinking;
     output.generation.chat_template_kwargs_json = template_options.kwargs_json;
     apply_openai_prompt_cache_policy(output.generation, cache_policy);
-    check_ninferno_extension(body);
+    output.generation.draft_tokens = parse_ninferno_extension(body).draft_tokens;
     output.generation.output_constraint = std::move(constraint);
     attach_tool_call_constraint(output.generation);
     // What the parser reads, plus standard fields with no local effect (metadata, prediction,

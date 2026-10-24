@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <optional>
 #include <random>
@@ -96,9 +97,14 @@ void append_stop_strings(const RequestJson& value, std::string param, bool singl
 void check_message_count(std::size_t count, const RequestLimits& limits, const char* field);
 
 // The server extension object shared by every dialect: {"ninferno": {...}}. Absent or null is
-// accepted; anything else that is not a known member with a known value is a 400 (no member is
-// defined at present).
-void check_ninferno_extension(const RequestJson& body);
+// accepted; anything else that is not a known member with a known value is a 400. Its members:
+//   draft_tokens  this request's speculative draft depth, 0..kMaximumRequestDraftTokens: 0 decodes
+//                 it plainly; the server refuses a depth past the window it captured at startup.
+inline constexpr std::uint32_t kMaximumRequestDraftTokens = 15;
+struct NinfernoExtension {
+    std::optional<std::uint32_t> draft_tokens;
+};
+[[nodiscard]] NinfernoExtension parse_ninferno_extension(const RequestJson& body);
 
 // Top-level fields of `body` outside `known` (what the dialect reads, plus fields it knows to be
 // neutral): one note lists them, so a misspelt option (max_token) is not silently without effect.

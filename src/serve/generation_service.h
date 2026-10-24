@@ -285,8 +285,12 @@ private:
     compile_output_constraint(const OutputConstraintRequest& constraint, bool follows_reasoning,
                               bool special_tokens_visible) const;
 
-    // Chooses the request's speculation (--spec auto) into request_options and prepared.
-    void choose_speculation(bool thinking, ninferno::RequestOptions& request_options,
+    // Refuses (HTTP 400) a request draft depth past the window the Engine captured at startup.
+    void check_draft_depth(std::uint32_t depth) const;
+    // Chooses the request's speculation (--spec auto) into request_options and prepared; a depth
+    // the request names (ninferno.draft_tokens) wins over the server's choice.
+    void choose_speculation(bool thinking, std::optional<std::uint32_t> draft_tokens,
+                            ninferno::RequestOptions& request_options,
                             PreparedRequest& prepared) const;
 
     ServeOptions options_;
