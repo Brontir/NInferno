@@ -83,11 +83,6 @@ models::LoadOptions DenseExecution::load_options() const {
 }
 
 void DenseExecution::validate_options(DeviceContext& device, const EngineOptions& options) const {
-    if (options.purpose != EnginePurpose::Generation) {
-        throw std::invalid_argument("the dense decoder serves generation only; ninferno-perplexity "
-                                    "scores Qwen models (a source build "
-                                    "scores this family with ninferno-dense score)");
-    }
     if (options.enable_vision) {
         throw std::invalid_argument("dense decoder artifacts carry no Vision encoder");
     }
@@ -162,8 +157,13 @@ WorkspacePlan DenseExecution::workspace_plan(const SequencePlanImpl& plan) const
     out.ordinary_round = DensePass::workspace_bytes(model_, context, batch, batch) +
                          ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, batch);
     if (plan.features.masked_draft()) { dflash_workspace(plan, out); }
-    out.general_capacity =
-        std::max({out.text_prefill, out.ordinary_round, out.dflash_context, out.dflash_round});
+    // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+    if (plan.causal_scoring) {
+        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+            traits_.output_rows, model_.weights().output_head);
+    }
+    out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.dflash_context,
+                                     out.dflash_round, out.causal_score});
     out.capacity = out.general_capacity;
     return out;
 }

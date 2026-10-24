@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -83,6 +84,9 @@ public:
 
     // Artifact-tokenizer raw-text encoding. No chat template or implicit special token is added.
     [[nodiscard]] std::vector<TokenId> tokenize_text(std::string_view text) const;
+    // The token a document starts with when the model's tokenizer adds one (Gemma 4's <bos>):
+    // a causal score of text that starts mid-document begins from it. nullopt when it adds none.
+    [[nodiscard]] std::optional<TokenId> document_start_token() const;
 
     // Returns log p(tokens[i] | tokens[0..i)) for i in [first_target,tokens.size()).
     [[nodiscard]] std::vector<float> score_tokens(std::vector<TokenId> tokens,

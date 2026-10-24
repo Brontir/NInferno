@@ -286,6 +286,10 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     CorpusSelection corpus = options.corpus
                                  ? ninferno::perplexity::load_corpus(*options.corpus, options.quick)
                                  : ninferno::perplexity::load_custom_text(*options.text);
+    // A model whose tokenizer starts a document with a token (Gemma 4's <bos>) scores every window
+    // from it in place of the window's first token, as llama.cpp's perplexity and ninferno-gemma4
+    // score do: a Gemma 4 window without it degrades along its length (26B at W 4096: ppl 954).
+    const std::optional<ninferno::TokenId> document_start = engine.document_start_token();
     std::vector<EvaluationStream> streams;
     streams.reserve(corpus.streams.size());
     std::uint64_t total_scored_tokens = 0;
@@ -398,6 +402,7 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
             std::vector<ninferno::TokenId> input(
                 stream.tokens.begin() + static_cast<std::ptrdiff_t>(window.input_begin),
                 stream.tokens.begin() + static_cast<std::ptrdiff_t>(window.input_end));
+            if (document_start) { input.front() = *document_start; }
             const Clock::time_point window_started = Clock::now();
             const std::size_t expected             = window.target_end - window.target_begin;
             // Target token i is the stream's target i - 1.
@@ -547,6 +552,7 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
           {"prefill_chunk_tokens", 1024},
           {"step_tokens", options.step_tokens},
           {"score_tile_tokens", 1024},
+          {"window_start_token", document_start ? json(*document_start) : json(nullptr)},
           {"kv_dtype", kv_name(options.kv)},
           {"activations", ninferno::product::activation_mode_name(options.activations)}}},
         {"timing",

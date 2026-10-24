@@ -224,11 +224,6 @@ public:
     }
 
     void validate_options(DeviceContext& device, const EngineOptions& options) const override {
-        if (options.purpose != EnginePurpose::Generation) {
-            throw std::invalid_argument("Gemma 4 serves generation only; ninferno-perplexity "
-                                        "scores Qwen models (a source build "
-                                        "scores this family with ninferno-gemma4 score)");
-        }
         if (options.enable_vision && !encoder_) {
             throw std::invalid_argument("Gemma 4: this artifact was loaded without its vision "
                                         "tower; serve it without --vision");
@@ -312,8 +307,13 @@ public:
                     traits_.public_tokens, 1, width - 1, 1, rows) +
                 DrafterPass::workspace_bytes(*drafter_, context, rows) + 1024;
         }
-        out.general_capacity = std::max(
-            {out.text_prefill, out.ordinary_round, out.mtp_prefill, out.mtp_round});
+        // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+        if (plan.causal_scoring) {
+            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+                traits_.output_rows, model_.weights().output_head);
+        }
+        out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.mtp_prefill,
+                                         out.mtp_round, out.causal_score});
         out.capacity         = out.general_capacity;
         if (plan.features.vision) {
             const VisionConfig& v = vision_config();

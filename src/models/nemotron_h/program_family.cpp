@@ -93,10 +93,6 @@ public:
     }
 
     void validate_options(DeviceContext& device, const EngineOptions& options) const override {
-        if (options.purpose != EnginePurpose::Generation) {
-            throw std::invalid_argument(
-                "Nemotron-H serves generation only; ninferno-perplexity scores Qwen models");
-        }
         if (options.enable_vision) {
             throw std::invalid_argument("Nemotron-H artifacts carry no Vision encoder");
         }
@@ -201,8 +197,13 @@ public:
                     traits_.public_tokens, 1, width - 1, 1, rows) +
                 MtpPass::workspace_bytes(model_, *mtp_, context, columns) + 4096;
         }
-        out.general_capacity = std::max(
-            {out.text_prefill, out.ordinary_round, out.mtp_prefill, out.mtp_round});
+        // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+        if (plan.causal_scoring) {
+            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+                traits_.output_rows, model_.weights().output_head);
+        }
+        out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.mtp_prefill,
+                                         out.mtp_round, out.causal_score});
         out.capacity         = out.general_capacity;
         return out;
     }

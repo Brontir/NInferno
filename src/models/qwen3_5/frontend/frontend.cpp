@@ -758,6 +758,30 @@ ModelSamplingDefaults checkpoint_sampling(std::string_view generation_config_jso
                                  .source       = "transformers defaults"};
 }
 
+// The BOS token the tokenizer adds at a document's start (tokenizer_config.json add_bos_token;
+// absent, true when a bos_token is named, as transformers 5 reads it), when it is one token of
+// this vocabulary.
+namespace {
+
+std::optional<TokenId> adds_document_start(std::string_view tokenizer_config_json,
+                                           const text::TokenCodec& tokenizer) {
+    const Json config = parse_resource_json(tokenizer_config_json, "tokenizer_config.json");
+    const auto bos    = config.find("bos_token");
+    if (bos == config.end() || bos->is_null()) { return std::nullopt; }
+    const auto add = config.find("add_bos_token");
+    if (add != config.end() && add->is_boolean() && !add->get<bool>()) { return std::nullopt; }
+    const std::string content = bos->is_string() ? bos->get<std::string>()
+                                : bos->is_object() && bos->contains("content")
+                                    ? bos->at("content").get<std::string>()
+                                    : std::string();
+    if (content.empty()) { return std::nullopt; }
+    const std::optional<int> id = tokenizer.token_id(content);
+    if (!id) { return std::nullopt; }
+    return static_cast<TokenId>(*id);
+}
+
+} // namespace
+
 class Frontend::Impl {
 public:
     Impl(const FrontendResources& resources, FrontendOptions options)
@@ -795,6 +819,7 @@ public:
                 "Frontend requires the parsed model tokenizer and public token domain");
         }
         sampling = options.sampling ? *options.sampling : default_sampling(options.architecture);
+        document_start = adds_document_start(resources.tokenizer_config_json, *tokenizer);
         for (const int token : tokenizer->default_stop_token_ids()) {
             if (!tokenizer->is_valid_token(token)) {
                 throw std::invalid_argument(
@@ -884,6 +909,7 @@ public:
     std::string chat_template_source;
     fi::CompiledChatTemplate chat_template;
     std::shared_ptr<const text::TokenCodec> tokenizer;
+    std::optional<TokenId> document_start; // document_start_token()
     std::shared_ptr<const OutputConventions> output;
     fi::ProcessorOptions processor;
     std::shared_ptr<fi::MediaPreprocessCache> media_cache;
@@ -1230,6 +1256,11 @@ PreparedPrompt Frontend::prepare_tokens(std::vector<TokenId> token_ids,
     result.context_cache.update_session_index = false;
     result.prepare.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return PreparedPrompt(std::move(prepared));
+}
+
+std::optional<TokenId> Frontend::document_start_token() const {
+    if (impl_ == nullptr) { throw std::logic_error("frontend is empty"); }
+    return impl_->document_start;
 }
 
 std::vector<TokenId> Frontend::tokenize_text(std::string_view text) const {
