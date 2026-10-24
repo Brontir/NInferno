@@ -641,8 +641,7 @@ int run_fused_qkv_geometry() {
             v{rows(physical, 5120, 1024)};
         if (ops::fused_attn_input_proj_geometry(q, k, v) != fused) {
             std::cerr << "fused Q/K/V geometry of hidden " << hidden << ": expected " << fused
-                      << '
-';
+                      << '\n';
             ++failures;
         }
     }
