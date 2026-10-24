@@ -1436,9 +1436,12 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
     if (!fs::is_directory(snapshot, ec)) { return false; }
     Listing listing;
     for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
-        if (entry.is_regular_file(ec)) { // a link to a blob not yet downloaded is not
+        // A link to a blob not yet downloaded is no regular file. Its size: a width selector
+        // (--quant 4bit) picks the largest candidate of that width.
+        if (entry.is_regular_file(ec)) {
             listing.files.push_back(
-                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string()});
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
         }
     }
     std::vector<RemoteFile> chosen;
