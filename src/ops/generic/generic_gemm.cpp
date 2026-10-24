@@ -3322,8 +3322,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         }
     }
     if (route.family != lab_asked.family) {
-        std::fprintf(stderr, "ROUTE_DEMOTION %s -> %s rows %d tokens %d k %d x16 %d ldx %d ws %zu
-",
+        std::fprintf(stderr, "ROUTE_DEMOTION %s -> %s rows %d tokens %d k %d x16 %d ldx %d ws %zu\n",
                      route_name(lab_asked).c_str(), route_name(route).c_str(), call.rows, args.tokens,
                      w.k, aligned_to(args.x, 16) ? 1 : 0, args.ldx,
                      workspace != nullptr ? workspace->capacity() : 0);
