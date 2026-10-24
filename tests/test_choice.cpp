@@ -428,6 +428,11 @@ void weighs_the_quantizations(const json& fixture) {
                                         oracle(swapped, 20e9), g);
         check(c.chosen && swapped.quants[chosen(c).candidate.quant].label == "Q4_K_M",
               "an equal quantization: the smaller label wherever it is listed");
+        for (const ch::Alternative& a : ch::explain(c, swapped.quants)) {
+            if (a.axis == ch::Axis::Quant && a.value == "Q4_K_M copy") {
+                check(a.why_code == "tie_order", "an equal quantization explained as the label tie");
+            }
+        }
     }
     // Without decision constants (Turing) the rule's largest stands.
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
