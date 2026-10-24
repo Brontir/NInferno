@@ -321,6 +321,8 @@ order, they are:
    declares. There is never a search.
 
 Each is checked against the target (vocabulary, geometry, taps) before it is fetched and converted.
+Under `--with-drafters` a drafter that cannot be planned, fetched or converted is an error;
+otherwise the model converts without it and says why.
 
 - A separate drafter (Gemma 4 assistant, DFlash) becomes its own artifact.
 - A companion (Qwen DFlash/DFlash2) becomes a component of the target.
