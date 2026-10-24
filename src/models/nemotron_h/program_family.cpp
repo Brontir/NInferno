@@ -60,9 +60,10 @@ static_assert(kMaximumConcurrency <= ops::kMamba2FoldMaxRows,
 class NemotronExecution final : public ModelExecution {
 public:
     NemotronExecution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
-                      std::int32_t public_tokens, ActivationMode activations)
+                      std::int32_t public_tokens, ActivationMode activations,
+                      EnginePurpose purpose)
         : model_(model), c_(model.config()), pass_(model, device), mtp_(mtp),
-          invariant_(activations == ActivationMode::Exact),
+          invariant_(activations == ActivationMode::Exact), purpose_(purpose),
           traits_{.hidden        = c_.hidden_size,
                   .output_rows   = c_.vocab_size,
                   .public_tokens = public_tokens,
@@ -88,7 +89,8 @@ public:
     }
 
     [[nodiscard]] models::LoadOptions load_options() const override {
-        return {.speculative = mtp_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
+        return {.purpose     = purpose_,
+                .speculative = mtp_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
                 .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
     }
 
@@ -498,6 +500,7 @@ private:
     const MtpWeights* mtp_ = nullptr;
     std::optional<MtpPass> mtp_pass_;
     bool invariant_;
+    EnginePurpose purpose_;
     ModelTraits traits_;
 };
 
@@ -629,9 +632,10 @@ StateShape state_shape(const Config& config, std::int32_t public_tokens) {
 
 std::unique_ptr<const ModelExecution>
 make_program_execution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
-                       std::int32_t public_tokens, ActivationMode activations) {
+                       std::int32_t public_tokens, ActivationMode activations,
+                       EnginePurpose purpose) {
     return std::make_unique<const NemotronExecution>(model, mtp, device, public_tokens,
-                                                     activations);
+                                                     activations, purpose);
 }
 
 } // namespace ninferno::models::nemotron_h

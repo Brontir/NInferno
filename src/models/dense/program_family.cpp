@@ -29,9 +29,9 @@ namespace detail {
 
 DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDrafter* drafter,
                                DeviceContext& device, std::int32_t public_tokens,
-                               ActivationMode activations)
+                               ActivationMode activations, EnginePurpose purpose)
     : model_(model), c_(model.config()), pass_(model, device), drafter_(drafter),
-      invariant_(activations == ActivationMode::Exact),
+      invariant_(activations == ActivationMode::Exact), purpose_(purpose),
       traits_{.hidden             = c_.hidden_size,
               .output_rows        = c_.vocab_size,
               .public_tokens      = public_tokens,
@@ -78,7 +78,8 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
 }
 
 models::LoadOptions DenseExecution::load_options() const {
-    return {.speculative = drafter_ ? SpeculativeBackend::DFlash : SpeculativeBackend::None,
+    return {.purpose     = purpose_,
+            .speculative = drafter_ ? SpeculativeBackend::DFlash : SpeculativeBackend::None,
             .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
 }
 
@@ -374,9 +375,9 @@ StateShape state_shape(const Config& config, const speculation::DFlashConfig* dr
 std::unique_ptr<const qwen3_5::detail::ModelExecution>
 make_program_execution(const Model& model, const speculation::DFlashDrafter* drafter,
                        DeviceContext& device, std::int32_t public_tokens,
-                       ActivationMode activations) {
+                       ActivationMode activations, EnginePurpose purpose) {
     return std::make_unique<const detail::DenseExecution>(model, drafter, device, public_tokens,
-                                                          activations);
+                                                          activations, purpose);
 }
 
 } // namespace ninferno::models::dense
