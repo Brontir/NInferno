@@ -282,6 +282,7 @@ Json choice_json(const ServedChoice& served) {
                   {"accuracy_weight", served.task.accuracy_weight}}},
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
+                {"quant_by_worth", served.choice.quant_by_worth},
                 {"chunk_by_speed", served.choice.chunk_by_speed}};
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
