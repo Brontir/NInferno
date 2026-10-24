@@ -400,8 +400,8 @@ double table_distance(const Table& table) {
 }
 
 // The default lookup's tables, nearest measured board first: every table of `dir` whose routes
-// this device runs (table_distance finite), ties in file-name order. A table that fails to parse
-// is an error, whichever class it is for.
+// this device runs (table_distance finite), ties in file-name order. The device's own table that
+// fails to parse is an error; another class's is skipped.
 std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
     std::vector<std::filesystem::path> files;
     std::error_code ec;
@@ -410,12 +410,22 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
         if (it->path().extension() == ".json" && it->is_regular_file(ec)) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end());
+    const auto own = own_keys();
     std::vector<std::pair<double, std::shared_ptr<Table>>> ranked;
     for (const auto& file : files) {
         std::shared_ptr<Table> table;
-        // A table that does not parse is a broken install, whichever class it is for: skipping
-        // it would let the nearest-board choice depend on which files happen to be readable.
-        table = parse_table(utf8_path(file));
+        // The device's own class table that does not parse is a broken install (an error).
+        // Another class's table is validated against this device's facts (a prefill band's
+        // summation order, the routes it runs), so it can be refused here and sound on its own
+        // board: it lends nothing, as for a board it does not run on.
+        try {
+            table = parse_table(utf8_path(file));
+        } catch (const std::exception&) {
+            for (const auto& key : own) {
+                if (route_table_file_name(key) == utf8_file_name(file)) throw;
+            }
+            continue;
+        }
         const double d = table_distance(*table);
         if (std::isfinite(d)) ranked.emplace_back(d, std::move(table));
     }
