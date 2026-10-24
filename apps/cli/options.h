@@ -61,6 +61,12 @@ struct Options {
     // --drafter-registry FILE (spec::Registry::use_file, before the model's profile is read).
     std::filesystem::path drafter_registry;
     product::LogLevel log_level = product::LogLevel::Info;
+    // --plan --no-load [--json] [--plan-device NAME]: the plan without the weights of the artifact
+    // at these options (ninferno-serve --plan --no-load's; no --prompt needed), then exit.
+    bool plan_only    = false;
+    bool plan_no_load = false;
+    bool plan_json    = false;
+    std::string plan_device;
 };
 
 [[nodiscard]] Options parse_options(int argc, char** argv);

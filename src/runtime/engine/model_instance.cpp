@@ -1,5 +1,7 @@
+#include "core/device_traits.h"
 #include "runtime/engine/model_instance.h"
 #include "runtime/engine/family_registry.h"
+#include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_ladder.h"
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
@@ -53,29 +55,10 @@ std::size_t current_free_device_bytes() {
     return free_bytes;
 }
 
-// The GPU is shared through WDDM, whose paging spills an over-full device to host memory instead
-// of failing: natively on Windows a card in WDDM mode (not TCC), and under WSL 2 every GPU (it
-// reaches the Windows host's through /dev/dxg).
-bool paravirtualized_gpu(int device) {
-#ifdef _WIN32
-    int tcc = 0;
-    return cudaDeviceGetAttribute(&tcc, cudaDevAttrTccDriver, device) != cudaSuccess || tcc == 0;
-#else
-    (void)device;
-    static const bool present = [] {
-        std::error_code error;
-        return std::filesystem::exists("/dev/dxg", error);
-    }();
-    return present;
-#endif
-}
-
-// The GPU drives a display: the host's kernel-run watchdog is on (a headless card has it off).
-bool drives_display(int device) {
-    int watchdog = 0;
-    CUDA_CHECK(cudaDeviceGetAttribute(&watchdog, cudaDevAttrKernelExecTimeout, device));
-    return watchdog != 0;
-}
+// The driver model and the display: core/device_traits.h (the plan without the weights reads the
+// same functions).
+using ninferno::drives_display;
+using ninferno::paravirtualized_gpu;
 
 // The CUDA stack limit: the local memory per thread the driver keeps for every resident thread. It
 // starts at the driver's default and grows at the first launch of a kernel with a larger frame.
@@ -532,20 +515,11 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         .tokens    = options.max_context,
     };
     // An automatic max_context starts from the model's own (under the cap, and within an explicit
-    // KV capacity, which bounds one sequence).
-    if (context.automatic) {
-        if (context.native == 0) {
-            throw std::logic_error("the model reports no position capacity");
-        }
-        resolved.max_context = context.native;
-        if (options.max_context != 0) {
-            resolved.max_context = std::min(resolved.max_context, options.max_context);
-        }
-        if (options.kv_capacity.mode == KvCapacityMode::Explicit) {
-            resolved.max_context =
-                std::min(resolved.max_context, options.kv_capacity.explicit_tokens);
-        }
+    // KV capacity, which bounds one sequence): plan_dry_run.h, plan_context_ceiling.
+    if (context.automatic && context.native == 0) {
+        throw std::logic_error("the model reports no position capacity");
     }
+    resolved.max_context = plan_context_ceiling(options, context.native);
     // A configured cached Device state count (none with the context cache off) pins that axis.
     const std::optional<std::uint32_t> configured_states =
         options.context_cache.enabled ? options.context_cache.device_state_slots
@@ -619,12 +593,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     const EngineOptions unfitted = resolved;
     // Whether the driver holds the plan's CUDA graph memory (the kernel warm-up below).
     bool graph_memory_held = false;
-    // The longest decode round a request asks for: the widest launch window and its target.
-    std::uint32_t window = resolved.speculative.draft_tokens;
-    for (const std::uint32_t k : resolved.speculative.request_draft_tokens) {
-        window = std::max(window, k);
-    }
-    const std::uint32_t round_tokens = window + 1U;
+    // The longest decode round a request asks for: the widest launch window and its target
+    // (plan_dry_run.h, the definition the dry run's axes share).
+    const std::uint32_t round_tokens = plan_round_tokens(resolved.speculative);
     const bool kv_automatic          = resolved.kv_capacity.mode == KvCapacityMode::Automatic;
     // Whether a kernel warm-up measures what the plan's kernels take before the plan is final.
     const bool automatic_fit = context.automatic || resolved.prefill_chunk_automatic ||
@@ -741,18 +712,17 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     const bool with_display           = drives_display(device.device);
     const std::uint64_t class_reserve = plan_class_reserve(
         device.props.totalGlobalMem, paravirtual, with_display, device.props.integrated != 0);
-    const PlanMargins margins{
-        .base      = kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes : 0,
-        .reserve   = kv_automatic ? class_reserve : 0,
-        .allowance = automatic_fit ? kPlanWarmUpAllowanceBytes : 0,
-    };
-    // The margins of an advice ladder (an automatic pool beside the asked or default headroom).
-    const PlanMargins advice_margins{
-        .base      = kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes
-                                  : kDefaultKvCapacityHeadroomBytes,
-        .reserve   = class_reserve,
-        .allowance = kPlanWarmUpAllowanceBytes,
-    };
+    // The ladder's axes and margins (plan_dry_run.h): the seams the dry run without the weights
+    // (ninferno-serve --plan --no-load) shares with a start.
+    const PlanAxes axes =
+        plan_axes(unfitted, context.native, host_states_configured, class_reserve);
+    if (axes.round_tokens != round_tokens || axes.kv_automatic != kv_automatic ||
+        axes.states_pinned != configured_states || axes.states_minimum != states_minimum ||
+        plan_margins(axes).allowance != (automatic_fit ? kPlanWarmUpAllowanceBytes : 0)) {
+        throw std::logic_error("the plan axes disagree with the start's options");
+    }
+    const PlanMargins margins        = plan_margins(axes);
+    const PlanMargins advice_margins = plan_advice_margins(axes);
     const auto ladder_for = [&](std::uint32_t concurrency, bool pins, bool chunk_pinned) {
         Ladder ladder{.concurrency = concurrency,
                       .kv          = pins ? resolved.kv_capacity
@@ -760,32 +730,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                                        kv_automatic ? resolved.kv_capacity.automatic_headroom_bytes
                                                     : kDefaultKvCapacityHeadroomBytes),
                       .main        = pins};
-        PlanLadderInputs inputs{
-            .context_ceiling  = unfitted.max_context,
-            .context_pinned   = pins && !context.automatic,
-            .concurrency      = concurrency,
-            .kv_tokens_pinned = pins && !kv_automatic ? std::optional<std::uint32_t>(
-                                                            resolved.kv_capacity.explicit_tokens)
-                                                      : std::nullopt,
-            .states_pinned    = configured_states,
-            .states_default   = automatic_cached_device_states(concurrency),
-            .states_minimum   = states_minimum,
-            .prefill_chunk    = unfitted.prefill_chunk,
-            .chunk_pinned     = chunk_pinned,
-            // A class reserve beside the pool (a discrete fact: the driver model, the display,
-            // an integrated GPU): the survival range then has its rungs without it.
-            .class_reserve = pins ? margins.reserve > margins.base
-                                  : advice_margins.reserve > advice_margins.base,
-            // The last-resort rung only without speculation: a drafter's plan that fits nothing
-            // longer is refused, and ninferno-serve's --spec auto tries the profile's fit fallback,
-            // shallower drafts and the MTP head, then plain decode, which hold more.
-            .last_resort_context =
-                resolved.speculative.backend == SpeculativeBackend::None
-                    ? std::max(kAutomaticContextGrain,
-                               (round_tokens + 2U + kAutomaticContextGrain - 1U) /
-                                   kAutomaticContextGrain * kAutomaticContextGrain)
-                    : 0U,
-        };
+        const PlanLadderInputs inputs = plan_ladder_inputs(axes, concurrency, pins, chunk_pinned);
         const std::vector<PlanRung> candidates = plan_ladder(inputs);
         ladder.rungs = prune_plan_ladder(candidates, [&](std::size_t index) {
             const std::optional<PlanRungCost> cost = rung_cost(
@@ -819,22 +764,20 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         if (!fit) { return std::nullopt; }
         return ladder.rungs[fit->rung].max_context;
     };
+    // longest_context in `free_bytes`, as the advice functions the dry run shares read it
+    // (plan_dry_run.h, plan_fits_instead).
+    const auto longest_in = [&](std::uint64_t free_bytes) {
+        return PlanLongestContextFn([&, free_bytes](std::uint32_t concurrency, bool chunk_kept) {
+            return longest_context(concurrency, free_bytes, chunk_kept);
+        });
+    };
     // Each lower concurrency that fits a longer automatic context than `served_context` (nullopt:
     // nothing fits at the served concurrency), the highest first.
     const auto lower_concurrency_fits = [&](std::optional<std::uint32_t> served_context,
                                             std::uint64_t free_bytes, bool chunk_pinned) {
-        std::vector<ConcurrencyFit> out;
-        for (std::uint32_t concurrency = resolved.max_concurrency - 1U; concurrency >= 1U;
-             --concurrency) {
-            const std::optional<std::uint32_t> fit =
-                longest_context(concurrency, free_bytes, chunk_pinned);
-            if (fit && (!served_context || *fit > *served_context)) {
-                out.push_back({.max_concurrency = concurrency, .max_context = *fit});
-                served_context = fit;
-            }
-            if (served_context && *served_context >= unfitted.max_context) { break; }
-        }
-        return out;
+        return plan_lower_concurrency_fits(resolved.max_concurrency, served_context,
+                                           unfitted.max_context, chunk_pinned,
+                                           longest_in(free_bytes));
     };
     // No rung fits: the refusal names the last rung's need, the free memory and what fits
     // instead (a CapacityError: ninferno-serve's fallbacks recover by that type).
@@ -857,25 +800,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         // or the states were asked for) and at each lower one that fits longer.
         const bool pinned = !context.automatic || !kv_automatic || configured_states.has_value();
         const bool chunk_pinned = !resolved.prefill_chunk_automatic;
-        const auto what_fits    = [&](bool chunk_kept) {
-            std::vector<ConcurrencyFit> out;
-            if (pinned) {
-                if (const auto here =
-                        longest_context(resolved.max_concurrency, free_bytes, chunk_kept)) {
-                    out.push_back(
-                        {.max_concurrency = resolved.max_concurrency, .max_context = *here});
-                }
-            }
-            if (resolved.max_concurrency > 1) {
-                const std::vector<ConcurrencyFit> lower = lower_concurrency_fits(
-                    out.empty() ? std::nullopt
-                                : std::optional<std::uint32_t>(out.back().max_context),
-                    free_bytes, chunk_kept);
-                out.insert(out.end(), lower.begin(), lower.end());
-            }
-            return out;
-        };
-        std::vector<ConcurrencyFit> fits = what_fits(chunk_pinned);
+        const PlanFitsInstead instead_fits =
+            plan_fits_instead(resolved.max_concurrency, unfitted.max_context, pinned, chunk_pinned,
+                              longest_in(free_bytes));
+        std::vector<ConcurrencyFit> fits = instead_fits.fits;
         std::vector<std::uint32_t> chunks{unfitted.prefill_chunk};
         if (!chunk_pinned) {
             for (std::uint32_t chunk = unfitted.prefill_chunk / 2;
@@ -884,13 +812,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
         }
         std::uint32_t narrowed_from = 0;
-        if (fits.empty() && chunk_pinned) {
+        if (instead_fits.narrowed) {
             // An explicit --prefill-chunk nothing fits with: what the narrower chunks fit.
-            fits = what_fits(false);
-            if (!fits.empty()) {
-                narrowed_from = unfitted.prefill_chunk;
-                chunks        = {kNarrowestAutomaticPrefillChunk};
-            }
+            narrowed_from = unfitted.prefill_chunk;
+            chunks        = {kNarrowestAutomaticPrefillChunk};
         }
         const bool explicit_plan = !context.automatic && !resolved.prefill_chunk_automatic &&
                                    !kv_automatic && configured_states.has_value();
