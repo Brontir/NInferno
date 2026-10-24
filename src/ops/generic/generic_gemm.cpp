@@ -3233,6 +3233,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         call.x = &gathered;
     }
     GemmArgs args = make_args(call);
+    const Route lab_asked = route;
     if (!aligned_to(args.x, 16) && route.family == Family::RegisterMma) {
         route = Route{Family::Scalar, 0};
     }
@@ -3319,6 +3320,13 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         if (!aligned_to(args.x, 16) || (w.k % k_multiple(codec_of(w))) != 0) {
             route = Route{Family::Scalar, 0};
         }
+    }
+    if (route.family != lab_asked.family) {
+        std::fprintf(stderr, "ROUTE_DEMOTION %s -> %s rows %d tokens %d k %d x16 %d ldx %d ws %zu
+",
+                     route_name(lab_asked).c_str(), route_name(route).c_str(), call.rows, args.tokens,
+                     w.k, aligned_to(args.x, 16) ? 1 : 0, args.ldx,
+                     workspace != nullptr ? workspace->capacity() : 0);
     }
     // Only a register-MMA or R8 launch joins the call before it; every other route runs in stream
     // order.
