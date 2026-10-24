@@ -151,8 +151,26 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     return out;
 }
 
+// The bytes of the vision projector the start fetches beside a GGUF model under --vision (the same
+// choice: convert::best_projector, every part of a split one); 0 when there is none.
+std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quants) {
+    std::vector<std::string> names;
+    for (const auto& q : quants) { names.insert(names.end(), q.files.begin(), q.files.end()); }
+    const auto parts = convert::best_projector(names);
+    std::uint64_t bytes = 0;
+    for (const auto& q : quants) {
+        // A projector file is a listing entry of its own (a sidecar), its bytes its own.
+        if (q.files.size() == 1 &&
+            std::find(parts.begin(), parts.end(), q.files.front()) != parts.end()) {
+            bytes += q.bytes;
+        }
+    }
+    return bytes;
+}
+
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
-ModelRead read_hub(const std::string& spec, const std::string& quant) {
+// With `vision`, a GGUF model's facts count the projector the start fetches beside it.
+ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision) {
     ModelRead out;
     out.kind                          = "hub";
     out.source                        = spec;
@@ -180,6 +198,12 @@ ModelRead read_hub(const std::string& spec, const std::string& quant) {
             native = &q;
         }
     }
+    // No --quant: a revision with top-level safetensors weights is fetched as them, whatever GGUF
+    // files it also holds (convert/fetch.cpp choose_files), so the plan is theirs.
+    if (quant.empty() && weights != nullptr) {
+        header = nullptr;
+        native = nullptr; // and not as a published .ninferno beside them
+    }
     if (header != nullptr) {
         out.gguf    = true;
         out.quant   = header->quant;
@@ -191,6 +215,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant) {
                     convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                              head.bytes.size(), head.size, head.path);
                 out.facts = product::plan_facts_of_gguf(file, header->bytes);
+                if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
                 return out;
             } catch (const convert::GgufTruncated&) { continue; }
         }
@@ -215,6 +240,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant) {
     if (weights != nullptr) {
         out.facts = product::plan_facts_of_config(convert::fetch_config(spec, fetch),
                                                   weights->bytes, runtime::WeightBasis::FileSize);
+        out.facts.model.mtp_bytes = weights->mtp_bytes;
         out.listing.clear();
         return out;
     }
@@ -253,7 +279,7 @@ ModelRead read_model(const ServeOptions& options) {
     if (!convert::is_repository_spec(name)) {
         throw std::runtime_error("'" + name + "' is neither a file or directory nor a hub id");
     }
-    return read_hub(name, options.quant);
+    return read_hub(name, options.quant, options.enable_vision);
 }
 
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
@@ -455,7 +481,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
 
     ModelRead model;
     try {
-        model = read_hub(options.model_source, "");
+        model = read_hub(options.model_source, "", options.enable_vision);
     } catch (const std::exception& e) {
         // The hub cannot be reached: a quantization already here that fits is served (each
         // cached file planned from its own header); otherwise the choice is the user's, never a

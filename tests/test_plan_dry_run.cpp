@@ -735,6 +735,43 @@ void test_rule() {
                   pr::plan_reason_code(plan.rows[2].planned.plan).code == "shape_unknown",
               "unknown, with its code");
     }
+    // One stream under an automatic context on a WDDM card driving the display (a class reserve):
+    // a row is own only where the start's own automatic plan keeps every stream's context, never
+    // where a pinned probe without the reserve would (the start serves those on a survival rung).
+    {
+        const rt::PlanDeviceFacts desktop = card(24, 89, true, true);
+        pr::DryRunInputs inputs;
+        inputs.device                 = desktop;
+        const pr::LaunchPlanOptions o = pr::launch_options({.spec = "none"});
+        inputs.options                = o.options;
+        inputs.ask                    = o.ask;
+        const pr::QuantPlan plan      = pr::plan_quants(shape, listing, inputs);
+        for (const pr::QuantRow& r : plan.rows) {
+            if (r.fit.state != QuantFitState::Own) { continue; }
+            const rt::DryRunRung* chosen = r.planned.plan.chosen();
+            check(chosen != nullptr && !chosen->rung.survival,
+                  r.listing.quant + ": own at one stream only on the start's own plan");
+        }
+    }
+    // Several streams under an automatic context: a row launched at its own context per stream
+    // shows the launch's plan (--max-context-cap at that context: still automatic, the step-down
+    // rungs kept), not the uncapped pool the streams would share.
+    {
+        pr::DryRunInputs inputs;
+        inputs.device                 = device;
+        const pr::LaunchPlanOptions o = pr::launch_options({.max_concurrency = 4, .spec = "none"});
+        inputs.options                = o.options;
+        inputs.ask                    = o.ask;
+        const pr::QuantPlan plan      = pr::plan_quants(shape, listing, inputs);
+        for (const pr::QuantRow& r : plan.rows) {
+            if (r.launch_context == 0) { continue; }
+            const rt::DryRunRung* chosen = r.planned.plan.chosen();
+            check(chosen != nullptr && chosen->rung.max_context <= r.launch_context &&
+                      r.planned.plan.axes.context_automatic &&
+                      r.planned.plan.axes.context_ceiling == r.launch_context,
+                  r.listing.quant + ": the plan shown is the launch's, capped at its context");
+        }
+    }
     // On a 24 GB card at 32K x 1 a 27B fits at Q6_K, not at Q8_0 (the lab's 4090).
     {
         pr::DryRunInputs inputs;
