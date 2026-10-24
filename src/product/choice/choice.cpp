@@ -426,6 +426,8 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         const std::string ring{kv_cache_storage_name(candidate.ring)};
         if (candidate.ring == KvCacheStorage::BFloat16) {
             add(Axis::Ring, ring, 0, true, "the reference");
+        } else if (const KldTerm* term = measured_term(Axis::Ring, ring, gen, family)) {
+            add(Axis::Ring, ring, term->kld, true, std::string(term->source));
         } else {
             const KldTerm* proxy = measured_term(Axis::Kv, ring, gen, family);
             add(Axis::Ring, ring, proxy ? proxy->kld : worst_term(Axis::Kv), false,
