@@ -3477,6 +3477,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         return;
     case Family::RegisterMma:
         if ((w.k % k_multiple(codec)) != 0) {
+            // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
+            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
+                          aligned_to(args.x, 16), args.ldx,
+                          workspace != nullptr ? workspace->capacity() : 0);
             launch_scalar(codec, call.epilogue, args, stream);
             return;
         }
