@@ -2233,7 +2233,7 @@ function renderBody() {
     if (q) {
       const st = selSt, here = localFor(sel.repo, q.quant);
       const mem = stale ? null : planMemory(selRow && selRow.plan), need = mem ? mem.need / GiB : 0;
-      const cdoc = stale ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice.chosen;
+      const cdoc = stale ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice && cdoc.choice.chosen;
       const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth}
                       : stale ? null : rowEstimate(rowPlan(q));
       const plain = est ? est.decode_tok_s : 0, one = plain * specGain();
