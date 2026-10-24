@@ -7,6 +7,7 @@
 #include "convert/dense.h"
 #include "convert/pyjson.h"
 #include "convert/safetensors.h"
+#include "core/cache_file.h"
 #include "core/host_memory.h"
 #include "spec/manifest.h"
 
@@ -16,6 +17,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <fstream>
 #include <regex>
 #include <stdexcept>
@@ -321,6 +323,23 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
     return found.front();
 }
 
+void accept_converted(const fs::path& commit_dir, const std::string& ref,
+                      const std::string& hub_commit) {
+    const OJson record = {{"ref", ref}, {"hub_commit", hub_commit}};
+    write_file_atomic(commit_dir / "accepted.json", record.dump(1) + "\n");
+}
+
+bool converted_accepted(const fs::path& commit_dir, const std::string& ref,
+                        const std::string& hub_commit) {
+    std::ifstream stream(commit_dir / "accepted.json");
+    if (!stream) { return false; }
+    try {
+        const auto record = OJson::parse(stream);
+        return record.value("ref", std::string()) == ref &&
+               record.value("hub_commit", std::string()) == hub_commit;
+    } catch (const std::exception&) { return false; }
+}
+
 bool is_repository_spec(const std::string& text) {
     static const std::regex pattern(R"([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*(@[^\s/]+)?)");
     return std::regex_match(text, pattern) && !text.ends_with(".ninferno") && !text.ends_with(".gguf");
@@ -348,6 +367,22 @@ std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem
 
 AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     AcquiredModel out;
+    // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there.
+    struct RemoveReplaced {
+        fs::path dir;
+        const AcquiredModel& out;
+        const AcquireOptions& options;
+        ~RemoveReplaced() {
+            if (dir.empty() || std::uncaught_exceptions() > 0 || out.artifact.empty() ||
+                out.artifact.parent_path() == dir) {
+                return;
+            }
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+            say(options, ec ? "the old conversion " + dir.string() + " stays: " + ec.message()
+                            : "removed the old conversion " + dir.string());
+        }
+    } replaced{{}, out, options};
     ConvertOptions& convert_options = options.convert;
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string preflight_recipe;
@@ -359,22 +394,49 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
             auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
                                       convert_options.recipe);
-            // A branch or a tag may have moved since its download was converted and removed: the
-            // kept artifact serves only while the hub still names its commit (or under
-            // $HF_HUB_OFFLINE); a hub that cannot be reached is an error, never an older model.
+            // A branch or a tag may have moved since its download was converted and removed. The
+            // converted weights stay unless the user asks for the new commit (a download of many
+            // gigabytes): the start says so (MovedRef::Notice), or the user kept them for good
+            // (Accept), or asked for the new ones (Refetch). The answer is the same whether the
+            // hub can be reached or not: unreachable, it is only unchecked.
+            const std::string ref = revision.empty() ? std::string("main") : revision;
             if (kept && revision != kept->parent_path().filename().string()) {
-                const std::string kept_commit = kept->parent_path().filename().string();
+                const auto commit_dir         = kept->parent_path();
+                const std::string kept_commit = commit_dir.filename().string();
+                const std::string label       = repo + "@" + ref;
                 std::optional<std::string> now;
                 try {
                     now = current_commit(spec, options.fetch);
+                    if (!now) {
+                        say(options, "HF_HUB_OFFLINE: " + label + " not checked against the hub");
+                    }
                 } catch (const std::exception& error) {
-                    throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" +
-                                             revision + " was converted at " + kept_commit +
-                                             ", which the ref may have left: set HF_HUB_OFFLINE=1 "
-                                             "to serve it, or name the commit (" + repo + "@" +
-                                             kept_commit + ")");
+                    say(options, "warning: could not ask the hub whether " + label +
+                                     " moved (" + error.what() + "); serving its conversion of " +
+                                     kept_commit.substr(0, 12));
                 }
-                if (now && *now != kept_commit) { kept.reset(); } // moved: fetch the new commit
+                if (now && *now != kept_commit) {
+                    const std::string moved = label + " is now " + now->substr(0, 12) +
+                                              "; the converted weights are of " +
+                                              kept_commit.substr(0, 12) + " (download removed)";
+                    if (options.moved_ref == MovedRef::Refetch) {
+                        say(options, moved + ": downloading the new commit (--refetch)");
+                        replaced.dir = commit_dir;
+                        kept.reset();
+                    } else if (options.moved_ref == MovedRef::Accept) {
+                        accept_converted(commit_dir, ref, *now);
+                        say(options, moved + ": kept, now and later (--accept-converted)");
+                    } else if (converted_accepted(commit_dir, ref, *now)) {
+                        say(options, moved + ": kept, as accepted earlier");
+                    } else {
+                        const std::string notice =
+                            "warning: " + moved + ". Serving the converted weights; "
+                            "--accept-converted keeps them without this notice, --refetch "
+                            "downloads the new commit and removes these";
+                        say(options, notice);
+                        if (options.on_moved_ref) { options.on_moved_ref(notice); }
+                    }
+                }
             }
             if (kept) {
                 const auto base      = kept->stem().string();
@@ -387,8 +449,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.fetched.model    = *kept;
                 out.fetched.offline  = true;
                 say(options, "artifact " + kept->string() +
-                                 " (converted earlier from the commit the hub still names; its "
-                                 "download was removed)");
+                                 " (converted earlier; its download was removed)");
                 // cache_current stamps a current one, so only a defective artifact's report
                 // is read on every start.
                 if (!cache_current(*kept) && unquantized_drafter_attention(*kept)) {

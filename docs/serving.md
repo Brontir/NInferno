@@ -51,6 +51,13 @@ For a hub id:
   bytes, the rung that fits and what would get more), then exits; `--plan --json` prints it as
   JSON for a UI's fit bar ([reference](reference/serving.md#automatic-context-selection)).
 - `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
+- A converted model whose download was removed (ninferno-ui removes it once the model loads) is
+  served from its converted weights. The hub is asked whether its branch still names the commit
+  they were converted from. If the branch moved, the start says so and serves the converted
+  weights anyway, after a 10-second count-down on a terminal (a new download is many gigabytes).
+  - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
+  - `--refetch` downloads the new commit, converts it and removes the old conversion.
+  - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is

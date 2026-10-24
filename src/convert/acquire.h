@@ -16,10 +16,12 @@
 //              next one finds the artifact;
 //   kept       with `reuse`, an artifact whose download was removed after it was converted
 //              (ninferno-ui removes the original once the model loaded: blobs/ and snapshots/ go,
-//              refs/ and ninferno/ stay) is loaded at the commit the cache's ref names, without
-//              asking the hub: fetching would download the weights again only to find the
-//              artifact. Taken when exactly one complete artifact there matches the quantization
-//              asked for (any, a label, or a width: "4bit").
+//              refs/ and ninferno/ stay) is loaded at the commit the cache's ref names. Taken when
+//              exactly one complete artifact there matches the quantization asked for (any, a
+//              label, or a width: "4bit"). The hub is asked (one listing request) whether the ref
+//              still names that commit; where it moved, `moved_ref` decides (a download is many
+//              gigabytes, so the converted weights stay unless the user asks otherwise), and a
+//              hub that cannot be reached leaves them, said.
 //
 // Nothing is searched for on the machine: only the hub cache entry of the named repository.
 
@@ -34,6 +36,15 @@
 #include <string>
 
 namespace ninferno::convert {
+
+// What a start does with a kept artifact whose ref the hub now names at another commit (the
+// branch moved after the model was converted and its download removed).
+enum class MovedRef {
+    Notice,  // keep the converted weights for this start, after a notice (on_moved_ref)
+    Accept,  // keep them now and later: recorded beside them (accept_converted), no more notice
+             // until the ref moves again
+    Refetch, // download the commit the ref names now, convert it, then remove the old conversion
+};
 
 struct AcquireOptions {
     FetchOptions fetch;
@@ -54,6 +65,10 @@ struct AcquireOptions {
     // from its repository. Other models are converted as without it (the Engine then says why).
     bool vision               = false;
     bool reuse                = false; // load an earlier run's artifact for the same commit
+    MovedRef moved_ref        = MovedRef::Notice;
+    // Called with the notice of MovedRef::Notice once it is logged; a console counts down here
+    // before the start goes on with the converted weights.
+    std::function<void(const std::string& notice)> on_moved_ref;
     // Called before the weights are downloaded, with the recipe chosen from config.json ("" for a
     // GGUF or a URL, whose recipe is known only once fetched); throwing stops the acquisition.
     std::function<void(const FetchPlan&, const std::string& recipe)> before_download;
@@ -75,6 +90,14 @@ struct AcquiredModel {
 [[nodiscard]] std::optional<std::filesystem::path>
 kept_artifact(const std::filesystem::path& cache, const std::string& repo,
               const std::string& revision, const std::string& quant, const std::string& recipe);
+
+// The record that the user keeps the conversion in `commit_dir` (<cache>/models--org--name/
+// ninferno/<commit>) for the ref `ref` while the hub names `hub_commit` (accepted.json there), and
+// whether it is there: a start then serves it without a notice, until the ref moves again.
+void accept_converted(const std::filesystem::path& commit_dir, const std::string& ref,
+                      const std::string& hub_commit);
+[[nodiscard]] bool converted_accepted(const std::filesystem::path& commit_dir,
+                                      const std::string& ref, const std::string& hub_commit);
 
 // `spec` is org/name[@revision] on the options' hub, or an http(s) URL of one file. Throws naming
 // what failed and what to do about it.

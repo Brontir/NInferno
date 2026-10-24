@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -368,6 +369,40 @@ def main() -> int:
                  and "resource_notes" not in report and report.get("gguf", {}).get("architecture") == "qwen35")
             if result.returncode:
                 errors.append(result.stderr[-2000:])
+
+            # 12b. Its download removed (as ninferno-ui does) and its branch moved on the hub: a
+            # rerun keeps the converted weights with a notice; --accept-converted records them
+            # (no notice after); a hub that cannot be reached leaves them; --refetch converts the
+            # new commit and removes the old conversion.
+            repo_dir = work / "cache-e2e" / "models--org--qwen-gguf"
+            for sub in ("blobs", "snapshots"):
+                shutil.rmtree(repo_dir / sub, ignore_errors=True)
+            old, new = "c0ffee0123456789abcdef0123456789abcdef01", "d" * 40
+            hub.repos["org/qwen-gguf"]["commit"] = new
+
+            def again(*extra, env=environment):
+                run = subprocess.run([str(native), "--fetch", "org/qwen-gguf", "--cache", str(work / "cache-e2e"),
+                                      *extra], cwd=repository, capture_output=True, text=True, env=env)
+                if run.returncode:
+                    errors.append(f"--fetch org/qwen-gguf {extra}:\n{run.stderr[-1500:]}")
+                return run.returncode, run.stdout + run.stderr
+
+            notice = again()
+            accepted = again("--accept-converted")
+            after = again()
+            unreachable = again(env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("a moved branch keeps the converted weights, with a notice",
+                 notice[0] == 0 and "org/qwen-gguf@main is now dddddddddddd" in notice[1]
+                 and "--refetch downloads the new commit" in notice[1] and "converted earlier" in notice[1])
+            case("--accept-converted keeps them without the notice",
+                 accepted[0] == 0 and (repo_dir / "ninferno" / old / "accepted.json").exists()
+                 and after[0] == 0 and "as accepted earlier" in after[1] and "warning:" not in after[1])
+            case("an unreachable hub leaves the converted weights, said",
+                 unreachable[0] == 0 and "could not ask the hub whether org/qwen-gguf@main moved" in unreachable[1])
+            refetched = again("--refetch")
+            case("--refetch converts the new commit and removes the old conversion",
+                 refetched[0] == 0 and (repo_dir / "ninferno" / new / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and not (repo_dir / "ninferno" / old).exists() and "removed the old conversion" in refetched[1])
             # With tokenizer metadata in the GGUF, its own chat template and end-of-sequence ids
             # are kept; the base model supplies only the Hugging Face tokenizer files.
             gguf_file, _, _ = synthetic_gguf.qwen_case(work / "qwen-src2", False, None, 32, rebuilt=True,
