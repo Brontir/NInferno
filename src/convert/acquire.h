@@ -80,6 +80,11 @@ kept_artifact(const std::filesystem::path& cache, const std::string& repo,
 // what failed and what to do about it.
 [[nodiscard]] AcquiredModel acquire_model(const std::string& spec, AcquireOptions options);
 
+// Of a repository's file names, the Vision projector a start takes under --vision (mmproj-*.gguf):
+// BF16 first, then F32, then F16, then any; ties to the first name. The start fetches it and the
+// plan without the weights charges it. nullopt when there is none.
+[[nodiscard]] std::optional<std::string> best_projector(const std::vector<std::string>& files);
+
 // The Vision projector beside a GGUF model file (mmproj-*.gguf in its directory): BF16 first,
 // then F32, then F16; nullopt when there is none.
 [[nodiscard]] std::optional<std::filesystem::path>

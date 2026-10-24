@@ -26,10 +26,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// A GGUF model's Vision projector (mmproj-*.gguf): beside the model file (a local directory, or
-// the hub snapshot when it was fetched before), else fetched from the model's repository at the
-// same commit. BF16 first (the published encoder's own type, kept exactly), then F32, then F16
-// (rounded to a narrower range). nullopt when there is none.
+// A Vision projector's place in the order a start takes them (mmproj-*.gguf): BF16 first (the
+// published encoder's own type, kept exactly), then F32, then F16 (rounded to a narrower range),
+// then any; -1 for another file.
 int projector_rank(std::string_view file_name) {
     const std::string name = ascii_lower(file_name);
     if (!name.starts_with("mmproj") || !name.ends_with(".gguf")) { return -1; }
@@ -39,34 +38,34 @@ int projector_rank(std::string_view file_name) {
                                                    : 3;
 }
 
+// A GGUF model's Vision projector. A hub model's is the one its repository's listing ranks first
+// (best_projector), fetched or already in the snapshot: the plan without the weights charges that
+// one, whatever an earlier run left beside the model. A local model's, or a hub snapshot's served
+// offline (no listing), is the best one beside the model file. nullopt when there is none.
 std::optional<fs::path> gguf_projector(const FetchResult& fetched, const FetchOptions& fetch,
                                        const std::function<void(const std::string&)>& log) {
-    if (auto beside = gguf_projector_beside(fetched.model); beside || fetched.repo.empty()) {
-        return beside;
+    if (fetched.repo.empty() || fetched.offline) { return gguf_projector_beside(fetched.model); }
+    auto listing     = fetch;
+    listing.revision = fetched.commit;
+    std::vector<std::string> names;
+    for (const auto& quant : list_quants(fetched.repo + "@" + fetched.commit, listing)) {
+        names.insert(names.end(), quant.files.begin(), quant.files.end());
     }
-    std::error_code ec;
-    for (const char* pattern : {"mmproj-BF16.gguf", "mmproj-F32.gguf", "mmproj-F16.gguf",
-                                "mmproj*.gguf"}) {
-        auto small     = fetch;
-        small.include  = {pattern};
-        small.quant.clear();
-        small.revision = fetched.commit;
-        try {
-            const auto files = fetch_model(fetched.repo, small);
-            for (const auto& file : files.files) {
-                const auto path = files.snapshot / file.path;
-                if (projector_rank(path.filename().string()) >= 0 &&
-                    fs::is_regular_file(path, ec)) {
-                    if (log) { log("vision projector " + fetched.repo + "/" + file.path); }
-                    return path;
-                }
-            }
-        } catch (const std::exception& error) {
-            const std::string what = error.what();
-            if (what.find("no file matches") == std::string::npos) { throw; }
+    const auto best = best_projector(names);
+    if (!best) { return std::nullopt; }
+    auto small     = fetch;
+    small.include  = {*best};
+    small.quant.clear();
+    small.revision = fetched.commit;
+    const auto files = fetch_model(fetched.repo, small);
+    for (const auto& file : files.files) {
+        if (file.path == *best) {
+            if (log) { log("vision projector " + fetched.repo + "/" + file.path); }
+            return files.snapshot / file.path;
         }
     }
-    return std::nullopt;
+    throw std::runtime_error(fetched.repo + ": the vision projector " + *best +
+                             " is listed but was not fetched");
 }
 
 constexpr const char* kTokenizerFiles[] = {"tokenizer.json", "tokenizer_config.json",
@@ -316,6 +315,19 @@ bool recipe_has_vision(const std::string& recipe) {
     return recipe.starts_with("qwen3_") ||
            (recipe.starts_with("gemma4") && recipe.find("assistant") == std::string::npos &&
             recipe.find("dflash") == std::string::npos);
+}
+
+std::optional<std::string> best_projector(const std::vector<std::string>& files) {
+    std::optional<std::string> best;
+    int best_rank = 99;
+    for (const auto& file : files) {
+        const int r = projector_rank(fs::path(file).filename().string());
+        if (r >= 0 && (r < best_rank || (r == best_rank && file < *best))) {
+            best      = file;
+            best_rank = r;
+        }
+    }
+    return best;
 }
 
 std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem::path& gguf) {

@@ -151,27 +151,17 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     return out;
 }
 
-// The listing's vision projector the start would fetch beside a GGUF model under --vision
-// (convert/acquire.cpp gguf_projector: mmproj BF16, then F32, then F16, then any), nullptr when
-// there is none.
+// The listing's vision projector the start fetches beside a GGUF model under --vision (the same
+// choice: convert::best_projector), nullptr when there is none.
 const convert::RepoQuant* listed_projector(const std::vector<convert::RepoQuant>& quants) {
-    const convert::RepoQuant* best = nullptr;
-    int best_rank                  = 4;
+    std::vector<std::string> names;
+    for (const auto& q : quants) { names.insert(names.end(), q.files.begin(), q.files.end()); }
+    const auto best = convert::best_projector(names);
+    if (!best) { return nullptr; }
     for (const auto& q : quants) {
-        for (const std::string& file : q.files) {
-            const std::string name = ascii_lower(fs::path(file).filename().string());
-            if (!name.starts_with("mmproj") || !name.ends_with(".gguf")) { continue; }
-            const int rank = name.find("bf16") != std::string::npos  ? 0
-                             : name.find("f32") != std::string::npos ? 1
-                             : name.find("f16") != std::string::npos ? 2
-                                                                     : 3;
-            if (rank < best_rank) {
-                best      = &q;
-                best_rank = rank;
-            }
-        }
+        if (std::find(q.files.begin(), q.files.end(), *best) != q.files.end()) { return &q; }
     }
-    return best;
+    return nullptr;
 }
 
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
