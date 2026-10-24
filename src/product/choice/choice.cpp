@@ -196,21 +196,25 @@ std::string activation_name(ActivationMode mode) {
 }
 
 // The order among candidates of equal standing: the larger worth, then the longer own context,
-// then the fewer bytes of weights, then the enumeration order.
+// then the fewer bytes of weights, then the smaller quantization label (the quant rule's last
+// key, runtime/engine/quant_rule.cpp quant_ranks_above), then the enumeration order.
 bool better(const Scored& a, std::size_t ia, const Scored& b, std::size_t ib,
             const std::vector<QuantOption>& quants) {
     if (std::abs(a.worth - b.worth) > kWorthTie) { return a.worth > b.worth; }
     if (a.own_context != b.own_context) { return a.own_context > b.own_context; }
-    const double wa = quants[a.candidate.quant].weight_bytes;
-    const double wb = quants[b.candidate.quant].weight_bytes;
-    if (wa != wb) { return wa < wb; }
+    const QuantOption& qa = quants[a.candidate.quant];
+    const QuantOption& qb = quants[b.candidate.quant];
+    if (qa.weight_bytes != qb.weight_bytes) { return qa.weight_bytes < qb.weight_bytes; }
+    if (qa.label != qb.label) { return qa.label < qb.label; }
     return ia < ib;
 }
 
-// The quantization rule's order: more bits per weight, then more bytes, then the listing.
+// The quantization rule's order (quant_ranks_above): more bits per weight, then more bytes, then
+// the smaller label, then the listing.
 bool larger_quant(const QuantOption& a, std::size_t ia, const QuantOption& b, std::size_t ib) {
     if (a.bits_per_weight != b.bits_per_weight) { return a.bits_per_weight > b.bits_per_weight; }
     if (a.weight_bytes != b.weight_bytes) { return a.weight_bytes > b.weight_bytes; }
+    if (a.label != b.label) { return a.label < b.label; }
     return ia < ib;
 }
 
@@ -716,6 +720,8 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
                 alt.why_code = "tie_order";
                 alt.why_not  = axis == Axis::Activations
                                    ? "the same in every respect (fast and int8 take one route on these weights): the listing's order"
+                               : axis == Axis::Quant
+                                   ? "the same in every respect: the smaller label, as the quant rule"
                                    : "the same in every respect for this request: the listing's order";
             } else {
                 alt.why_code = "lower_worth";
