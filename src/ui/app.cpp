@@ -1541,6 +1541,31 @@ std::optional<long> active_requests(int port) {
 
 } // namespace
 
+namespace {
+
+// `spec` started on `artifact` by its path: the model argument (argv[1]) is the path, the hub's
+// --quant goes (the path names one quantization); `fresh` (another artifact than the one `spec`
+// ran) also drops --spec-profile, a tune keyed to the old artifact's id that ninferno-serve refuses
+// for another.
+LaunchSpec on_artifact(LaunchSpec spec, const fs::path& artifact, bool fresh) {
+    std::vector<std::string> argv;
+    for (std::size_t i = 0; i < spec.argv.size(); ++i) {
+        const std::string& arg = spec.argv[i];
+        if (i == 1) {
+            argv.push_back(artifact.string());
+        } else if (arg == "--quant" || (fresh && arg == "--spec-profile")) {
+            ++i; // and its value
+        } else {
+            argv.push_back(arg);
+        }
+    }
+    spec.argv  = std::move(argv);
+    spec.model = artifact.string();
+    return spec;
+}
+
+} // namespace
+
 void App::advance_updates() {
     std::lock_guard lock(moved_mutex_);
     for (auto& [key, update] : updates_) {
@@ -1574,14 +1599,11 @@ void App::advance_updates() {
                     if (!same_file(info.artifact, part.old_artifact)) { continue; }
                     ModelUpdate::Switch next;
                     next.old_serve = info.id;
-                    next.back      = info.spec;
-                    next.next      = info.spec;
-                    for (auto& arg : next.next.argv) {
-                        if (same_file(arg, part.old_artifact)) { arg = part.new_artifact.string(); }
-                    }
-                    if (next.next.model == part.old_artifact.string()) {
-                        next.next.model = part.new_artifact.string();
-                    }
+                    // Both starts name their conversion by its path: a start by the hub id would
+                    // resolve to whatever the ref names now (after the update, the new commit),
+                    // so a revert would start the new conversion again.
+                    next.back = on_artifact(info.spec, part.old_artifact, false);
+                    next.next = on_artifact(info.spec, part.new_artifact, true);
                     update.switches.push_back(std::move(next));
                 }
             }
