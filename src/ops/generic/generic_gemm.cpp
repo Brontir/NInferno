@@ -3168,13 +3168,11 @@ const DeviceGates& device_gates() {
     int device = 0;
     if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kOrdinals) return none;
     const auto slot = static_cast<std::size_t>(device);
+    // A device whose class cannot be read throws (call_once then stays open): caching "none"
+    // would turn PDL and the spread off for the process on one transient failure.
     std::call_once(once[slot], [&] {
-        try {
-            const DeviceClass& d = device_class(device);
-            gates[slot]          = {spread_by_board(d), d.features.pdl};
-        } catch (const std::exception&) {
-            gates[slot] = none;
-        }
+        const DeviceClass& d = device_class(device);
+        gates[slot]          = {spread_by_board(d), d.features.pdl};
     });
     return gates[slot];
 }

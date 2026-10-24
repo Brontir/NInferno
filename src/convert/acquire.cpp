@@ -480,6 +480,9 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             const auto target = describe_gguf_artifact(out.artifact, model_id, fetched.model);
             out.drafters      = attach_drafters(plan_drafters(target), out.artifact, attach);
         } catch (const std::exception& error) {
+            // Asked for by name (--with-drafters): a drafter that cannot be attached is an error,
+            // not a model served slower without it.
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("drafters not attached: ") + error.what());
         }
     };
@@ -507,6 +510,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 }
             }
         } catch (const std::exception& error) {
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("companion drafters not planned: ") + error.what());
         }
         if (companions.empty()) { return; }
@@ -521,6 +525,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         try {
             out.conversion = convert(with);
         } catch (const std::exception& error) {
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("companion drafters not converted in: ") + error.what());
             remove_artifact(out.artifact);
             out.conversion = convert(text_only);

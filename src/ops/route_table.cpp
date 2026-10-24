@@ -400,9 +400,8 @@ double table_distance(const Table& table) {
 }
 
 // The default lookup's tables, nearest measured board first: every table of `dir` whose routes
-// this device runs (table_distance finite), ties in file-name order. A table named after one of
-// the device's own classes that fails to parse is the caller's error to report; any other that
-// fails lends nothing.
+// this device runs (table_distance finite), ties in file-name order. A table that fails to parse
+// is an error, whichever class it is for.
 std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
     std::vector<std::filesystem::path> files;
     std::error_code ec;
@@ -411,18 +410,12 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
         if (it->path().extension() == ".json" && it->is_regular_file(ec)) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end());
-    const auto own = own_keys();
     std::vector<std::pair<double, std::shared_ptr<Table>>> ranked;
     for (const auto& file : files) {
         std::shared_ptr<Table> table;
-        try {
-            table = parse_table(utf8_path(file));
-        } catch (const std::exception&) {
-            for (const auto& key : own) {
-                if (route_table_file_name(key) == utf8_file_name(file)) throw;
-            }
-            continue;
-        }
+        // A table that does not parse is a broken install, whichever class it is for: skipping
+        // it would let the nearest-board choice depend on which files happen to be readable.
+        table = parse_table(utf8_path(file));
         const double d = table_distance(*table);
         if (std::isfinite(d)) ranked.emplace_back(d, std::move(table));
     }
@@ -563,16 +556,13 @@ void ensure_default_locked(DeviceTables& d) {
             }
         }
     } catch (const std::exception& error) {
-        // A broken default table must not stop the engine: every consumer answers as untuned.
-        // It must not go unnoticed either: the reason is the table status (the startup log
-        // prints it) and a warning now.
-        d.table.reset();
-        d.default_status      = {};
-        d.default_status.path = attempted;
-        d.default_status.message = "route table " +
-                                   (attempted.empty() ? std::string("directory") : attempted) +
-                                   " refused (" + error.what() + "); routes are untuned";
-        std::fprintf(stderr, "ninferno: warning: %s\n", d.default_status.message.c_str());
+        // A broken default table stops the engine: answering as untuned would change the routes,
+        // the speed and (for the A8 and A4 routes) the bytes with what is on disk. A directory
+        // with no table for this class is not an error (the heuristic routes, by design).
+        throw std::runtime_error("route table " +
+                                 (attempted.empty() ? std::string("directory") : attempted) +
+                                 " refused: " + error.what() +
+                                 " (a broken install: reinstall, or name a table with --route-table)");
     }
     publish_locked(d, d.table);
 }
