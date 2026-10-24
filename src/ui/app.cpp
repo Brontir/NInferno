@@ -487,12 +487,16 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (request.refetch && !request.prepare_only) {
         throw std::invalid_argument("refetch is a prepare's");
     }
+    if (request.keep_replaced && !request.refetch) {
+        throw std::invalid_argument("keep_replaced is a refetch's");
+    }
     if (!request.recipe.empty() && !is_word(request.recipe)) {
         throw std::invalid_argument("bad recipe: " + request.recipe);
     }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
+        if (request.keep_replaced) { spec.argv.push_back("--keep-replaced"); }
         if (!request.recipe.empty()) {
             spec.argv.push_back("--recipe");
             spec.argv.push_back(request.recipe);
@@ -1399,12 +1403,9 @@ Json App::moved_json() {
             std::string commit;
             std::ifstream(ref_file.path()) >> commit;
             const auto dir = repo_dir.path() / "ninferno" / commit;
-            // Only a conversion whose download is gone: with the download there, a start by the
-            // hub id fetches the new commit as any download does.
-            if (commit.size() != 40 || !fs::is_directory(dir, ec) ||
-                fs::exists(repo_dir.path() / "snapshots" / commit, ec)) {
-                continue;
-            }
+            // A conversion of the commit the ref named, its download removed or still here: a
+            // start keeps it either way (convert::acquire_model).
+            if (commit.size() != 40 || !fs::is_directory(dir, ec)) { continue; }
             const auto ref = ref_file.path().filename().string();
             const auto key = repo + "@" + ref;
             std::string hub_commit;
@@ -1437,7 +1438,25 @@ Json App::moved_json() {
                            {"artifacts", artifacts}});
         }
     }
-    return {{"models", out}};
+    Json updates = Json::array();
+    {
+        std::lock_guard lock(moved_mutex_);
+        for (const auto& [key, update] : updates_) {
+            Json percent = Json::array();
+            for (const auto& part : update.parts) {
+                ProcessInfo info;
+                percent.push_back(processes_.find(part.prepare, info) ? info.percent : -1);
+            }
+            updates.push_back({{"repo", update.repo},
+                               {"ref", update.ref},
+                               {"commit", update.old_commit},
+                               {"hub_commit", update.hub_commit},
+                               {"state", update.state},
+                               {"error", update.error},
+                               {"prepares", percent}});
+        }
+    }
+    return {{"models", out}, {"updates", updates}};
 }
 
 Json App::answer_moved(const std::string& repo, const std::string& ref, const std::string& commit,
@@ -1465,20 +1484,210 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         return {{"accepted", true}};
     }
     if (action != "refetch") { throw std::invalid_argument("action is accept or refetch"); }
+    const auto key = repo + "@" + ref;
+    std::lock_guard lock(moved_mutex_);
+    if (const auto it = updates_.find(key);
+        it != updates_.end() && (it->second.state == "downloading" || it->second.state == "switching")) {
+        throw std::invalid_argument(key + " is already being updated");
+    }
+    ModelUpdate update;
+    update.repo       = repo;
+    update.ref        = ref;
+    update.old_commit = commit;
+    update.hub_commit = hub_commit;
+    update.state      = "downloading";
     Json ids = Json::array();
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (entry.path().extension() != ".ninferno" || facts(entry.path()).drafter) { continue; }
         LaunchRequest request;
-        request.model        = ref == "main" ? repo : repo + "@" + ref;
-        const auto name      = artifact_name(entry.path().filename().string());
-        request.quant        = name.quant;
-        request.recipe       = name.recipe; // the replaced conversion's, official or not
-        request.prepare_only = true;
-        request.refetch      = true;
-        request.gpu          = -1;
-        ids.push_back(processes_.start(make_launch(options_, request)));
+        request.model         = ref == "main" ? repo : repo + "@" + ref;
+        const auto name       = artifact_name(entry.path().filename().string());
+        request.quant         = name.quant;
+        request.recipe        = name.recipe; // the replaced conversion's, official or not
+        request.prepare_only  = true;
+        request.refetch       = true;
+        request.keep_replaced = true; // removed here once nothing serves it
+        request.gpu           = -1;
+        const auto id = processes_.start(make_launch(options_, request));
+        update.parts.push_back({.old_artifact = entry.path(), .new_artifact = {}, .prepare = id});
+        ids.push_back(id);
     }
+    if (update.parts.empty()) { throw std::invalid_argument("no converted model of " + key); }
+    updates_[key] = std::move(update);
     return {{"ids", ids}};
+}
+
+namespace {
+
+bool ended(const std::string& state) { return state == "exited" || state == "failed"; }
+
+bool same_file(const std::string& a, const fs::path& b) {
+    std::error_code ec;
+    return !a.empty() && fs::equivalent(fs::path(a), b, ec) && !ec;
+}
+
+// The requests a ninferno-serve on `port` has in flight (its /health); nullopt when unanswered.
+std::optional<long> active_requests(int port) {
+    if (port <= 0) { return std::nullopt; }
+    httplib::Client client("127.0.0.1", port);
+    client.set_connection_timeout(std::chrono::milliseconds(300));
+    client.set_read_timeout(std::chrono::seconds(1));
+    const auto res = client.Get("/health");
+    if (!res || res->status != 200) { return std::nullopt; }
+    try {
+        return Json::parse(res->body).at("active_requests").get<long>();
+    } catch (const std::exception&) { return std::nullopt; }
+}
+
+} // namespace
+
+namespace {
+
+// `spec` started on `artifact` by its path: the model argument (argv[1]) is the path, the hub's
+// --quant goes (the path names one quantization); `fresh` (another artifact than the one `spec`
+// ran) also drops --spec-profile, a tune keyed to the old artifact's id that ninferno-serve refuses
+// for another.
+LaunchSpec on_artifact(LaunchSpec spec, const fs::path& artifact, bool fresh) {
+    std::vector<std::string> argv;
+    for (std::size_t i = 0; i < spec.argv.size(); ++i) {
+        const std::string& arg = spec.argv[i];
+        if (i == 1) {
+            argv.push_back(artifact.string());
+        } else if (arg == "--quant" || (fresh && arg == "--spec-profile")) {
+            ++i; // and its value
+        } else {
+            argv.push_back(arg);
+        }
+    }
+    spec.argv  = std::move(argv);
+    spec.model = artifact.string();
+    return spec;
+}
+
+} // namespace
+
+void App::advance_updates() {
+    std::lock_guard lock(moved_mutex_);
+    for (auto& [key, update] : updates_) {
+        if (update.state == "downloading") {
+            bool all = true;
+            for (auto& part : update.parts) {
+                ProcessInfo info;
+                if (!processes_.find(part.prepare, info)) {
+                    update.state = "failed";
+                    update.error = "the download's process is gone; the old conversion stays";
+                    break;
+                }
+                if (!ended(info.state)) {
+                    all = false;
+                } else if (info.state == "failed" || info.exit_code != 0 || info.artifact.empty()) {
+                    update.state = "failed";
+                    update.error = "the new commit's download or conversion failed (" +
+                                   info.last_line + "); the old conversion stays";
+                    break;
+                } else {
+                    part.new_artifact = info.artifact;
+                }
+            }
+            if (update.state != "downloading" || !all) { continue; }
+            // The models serving an old conversion, each to restart once on its new one.
+            for (const auto& info : processes_.list()) {
+                if (info.spec.kind != "serve" || ended(info.state) || info.state == "stopping") {
+                    continue;
+                }
+                for (const auto& part : update.parts) {
+                    if (!same_file(info.artifact, part.old_artifact)) { continue; }
+                    ModelUpdate::Switch next;
+                    next.old_serve = info.id;
+                    // Both starts name their conversion by its path: a start by the hub id would
+                    // resolve to whatever the ref names now (after the update, the new commit),
+                    // so a revert would start the new conversion again.
+                    next.back = on_artifact(info.spec, part.old_artifact, false);
+                    next.next = on_artifact(info.spec, part.new_artifact, true);
+                    update.switches.push_back(std::move(next));
+                }
+            }
+            update.state = "switching";
+        }
+        if (update.state != "switching") { continue; }
+        bool all = true;
+        for (auto& sw : update.switches) {
+            if (sw.done) { continue; }
+            all = false;
+            if (sw.serve == 0) {
+                ProcessInfo old;
+                const bool found = processes_.find(sw.old_serve, old);
+                if (!sw.stopping) {
+                    // Stopped by the user meanwhile: nothing to restart.
+                    if (!found || ended(old.state) || old.state == "stopping") {
+                        sw.done = true;
+                        continue;
+                    }
+                    // Restarted when it serves no request (its /health): not in a conversation.
+                    if (old.state != "ready" || active_requests(old.spec.port).value_or(1) != 0) {
+                        continue;
+                    }
+                    sw.stopping = true;
+                    std::thread([this, id = sw.old_serve] { processes_.stop(id); }).detach();
+                    continue;
+                }
+                if (found && !ended(old.state)) { continue; }
+                try {
+                    sw.serve = processes_.start(sw.next);
+                } catch (const std::exception& error) {
+                    update.error = sw.next.model + " did not start on the new conversion (" +
+                                   error.what() + "); back on the old one";
+                    sw.reverted = true;
+                    try {
+                        sw.serve = processes_.start(sw.back);
+                    } catch (const std::exception& again) {
+                        update.error += std::string("; it did not start on the old one either (") +
+                                        again.what() + ")";
+                        sw.done = true;
+                    }
+                }
+                continue;
+            }
+            ProcessInfo now;
+            if (!processes_.find(sw.serve, now) || now.state == "ready") {
+                sw.done = true;
+                continue;
+            }
+            if (!ended(now.state)) { continue; }
+            if (sw.reverted) {
+                // Not again: the old conversion did not come back up either.
+                update.error += "; it did not start on the old one either (" + now.last_line + ")";
+                sw.done = true;
+                continue;
+            }
+            update.error = sw.next.model + " did not start on the new conversion (" +
+                           now.last_line + "); back on the old one";
+            sw.reverted = true;
+            try {
+                sw.serve = processes_.start(sw.back);
+            } catch (const std::exception& again) {
+                update.error += std::string("; it did not start on the old one either (") +
+                                again.what() + ")";
+                sw.done = true;
+            }
+        }
+        if (!all) { continue; }
+        if (std::any_of(update.switches.begin(), update.switches.end(),
+                        [](const ModelUpdate::Switch& sw) { return sw.reverted; })) {
+            // The old conversion stays: a model serves it again. The new one stays beside.
+            update.state = "failed";
+            continue;
+        }
+        for (const auto& part : update.parts) {
+            try {
+                (void)delete_artifact(part.old_artifact);
+            } catch (const std::exception& error) {
+                update.error = "the old conversion " + part.old_artifact.filename().string() +
+                               " was kept: " + error.what();
+            }
+        }
+        update.state = "done";
+    }
 }
 
 fs::path App::hub_root() const {
@@ -1634,6 +1843,11 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     std::uint64_t freed = 0;
+    // Its speculation manifest names the drafters converted for it (read before the sidecars go).
+    std::string manifest;
+    if (std::ifstream in(spec::manifest_path(path)); in) {
+        manifest.assign(std::istreambuf_iterator<char>(in), {});
+    }
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
     const auto prefix = path.filename().string();
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
@@ -1654,6 +1868,23 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     if (!repo_dir.empty()) {
+        // Its commit's directory holding no conversion but the drafters its manifest names:
+        // removed whole, as the converter removes a replaced conversion (acquire.cpp). Another
+        // quantization of the commit keeps it.
+        const auto commit_dir = path.parent_path();
+        if (commit_dir.parent_path() == repo_dir / "ninferno") {
+            bool others = false;
+            for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
+                if (entry.path().extension() == ".ninferno" &&
+                    manifest.find(entry.path().filename().string()) == std::string::npos) {
+                    others = true;
+                }
+            }
+            if (!others) {
+                freed += tree_bytes(commit_dir);
+                fs::remove_all(commit_dir, ec);
+            }
+        }
         bool left = false;
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".ninferno" &&
@@ -1916,6 +2147,7 @@ void App::watch_health() {
             }
         }
         remove_converted_originals();
+        advance_updates();
         processes_.forget_ended(std::chrono::hours(6));
         for (int i = 0; i < 10 && !stopping_; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));

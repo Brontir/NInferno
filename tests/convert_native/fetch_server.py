@@ -158,7 +158,11 @@ def make_handler(hub: Hub):
                         item.pop("size")
                         item.get("lfs", {}).pop("size", None)
                     siblings.append(item)
-                body = json.dumps({"id": f"{parts[2]}/{parts[3]}", "sha": repo["commit"],
+                # A commit the repository had before (its "history", as a moved branch leaves it)
+                # still lists as itself; any other revision lists as the current commit.
+                revision = "/".join(parts[5:])
+                sha = revision if revision in repo.get("history", ()) else repo["commit"]
+                body = json.dumps({"id": f"{parts[2]}/{parts[3]}", "sha": sha,
                                    "siblings": siblings}).encode()
                 return self.reply(200, body, {"Content-Type": "application/json"}, head)
             # Hugging Face: /<org>/<name>/resolve/<commit>/<path>

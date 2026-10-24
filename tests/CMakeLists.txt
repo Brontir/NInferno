@@ -16,6 +16,12 @@ if(NINFERNO_BUILD_APPS)
   include(convert_native/tests.cmake)
   include(oracle/tests.cmake)
   include(cmake/AppRefusalTests.cmake)
+  # ninferno-ui's update of a moved hub model against a stand-in hub and ninferno-serve: one
+  # restart when idle, one revert when the new conversion does not start. No GPU.
+  add_test(NAME ninferno_ui_moved_update_test
+    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/ui_moved_update_test.py
+            $<TARGET_FILE:ninferno-ui> ${CMAKE_CURRENT_LIST_DIR}/convert_native)
+  set_tests_properties(ninferno_ui_moved_update_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # Speculation support (registry, corpus, fingerprints, profiles, watchdog, manifests): no GPU.

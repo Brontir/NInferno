@@ -20,11 +20,15 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 
 - **GPUs:** each card's memory, load, temperature and power, and the models running on it.
 - **My models:** the models downloaded or converted on this machine, ready to start. A
-  converted hub model whose download was removed and whose branch has moved on the hub since is
-  marked "newer weights on the hub". It still starts from its converted weights. The mark offers
-  two choices:
+  converted hub model whose branch has moved on the hub since (its download removed or still in
+  the cache) is marked "newer weights on the hub", and a popup asks once per new commit. It still
+  starts from its converted weights; nothing downloads by itself. The choices:
   - **Keep these:** treat them as valid from now on (no mark until the branch moves again).
-  - **Download new:** download the new commit, convert it and delete the old conversion.
+  - **Download new:** download and convert the new commit in the background, beside the old
+    conversion. A model running on the old conversion restarts on the new one once, when it has no
+    request in flight; then the old conversion is deleted. If the new one does not start, the
+    model starts on the old one once more and the update ends, saying why; nothing is retried.
+  - **Later:** ask again at the next new commit.
 
   The hub is asked at most hourly per model, never with `--offline`.
 - **Find:** Hugging Face search by downloads, likes, update or trend, with a mark for what

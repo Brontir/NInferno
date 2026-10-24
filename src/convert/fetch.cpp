@@ -1430,6 +1430,59 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 
 } // namespace
 
+bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
+                          const std::string& repo) {
+    std::error_code ec;
+    if (!fs::is_directory(snapshot, ec)) { return false; }
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        // A link to a blob not yet downloaded is no regular file. Its size: a width selector
+        // (--quant 4bit) picks the largest candidate of that width.
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    std::vector<RemoteFile> chosen;
+    try {
+        chosen = choose_files(listing, options, repo);
+    } catch (const std::exception&) {
+        return false; // no model there for options.quant
+    }
+    bool weights = false;
+    for (const auto& file : chosen) {
+        const auto name = ascii_lower(file.path);
+        if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one
+        // part leaves the others unlinked, and the listing above sees only what is there.
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+        std::smatch match;
+        if (std::regex_match(file.path, match, split)) {
+            const int parts = std::stoi(match[2].str());
+            for (int part = 1; part <= parts; ++part) {
+                char suffix[32];
+                std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
+                if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
+            }
+        }
+        // Every shard a safetensors index names.
+        if (name.ends_with("model.safetensors.index.json")) {
+            try {
+                std::ifstream in(snapshot / file.path);
+                const auto index = Json::parse(in);
+                for (const auto& [tensor, shard] : index.at("weight_map").items()) {
+                    if (!fs::is_regular_file(snapshot / shard.get<std::string>(), ec)) { return false; }
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+    }
+    return weights;
+}
+
+
 std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
     if (hub_offline()) { return std::nullopt; }
     auto [repo, revision] = split_spec(spec, options);

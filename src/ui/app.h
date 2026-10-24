@@ -109,6 +109,9 @@ struct LaunchRequest {
     // The conversion recipe (ninferno-serve --recipe; "": the official one): a refetch keeps the
     // replaced artifact's.
     std::string recipe;
+    // With refetch: the replaced conversion stays for the caller to remove once nothing serves it
+    // (ninferno-serve --keep-replaced): ninferno-ui's update of a running model.
+    bool keep_replaced = false;
 };
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
@@ -222,16 +225,40 @@ private:
     nlohmann::json arch_json(const std::string& repo, const std::string& hub);
     nlohmann::json listing_of(const std::string& repo, const std::string& hub);
     nlohmann::json local_json();
-    // The converted hub models whose download was removed and whose branch the hub now names at
-    // another commit: what each start of them would warn about (ninferno-serve keeps the
+    // The converted hub models whose branch the hub now names at another commit (their download
+    // removed or not): what each start of them would warn about (ninferno-serve keeps the
     // converted weights unless asked). One listing request per repository and branch, at most
-    // hourly; none with --offline.
+    // hourly; none with --offline. With the updates the user asked for and how far each is.
     nlohmann::json moved_json();
     // The user's answer for one such conversion: "accept" keeps it as valid now and later
-    // (convert::accept_converted), "refetch" starts a prepare per converted quantization that
-    // downloads the new commit and removes the old conversion. The prepares' ids.
+    // (convert::accept_converted), "refetch" starts its update (ModelUpdate). Nothing else
+    // starts one: the GUI only offers it.
     nlohmann::json answer_moved(const std::string& repo, const std::string& ref,
                                 const std::string& commit, const std::string& action);
+    // One update of a moved hub model (repo@ref), asked for once, advanced by watch_health:
+    // a prepare per converted quantization downloads the new commit and converts it beside the
+    // old conversion (--keep-replaced); then each model serving an old conversion is restarted
+    // once on the new one, when it has no request in flight; then the old conversions go. Nothing
+    // is retried: a failed download keeps the old conversion; a model whose new conversion does
+    // not come up starts once more on the old one, and the update ends there (failed).
+    struct ModelUpdate {
+        struct Part {
+            std::filesystem::path old_artifact, new_artifact;
+            std::uint64_t prepare = 0;
+        };
+        struct Switch {
+            std::uint64_t old_serve = 0;
+            LaunchSpec back, next; // the start on the old conversion, and on the new one
+            std::uint64_t serve = 0; // the restart (0: not yet)
+            bool stopping = false, reverted = false, done = false;
+        };
+        std::string repo, ref, old_commit, hub_commit;
+        std::vector<Part> parts;
+        std::vector<Switch> switches;
+        std::string state; // downloading | switching | done | failed
+        std::string error;
+    };
+    void advance_updates();
     nlohmann::json search_json(const std::string& query, const std::string& sort = "downloads",
                                const std::string& hub = "huggingface");
     nlohmann::json kv_json(const std::string& repo, const nlohmann::json& listing,
@@ -279,6 +306,7 @@ private:
     std::mutex moved_mutex_;
     // repo@ref -> (when asked, the commit the hub names; "" when it could not be asked)
     std::map<std::string, std::pair<std::int64_t, std::string>> hub_commits_;
+    std::map<std::string, ModelUpdate> updates_; // repo@ref -> its update (moved_mutex_)
     mutable std::mutex catalog_mutex_;
     std::shared_ptr<const Catalog> catalog_;
     std::string catalog_source_; // "built in", or the feed and when it was read
