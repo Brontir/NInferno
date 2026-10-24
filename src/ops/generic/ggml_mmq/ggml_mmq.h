@@ -64,10 +64,35 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int 
 
 [[nodiscard]] std::size_t fixup_bound(int columns);
 
-// out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows).
+// How a product spreads its output tiles over the grid.
+//   StreamK: ggml's stream-k, where the tiles fill the SMs badly (under 90 % of the last wave):
+//     one CTA per SM walks a contiguous range of (tile, K block) and a fixup pass adds the
+//     partial sums of the tiles split between two CTAs. Where a tile's K splits depends on the
+//     tile count (the call's column count) and the SM count, so a column's bytes depend on both.
+//   Tiles: k_splits CTAs per output tile, each summing one fixed 1/k_splits of K in order (the
+//     same kernel launched with tiles * k_splits CTAs); with k_splits > 1 the CTA of the last part
+//     writes its sums and a fixup adds the sum of the other parts, taken in descending order.
+//     Each output element is summed over the same K blocks in the same order whatever the call's
+//     width, the column tile, the slice it sits in or the device's SM count: a column's bytes
+//     depend on its own activation and k_splits only. The column tile (16..128) changes which
+//     warp holds an element and how many column sub-tiles a warp walks, not the element's
+//     sequence of int8 MMA sums and FP32 scale-and-adds (mmq-vec-dot.cuh:
+//     sum[e] += d_x * d_y * C[e] per 32-value block, k ascending).
+enum class Split : std::uint8_t { StreamK, Tiles };
+
+// The fixup plane a Split::Tiles product needs (0 for one part per tile).
+[[nodiscard]] std::size_t tiles_fixup_bytes(Type type, int rows, int columns, int k_splits);
+
+// The CTAs of the kernel a 128-token call takes that the device holds at once: its SMs times the
+// compiled kernel's occupancy. A Split::Tiles launch of n tiles runs ceil(n / tile_slots) waves.
+[[nodiscard]] int tile_slots(Type type);
+
+// out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows). `fixup`
+// holds fixup_bound bytes under Split::StreamK, tiles_fixup_bytes under Split::Tiles; k_splits
+// (Split::Tiles only) divides K / 256.
 void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,
-             void* fixup, cudaStream_t stream);
+             void* fixup, cudaStream_t stream, Split split = Split::StreamK, int k_splits = 1);
 
 // ggml's vector kernel (ggml_vec.cu, after ninfer-all's): 1..kVecMaxColumns tokens with dp4a on
 // a planar q8_1 activation, two output rows a warp, the epilogue in the kernel. A token's sums do

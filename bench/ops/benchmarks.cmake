@@ -33,6 +33,9 @@ ninferno_add_op_bench(ninferno_linear_route_sweep_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/linear_route_sweep_bench.cu")
 # Offline autotuner of the generic projection path: writes a per-GPU-class route table.
 ninferno_add_op_bench(ninferno_route_tune SOURCES "${CMAKE_CURRENT_LIST_DIR}/route_tune.cpp")
+# ggml's matrix kernel at prefill widths: stream-k against one CTA per tile (the prefill profile's).
+ninferno_add_op_bench(ninferno_ggml_mmq_prefill_bench
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/ggml_mmq_prefill_bench.cpp")
 # Every R8 decode schedule on given problems, next to the dispatcher's pick.
 ninferno_add_op_bench(ninferno_r8_schedule_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/r8_schedule_bench.cpp")
 ninferno_add_op_bench(ninferno_linear_topk_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/linear_topk_bench.cu")

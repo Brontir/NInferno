@@ -31,7 +31,6 @@ This page states the rule and its target. The engine does not meet all of it yet
   5 minutes restarts the server;
 - `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
-- MMQ prefill bytes depend on where a chunk is cut;
 - the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
   (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
   its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took
@@ -76,7 +75,12 @@ This page states the rule and its target. The engine does not meet all of it yet
   them is the taint `carried_context_cost`;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
-- the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
+- the batch dependence of `fast` bytes at T ≤ 16, which the promise below allows, is not written
+  down per route yet (which routes, which batch properties move the bytes);
+- under `fast`, a prefill segment of fewer than 17 tokens takes the decode routes (T ≤ 16), whose
+  bytes differ from those of the prefill routes: where a prefix-cache frontier, a restore base or
+  forced tokens leave fewer than 17 prompt tokens to prefill, those tokens get other bytes than
+  the miss that prefilled them in a wider call (`exact` is free of this);
 - no CI property checks invariance yet;
 - the PCI-ID reference table has no per-SKU instruction rates yet (the L40's half-rate
   FP32-accumulate HMMA is still the generation row's `fp32acc_full_rate`);
@@ -474,7 +478,16 @@ option change moves the fingerprint only, a plan change both, an observed size t
 - Same fingerprint: same decisions.
 - `--activations exact`: the same bytes on every card of a generation.
 - `fast`: the same bytes for the same request schedule on the same chip type. At T ≤ 16 the bytes
-  may depend on the batch's composition, and this is documented.
+  may depend on the batch's composition, and this will be documented per route.
+- `fast` prefill: on a given chip type, a token's bytes do not depend on where its prompt was cut
+  (the chunk size, a prefix-cache frontier, a restore base) as long as every call that holds it
+  has 17 tokens or more, and outside the Gated DeltaNet gap listed above. So a prefix-cache hit
+  gives the bytes of a miss only when the segment left to prefill after the cached prefix has 17
+  tokens or more; a shorter segment takes the decode routes (the gap listed above)
+  (`include/ninferno/ops/prefill_routes.h`). The prefill profile's routes may read the device's
+  discrete facts for speed only where that changes no bytes: ggml's matrix kernel
+  (`ggml_mmq.tiles`) splits K by the weight's shape alone and picks its slice by the SM count, so
+  its prefill bytes are also the same across SM counts of one architecture.
 - Speed: a forecast with one of these labels:
   - *verified*: a lab card;
   - *covered*: within the lab's bounds for the generation;

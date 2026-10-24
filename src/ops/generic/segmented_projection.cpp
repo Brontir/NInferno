@@ -234,8 +234,8 @@ segmented_swiglu_pair_workspace_capacity_bytes(const SegmentedProjectionWeights&
     if (max_tokens > generic::kGgmlVecMaxTokens) {
         const auto halves = *gated_halves(weights);
         const std::int32_t slice =
-            std::min(generic::ggml_mmq_slice_tokens(halves.first.weight->qtype),
-                     generic::ggml_mmq_slice_tokens(halves.second.weight->qtype));
+            std::min(generic::ggml_mmq_slice_tokens(halves.first.weight->qtype, 2 * half),
+                     generic::ggml_mmq_slice_tokens(halves.second.weight->qtype, 2 * half));
         bytes = std::max(bytes, generic::ggml_mmq_gated_pair_bytes(weights.columns(), half,
                                                                    std::min(max_tokens, slice)));
     }

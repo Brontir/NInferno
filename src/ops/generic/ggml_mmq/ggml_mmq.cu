@@ -24,10 +24,12 @@ extern "C" void ggml_abort(const char* file, int line, const char* fmt, ...) {
 }
 
 #define NINFERNO_GGML_MMQ_EXTERN(TYPE)                                                             \
-    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int); \
+    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(           \
+        int, int, ninferno::ops::ggml_mmq::Split, int);                                            \
+    extern template int ninferno::ops::ggml_mmq::detail::tile_slots_impl<TYPE>();                  \
     extern template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                      \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
-        std::int64_t, void*, cudaStream_t)
+        std::int64_t, void*, cudaStream_t, ninferno::ops::ggml_mmq::Split, int)
 NINFERNO_GGML_MMQ_EXTERN(GGML_TYPE_Q4_K);
 NINFERNO_GGML_MMQ_EXTERN(GGML_TYPE_Q5_K);
 NINFERNO_GGML_MMQ_EXTERN(GGML_TYPE_Q6_K);
@@ -247,12 +249,26 @@ std::size_t fixup_bound(int columns) {
     return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
 }
 
+std::size_t tiles_fixup_bytes(Type type, int rows, int columns, int k_splits) {
+#define NINFERNO_FIXUP(T) detail::fixup_bytes_impl<T>(rows, columns, Split::Tiles, k_splits)
+    switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_FIXUP) }
+#undef NINFERNO_FIXUP
+    throw std::invalid_argument("ggml mmq: unknown block format");
+}
+
+int tile_slots(Type type) {
+#define NINFERNO_SLOTS(T) detail::tile_slots_impl<T>()
+    switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_SLOTS) }
+#undef NINFERNO_SLOTS
+    throw std::invalid_argument("ggml mmq: unknown block format");
+}
+
 void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,
-             void* fixup, cudaStream_t stream) {
+             void* fixup, cudaStream_t stream, Split split, int k_splits) {
 #define NINFERNO_PRODUCT(T)                                                                        \
     detail::product_impl<T>(weight, blocks_per_row, rows, k, activation, columns, out,             \
-                            out_column_stride, fixup, stream)
+                            out_column_stride, fixup, stream, split, k_splits)
     switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_PRODUCT) }
 #undef NINFERNO_PRODUCT
     throw std::invalid_argument("ggml mmq: unknown block format");
