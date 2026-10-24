@@ -529,6 +529,21 @@ def main() -> int:
             # The fetches at the new commit above moved the cache's ref to it: back to the commit
             # the kept download is of, as before them.
             (repo2 / "refs" / "main").write_text(old2)
+            # A --vision start: the kept download holds the model, not its projector, so it does
+            # not hold what is asked (nothing pins to it); with the projector beside it, it does.
+            probe = Path(sys.argv[3]).resolve()
+            kept_snapshot = repo2 / "snapshots" / old2
+            def holds(mode):
+                run = subprocess.run([str(probe), "org/qwen-gguf2", mode, "Q8_0", str(kept_snapshot)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            without = (holds("--holds"), holds("--holds-vision"))
+            (kept_snapshot / "mmproj-model-BF16.gguf").write_bytes(b"projector")
+            with_projector = holds("--holds-vision")
+            (kept_snapshot / "mmproj-model-BF16.gguf").unlink()
+            case("a --vision start pins only to a snapshot with the projector",
+                 without == ("true", "false") and with_projector == "true")
+            (repo2 / "refs" / "main").write_text(old2)
             refetched2 = again2("--refetch")
             case("--refetch with the download kept converts the new commit, removes the old conversion",
                  refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()

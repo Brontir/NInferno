@@ -477,9 +477,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             } else if (std::ifstream ref_file(repo_dir / "refs" / ref); ref_file) {
                 std::string commit;
                 // Only a snapshot holding the model this start asks for (its quantization, every
-                // shard): another quantization of the old commit is no reason to pin to it.
+                // shard, the projector a --vision start takes): another quantization of the old
+                // commit is no reason to pin to it.
                 if (ref_file >> commit && commit.find_first_of("/\\.") == std::string::npos &&
-                    snapshot_holds_model(repo_dir / "snapshots" / commit, options.fetch, repo)) {
+                    snapshot_holds_model(repo_dir / "snapshots" / commit, options.fetch, repo,
+                                         options.vision)) {
                     held_commit = commit;
                 }
             }
