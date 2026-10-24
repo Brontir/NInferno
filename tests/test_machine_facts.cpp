@@ -159,6 +159,49 @@ void deterministic_and_driver_blind() {
            "an id reported by another architecture is not the table's row");
 }
 
+// An id shared by boards on different memories: the row's board takes the row, a variant on another
+// bus or a slower memory takes the driver's memory (its clock on the grid) and is extrapolated,
+// while an overclocked memory or a driver's rounding still reads as the row.
+void memory_variants() {
+    // RTX 4070: the row is the GDDR6X board (21 Gbps, 504 GB/s); the GDDR6 board under the same id
+    // runs 20 Gbps (480 GB/s).
+    const MachineFacts x = machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 10501000, 192});
+    expect(x.source == FactSource::Verified && !x.driver_read &&
+               std::abs(x.dram_gbps() - 504) < 1e-9,
+           "RTX 4070 GDDR6X: the row, verified");
+    const MachineFacts g6 = machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 10001000, 192});
+    const int grid_10001  = static_cast<int>(std::llround(snap_to_fact_grid(10001000)));
+    expect(g6.source == FactSource::Extrapolated && g6.driver_read &&
+               g6.memory_clock_khz == grid_10001 && g6.reference_clock_khz == 2475000 &&
+               g6.sku == "GeForce RTX 4070",
+           "RTX 4070 GDDR6: the driver's memory clock on the grid, extrapolated");
+    expect(std::abs(g6.dram_gbps() / 480 - 1) < 0.023,
+           "RTX 4070 GDDR6: 480 GB/s within half a grid step (" + std::to_string(g6.dram_gbps()) +
+               ")");
+    // RTX 3060: the row is the 12 GB board on a 192-bit bus (360 GB/s); an 8 GB board under the
+    // same id has a 128-bit bus (240 GB/s).
+    const MachineFacts narrow =
+        machine_facts(DriverReport{0x2503, 8, 6, 28, 1777000, 7501000, 128});
+    expect(narrow.source == FactSource::Extrapolated && narrow.driver_read &&
+               narrow.memory_bus_bits == 128 && std::abs(narrow.dram_gbps() - 240) < 1e-9,
+           "RTX 3060 on a 128-bit bus: the driver's bus width, extrapolated");
+    // Not variants: a memory overclock (+5 %, a grid step up), a driver's rounding either way, no
+    // memory values at all.
+    for (const int memory_khz : {11001000, 10501000, 10499000, 0}) {
+        const MachineFacts same_board =
+            machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, memory_khz, 192});
+        expect(same(same_board, x),
+               "RTX 4070 GDDR6X at " + std::to_string(memory_khz) + " kHz: the row's facts");
+    }
+    expect(same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 10501000, 0}), x),
+           "no bus width reported: the row's");
+    // Values no memory has (a bus that is no whole number of 32-bit channels, a clock under
+    // 100 MHz) are as good as unreported.
+    expect(same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 1, 1}), x) &&
+               same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 99999, 200}), x),
+           "implausible driver memory values: the row's");
+}
+
 // Principle 7: a laptop is priced at the bottom of its published boost range (an RTX 4090 Laptop
 // GPU runs 80 to 150 W, 1455 to 2040 MHz), whatever its driver reports; a laptop row without the
 // bottom takes the lower of its top and the driver's clock on the grid.
@@ -176,6 +219,13 @@ void laptops_conservative() {
         machine_facts(DriverReport{0x2520, 8, 6, 30, 1703000, 7001000, 192}).reference_clock_khz ==
             1283000,
         "RTX 3060 Laptop GPU: 1283 MHz, the bottom of 1283-1703");
+    // A laptop's OEM memory clock or bus width is not read as a memory variant: two laptops of
+    // one name keep the row's memory and fingerprint alike.
+    const MachineFacts slow_memory =
+        machine_facts(DriverReport{0x2717, 8, 9, 76, 1755000, 8001000, 192});
+    expect(slow_memory.memory_clock_khz == 9000000 && slow_memory.memory_bus_bits == 256 &&
+               !slow_memory.driver_read,
+           "RTX 4090 Laptop GPU on a slower or narrower memory report: the row's memory");
     const std::string row =
         R"({"schema":1,"gpus":[{"id":"0x2717","name":"x","chip":"ad103","cc":89,)"
         R"("segment":"geforce","form":"laptop","sms":76,"boost_mhz":2040,"bus_bits":256,)"
@@ -249,6 +299,13 @@ void mig_and_zero_clocks() {
            "MIG slice: the table's clock");
     expect(std::abs(slice.share - 14.0 / 108) < 1e-12, "MIG slice: its share of the bandwidth");
     expect(std::abs(slice.dram_gbps() - 1555.2 * 14 / 108) < 1e-6, "MIG slice: bandwidth");
+    // A slice whose driver reports its own part of the memory (a narrower bus, a lower clock) is
+    // not a memory variant: the share prices that part once.
+    const MachineFacts reported = machine_facts(DriverReport{0x20B0, 8, 0, 14, 0, 1000000, 640});
+    expect(reported.memory_bus_bits == 5120 &&
+               reported.memory_clock_khz == slice.memory_clock_khz &&
+               std::abs(reported.dram_gbps() - slice.dram_gbps()) < 1e-6,
+           "MIG slice reporting its memory: the board's memory times the share, once");
     // The whole A100 with zero clocks (a WSL driver): verified table facts.
     const MachineFacts whole = machine_facts(DriverReport{0x20B0, 8, 0, 108, 0, 0, 0});
     expect(whole.source == FactSource::Verified && std::abs(whole.dram_gbps() - 1555.2) < 1e-6,
@@ -373,6 +430,7 @@ int main() {
         table_well_formed();
         lab_cards_old_vs_new();
         deterministic_and_driver_blind();
+        memory_variants();
         laptops_conservative();
         grid();
         mig_and_zero_clocks();

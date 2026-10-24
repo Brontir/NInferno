@@ -8,6 +8,7 @@
 #include "core/sha256.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
@@ -19,6 +20,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -574,6 +577,40 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << files << " shipped route tables in " << shipped << '\n';
+
+    // Every shipped dense-tune entry names this build's schedule sets. The tuner looks an entry up
+    // by its whole key (generic_tune.cpp, problem_key), so an entry keyed by another set matches
+    // nothing and its measurements are lost without a word, as when the staged set grew from 9
+    // to 13: a change of a set re-keys the entries it leaves valid or retunes them.
+    if (!shipped.empty()) {
+        const std::string signature = "|s" + std::to_string(generic::rmma_schedule_count()) + "." +
+                                      std::to_string(generic::staged_schedule_count()) + "." +
+                                      std::to_string(generic::nvfp4_tiled_schedule_count()) + "." +
+                                      std::to_string(generic::r8_schedule_count()) + "." +
+                                      std::to_string(generic::w4a8_schedule_count());
+        std::ifstream in(ninferno::path_from_utf8(shipped) / "tuner" / "dense_tune.json");
+        std::stringstream text;
+        text << in.rdbuf();
+        const std::string content = text.str();
+        const std::regex key_pattern(R"re("([a-z0-9]+:[0-9]+sm\|[^"]+)")re");
+        int keys = 0, foreign = 0;
+        for (auto it = std::sregex_iterator(content.begin(), content.end(), key_pattern);
+             it != std::sregex_iterator(); ++it) {
+            const std::string key = (*it)[1].str();
+            ++keys;
+            const std::size_t at  = key.find(signature);
+            const std::size_t end = at + signature.size();
+            if (at == std::string::npos || (end != key.size() && key[end] != '|')) {
+                if (foreign++ < 3) {
+                    std::cerr << "dense tune key of other schedule sets: " << key << '\n';
+                }
+            }
+        }
+        failures += check(keys > 0 && foreign == 0,
+                          "every shipped dense-tune key names this build's schedule sets (" +
+                              signature.substr(1) + "): " + std::to_string(foreign) + " of " +
+                              std::to_string(keys) + " do not");
+    }
 
     // fp8_e4m3fn_row_f32 runs fp8's register MMA: without an entry of its own it takes the fp8
     // (row BF16) A16 entry of its shape; an entry of its own wins.

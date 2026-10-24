@@ -10,9 +10,20 @@ This page states the rule and its target. The engine does not meet all of it yet
   still takes its split count from the free-memory-sized context, so the drafts and how many are
   accepted can follow free memory; under greedy decoding the emitted bytes do not (the target's
   verify decides them). The target's causal attention splits follow each token's position only;
-- a constrained row's measured mask time decides whether its masks are filled before launch and
-  whether a DFlash row drafts, and the decode wait (spin or block) follows measured host lag; the
-  wait cannot change bytes or batches;
+- the decode wait (spin or block) follows measured host lag; the wait cannot change bytes or
+  batches;
+- the constrained-decoding mask times are declared, not fitted (`runtime/contract/token_mask.h`):
+  1 ms a mask row for a grammar the engine shapes or a regex, the samplers' whole 1.5 s wait bound
+  for a client's EBNF grammar (also a `grammar` format in a client's structural tag), against the
+  187.5 ms a step may compute while its kernels run. A step that holds an EBNF row fills its masks
+  before its launch and its constrained DFlash rows verify without drafts, so under sampling or
+  `fast` a constrained DFlash row's bytes follow the constraints of its step's other rows and where
+  their committed tokens stand (under greedy `exact` decoding the target's verify decides them
+  either way). Inside a reasoning section an EBNF row copies a fixed mask and counts as shaped: a
+  round whose drafts cross the terminator computes up to 15 grammar rows while its kernels run, as
+  the measured rule's first slow round did. The Engine's tool-call markup counts as shaped, Gemma
+  4's argument grammar included. The two times await calibration against the responses'
+  `constraint_mask_ms` over `constraint_masked_n` on lab hosts;
 - a token mask the device does not see released within its wall-clock wait bound ends the request;
 - wall-clock bounds decide whether a request or the server goes on (outcome, not bytes): a queued
   request expires after `--pending-timeout-ms` (also during media preparation), a DFlash round
@@ -36,10 +47,9 @@ This page states the rule and its target. The engine does not meet all of it yet
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
 - under `fast`, the Qwen Gated DeltaNet prefill scan counts its 16-token chunks from each call's
-  start, so after a call that starts off that grid (a turn's rewrite frontier, a private endpoint
-  restore, forced tokens, the next Vision item) the bytes depend on the prefill chunk size, and a
-  prefix restored from the cache or a KV-lease re-prefill of decoded tokens gives other bytes than
-  the run it replaces; `exact` runs the scan token by token and is free of this;
+  start, so a prefix restored off the chunk grid of its segment (a private endpoint restore) or a
+  KV-lease re-prefill of decoded tokens gives other bytes than the run it replaces; `exact` runs the
+  scan token by token and is free of this;
 - launch counts stand as constants, the same on every board but not yet fitted on two lab cards
   or hashed with their kernels: the BF16 GDN gating split bands (byte-neutral) and the Gemma 4
   decode attention's 64-key split floor on the RTX 5090 alone; the rope 256-thread bound (1020
@@ -60,7 +70,14 @@ This page states the rule and its target. The engine does not meet all of it yet
   always 256 at those widths the 4090 up to 30 %);
 - choices measured on one board still carry to others by board distance (`core/measured_boards.h`:
   `measured_gate`, the small-T bands, the R8 decode tables, the MoE A8 routes, the MMQ prefill
-  and spread gates): the nearest measured board, not a rule over facts;
+  and spread gates, the context-cost machine of a class no compiled machine names): the nearest
+  measured board, not a rule over facts. The context-cost machine is found by the device's class
+  chain (`gb202:170sm`, never the driver's name), carried as measured within the carry distance
+  (no SM-count ratio rescales it) and otherwise the declared generic defaults; the fingerprint
+  names which (`sources.context_cost.machine`: `own <key>`, `carried from <key>`, `generic`; the
+  logs add a carried machine's distance) and where each component came from
+  (`sources.context_cost.transfer`, `.prefill`), and a carried machine that still prices one of
+  them is the taint `carried_context_cost`;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
@@ -86,13 +103,16 @@ This page states the rule and its target. The engine does not meet all of it yet
 - the fingerprint below exists as v1 (`ninferno-fingerprint/1`,
   `src/runtime/engine/decision_fingerprint.h`): it hashes the device facts (of the clocks, the
   reference facts the decisions read: source, reference and memory clock, bus width, share and
-  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id or a laptop row without
-  the bottom of its range, and as observed otherwise, so an overclocked board fingerprints as a
-  stock one and two laptops of one name from two OEMs alike), the host's
+  `mma_slow`; the driver's clocks only where they fed a fact, an unknown id, a laptop row without
+  the bottom of its range or a whole board on another memory than its id's row (another bus
+  width, a slower memory clock), and as observed otherwise, so an overclocked board fingerprints as
+  a stock one and two laptops of one name from two OEMs alike), the host's
   logical CPU count, RAM class and CPU bandwidth quota, the build (the git commit is read at every
   build, not at configure), the requested options (the decode pacing and the maintainer options
   among them; no environment variable decides), the route table, dense- and MoE-tune files,
-  context-cost presets, speculation profile and drafter registry by content, the artifact and a
+  context-cost presets, a `--chat-template` file, speculation profile and drafter registry by
+  content, the compiled context-cost machine the device's class resolved to (own, carried or
+  generic) and the source of its transfer and prefill, the artifact and a
   separate drafter by their source identity (their artifact ids are observed), the plan startup resolved without the free memory (KV and state storage,
   speculative windows, route breakpoints, decode steps per round) and the violations of this page
   present (taint). The RAM class is `bit_floor` of the whole GiB the host reports (64 for 64 to
@@ -144,9 +164,11 @@ What the design guarantees once complete:
    schedule (drafts accepted, rounds run, requests runnable) are not observations of the machine.
    A planner reports the points of its search to a caller that times them, and reads nothing back
    (the stopwatch, `planning_stopwatch.h`, is included only by the ResourceManager).
-   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads and timers
-   out of the text of the decision files it lists; what those files include is not checked (see
-   the known gaps and [Runtime observations](#runtime-observations)).
+   The CTest `ninferno_decision_inputs_test` keeps clock and timing headers, clock reads, timers,
+   environment reads and free-memory queries out of the text of the decision files it lists (the
+   plan ladder and the projection selector among them; one lab dump of the problems reached is
+   allowed by name); what those files include is not checked (see the known gaps and
+   [Runtime observations](#runtime-observations)).
 4. **Constants are fitted on at least two lab cards.** A constant about the hardware and its
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
@@ -548,12 +570,13 @@ logged or exported only; (b) moves only scheduling or latency, not the bytes of 
 | Queue expiry (`--pending-timeout-ms`) | `src/runtime/engine/engine_core.h` (submit, admission head and backfill), `src/models/qwen3_5/frontend/media_cache.cpp` | (b), expires a waiting request, no bytes |
 | DFlash draft arrival, 30 s | `src/models/qwen3_5/program/decode.cpp` (`fill_dflash_draft_masks`) | (b), fails a stuck round, no bytes |
 | Second transient CUDA error within 5 minutes | `src/runtime/engine/engine_core.h` (`kTransientCudaErrorWindow`) | (b), restarts the server instead of going on |
-| Mask fill order, constrained DFlash drafting | `src/structured/request_constraint.cpp` → `src/models/qwen3_5/program/decode.cpp` | (c), open |
+| Mask fill order, constrained DFlash drafting | `src/runtime/contract/token_mask.h` → `src/models/qwen3_5/program/decode.cpp` | declared mask time by constraint class, reasoning gate and draft shape, no clock |
 | Device mask-release wait bound | `src/ops/kernel/sampling_device.cuh` | (c), open: ends a request |
 | Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), opt-in by option (`--dense-tune`, `--moe-tune`), off by default |
+| Local speculation tune (`ninferno spec-tune`, `ninferno-ui`'s calibrate action) | `src/spec/manifest.cpp` (`resolve_speculation`), `src/ui/app.cpp` (`make_launch`) | (c), opt-in: read only when named (`--spec-profile`; `ninferno-ui` names it only for a start that asks, `spec_profile`, never by itself), taint `local_spec_tune` |
 | Free memory after warm-up | `src/runtime/engine/model_instance.cpp` | (c), open (gaps above) |
 | Acceptance watchdog | `src/spec/watchdog.h` | counts of the request's own drafts, not a timing |
-| Planning, transfer, phase and request timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
+| Planning, transfer, phase, request and mask-host timings; CUDA event profiling; NVML in the UI | `src/runtime/engine/context_cache/resource_manager.h`, `src/runtime/contract/timing.h`, `src/runtime/engine/engine_core.h`, `src/structured/request_constraint.cpp`, `src/models/speculation/decoder.cu`, `src/serve/`, `src/ui/gpu_stats.cpp` | (a) |
 
 ## Review checklist
 

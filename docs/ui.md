@@ -31,6 +31,13 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 - **Downloads:** progress of every download and conversion.
 - **Start:** a model with the measured speculation and its precision (exact output or the
   faster default), then a chat window on it, or its OpenAI-compatible address for other apps.
+- **Calibrate (⚙):** measures speculation for a converted model on the chosen GPU
+  (`ninferno spec-tune`, about two minutes) and writes `<model>.ninferno.spec_profile.json` beside
+  it. A measurement of your machine is never used by itself: the page's Start does not use it,
+  and a start names it (`--spec-profile`) only when it asks for it (`POST /api/launch` with
+  `"spec_profile": true`). Asked for, a tune that does not serve on that GPU (made for another
+  artifact, GPU class or drafters) refuses the start: the UI answers with the reason, or, on a GPU
+  whose class it cannot name (a MIG slice), `ninferno-serve` refuses to start and its log says why.
 
 ## Options
 

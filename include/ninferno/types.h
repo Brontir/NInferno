@@ -77,8 +77,10 @@ inline constexpr std::string_view kKvCacheStorageNames = "bf16|int8|fp8|nvfp4|k8
 // How the linear-attention layers keep their recurrent state between calls (--state-dtype).
 // - FP32: --activations exact, and the families without an automatic choice.
 // - BF16: half the bytes of every state slot and cached state image (Qwen 3.5 GDN layers). The
-//   recurrence still runs in FP32 registers and rounds only the state it stores, so the rounding
-//   does not feed back within a call; across calls it does, which is why it is opt-in.
+//   recurrence still runs in FP32 registers and rounds the state to the storage when it stores it
+//   and at every 16-token chunk end of a prefill call, so the rounding feeds back, which is why it
+//   is opt-in. On the chunk grid a prefill cut stays neutral: the call before it stores the state
+//   one call carries past that point.
 // - FP16: the same bytes as BF16 with an 11-bit significand instead of 8:
 //   eight times finer rounding where the state stays inside FP16's range,
 //   which the decayed GDN state does (stores saturate at 65504). The automatic choice of the
@@ -701,6 +703,10 @@ struct OutputConstraintSpec {
     // (response_format beside tools). The output is then either the calls or that JSON, nothing
     // else; empty means no such alternative.
     std::string answer_schema;
+    // StructuralTag only: the Engine rendered it from a ToolCalls spec, so an EBNF format inside is
+    // the model's own argument syntax, not a client's free grammar. compile_output_constraint sets
+    // it, and clears it on every spec it did not render.
+    bool engine_rendered = false;
     // JSON kinds only: forbid insignificant whitespace. Otherwise a bounded whitespace run is
     // admitted between JSON tokens.
     bool compact_json = false;
@@ -1257,6 +1263,11 @@ struct SpeculativeStats {
     std::uint64_t drafted_tokens  = 0;
     std::uint64_t accepted_tokens = 0;
     std::uint64_t fallback_steps  = 0;
+    // Of fallback_steps, the DFlash rounds this constrained request verified without the drafts
+    // it could have verified: its step filled its masks before the launch, because the host time
+    // the step's constraints declare for them is too long to overlap the kernels (a client's EBNF
+    // grammar past its reasoning in the step). Declared, never measured.
+    std::uint64_t constraint_fallback_steps = 0;
     std::vector<std::uint64_t> accepted_per_position;
     // Rounds this request verified below its depth because the step's load bound capped it
     // (SpeculativeOptions::load); they do not feed its watchdog.
@@ -1708,9 +1719,9 @@ enum class ContextCostPresetSource : std::uint8_t {
     GenericDefault,
     CompiledDefault,
     External,
-    // A measured machine of the same architecture, the nearest by SM count, its prefill scaled by
-    // the SM ratio (ContextCostSummary::similar_to names it).
-    SimilarMachine,
+    // The compiled machine of the nearest measured board within the carry distance, as measured
+    // (ContextCostSummary::machine names it).
+    CarriedMachine,
 };
 
 [[nodiscard]] inline constexpr const char*
@@ -1722,8 +1733,8 @@ context_cost_preset_source_name(ContextCostPresetSource source) noexcept {
         return "compiled-default";
     case ContextCostPresetSource::External:
         return "external";
-    case ContextCostPresetSource::SimilarMachine:
-        return "similar-machine";
+    case ContextCostPresetSource::CarriedMachine:
+        return "carried-machine";
     }
     return "unknown";
 }
@@ -1731,10 +1742,14 @@ context_cost_preset_source_name(ContextCostPresetSource source) noexcept {
 struct ContextCostSummary {
     ContextCostPresetSource transfer_source = ContextCostPresetSource::GenericDefault;
     ContextCostPresetSource prefill_source  = ContextCostPresetSource::GenericDefault;
-    std::string hardware_class;
+    // The device's class id ("gb202:170sm"): presets are found along its class chain.
+    std::string gpu_class;
+    // The compiled machine the device's class resolved to: "own <key>" (a key of its class chain),
+    // "carried from <key> at <board distance>" (the nearest measured board), or "generic". The
+    // distance is for the logs; the decision fingerprint records the key alone.
+    std::string machine;
     std::string prefill_signature;
     std::filesystem::path preset_path;
-    std::string similar_to; // the machine a SimilarMachine source stands in with ("" otherwise)
 };
 
 // Static facts about the loaded model, independent of the current request context and memory
@@ -1770,6 +1785,9 @@ struct LoadSummary {
     std::string cuda_sync_mode;
     std::vector<std::string> weight_formats;
     std::string prefill_signature;
+    // The served chat template as the decision fingerprint names it: "artifact", or the
+    // --chat-template file by the bytes the served Frontend compiled.
+    std::string chat_template_source;
     std::string gpu_class;   // the device class the route data is keyed by, e.g. "gb202:170sm"
     std::string route_table; // what the per-GPU-class route table is: loaded, absent, or refused
     // The device facts guessed or unreported, with the conservative choice taken (device_fact_notes).

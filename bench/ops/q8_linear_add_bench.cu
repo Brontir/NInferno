@@ -137,8 +137,6 @@ void write_csv(const Options& options, const std::vector<Result>& results) {
     }
 }
 
-
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -224,22 +222,14 @@ int main(int argc, char** argv) {
     run(#NAME, [&](cudaStream_t candidate_stream) {                                                \
         ops::detail::q8_linear_add_##NAME##_launch(x, packed.weight, out, candidate_stream);       \
     })
-            RUN_MMA(mma_r32_c32);
-            RUN_MMA(mma_r32_c48);
             RUN_MMA(mma_r32_c64);
             RUN_MMA(mma_r32_c80);
             RUN_MMA(mma_r32_c96);
-            RUN_MMA(mma_r32_c112);
             RUN_MMA(mma_r32_c128);
             RUN_MMA(mma_r48_c64);
-            RUN_MMA(mma_r48_c80);
             RUN_MMA(mma_r48_c96);
             RUN_MMA(mma_r48_c112);
             RUN_MMA(mma_r48_c128);
-            RUN_MMA(mma_r64_c32);
-            RUN_MMA(mma_r64_c48);
-            RUN_MMA(mma_r64_c64);
-            RUN_MMA(mma_r64_c80);
             RUN_MMA(mma_r64_c96);
             RUN_MMA(mma_r64_c112);
             RUN_MMA(mma_r64_c128);

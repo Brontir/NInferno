@@ -15,7 +15,9 @@
 //                          of that repository is left)
 //   POST /api/delete_original {repo}: a converted hub model's downloaded original
 //   GET  /api/log?id&n     the last lines of a process's output
-//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?} -> ninferno-serve
+//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?, spec_profile?}
+//                          -> ninferno-serve (spec_profile: the tune beside the model, by request)
+//   POST /api/tune         {artifact, gpu}: spec-tune on that GPU writes a tune beside the model
 //   POST /api/prepare      {model, quant?} -> download and convert only (--prepare-only)
 //   POST /api/stop         {id}
 //   POST /api/update       {action: install | restart}: install the newest release (the updater
@@ -96,19 +98,25 @@ struct LaunchRequest {
     std::string precision; // "" or exact | balanced | fast
     std::string kv_dtype;  // "" or bf16 | int8 | fp8 | nvfp4 | k8v4 (serve's --kv-dtype)
     std::string hub;       // "" (Hugging Face) or modelscope: where a hub id is fetched
+    // Name the tune beside the artifact (<artifact>.spec_profile.json, /api/tune's) for this start
+    // (--spec-profile). Never by itself: a measurement of this machine runs only when asked for,
+    // and asked for, one that would not serve on the request's GPU refuses the start.
+    bool spec_profile = false;
     bool prepare_only = false;
 };
 
-// Throws std::invalid_argument on a value outside the allowed set. `gpu`: what NVML says of the GPU
-// the request runs on (nullptr: unknown), which a tune beside the model must have been made for.
+// Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
+// the model is not started by its .ninferno path or the tune beside it does not serve on `gpu`
+// (tune_refusal_on). `gpu`: what NVML says of the GPU the request runs on (nullptr: unknown).
 [[nodiscard]] LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request,
                                      const GpuStat* gpu = nullptr);
 
-// Why the tune at `tune` (of the artifact `artifact_id`) would not serve on `gpu`; empty: it
-// serves. The GPU class the server keys a tune by ("gb202:170sm", spec::gpu_identity) from the PCI
-// id, the compute capability and the SM count. An unknown GPU, or one without an SM count (boards
-// of one chip differ in it; a MIG slice reports none), refuses: the published profile runs rather
-// than a tune the server may refuse to start with.
+// Why the tune at `tune` (of the artifact `artifact_id`) would not serve on `gpu`; empty: nothing
+// here refuses it. The GPU class the server keys a tune by ("gb202:170sm", spec::gpu_identity) from
+// the PCI id, the compute capability and the SM count. On an unknown GPU, or one without an SM
+// count (boards of one chip differ in it; a MIG slice reports none), only the tune itself is
+// checked: ninferno-serve names its GPU's class from CUDA and refuses to start with a named tune
+// of another.
 [[nodiscard]] std::string tune_refusal_on(const std::filesystem::path& tune,
                                           const std::string& artifact_id, const GpuStat* gpu);
 

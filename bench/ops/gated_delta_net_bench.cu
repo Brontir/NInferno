@@ -7,6 +7,7 @@
 #include "ops/linear_attention/gated_delta_net/chunked/launch.h"
 #include "ops/linear_attention/gated_delta_net/launch.h"
 
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -59,6 +61,7 @@ struct Options {
     int repeat               = 100;
     std::size_t flush_bytes  = kDefaultFlushBytes;
     std::string qk_norm      = "fused";
+    DType state_dtype        = DType::FP32;
 };
 
 struct Problem {
@@ -66,6 +69,8 @@ struct Problem {
     std::int32_t value_heads;
     std::int32_t tokens;
     std::int32_t batch = 1;
+    // Bytes of one recurrent-state element: FP32, or 2 for a --state-dtype bf16 or f16 prefill.
+    std::size_t state_element = sizeof(float);
 };
 
 struct GraphMeasurement {
@@ -151,6 +156,17 @@ Options parse_options(int argc, char** argv) {
             if (options.qk_norm != "fused" && options.qk_norm != "composed") {
                 fail("--qk-norm must be fused or composed");
             }
+        } else if (arg == "--state-dtype") {
+            const std::string_view dtype = take("--state-dtype");
+            if (dtype == "f32") {
+                options.state_dtype = DType::FP32;
+            } else if (dtype == "bf16") {
+                options.state_dtype = DType::BF16;
+            } else if (dtype == "f16") {
+                options.state_dtype = DType::FP16;
+            } else {
+                fail("--state-dtype must be f32, bf16 or f16");
+            }
         } else if (arg == "--breakdown") {
             options.breakdown = true;
         } else if (arg == "--warmup") {
@@ -177,6 +193,9 @@ Options parse_options(int argc, char** argv) {
     }
     if (options.breakdown && options.mode == Mode::BatchUpdate) {
         fail("--breakdown requires a prefill mode");
+    }
+    if (options.state_dtype != DType::FP32 && options.mode == Mode::BatchUpdate) {
+        fail("--state-dtype requires a prefill mode");
     }
     if (options.qk_norm == "composed" && options.mode != Mode::BatchUpdate) {
         fail("--qk-norm composed is a batch-update comparison");
@@ -207,6 +226,7 @@ void print_help(const char* program) {
         "  --value-heads N    divisible value heads >= Q/K heads (default: 48)\n"
         "  --batch B          exact batch-update batch in [1,8] (default: 1)\n"
         "  --qk-norm MODE     batch-update normalization: fused or composed (default: fused)\n"
+        "  --state-dtype D    prefill state storage: f32, bf16 or f16 (default: f32)\n"
         "\n"
         "Measurement:\n"
         "  --warmup N         cold-L2 graph warmups per case (default: 20)\n"
@@ -275,6 +295,34 @@ DeviceBuffer make_normalized_bf16(std::size_t rows, std::uint32_t seed) {
 
     DeviceBuffer device(host.size() * sizeof(std::uint16_t));
     device.copy_from_host(host.data(), device.bytes);
+    return device;
+}
+
+const char* state_dtype_name(DType dtype) {
+    return dtype == DType::FP16 ? "f16" : dtype == DType::BF16 ? "bf16" : "f32";
+}
+
+std::size_t state_element_bytes(DType dtype) {
+    return dtype == DType::FP32 ? sizeof(float) : sizeof(std::uint16_t);
+}
+
+// The prefill modes' input state in the storage --state-dtype names.
+DeviceBuffer make_state(std::size_t elements, DType dtype) {
+    DeviceBuffer values = bench::make_f32(elements, 211U, -.02F, .02F);
+    if (dtype == DType::FP32) { return values; }
+    std::vector<float> host(elements);
+    CUDA_CHECK(cudaMemcpy(host.data(), values.p, elements * sizeof(float), cudaMemcpyDeviceToHost));
+    std::vector<std::uint16_t> bits(elements);
+    for (std::size_t i = 0; i < elements; ++i) {
+        if (dtype == DType::BF16) {
+            bits[i] = f32_to_bf16(host[i]);
+        } else {
+            const __half h = __float2half_rn(host[i]);
+            std::memcpy(&bits[i], &h, sizeof(bits[i]));
+        }
+    }
+    DeviceBuffer device(elements * sizeof(std::uint16_t));
+    device.copy_from_host(bits.data(), device.bytes);
     return device;
 }
 
@@ -377,7 +425,7 @@ double running_logical_bytes(const Problem& problem) {
         static_cast<double>(problem.value_heads) * tokens * batch * sizeof(float);
     const double state_bytes = static_cast<double>(gated_delta_net_detail::kStateDim) *
                                gated_delta_net_detail::kStateDim * problem.value_heads * batch *
-                               sizeof(float);
+                               problem.state_element;
     return 2.0 * qk_bytes + 2.0 * value_bytes + 2.0 * gate_bytes + 2.0 * state_bytes;
 }
 
@@ -414,7 +462,8 @@ double gate_tensor_bytes(const Problem& problem) {
 
 double state_tensor_bytes(const Problem& problem) {
     return static_cast<double>(gated_delta_net_detail::kStateDim) *
-           gated_delta_net_detail::kStateDim * problem.value_heads * problem.batch * sizeof(float);
+           gated_delta_net_detail::kStateDim * problem.value_heads * problem.batch *
+           problem.state_element;
 }
 
 TrafficBytes prepare_traffic(const Problem& p, std::size_t workspace) {
@@ -530,15 +579,16 @@ std::vector<BenchRow> run_prefill(const Options& options, std::int32_t tokens,
     const bool force_recurrent = options.mode == Mode::RecurrentOnly;
     const bool chunked =
         force_chunked || (!force_recurrent && tokens >= chunked_detail::kMinTokens);
-    const Problem problem{options.qk_heads, options.value_heads, tokens};
+    const Problem problem{options.qk_heads, options.value_heads, tokens, 1,
+                          state_element_bytes(options.state_dtype)};
     Operands operands(problem, !normalize);
     const std::size_t state_elements = std::size_t(state_dim) * state_dim * problem.value_heads;
-    DeviceBuffer state_in            = bench::make_f32(state_elements, 211U, -.02F, .02F);
-    DeviceBuffer state_out           = make_zeros(state_elements * sizeof(float));
+    DeviceBuffer state_in            = make_state(state_elements, options.state_dtype);
+    DeviceBuffer state_out = make_zeros(state_elements * state_element_bytes(options.state_dtype));
     Tensor q = operands.query(), k = operands.key(), v = operands.value();
     Tensor g = operands.gate(), beta = operands.beta_tensor(), out = operands.output();
-    Tensor si(state_in.p, DType::FP32, {state_dim, state_dim, problem.value_heads});
-    Tensor so(state_out.p, DType::FP32, {state_dim, state_dim, problem.value_heads});
+    Tensor si(state_in.p, options.state_dtype, {state_dim, state_dim, problem.value_heads});
+    Tensor so(state_out.p, options.state_dtype, {state_dim, state_dim, problem.value_heads});
     const auto layout =
         chunked_detail::workspace_layout(problem.qk_heads, problem.value_heads, tokens);
     std::size_t bytes = 0;
@@ -560,13 +610,14 @@ std::vector<BenchRow> run_prefill(const Options& options, std::int32_t tokens,
                                          static_cast<const __nv_bfloat16*>(v.data),
                                          static_cast<const float*>(g.data),
                                          static_cast<const float*>(beta.data),
-                                         static_cast<const float*>(si.data),
-                                         static_cast<float*>(so.data),
+                                         si.data,
+                                         so.data,
                                          static_cast<__nv_bfloat16*>(out.data),
                                          problem.qk_heads,
                                          problem.value_heads,
                                          tokens,
-                                         gated_delta_net_scale()};
+                                         gated_delta_net_scale(),
+                                         options.state_dtype};
     const int tile =
         chunked ? chunked_detail::value_tile(problem.value_heads, execution.multiprocessor_count)
                 : 0;
@@ -682,8 +733,9 @@ void print_banner(const Options& options, const cudaDeviceProp& device) {
     }
     std::printf("Gated DeltaNet benchmark\n");
     std::printf("  device      %s (sm_%d%d)\n", device.name, device.major, device.minor);
-    std::printf("  geometry    state_dim=128 qk_heads=%d value_heads=%d batch=%d\n",
-                options.qk_heads, options.value_heads, options.batch);
+    std::printf("  geometry    state_dim=128 qk_heads=%d value_heads=%d batch=%d state=%s\n",
+                options.qk_heads, options.value_heads, options.batch,
+                state_dtype_name(options.state_dtype));
     std::printf("  execution   CUDA Graph replay\n");
     std::printf("  cache       cold L2 (%zu MiB flush before each sample)\n",
                 options.flush_bytes >> 20);
