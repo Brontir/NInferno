@@ -328,6 +328,17 @@ def main() -> int:
         case("HF_HUB_OFFLINE", offline_ok and result.returncode != 0
              and "has no snapshot in the cache" in result.stderr)
 
+        # 11d. A hub that cannot be reached: a ref's cached snapshot is refused (the ref may have
+        # moved), naming both ways out; the commit it was cached at serves.
+        dead = {"HF_ENDPOINT": "http://127.0.0.1:9"}
+        result = fetch("org/tiny", env=dead, check=False)
+        commit = (work / "cache" / "models--org--tiny" / "refs" / "main").read_text().strip()
+        pinned_result = fetch(f"org/tiny@{commit}", env=dead, check=False)
+        case("unreachable hub: a ref is refused, its commit serves",
+             result.returncode != 0 and "HF_HUB_OFFLINE=1" in result.stderr
+             and f"org/tiny@{commit}" in result.stderr
+             and pinned_result.returncode == 0 and "using the cached snapshot" in pinned_result.stdout)
+
         # 12. Fetch a GGUF model and convert it without --out: the recipe is chosen, and the
         # tokenizer files come from the base model the GGUF names (none travel with it).
         try:
