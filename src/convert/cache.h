@@ -48,15 +48,18 @@ inline constexpr int kCacheRevision = 5;
 [[nodiscard]] int cached_revision(const std::filesystem::path& artifact);
 // Records kCacheRevision beside a conversion just made.
 void stamp_revision(const std::filesystem::path& artifact);
-// What a conversion read from its source, cheaply: each file's path, size and modification time,
-// one line each in path order ("missing" for a file that is not there). A checkpoint replaced at
-// the same path (a newer revision copied over it, a re-download) changes it.
-[[nodiscard]] std::string source_stamp(std::vector<std::filesystem::path> files);
+// What a conversion read from its source, cheaply: each file's name (from `root`, the model's
+// directory; a file outside it by its full path), size and modification time, one line each in
+// name order (a file that is not there has none). A checkpoint replaced at the same path (a newer
+// revision copied over it, a re-download) changes it; another spelling of the path does not.
+[[nodiscard]] std::string source_stamp(const std::filesystem::path& root,
+                                       std::vector<std::filesystem::path> files);
 // Records `stamp` beside a conversion just made (<artifact>.source).
 void stamp_source(const std::filesystem::path& artifact, const std::string& stamp);
-// Whether `stamp` differs from the one recorded beside `artifact`. An artifact converted before
-// stamps were kept has none: it is stamped `stamp` now (a read-only cache stays unstamped) and is
-// not changed.
+// Whether `stamp` names a file the one recorded beside `artifact` does not, or one of another size
+// or time; a recorded file that is gone is no change (--consume-source removed it). An artifact
+// converted before stamps were kept has none: it is stamped `stamp` now (a read-only cache stays
+// unstamped) and is not changed.
 [[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);

@@ -558,11 +558,15 @@ void ensure_default_locked(DeviceTables& d) {
     } catch (const std::exception& error) {
         // A broken default table stops the engine: answering as untuned would change the routes,
         // the speed and (for the A8 and A4 routes) the bytes with what is on disk. A directory
-        // with no table for this class is not an error (the heuristic routes, by design).
+        // with no table for this class is not an error (the heuristic routes, by design). The
+        // lookup stays unattempted, so every later lookup refuses again rather than answering as
+        // untuned.
+        d.default_attempted = false;
         throw std::runtime_error("route table " +
                                  (attempted.empty() ? std::string("directory") : attempted) +
                                  " refused: " + error.what() +
-                                 " (a broken install: reinstall, or name a table with --route-table)");
+                                 " (a broken install: reinstall, or name a table with "
+                                 "--route-table)");
     }
     publish_locked(d, d.table);
 }
@@ -708,6 +712,12 @@ void clear_route_table() {
     d.default_status         = {};
     d.default_status.message = "route table cleared; routes are untuned";
     publish_locked(d, nullptr);
+}
+
+bool route_table_loaded(const std::string& path) {
+    DeviceTables& d = here();
+    std::lock_guard lock(d.mutex);
+    return d.explicit_table && d.table && d.table->status.path == path;
 }
 
 RouteTableStatus route_table_status() {

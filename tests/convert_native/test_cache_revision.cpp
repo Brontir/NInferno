@@ -78,17 +78,27 @@ int main() {
     const auto weights = dir / "model.safetensors";
     std::ofstream(weights) << "weights";
     std::ofstream(dir / "config.json") << "{}";
-    const auto before = source_stamp({weights, dir / "config.json"});
+    const auto before = source_stamp(dir, {weights, dir / "config.json"});
     check(!source_changed(text, before) && fs::exists(text.string() + ".source"),
           "an unstamped artifact is stamped, not changed");
-    check(!source_changed(text, source_stamp({dir / "config.json", weights})),
+    check(!source_changed(text, source_stamp(dir, {dir / "config.json", weights})),
           "the same files in another order are the same source");
+    fs::create_directories(dir / "sub");
+    const auto spelled = dir / "sub" / "..";
+    check(!source_changed(text, source_stamp(spelled, {spelled / "model.safetensors",
+                                                       spelled / "config.json"})),
+          "another spelling of the directory is the same source");
+    fs::remove(weights);
+    check(!source_changed(text, source_stamp(dir, {weights, dir / "config.json"})),
+          "weights removed (--consume-source) are no change");
     std::ofstream(weights) << "other weights";
-    check(source_changed(text, source_stamp({weights, dir / "config.json"})),
+    check(source_changed(text, source_stamp(dir, {weights, dir / "config.json"})),
           "weights of another size are another source");
     fs::remove(weights);
-    check(source_changed(text, source_stamp({weights, dir / "config.json"})),
-          "a removed file is another source");
+    std::ofstream(dir / "model-00001-of-00002.safetensors") << "shard";
+    check(source_changed(text, source_stamp(dir, {dir / "model-00001-of-00002.safetensors",
+                                                  dir / "config.json"})),
+          "a new file is another source");
     fs::remove_all(dir);
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;

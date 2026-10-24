@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <stdexcept>
 
@@ -88,28 +89,52 @@ bool checkpoint_has_vision(const std::filesystem::path& checkpoint) {
     } catch (const std::exception&) { return false; }
 }
 
-std::string source_stamp(std::vector<std::filesystem::path> files) {
+std::string source_stamp(const std::filesystem::path& root,
+                         std::vector<std::filesystem::path> files) {
     namespace fs = std::filesystem;
-    std::sort(files.begin(), files.end());
-    files.erase(std::unique(files.begin(), files.end()), files.end());
-    std::string out;
+    std::map<std::string, std::string> lines; // by name: one line per file, in name order
     for (const auto& file : files) {
         std::error_code size_error, time_error;
         const auto size = fs::file_size(file, size_error);
         const auto time = fs::last_write_time(file, time_error);
-        out += file.generic_string() + '\t';
-        out += size_error || time_error
-                   ? std::string("missing")
-                   : std::to_string(size) + '\t' +
-                         std::to_string(time.time_since_epoch().count());
-        out += '\n';
+        if (size_error || time_error) { continue; }
+        // Named from the model's directory, so another spelling of the same path (relative,
+        // absolute, a moved directory) is the same source; a file outside it by its full path.
+        const auto relative = file.lexically_relative(root);
+        std::error_code canonical_error;
+        const auto absolute = fs::weakly_canonical(file, canonical_error);
+        const auto text     = !relative.empty() && *relative.begin() != ".."
+                                  ? relative.generic_u8string()
+                                  : (canonical_error ? file : absolute).generic_u8string();
+        const std::string name(text.begin(), text.end());
+        lines[name] = std::to_string(size) + '\t' + std::to_string(time.time_since_epoch().count());
     }
+    std::string out;
+    for (const auto& [name, facts] : lines) { out += name + '\t' + facts + '\n'; }
     return out;
 }
 
 void stamp_source(const std::filesystem::path& artifact, const std::string& stamp) {
     write_file_atomic(artifact.string() + ".source", stamp);
 }
+
+namespace {
+
+std::map<std::string, std::string> stamp_lines(const std::string& stamp) {
+    std::map<std::string, std::string> out;
+    std::size_t at = 0;
+    while (at < stamp.size()) {
+        auto end = stamp.find('\n', at);
+        if (end == std::string::npos) { end = stamp.size(); }
+        const auto line = stamp.substr(at, end - at);
+        const auto tab  = line.find('\t');
+        if (tab != std::string::npos) { out[line.substr(0, tab)] = line.substr(tab + 1); }
+        at = end + 1;
+    }
+    return out;
+}
+
+} // namespace
 
 bool source_changed(const std::filesystem::path& artifact, const std::string& stamp) {
     std::ifstream in(artifact.string() + ".source", std::ios::binary);
@@ -119,9 +144,15 @@ bool source_changed(const std::filesystem::path& artifact, const std::string& st
         } catch (const std::exception&) {}
         return false;
     }
-    const std::string recorded{std::istreambuf_iterator<char>(in),
-                               std::istreambuf_iterator<char>()};
-    return recorded != stamp;
+    const auto recorded = stamp_lines(
+        std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()});
+    // A file the conversion read that is gone is not a change (--consume-source removes the
+    // weights it converted); a file that is new, or of another size or time, is.
+    for (const auto& [name, facts] : stamp_lines(stamp)) {
+        const auto at = recorded.find(name);
+        if (at == recorded.end() || at->second != facts) { return true; }
+    }
+    return false;
 }
 
 void remove_artifact(const std::filesystem::path& artifact) {
@@ -149,8 +180,18 @@ bool source_present(const std::filesystem::path& path) {
     return false;
 }
 
-// The files a conversion of `path` reads: a GGUF model's files and its projector, or a directory's
-// top-level files but hidden ones; and each resource the model's directory lacks.
+// Whether a checkpoint directory's file is one a conversion reads: weights, configuration,
+// tokenizer and chat-template files (not a README, a log or a hidden file).
+bool read_by_conversion(const std::filesystem::path& file) {
+    const auto name = file.filename().string();
+    if (name.starts_with(".")) { return false; }
+    const auto ext = file.extension().string();
+    return ext == ".safetensors" || ext == ".gguf" || ext == ".json" || ext == ".jinja" ||
+           ext == ".model" || ext == ".txt" || ext == ".tiktoken";
+}
+
+// The files a conversion of `path` reads: a GGUF model's files and its projector, or a checkpoint
+// directory's (read_by_conversion); and each resource the model's directory lacks.
 std::vector<std::filesystem::path>
 source_files(const std::filesystem::path& path,
              const std::optional<std::filesystem::path>& projector,
@@ -164,7 +205,7 @@ source_files(const std::filesystem::path& path,
     } else {
         std::error_code ec;
         for (const auto& entry : fs::directory_iterator(path, ec)) {
-            if (entry.is_regular_file(ec) && !entry.path().filename().string().starts_with(".")) {
+            if (entry.is_regular_file(ec) && read_by_conversion(entry.path())) {
                 files.push_back(entry.path());
             }
         }
@@ -224,7 +265,8 @@ cached_artifact(const std::filesystem::path& path,
     out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
                         (vision ? "vision." : "") + out.recipe + ".ninferno");
     // Taken before the conversion: --consume-source removes the weights it stamps.
-    const auto stamp = source_stamp(source_files(path, projector, resources));
+    const auto stamp =
+        source_stamp(file ? path.parent_path() : path, source_files(path, projector, resources));
     if (serve_cached(out.path, path, stamp)) { return out; }
     fs::create_directories(cache);
     const auto lock_path = cache / ".convert.lock";

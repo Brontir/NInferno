@@ -233,6 +233,19 @@ bool complete(const fs::path& artifact, bool drafters) {
            (!drafters || fs::exists(spec::manifest_path(artifact)));
 }
 
+// Under --with-drafters every drafter planned for the model is required: one that failed to be
+// fetched, converted or attached is an error, not a model served without it.
+void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
+    if (options.with_drafters != true) { return; }
+    for (const auto& d : plan.drafters) {
+        if (d.status.starts_with("failed")) {
+            throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
+                                     " (--with-drafters requires every drafter; without the "
+                                     "flag the model is served without it)");
+        }
+    }
+}
+
 } // namespace
 
 void check_free_space(const FetchPlan& plan) { check_space(plan); }
@@ -497,6 +510,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         try {
             const auto target = describe_gguf_artifact(out.artifact, model_id, fetched.model);
             out.drafters      = attach_drafters(plan_drafters(target), out.artifact, attach);
+            require_drafters(*out.drafters, options);
         } catch (const std::exception& error) {
             // Asked for by name (--with-drafters): a drafter that cannot be attached is an error,
             // not a model served slower without it.
@@ -522,6 +536,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 return; // converted with its companion already
             }
             companions = fetch_companions(plan, attach);
+            require_drafters(plan, options);
             for (const auto& d : plan.drafters) {
                 if (d.status == "fetched" && !d.decl.component.empty()) {
                     declared_quant = d.decl.quant;
@@ -622,6 +637,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     stamp_revision(out.artifact);
     if (out.drafters) {
         out.drafters = attach_drafters(std::move(*out.drafters), out.artifact, attach);
+        require_drafters(*out.drafters, options);
     } else if (drafters_on && gguf) {
         if (!options.components_given) { convert_gguf_companions(convert_options, drafter_quant); }
         attach_to_artifact();
