@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specBasisText", "launchSettingsOf",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specBasisText", "launchSettingsOf",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -383,5 +383,37 @@ eq(H.launchSettingsOf({ctx: 65536, cap: 49152, par: 4}), {ctx: 65536, cap: 0, pa
 // The page no longer decides speculation itself (P7): no autoVerdict, no spec=none from it.
 ok(!/autoVerdict/.test(html), "autoVerdict is gone");
 ok(!/sp\.config\)\}\$\{sp\.speedup/.test(html), "the old registry auto line is gone");
+
+// The speeds are the server's choice model's (src/product/choice): the page keeps no model of its own.
+ok(!/function genTps|KIND_LOAD|function calibOf|function prefillTps/.test(html), "the page's own speed model is gone");
+eq(H.rowEstimate({estimate: {decode_tok_s: 80.5, prefill_tok_s: 5700, depth: 8192}}), {decode_tok_s: 80.5, prefill_tok_s: 5700, depth: 8192}, "a row's estimate");
+eq(H.rowEstimate({estimate: null}), null, "no estimate");
+eq(H.rowEstimate(null), null, "no row");
+// The choice's alternatives as deltas against the chosen.
+const choiceDoc = {choice: {chosen: {kv: "int8", activations: "fast", own_context: 65536, decode_tok_s: 80, prefill_tok_s: 5700, request_seconds: 6.6, kld: 0.0044},
+  alternatives: [{axis: "kv", value: "bf16", fits: true, own_context: 40960, decode_tok_s: 79.2, prefill_tok_s: 5700, request_seconds: 6.65, kld: 0.0043, why_code: "lower_worth"},
+                 {axis: "activations", value: "exact", fits: true, own_context: 61440, decode_tok_s: 70, prefill_tok_s: 1567, request_seconds: 8.3, kld: 0, why_code: "lower_worth"},
+                 {axis: "kv", value: "nvfp4", fits: false, own_context: 0, why_code: "no_fit"}]}};
+const cr = H.choiceRows(choiceDoc);
+eq(cr.length, 3, "one row an alternative");
+eq(cr[0].dctx, -24576, "BF16 KV holds less context each");
+ok(Math.abs(cr[0].ddecode + 0.01) < 1e-9 && Math.abs(cr[1].dtime - (8.3 / 6.6 - 1)) < 1e-9, "decode and time as ratios");
+ok(Math.abs(cr[1].dkld + 0.0044) < 1e-12, "exact: the KLD difference");
+eq([cr[2].fits, cr[2].ddecode, cr[2].dkld, cr[2].why], [false, null, null, "no_fit"], "an alternative that does not fit has no speeds");
+eq(H.choiceRows({choice: {chosen: null}}), [], "no choice: no rows");
+eq(H.choiceRows(null), [], "no document");
+// The worth's pick within the rule's tier: its own words, naming the largest that fits.
+{
+  const doc = {rule_code: "best_worth", rule_params: {quant: "Q6_K", largest: "Q8_0", tier: "own", automatic: true, concurrency: 1, card_gb: 24},
+               pick: {quant: "Q6_K", tier: "own", target_context: 32768}};
+  const en = H.ruleText(doc, {ctx: 0, par: 1, native: 262144}, words("en"));
+  ok(en.startsWith("Q6_K, the best balance of speed and accuracy") && en.includes("the largest that fits is Q8_0"), "best_worth in words");
+}
+// The choice belongs to the quantization it was made at: the panel and the pick's speed only there.
+const atQ4 = {choice: {chosen: {quant: "Q4_K_M"}}};
+ok(H.choiceFor(atQ4, "Q4_K_M") && !H.choiceFor(atQ4, "Q8_0") && H.choiceFor(atQ4, ""), "a choice is for its quantization");
+ok(!H.choiceFor({choice: {chosen: null}}, "Q4_K_M") && !H.choiceFor(null, "Q4_K_M"), "no choice: for none");
+for (const lang of ["en", "ru"]) for (const k of ["choiceHead", "choiceLine", "choiceAlt", "estBasis", "why_no_fit", "why_lower_worth", "why_quant_rule", "ax_kv", "ax_activations", "ax_quant"])
+  ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 console.log(`test_page_plan: ${checks} checks passed`);
