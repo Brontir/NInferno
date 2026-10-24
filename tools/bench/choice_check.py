@@ -87,7 +87,10 @@ def main():
     ap.add_argument("--port", type=int, default=18979)
     a, flags = ap.parse_known_args()  # the rest goes to ninferno-serve as given
     extra = [f for f in flags if f != "--"]
-    common = [a.model, "--max-context", str(a.max_context), "--max-concurrency", str(a.concurrency), *extra]
+    # Plain decoding unless the caller names a speculation: the plan and the server see the same
+    # flags (a drafter's weights and KV change the plan, its speed the time).
+    spec = [] if any(f == "--spec" or f.startswith("--spec=") for f in extra) else ["--spec", "none"]
+    common = [a.model, "--max-context", str(a.max_context), "--max-concurrency", str(a.concurrency), *extra, *spec]
 
     plan = json.loads(subprocess.run([a.serve, *common, "--plan", "--no-load", "--json"], check=True,
                                      capture_output=True, text=True).stdout)
@@ -98,7 +101,7 @@ def main():
 
     log = Path(f"choice_check_{a.port}.log")
     with log.open("w") as out:
-        server = subprocess.Popen([a.serve, *common, "--spec", "none", "--port", str(a.port)], stdout=out,
+        server = subprocess.Popen([a.serve, *common, "--port", str(a.port)], stdout=out,
                                   stderr=subprocess.STDOUT)
     try:
         if not healthy(a.port, server):
