@@ -4,7 +4,7 @@
 //
 // Prints {"commit", "path", "size", "bytes", "cached", "offline"} as one JSON line; an error on
 // stderr, exit 1. With QUANT --list, prints list_quants(SPEC) instead: [{"quant", "format",
-// "bytes", "mtp_bytes", "files"}].
+// "bytes", "mtp_bytes", "drafter", "files"}].
 #include "convert/fetch.h"
 
 #include <nlohmann/json.hpp>
@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
                                 {"format", q.format},
                                 {"bytes", q.bytes},
                                 {"mtp_bytes", q.mtp_bytes},
+                                {"drafter", q.drafter},
                                 {"files", q.files}});
             }
             std::printf("%s\n", rows.dump().c_str());
