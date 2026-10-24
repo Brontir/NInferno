@@ -974,6 +974,17 @@ constexpr const char* kFrontend[] = {"config.json",           "tokenizer.json",
                                      "generation_config.json", "preprocessor_config.json",
                                      "video_preprocessor_config.json"};
 
+// Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors, and a
+// checkpoint may keep a part in its own model_<part>.safetensors that the index names (Qwen3.5's
+// MTP layers: model_mtp.safetensors); when they are there, other top-level files are a second copy
+// in another layout (Mistral repositories also ship consolidated.safetensors, as large as the
+// model). The fetch takes those files (choose_files) and the listing counts them (list_quants).
+bool transformers_weight_file(const std::string& path) {
+    return path == "model.safetensors" ||
+           ((path.starts_with("model-") || path.starts_with("model_")) &&
+            path.ends_with(".safetensors"));
+}
+
 std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions& options,
                                      const std::string& repo) {
     std::vector<RemoteFile> out;
@@ -1016,22 +1027,13 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
         for (const auto& file : listing.files) {
             if (file.path == "model.safetensors.index.json") { out.push_back(file); }
         }
-        // Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors,
-        // and a checkpoint may keep a part in its own model_<part>.safetensors that the index
-        // names (Qwen3.5's MTP layers: model_mtp.safetensors); when they are there, other
-        // top-level files are a second copy in another layout (Mistral repositories also ship
-        // consolidated.safetensors, as large as the model).
-        const auto transformers_named = [](const std::string& path) {
-            return path == "model.safetensors" ||
-                   ((path.starts_with("model-") || path.starts_with("model_")) &&
-                    path.ends_with(".safetensors"));
-        };
+        // Transformers-named weights, when there are any (transformers_weight_file).
         const bool named = std::any_of(safetensors.begin(), safetensors.end(), [&](const auto* f) {
-            return transformers_named(f->path);
+            return transformers_weight_file(f->path);
         });
         for (const auto* file : safetensors) {
             if (file->path.find('/') == std::string::npos &&
-                (!named || transformers_named(file->path))) {
+                (!named || transformers_weight_file(file->path))) {
                 out.push_back(*file);
             }
         }
@@ -1855,12 +1857,14 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::map<std::string, std::size_t> index; // group key -> out position
     RepoQuant weights;
     weights.format = "safetensors";
+    std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
         // An importance matrix (imatrix*.gguf) or another file too small to be a model.
         if (name.find("imatrix") != std::string::npos) { continue; }
+        // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
-            file.size < (256ULL << 20)) {
+            file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
@@ -1899,8 +1903,17 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
                    file.path.find('/') == std::string::npos) {
             // The top-level weights, as the fetch takes them (subdirectories hold originals and
             // other formats: gpt-oss's original/model.safetensors).
-            weights.bytes += file.size;
-            weights.files.push_back(file.path);
+            top_level.push_back(&file);
+        }
+    }
+    // Of them, the Transformers-named ones when there are any, as choose_files takes them.
+    const bool named = std::any_of(top_level.begin(), top_level.end(), [](const auto* f) {
+        return transformers_weight_file(f->path);
+    });
+    for (const auto* file : top_level) {
+        if (!named || transformers_weight_file(file->path)) {
+            weights.bytes += file->size;
+            weights.files.push_back(file->path);
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }

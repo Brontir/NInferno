@@ -3,7 +3,8 @@
 //     fetch_head_probe SPEC QUANT BYTES CACHE
 //
 // Prints {"commit", "path", "size", "bytes", "cached", "offline"} as one JSON line; an error on
-// stderr, exit 1.
+// stderr, exit 1. With QUANT --list, prints list_quants(SPEC) instead: [{"quant", "format",
+// "bytes", "files"}].
 #include "convert/fetch.h"
 
 #include <nlohmann/json.hpp>
@@ -19,8 +20,19 @@ int main(int argc, char** argv) {
     }
     try {
         ninferno::convert::FetchOptions options;
-        options.quant   = argv[2];
-        options.cache   = argv[4];
+        options.cache = argv[4];
+        if (std::string(argv[2]) == "--list") {
+            nlohmann::json rows = nlohmann::json::array();
+            for (const auto& q : ninferno::convert::list_quants(argv[1], options)) {
+                rows.push_back({{"quant", q.quant},
+                                {"format", q.format},
+                                {"bytes", q.bytes},
+                                {"files", q.files}});
+            }
+            std::printf("%s\n", rows.dump().c_str());
+            return 0;
+        }
+        options.quant = argv[2];
         const auto head =
             ninferno::convert::fetch_gguf_head(argv[1], options, std::stoull(argv[3]));
         const nlohmann::json out{{"commit", head.commit},        {"path", head.path},
