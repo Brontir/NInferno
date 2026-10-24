@@ -2964,7 +2964,8 @@ struct ShapedColumns {
     std::vector<float> q, k, v;
 };
 
-ShapedColumns shaped_columns(const Geometry& geometry, int first, int width, int batch) {
+ShapedColumns shaped_columns(const Geometry& geometry, int first, int width, int batch,
+                             bool growing_values = false) {
     const std::size_t q_column  = std::size_t(kHeadDim) * geometry.q_heads;
     const std::size_t kv_column = std::size_t(kHeadDim) * geometry.kv_heads;
     const std::size_t columns   = std::size_t(width) * batch;
@@ -2977,7 +2978,10 @@ ShapedColumns shaped_columns(const Geometry& geometry, int first, int width, int
             const unsigned seed      = 9100u + 97u * b + 3u * (b == 0 ? first + j : j);
             const auto cq            = make_bf16_values(q_column, seed, -.25f, .25f);
             const auto ck            = make_bf16_values(kv_column, seed + 1u, -.25f, .25f);
-            const auto cv            = make_bf16_values(kv_column, seed + 2u, -1.f, 1.f);
+            // Growing values: 8 * 2^(column / 32), at most about 5400 within 300 columns.
+            const float amplitude =
+                growing_values ? 8.f * std::exp2(static_cast<float>(first + j) / 32.f) : 1.f;
+            const auto cv = make_bf16_values(kv_column, seed + 2u, -amplitude, amplitude);
             std::copy(cq.begin(), cq.end(), out.q.begin() + column * q_column);
             std::copy(ck.begin(), ck.end(), out.k.begin() + column * kv_column);
             std::copy(cv.begin(), cv.end(), out.v.begin() + column * kv_column);
@@ -2997,6 +3001,9 @@ struct ShapedCall {
     // The keys of the session's KV row (its block-table width and envelope), as a session sizes
     // it from free memory; 0 or fewer than the cache's: the cache's own.
     int row_keys = 0;
+    // Value columns whose magnitude doubles every 32 columns (shaped_columns): their INT8 group
+    // scales pass 8 and cross powers of two inside a tile, as the prompt kernel's FP16 bound sees.
+    bool growing_values = false;
 };
 
 std::vector<std::uint16_t> shaped_request_output(const Geometry& geometry, KvCacheStorage storage,
@@ -3012,7 +3019,7 @@ std::vector<std::uint16_t> shaped_request_output(const Geometry& geometry, KvCac
     DeviceContext device;
     const auto call = [&](int first, int width, int batch, int valid) {
         const std::size_t columns = std::size_t(width) * batch;
-        const auto host           = shaped_columns(geometry, first, width, batch);
+        const auto host = shaped_columns(geometry, first, width, batch, shape.growing_values);
         std::vector<int> counts(batch), lanes(batch), positions(columns);
         for (int b = 0; b < batch; ++b) {
             counts[b]           = b == 0 ? valid : width;
@@ -3166,11 +3173,64 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
     return failures;
 }
 
+// Under the prefill route profile (--activations fast) a prefill call of 17 columns or more over
+// INT8 keys and values takes one kernel at every width (int8/plan.cpp): a token's bytes do not
+// follow the call's width or where its prompt was cut, on either side of the 256-column width
+// that once parted the grouped and tiled families. Volta keeps the width rule.
+int run_prefill_shape_invariance_cases(KvCacheStorage storage) {
+    if (storage != KvCacheStorage::Int8Group64 || NINFERNO_BUILD_ARCH < 75) return 0;
+    const ops::ScopedPrefillRoutes prefill;
+    int failures = 0;
+    for (const auto& geometry : {kGeometries[0], kGeometries[1], kGeometries[3]})
+        for (const int context : {300, 2900, 12000, 40000}) {
+            const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
+            const std::string name = std::string("prefill width ") + geometry.name + " " +
+                                     cache_name(storage) + " ctx=" + std::to_string(context) + " ";
+            const auto output      = [&](ShapedCall shape) {
+                return shaped_request_output(geometry, storage, context, shape);
+            };
+            const auto wide = output({.width = 300, .valid = 300});
+            for (const int width : {17, 64, 130, 257})
+                failures += verify_shape_prefix(name + "W=" + std::to_string(width) + " vs W=300",
+                                                output({.width = width, .valid = width}), wide);
+            // Prompt cuts: 256 columns appended by one call and the last 44 by another, and one
+            // leaving the narrowest prefill call.
+            failures += verify_shape_prefix(name + "cut at 256 vs W=300",
+                                            output({.width = 44, .valid = 44, .prefix = 256}), wide,
+                                            256 * q_column);
+            failures += verify_shape_prefix(name + "cut at 283 vs W=300",
+                                            output({.width = 17, .valid = 17, .prefix = 283}), wide,
+                                            283 * q_column);
+            const auto cached = shaped_cached_output(geometry, storage, context, 300);
+            for (const int width : {17, 130})
+                failures += verify_shape_prefix(
+                    name + "cached W=" + std::to_string(width) + " vs W=300",
+                    shaped_cached_output(geometry, storage, context, width), cached);
+            // Values whose group scales pass 8 and grow along the columns: a row's FP16 bound
+            // follows the keys it sees, not the later rows of its CTA (prompt_fast.cuh).
+            const auto grown = output({.width = 300, .valid = 300, .growing_values = true});
+            for (const int width : {17, 130})
+                failures += verify_shape_prefix(
+                    name + "growing values W=" + std::to_string(width) + " vs W=300",
+                    output({.width = width, .valid = width, .growing_values = true}), grown);
+            failures += verify_shape_prefix(
+                name + "growing values cut at 283 vs W=300",
+                output({.width = 17, .valid = 17, .prefix = 283, .growing_values = true}), grown,
+                283 * q_column);
+        }
+    return failures;
+}
+
 int run_storage_cases(DeviceExecutionView execution, KvCacheStorage storage) {
     int failures = verify_workspace_capacity_contract(execution, storage);
     {
         // The invariant route profile's partitions and chunked launches size their own partials.
         const ops::ScopedInvariantRoutes invariant;
+        failures += verify_workspace_capacity_contract(execution, storage);
+    }
+    {
+        // So do the prefill route profile's (an INT8 prefill call of 17 columns or more is tiled).
+        const ops::ScopedPrefillRoutes prefill;
         failures += verify_workspace_capacity_contract(execution, storage);
     }
     if (storage == KvCacheStorage::Nvfp4Group16) {
@@ -3212,6 +3272,7 @@ int run_storage_cases(DeviceExecutionView execution, KvCacheStorage storage) {
             failures += run_numerical_profile_cases({execution.stream, sms}, storage);
     failures += run_small_prefill_cases(execution, storage);
     failures += run_shape_invariance_cases(storage);
+    failures += run_prefill_shape_invariance_cases(storage);
     return failures;
 }
 

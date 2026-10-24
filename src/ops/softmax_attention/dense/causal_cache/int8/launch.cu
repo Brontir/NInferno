@@ -143,14 +143,15 @@ void execute_parallel(const CausalAttentionOperands& p, Int8KvReadView cache,
 }
 
 // sm80+: the register-resident prompt kernel (int8/prompt_fast.cuh) takes the tiled family. It
-// needs 98 KiB of shared memory and m16n8k32 integer MMA.
+// needs 98 KiB of shared memory and m16n8k32 integer MMA; its key pieces' partials come from the
+// workspace (int8_kv_workspace_bytes).
 
 void tiled(const CausalAttentionOperands& p, Int8KvReadView cache, int multiprocessors,
-           cudaStream_t stream) {
+           WorkspaceArena& workspace, cudaStream_t stream) {
     with_causal_geometry(p.query_heads, p.kv_heads, [&]<class G>() {
 #if NINFERNO_BUILD_ARCH >= 80
         if constexpr (G::kHeadDim == kInt8PromptFastD) {
-            return launch_int8_kv_prompt_fast<G>(p, cache, multiprocessors, stream);
+            return launch_int8_kv_prompt_fast<G>(p, cache, multiprocessors, workspace, stream);
         }
 #endif
         launch_int8_kv_tiled_mma<G, Int8KvTiledInstance>(p, cache, stream);
@@ -278,7 +279,7 @@ bool int8_kv_append_attention(const Tensor& q, const Tensor& k, const Tensor& v,
                                                       envelope.max_visible_keys)) {
                 int8_volta_splitd(q, rows, scale, cache, envelope, workspace, out, stream);
             } else {
-                tiled(p, view, execution.multiprocessor_count, stream);
+                tiled(p, view, execution.multiprocessor_count, workspace, stream);
             }
             return false;
         }
@@ -308,7 +309,7 @@ void int8_kv_cached_attention(const Tensor& q, const Tensor& positions, float sc
         tiled(make_causal_operands(q, positions, out, scale, envelope.max_visible_keys,
                                    cache.num_kv_heads),
               make_quantized_causal_cache_view<Int8KvCacheView<false>>(view),
-              execution.multiprocessor_count, stream);
+              execution.multiprocessor_count, workspace, stream);
     else if (key_major_takes())
         execute_key_major(make_causal_operands(q, positions, out, scale, envelope.max_visible_keys,
                                                cache.num_kv_heads),

@@ -11,6 +11,10 @@ namespace ninferno::ops {
  * take, for every call of at least 17 tokens, only routes that give a column the same bytes.
  * Outside it (decode, speculative verify, drafters, other models) they keep their speed-tuned
  * tables: a verify pass is compared against its own draft and needs no invariance.
+ * causal_softmax_attention over INT8 keys and values reads it too: a call of at least 17 tokens
+ * takes the tiled family (the prompt kernel) at every width, from Turing on. Over BF16, FP8, K8V4
+ * and NVFP4 keys and values, and on Volta, the attention still picks its kernel and key splits by
+ * the call's width outside the invariant profile.
  *
  * The profile is a host-side, per-thread choice read when an op resolves its route, so it applies
  * to eager launches and to captures alike. Workspace capacity queries cover both profiles.

@@ -865,6 +865,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         const Options options = parse_options(argc, argv);
+        bench::prefill_routes_from_env();
         DeviceContext device;
         const auto execution = device.execution_view();
         const auto stream    = execution.stream;
