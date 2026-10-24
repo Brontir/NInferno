@@ -720,8 +720,7 @@ void test_catalog() {
         const auto vision = root / "models--org--v-GGUF";
         fs::create_directories(vision / "refs");
         fs::create_directories(vision / "ninferno/c0ffee");
-        std::ofstream(vision / "refs/main") << "c0ffee
-";
+        std::ofstream(vision / "refs/main") << "c0ffee\n";
         for (const char* name : {"v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
                                  "v-UD-Q4_K_M.vision.qwen3_5_bf16.ninferno"}) {
             std::ofstream(vision / "ninferno/c0ffee" / name) << "x";
