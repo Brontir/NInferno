@@ -42,7 +42,7 @@ Nothing is measured on the user's machine.
 Among the candidates that fit, the largest worth `-ln(T) - lambda * KLD` wins (`lambda` 25: 0.001
 KLD is worth 2.5 % of a request's time). Where two candidates cost about the same, the more accurate
 one wins; where one is much faster, it wins. Ties: the longer own context, then fewer weight bytes,
-then the listing's order.
+then the smaller quantization label (the quant rule's last key), then the listing's order.
 
 **Gates.** A constant decides only once it rests on two lab cards (principle 4); until then the
 choice falls back and says why. `choice_constants.h` holds the gates:
@@ -130,7 +130,7 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 | `no_fit` | it does not hold the asked context per stream |
 | `lower_worth` | it fits and its worth is lower |
 | `tie_context` | the same worth; the chosen keeps more context per stream (or fewer weight bytes) |
-| `tie_order` | the same in every respect; the listing's order |
+| `tie_order` | the same in every respect; the smaller quantization label, else the listing's order |
 | `quant_rule` | the quant rule decided: no worth here, or the other side of the 3.5-bit floor |
 | `default` | a gate is closed: the family's default (or the default chunk) stands |
 | `coupled` | a ring or state value: it follows the KV codec and the activations |
