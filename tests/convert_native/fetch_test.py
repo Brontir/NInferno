@@ -489,6 +489,13 @@ def main() -> int:
             case("an unreachable hub serves the download kept, said",
                  unreachable2[0] == 0 and "could not ask the hub whether org/qwen-gguf2@main moved"
                  in unreachable2[1])
+            # The same asked by width: the kept download is of that width, so it is held too.
+            reset()
+            by_width = again2("--quant", "8bit")
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("a moved branch asked by width: the download kept holds it, pinned, with a notice",
+                 by_width[0] == 0 and "org/qwen-gguf2@main is now eeeeeeeeeeee" in by_width[1]
+                 and not downloads)
             # Another quantization of the moved ref than the download kept: the old snapshot does
             # not hold it, so nothing pins to the old commit; it is fetched at the new one.
             q4 = blob(MIB, 61)
