@@ -17,6 +17,19 @@ without the flags, `ninferno-serve --plan --no-load`, and ninferno-ui's `/api/pl
 
 Nothing is measured on the user's machine.
 
+## Where it runs
+
+One function decides the automatic axes everywhere: `product::choose_at_weights` (#89's
+`product/plan/plan_choice`) over `choice::choose`. `ninferno-serve`'s start (`choose_served_axes`), the
+`ninferno` CLI's start and `--plan`, `--plan --no-load`, the quantization rule's worth ranking
+(`plan_quants`) and ninferno-ui's `/api/plan` all call it; none keeps a rule of its own for the KV
+codec, the activations, the state, the ring or the chunk. The quantization is most often the user's
+(`--quant`, the UI's row); the other axes are almost never pinned, so their default is the one that
+serves. Where the choice cannot run (a model whose shape the plan cannot read), the engine takes the
+family's defaults through `runtime::plan_family_storage`, the same function the choice takes its
+defaults from. The measuring tools (`ninferno-perplexity`, the spec tuner, the maintainer apps) take
+their options as given.
+
 ## The three estimates
 
 - **Memory.** The plan without the weights (`runtime/engine/plan_dry_run.h`): the family planner's own
