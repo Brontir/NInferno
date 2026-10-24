@@ -147,8 +147,9 @@ int main(int argc, char** argv) {
                        "quantization_config": {"quant_method": "bitsandbytes"},
                        "tokenizer_config": {"bos_token": "<s>"}},
             "safetensors": {"parameters": {"F32": 1, "BF16": 2, "U8": 3}}})"));
-        expect(facts.chat_template == false && facts.weight_dtypes.size() == 3,
-               "the search's facts: no template, three dtypes");
+        // The summary shows no template: unknown (the file itself may hold one), not "none".
+        expect(!facts.chat_template && facts.weight_dtypes.size() == 3,
+               "the search's facts: the template unknown, three dtypes");
         expect(says(of(facts), Verdict::Unsupported, "bitsandbytes"),
                "the search's facts refuse bitsandbytes first");
         const auto gguf = cv::search_support_facts(Json::parse(R"({
