@@ -149,6 +149,27 @@ int similar_default() {
                                    4096, 4096, generic::Epilogue::Store};
     failures += check(!generic::table_route(foreign, 4, false).has_value(),
                       "a table of another instruction set lends nothing");
+    // A table classed TU116 without "mma_slow" takes the chip's fact (mma_slow), so on a tensor-core
+    // Turing board of the same SM count it lends nothing; a writer on such a board writes no field.
+    if (ninferno::device_class().compute_capability() == 75 &&
+        !ninferno::device_class().features.mma_slow) {
+        std::ofstream(dir / "tu116-22sm.json")
+            << "{\"schema\": \"ninferno-route-table/1\", \"gpu\": {\"class\": \"tu116:22sm\", "
+               "\"name\": \"test\", \"board\": {\"cc\": 75, \"sms\": " +
+                   std::to_string(ninferno::device_class().sms) + "}}, \"entries\": [" +
+                   entry(8192, "rmma.m1.n1.w1x4") + "]}";
+        ::setenv("NINFERNO_ROUTE_DIR", dir.string().c_str(), 1);
+        const generic::Problem slow{ninferno::QType::Q8_G32_FP16,
+                                    ninferno::ops::LinearPolicy::A16Only, 4096, 8192,
+                                    generic::Epilogue::Store};
+        (void)ninferno::ops::route_table_status();
+        failures += check(!generic::table_route(slow, 4, false).has_value(),
+                          "a TU116 table (no mma_slow field: the chip's fact) lends nothing here");
+    }
+    failures += check(generic::write_route_table(gpu, "test", {}).find("mma_slow") ==
+                          std::string::npos ||
+                          ninferno::device_class().features.mma_slow,
+                      "a board without mma_slow writes no mma_slow field");
     // An explicit table stands alone.
     (void)ninferno::ops::load_route_table(utf8_path(dir / (file + ".json")));
     failures += check(!generic::table_route(lent, 4, false).has_value(),

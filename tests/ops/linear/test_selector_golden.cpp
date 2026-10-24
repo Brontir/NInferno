@@ -56,6 +56,8 @@ constexpr GoldenBoard kBoards[] = {
     {"a10", 0x2236, 8, 6, 72, 6, 24, 1695, 6251, 384},
     {"a100", 0x20B0, 8, 0, 108, 40, 40, 1410, 1215, 5120},
     {"rtx2080ti", 0x1E07, 7, 5, 68, 5, 11, 1545, 7000, 352},
+    // TU116 (GTX 1660 SUPER, 1.5 MiB L2 written as 1): no tensor cores, mma_slow.
+    {"gtx1660super", 0x21C4, 7, 5, 22, 1, 6, 1785, 7001, 192},
     {"v100", 0x1DB5, 7, 0, 80, 6, 32, 1530, 877, 4096},
     // Not targets, but the rows where spellings of one generation fact used to disagree.
     {"h100-sxm", 0x2330, 9, 0, 132, 50, 80, 1980, 2619, 5120},

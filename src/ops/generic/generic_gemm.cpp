@@ -14,6 +14,7 @@
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/vec_verify_rule.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 
 #include <cuda_bf16.h>
@@ -377,11 +378,24 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
+// Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs: there R8 also takes the
+// verify widths up to kR8SlicedMaxTokens, as kR8VerifyTokens-token slices (run_route), each token
+// summed as at decode (a V100 Q8_0 verify of 5..16 tokens ran the emulated rmma.m1.n1/n2 tiles).
+// Formats with ggml's vector kernel take that first there (vec_rule); this reaches the others.
+constexpr std::int32_t kR8SlicedMaxTokens = 16;
+bool r8_sliced_device() {
+    try {
+        return !device_class().features.mma_tensor;
+    } catch (const std::exception&) { return false; }
+}
+
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits).
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     if (!allows_r8(w, policy)) return false;
     if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= kR8VerifyTokens && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    if (tokens <= kR8VerifyTokens) return r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return tokens <= kR8SlicedMaxTokens && r8_sliced_device() && r8_verify_compiled(w.qtype) &&
+           r8_verify_takes_shape(w.qtype, w.n, w.k);
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -551,8 +565,12 @@ std::int32_t vec_rule_max_tokens() {
     return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
 
+// Q6_K takes the register MMA from T = 2 where tensor mma.sync runs (vec_verify_rule.h: the X6
+// matrices).
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
+    const std::int32_t widest = vec_rule_max_tokens();
+    return tokens >= 2 && tokens <= widest && vec_call(w, policy, tokens) &&
+           vec_verify_format(w.qtype, widest == kVecRuleMaxTokens);
 }
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
@@ -758,6 +776,71 @@ bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
 
 bool bf16_mma_native();
 
+// The L2 bytes per SM verify_rmma reads (0 where the device cannot be queried, which keeps the
+// rule of the large-L2 boards).
+std::size_t l2_per_sm() {
+    try {
+        const auto& d = device_class();
+        return d.sms > 0 ? d.l2_bytes / static_cast<std::size_t>(d.sms) : 0;
+    } catch (const std::exception&) { return 0; }
+}
+
+// The register-MMA schedule of a 9..16-token call (a verify) of K >= 1024 on a native BF16 MMA,
+// from the call's 16-row CTAs, the SMs and the L2 per SM. X6 route matrices (ninferno_route_tune
+// --matrix, 26 problems x every admitted route, T 1..16, L2 flushed; RTX 3090 ga102:82sm 6 MiB L2
+// = 75 KiB per SM, A100 ga100:108sm 40 MiB = 379 KiB, RTX 4090 ad102:128sm 72 MiB = 576 KiB, RTX
+// 5070 Ti gb203:70sm 48 MiB = 702 KiB; held out of the fit: RTX 4060 Ti ad106:34sm 32 MiB = 964
+// KiB), cells over 1.05x the best route of the call: 3090 208 -> 169 (the shipped route tables
+// 162), 4090 162 -> 162 (182), A100 168 -> 142 (168), 5070 Ti 168 -> 168 (194), 4060 Ti 142 -> 134
+// (122); no cell slower on any board.
+// - A grid of more than one and at most two 16-row CTAs per SM takes the decode split of K (eight
+//   warps, as at T <= 8) over two 8-token columns: the four-warp n2 tile leaves 4..8 warps per SM
+//   there (Q8 2048x4096, 128 CTAs: 3090 1.30-1.36 -> 1.00, A100 1.41 -> 1.00, 5070 Ti 1.33-1.40
+//   -> 1.13-1.20; Q4_K 1024x5120, 64 CTAs on the held-out 4060 Ti: 1.27-1.33 -> 1.00).
+// - Where the L2 holds under 512 KiB per SM (and clusters do not split K), a grid of at most one
+//   CTA per SM takes the same eight-warp split, sixteen (one_wave_split) only while both token
+//   columns together hold at most one CTA per SM: past that the sixteen-warp CTAs share SMs and
+//   lost there (Q4_K 1024x5120, 128 CTAs: 3090 w1x16 1.13-1.21 -> w1x8 1.00, A100 1.06-1.17 ->
+//   1.00), while the 4090, 576 KiB per SM, kept sixteen (1.00, Q8 2048x4096 at 256 CTAs too).
+// - Past two CTAs per SM, the n2 tile of four K warps (16 rows), but:
+//   Q4_K at a short K (under 72 steps of 128) where the L2 holds under 512 KiB per SM takes two
+//   row warps by two K warps (32 rows per CTA). A 16-row CTA re-reads the call's whole activation
+//   (16 tokens x K BF16) for every 16 rows, at 4.5 bits a weight 3.6 activation bytes per weight
+//   byte; 32 rows halve that, and each K warp reads every 256-value super-block's header (d, dmin,
+//   scales) of its rows in two of its 32-value steps instead of four. Q4_K 17408x5120 SwiGLU A16:
+//   3090 1.05-1.12 -> 1.00, A100 1.17-1.20 -> 1.00; 6144x5120: 3090 1.06-1.12 -> 1.02-1.06, A100
+//   1.30-1.34 -> 1.02-1.07. The 4090 and 5070 Ti lose on it (1.07-1.33) and keep the 16-row tile.
+//   Q5_K's short-K SwiGLU lost on it on the 3090 (1.23 -> 1.38).
+//   Q4_K and Q5_K at a long K where the L2 holds under 128 KiB per SM (the 6 MiB GA102: K = 17408
+//   re-reads 557 KB of activation per CTA) take the 32-row CTA with one 8-token column: half the
+//   activation traffic of the 16-row tile at the same 320 CTAs (5120 rows), each weight read by two
+//   CTAs that run together. 3090 Q4_K 5120x17408: 1.32-1.40 -> 1.03-1.07, Q5_K 1.26-1.42 ->
+//   1.04-1.10; the A100 lost on it (1.23, 1.44) and keeps the 16-row tile.
+//   Not taken: Q6_K 5120x17408 ran faster on the n4 tile (half its token tiles empty through
+//   T = 16, the same bytes as n2) on the 3090 (w1x4), 4090 and 4060 Ti (w1x8) and slower on the
+//   A100 and 5070 Ti; no chip fact with a mechanism separates them.
+int verify_rmma(const Problem& problem, std::int64_t ctas, std::int64_t sms) {
+#ifdef NINFERNO_WITHOUT_NVFP4
+    constexpr bool kClusters = false;
+#else
+    constexpr bool kClusters = true;
+#endif
+    const std::size_t l2    = l2_per_sm();
+    const auto per_sm_under = [&](std::size_t kib) { return l2 > 0 && l2 < kib * 1024; };
+    const bool small_l2     = per_sm_under(512);
+    if (ctas <= sms && (kClusters || !small_l2 || 2 * ctas <= sms))
+        return one_wave_split(ctas, sms);
+    if (ctas <= 2 * sms) return rmma_index(1, 8, 1, 1);
+    const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + 127) / 128;
+    const bool long_k        = 2 * steps >= 9 * 16;
+    const QType q            = problem.qtype;
+    if (q == QType::GGML_Q4_K && !long_k && small_l2) return rmma_index(2, 2, 1, 2);
+    if ((q == QType::GGML_Q4_K || q == QType::GGML_Q5_K) && long_k && per_sm_under(128)) {
+        return rmma_index(2, 2, 1, 1);
+    }
+    return rmma_index(1, 4, 1, 2);
+}
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -787,6 +870,8 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // 16..41 for the rule).
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
+                // On a native BF16 MMA the L2 per SM and the format refine both (verify_rmma).
+                if (bf16_mma_native()) return verify_rmma(problem, ctas, sms);
                 if (ctas <= sms) return one_wave_split(ctas, sms);
                 return rmma_index(1, 4, 1, 2);
             }
@@ -2959,6 +3044,8 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
 
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
+    // R8 past kR8VerifyTokens runs in slices of that many tokens, one after another.
+    if (route.family == Family::R8Mma) tokens = std::min(tokens, kR8VerifyTokens);
     if (route.family == Family::I8Mma) {
         const auto t      = static_cast<std::size_t>(i8_padded_tokens(tokens));
         const auto groups = static_cast<std::size_t>(k / 64);
@@ -3070,7 +3157,9 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     const bool r8_verify = r8_verify_compiled(problem.qtype) && allows_a8(problem.policy) &&
                            (problem.k % r8_k_values(problem.qtype)) == 0 &&
                            (weight == nullptr || allows_r8(*weight, problem.policy)) &&
-                           forced != 0 && max_tokens >= 2 && min_tokens <= kR8VerifyTokens;
+                           forced != 0 && max_tokens >= 2 &&
+                           min_tokens <= (current_features().mma_tensor ? kR8VerifyTokens
+                                                                        : kR8SlicedMaxTokens);
     // ggml's matrix kernel: its activation, the FP32 plane (SwiGlu: gate and up rows) and the
     // stream-k fixup, at the widest call of its band in the interval.
     std::size_t mmq = 0;
@@ -3114,8 +3203,11 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                             problem.qtype == QType::Q6_G64_FP16)
                                ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
                                : 0;
-    return with_gather(std::max(
-        {mmq, i8, route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)}));
+    // R8 alone (no W4A8 width in the interval) reads one slice's planes, reused slice by slice.
+    const std::size_t planes =
+        a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)
+           : route_workspace_bytes(Route{Family::R8Mma, 0}, problem.k, max_tokens);
+    return with_gather(std::max({mmq, i8, planes}));
 }
 
 // GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
@@ -3208,6 +3300,28 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                bool* released) {
     if (released != nullptr) *released = false;
     validate_call(ordered);
+    // R8 past kR8VerifyTokens (r8_call: Volta's verify widths): slices of that many tokens, in
+    // order, each a call R8 takes as it does at those widths, so a token's bytes are its decode
+    // bytes whatever the call's width.
+    if (route.family == Family::R8Mma && ordered.x->ne[1] > kR8VerifyTokens) {
+        const std::int32_t t = ordered.x->ne[1];
+        for (std::int32_t c0 = 0; c0 < t; c0 += kR8VerifyTokens) {
+            const std::int32_t n = std::min(kR8VerifyTokens, t - c0);
+            const Tensor x       = ordered.x->slice(1, c0, n);
+            Tensor outs[kMaxSegments];
+            Call part          = ordered;
+            part.x             = &x;
+            part.join_previous = false;
+            part.release_next  = false;
+            for (int s = 0; s < ordered.segments; ++s) {
+                const Tensor& o = *ordered.out[s];
+                outs[s]         = o.view({o.ne[0], t}).slice(1, c0, n);
+                part.out[s]     = &outs[s];
+            }
+            run_route(route, part, workspace, stream, nullptr);
+        }
+        return;
+    }
     const Weight& w = *ordered.weight;
     if (!supports(w)) throw std::invalid_argument("generic linear: unsupported weight layout");
     // An explicit route parses on every build; one whose kernels this build lacks is refused as
@@ -3274,9 +3388,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
     // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
     // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
-    const bool r8_pre = route.family == Family::R8Mma && args.tokens >= 2 &&
-                        args.tokens <= kR8VerifyTokens && workspace != nullptr &&
-                        r8_verify_compiled(w.qtype);
+    const bool r8_pre =
+        route.family == Family::R8Mma && args.tokens >= 2 && args.tokens <= kR8VerifyTokens &&
+        workspace != nullptr && r8_verify_compiled(w.qtype) &&
+        mmq_fits(*workspace, route_workspace_bytes(route, w.k, args.tokens));
     if (route.family == Family::R8Mma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0 ||
                                           !(r8_pre || r8_fits(w.qtype, args.k, args.tokens)))) {
         const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
