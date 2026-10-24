@@ -389,9 +389,11 @@ def main() -> int:
                 refused = subprocess.run([str(native), "--fetch", spec, "--cache", str(work / "cache-support")],
                                          cwd=repository, capture_output=True, text=True, env=environment)
                 cached = list((work / "cache-support").glob(f"models--{spec.replace('/', '--')}/snapshots/*/*"))
-                case(f"{spec} refused before the download: {says}",
-                     refused.returncode != 0 and "nothing was downloaded" in refused.stderr
-                     and says in refused.stderr and not cached, refused.stderr[-600:])
+                ok = (refused.returncode != 0 and "nothing was downloaded" in refused.stderr
+                      and says in refused.stderr and not cached)
+                if not ok:
+                    errors.append(refused.stderr[-600:])
+                case(f"{spec} refused before the download: {says}", ok)
             synthetic_gguf.resources(work / "qwen-src" / "twin")
             base_files = {name: (work / "qwen-src" / "twin" / name).read_bytes()
                           for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
