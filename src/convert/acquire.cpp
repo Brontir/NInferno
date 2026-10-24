@@ -426,9 +426,19 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 try {
                     now = current_commit(spec, options.fetch);
                     if (!now) {
+                        // Asked for the new commit: no hub to download it from is an error.
+                        if (options.moved_ref == MovedRef::Refetch) {
+                            throw std::runtime_error("HF_HUB_OFFLINE is set");
+                        }
                         say(options, "HF_HUB_OFFLINE: " + label + " not checked against the hub");
                     }
                 } catch (const std::exception& error) {
+                    if (options.moved_ref == MovedRef::Refetch) {
+                        throw std::runtime_error("--refetch: cannot ask the hub what " + label +
+                                                 " names now (" + error.what() +
+                                                 "); the conversion of " +
+                                                 kept_commit.substr(0, 12) + " is kept");
+                    }
                     say(options, "warning: could not ask the hub whether " + label +
                                      " moved (" + error.what() + "); serving its conversion of " +
                                      kept_commit.substr(0, 12));

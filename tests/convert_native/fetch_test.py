@@ -397,8 +397,12 @@ def main() -> int:
             case("--accept-converted keeps them without the notice",
                  accepted[0] == 0 and (repo_dir / "ninferno" / old / "accepted.json").exists()
                  and after[0] == 0 and "as accepted earlier" in after[1] and "warning:" not in after[1])
-            case("an unreachable hub leaves the converted weights, said",
-                 unreachable[0] == 0 and "could not ask the hub whether org/qwen-gguf@main moved" in unreachable[1])
+            dead_refetch = subprocess.run([str(native), "--fetch", "org/qwen-gguf", "--cache", str(work / "cache-e2e"),
+                                           "--refetch"], cwd=repository, capture_output=True, text=True,
+                                          env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("an unreachable hub leaves the converted weights, said; --refetch then fails",
+                 unreachable[0] == 0 and "could not ask the hub whether org/qwen-gguf@main moved" in unreachable[1]
+                 and dead_refetch.returncode != 0 and "--refetch: cannot ask the hub" in dead_refetch.stderr)
             refetched = again("--refetch")
             case("--refetch converts the new commit and removes the old conversion",
                  refetched[0] == 0 and (repo_dir / "ninferno" / new / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
