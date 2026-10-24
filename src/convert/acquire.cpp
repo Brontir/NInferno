@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <exception>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <stdexcept>
 #include <string_view>
@@ -367,20 +368,37 @@ std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem
 
 AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     AcquiredModel out;
-    // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there.
+    // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there: the
+    // artifact with its sidecars, and its commit's directory when nothing but its own drafters
+    // (named in its speculation manifest) is left there (another quantization of that commit
+    // stays).
     struct RemoveReplaced {
-        fs::path dir;
+        fs::path artifact;
         const AcquiredModel& out;
         const AcquireOptions& options;
         ~RemoveReplaced() {
-            if (dir.empty() || std::uncaught_exceptions() > 0 || out.artifact.empty() ||
-                out.artifact.parent_path() == dir) {
+            if (artifact.empty() || std::uncaught_exceptions() > 0 || out.artifact.empty() ||
+                out.artifact == artifact) {
                 return;
             }
+            const auto dir = artifact.parent_path();
+            std::string manifest;
+            if (std::ifstream in(spec::manifest_path(artifact)); in) {
+                manifest.assign(std::istreambuf_iterator<char>(in), {});
+            }
+            remove_artifact(artifact);
             std::error_code ec;
-            fs::remove_all(dir, ec);
-            say(options, ec ? "the old conversion " + dir.string() + " stays: " + ec.message()
-                            : "removed the old conversion " + dir.string());
+            bool others = false;
+            for (const auto& entry : fs::directory_iterator(dir, ec)) {
+                const auto name = entry.path().filename().string();
+                if (entry.path().extension() == ".ninferno" &&
+                    manifest.find(name) == std::string::npos) {
+                    others = true;
+                }
+            }
+            if (!others) { fs::remove_all(dir, ec); }
+            say(options, "removed the old conversion " + artifact.string() +
+                             (others ? " (other conversions of that commit stay)" : ""));
         }
     } replaced{{}, out, options};
     ConvertOptions& convert_options = options.convert;
@@ -421,7 +439,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                               kept_commit.substr(0, 12) + " (download removed)";
                     if (options.moved_ref == MovedRef::Refetch) {
                         say(options, moved + ": downloading the new commit (--refetch)");
-                        replaced.dir = commit_dir;
+                        replaced.artifact = *kept;
                         kept.reset();
                     } else if (options.moved_ref == MovedRef::Accept) {
                         accept_converted(commit_dir, ref, *now);

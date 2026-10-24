@@ -98,6 +98,9 @@ struct LaunchRequest {
     // and asked for, one that would not serve on the request's GPU refuses the start.
     bool spec_profile = false;
     bool prepare_only = false;
+    // A prepare of a hub model whose branch moved after its conversion: download the new commit,
+    // convert it and remove the old conversion (ninferno-serve --refetch).
+    bool refetch = false;
 };
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
@@ -199,6 +202,16 @@ private:
     nlohmann::json arch_json(const std::string& repo, const std::string& hub);
     nlohmann::json listing_of(const std::string& repo, const std::string& hub);
     nlohmann::json local_json();
+    // The converted hub models whose download was removed and whose branch the hub now names at
+    // another commit: what each start of them would warn about (ninferno-serve keeps the
+    // converted weights unless asked). One listing request per repository and branch, at most
+    // hourly; none with --offline.
+    nlohmann::json moved_json();
+    // The user's answer for one such conversion: "accept" keeps it as valid now and later
+    // (convert::accept_converted), "refetch" starts a prepare per converted quantization that
+    // downloads the new commit and removes the old conversion. The prepares' ids.
+    nlohmann::json answer_moved(const std::string& repo, const std::string& ref,
+                                const std::string& commit, const std::string& action);
     nlohmann::json search_json(const std::string& query, const std::string& sort = "downloads",
                                const std::string& hub = "huggingface");
     nlohmann::json kv_json(const std::string& repo, const nlohmann::json& listing,
@@ -234,6 +247,9 @@ private:
     std::map<std::string, std::string> base_models_; // repo -> its card's base_model ("-": none)
     std::map<std::string, std::pair<std::int64_t, nlohmann::json>> searches_; // q -> (time, hits)
     std::set<std::uint64_t> originals_done_; // processes already handled
+    std::mutex moved_mutex_;
+    // repo@ref -> (when asked, the commit the hub names; "" when it could not be asked)
+    std::map<std::string, std::pair<std::int64_t, std::string>> hub_commits_;
     mutable std::mutex catalog_mutex_;
     std::shared_ptr<const Catalog> catalog_;
     std::string catalog_source_; // "built in", or the feed and when it was read

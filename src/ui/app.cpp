@@ -435,8 +435,12 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         throw std::invalid_argument("ModelScope models are listed only: ninferno-serve fetches from "
                                     "Hugging Face");
     }
+    if (request.refetch && !request.prepare_only) {
+        throw std::invalid_argument("refetch is a prepare's");
+    }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
+        if (request.refetch) { spec.argv.push_back("--refetch"); }
     } else {
         spec.argv.insert(spec.argv.end(),
                          {"--host", "127.0.0.1", "--port", std::to_string(request.port)});
@@ -1089,6 +1093,101 @@ Json App::catalog_json(int gpu) {
             {"catalog_source", source}};
 }
 
+Json App::moved_json() {
+    Json out = Json::array();
+    if (options_.offline) { return {{"models", out}, {"offline", true}}; }
+    const auto root = hub_root();
+    const std::int64_t now = std::time(nullptr);
+    std::error_code ec;
+    for (const auto& repo_dir : fs::directory_iterator(root, ec)) {
+        const auto repo = convert::hub_repo_of_directory(repo_dir.path().filename().string());
+        if (repo.empty() || !fs::is_directory(repo_dir.path() / "ninferno", ec)) { continue; }
+        // The branches (refs/<name>) and the commit each named when it was fetched.
+        for (const auto& ref_file : fs::directory_iterator(repo_dir.path() / "refs", ec)) {
+            if (!ref_file.is_regular_file(ec)) { continue; }
+            std::string commit;
+            std::ifstream(ref_file.path()) >> commit;
+            const auto dir = repo_dir.path() / "ninferno" / commit;
+            // Only a conversion whose download is gone: with the download there, a start by the
+            // hub id fetches the new commit as any download does.
+            if (commit.size() != 40 || !fs::is_directory(dir, ec) ||
+                fs::exists(repo_dir.path() / "snapshots" / commit, ec)) {
+                continue;
+            }
+            const auto ref = ref_file.path().filename().string();
+            const auto key = repo + "@" + ref;
+            std::string hub_commit;
+            {
+                std::lock_guard lock(moved_mutex_);
+                const auto it = hub_commits_.find(key);
+                if (it != hub_commits_.end() && now - it->second.first < 3600) {
+                    hub_commit = it->second.second;
+                } else {
+                    try {
+                        convert::FetchOptions fetch;
+                        fetch.cache = root;
+                        hub_commit  = convert::current_commit(key, fetch).value_or("");
+                    } catch (const std::exception&) {} // unchecked: nothing to say
+                    hub_commits_[key] = {now, hub_commit};
+                }
+            }
+            if (hub_commit.empty() || hub_commit == commit) { continue; }
+            Json artifacts = Json::array();
+            for (const auto& entry : fs::directory_iterator(dir, ec)) {
+                if (entry.path().extension() == ".ninferno" && !facts(entry.path()).drafter) {
+                    artifacts.push_back(entry.path().string());
+                }
+            }
+            out.push_back({{"repo", repo},
+                           {"ref", ref},
+                           {"commit", commit},
+                           {"hub_commit", hub_commit},
+                           {"accepted", convert::converted_accepted(dir, ref, hub_commit)},
+                           {"artifacts", artifacts}});
+        }
+    }
+    return {{"models", out}};
+}
+
+Json App::answer_moved(const std::string& repo, const std::string& ref, const std::string& commit,
+                       const std::string& action) {
+    static const std::regex hex40("[0-9a-f]{40}");
+    static const std::regex ref_name("[A-Za-z0-9._-]+");
+    if (!convert::is_repository_spec(repo) || repo.find('@') != std::string::npos ||
+        !std::regex_match(commit, hex40) || !std::regex_match(ref, ref_name)) {
+        throw std::invalid_argument("bad repo, ref or commit");
+    }
+    const auto dir = hub_root() / convert::hub_repo_directory(repo) / "ninferno" / commit;
+    std::string hub_commit;
+    {
+        std::lock_guard lock(moved_mutex_);
+        const auto it = hub_commits_.find(repo + "@" + ref);
+        if (it != hub_commits_.end()) { hub_commit = it->second.second; }
+    }
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec) || hub_commit.empty() || hub_commit == commit) {
+        throw std::invalid_argument(repo + "@" + ref + " is not known to have moved from " +
+                                    commit.substr(0, 12));
+    }
+    if (action == "accept") {
+        convert::accept_converted(dir, ref, hub_commit);
+        return {{"accepted", true}};
+    }
+    if (action != "refetch") { throw std::invalid_argument("action is accept or refetch"); }
+    Json ids = Json::array();
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (entry.path().extension() != ".ninferno" || facts(entry.path()).drafter) { continue; }
+        LaunchRequest request;
+        request.model        = ref == "main" ? repo : repo + "@" + ref;
+        request.quant        = artifact_name(entry.path().filename().string()).quant;
+        request.prepare_only = true;
+        request.refetch      = true;
+        request.gpu          = -1;
+        ids.push_back(processes_.start(make_launch(options_, request)));
+    }
+    return {{"ids", ids}};
+}
+
 fs::path App::hub_root() const {
     return options_.hub_cache.empty() ? convert::default_hub_cache() : options_.hub_cache;
 }
@@ -1714,6 +1813,22 @@ void App::install(httplib::Server& server) {
                         reply_error(res, 400, std::string("bad request body: ") + error.what());
                     } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
                 });
+    server.Get("/api/moved", [this](const httplib::Request&, httplib::Response& res) {
+        try {
+            reply_json(res, moved_json());
+        } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
+    });
+    server.Post("/api/moved", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            const Json body = Json::parse(req.body);
+            reply_json(res, answer_moved(body.at("repo").get<std::string>(),
+                                         body.at("ref").get<std::string>(),
+                                         body.at("commit").get<std::string>(),
+                                         body.at("action").get<std::string>()));
+        } catch (const std::invalid_argument& error) {
+            reply_error(res, 400, error.what());
+        } catch (const std::exception& error) { reply_error(res, 400, error.what()); }
+    });
     server.Post("/api/stop", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             const auto id = Json::parse(req.body).at("id").get<std::uint64_t>();

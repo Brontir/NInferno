@@ -957,6 +957,19 @@ for (const [code, words] of Object.entries({
       updDone:"NInferno {v} をインストールしました。再起動すると使えます：実行中のモデルは停止し、再度起動できます。",updRestart:"今すぐ再起動",
       updFailed:"更新が完了しませんでした。",updRetry:"再試行",updManual:"次のコマンドでインストール：ninferno-update",updRestarting:"再起動中…"},
 })) { if (T[code]) Object.assign(T[code], words); }
+// A converted model whose branch moved on the hub (/api/moved): keep it or download anew.
+for (const [code, words] of Object.entries({
+  en:{hubMoved:"The hub has newer weights for this model",keepThese:"Keep these",keepTip:"Keep these weights as valid, now and later",refetchNew:"Download new",refetchTip:"Download the new weights, convert them and delete these"},
+  ru:{hubMoved:"На хабе новые веса этой модели",keepThese:"Оставить эти",keepTip:"Считать эти веса верными сейчас и впредь",refetchNew:"Скачать новые",refetchTip:"Скачать новые веса, сконвертировать и удалить эти"},
+  uk:{hubMoved:"На хабі нові ваги цієї моделі",keepThese:"Залишити ці",keepTip:"Вважати ці ваги правильними зараз і надалі",refetchNew:"Завантажити нові",refetchTip:"Завантажити нові ваги, сконвертувати й видалити ці"},
+  de:{hubMoved:"Auf dem Hub gibt es neuere Gewichte für dieses Modell",keepThese:"Diese behalten",keepTip:"Diese Gewichte jetzt und künftig als gültig behalten",refetchNew:"Neue laden",refetchTip:"Die neuen Gewichte laden, konvertieren und diese löschen"},
+  fr:{hubMoved:"Le hub a des poids plus récents pour ce modèle",keepThese:"Garder ceux-ci",keepTip:"Garder ces poids comme valides, maintenant et à l'avenir",refetchNew:"Télécharger les nouveaux",refetchTip:"Télécharger les nouveaux poids, les convertir et supprimer ceux-ci"},
+  es:{hubMoved:"El hub tiene pesos más recientes de este modelo",keepThese:"Conservar estos",keepTip:"Conservar estos pesos como válidos, ahora y en adelante",refetchNew:"Descargar los nuevos",refetchTip:"Descargar los pesos nuevos, convertirlos y borrar estos"},
+  it:{hubMoved:"Sull'hub ci sono pesi più recenti per questo modello",keepThese:"Tieni questi",keepTip:"Considera validi questi pesi, ora e in futuro",refetchNew:"Scarica i nuovi",refetchTip:"Scarica i nuovi pesi, convertili ed elimina questi"},
+  pl:{hubMoved:"Na hubie są nowsze wagi tego modelu",keepThese:"Zachowaj te",keepTip:"Uznaj te wagi za ważne teraz i w przyszłości",refetchNew:"Pobierz nowe",refetchTip:"Pobierz nowe wagi, przekonwertuj je i usuń te"},
+  zh:{hubMoved:"Hub 上有此模型的更新权重",keepThese:"保留当前",keepTip:"将这些权重视为有效（现在及以后）",refetchNew:"下载新权重",refetchTip:"下载新权重、转换并删除当前权重"},
+  ja:{hubMoved:"ハブにこのモデルの新しい重みがあります",keepThese:"これを使い続ける",keepTip:"この重みを今後も有効として扱う",refetchNew:"新しい重みを取得",refetchTip:"新しい重みをダウンロード・変換し、これを削除"},
+})) { if (T[code]) Object.assign(T[code], words); }
 const LANGS = [
   ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
   ["uk", "Українська", '<svg viewBox="0 0 3 2"><rect width="3" height="1" fill="#0057B7"/><rect y="1" width="3" height="1" fill="#FFD700"/></svg>'],
@@ -1178,6 +1191,18 @@ function setTab(name) {
 // ---- my models ------------------------------------------------------------------------------
 let mine = [];
 const confirming = new Set();
+// Converted hub models whose branch the hub now names at another commit and that the user has not
+// kept (/api/moved, asked at most every 10 minutes): artifact path -> {repo, ref, commit, ...}.
+let moved = {}, movedAt = 0;
+async function refreshMoved() {
+  if (Date.now() - movedAt < 600000) return;
+  movedAt = Date.now();
+  let j;
+  try { j = await api("/api/moved"); } catch (e) { return; }
+  moved = {};
+  for (const e of j.models || []) if (!e.accepted) for (const a of e.artifacts) moved[a] = e;
+  if (Object.keys(moved).length && tab === "models") refreshMine();
+}
 async function refreshMine() {
   let j;
   try { j = await api("/api/local"); } catch (e) { setTimeout(refreshMine, 2000); return; }  // ninferno-ui restarting
@@ -1191,6 +1216,10 @@ async function refreshMine() {
                   (m.mtp ? `<span class="icon i-spec" title="${t("spec")}">⚡</span>` : "") +
                   (m.running ? `<span class="icon i-run" title="${t("running")}">▶</span>` : "");
     const key = "d" + i;
+    const mv = m.running ? null : moved[m.artifact];
+    const movedLine = mv ? `<div class="sub"><span class="warn" title="${esc(mv.ref)}: ${esc(mv.commit.slice(0, 12))} → ${esc(mv.hub_commit.slice(0, 12))}">⚠ ${t("hubMoved")}</span>
+        <button class="ghost" data-mvkeep="${i}" title="${t("keepTip")}">${t("keepThese")}</button>
+        <button class="ghost" data-mvget="${i}" title="${t("refetchTip")}">${t("refetchNew")}</button></div>` : "";
     const del = confirming.has(m.artifact)
       ? `<span class="confirm">${t("delq")} <button class="danger" data-delyes="${i}">${t("yes")}</button><button data-delno="${i}">${t("no")}</button></span>`
       : `<button class="ghost danger" data-del="${i}" title="${t("del")}">🗑</button>`;
@@ -1199,13 +1228,14 @@ async function refreshMine() {
       <td>${m.params ? `<span class="chip">${esc(m.params)}</span>` : ""}</td>
       <td class="muted">${esc(m.publisher)}</td>
       <td><span class="title">${esc(m.title)}</span><span class="icons">${icons}</span>
-        ${m.original_gib > 0 ? `<div class="sub">${t("original")}: ${m.original_gib.toFixed(1)} GiB · <a href="#" data-delorig="${esc(m.repo)}">${t("del")}</a></div>` : ""}</td>
+        ${m.original_gib > 0 ? `<div class="sub">${t("original")}: ${m.original_gib.toFixed(1)} GiB · <a href="#" data-delorig="${esc(m.repo)}">${t("del")}</a></div>` : ""}${movedLine}</td>
       <td>${m.quant ? `<span class="chip">${esc(m.quant)}</span>` : ""}</td>
       <td class="num">${m.size_gib.toFixed(1)} GiB</td>
       <td class="muted">${esc(ago(m.modified))}</td>
       <td><div class="acts">${m.running ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
         <button class="ghost" data-tune="${i}" title="${t("calibrate")}">⚙</button>${del}</div></td></tr>`;
   }).join("");
+  refreshMoved();
 }
 
 // ---- find -------------------------------------------------------------------------------------
@@ -2061,7 +2091,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.tab) setTab(d.tab);
@@ -2086,6 +2116,14 @@ document.addEventListener("click", async ev => {
     const repos = d.delorig === "*" ? [...new Set(mine.filter(m => m.original_gib > 0).map(m => m.repo))] : [d.delorig];
     for (const repo of repos) { try { await api("/api/delete_original", {repo}); } catch (e) { showError(e.message); } }
     refreshMine();
+  }
+  else if (d.mvkeep !== undefined || d.mvget !== undefined) {
+    const keep = d.mvkeep !== undefined, e = moved[mine[+(keep ? d.mvkeep : d.mvget)].artifact];
+    if (!e) return;
+    try { await api("/api/moved", {repo: e.repo, ref: e.ref, commit: e.commit, action: keep ? "accept" : "refetch"}); }
+    catch (er) { showError(er.message); return; }
+    for (const a of e.artifacts) delete moved[a];
+    if (keep) refreshMine(); else { setTab("downloads"); refreshState(); }
   }
   else if (d.hubsel) setHub(d.hubsel);
   else if (d.sort) {
