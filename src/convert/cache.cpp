@@ -7,7 +7,9 @@
 #include "core/cache_file.h"
 #include "core/sys.h"
 
+#include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 
@@ -86,6 +88,42 @@ bool checkpoint_has_vision(const std::filesystem::path& checkpoint) {
     } catch (const std::exception&) { return false; }
 }
 
+std::string source_stamp(std::vector<std::filesystem::path> files) {
+    namespace fs = std::filesystem;
+    std::sort(files.begin(), files.end());
+    files.erase(std::unique(files.begin(), files.end()), files.end());
+    std::string out;
+    for (const auto& file : files) {
+        std::error_code size_error, time_error;
+        const auto size = fs::file_size(file, size_error);
+        const auto time = fs::last_write_time(file, time_error);
+        out += file.generic_string() + '\t';
+        out += size_error || time_error
+                   ? std::string("missing")
+                   : std::to_string(size) + '\t' +
+                         std::to_string(time.time_since_epoch().count());
+        out += '\n';
+    }
+    return out;
+}
+
+void stamp_source(const std::filesystem::path& artifact, const std::string& stamp) {
+    write_file_atomic(artifact.string() + ".source", stamp);
+}
+
+bool source_changed(const std::filesystem::path& artifact, const std::string& stamp) {
+    std::ifstream in(artifact.string() + ".source", std::ios::binary);
+    if (!in) {
+        try {
+            stamp_source(artifact, stamp);
+        } catch (const std::exception&) {}
+        return false;
+    }
+    const std::string recorded{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    return recorded != stamp;
+}
+
 void remove_artifact(const std::filesystem::path& artifact) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -111,10 +149,40 @@ bool source_present(const std::filesystem::path& path) {
     return false;
 }
 
-// A cached artifact to serve as it is: current, or older with nothing left to convert from.
-bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source) {
+// The files a conversion of `path` reads: a GGUF model's files and its projector, or a directory's
+// top-level files but hidden ones; and each resource the model's directory lacks.
+std::vector<std::filesystem::path>
+source_files(const std::filesystem::path& path,
+             const std::optional<std::filesystem::path>& projector,
+             const std::vector<std::pair<std::string, std::filesystem::path>>& resources) {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> files;
+    const bool file = fs::is_regular_file(path);
+    if (file) {
+        files = gguf_model_files(path);
+        if (projector) { files.push_back(*projector); }
+    } else {
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(path, ec)) {
+            if (entry.is_regular_file(ec) && !entry.path().filename().string().starts_with(".")) {
+                files.push_back(entry.path());
+            }
+        }
+    }
+    const auto root = file ? path.parent_path() : path;
+    for (const auto& [role, source] : resources) {
+        files.push_back(fs::exists(root / role) ? root / role : source);
+    }
+    return files;
+}
+
+// A cached artifact to serve as it is: current and converted from the source as it is now, or
+// with nothing left to convert from.
+bool serve_cached(const std::filesystem::path& artifact, const std::filesystem::path& source,
+                  const std::string& stamp) {
     return std::filesystem::exists(artifact) &&
-           (cache_current(artifact) || !source_present(source));
+           (!source_present(source) ||
+            (cache_current(artifact) && !source_changed(artifact, stamp)));
 }
 
 } // namespace
@@ -155,7 +223,9 @@ cached_artifact(const std::filesystem::path& path,
     }
     out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
                         (vision ? "vision." : "") + out.recipe + ".ninferno");
-    if (serve_cached(out.path, path)) { return out; }
+    // Taken before the conversion: --consume-source removes the weights it stamps.
+    const auto stamp = source_stamp(source_files(path, projector, resources));
+    if (serve_cached(out.path, path, stamp)) { return out; }
     fs::create_directories(cache);
     const auto lock_path = cache / ".convert.lock";
     const int lock       = sys::open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
@@ -170,12 +240,16 @@ cached_artifact(const std::filesystem::path& path,
     if (sys::lock(lock, true) != 0) {
         throw std::runtime_error("cannot lock " + lock_path.string());
     }
-    if (serve_cached(out.path, path)) { return out; }
+    if (serve_cached(out.path, path, stamp)) { return out; }
     if (fs::exists(out.path)) {
         if (log) {
-            log("converting " + path.string() + " again: its cached artifact is conversion revision " +
-                std::to_string(cached_revision(out.path)) + ", this NInferno makes revision " +
-                std::to_string(kCacheRevision));
+            log(cache_current(out.path)
+                    ? "converting " + path.string() +
+                          " again: its files changed since the cached artifact was converted"
+                    : "converting " + path.string() +
+                          " again: its cached artifact is conversion revision " +
+                          std::to_string(cached_revision(out.path)) +
+                          ", this NInferno makes revision " + std::to_string(kCacheRevision));
         }
         remove_artifact(out.path);
     }
@@ -200,6 +274,7 @@ cached_artifact(const std::filesystem::path& path,
     options.log       = log;
     const auto result = convert(options);
     stamp_revision(out.path);
+    stamp_source(out.path, stamp);
     out.converted     = true;
     out.seconds       = result.seconds;
     return out;

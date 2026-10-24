@@ -2,7 +2,7 @@
 // companion drafter kept its attention projections unquantized (revision 4: qwen3_5_published;
 // revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too); not a text-only one, not one
 // whose drafter is already Q8. A current older artifact is stamped current, so its report is read
-// once.
+// once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
 #include "convert/cache.h"
 #include "core/sys.h"
@@ -70,6 +70,25 @@ int main() {
     check(cache_current(artifact(dir, "new", 5, "dflash/layers/0/attention/query", "bf16")),
           "revision 5 is current");
     check(!cache_current(artifact(dir, "old", 2, "text/output_head", "bf16")), "revision 2 is not");
+
+    // A checkpoint replaced at the same path changes the stamp of what its conversion read; an
+    // artifact converted before stamps were kept is stamped on first sight, not converted again.
+    using ninferno::convert::source_changed;
+    using ninferno::convert::source_stamp;
+    const auto weights = dir / "model.safetensors";
+    std::ofstream(weights) << "weights";
+    std::ofstream(dir / "config.json") << "{}";
+    const auto before = source_stamp({weights, dir / "config.json"});
+    check(!source_changed(text, before) && fs::exists(text.string() + ".source"),
+          "an unstamped artifact is stamped, not changed");
+    check(!source_changed(text, source_stamp({dir / "config.json", weights})),
+          "the same files in another order are the same source");
+    std::ofstream(weights) << "other weights";
+    check(source_changed(text, source_stamp({weights, dir / "config.json"})),
+          "weights of another size are another source");
+    fs::remove(weights);
+    check(source_changed(text, source_stamp({weights, dir / "config.json"})),
+          "a removed file is another source");
     fs::remove_all(dir);
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;

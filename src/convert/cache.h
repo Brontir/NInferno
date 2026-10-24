@@ -48,6 +48,16 @@ inline constexpr int kCacheRevision = 5;
 [[nodiscard]] int cached_revision(const std::filesystem::path& artifact);
 // Records kCacheRevision beside a conversion just made.
 void stamp_revision(const std::filesystem::path& artifact);
+// What a conversion read from its source, cheaply: each file's path, size and modification time,
+// one line each in path order ("missing" for a file that is not there). A checkpoint replaced at
+// the same path (a newer revision copied over it, a re-download) changes it.
+[[nodiscard]] std::string source_stamp(std::vector<std::filesystem::path> files);
+// Records `stamp` beside a conversion just made (<artifact>.source).
+void stamp_source(const std::filesystem::path& artifact, const std::string& stamp);
+// Whether `stamp` differs from the one recorded beside `artifact`. An artifact converted before
+// stamps were kept has none: it is stamped `stamp` now (a read-only cache stays unstamped) and is
+// not changed.
+[[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);
 
@@ -67,7 +77,9 @@ struct CachedArtifact {
 // wins. `consume_source` converts with --consume-source (destroying the checkpoint's weights); only
 // a caller the user explicitly asked for that may pass it. `vision` keeps a Qwen3.5 / 3.6 / 3.8
 // model's Vision encoder (a checkpoint's own, or the mmproj-*.gguf beside a GGUF file) in its own
-// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it.
+// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it. A cached
+// artifact whose source files changed since it was converted (source_stamp) is converted again
+// while the source is there; one whose source is gone is served as it is.
 [[nodiscard]] CachedArtifact
 cached_artifact(const std::filesystem::path& path,
                 const std::vector<std::pair<std::string, std::filesystem::path>>& resources = {},
