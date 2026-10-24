@@ -51,8 +51,13 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 |---|---|---|
 | `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
 | each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
-| `kKldFamilies`, `kQuantKldFamily` | the families the switches' terms and the quantization curve were measured on (Qwen 3.5 dense) | another family keeps its defaults; a family with switch terms but no curve keeps the quant rule's largest |
+| `KldTerm::family`, `kQuantKldFamily` | the families the switches' terms (Qwen 3.5 dense and MoE) and the quantization curve (Qwen 3.5 dense) were measured on | another family keeps its defaults; a family with switch terms but no curve keeps the quant rule's largest |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
+
+The switches' terms are per family: Qwen 3.5 MoE (Qwen3.6-35B-A3B) loses 3.4 times dense's KLD
+to INT8 KV (0.0033 against 0.00095) and more to fast (0.0049 against 0.0039), so one family's terms
+never decide for another (they are shown, marked as borrowed). The MoE terms rest on the RTX 4090
+and 5070 Ti (within 6 %); it has no quantization curve, so its quantization stays the quant rule's.
 
 The KV codecs' terms, the int8 activations' term and the quantization curve agree across the two
 generations measured (RTX 5070 Ti and RTX 4070 Ti / 4090: KV within 13 %, the curve within 2 %,
