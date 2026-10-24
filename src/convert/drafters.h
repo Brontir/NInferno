@@ -100,6 +100,11 @@ struct DrafterPlan {
     [[nodiscard]] nlohmann::json to_json() const;
 };
 
+// Whether a safetensors index (model.safetensors.index.json) lists MTP layers (mtp.*): the
+// weights, not config.json's declaration, say whether a checkpoint has them (a fine-tune saved
+// without them keeps mtp_num_hidden_layers).
+[[nodiscard]] bool index_lists_mtp(const nlohmann::json& index);
+
 // The target as the converter sees it: a checkpoint directory (its README's base_model lineage
 // and its ninferno_speculation.json are read from disk) or a .ninferno artifact.
 [[nodiscard]] DrafterTarget describe_checkpoint(const std::filesystem::path& dir, std::string repo);
