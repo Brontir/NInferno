@@ -282,6 +282,31 @@ struct GpuKey {
 // 170-SM RTX 5090 gained 29 % and 19 % at 8. Unchanged when sms is 0 or a plain bound already
 // starts at or below the cap.
 [[nodiscard]] std::vector<LoadBound> stand_in_load(std::vector<LoadBound> load, int sms);
+// The compute capability (86: "sm86") of a published profile's GPU class, by the full-chip table
+// (gpu_chip_arch); 0 for the "*" profile or a class the table does not know.
+[[nodiscard]] int profile_arch(const nlohmann::json& published);
+// Whether `published` stands in from another architecture generation than `gpu`'s: another
+// compute-capability major (8 Ampere and Ada, which share the mma.sync path; 12 Blackwell), or on
+// major 7 another architecture (sm70 Volta verifies on its own route, ~48x an RTX 4090's cost per
+// column; sm75 Turing on its own tensor path). Unknown counts as another generation: a donor class
+// the chip table does not know, or a device without its compute capability or SM count (where
+// stand_in_load caps nothing). The "*" profile does not: it keeps stand_in_load's cap. Such a
+// stand-in's table also runs under the load model's ceiling (apply_load_ceiling).
+[[nodiscard]] bool cross_generation(const GpuKey& gpu, const nlohmann::json& published);
+// The same rule for a donor architecture `donor_arch` (86: sm86; 0 or less: unknown, another
+// generation): cross_generation's test without the "*" case.
+[[nodiscard]] bool other_generation(const GpuKey& gpu, int donor_arch);
+// The bound `load` puts on a step of `rows` rows: its entry of the most lanes at or below `rows`
+// (an entry of fewer than two lanes read as two: one request is never bounded); nullopt when none
+// applies (unbounded).
+[[nodiscard]] std::optional<LoadBound> bound_at(const std::vector<LoadBound>& load,
+                                                std::int32_t rows);
+// The lower of two load tables at every row count from two on: each step runs the shallower of
+// the two bounds (an unbounded side never wins), with that bound's draft width (the first
+// table's on a tie), and once either is plain the step is plain. In parse_load's form: lanes
+// ascending from two, an entry only where the bound changes.
+[[nodiscard]] std::vector<LoadBound> lower_load(const std::vector<LoadBound>& a,
+                                                const std::vector<LoadBound>& b);
 
 // Whether `memory_bytes` satisfies a "mem" range ("", ">=24gib", ">16gib", "<=12gib", "<16gib").
 [[nodiscard]] bool memory_in_range(std::string_view range, std::uint64_t memory_bytes);

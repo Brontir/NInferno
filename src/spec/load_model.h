@@ -154,6 +154,35 @@ struct DrafterFacts {
                                                   std::span<const std::int32_t> depths,
                                                   std::int32_t max_rows);
 
+// The rows a load ceiling is modeled up to (load_ceiling).
+inline constexpr std::int32_t kCeilingRows = 64;
+// The acceptance a load ceiling prices depths with when its cost is priced (the RTX 4090 grid's
+// DFlash2 a and d, header comment). An unpriced cost never reads them.
+inline constexpr double kCeilingAcceptance = 0.75;
+inline constexpr double kCeilingDecay      = 0.97;
+
+// The round cost a server prices a profile measured on another GPU with at startup: from the GPU's
+// facts alone, since startup does not hold the target's (TargetFacts: the artifact's shape, weight
+// formats and experts). Unpriced, its fit labelled with what the GPU alone says: "mma emulated",
+// "sm70: one lab card", "sm61: no lab card", "unknown compute capability", else "sm89: no target
+// facts at startup" (a generation round_cost_of prices still needs the target's facts).
+[[nodiscard]] RoundCost startup_cost(const GpuKey& gpu);
+
+struct LoadCeiling {
+    std::vector<LoadBound> load; // from two rows on (parse_load's form)
+    std::string reason;          // "modeled_load: <the cost's fit reason, or "priced">"
+};
+
+// The ceiling on the load table of a stand-in profile from another architecture generation
+// (spec::cross_generation): modeled_load(cost, a, d, depths, kCeilingRows) read from two rows on
+// (a load table never bounds one request: parse_load). Every facts-only cost gives plain from two
+// rows, "2:0": an unpriced one is plain from one row, and round_cost_of's is fitted at one row
+// (RoundCost::fitted_rows), past which modeled_load decodes plainly. A multi-row fit lets more
+// rows speculate where it says they pay. The profile's own table runs under it:
+// lower_load(own, ceiling.load). Deterministic: facts only, nothing timed.
+[[nodiscard]] LoadCeiling load_ceiling(const RoundCost& cost, double a, double d,
+                                       std::span<const std::int32_t> depths);
+
 // Context classes (idea 32, step 3): the draft depth each prompt-length class should run at one
 // row, from the round cost and the class's acceptance factor (spec/context_class.h). Lab
 // constants, not timings: a depth must beat plain decode by kClassMargin, the cost model's rms

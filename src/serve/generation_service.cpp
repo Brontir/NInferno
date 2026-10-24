@@ -3,6 +3,7 @@
 #include "product/media_acquire/acquire.h"
 #include "product/speculative_options.h"
 #include "serve/translate.h"
+#include "spec/manifest.h"
 
 #include <algorithm>
 #include <chrono>
@@ -304,6 +305,15 @@ std::string speculation_fallback(const GenerationMetrics& metrics, std::string_v
     return startup.empty() ? std::string("none") : std::string(startup);
 }
 
+// The "profile" step's note for a stand-in from another generation whose load table the load
+// model's ceiling lowered (product::ServedSpeculation::load_ceiling); empty otherwise.
+static std::string stand_in_note(const product::ServedSpeculation& served) {
+    return served.load_ceiling.empty()
+               ? std::string()
+               : "; stand-in from another generation: load capped by the cost model (" +
+                     served.load_ceiling + ")";
+}
+
 std::string auto_plain_reason(const std::string& refused, const std::string& why,
                               bool prefill_chunk_explicit) {
     return "--spec auto (" + refused +
@@ -416,8 +426,14 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         if (options_.speculation_load) {
             speculative.load = product::engine_load(*options_.speculation_load,
                                                     product::speculative_window(speculative));
+            // The given bounds replace the table the load model's ceiling capped.
+            spec::clear_load_ceiling(speculative.decision_sources);
         }
         if (!served_speculation_) { return; }
+        if (options_.speculation_load) { // nothing the ceiling capped runs: no note of it
+            served_speculation_->load_ceiling.clear();
+            spec::drop_ceiling_notes(served_speculation_->notes);
+        }
         for (std::string& note : product::fit_draft_widths(
                  speculative, product::engine_support(options_.artifact_path))) {
             served_speculation_->notes.push_back(std::move(note));
@@ -673,7 +689,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                        .config    = primary.config.enabled() ? primary.config.label() : "plain",
                        .selection = options_.per_request_speculation ? "thinking" : "fixed",
                        .reason    = fell_back ? served_speculation_->fit_fallback
-                                              : "profile " + served_speculation_->source,
+                                              : "profile " + served_speculation_->source +
+                                      stand_in_note(*served_speculation_),
                        .fallback  = fell_back ? "fit_fallback" : "none",
         };
     } else if (!speculation_plain_reason_.empty()) {

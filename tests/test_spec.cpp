@@ -2694,6 +2694,313 @@ int test_variants() {
     return failures;
 }
 
+// G2 PR-a: a stand-in profile from another architecture generation runs its load table under the
+// load model's ceiling; one of the same generation keeps stand_in_load's cap.
+int test_cross_generation() {
+    int failures = 0;
+    // bound_at and lower_load: the shallower bound at every row count from two on.
+    const auto lower = [](const char* a, const char* b) {
+        return load_label(lower_load(parse_load(a), parse_load(b)));
+    };
+    failures +=
+        check(!bound_at(parse_load("3:3"), 2) && bound_at(parse_load("3:3"), 4)->depth == 3 &&
+                  bound_at(parse_load("2:7,4:3"), 9)->depth == 3 &&
+                  bound_at({{1, 0}}, 2)->depth == 0 && !bound_at({{1, 0}}, 1),
+              "bound_at: the entry of the most lanes at or below the rows, from two");
+    failures += check(lower("2:7,3:3", "2:0") == "2:0" && lower("3:3", "") == "3:3" &&
+                          lower("", "") == "none" && lower("2:7,5:5", "3:3") == "2:7,3:3" &&
+                          lower("2:3:drafts,6:0", "4:2") == "2:3:drafts,4:2,6:0" &&
+                          load_label(lower_load({}, {{1, 0}})) == "2:0",
+                      "lower_load: the shallower bound per row count, plain stays plain");
+    // startup_cost: unpriced at startup (no target facts), labelled by the GPU's facts.
+    const auto key = [](int cc, bool mma_slow = false) {
+        GpuKey k;
+        k.compute_capability = cc;
+        k.mma_slow           = mma_slow;
+        return k;
+    };
+    const auto reason = [&](const GpuKey& k) {
+        const RoundCost c = startup_cost(k);
+        return c.priced || c.fit.reliable ? std::string("priced") : c.fit.reason;
+    };
+    failures += check(reason(key(70)) == "sm70: one lab card" &&
+                          reason(key(89)) == "sm89: no target facts at startup" &&
+                          reason(key(61)) == "sm61: no lab card" &&
+                          reason(key(75, true)) == "mma emulated" &&
+                          reason(key(0)) == "unknown compute capability",
+                      "startup_cost: unpriced, labelled by the GPU's facts");
+    const std::vector<std::int32_t> depths{3, 7};
+    for (const int cc : {70, 75, 80, 86, 89, 120}) {
+        const LoadCeiling c =
+            load_ceiling(startup_cost(key(cc)), kCeilingAcceptance, kCeilingDecay, depths);
+        failures +=
+            check(load_label(c.load) == "2:0" && c.reason.starts_with("modeled_load: "),
+                  "load_ceiling at startup: plain from two rows on sm" + std::to_string(cc));
+    }
+    failures += check(
+        load_label(
+            load_ceiling(RoundCost{.alpha = 0.01, .delta = 0.02}, 0.75, 0.97, depths).load) ==
+                "2:0" &&
+            load_ceiling(RoundCost{.fitted_rows = kCeilingRows}, 0.75, 0.97, depths).load.empty(),
+        "load_ceiling: the model's (a one-row fit plain from 2, free multi-row "
+        "rounds unbounded)");
+    // The architecture of a donor class: by the full-chip table; "*" has none.
+    failures += check(profile_arch(Json{{"gpu_class", "ga102"}}) == 86 &&
+                          profile_arch(Json{{"gpu_class", "gb203:70sm"}}) == 120 &&
+                          profile_arch(Json{{"gpu_class", "sm89"}}) == 89 &&
+                          profile_arch(Json{{"gpu_class", "gv100"}}) == 70 &&
+                          profile_arch(Json{{"gpu_class", "*"}}) == 0,
+                      "profile_arch: the donor class's compute capability");
+    // cross_generation: another major, or on major 7 another architecture; unknown on either side
+    // counts; the "*" profile never does.
+    const auto device = [](int cc, int sms) {
+        GpuKey k;
+        k.compute_capability = cc;
+        k.sms                = sms;
+        return k;
+    };
+    const auto donor = [](const char* cls) { return Json{{"gpu_class", cls}}; };
+    failures += check(cross_generation(device(70, 80), donor("ga102")) &&
+                          cross_generation(device(70, 80), donor("tu102")) &&
+                          cross_generation(device(75, 68), donor("gv100")) &&
+                          cross_generation(device(120, 170), donor("ad102")),
+                      "cross_generation: another major, or Volta against Turing");
+    failures += check(!cross_generation(device(80, 108), donor("ga102")) &&
+                          !cross_generation(device(86, 82), donor("ga100")) &&
+                          !cross_generation(device(89, 58), donor("ad106")) &&
+                          !cross_generation(device(89, 128), donor("ga102")) &&
+                          !cross_generation(device(120, 170), donor("gb206")) &&
+                          !cross_generation(device(75, 68), donor("tu104")),
+                      "cross_generation: Ampere and Ada one generation, same arch on major 7");
+    failures += check(cross_generation(device(0, 80), donor("ga102")) &&
+                          cross_generation(device(86, 0), donor("ga102")) &&
+                          cross_generation(device(86, 82), donor("gx999")),
+                      "cross_generation: an unknown device (no compute capability or SMs) or "
+                      "an unknown donor class counts as another generation");
+    failures += check(!cross_generation(device(70, 80), donor("*")) &&
+                          !cross_generation(device(0, 0), donor("*")),
+                      "cross_generation: the \"*\" profile keeps the SM cap");
+
+    const Registry& registry = Registry::builtin();
+    // Volta: Nemotron 3.5 Lightning has no gv100 profile, so a V100 runs the RTX 3090's (ga102,
+    // Ampere) mtp:3. stand_in_load capped it at 80 SMs / 10 = 8 rows (C4 drafted at 0.82x
+    // plain); from another generation it runs under the ceiling: plain from two rows, one request
+    // keeps mtp:3.
+    if (const auto* nemo = registry.by_id("nemotron-3.5-lightning-30b-a3b")) {
+        const std::string repo = "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF";
+        GpuKey v100{ninferno::gpu_similarity_chain("gv100", 80, 7, 0), 32ULL << 30, false, 3, 80};
+        v100.compute_capability = 70;
+        const auto* donor       = select_published(nemo->profiles, v100, repo, nullptr);
+        failures += check(donor != nullptr && measured_elsewhere(v100, *donor) &&
+                              cross_generation(v100, *donor),
+                          "Nemotron 3.5 Lightning on a V100: a stand-in from another generation");
+        if (donor != nullptr) {
+            Profile p              = profile_from_published(*donor);
+            const std::string pick = p.overall.config.label();
+            ResolvedSpeculation r;
+            std::vector<std::string> notes;
+            apply_load_ceiling(p, v100, r, notes, "stand-in from another generation");
+            bool plain = true;
+            for (std::int32_t rows = 2; rows <= 8; ++rows) {
+                const auto bound = bound_at(p.load, rows);
+                plain            = plain && bound && bound->depth == 0;
+            }
+            failures +=
+                check(plain && load_label(p.load) == "2:0" && r.load_capped &&
+                          r.load_ceiling == "2:0 (modeled_load: sm70: one lab card)" &&
+                          notes.size() == 1 && p.overall.config.label() == pick && pick == "mtp:3",
+                      "Volta, a foreign-generation stand-in: plain at C>=2, mtp:3 alone");
+        }
+        // The same generation keeps its table: an A100 (sm80) runs the RTX 3090's (sm86) profile
+        // under stand_in_load's cap only (its 108 SMs: plain from 11 rows).
+        GpuKey a100{ninferno::gpu_similarity_chain("ga100", 108, 8, 0), 40ULL << 30, false, 3, 108};
+        a100.compute_capability = 80;
+        const auto* same        = select_published(nemo->profiles, a100, repo, nullptr);
+        failures += check(
+            same != nullptr && measured_elsewhere(a100, *same) && !cross_generation(a100, *same) &&
+                load_label(stand_in_load(profile_from_published(*same).load, a100.sms)) ==
+                    "2:3,11:0",
+            "A100, a same-generation stand-in: its table under the SM cap");
+    } else {
+        failures += check(false, "registry has nemotron-3.5-lightning-30b-a3b");
+    }
+    // A V100's own gpt-oss-20b profile is its own: no stand-in at all.
+    if (const auto* oss = registry.by_id("gpt-oss-20b")) {
+        GpuKey v100{ninferno::gpu_similarity_chain("gv100", 80, 7, 0), 32ULL << 30, false, 3, 80};
+        v100.compute_capability = 70;
+        const auto* own = select_published(oss->profiles, v100, "openai/gpt-oss-20b", nullptr);
+        failures += check(own != nullptr && own->value("gpu_class", "") == "gv100" &&
+                              !measured_elsewhere(v100, *own),
+                          "gpt-oss-20b on a V100: its own gv100 profile");
+    }
+
+    // End to end (resolve_speculation's take_published): one manifest, an Ampere (ga102) profile
+    // only, resolved on a V100 and on an A100.
+    namespace fs = std::filesystem;
+    const auto dir =
+        fs::temp_directory_path() / ("ninferno_spec_xgen_test_" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    const auto artifact = dir / "model.ninferno";
+    const Json manifest = {
+        {"schema", 1},
+        {"target", {{"artifact_id", "cccc"}, {"repo", "org/c"}, {"engine", "qwen3_5"}}},
+        {"source", "bundle"},
+        {"fallback", "none"},
+        {"drafters",
+         Json::array(
+             {{{"name", "mtp"}, {"kind", "mtp"}, {"component", "mtp"}, {"status", "embedded"}}})},
+        {"profiles", Json::parse(R"([
+            {"gpu_class": "ga102", "requires": ["mtp"], "default": {"config": "mtp:3", "drafter": "mtp", "floor_tokens_per_round": 1.5},
+             "load": [{"lanes": 2, "depth": 3}]}
+        ])")}};
+    std::ofstream(manifest_path(artifact)) << manifest.dump(1);
+    GpuKey v100{{"gv100:80sm", "gv100", "sm70", "*", "ga102"}, 32ULL << 30, false, 3, 80};
+    v100.compute_capability = 70;
+    GpuKey a100{{"ga100:108sm", "ga100", "sm80", "ga102", "*"}, 40ULL << 30, false, 3, 108};
+    a100.compute_capability = 80;
+    const auto on_v100      = resolve_speculation(artifact, "cccc", v100);
+    const auto on_a100      = resolve_speculation(artifact, "cccc", a100);
+    failures += check(on_v100.found() && on_v100.profile.overall.config.label() == "mtp:3" &&
+                          load_label(on_v100.profile.load) == "2:0" && on_v100.load_capped &&
+                          on_v100.load_ceiling == "2:0 (modeled_load: sm70: one lab card)" &&
+                          std::any_of(on_v100.notes.begin(), on_v100.notes.end(),
+                                      [](const std::string& n) {
+                                          return n.find("stand-in from another generation (ga102 "
+                                                        "for sm70): load capped by the cost "
+                                                        "model") != std::string::npos;
+                                      }),
+                      "resolve: a V100 under an Ampere stand-in decodes plainly from two rows");
+    failures += check(on_a100.found() && load_label(on_a100.profile.load) == "2:3,11:0" &&
+                          on_a100.load_ceiling.empty() && !on_a100.load_capped,
+                      "resolve: an A100 under the same Ampere stand-in keeps 2:3 (SM cap)");
+    // An unknown device (no SM count: stand_in_load would keep the donor's whole table) runs
+    // under the ceiling too.
+    GpuKey unknown{{"gv100:80sm", "gv100", "sm70", "*", "ga102"}, 32ULL << 30, false, 3, 0};
+    const auto on_unknown = resolve_speculation(artifact, "cccc", unknown);
+    failures += check(on_unknown.found() && load_label(on_unknown.profile.load) == "2:0" &&
+                          on_unknown.load_capped,
+                      "resolve: an unknown device under a stand-in decodes plainly from two rows");
+    // A named local tune (#32) borrowing the stand-in's table takes it under the ceiling too.
+    Profile tuned;
+    tuned.key.artifact_id = "cccc";
+    tuned.key.gpu         = "gv100:80sm";
+    tuned.drafters.push_back({"mtp", "mtp", "mtp", "", "", "", "accepted", "", 2.0, 0.7});
+    tuned.overall.config  = SpecConfig::parse("mtp:2");
+    tuned.overall.drafter = "mtp";
+    const auto tune_path  = dir / "tune.json";
+    write_profile(tune_path, tuned);
+    const auto named = resolve_speculation(artifact, "cccc", v100, tune_path);
+    failures += check(named.source.starts_with("local tune") &&
+                          named.profile.overall.config.label() == "mtp:2" &&
+                          load_label(named.profile.load) == "2:0" && named.load_capped &&
+                          named.load_ceiling == "2:0 (modeled_load: sm70: one lab card)",
+                      "resolve: a named tune borrows a foreign-generation stand-in's table "
+                      "under the ceiling");
+    // Turing's profile on a V100 (both major 7) stands in from another architecture; the "*"
+    // profile keeps the SM cap.
+    for (const char* cls : {"tu102", "*"}) {
+        Json other                        = manifest;
+        other["profiles"][0]["gpu_class"] = cls;
+        std::ofstream(manifest_path(artifact)) << other.dump(1);
+        GpuKey volta{{"gv100:80sm", "gv100", "sm70", "*", "tu102"}, 32ULL << 30, false, 3, 80};
+        volta.compute_capability = 70;
+        const auto r             = resolve_speculation(artifact, "cccc", volta);
+        const bool star          = std::string(cls) == "*";
+        failures += check(r.found() && load_label(r.profile.load) == (star ? "2:3,8:0" : "2:0") &&
+                              r.load_capped == !star && r.load_ceiling.empty() == star,
+                          std::string("resolve: a V100 under a ") + cls +
+                              (star ? " stand-in keeps the SM cap (2:3,8:0)"
+                                    : " stand-in decodes plainly from two rows"));
+    }
+    fs::remove_all(dir);
+
+    // The built-in drafter's default: its table within the donor generations (Ampere/Ada,
+    // Blackwell) under the SM cap, on any other under the load model's ceiling.
+    const auto builtin = [](const char* config, int cc, int sms, ResolvedSpeculation& r) {
+        Profile p;
+        p.overall.config = SpecConfig::parse(config);
+        GpuKey k;
+        k.compute_capability = cc;
+        k.sms                = sms;
+        std::vector<std::string> notes;
+        apply_builtin_load(p, k, r, notes);
+        return p.load;
+    };
+    ResolvedSpeculation on_volta, on_ada, on_ampere, on_blackwell, on_hopper, on_unknown_gpu;
+    const auto volta = builtin("mtp:3", 70, 80, on_volta);
+    failures += check(load_label(volta) == "2:0" && on_volta.load_capped &&
+                          on_volta.load_ceiling == "2:0 (modeled_load: sm70: one lab card)",
+                      "the built-in MTP 3 default on a V100: plain from two rows (C>=2)");
+    const auto ada = builtin("mtp:3", 89, 128, on_ada);
+    failures += check(bound_at(ada, 8) && bound_at(ada, 8)->depth == 2 && !bound_at(ada, 7) &&
+                          load_label(ada) == "8:2,13:0" && on_ada.load_ceiling.empty(),
+                      "the built-in MTP 3 default on an RTX 4090 keeps 8:2 (SM cap at 13)");
+    failures += check(load_label(builtin("mtp:3", 86, 82, on_ampere)) == "8:2,9:0" &&
+                          on_ampere.load_ceiling.empty(),
+                      "the built-in MTP 3 default on an RTX 3090 keeps 8:2 (SM cap at 9)");
+    failures += check(load_label(builtin("dflash2:7", 120, 170, on_blackwell)) == "2:3,17:0" &&
+                          on_blackwell.load_ceiling.empty(),
+                      "the built-in DFlash2 7 default on an RTX 5090 keeps 2:3");
+    failures += check(load_label(builtin("dflash2:7", 90, 132, on_hopper)) == "2:0" &&
+                          on_hopper.load_capped &&
+                          load_label(builtin("mtp:3", 0, 0, on_unknown_gpu)) == "2:0",
+                      "the built-in defaults on Hopper and an unknown GPU: plain from two rows");
+    // The fingerprint's source: "lowered", or "kept" where the ceiling did not lower the table;
+    // an explicit --spec-load clears it.
+    failures += check(load_ceiling_source(on_volta) ==
+                              std::optional<std::string>("2:0 (modeled_load: sm70: one lab card) "
+                                                         "lowered") &&
+                          !load_ceiling_source(on_ada),
+                      "load_ceiling_source: the ceiling, lowered");
+    {
+        Profile p;
+        p.overall.config = SpecConfig::parse("mtp:3");
+        p.load           = {{2, 0}};
+        GpuKey k;
+        k.compute_capability = 70;
+        k.sms                = 80;
+        ResolvedSpeculation r;
+        std::vector<std::string> notes;
+        apply_load_ceiling(p, k, r, notes, "a test");
+        failures +=
+            check(load_ceiling_source(r) == std::optional<std::string>(
+                                                "2:0 (modeled_load: sm70: one lab card) kept") &&
+                      notes.empty(),
+                  "load_ceiling_source: the ceiling, kept (it lowered nothing)");
+        std::map<std::string, std::string> sources{{kLoadCeilingSource, *load_ceiling_source(r)},
+                                                   {"speculation.profile", "built-in default"}};
+        clear_load_ceiling(sources);
+        failures +=
+            check(!sources.contains(kLoadCeilingSource) && sources.contains("speculation.profile"),
+                  "an explicit --spec-load clears the ceiling's source");
+    }
+    // --spec-load none on a V100 without a profile: the built-in default's ceiling notes go too
+    // (generation_service: clear_load_ceiling, drop_ceiling_notes); other notes stay.
+    {
+        Profile p;
+        p.overall.config = SpecConfig::parse("mtp:3");
+        GpuKey k;
+        k.compute_capability = 70;
+        k.sms                = 80;
+        ResolvedSpeculation r;
+        std::vector<std::string> notes{"default mtp:3: watchdog floor 1.00 -> 1.40"};
+        apply_builtin_load(p, k, r, notes);
+        const auto ceiling_note = [](const std::string& n) {
+            return n.find(kCeilingNoteMark) != std::string::npos;
+        };
+        const bool noted = std::any_of(notes.begin(), notes.end(), ceiling_note);
+        std::map<std::string, std::string> sources{{kLoadCeilingSource, *load_ceiling_source(r)}};
+        const auto given = parse_load("none"); // --spec-load none: the table the server runs
+        clear_load_ceiling(sources);
+        drop_ceiling_notes(notes);
+        failures += check(noted && given.empty() && sources.empty() && notes.size() == 1 &&
+                              notes[0].starts_with("default mtp:3: watchdog floor") &&
+                              std::none_of(notes.begin(), notes.end(), ceiling_note),
+                          "--spec-load none: no ceiling note or source survives");
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -2714,6 +3021,7 @@ int main() {
     failures += test_context_classes();
     failures += test_variants();
     failures += test_resolve();
+    failures += test_cross_generation();
     if (failures == 0) { std::cout << "spec: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
 }

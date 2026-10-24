@@ -311,8 +311,20 @@ The profile therefore bounds speculation under load, in its `load` table.
 - **Fallback tables.** A profile measured without a table takes one whose default drafts with the
   same kind: another artifact's on the same GPU class first, else the `*` profile's for the same
   drafters.
-- **Override.** `--spec-load LANES:DEPTH,...` replaces the table (`none`: no bound). It also bounds
-  an explicit `--spec`, and needs one.
+- **Tables from another GPU.** A stand-in profile (a similar chip's, or the `*` one) keeps its
+  table capped to this GPU's multiprocessors: plain from max(2, ceil(SMs / 10)) rows. A stand-in
+  from another architecture generation (another compute-capability major; on major 7, Volta and
+  Turing apart; Ampere and Ada are one generation), or any stand-in on a device whose compute
+  capability or SM count is unknown, also runs under the cost model's ceiling: today plain from 2
+  concurrent requests, while one request keeps the profile's pick. `*` donors and
+  same-generation stand-ins keep their table under the SM cap. The built-in drafter's default
+  (MTP 3 `8:2`, DFlash2 7 `2:3`) keeps its table, under the SM cap, only on Ampere/Ada and
+  Blackwell, where it was measured; elsewhere it is plain from 2 requests too. The startup reason
+  says "load capped by the cost model", and the decision fingerprint records the ceiling
+  (`speculation.load_ceiling`).
+- **Override.** `--spec-load LANES:DEPTH,...` replaces the table (`none`: no bound), and with it
+  every cap above: the SM cap and the cost model's ceiling, their notes and their fingerprint
+  source. It also bounds an explicit `--spec`, and needs one.
 - **Draft width in a bound.** A speculating bound may also name a DFlash draft width,
   `LANES:DEPTH:block` or `LANES:DEPTH:drafts` (a table entry's `draft_width`). The width resolves
   from a launch's rows: a launch of at least that bound's lanes (and fewer than the next bound's)

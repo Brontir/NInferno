@@ -1,5 +1,6 @@
 #include "spec/profile.h"
 #include "core/ascii.h"
+#include "core/device_class.h"
 
 #include "spec/registry.h"
 
@@ -600,6 +601,64 @@ std::vector<LoadBound> stand_in_load(std::vector<LoadBound> load, int sms) {
         if (bound.lanes < cap) { out.push_back(bound); }
     }
     out.push_back(LoadBound{cap, 0});
+    return out;
+}
+
+int profile_arch(const Json& published) {
+    const std::string arch = gpu_chip_arch(published.value("gpu_class", std::string()));
+    if (arch.size() < 3) { return 0; }
+    return std::atoi(arch.c_str() + 2); // "sm86" -> 86, "sm120" -> 120
+}
+
+bool cross_generation(const GpuKey& gpu, const Json& published) {
+    if (published.value("gpu_class", std::string()) == "*") { return false; }
+    return other_generation(gpu, profile_arch(published));
+}
+
+bool other_generation(const GpuKey& gpu, int donor) {
+    const int own = gpu.compute_capability;
+    // Unknown on either side: nothing says the verify cost carries over.
+    if (donor <= 0 || own <= 0 || gpu.sms <= 0) { return true; }
+    if (donor / 10 != own / 10) { return true; }
+    // Major 7 splits: Volta verifies on its own route, Turing on its own tensor path. Ampere and
+    // Ada (sm80, sm86, sm89) share the mma.sync path and stay one generation.
+    return own / 10 == 7 && donor != own;
+}
+
+std::optional<LoadBound> bound_at(const std::vector<LoadBound>& load, std::int32_t rows) {
+    std::optional<LoadBound> out;
+    for (const LoadBound& bound : load) {
+        if (std::max<std::int32_t>(2, bound.lanes) <= rows && (!out || bound.lanes >= out->lanes)) {
+            out = bound;
+        }
+    }
+    return out;
+}
+
+std::vector<LoadBound> lower_load(const std::vector<LoadBound>& a,
+                                  const std::vector<LoadBound>& b) {
+    std::vector<std::int32_t> rows{2};
+    for (const auto* table : {&a, &b}) {
+        for (const LoadBound& bound : *table) {
+            rows.push_back(std::max<std::int32_t>(2, bound.lanes));
+        }
+    }
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    std::vector<LoadBound> out;
+    for (const std::int32_t n : rows) {
+        const auto x = bound_at(a, n);
+        const auto y = bound_at(b, n);
+        if (!x && !y) { continue; }
+        LoadBound lower = !y || (x && x->depth <= y->depth) ? *x : *y;
+        lower.lanes     = n;
+        if (lower.depth == 0) { lower.width = DraftWidth::Default; }
+        if (!out.empty() && out.back().depth == lower.depth && out.back().width == lower.width) {
+            continue;
+        }
+        out.push_back(lower);
+        if (lower.depth == 0) { break; } // a row turned plain does not resume
+    }
     return out;
 }
 

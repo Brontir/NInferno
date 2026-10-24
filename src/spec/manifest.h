@@ -68,6 +68,11 @@ struct ResolvedSpeculation {
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
     // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
+    // A stand-in from another architecture generation (spec::cross_generation) runs its load
+    // table under the load model's ceiling (spec::load_ceiling): the ceiling and why ("2:0
+    // (modeled_load: sm70: one lab card)"), empty otherwise; and whether it lowered the table.
+    std::string load_ceiling;
+    bool load_capped = false;
     // The model's published profiles (a JSON array: every GPU class it was measured on) whose
     // floors bound a foreign profile's; null for a built-in default (the registry median then).
     nlohmann::json floor_sources;
@@ -131,5 +136,45 @@ void require_named_tune(const ResolvedSpeculation& resolved);
 // A note names each raised choice.
 void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
                           std::vector<std::string>& notes);
+
+// A stand-in's load table from another architecture generation (`whose`: the note's reason)
+// runs no deeper than the load model allows on `gpu`: profile.load becomes lower_load(profile.load,
+// load_ceiling(startup_cost(gpu), ...)) over the depths the profile's choices draft at, and
+// resolved.load_ceiling and load_capped record it (a note when it lowers the table). The ceiling
+// reads facts only, so such a stand-in decodes plainly from two rows wherever the model has no
+// multi-row price (every GPU today), and one request keeps the profile's own pick.
+// The built-in drafter's default load tables (a model with a drafter but no profile for this GPU,
+// and the MTP head fallback), measured on a few cards:
+//   MTP 3: 8:2, two drafts from eight rows: Qwen3.6 35B on the RTX 5090 at C=8 (both orders)
+//     1250-1258 tok/s at depth 2 against 1131-1158 at depth 3; as the head fallback, Qwen3.8 27B
+//     at C=8 1.56x plain on the RTX 4090 and 1.49x on the RTX 3090, at C=4 1.26x on the RTX
+//     5070 Ti.
+//   DFlash2 7: 2:3, three drafts from two rows: Qwen3.8 27B Q3 on the RTX 4080 SUPER, C=4 depth 3
+//     214-218 tok/s against plain 153, C=2 164-173 against depth 7 149-158.
+//   DFlash 7: none.
+[[nodiscard]] std::vector<LoadBound> builtin_default_load(Mode mode);
+// The architectures those cards are of (Ampere and Ada, one generation for other_generation:
+// sm80, sm86, sm89; Blackwell: sm120). A device of another generation (Volta, Turing, Hopper,
+// unknown) runs the default's table under the load model's ceiling.
+inline constexpr int kBuiltinLoadArchs[] = {86, 89, 120};
+// The built-in default's table for `profile` (its overall choice's mode) on `gpu`: within the
+// donor generations stand_in_load's SM cap; from another generation also the load model's
+// ceiling (apply_load_ceiling, recorded in `resolved`).
+void apply_builtin_load(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes);
+// The decision fingerprint's source for the ceiling (key kLoadCeilingSource): "<ceiling> lowered"
+// or "<ceiling> kept" (it did not lower the table); nullopt when none applied.
+inline constexpr const char* kLoadCeilingSource = "speculation.load_ceiling";
+[[nodiscard]] std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved);
+// An explicit --spec-load replaces the table the ceiling capped: its source leaves `sources`.
+void clear_load_ceiling(std::map<std::string, std::string>& sources);
+// What every note of the ceiling says (apply_load_ceiling's, through the stand-in rule and the
+// built-in default). drop_ceiling_notes removes those notes and the SM cap's (stand_in_load's
+// "... multiprocessors"), for an explicit --spec-load, which replaces both caps.
+inline constexpr const char* kCeilingNoteMark = "load capped by the cost model";
+void drop_ceiling_notes(std::vector<std::string>& notes);
+
+void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes, const std::string& whose);
 
 } // namespace ninferno::spec

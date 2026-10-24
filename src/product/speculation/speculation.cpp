@@ -58,6 +58,11 @@ std::map<std::string, std::string> decision_sources_of(const spec::ResolvedSpecu
                           : resolved.found() ? "built-in default"
                                              : "none")
             : std::string(local ? "local tune" : "published") + " sha256:" + resolved.sha256;
+    // A stand-in from another generation runs under the load model's ceiling
+    // (spec::apply_load_ceiling).
+    if (const auto ceiling = spec::load_ceiling_source(resolved)) {
+        out[spec::kLoadCeilingSource] = *ceiling;
+    }
     // A registry file only when --drafter-registry named one (spec::Registry::use_file), else the
     // compiled-in one.
     try {
@@ -122,11 +127,13 @@ SpeculativeBackend backend_of_kind(std::string_view kind) noexcept {
 // A model whose drafter is built in but which has no profile for this GPU (none tuned here, none
 // published along its similarity chain, no manifest at all): its drafter's default rather than
 // plain decode, with the watchdog floors raised to the registry's (raise_foreign_floors, as for a
-// profile measured on another GPU) so a configuration that does not pay here stops. MTP 3 (with the proposal head when
-// the artifact has one), else DFlash2 or DFlash 7. (RTX 5090: Qwen3.8 27B IQ3_S converted
-// from the HF GGUF with MTP and DFlash2 decoded 93 tok/s plain under --spec auto, 192 with MTP 3
-// and its head.) Nothing when the artifact carries no drafter.
-void default_for_builtin_drafter(const std::filesystem::path& artifact,
+// profile measured on another GPU) so a configuration that does not pay here stops. MTP 3 (with the
+// proposal head when the artifact has one), else DFlash2 or DFlash 7. (RTX 5090: Qwen3.8 27B IQ3_S
+// converted from the HF GGUF with MTP and DFlash2 decoded 93 tok/s plain under --spec auto, 192
+// with MTP 3 and its head.) Nothing when the artifact carries no drafter. Its load table is
+// spec::builtin_default_load's, under the SM cap on the generations it was measured on and the
+// load model's ceiling on any other (spec::apply_builtin_load).
+void default_for_builtin_drafter(const std::filesystem::path& artifact, const spec::GpuKey& gpu,
                                  spec::ResolvedSpeculation& resolved) {
     std::set<std::string> components;
     try {
@@ -138,15 +145,8 @@ void default_for_builtin_drafter(const std::filesystem::path& artifact,
     spec::Choice choice;
     if (components.contains("mtp")) {
         choice.config = {.mode = spec::Mode::Mtp, .k = 3};
-        // From eight rows on, two drafts: Qwen3.6 35B on the RTX 5090 at C=8 (both
-        // orders) 1250-1258 tok/s at depth 2 against 1131-1158 at depth 3.
-        resolved.profile.load = {{.lanes = 8, .depth = 2}};
     } else if (components.contains("dflash2")) {
         choice.config = {.mode = spec::Mode::DFlash2, .k = 7};
-        // From two rows on, three drafts: Qwen3.8 27B Q3 (HF GGUF conversion) on the RTX 4080
-        // SUPER, no profile for the chip (both orders): C=4 depth 7 131 tok/s, plain 153,
-        // depth 5 155-160, depth 3 214-218; C=2 depth 7 149-158, depth 3 164-173.
-        resolved.profile.load = {{.lanes = 2, .depth = 3}};
     } else if (components.contains("dflash")) {
         choice.config = {.mode = spec::Mode::DFlash, .k = 7};
     } else {
@@ -162,6 +162,7 @@ void default_for_builtin_drafter(const std::filesystem::path& artifact,
     resolved.source                   = "the built-in " + choice.drafter + " drafter's default (" +
                       choice.config.label() + ", untuned on this GPU: spec-tune measures one)";
     spec::raise_foreign_floors(resolved.profile, resolved, resolved.notes);
+    spec::apply_builtin_load(resolved.profile, gpu, resolved, resolved.notes);
 }
 
 std::optional<spec::ResolvedSpeculation> resolve(const std::filesystem::path& artifact,
@@ -179,7 +180,9 @@ std::optional<spec::ResolvedSpeculation> resolve(const std::filesystem::path& ar
     auto resolved =
         spec::resolve_speculation(artifact, id, spec::gpu_identity(device).key, local_profile);
     spec::require_named_tune(resolved);
-    if (!resolved.found()) { default_for_builtin_drafter(artifact, resolved); }
+    if (!resolved.found()) {
+        default_for_builtin_drafter(artifact, spec::gpu_identity(device).key, resolved);
+    }
     return resolved;
 }
 
@@ -351,6 +354,7 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     out.engine.load = engine_load(profile.load, speculative_window(out.engine));
     out.engine.context_limit = profile.context_limit;
     out.engine.decision_sources = decision_sources_of(resolved);
+    if (resolved.load_capped) { out.load_ceiling = resolved.load_ceiling; }
     for (std::string& note : fit_draft_widths(out.engine, can)) {
         out.notes.push_back(std::move(note));
     }
@@ -525,7 +529,7 @@ std::optional<ServedSpeculation> served_head_fallback(const std::filesystem::pat
     }
     spec::ResolvedSpeculation head;
     head.floor_sources = resolved->floor_sources; // the model's own MTP floors, where it has them
-    default_for_builtin_drafter(artifact, head);
+    default_for_builtin_drafter(artifact, spec::gpu_identity(device).key, head);
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;
     }

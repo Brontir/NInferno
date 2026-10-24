@@ -69,6 +69,9 @@ struct ServedSpeculation {
     // Set when the profile's choice did not fit the requested context on this device and its fit
     // fallback runs instead: why (the Engine's refusal). Logged as a warning.
     std::string fit_fallback;
+    // Set when the load model's ceiling lowered the load table (spec::apply_load_ceiling: a
+    // stand-in from another architecture generation): the ceiling and why.
+    std::string load_ceiling;
 };
 
 // nullopt when the artifact came with no speculation profile for this GPU. `thinking` is the

@@ -4,6 +4,7 @@
 #include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
+#include "spec/load_model.h"
 #include "spec/registry.h"
 
 #include <algorithm>
@@ -42,7 +43,9 @@ std::vector<std::string> referenced(const Profile& p) {
 
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
 // measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
-// bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
+// bounds where it measured none, and a stand-in's bounds capped to this GPU's multiprocessors
+// (stand_in_load), one from another architecture generation also under the load model's ceiling
+// (cross_generation, apply_load_ceiling). false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
@@ -79,6 +82,17 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
                                 std::to_string(capped.back().lanes) + " rows on this one's " +
                                 std::to_string(gpu.sms) + " multiprocessors");
             p.load = capped;
+        }
+        // From another generation, the SM cap's table also runs under the load model's ceiling:
+        // lower_load(stand_in_load(...), ceiling).
+        if (cross_generation(gpu, published)) {
+            const std::string device = gpu.compute_capability > 0
+                                           ? "sm" + std::to_string(gpu.compute_capability)
+                                           : std::string("this GPU");
+            apply_load_ceiling(p, gpu, out, out.notes,
+                               "stand-in from another generation (" +
+                                   published.value("gpu_class", std::string()) + " for " + device +
+                                   "): " + kCeilingNoteMark);
         }
     }
     return true;
@@ -307,6 +321,81 @@ void raise_foreign_floors(Profile& profile, const ResolvedSpeculation& resolved,
     }
 }
 
+std::vector<LoadBound> builtin_default_load(Mode mode) {
+    if (mode == Mode::Mtp) { return {{.lanes = 8, .depth = 2}}; }
+    if (mode == Mode::DFlash2) { return {{.lanes = 2, .depth = 3}}; }
+    return {};
+}
+
+void apply_builtin_load(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes) {
+    profile.load      = builtin_default_load(profile.overall.config.mode);
+    const auto capped = stand_in_load(profile.load, gpu.sms);
+    if (capped != profile.load) {
+        notes.push_back("load bounds " + load_label(profile.load) + " -> " + load_label(capped) +
+                        ": the built-in default's, plain from " +
+                        std::to_string(capped.back().lanes) + " rows on this GPU's " +
+                        std::to_string(gpu.sms) + " multiprocessors");
+        profile.load = capped;
+    }
+    bool donor = false;
+    for (const int arch : kBuiltinLoadArchs) { donor = donor || !other_generation(gpu, arch); }
+    if (donor) { return; }
+    const std::string device = gpu.compute_capability > 0
+                                   ? "sm" + std::to_string(gpu.compute_capability)
+                                   : std::string("this GPU");
+    apply_load_ceiling(profile, gpu, resolved, notes,
+                       "the built-in default was measured on another generation (sm86, sm89, "
+                       "sm120; " +
+                           device + "): " + kCeilingNoteMark);
+}
+
+std::optional<std::string> load_ceiling_source(const ResolvedSpeculation& resolved) {
+    if (resolved.load_ceiling.empty()) { return std::nullopt; }
+    return resolved.load_ceiling + (resolved.load_capped ? " lowered" : " kept");
+}
+
+void clear_load_ceiling(std::map<std::string, std::string>& sources) {
+    sources.erase(kLoadCeilingSource);
+}
+
+void drop_ceiling_notes(std::vector<std::string>& notes) {
+    // The ceiling's notes, and the SM cap's ("load bounds ... plain from N rows on this GPU's M
+    // multiprocessors"): an explicit table replaces both caps.
+    std::erase_if(notes, [](const std::string& note) {
+        return note.find(kCeilingNoteMark) != std::string::npos ||
+               (note.starts_with("load bounds ") && note.ends_with(" multiprocessors"));
+    });
+}
+
+void apply_load_ceiling(Profile& profile, const GpuKey& gpu, ResolvedSpeculation& resolved,
+                        std::vector<std::string>& notes, const std::string& whose) {
+    std::vector<std::int32_t> depths;
+    const auto add = [&](const Choice& c) {
+        if (c.config.enabled()) { depths.push_back(c.config.k); }
+    };
+    add(profile.overall);
+    add(profile.thinking);
+    add(profile.non_thinking);
+    if (profile.fit_fallback) { add(*profile.fit_fallback); }
+    for (const auto* served : {&profile.served, &profile.portable}) {
+        if (!served->has_value()) { continue; }
+        add((*served)->overall);
+        add((*served)->thinking);
+        add((*served)->non_thinking);
+    }
+    const LoadCeiling ceiling =
+        load_ceiling(startup_cost(gpu), kCeilingAcceptance, kCeilingDecay, depths);
+    const auto lowered    = lower_load(profile.load, ceiling.load);
+    resolved.load_ceiling = load_label(ceiling.load) + " (" + ceiling.reason + ")";
+    resolved.load_capped  = lowered != profile.load;
+    if (resolved.load_capped) {
+        notes.push_back("load bounds " + load_label(profile.load) + " -> " + load_label(lowered) +
+                        ": " + whose + ", ceiling " + resolved.load_ceiling);
+        profile.load = lowered;
+    }
+}
+
 namespace {
 
 // Why `tuned` (read from `path`) does not serve `artifact_id` on `gpu_class`: a drafter replaced
@@ -427,6 +516,8 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                 if (published != nullptr && take_published(profiles, *published, gpu, scratch, p) &&
                     !p.load.empty() && p.overall.config.mode == out.profile.overall.config.mode) {
                     out.profile.load = std::move(p.load);
+                    out.load_ceiling = scratch.load_ceiling; // a stand-in's, under its ceiling
+                    out.load_capped  = scratch.load_capped;
                     out.notes.push_back("load bounds " + load_label(out.profile.load) + " from " +
                                         published_source(origin, *published) +
                                         ": the local tune measured none");
