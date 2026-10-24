@@ -107,7 +107,8 @@ def main():
     # A hub model starts the quantization the plan priced (a start may otherwise keep another one
     # already in the cache): the timings and the estimates are then of the same weights.
     pin = []
-    if not Path(a.model).exists() and not any(f == "--quant" or f.startswith("--quant=") for f in extra)             and chosen.get("quant"):
+    named = any(f == "--quant" or f.startswith("--quant=") for f in extra)
+    if not Path(a.model).exists() and not named and chosen.get("quant"):
         pin = ["--quant", chosen["quant"]]
 
     log = Path(f"choice_check_{a.port}.log")
