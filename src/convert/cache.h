@@ -57,9 +57,9 @@ void stamp_revision(const std::filesystem::path& artifact);
 // Records `stamp` beside a conversion just made (<artifact>.source).
 void stamp_source(const std::filesystem::path& artifact, const std::string& stamp);
 // Whether `stamp` names a file the one recorded beside `artifact` does not, or one of another size
-// or time; a recorded file that is gone is no change (--consume-source removed it). An artifact
-// converted before stamps were kept has none: it is stamped `stamp` now (a read-only cache stays
-// unstamped) and is not changed.
+// or time, or lacks a recorded file other than weights (weights that are gone are no change:
+// --consume-source removed them). An artifact converted before stamps were kept has none: it is
+// stamped `stamp` now (a read-only cache stays unstamped) and is not changed.
 [[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);

@@ -146,11 +146,17 @@ bool source_changed(const std::filesystem::path& artifact, const std::string& st
     }
     const auto recorded = stamp_lines(
         std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()});
-    // A file the conversion read that is gone is not a change (--consume-source removes the
-    // weights it converted); a file that is new, or of another size or time, is.
-    for (const auto& [name, facts] : stamp_lines(stamp)) {
+    // Weights the conversion read that are gone are no change (--consume-source removes them);
+    // any other file gone (a tokenizer, a template, the configuration), new, or of another size
+    // or time is.
+    const auto current = stamp_lines(stamp);
+    for (const auto& [name, facts] : current) {
         const auto at = recorded.find(name);
         if (at == recorded.end() || at->second != facts) { return true; }
+    }
+    for (const auto& [name, facts] : recorded) {
+        const bool weights = name.ends_with(".safetensors") || name.ends_with(".gguf");
+        if (!weights && !current.contains(name)) { return true; }
     }
     return false;
 }

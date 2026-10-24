@@ -99,6 +99,9 @@ int main() {
     check(source_changed(text, source_stamp(dir, {dir / "model-00001-of-00002.safetensors",
                                                   dir / "config.json"})),
           "a new file is another source");
+    fs::remove(dir / "model-00001-of-00002.safetensors");
+    fs::remove(dir / "config.json");
+    check(source_changed(text, source_stamp(dir, {})), "a configuration file gone is a change");
     fs::remove_all(dir);
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;

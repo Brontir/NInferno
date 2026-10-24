@@ -234,11 +234,12 @@ bool complete(const fs::path& artifact, bool drafters) {
 }
 
 // Under --with-drafters every drafter planned for the model is required: one that failed to be
-// fetched, converted or attached is an error, not a model served without it.
+// fetched, converted or attached, or that does not fit the target, is an error, not a model served
+// without it.
 void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
     if (options.with_drafters != true) { return; }
     for (const auto& d : plan.drafters) {
-        if (d.status.starts_with("failed")) {
+        if (d.status.starts_with("failed") || d.status.starts_with("incompatible")) {
             throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
