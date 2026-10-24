@@ -318,7 +318,9 @@ bool mtp_tensor(const std::string& name) {
 } // namespace
 
 bool index_lists_mtp(const Json& index) {
-    for (const auto& [name, file] : index.value("weight_map", Json::object()).items()) {
+    // Held by name: items() of a temporary outlives it in a range-for.
+    const auto weights = index.value("weight_map", Json::object());
+    for (const auto& [name, file] : weights.items()) {
         if (mtp_tensor(name)) { return true; }
     }
     return false;
