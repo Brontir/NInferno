@@ -167,7 +167,12 @@ struct KldTerm {
     std::string_view source;
 };
 
-inline constexpr std::string_view kKldFamily = "qwen3_5_text"; // the family the terms were measured on
+// The families the switches' terms (KV codecs, activations, state) were measured on: the worth
+// decides the KV codec, the activations and the chunk for them. Another family keeps its defaults.
+inline constexpr std::string_view kKldFamilies[] = {"qwen3_5_text"};
+// The family the quantization curve was measured on: the worth weighs the quantizations for it;
+// another family the switches decide for keeps the quant rule's largest.
+inline constexpr std::string_view kQuantKldFamily = "qwen3_5_text";
 
 inline constexpr KldTerm kKldTerms[] = {
     // The KV codecs: a model constant. RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the

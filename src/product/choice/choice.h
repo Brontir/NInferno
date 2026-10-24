@@ -163,9 +163,13 @@ struct Reference {
     std::string why; // "" when the worth decides, else why the family's defaults stand
 };
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
-// Whether the worth decides for `model` on this card: its generation decides and the accuracy
-// terms were measured on its family (kKldFamily); else the quant rule's largest and the family's
-// defaults stand.
+// Whether the worth decides the KV codec and the activations for `model` on this card: its
+// generation decides and the switches' terms were measured on its family (kKldFamilies); else the
+// family's defaults stand.
+[[nodiscard]] bool decides_switches(const ModelFacts& model, const CardFacts& card,
+                                    const Gates& gates = {});
+// Whether the worth also weighs the quantizations: the curve was measured on its family
+// (kQuantKldFamily); else the quant rule's largest stands.
 [[nodiscard]] bool weighs_quantizations(const ModelFacts& model, const CardFacts& card,
                                         const Gates& gates = {});
 
@@ -174,7 +178,7 @@ struct Term {
     std::string value;
     double kld = 0;
     bool measured = true;    // false: a stand-in (the axis's worst measured term, or a proxy)
-    bool transferred = false; // measured on another family (kKldFamily) or generation
+    bool transferred = false; // measured on another family (kKldFamilies, kQuantKldFamily)
     std::string source;
 };
 
@@ -207,7 +211,8 @@ struct Choice {
     std::vector<Scored> scored;        // every candidate in enumeration order, then the variants
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
     std::uint32_t context = 0;         // the own context per stream the choice settled on
-    bool by_worth = false;             // the worth decided (else the rule and the family's defaults)
+    bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
+    bool quant_by_worth = false;       // and the quantization (else the quant rule's largest)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
     std::string why;                   // one line: what decided it
 };

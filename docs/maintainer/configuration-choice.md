@@ -51,7 +51,7 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 |---|---|---|
 | `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
 | each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
-| `kKldFamily` | the family the accuracy terms were measured on (Qwen 3.5 dense) | another family keeps the rule and its defaults |
+| `kKldFamilies`, `kQuantKldFamily` | the families the switches' terms and the quantization curve were measured on (Qwen 3.5 dense) | another family keeps its defaults; a family with switch terms but no curve keeps the quant rule's largest |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
 
 The KV codecs' terms, the int8 activations' term and the quantization curve agree across the two
