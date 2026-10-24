@@ -636,6 +636,34 @@ bool mmq_fits(const DeviceArena& workspace, std::size_t bytes) {
 }
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
+std::atomic<std::uint64_t> route_demotions{0};
+
+// A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
+// cannot read to the register MMA of the same summation order.
+bool same_bytes(Route asked, Route ran) {
+    return ran.family == Family::RegisterMma &&
+           (asked.family == Family::StagedMma || asked.family == Family::Nvfp4TiledMma);
+}
+
+// A call the asked route could not take ran another route, with other bytes and speed than a
+// route table or the heuristic chose: said once per pair of routes, with the call's facts, and
+// counted (route_demotion_count). No product run demoted in the lab (perplexity, generation and
+// serving at 1 and 4 streams on Ada, Blackwell and Turing); one names a caller that sized or
+// aligned its call short of its route.
+void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16, std::int64_t ldx,
+                   std::size_t workspace) {
+    route_demotions.fetch_add(1, std::memory_order_relaxed);
+    static std::mutex mutex;
+    static std::set<std::pair<std::string, std::string>> said;
+    const std::lock_guard lock(mutex);
+    if (!said.emplace(route_name(asked), route_name(ran)).second) { return; }
+    std::fprintf(stderr,
+                 "ninferno: warning: route %s cannot take a call of %d rows x %d tokens (k %d, x "
+                 "%s16-byte aligned, ldx %lld, workspace %zu bytes): it ran %s, with other bytes "
+                 "and speed\n",
+                 route_name(asked).c_str(), rows, tokens, k, x16 ? "" : "not ",
+                 static_cast<long long>(ldx), workspace, route_name(ran).c_str());
+}
 
 // The token-major grid of the 128-token W4A8 tiles (W4a8Activation::token_major) on the RTX 4090
 // (sm_89), where the row-major grid streams a large matrix from DRAM once per token tile: Muse 30B
@@ -2957,6 +2985,10 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
+std::uint64_t route_demotion_count() noexcept {
+    return route_demotions.load(std::memory_order_relaxed);
+}
+
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
     if (route.family == Family::I8Mma) {
@@ -3230,7 +3262,8 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                         stream);
         call.x = &gathered;
     }
-    GemmArgs args = make_args(call);
+    GemmArgs args     = make_args(call);
+    const Route asked = route;
     if (!aligned_to(args.x, 16) && route.family == Family::RegisterMma) {
         route = Route{Family::Scalar, 0};
     }
@@ -3297,26 +3330,19 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
          (workspace == nullptr || args.segments > ggml_mmq::kVecMaxSegments ||
           !mmq_fits(*workspace,
                     vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns)))))) {
-        // A caller that sized its workspace short of the route: say so once (the call still runs)
-        // and count it (ggml_mmq_fallback_count).
+        // A caller that sized its workspace short of the route (said below, with every other
+        // demotion) is counted here too (ggml_mmq_fallback_count).
         mmq_fallbacks.fetch_add(1, std::memory_order_relaxed);
-        static std::once_flag warned;
-        std::call_once(warned, [&] {
-            std::fprintf(
-                stderr, "%s: call of %d rows x %d tokens runs A16 (workspace %zu of %zu)\n",
-                route_name(route).c_str(), call.rows, args.tokens,
-                workspace != nullptr ? workspace->capacity() : 0,
-                route.family == Family::GgmlVec
-                    ? vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns))
-                    : mmq_workspace_bytes(w.k, plane_rows,
-                                          std::min(args.tokens, kMmqPrefillSlice)));
-        });
         const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
         route = Route{Family::RegisterMma,
                       static_cast<std::uint8_t>(heuristic_rmma(a16, args.tokens, false))};
         if (!aligned_to(args.x, 16) || (w.k % k_multiple(codec_of(w))) != 0) {
             route = Route{Family::Scalar, 0};
         }
+    }
+    if (route.family != asked.family && !same_bytes(asked, route)) {
+        note_demotion(asked, route, call.rows, args.tokens, w.k, aligned_to(args.x, 16), args.ldx,
+                      workspace != nullptr ? workspace->capacity() : 0);
     }
     // Only a register-MMA or R8 launch joins the call before it; every other route runs in stream
     // order.
@@ -3449,6 +3475,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         return;
     case Family::RegisterMma:
         if ((w.k % k_multiple(codec)) != 0) {
+            // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
+            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
+                          aligned_to(args.x, 16), args.ldx,
+                          workspace != nullptr ? workspace->capacity() : 0);
             launch_scalar(codec, call.epilogue, args, stream);
             return;
         }
@@ -3583,8 +3613,11 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
             return;
         }
-        // A call the decoded copy does not fit runs scalar.
+        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed).
         if (volta_cutlass_only(codec)) {
+            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
+                          aligned_to(args.x, 16), args.ldx,
+                          workspace != nullptr ? workspace->capacity() : 0);
             launch_scalar(codec, call.epilogue, args, stream);
             return;
         }

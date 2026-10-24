@@ -447,10 +447,18 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
             call.out[0]          = &tout;
             call.segment_rows[0] = out_rows;
             const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
+            const std::uint64_t demotions = generic::route_demotion_count();
             generic::run_route(*route, call, &workspace, nullptr);
             if (route->family == generic::Family::GgmlMmq &&
                 generic::ggml_mmq_fallback_count() != fallbacks) {
                 std::cerr << label << ": ggml_mmq ran A16 in a workspace sized for it\n";
+                return 1;
+            }
+            // The route asked for ran (or one of the same bytes): a call sized and aligned for it
+            // is never demoted.
+            if (generic::route_demotion_count() != demotions) {
+                std::cerr << label << ": " << generic::route_name(*route)
+                          << " ran another route in a call sized for it\n";
                 return 1;
             }
         } else if (op == Op::Linear) {
