@@ -5,13 +5,17 @@
 #include "convert/acquire.h"
 #include "convert/cache.h"
 #include "core/host_memory.h"
+#include "core/sys.h"
 #include "core/units.h"
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
+#include <thread>
 
 namespace ninferno::serve {
 namespace {
@@ -132,6 +136,23 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.repository     = fs::current_path();
     acquire.log            = log;
     if (options.with_drafters) { acquire.with_drafters = true; }
+    acquire.moved_ref = options.refetch            ? convert::MovedRef::Refetch
+                        : options.accept_converted ? convert::MovedRef::Accept
+                                                   : convert::MovedRef::Notice;
+    // On a terminal the notice stays on screen for a moment before the start goes on with the
+    // converted weights (Ctrl+C stops it to choose); a service or ninferno-ui does not wait. The
+    // weights served are the same either way.
+    if (sys::stderr_is_terminal()) {
+        acquire.on_moved_ref = [](const std::string&) {
+            for (int left = 10; left > 0; --left) {
+                std::fprintf(stderr, "\rserving the converted weights in %2d s (Ctrl+C to stop) ",
+                             left);
+                std::fflush(stderr);
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+            std::fprintf(stderr, "\r%60s\r", "");
+        };
+    }
     acquire.vision = options.enable_vision;
     if (!options.prepare_only) {
         const int device        = options.device;

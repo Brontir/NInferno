@@ -230,12 +230,10 @@ EngineOptions normalize_engine_options(EngineOptions options) {
         options.recurrent_state_automatic = false;
     }
     if (options.kv_cache_automatic) {
-        // The device's compute capability decides FP8 rows (automatic_kv_cache); a host without
-        // the device keeps the family's storage, which the load then reports or refuses.
-        int compute_capability = 1000;
-        try {
-            compute_capability = device_class(options.device).compute_capability();
-        } catch (const std::exception&) {}
+        // The device's compute capability decides FP8 rows (automatic_kv_cache). A device whose
+        // class cannot be read is an error here, not a guessed capability that picks another KV
+        // codec (the load would fail on it anyway).
+        const int compute_capability = device_class(options.device).compute_capability();
         options.kv_cache =
             automatic_kv_cache(artifact_model_type(options.artifact_path), compute_capability);
         options.kv_cache_automatic = false;

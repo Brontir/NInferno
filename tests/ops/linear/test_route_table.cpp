@@ -70,9 +70,10 @@ bool refused(const std::string& gpu, const std::string& name, const std::string&
 
 } // namespace
 
-// A malformed default table (the device's own class file in the --route-dir directory) is not
-// applied, and the status says which directory and why instead of reporting that nothing was
-// loaded. Run in its own process: the default lookup happens once.
+// A malformed default table (the device's own class file in the --route-dir directory) stops the
+// lookup with an error naming the directory and why, instead of answering as untuned (another
+// route, speed and, for the A8 and A4 routes, other bytes). Run in its own process: the default
+// lookup happens once.
 int malformed_default() {
     std::string file = ninferno::ops::route_gpu_class();
     for (char& c : file) {
@@ -83,13 +84,17 @@ int malformed_default() {
     std::filesystem::create_directories(dir);
     std::ofstream(path) << "{\"schema\": \"ninferno-route-table/1\", \"gpu\": ";
     ninferno::ops::set_route_table_dir(dir);
-    const auto s = ninferno::ops::route_table_status();
-    std::cout << "malformed default table: loaded=" << s.loaded << " message: " << s.message
-              << '\n';
-    int failures = check(!s.loaded, "a malformed default table is not applied");
-    failures += check(s.path == utf8_path(dir) && s.message.find("refused") != std::string::npos &&
-                          s.message.find(utf8_path(dir)) != std::string::npos,
-                      "the status names the refused directory and the reason: " + s.message);
+    std::string message;
+    try {
+        (void)ninferno::ops::route_table_status();
+    } catch (const std::exception& error) {
+        message = error.what();
+    }
+    std::cout << "malformed default table: " << message << '\n';
+    const int failures =
+        check(message.find("refused") != std::string::npos &&
+                  message.find(utf8_path(dir)) != std::string::npos,
+              "a malformed default table stops the lookup, naming the directory and why: " + message);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table malformed default\n";
     return failures == 0 ? 0 : 1;
 }

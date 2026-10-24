@@ -33,7 +33,7 @@ std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
-           "[--plan-device NAME]]] [--with-drafters] "
+           "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
            "[--kv-auto-headroom-mib N] "
@@ -97,6 +97,11 @@ std::string serve_usage_text(const char* argv0) {
            "       idle card of its class), and refused before the download when none does.\n"
            "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
            "       download); a checkpoint's are attached without it.\n"
+           "       A hub model whose branch moved after it was converted and its download\n"
+           "       removed is served from its converted weights, after a notice (and a 10 s\n"
+           "       count-down on a terminal): --accept-converted keeps them without the notice\n"
+           "       from now on, --refetch downloads the new commit, converts it and removes\n"
+           "       the old conversion.\n"
            "       --default-max-tokens defaults to " +
            std::to_string(kDefaultMaxTokens) +
            " when omitted\n"
@@ -539,6 +544,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_device = require_value("--plan-device");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
+        } else if (arg == "--accept-converted") {
+            options.accept_converted = true;
+        } else if (arg == "--refetch") {
+            options.refetch = true;
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(require_value("--log-level"));
         } else {
@@ -570,6 +579,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.plan_json && !options.plan_only) {
         throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.accept_converted && options.refetch) {
+        throw std::invalid_argument("--accept-converted keeps the converted weights, --refetch "
+                                    "replaces them: name one");
     }
     if (options.plan_no_load && !options.plan_only) {
         throw std::invalid_argument("--no-load plans without the weights: it needs --plan");

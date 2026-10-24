@@ -53,7 +53,9 @@ python3 -m tools.convert \
   layout (`$HF_HUB_CACHE`, `$HF_HOME/hub`, `$XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub`). `$HF_TOKEN` (else
   `$HUGGING_FACE_HUB_TOKEN`) authorizes gated repositories, `$HF_ENDPOINT` points at another hub
   (`$MODELSCOPE_ENDPOINT` and `$MODELSCOPE_API_TOKEN` for ModelScope). `$HF_HUB_OFFLINE` (`1`,
-  `true`, `yes` or `on`) uses the cached snapshot only.
+  `true`, `yes` or `on`) uses the cached snapshot only. Without it a hub that cannot be reached is
+  an error for a branch or tag (it may have moved since the snapshot was cached); a commit's cached
+  snapshot is served.
 - Before downloading weights, `config.json` alone decides whether the architecture converts, and the
   cache's free space is checked.
 - `--fetch` without `--out` writes the artifact to
@@ -319,6 +321,8 @@ order, they are:
    declares. There is never a search.
 
 Each is checked against the target (vocabulary, geometry, taps) before it is fetched and converted.
+Under `--with-drafters` a drafter that cannot be planned, fetched or converted is an error;
+otherwise the model converts without it and says why.
 
 - A separate drafter (Gemma 4 assistant, DFlash) becomes its own artifact.
 - A companion (Qwen DFlash/DFlash2) becomes a component of the target.

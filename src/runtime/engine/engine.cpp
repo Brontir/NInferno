@@ -58,7 +58,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
         ops::set_route_table_dir(m.route_dir);
     }
     if (!m.route_table.empty() &&
-        (first || ops::route_table_status().path != utf8_path(m.route_table))) {
+        (first || !ops::route_table_loaded(utf8_path(m.route_table)))) {
         (void)ops::load_route_table_option(m.route_table);
     }
     if (!first) { return; }

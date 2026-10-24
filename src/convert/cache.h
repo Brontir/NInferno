@@ -48,6 +48,19 @@ inline constexpr int kCacheRevision = 5;
 [[nodiscard]] int cached_revision(const std::filesystem::path& artifact);
 // Records kCacheRevision beside a conversion just made.
 void stamp_revision(const std::filesystem::path& artifact);
+// What a conversion read from its source, cheaply: each file's name (from `root`, the model's
+// directory; a file outside it by its full path), size and modification time, one line each in
+// name order (a file that is not there has none). A checkpoint replaced at the same path (a newer
+// revision copied over it, a re-download) changes it; another spelling of the path does not.
+[[nodiscard]] std::string source_stamp(const std::filesystem::path& root,
+                                       std::vector<std::filesystem::path> files);
+// Records `stamp` beside a conversion just made (<artifact>.source).
+void stamp_source(const std::filesystem::path& artifact, const std::string& stamp);
+// Whether `stamp` names a file the one recorded beside `artifact` does not, or one of another size
+// or time, or lacks a recorded file other than weights (weights that are gone are no change:
+// --consume-source removed them). An artifact converted before stamps were kept has none: it is
+// stamped `stamp` now (a read-only cache stays unstamped) and is not changed.
+[[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);
 
@@ -67,7 +80,9 @@ struct CachedArtifact {
 // wins. `consume_source` converts with --consume-source (destroying the checkpoint's weights); only
 // a caller the user explicitly asked for that may pass it. `vision` keeps a Qwen3.5 / 3.6 / 3.8
 // model's Vision encoder (a checkpoint's own, or the mmproj-*.gguf beside a GGUF file) in its own
-// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it.
+// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it. A cached
+// artifact whose source files changed since it was converted (source_stamp) is converted again
+// while the source is there; one whose source is gone is served as it is.
 [[nodiscard]] CachedArtifact
 cached_artifact(const std::filesystem::path& path,
                 const std::vector<std::pair<std::string, std::filesystem::path>>& resources = {},

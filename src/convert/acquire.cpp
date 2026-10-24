@@ -7,6 +7,7 @@
 #include "convert/dense.h"
 #include "convert/pyjson.h"
 #include "convert/safetensors.h"
+#include "core/cache_file.h"
 #include "core/host_memory.h"
 #include "spec/manifest.h"
 
@@ -16,7 +17,9 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <stdexcept>
 #include <string_view>
@@ -232,6 +235,20 @@ bool complete(const fs::path& artifact, bool drafters) {
            (!drafters || fs::exists(spec::manifest_path(artifact)));
 }
 
+// Under --with-drafters every drafter planned for the model is required: one that failed to be
+// fetched, converted or attached, or that does not fit the target, is an error, not a model served
+// without it.
+void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
+    if (options.with_drafters != true) { return; }
+    for (const auto& d : plan.drafters) {
+        if (d.status.starts_with("failed") || d.status.starts_with("incompatible")) {
+            throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
+                                     " (--with-drafters requires every drafter; without the "
+                                     "flag the model is served without it)");
+        }
+    }
+}
+
 } // namespace
 
 void check_free_space(const FetchPlan& plan) { check_space(plan); }
@@ -306,6 +323,23 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
     return found.front();
 }
 
+void accept_converted(const fs::path& commit_dir, const std::string& ref,
+                      const std::string& hub_commit) {
+    const OJson record = {{"ref", ref}, {"hub_commit", hub_commit}};
+    write_file_atomic(commit_dir / "accepted.json", record.dump(1) + "\n");
+}
+
+bool converted_accepted(const fs::path& commit_dir, const std::string& ref,
+                        const std::string& hub_commit) {
+    std::ifstream stream(commit_dir / "accepted.json");
+    if (!stream) { return false; }
+    try {
+        const auto record = OJson::parse(stream);
+        return record.value("ref", std::string()) == ref &&
+               record.value("hub_commit", std::string()) == hub_commit;
+    } catch (const std::exception&) { return false; }
+}
+
 bool is_repository_spec(const std::string& text) {
     static const std::regex pattern(R"([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*(@[^\s/]+)?)");
     return std::regex_match(text, pattern) && !text.ends_with(".ninferno") && !text.ends_with(".gguf");
@@ -358,6 +392,39 @@ std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem
 
 AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     AcquiredModel out;
+    // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there: the
+    // artifact with its sidecars, and its commit's directory when nothing but its own drafters
+    // (named in its speculation manifest) is left there (another quantization of that commit
+    // stays).
+    struct RemoveReplaced {
+        fs::path artifact;
+        const AcquiredModel& out;
+        const AcquireOptions& options;
+        ~RemoveReplaced() {
+            if (artifact.empty() || std::uncaught_exceptions() > 0 || out.artifact.empty() ||
+                out.artifact == artifact) {
+                return;
+            }
+            const auto dir = artifact.parent_path();
+            std::string manifest;
+            if (std::ifstream in(spec::manifest_path(artifact)); in) {
+                manifest.assign(std::istreambuf_iterator<char>(in), {});
+            }
+            remove_artifact(artifact);
+            std::error_code ec;
+            bool others = false;
+            for (const auto& entry : fs::directory_iterator(dir, ec)) {
+                const auto name = entry.path().filename().string();
+                if (entry.path().extension() == ".ninferno" &&
+                    manifest.find(name) == std::string::npos) {
+                    others = true;
+                }
+            }
+            if (!others) { fs::remove_all(dir, ec); }
+            say(options, "removed the old conversion " + artifact.string() +
+                             (others ? " (other conversions of that commit stay)" : ""));
+        }
+    } replaced{{}, out, options};
     ConvertOptions& convert_options = options.convert;
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string preflight_recipe;
@@ -367,8 +434,63 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
-            if (const auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
-                                                convert_options.recipe)) {
+            auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
+                                      convert_options.recipe);
+            // A branch or a tag may have moved since its download was converted and removed. The
+            // converted weights stay unless the user asks for the new commit (a download of many
+            // gigabytes): the start says so (MovedRef::Notice), or the user kept them for good
+            // (Accept), or asked for the new ones (Refetch). The answer is the same whether the
+            // hub can be reached or not: unreachable, it is only unchecked.
+            const std::string ref = revision.empty() ? std::string("main") : revision;
+            if (kept && revision != kept->parent_path().filename().string()) {
+                const auto commit_dir         = kept->parent_path();
+                const std::string kept_commit = commit_dir.filename().string();
+                const std::string label       = repo + "@" + ref;
+                std::optional<std::string> now;
+                try {
+                    now = current_commit(spec, options.fetch);
+                    if (!now) {
+                        // Asked for the new commit: no hub to download it from is an error.
+                        if (options.moved_ref == MovedRef::Refetch) {
+                            throw std::runtime_error("HF_HUB_OFFLINE is set");
+                        }
+                        say(options, "HF_HUB_OFFLINE: " + label + " not checked against the hub");
+                    }
+                } catch (const std::exception& error) {
+                    if (options.moved_ref == MovedRef::Refetch) {
+                        throw std::runtime_error("--refetch: cannot ask the hub what " + label +
+                                                 " names now (" + error.what() +
+                                                 "); the conversion of " +
+                                                 kept_commit.substr(0, 12) + " is kept");
+                    }
+                    say(options, "warning: could not ask the hub whether " + label +
+                                     " moved (" + error.what() + "); serving its conversion of " +
+                                     kept_commit.substr(0, 12));
+                }
+                if (now && *now != kept_commit) {
+                    const std::string moved = label + " is now " + now->substr(0, 12) +
+                                              "; the converted weights are of " +
+                                              kept_commit.substr(0, 12) + " (download removed)";
+                    if (options.moved_ref == MovedRef::Refetch) {
+                        say(options, moved + ": downloading the new commit (--refetch)");
+                        replaced.artifact = *kept;
+                        kept.reset();
+                    } else if (options.moved_ref == MovedRef::Accept) {
+                        accept_converted(commit_dir, ref, *now);
+                        say(options, moved + ": kept, now and later (--accept-converted)");
+                    } else if (converted_accepted(commit_dir, ref, *now)) {
+                        say(options, moved + ": kept, as accepted earlier");
+                    } else {
+                        const std::string notice =
+                            "warning: " + moved + ". Serving the converted weights; "
+                            "--accept-converted keeps them without this notice, --refetch "
+                            "downloads the new commit and removes these";
+                        say(options, notice);
+                        if (options.on_moved_ref) { options.on_moved_ref(notice); }
+                    }
+                }
+            }
+            if (kept) {
                 const auto base      = kept->stem().string();
                 out.artifact         = *kept;
                 out.recipe           = base.substr(base.rfind('.') + 1);
@@ -379,8 +501,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.fetched.model    = *kept;
                 out.fetched.offline  = true;
                 say(options, "artifact " + kept->string() +
-                                 " (converted earlier; its download was removed, so the hub is "
-                                 "not asked for a newer commit)");
+                                 " (converted earlier; its download was removed)");
                 // cache_current stamps a current one, so only a defective artifact's report
                 // is read on every start.
                 if (!cache_current(*kept) && unquantized_drafter_attention(*kept)) {
@@ -503,7 +624,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         try {
             const auto target = describe_gguf_artifact(out.artifact, model_id, fetched.model);
             out.drafters      = attach_drafters(plan_drafters(target), out.artifact, attach);
+            require_drafters(*out.drafters, options);
         } catch (const std::exception& error) {
+            // Asked for by name (--with-drafters): a drafter that cannot be attached is an error,
+            // not a model served slower without it.
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("drafters not attached: ") + error.what());
         }
     };
@@ -525,12 +650,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 return; // converted with its companion already
             }
             companions = fetch_companions(plan, attach);
+            require_drafters(plan, options);
             for (const auto& d : plan.drafters) {
                 if (d.status == "fetched" && !d.decl.component.empty()) {
                     declared_quant = d.decl.quant;
                 }
             }
         } catch (const std::exception& error) {
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("companion drafters not planned: ") + error.what());
         }
         if (companions.empty()) { return; }
@@ -545,6 +672,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         try {
             out.conversion = convert(with);
         } catch (const std::exception& error) {
+            if (options.with_drafters == true) { throw; }
             say(options, std::string("companion drafters not converted in: ") + error.what());
             remove_artifact(out.artifact);
             out.conversion = convert(text_only);
@@ -623,6 +751,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     stamp_revision(out.artifact);
     if (out.drafters) {
         out.drafters = attach_drafters(std::move(*out.drafters), out.artifact, attach);
+        require_drafters(*out.drafters, options);
     } else if (drafters_on && gguf) {
         if (!options.components_given) { convert_gguf_companions(convert_options, drafter_quant); }
         attach_to_artifact();

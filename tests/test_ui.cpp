@@ -717,10 +717,48 @@ void test_catalog() {
                   !kept_artifact(root, "org/m-GGUF", "dev", "Q4_K_M", "") &&
                   !kept_artifact(root, "org/other", "", "Q4_K_M", ""),
               "no kept artifact: two match, unfinished, another recipe, ref or repository");
+        // The user kept this conversion while the hub named another commit: until it moves again.
+        using ninferno::convert::accept_converted;
+        using ninferno::convert::converted_accepted;
+        const auto commit_dir = repo / "ninferno/c0ffee";
+        check(!converted_accepted(commit_dir, "main", "d00d"), "nothing kept yet");
+        accept_converted(commit_dir, "main", "d00d");
+        check(converted_accepted(commit_dir, "main", "d00d") &&
+                  !converted_accepted(commit_dir, "main", "beef") &&
+                  !converted_accepted(commit_dir, "dev", "d00d"),
+              "kept for that ref and hub commit only");
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
         fs::remove_all(root);
+    }
+    // A prepare that downloads a moved branch's new commit and removes the old conversion; only a
+    // prepare does.
+    {
+        UiOptions refetch_options;
+        refetch_options.serve_binary = "ninferno-serve";
+        LaunchRequest refetch;
+        refetch.model        = "org/m-GGUF";
+        refetch.quant        = "Q4_K_M";
+        refetch.prepare_only = true;
+        refetch.refetch      = true;
+        refetch.gpu          = -1;
+        const auto argv      = make_launch(refetch_options, refetch).argv;
+        check(std::find(argv.begin(), argv.end(), "--refetch") != argv.end() &&
+                  std::find(argv.begin(), argv.end(), "--prepare-only") != argv.end(),
+              "a refetch prepare");
+        refetch.recipe          = "qwen3_5_q8";
+        const auto with_recipe  = make_launch(refetch_options, refetch).argv;
+        const auto recipe_flag  = std::find(with_recipe.begin(), with_recipe.end(), "--recipe");
+        check(recipe_flag != with_recipe.end() && recipe_flag + 1 != with_recipe.end() &&
+                  recipe_flag[1] == "qwen3_5_q8",
+              "a refetch keeps the replaced artifact's recipe");
+        refetch.prepare_only = false;
+        bool refused         = false;
+        try {
+            (void)make_launch(refetch_options, refetch);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "a serve start does not refetch");
     }
     // The Vision projector a start fetches and the plan charges: one choice from the listing, every
     // part of a split one.

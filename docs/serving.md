@@ -36,7 +36,7 @@ The model argument can be:
 | Argument | What happens |
 |---|---|
 | hub id `org/name[@revision]` | downloaded into the Hugging Face cache, converted, and reused on later starts |
-| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/` |
+| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/`, again when its files change |
 | `.ninferno` file | served as is |
 
 For a hub id:
@@ -72,6 +72,13 @@ For a hub id:
     plan, the fetch's own default applies;
   - the fetch's own default order (when no plan applies) now puts BF16 and F16 files last: the
     engine serves 8 bits or fewer, so a repository without Q8_0 gets a K-quant, not BF16.
+- A converted model whose download was removed (ninferno-ui removes it once the model loads) is
+  served from its converted weights. The hub is asked whether its branch still names the commit
+  they were converted from. If the branch moved, the start says so and serves the converted
+  weights anyway, after a 10-second count-down on a terminal (a new download is many gigabytes).
+  - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
+  - `--refetch` downloads the new commit, converts it and removes the old conversion.
+  - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is

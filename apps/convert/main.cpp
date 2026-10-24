@@ -46,6 +46,7 @@ constexpr const char* kUsage =
     "                      [--min-speed BYTES_PER_S] [--stall-seconds S] [--retries N]\n"
     "                      [--chunk-bytes N] [--no-verify]\n"
     "                      [--fetch-only] [--no-base-tokenizer]\n"
+    "                      [--accept-converted | --refetch]\n"
     "  drafters:           [--no-drafters] [--with-drafters] [--model-id REPO]\n"
     "                      [--drafter-artifact NAME=PATH]...\n"
     "       ninferno-convert --plan-drafters (--model DIR | --target-artifact PATH) [--model-id "
@@ -65,6 +66,9 @@ constexpr const char* kUsage =
     "--model needs --out; with --fetch and no --out the artifact goes to\n"
     "<cache>/models--org--name/ninferno/<commit>/<stem>.<recipe>.ninferno, and a rerun reuses\n"
     "it unless a flag changes what is written (--components, --vocab, --drafter-quant, ...).\n"
+    "Where its download was removed and the branch has moved since, the rerun keeps the\n"
+    "converted weights and says so; --accept-converted keeps them without the notice from now\n"
+    "on, --refetch downloads the new commit and removes the old conversion.\n"
     "Without --recipe the\n"
     "official recipe for the checkpoint's architecture is chosen (with its quantized source\n"
     "when it needs one).\n"
@@ -212,6 +216,7 @@ int main(int argc, char** argv) {
     bool fetch_only     = false;
     bool base_tokenizer_files = true;
     std::optional<bool> with_drafters; // --with-drafters / --no-drafters
+    std::optional<ninferno::convert::MovedRef> moved_ref; // --accept-converted / --refetch
     bool plan_only = false, attach_only = false;
     std::optional<ninferno::convert::ExpertLayout> relayout; // --relayout
     std::vector<std::string> given;                        // every flag, for --relayout's check
@@ -242,6 +247,8 @@ int main(int argc, char** argv) {
                                                                          "--no-base-tokenizer",
                                                                          "--with-drafters",
                                                                          "--no-drafters",
+                                                                         "--accept-converted",
+                                                                         "--refetch",
                                                                          "--plan-drafters",
                                                                          "--attach-drafters",
                                                                          "--proposal",
@@ -336,6 +343,13 @@ int main(int argc, char** argv) {
                 }
                 with_drafters           = false;
                 options.components_auto = false;
+            } else if (flag == "--accept-converted" || flag == "--refetch") {
+                const auto choice = flag == "--refetch" ? ninferno::convert::MovedRef::Refetch
+                                                        : ninferno::convert::MovedRef::Accept;
+                if (moved_ref && *moved_ref != choice) {
+                    throw std::runtime_error("give one of --accept-converted and --refetch");
+                }
+                moved_ref = choice;
             } else if (flag == "--plan-drafters") {
                 plan_only = true;
             } else if (flag == "--attach-drafters") {
@@ -497,6 +511,7 @@ int main(int argc, char** argv) {
             acquire.convert              = options;
             acquire.components_given     = components_given;
             acquire.with_drafters        = with_drafters;
+            if (moved_ref) { acquire.moved_ref = *moved_ref; }
             acquire.model_id             = model_id;
             acquire.drafter_artifacts    = drafter_artifacts;
             acquire.repository           = std::filesystem::current_path();

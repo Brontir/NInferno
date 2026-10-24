@@ -19,7 +19,14 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 ## What the page does
 
 - **GPUs:** each card's memory, load, temperature and power, and the models running on it.
-- **My models:** the models downloaded or converted on this machine, ready to start.
+- **My models:** the models downloaded or converted on this machine, ready to start. A
+  converted hub model whose download was removed and whose branch has moved on the hub since is
+  marked "newer weights on the hub". It still starts from its converted weights. The mark offers
+  two choices:
+  - **Keep these:** treat them as valid from now on (no mark until the branch moves again).
+  - **Download new:** download the new commit, convert it and delete the old conversion.
+
+  The hub is asked at most hourly per model, never with `--offline`.
 - **Find:** Hugging Face search by downloads, likes, update or trend, with a mark for what
   NInferno runs; each repository's quantizations with their size and the context, concurrency and
   speed they leave on your GPU. The speeds are the engine's estimates from the card's and the

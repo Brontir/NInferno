@@ -45,6 +45,12 @@ struct ServeOptions {
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
+    // A hub model whose branch moved after it was converted and its download removed: false
+    // keeps the converted weights after a notice (a terminal counts down first);
+    // --accept-converted keeps them without one from now on; --refetch downloads the new commit,
+    // converts it and removes the old conversion. Refused together.
+    bool accept_converted = false;
+    bool refetch          = false;
     std::filesystem::path chat_template_path;
     std::string host = "127.0.0.1";
     int port         = 8080;
