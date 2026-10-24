@@ -28,7 +28,8 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 
   The hub is asked at most hourly per model, never with `--offline`.
 - **Find:** Hugging Face search by downloads, likes, update or trend, with a mark for what
-  NInferno runs; each repository's quantizations with their size and the context, concurrency and
+  NInferno runs (the converter's rule set, [weight conversion](weight-conversion.md): runs, a
+  drafter, needs a token, or not supported with the reason); each repository's quantizations with their size and the context, concurrency and
   speed they leave on your GPU. The speeds are the engine's estimates from the card's and the
   model's facts ([Configuration choice](maintainer/configuration-choice.md)), not measurements.
   Under the pick, "Engine's choice" says which KV cache, activations and state a start would take

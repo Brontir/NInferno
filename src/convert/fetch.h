@@ -193,10 +193,9 @@ struct HubModel {
     std::string architecture;
     std::int64_t context = 0;
     std::string library; // the weights' library: transformers, gguf, mlx, ... ("" unsaid)
-    // A quantization of the weights the converter does not read (config.json's quant_method:
-    // "bitsandbytes", "hqq", ...; compressed-tensors with transforms or sparse packings); "" when
-    // it reads them (unquantized, FP8, AWQ, GPTQ, compressed-tensors, ModelOpt, AutoRound, MXFP4).
-    std::string unread_quantization;
+    // The search's answer for the model as the hub gave it (Hugging Face; null on ModelScope): the
+    // facts convert::search_support_facts reads.
+    nlohmann::json card;
 };
 
 // The hub's model search, at most `limit` (1 to 100), largest first by `sort`: downloads, likes,

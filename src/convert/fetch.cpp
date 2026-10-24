@@ -1749,7 +1749,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                       (term.empty() ? "&filter=gguf" : "") + "&sort=" + sort +
                       "&direction=-1&limit=" + std::to_string(std::clamp(limit, 1, 100));
     for (const char* field : {"downloads", "likes", "lastModified", "pipeline_tag", "tags",
-                              "config", "gguf", "library_name"}) {
+                              "config", "gguf", "library_name", "safetensors", "gated"}) {
         url += std::string("&expand%5B%5D=") + field;
     }
     const HuggingFace hub(endpoint);
@@ -1776,9 +1776,6 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                 model.context = n->get<std::int64_t>();
             }
         }
-        if (const auto config = item.find("config"); config != item.end() && config->is_object()) {
-            model.unread_quantization = unread_quantization(*config);
-        }
         if (const auto config = item.find("config");
             model.architecture.empty() && config != item.end() && config->is_object()) {
             const auto archs   = config->value("architectures", Json::array());
@@ -1786,6 +1783,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                                      ? archs[0].get<std::string>()
                                      : config->value("model_type", std::string());
         }
+        model.card = item;
         if (!model.id.empty()) { out.push_back(std::move(model)); }
     }
     return out;

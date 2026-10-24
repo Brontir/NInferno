@@ -13,6 +13,7 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
@@ -252,67 +253,33 @@ std::string params_label(const std::string& name) {
 
 // An architecture name reduced for comparison: lower case, letters and digits only, the class
 // suffix dropped ("Qwen3_5MoeForCausalLM", "qwen35moe" and model_type "qwen3_5_moe" all qwen35moe).
-std::string arch_key(std::string name) {
-    for (const char* suffix : {"ForConditionalGeneration", "ForCausalLM", "Model"}) {
-        if (name.size() > std::strlen(suffix) && name.ends_with(suffix)) {
-            name.resize(name.size() - std::strlen(suffix));
-            break;
-        }
+// The UI's support level of a model (page.html's SUP), from convert::model_support: "full" (the
+// engine runs it), "drafter" (runs beside its model), "token" (gated: set HF_TOKEN), "projector"
+// (the hub read an image projector, not the model: the model file is read again), "unknown",
+// "none" (with the reason).
+std::string support_level(const convert::Support& support) {
+    switch (support.verdict) {
+    case convert::Verdict::Supported: return support.role == "drafter" ? "drafter" : "full";
+    case convert::Verdict::NeedsToken: return "token";
+    case convert::Verdict::Unknown: return "unknown";
+    case convert::Verdict::Unsupported: return support.role == "projector" ? "projector" : "none";
     }
-    std::string out;
-    for (const unsigned char c : name) {
-        if (std::isalnum(c)) { out += static_cast<char>(std::tolower(c)); }
-    }
-    return out;
+    return "unknown";
 }
 
-// The architectures the engine runs, reduced: map_gguf_model's general.architecture values and
-// the checkpoint architectures the converter names (as config.json does).
-const std::set<std::string>& engine_arch_keys() {
-    static const std::set<std::string> keys = [] {
-        std::set<std::string> out;
-        for (const auto& name : convert::supported_gguf_architectures()) {
-            out.insert(arch_key(name));
-        }
-        static const std::regex name(
-            R"(\b[A-Z][A-Za-z0-9_]*(?:ForCausalLM|ForConditionalGeneration)\b)");
-        const auto& text = convert::supported_architectures_text();
-        for (std::sregex_iterator it(text.begin(), text.end(), name), end; it != end; ++it) {
-            out.insert(arch_key(it->str()));
-        }
-        return out;
-    }();
-    return keys;
-}
-
-// How far the engine runs a hub model, by the architecture named for its weights (the hub's
-// reading, or ours of the weights' own head): "full" (the engine runs exactly it), "family" (a
-// variant of a family it runs: a multimodal wrapper, a newer revision; not verified), "drafter"
-// (a speculative drafter: runs beside its model), "projector" (the hub read an image projector,
-// not the model: unknown until the weights are read), "none" (another family, or a task that is
-// not text generation: speech, embeddings, ranking), "unknown" (nothing said).
-std::string architecture_support(const std::string& architecture, const std::string& pipeline) {
-    static const std::set<std::string> generative = {
-        "",           "text-generation",      "image-text-to-text",
-        "any-to-any", "text2text-generation", "image-to-text",
-        "chat"};
-    if (!generative.contains(pipeline)) { return "none"; }
-    if (architecture.empty()) { return "unknown"; }
-    const auto key = arch_key(architecture);
-    if (key == "clip" || key == "mmproj") { return "projector"; }
-    if (key == "dflash" || key.find("assistant") != std::string::npos ||
-        key.find("draft") != std::string::npos || key.find("dspark") != std::string::npos ||
-        key.ends_with("mtp")) {
-        return "drafter";
+// The facts an architecture name alone gives (ModelScope's search, a GGUF header, config.json).
+convert::SupportFacts facts_of_architecture(const std::string& architecture, bool gguf,
+                                            std::string pipeline = {}, std::string library = {}) {
+    convert::SupportFacts facts;
+    facts.pipeline = std::move(pipeline);
+    facts.library  = std::move(library);
+    facts.gguf     = gguf;
+    if (gguf) {
+        facts.gguf_architecture = architecture;
+    } else if (!architecture.empty()) {
+        facts.config = Json{{"architectures", Json::array({architecture})}};
     }
-    const auto& keys = engine_arch_keys();
-    if (keys.contains(key)) { return "full"; }
-    // A family the engine runs, by the longest known name the key starts with (at least five
-    // characters: "qwen3" covers Qwen3 variants, not "qwen4").
-    for (const auto& known : keys) {
-        if (known.size() >= 5 && key.starts_with(known)) { return "family"; }
-    }
-    return "none";
+    return facts;
 }
 
 // general.architecture from the first bytes of a GGUF file: the header, then key-value pairs until
@@ -862,8 +829,25 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
             out["file"]   = "config.json";
         }
     } catch (const std::exception& error) { out["error"] = error.what(); }
+    // Whether the engine runs it: the whole decision from what the hub shows (convert/support.h),
+    // else from the architecture read above.
     if (!out.contains("support")) {
-        out["support"] = architecture_support(out["architecture"].get<std::string>(), "");
+        std::optional<convert::Support> support;
+        if (hub != "modelscope") {
+            try {
+                auto ask  = fetch;
+                ask.quant = quant;
+                if (const auto facts = convert::hub_support_facts(repo, ask)) {
+                    support = convert::model_support(*facts);
+                }
+            } catch (const std::exception&) {}
+        }
+        if (!support) {
+            support = convert::model_support(facts_of_architecture(
+                out["architecture"].get<std::string>(), out["source"] == "gguf"));
+        }
+        out["support"] = support_level(*support);
+        if (!support->reason.empty()) { out["note"] = support->reason; }
     }
     std::lock_guard lock(sizes_mutex_);
     if (!out.contains("error")) { archs_[hub_key(repo, hub)] = out; }
@@ -1114,11 +1098,16 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
     auto kv          = kv_json(repo, list, hub);
     auto speculation = speculation_json(repo, gpu, kv, list);
     const auto arch  = kv.value("architecture", std::string());
+    // A GGUF repository's architecture is its general.architecture (no weights of another format).
+    const bool gguf = std::none_of(list.begin(), list.end(), [](const Json& q) {
+        return !q.value("drafter", false) && q.value("format", std::string()) != "gguf";
+    });
     return {
         {"repo", repo},
         {"hub", hub},
         {"architecture", arch},
-        {"support", architecture_support(arch, "")},
+        {"support", support_level(convert::model_support(
+                        facts_of_architecture(arch, gguf)))},
         {"quants", out},
         {"rule", plan.is_object() ? plan.value("rule", std::string()) : std::string()},
         {"rule_code", plan.is_object() ? plan.value("rule_code", std::string()) : std::string()},
@@ -1753,6 +1742,11 @@ Json App::search_json(const std::string& query, const std::string& sort,
             convert::FetchOptions fetch;
             fetch.hub = hub_name;
             for (const auto& m : convert::search_models(query, fetch, 40, sort)) {
+                // Hugging Face's answer carries the facts; ModelScope's only the architecture.
+                const auto support = convert::model_support(
+                    m.card.is_object() ? convert::search_support_facts(m.card)
+                                       : facts_of_architecture(m.architecture, m.gguf, m.pipeline,
+                                                               m.library));
                 hub.push_back(
                     {{"id", m.id},
                      {"downloads", m.downloads},
@@ -1763,14 +1757,8 @@ Json App::search_json(const std::string& query, const std::string& sort,
                      {"architecture", m.architecture},
                      {"context", m.context},
                      {"library", m.library},
-                     {"weights_format",
-                      m.library == "mlx" ? std::string("MLX") : m.unread_quantization},
-                     // Apple's MLX weights, a quantization the converter does not read
-                     // (bitsandbytes, HQQ): the architecture may be the engine's, the
-                     // format is not.
-                     {"support", m.library == "mlx" || !m.unread_quantization.empty()
-                                     ? std::string("format")
-                                     : architecture_support(m.architecture, m.pipeline)}});
+                     {"support", support_level(support)},
+                     {"note", support.reason}});
             }
         } catch (const std::exception& e) { error = e.what(); }
     }

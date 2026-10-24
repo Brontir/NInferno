@@ -179,6 +179,11 @@ Support model_support(const SupportFacts& facts) {
 SupportFacts search_support_facts(const Json& item) {
     SupportFacts out;
     out.pipeline = item.value("pipeline_tag", std::string());
+    // A gated repository answers its files only with a token.
+    if (const auto gated = item.find("gated");
+        gated != item.end() && !gated->is_null() && !(gated->is_boolean() && !gated->get<bool>())) {
+        out.needs_token = sys::env("HF_TOKEN").empty() && sys::env("HUGGING_FACE_HUB_TOKEN").empty();
+    }
     out.library  = item.value("library_name", std::string());
     for (const auto& tag : item.value("tags", Json::array())) {
         if (tag.is_string() && tag.get<std::string>() == "mlx") { out.library = "mlx"; }
