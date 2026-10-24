@@ -759,6 +759,17 @@ void test_catalog() {
             (void)make_launch(refetch_options, refetch);
         } catch (const std::invalid_argument&) { refused = true; }
         check(refused, "a serve start does not refetch");
+        refetch.prepare_only  = true;
+        refetch.keep_replaced = true;
+        const auto kept       = make_launch(refetch_options, refetch).argv;
+        check(std::find(kept.begin(), kept.end(), "--keep-replaced") != kept.end(),
+              "ninferno-ui's update keeps the replaced conversion for itself to remove");
+        refetch.refetch = false;
+        refused         = false;
+        try {
+            (void)make_launch(refetch_options, refetch);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "keep_replaced only with a refetch");
     }
     // The Vision projector a start fetches and the plan charges: one choice from the listing, every
     // part of a split one.
