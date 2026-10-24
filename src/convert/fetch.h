@@ -16,8 +16,9 @@
 //              LFS sha256; the CDN's own ETag is not it) verified before an atomic rename;
 //   auth       $HF_TOKEN (or $HUGGING_FACE_HUB_TOKEN) / $MODELSCOPE_API_TOKEN, sent to the hub
 //              only, never to the CDN a download redirects to, never logged;
-//   offline    a listing that fails (or $HF_HUB_OFFLINE) falls back to the snapshot the revision
-//              resolved to before, as it lies in the cache.
+//   offline    under $HF_HUB_OFFLINE, the snapshot the revision resolved to before, as it lies in
+//              the cache; a listing that fails falls back to it only for a commit (a branch or a
+//              tag may have moved: the error says so).
 
 #include <cstdint>
 #include <filesystem>
@@ -164,6 +165,11 @@ struct RepoQuant {
     bool drafter        = false;
     std::vector<std::string> files;
 };
+
+// The commit `spec`'s revision names on the hub now (one listing request); nullopt under
+// $HF_HUB_OFFLINE. Throws when the hub cannot be reached.
+[[nodiscard]] std::optional<std::string> current_commit(const std::string& spec,
+                                                        const FetchOptions& options);
 
 // The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
 // is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.

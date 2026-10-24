@@ -1290,6 +1290,16 @@ std::string cached_commit(const fs::path& repo_dir, const std::string& repo,
         throw std::runtime_error(std::string(error.what()) + "; and " + repo + "@" + revision +
                                  " has no snapshot in the cache " + root.string());
     }
+    // A ref (a branch, a tag) may have moved since it was cached: its snapshot is served only when
+    // the user asked for the cache ($HF_HUB_OFFLINE), never because the hub could not be reached
+    // (the same command would serve another model by the state of the network). A commit is its
+    // own snapshot.
+    if (!hub_offline() && revision != commit) {
+        throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" + revision +
+                                 " was cached at " + commit +
+                                 ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
+                                 "that snapshot, or name the commit (" + repo + "@" + commit + ")");
+    }
     return commit;
 }
 
@@ -1414,6 +1424,13 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 }
 
 } // namespace
+
+std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
+    if (hub_offline()) { return std::nullopt; }
+    auto [repo, revision] = split_spec(spec, options);
+    const auto hub        = make_hub(options, revision);
+    return hub->list(repo, revision).commit;
+}
 
 FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
     const auto root = options.cache.empty() ? default_hub_cache() : options.cache;

@@ -343,8 +343,26 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
-            if (const auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
-                                                convert_options.recipe)) {
+            auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
+                                      convert_options.recipe);
+            // A branch or a tag may have moved since its download was converted and removed: the
+            // kept artifact serves only while the hub still names its commit (or under
+            // $HF_HUB_OFFLINE); a hub that cannot be reached is an error, never an older model.
+            if (kept && revision != kept->parent_path().filename().string()) {
+                const std::string kept_commit = kept->parent_path().filename().string();
+                std::optional<std::string> now;
+                try {
+                    now = current_commit(spec, options.fetch);
+                } catch (const std::exception& error) {
+                    throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" +
+                                             revision + " was converted at " + kept_commit +
+                                             ", which the ref may have left: set HF_HUB_OFFLINE=1 "
+                                             "to serve it, or name the commit (" + repo + "@" +
+                                             kept_commit + ")");
+                }
+                if (now && *now != kept_commit) { kept.reset(); } // moved: fetch the new commit
+            }
+            if (kept) {
                 const auto base      = kept->stem().string();
                 out.artifact         = *kept;
                 out.recipe           = base.substr(base.rfind('.') + 1);
@@ -355,8 +373,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.fetched.model    = *kept;
                 out.fetched.offline  = true;
                 say(options, "artifact " + kept->string() +
-                                 " (converted earlier; its download was removed, so the hub is "
-                                 "not asked for a newer commit)");
+                                 " (converted earlier from the commit the hub still names; its "
+                                 "download was removed)");
                 // cache_current stamps a current one, so only a defective artifact's report
                 // is read on every start.
                 if (!cache_current(*kept) && unquantized_drafter_attention(*kept)) {

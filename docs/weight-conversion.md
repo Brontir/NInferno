@@ -53,7 +53,9 @@ python3 -m tools.convert \
   layout (`$HF_HUB_CACHE`, `$HF_HOME/hub`, `$XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub`). `$HF_TOKEN` (else
   `$HUGGING_FACE_HUB_TOKEN`) authorizes gated repositories, `$HF_ENDPOINT` points at another hub
   (`$MODELSCOPE_ENDPOINT` and `$MODELSCOPE_API_TOKEN` for ModelScope). `$HF_HUB_OFFLINE` (`1`,
-  `true`, `yes` or `on`) uses the cached snapshot only.
+  `true`, `yes` or `on`) uses the cached snapshot only. Without it a hub that cannot be reached is
+  an error for a branch or tag (it may have moved since the snapshot was cached); a commit's cached
+  snapshot is served.
 - Before downloading weights, `config.json` alone decides whether the architecture converts, and the
   cache's free space is checked.
 - `--fetch` without `--out` writes the artifact to
