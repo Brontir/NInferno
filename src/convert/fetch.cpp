@@ -1699,9 +1699,7 @@ std::vector<HubModel> search_modelscope(const std::string& term, const FetchOpti
 
 } // namespace
 
-// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
-// quant_config and the matrix sources it picks), "" otherwise.
-static std::string unread_quantization(const Json& config) {
+std::string unread_quantization(const Json& config) {
     auto q = config.value("quantization_config", Json::object());
     if (q.empty()) {
         q = config.value("text_config", Json::object())
@@ -1818,6 +1816,30 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
         throw std::runtime_error(url + " is larger than " + std::to_string(max_bytes) + " bytes");
     }
     return response.body;
+}
+
+std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions& options) {
+    if (!is_hugging_face_hub(options.hub) || hub_offline()) { return std::nullopt; }
+    auto [repo, revision] = split_spec(spec, options);
+    if (revision.empty()) { revision = "main"; }
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    std::string url = endpoint + "/api/models/" + repo + "/revision/" + url_path(revision) + "?";
+    for (const char* field : {"pipeline_tag", "library_name", "gated", "config", "gguf",
+                              "safetensors", "siblings", "sha"}) {
+        url += std::string("expand%5B%5D=") + field + "&";
+    }
+    url.pop_back();
+    const HuggingFace hub(endpoint);
+    const auto response = request(url, hub.credentials(), false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("reading " + repo + "'s model card", response, "");
+    }
+    auto parsed = Json::parse(response.body, nullptr, false);
+    if (!parsed.is_object()) {
+        throw std::runtime_error(repo + "'s model card is not a JSON object");
+    }
+    return parsed;
 }
 
 Json fetch_config(const std::string& spec, const FetchOptions& options) {

@@ -4,6 +4,7 @@
 #include "convert/acquire.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -176,6 +177,24 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     out.kind                          = "hub";
     out.source                        = spec;
     convert::FetchOptions fetch       = fetch_options();
+    // A model the engine does not run is not planned: the converter's own rules, from what the
+    // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
+    // the listing below to fail or plan.
+    {
+        auto ask  = fetch;
+        ask.quant = quant;
+        std::optional<convert::SupportFacts> facts;
+        try {
+            facts = convert::hub_support_facts(spec, ask);
+        } catch (const std::exception&) {}
+        if (facts) {
+            const auto support = convert::model_support(*facts);
+            if (support.verdict == convert::Verdict::Unsupported ||
+                support.verdict == convert::Verdict::NeedsToken) {
+                throw std::runtime_error(spec + " cannot be run: " + support.reason);
+            }
+        }
+    }
     const auto quants                 = convert::list_quants(spec, fetch);
     out.repo                          = convert::split_spec(spec, fetch).first;
     const convert::RepoQuant* header  = nullptr;

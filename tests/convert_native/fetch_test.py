@@ -374,6 +374,24 @@ def main() -> int:
                                                        base_model="https://huggingface.co/org/qwen-base",
                                                        files=False)
             hub.add_repo("org/qwen-gguf", {"model-Q8_0.gguf": gguf_file.read_bytes(), "README.md": b""})
+            # 12a. Whether the engine runs a model, from what the hub shows before a download: a GGUF
+            # of another architecture (its header, by a range request), MLX weights (the card's
+            # library). Both refused, nothing in the cache.
+            other_arch = gguf_file.read_bytes().replace(b"\x06\x00\x00\x00\x00\x00\x00\x00qwen35",
+                                                        b"\x06\x00\x00\x00\x00\x00\x00\x00lfm2zz", 1)
+            hub.add_repo("org/lfm-gguf", {"model-Q8_0.gguf": other_arch})
+            hub.add_repo("org/mlx-model", {"config.json": (work / "qwen-src" / "twin" / "config.json").read_bytes()
+                                           if (work / "qwen-src" / "twin" / "config.json").exists()
+                                           else b'{"architectures": ["Qwen3ForCausalLM"]}',
+                                           "model.safetensors": blob(MIB, 71)})
+            hub.repos["org/mlx-model"]["card"] = {"library_name": "mlx", "pipeline_tag": "text-generation"}
+            for spec, says in (("org/lfm-gguf", "GGUF architecture 'lfm2zz'"), ("org/mlx-model", "MLX")):
+                refused = subprocess.run([str(native), "--fetch", spec, "--cache", str(work / "cache-support")],
+                                         cwd=repository, capture_output=True, text=True, env=environment)
+                cached = list((work / "cache-support").glob(f"models--{spec.replace('/', '--')}/snapshots/*/*"))
+                case(f"{spec} refused before the download: {says}",
+                     refused.returncode != 0 and "nothing was downloaded" in refused.stderr
+                     and says in refused.stderr and not cached, refused.stderr[-600:])
             synthetic_gguf.resources(work / "qwen-src" / "twin")
             base_files = {name: (work / "qwen-src" / "twin" / name).read_bytes()
                           for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja",

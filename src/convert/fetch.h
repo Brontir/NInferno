@@ -218,6 +218,20 @@ struct HubModel {
 // what failed (absent, not JSON); ModelScope is not read.
 [[nodiscard]] nlohmann::json fetch_config(const std::string& spec, const FetchOptions& options);
 
+// What Hugging Face says of a repository before any file is downloaded: its model card fields
+// (/api/models/<repo>/revision/<rev>): pipeline_tag, library_name, gated, the part of config.json
+// the hub reads (architectures, model_type, quantization_config, tokenizer_config), gguf (the
+// architecture and chat template of a GGUF model), safetensors (parameters by dtype) and
+// siblings. nullopt on another hub or under $HF_HUB_OFFLINE. Throws when the hub cannot answer.
+[[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
+                                                             const FetchOptions& options);
+
+// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
+// quant_config and the matrix sources it picks): "bitsandbytes", "hqq", compressed-tensors with
+// transforms or sparse packings; "" when it reads it (unquantized, FP8, AWQ, GPTQ,
+// compressed-tensors, ModelOpt, AutoRound, MXFP4).
+[[nodiscard]] std::string unread_quantization(const nlohmann::json& config);
+
 // Another small JSON file of the repository the same way (a native repository's
 // artifact-manifest.json).
 [[nodiscard]] nlohmann::json fetch_repo_json(const std::string& spec, const FetchOptions& options,

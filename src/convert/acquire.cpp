@@ -1,4 +1,5 @@
 #include "convert/acquire.h"
+
 #include "core/ascii.h"
 #include "convert/files.h"
 
@@ -7,6 +8,7 @@
 #include "convert/dense.h"
 #include "convert/pyjson.h"
 #include "convert/safetensors.h"
+#include "convert/support.h"
 #include "core/cache_file.h"
 #include "core/host_memory.h"
 #include "spec/manifest.h"
@@ -513,6 +515,22 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                      kept->string() + " or fetch the model again");
                 }
                 return out;
+            }
+        }
+        // Whether the engine runs the model at all, from what the hub shows before a download
+        // (convert/support.h). A hub not asked (offline, ModelScope) or not answering leaves it
+        // to the conversion.
+        std::optional<SupportFacts> facts;
+        try {
+            auto ask     = options.fetch;
+            ask.revision = revision;
+            facts        = hub_support_facts(repo, ask);
+        } catch (const std::exception&) {}
+        if (facts) {
+            const auto support = model_support(*facts);
+            if (support.verdict == Verdict::Unsupported || support.verdict == Verdict::NeedsToken) {
+                throw std::runtime_error(repo + " cannot be converted (nothing was downloaded): " +
+                                         support.reason);
             }
         }
         preflight_recipe = preflight(repo, revision, options);
