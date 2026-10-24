@@ -16,6 +16,20 @@ std::size_t rows_linear_bytes(const LinearParameters& p, std::int32_t first, std
     return ops::linear_workspace_capacity_bytes(w.qtype, w.n, w.k, p.policy, first, last);
 }
 
+// Whether the fused Q/K/gate/V projection (attn_input_proj) reads the packed parent: its formats.
+// A published GGUF's blocks (ggml K- and I-quants: an MoE model's MTP layer from unsloth's
+// UD-IQ3_S) run the generic linear and the split instead.
+bool fused(const MtpProjectionParameters& parameters) {
+    if (parameters.rows) { return false; }
+    switch (parameters.packed->weight.qtype) {
+    case QType::BF16:
+    case QType::NVFP4:
+    case QType::FP8_E4M3FN_ROW_BF16:
+    case QType::Q8_G32_FP16: return true;
+    default: return false;
+    }
+}
+
 } // namespace
 
 std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parameters,
@@ -28,7 +42,7 @@ std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parame
     }
     const auto& p = *parameters.packed;
     const auto& w = p.weight;
-    if (!parameters.rows) {
+    if (fused(parameters)) {
         return ops::attn_input_proj_workspace_capacity_bytes(w.qtype, w.n, w.k, p.policy, first,
                                                              last);
     }
@@ -80,7 +94,7 @@ void mtp_projection(const Tensor& hidden, const MtpProjectionParameters& paramet
         return;
     }
     const auto& p = *parameters.packed;
-    if (!parameters.rows) {
+    if (fused(parameters)) {
         ops::attn_input_proj(hidden, p.weight, query, gate, key, value, p.policy, workspace,
                              stream);
         return;
