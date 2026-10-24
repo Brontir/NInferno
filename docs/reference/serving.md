@@ -2189,7 +2189,7 @@ CHOICE:
 | `quant_by_worth` | `true` when the worth also weighed the quantizations (the curve was measured on the model's family); `false` when the quant rule's largest stood |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
 | `chosen` | `null` when nothing fits; else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
-| `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `chunk`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the listing order), `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
+| `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `chunk`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the smaller quantization label, else the listing order), `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
 
 ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
 measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
