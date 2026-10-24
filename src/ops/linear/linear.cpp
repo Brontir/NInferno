@@ -5,6 +5,7 @@
 
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/route_pins.h"
 #include "ops/generic/route_table.h"
 #include "ops/linear/linear_registry.h"
 #include "ops/linear/bf16/bf16_dispatch.h"
@@ -286,6 +287,16 @@ static std::size_t own_linear_workspace_capacity_bytes(QType qtype, std::int32_t
     // invariant route profile, runs on the generic path.
     if (invariant_routes_active() ||
         !detail::linear_shape_registered(qtype, output_rows, input_rows)) {
+        // --prefill-route w4a8 / i8 (ops/route_pins.h) promote a Q4/Q5/Q6 G64 weight recorded
+        // A16Only to int8 at prefill on every card (prefill_a8_policy), which dispatch_linear
+        // applies to a shape the tables do not own too: its planes, reserved under that policy.
+        if (const PrefillRoute pin = ops::route_pins().prefill;
+            !invariant_routes_active() && (pin == PrefillRoute::W4a8 || pin == PrefillRoute::I8)) {
+            return std::max(generic_bytes(), detail::generic::prefill_a8_workspace_bytes(
+                                                 {qtype, policy, output_rows, input_rows,
+                                                  detail::generic::Epilogue::Store},
+                                                 min_tokens, max_tokens));
+        }
         return generic_bytes();
     }
     if (const std::size_t a8 = detail::generic::prefill_a8_workspace_bytes(

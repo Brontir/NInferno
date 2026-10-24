@@ -5,6 +5,7 @@
 #include "core/weight_view.h"
 #include "ninferno/ops/gemma4_moe.h"
 #include "ninferno/ops/moe.h"
+#include "ops/route_pins.h"
 
 #include <cuda_runtime.h>
 
@@ -17,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ninferno::models::gemma4 {
@@ -305,11 +307,26 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                     return divisor.has_value() && std::isfinite(*divisor) && *divisor > 0;
                 });
             };
-            const bool nvfp4_experts =
-                c.moe() && ops::gemma4_moe_available() &&
-                contiguous_weight_region(prepare.view(ids.expert_gate_up.front()))
-                        .parent->geometry.format == QType::NVFP4 &&
-                calibrated(ids.expert_gate_up) && calibrated(ids.expert_down);
+            // --moe-path (ops/route_pins.h): auto takes Gemma4Moe where it runs the layer, generic
+            // never, fused refuses a layer it cannot run.
+            const auto fused_ready = [&]() -> std::pair<bool, std::string> {
+                if (!ops::gemma4_moe_available()) {
+                    return {false, "this build has no Gemma4Moe (sm_120a kernels)"};
+                }
+                if (contiguous_weight_region(prepare.view(ids.expert_gate_up.front()))
+                        .parent->geometry.format != QType::NVFP4) {
+                    return {false, "Gemma4Moe reads NVFP4 experts only"};
+                }
+                if (!calibrated(ids.expert_gate_up) || !calibrated(ids.expert_down)) {
+                    return {false, "the NVFP4 experts carry no activation divisors"};
+                }
+                return {true, std::string()};
+            };
+            bool nvfp4_experts = false;
+            if (c.moe()) {
+                const auto [ready, why_not] = fused_ready();
+                nvfp4_experts               = ops::moe_takes_fused(ready, why_not);
+            }
             if (c.moe() && !nvfp4_experts) {
                 // The generic MoE Op: the experts as stored (a GGUF's ggml blocks), the router
                 // reading rmsnorm(x) with router_scale * hidden^-0.5 folded into its BF16 weight.

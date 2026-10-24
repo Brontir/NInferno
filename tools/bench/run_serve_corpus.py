@@ -284,7 +284,63 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
     parser.add_argument("--kv-dtype", choices=tuple(KV_CACHE_NAMES), default="int8")
+    add_route_pin_arguments(parser)
     return parser.parse_args(argv)
+
+
+# The maintainer's route pins (docs/maintainer/environment.md, Route pins): an A/B of the automatic
+# kernel family choice against one family runs the same campaign with and without a pin.
+ROUTE_PINS = {
+    "prefill_route": ("--prefill-route", ("auto", "a16", "w4a8", "i8", "mmq", "w4a4")),
+    "decode_route": ("--decode-route", ("auto", "a16", "r8", "vec", "mmq")),
+    "moe_path": ("--moe-path", ("auto", "fused", "generic")),
+}
+
+
+def add_route_pin_arguments(parser: argparse.ArgumentParser) -> None:
+    for name, (flag, values) in ROUTE_PINS.items():
+        parser.add_argument(
+            flag,
+            dest=name,
+            choices=values,
+            default="auto",
+            help=f"ninferno-serve {flag} (maintainer route pin; default: auto)",
+        )
+
+
+def route_pins_of(args: argparse.Namespace) -> dict[str, str]:
+    return {name: getattr(args, name, "auto") for name in ROUTE_PINS}
+
+
+def route_pin_flags(pins: dict[str, str]) -> list[str]:
+    flags: list[str] = []
+    for name, (flag, _) in ROUTE_PINS.items():
+        if pins.get(name, "auto") != "auto":
+            flags.extend([flag, pins[name]])
+    return flags
+
+
+def require_route_pins(event: dict[str, Any], pins: dict[str, str]) -> None:
+    """The server must report the pins it was asked for (server_start engine.maintainer)."""
+    maintainer = event.get("engine", {}).get("maintainer", {})
+    actual = {name: maintainer.get(name, "auto") for name in ROUTE_PINS}
+    if actual != {name: pins.get(name, "auto") for name in ROUTE_PINS}:
+        raise CampaignError(f"server_start route pins {actual!r} do not match {pins!r}")
+
+
+def bind_route_pins(output_dir: Path, pins: dict[str, str]) -> None:
+    """One campaign directory, one set of pins: records of another pin set are never mixed in."""
+    path = output_dir / "route_pins.json"
+    if path.exists():
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        if recorded != pins:
+            raise CampaignError(
+                f"{output_dir} holds results measured with route pins {recorded!r}, not {pins!r}; "
+                "use another --output"
+            )
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(pins, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def filename_label(label: str) -> str:
@@ -726,6 +782,7 @@ def server_command(
     server_log: Path,
     port: int,
     device: int,
+    pins: dict[str, str] | None = None,
 ) -> list[str]:
     command = [
         str(serve),
@@ -751,6 +808,7 @@ def server_command(
         "--kv-dtype",
         spec.kv_dtype,
         "--no-prefix-reuse",
+        *route_pin_flags(pins or {}),
     ]
     if spec.speculative_backend != "none":
         command.extend(
@@ -797,6 +855,7 @@ def run_block(
     records: dict[tuple[str, str, str, str, int], dict[str, Any]],
     completed_before_block: int,
     total: int,
+    pins: dict[str, str] | None = None,
 ) -> None:
     first = block_specs[0]
     server_log = (
@@ -804,7 +863,7 @@ def run_block(
         / "server"
         / f"{filename_label(first.target)}_{first.kv_dtype}_{first.speculative_mode}_{first.sampling_mode}.jsonl"
     )
-    command = server_command(serve, first, server_log, port, device)
+    command = server_command(serve, first, server_log, port, device, pins)
     print(
         f"start {first.target}/{first.speculative_mode}: "
         f"{len(block_specs)} missing request(s)",
@@ -813,6 +872,7 @@ def run_block(
     with RunningServer(command, "127.0.0.1", port, server_log) as server:
         server_start = server.wait_until_ready()
         server_instance_id, prefill_signature = validate_server_start(server_start, first, device)
+        require_route_pins(server_start, pins or {})
 
         connection = http.client.HTTPConnection(
             "127.0.0.1", port, timeout=REQUEST_TIMEOUT_SECONDS
@@ -1248,6 +1308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     output_dir = args.output.expanduser().resolve()
     (output_dir / "server").mkdir(parents=True, exist_ok=True)
+    bind_route_pins(output_dir, route_pins_of(args))
     run_path = output_dir / "run.jsonl"
     records = load_existing_records(run_path, expected_specs)
     print(f"resume state: {len(records)}/{total} formal request(s) complete", flush=True)
@@ -1276,6 +1337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     records,
                     len(records),
                     total,
+                    route_pins_of(args),
                 )
 
     missing = set(expected_specs) - set(records)

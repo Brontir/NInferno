@@ -313,6 +313,10 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     for (const auto& line : load.moe_tune) {
         impl_->logger->info("routes | {}", format_pretty_text(line));
     }
+    // A maintainer's route pin is a test setting: never a quiet one.
+    for (const auto& line : load.route_pins) {
+        impl_->logger->warn("routes | pinned | {}", format_pretty_text(line));
+    }
     for (const auto& line : load.device_facts) {
         impl_->logger->warn("device | {}", format_pretty_text(line));
     }

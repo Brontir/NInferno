@@ -9,7 +9,8 @@ none of them changes what the engine computes.
 ## Options
 
 `ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
-`--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
+`--decode-steps`, `--decode-wait` and `--decode-route`, which it refuses: it scores and runs no
+decode rounds.
 `ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table`, `--route-dir` and
 `--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
 `--resume` compares) by content, never by a local path: a route table or a drafter registry as
@@ -40,8 +41,11 @@ other options (`options.pacing.*`, `options.maintainer.*`; an option naming a fi
 enters as `set`, the files themselves by content among the sources), and a maintainer option
 given is taint (`taint.maintainer`, by name). `--tune-cache` enters the fingerprint and is taint only
 while a tuner is on (it is read only then), and a `--drafter-registry` file in place of the compiled-in registry is taint too
-(`drafter_registry`). The request log's `server_start` record carries them (`engine.decode_pacing`,
-`engine.maintainer` with `drafter_registry`; `--decode-steps` as `auto` or its integer).
+(`drafter_registry`). The route pins enter as `options.maintainer.prefill_route`,
+`options.maintainer.decode_route` and `options.maintainer.moe_path` by their spelling, and each one
+not `auto` is taint by name. The request log's `server_start` record carries them
+(`engine.decode_pacing`, `engine.maintainer` with `drafter_registry` and the three pins;
+`--decode-steps` as `auto` or its integer).
 
 ### Decode pacing
 
@@ -68,6 +72,71 @@ heuristic.
 | `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
 | `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner an Engine runs at model load (the family tools, which load no model through an Engine, refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
+
+### Route pins
+
+Test options for A/B runs that check the automatic selection: each pins one kernel family, never a
+tuner, and times nothing. `auto` everywhere is the release's selection, byte for byte
+(`ninferno_selector_golden_test` runs with no pin; `ninferno_route_pin_selector_test` checks that
+clearing a pin restores every route).
+
+| Option | Values | Band | Families |
+|---|---|---|---|
+| `--prefill-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | calls of 17 tokens or more | `a16`: what the automatic selection takes for an A16Only weight (register MMA, tiled or staged tiles, the route tables' A16 entries); `w4a8`: the W4A8 heuristic's int8 tile (with its tuned prefill band); `i8`: the Q4/Q5/Q6 G64 int8 tiles; `mmq`: ggml's int8 matrix kernel in 512-token slices; `w4a4`: NVFP4 activations on NVFP4 weights |
+| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | calls of 1..16 tokens | `a16`: the automatic selection for an A16Only weight; `r8`: the int8 R8 kernel at 1 token (where the activation fits a CTA) and 2..4 tokens (the pre-quantized form); `vec`: ggml's dp4a vector kernel, 1..8 tokens (16 without tensor mma.sync); `mmq`: ggml's matrix kernel, 5..16 tokens |
+| `--moe-path` | `auto`, `fused`, `generic` | each MoE layer at load | `fused`: Qwen 3.5/3.6 SparseMoe (top-8 experts it reads) or Gemma 4's NVFP4 MoE (calibrated NVFP4 experts, sm_120a); `generic`: the generic MoE Op, which reads every expert format |
+
+A pinned family takes every call of its band that it can compute, and a call it cannot compute
+keeps the automatic route. A pin never changes the precision the user chose: the int8 families
+need a policy that allows int8 activations (the artifact's, or `--activations int8`), `w4a4` one
+that allows four bits. The one exception is the automatic promotion of the official Q4/Q5/Q6 G64
+weights recorded A16Only to int8 at prefill on the cards where it pays: `--prefill-route w4a8`
+or `i8` promotes them on every card (that is the decision under test), `a16` on none.
+
+Where the pins reach:
+
+- the generic projection path (`ops/generic`): every format and shape a registered shape table does
+  not own, all ggml block formats among them; a pin stands before the route tables' and the dense
+  tuner's choices;
+- the registered shapes' hand-off gates: R8 decode (`--decode-route r8` keeps the rule's 1-token
+  hand-off; any other decode pin keeps the call on the shape's own BF16 kernel), the int8 prefill
+  tiers of Q8 G32 and Q4/Q5/Q6 G64, and the NVFP4 W4A8 prefill (`a16` keeps the plan's A16 route);
+- the NVFP4 and FP8 shape tables of `linear`: `a16` keeps BF16 activations at the pinned widths,
+  and `--prefill-route w4a4` takes A4 from 17 tokens;
+- the MoE path choice of the Qwen 3.5/3.6 and Gemma 4 families.
+
+ninfer-all's dedicated int8 kernels of the Qwen3.8-27B Q4/Q5 G64 shapes (the `linear_swiglu`
+gate_up, the `linear_add` down and output projections) give way to a prefill pin of `a16`, `w4a8`
+or `i8`.
+
+Where they do not: the fused NVFP4 plans of the registered Qwen shapes (attention and GDN input
+projections, `linear_add`, `linear_swiglu`) keep their own A4 or A16 choice; the routed experts'
+grouped GEMMs keep their schedules (`--moe-tune` and the route tables' MoE bands); a GPU without
+tensor mma.sync (Volta) keeps its tiled route for calls of 17 tokens or more of a format with a
+tiled codec; the invariant routes of `--activations exact` take no pin at all; TMA and other
+schedule-level choices inside a shape table stay the table's.
+
+Refusals, each naming what can run instead:
+
+1. Before the device: a prefill or decode pin with `--activations exact`; `--prefill-route w4a4`
+   with `--activations int8`.
+2. Once the device is bound, before any weight is read: a family this build and GPU hold no kernel
+   of (`w4a4` outside the sm_120a builds, `mmq` below sm_75, a family whose device features are
+   missing), naming the families that run here.
+3. At load: `--moe-path fused` on a MoE layer its fused kernels cannot run (top-k, format, the
+   activation bits), naming the reason.
+4. At the end of startup (after the kernel warm-up and the served Program's decode graphs): a pin
+   whose band had calls none of which it could take, naming the families those calls could take;
+   `--moe-path` on a model with no MoE layer that chooses. A band no startup call reached (no
+   warm-up because every size was given explicitly, and no decode graphs) is reported as not
+   checked. The check reads what the selection took: a launch's own fallbacks (ggml's kernels with
+   a workspace short of them, which warn once; an unaligned activation) still run another route.
+   With several Engines alive in the process, the others' calls during this startup count too.
+
+The startup log prints one `routes | pinned |` line per pin with the families its band met. The
+serve bench tools take the three options (`tools/bench/run_serve_corpus.py`,
+`run_serve_concurrency.py`), pass them to `ninferno-serve` and check them in its `server_start`
+record.
 
 ### Speculation data
 

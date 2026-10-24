@@ -59,6 +59,12 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
         maintainer.debug_poison = parse_debug_poison(value());
     } else if (arg == "--debug-poison-skip") {
         maintainer.debug_poison_skip = comma_items(value());
+    } else if (arg == "--prefill-route") {
+        maintainer.prefill_route = parse_prefill_route(value());
+    } else if (arg == "--decode-route") {
+        maintainer.decode_route = parse_decode_route(value());
+    } else if (arg == "--moe-path") {
+        maintainer.moe_path = parse_moe_path(value());
     } else {
         return false;
     }
@@ -72,19 +78,29 @@ inline constexpr const char* kEngineFlagsUsage =
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
     "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
     "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--prefill-route auto|a16|w4a8|i8|mmq|w4a4] [--decode-route auto|a16|r8|vec|mmq]\n"
+    "       [--moe-path auto|fused|generic]\n";
 
-// The same without the decode pacing, for a program that only scores (ninferno-perplexity).
+// The same without the decode pacing and the decode route pin, for a program that only scores
+// (ninferno-perplexity).
 inline constexpr const char* kScoringEngineFlagsUsage =
     "       [--cuda-sync spin|blocking|yield|auto]\n"
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
     "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
     "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--prefill-route auto|a16|w4a8|i8|mmq|w4a4] [--moe-path auto|fused|generic]\n";
 
 // The decode pacing flags, which a scoring program refuses.
 [[nodiscard]] inline bool is_decode_pacing_flag(std::string_view arg) noexcept {
     return arg == "--decode-steps" || arg == "--decode-wait";
+}
+
+// Every flag that only changes decode rounds (the pacing and --decode-route), which a scoring
+// program refuses.
+[[nodiscard]] inline bool is_decode_only_flag(std::string_view arg) noexcept {
+    return is_decode_pacing_flag(arg) || arg == "--decode-route";
 }
 
 } // namespace ninferno::product

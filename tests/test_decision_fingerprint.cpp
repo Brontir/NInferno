@@ -237,6 +237,12 @@ int options_reach_their_section() {
         {"maintainer.debug_poison", [](EngineOptions& o) { o.maintainer.debug_poison = 0xFF; }},
         {"maintainer.debug_poison_skip",
          [](EngineOptions& o) { o.maintainer.debug_poison_skip = {"kv"}; }},
+        {"maintainer.prefill_route",
+         [](EngineOptions& o) { o.maintainer.prefill_route = ninferno::PrefillRoute::Mmq; }},
+        {"maintainer.decode_route",
+         [](EngineOptions& o) { o.maintainer.decode_route = ninferno::DecodeRoute::Vec; }},
+        {"maintainer.moe_path",
+         [](EngineOptions& o) { o.maintainer.moe_path = ninferno::MoePath::Generic; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
     // The artifact, its prefill signature and a separate drafter enter by source identity.
@@ -489,6 +495,20 @@ int maintainer_options() {
                       "the maintainer options given are taint by name: " +
                           (taints(lab).contains("maintainer") ? taints(lab).at("maintainer")
                                                               : std::string("none")));
+    // The route pins are test options: taint by name whenever one is not auto.
+    ninferno::EngineOptions pinned;
+    pinned.maintainer.prefill_route = ninferno::PrefillRoute::W4a8;
+    pinned.maintainer.decode_route  = ninferno::DecodeRoute::R8;
+    pinned.maintainer.moe_path      = ninferno::MoePath::Fused;
+    failures += check(taints(pinned).contains("maintainer") &&
+                          taints(pinned).at("maintainer") == "prefill_route,decode_route,moe_path",
+                      "the route pins are not taint by name");
+    for (const auto& [key, value] :
+         {std::pair{"maintainer.prefill_route", "w4a8"}, std::pair{"maintainer.decode_route", "r8"},
+          std::pair{"maintainer.moe_path", "fused"}}) {
+        failures += check(rt::options_of(pinned, "id", "sig", "").at(key) == value,
+                          std::string("the options section spells ") + key + " as its option");
+    }
     // --tune-cache is read only while a tuner is on: alone it is not taint.
     ninferno::EngineOptions cache_only;
     cache_only.maintainer.tune_cache = "cache";

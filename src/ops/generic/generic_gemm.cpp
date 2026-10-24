@@ -15,6 +15,7 @@
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/route_table.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
+#include "ops/route_pins.h"
 
 #include <cuda_bf16.h>
 
@@ -1705,14 +1706,43 @@ void refuse_frag(const Weight& w, const char* op) {
         "reads; a projection needs its published layout (ninferno-convert --relayout published)");
 }
 
+namespace {
+// A registered shape's own kernels of these formats compute BF16 activations only (the int8
+// tiers and R8 are the generic path's): a call such a gate keeps on its table is A16. The NVFP4
+// and FP8 shapes choose their quantized kernels themselves (their dispatch notes them).
+bool owned_tables_a16(QType qtype) {
+    return qtype != QType::NVFP4 && qtype != QType::FP8_E4M3FN_ROW_BF16;
+}
+} // namespace
+
 bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
-    return tokens <= kR8DecodeTokens && supports(weight) &&
-           r8_call(weight, policy, tokens);
+    const bool r8 =
+        tokens <= kR8DecodeTokens && supports(weight) && r8_call(weight, policy, tokens);
+    // --decode-route: R8 keeps the rule (a registered shape hands R8 only the decode calls its
+    // workspace query covers; the generic path notes the call); any other pin keeps the call on
+    // the shape's own kernel, which reads BF16 activations.
+    const DecodeRoute pin = route_pins().decode;
+    if (pin == DecodeRoute::Auto || pin == DecodeRoute::R8 || tokens < 1 ||
+        tokens > kDecodePinMaxTokens) {
+        return r8;
+    }
+    if (owned_tables_a16(weight.qtype)) {
+        note_decode_pin(pin == DecodeRoute::A16,
+                        family_bit(DecodeRoute::A16) | (r8 ? family_bit(DecodeRoute::R8) : 0U));
+    }
+    return false;
 }
 
 bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
-           weight.qtype == QType::NVFP4 && supports(weight) && allows_w4a8(weight, policy);
+    const bool w4a8 = tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
+                      weight.qtype == QType::NVFP4 && supports(weight) &&
+                      allows_w4a8(weight, policy);
+    // --prefill-route a16: the shape's own plan keeps the call on its A16 route.
+    if (w4a8 && route_pins().prefill == PrefillRoute::A16) {
+        note_prefill_pin(true, family_bit(PrefillRoute::A16) | family_bit(PrefillRoute::W4a8));
+        return false;
+    }
+    return w4a8;
 }
 
 bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy) {
@@ -1744,11 +1774,26 @@ bool qx_format(QType qtype) {
     return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
            qtype == QType::Q6_G64_FP16;
 }
+
+// Whether the Q4/Q5/Q6 G64 weights take the int8 tiers at prefill: where int8 activations pay
+// (qx_prefill_a8_pays, `pays`), or as a route pin asks (--prefill-route w4a8 or i8: on every card;
+// a16: on none).
+bool qx_prefill_a8_takes(bool pays) {
+    switch (route_pins().prefill) {
+    case PrefillRoute::W4a8:
+    case PrefillRoute::I8:
+        return true;
+    case PrefillRoute::A16:
+        return false;
+    default:
+        return pays;
+    }
+}
 } // namespace
 
 LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy) {
-    if (policy == LinearPolicy::A16Only && qx_format(qtype) && qx_prefill_a8_pays() &&
-        !invariant_routes_active()) {
+    if (policy == LinearPolicy::A16Only && qx_format(qtype) &&
+        qx_prefill_a8_takes(qx_prefill_a8_pays()) && !invariant_routes_active()) {
         return LinearPolicy::AllowA8;
     }
     return policy;
@@ -1774,10 +1819,11 @@ std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_
 
 bool prefill_a8_format(QType qtype) {
     static PerDevice<bool> pays;
-    const bool qx = pays.get([](int) { return qx_prefill_a8_pays(); });
+    const bool qx = qx_prefill_a8_takes(pays.get([](int) { return qx_prefill_a8_pays(); }));
     switch (qtype) {
     case QType::Q8_G32_FP16:
-        return true;
+        // --prefill-route a16 keeps Q8 on its shape tables' A16 kernels too.
+        return route_pins().prefill != PrefillRoute::A16;
     case QType::Q4_G64_FP16:
     case QType::Q5_G64_FP16:
     case QType::Q6_G64_FP16:
@@ -1788,8 +1834,22 @@ bool prefill_a8_format(QType qtype) {
 }
 
 bool q8_prefill_a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
-           prefill_a8_format(weight.qtype) && allows_a8(policy) && supports(weight);
+    const bool band = tokens >= kQ8PrefillA8Tokens && prefill_routes_active();
+    bool tier = band && prefill_a8_format(weight.qtype) && allows_a8(policy) && supports(weight);
+    // --prefill-route w4a8 / i8: the int8 tier of that family only, where it reads the weight;
+    // a16 has no tier (prefill_a8_format). A call kept on its shape table runs A16 there.
+    const PrefillRoute pin = route_pins().prefill;
+    if (pin == PrefillRoute::W4a8) tier = tier && allows_w4a8(weight, policy);
+    if (pin == PrefillRoute::I8) tier = tier && allows_i8(weight, policy);
+    if (band && !tier && pin != PrefillRoute::Auto && owned_tables_a16(weight.qtype)) {
+        const bool a8 = allows_a8(policy) && supports(weight);
+        note_prefill_pin(
+            pin == PrefillRoute::A16,
+            family_bit(PrefillRoute::A16) |
+                (a8 && allows_w4a8(weight, policy) ? family_bit(PrefillRoute::W4a8) : 0U) |
+                (a8 && allows_i8(weight, policy) ? family_bit(PrefillRoute::I8) : 0U));
+    }
+    return tier;
 }
 
 bool q8_prefill_a8_fused(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
@@ -2605,6 +2665,12 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     return std::nullopt;
 }
 
+namespace {
+Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill);
+std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                                  bool prefill);
+} // namespace
+
 Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    bool prefill) {
     // The invariant profile: one summation order per problem at every width, BF16 activations
@@ -2642,6 +2708,16 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         return Route{Family::Scalar, 0};
     }
     if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
+    // A maintainer's route pin (--prefill-route, --decode-route; ops/route_pins.h): the pinned
+    // family where it can compute the call, else the automatic route below. No pin: nothing here.
+    if (const auto pinned = pinned_route(problem, weight, tokens, prefill)) return *pinned;
+    return auto_route(problem, weight, tokens, prefill);
+}
+
+namespace {
+
+// The automatic selection after the profiles, the probe and Volta's tiled route (select_route).
+Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill) {
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
     // path's, whose speed bands split K by width (heuristic_rmma: 4, 8, 2 or 1 K-warps from 17
@@ -2710,6 +2786,169 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         return *band;
     }
     return heuristic;
+}
+
+// The route pinned family `f` gives a call of 17 tokens or more, nullopt where it cannot compute
+// it (the family's codec, K, alignment, policy or device).
+std::optional<Route> prefill_family_route(PrefillRoute f, const Problem& p, const Weight& w,
+                                          std::int32_t tokens, bool prefill) {
+    switch (f) {
+    case PrefillRoute::Auto:
+        return std::nullopt;
+    case PrefillRoute::A16: {
+        // The automatic selection with BF16 activations: what an A16Only weight takes.
+        Problem a16 = p;
+        a16.policy  = LinearPolicy::A16Only;
+        return auto_route(a16, w, tokens, prefill);
+    }
+    case PrefillRoute::W4a8: {
+        if (!allows_w4a8(w, p.policy)) return std::nullopt;
+        const auto r = w4a8_route(p, w, tokens);
+        if (!r) return std::nullopt;
+        // Its tuned prefill band, as the automatic W4A8 call takes it (the same bytes).
+        if (const auto band = tuned_prefill_route(p, tokens, *r);
+            band && band->family == Family::W4a8Mma && route_admits(*band, w, p.policy)) {
+            return *band;
+        }
+        return r;
+    }
+    case PrefillRoute::I8:
+        return i8_route(p, w, tokens);
+    case PrefillRoute::Mmq:
+        if (ggml_mmq_format(p.qtype) && (p.n % ggml_mmq::kRowMultiple) == 0 &&
+            mmq_admits(w, p.policy)) {
+            return Route{Family::GgmlMmq, 0};
+        }
+        return std::nullopt;
+    case PrefillRoute::W4a4: {
+        if (!allows_w4a4(w, p.policy)) return std::nullopt;
+        const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
+                                           heuristic_w4a4(p.n, tokens, prefill && tokens >= 17))};
+        if (route_admits(r, w, p.policy)) return r;
+        return std::nullopt;
+    }
+    }
+    return std::nullopt;
+}
+
+// The route pinned family `f` gives a call of 1..16 tokens, nullopt where it cannot compute it.
+std::optional<Route> decode_family_route(DecodeRoute f, const Problem& p, const Weight& w,
+                                         std::int32_t tokens, bool prefill) {
+    switch (f) {
+    case DecodeRoute::Auto:
+        return std::nullopt;
+    case DecodeRoute::A16: {
+        Problem a16 = p;
+        a16.policy  = LinearPolicy::A16Only;
+        return auto_route(a16, w, tokens, prefill);
+    }
+    case DecodeRoute::R8: {
+        // Decode where the activation fits a CTA; the verify widths on the pre-quantized form of
+        // every format that has it (the dense tuner's R8 candidates, r8_verify_tunable).
+        const bool runs = tokens <= kR8DecodeTokens ? r8_call(w, p.policy, tokens)
+                                                    : r8_verify_tunable(w, p.policy, tokens);
+        if (!runs) return std::nullopt;
+        const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(p, tokens))};
+        if (route_admits(r, w, p.policy)) return r;
+        return std::nullopt;
+    }
+    case DecodeRoute::Vec: {
+        const Route r{Family::GgmlVec, 0};
+        if (vec_call(w, p.policy, tokens) && route_admits(r, w, p.policy)) return r;
+        return std::nullopt;
+    }
+    case DecodeRoute::Mmq: {
+        const Route r{Family::GgmlMmq, 0};
+        if (mmq_call(w, p.policy, p.n, tokens) && route_admits(r, w, p.policy)) return r;
+        return std::nullopt;
+    }
+    }
+    return std::nullopt;
+}
+
+constexpr PrefillRoute kPinnedPrefillFamilies[] = {
+    PrefillRoute::A16, PrefillRoute::W4a8, PrefillRoute::I8, PrefillRoute::Mmq, PrefillRoute::W4a4};
+constexpr DecodeRoute kPinnedDecodeFamilies[] = {DecodeRoute::A16, DecodeRoute::R8,
+                                                 DecodeRoute::Vec, DecodeRoute::Mmq};
+
+std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                                  bool prefill) {
+    const RoutePins pins = route_pins();
+    if (tokens >= kPrefillPinMinTokens && pins.prefill != PrefillRoute::Auto) {
+        std::optional<Route> mine;
+        std::uint32_t could = 0;
+        for (const PrefillRoute f : kPinnedPrefillFamilies) {
+            const auto r = prefill_family_route(f, problem, weight, tokens, prefill);
+            if (!r) continue;
+            could |= family_bit(f);
+            if (f == pins.prefill) mine = r;
+        }
+        note_prefill_pin(mine.has_value(), could);
+        return mine;
+    }
+    if (tokens >= 1 && tokens <= kDecodePinMaxTokens && pins.decode != DecodeRoute::Auto) {
+        std::optional<Route> mine;
+        std::uint32_t could = 0;
+        for (const DecodeRoute f : kPinnedDecodeFamilies) {
+            const auto r = decode_family_route(f, problem, weight, tokens, prefill);
+            if (!r) continue;
+            could |= family_bit(f);
+            if (f == pins.decode) mine = r;
+        }
+        note_decode_pin(mine.has_value(), could);
+        return mine;
+    }
+    return std::nullopt;
+}
+
+bool family_on_device(Family family) {
+    return has_features(current_features(), route_requires(Route{family, 0}));
+}
+
+} // namespace
+
+std::optional<Route> pinned_family_route(PrefillRoute family, const Problem& problem,
+                                         const Weight& weight, std::int32_t tokens, bool prefill) {
+    if (tokens < kPrefillPinMinTokens) return std::nullopt;
+    return prefill_family_route(family, problem, weight, tokens, prefill);
+}
+
+std::optional<Route> pinned_family_route(DecodeRoute family, const Problem& problem,
+                                         const Weight& weight, std::int32_t tokens, bool prefill) {
+    if (tokens < 1 || tokens > kDecodePinMaxTokens) return std::nullopt;
+    return decode_family_route(family, problem, weight, tokens, prefill);
+}
+
+bool pin_family_on_device(PrefillRoute family) {
+    switch (family) {
+    case PrefillRoute::Auto:
+    case PrefillRoute::A16:
+        return true;
+    case PrefillRoute::W4a8:
+        return w4a8_schedule_count() > 0 && family_on_device(Family::W4a8Mma);
+    case PrefillRoute::I8:
+        return i8_schedule_count() > 0 && family_on_device(Family::I8Mma);
+    case PrefillRoute::Mmq:
+        return ggml_mmq::device_supported() && family_on_device(Family::GgmlMmq);
+    case PrefillRoute::W4a4:
+        return w4a4_schedule_count() > 0 && family_on_device(Family::W4a4Mma);
+    }
+    return false;
+}
+
+bool pin_family_on_device(DecodeRoute family) {
+    switch (family) {
+    case DecodeRoute::Auto:
+    case DecodeRoute::A16:
+        return true;
+    case DecodeRoute::R8:
+        return r8_schedule_count() > 0 && family_on_device(Family::R8Mma);
+    case DecodeRoute::Vec:
+        return family_on_device(Family::GgmlVec);
+    case DecodeRoute::Mmq:
+        return ggml_mmq::device_supported() && family_on_device(Family::GgmlMmq);
+    }
+    return false;
 }
 
 bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {

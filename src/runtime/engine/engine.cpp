@@ -12,6 +12,7 @@
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/route_options.h"
+#include "ops/route_pins.h"
 #include "ops/generic/generic_gemm.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
@@ -62,15 +63,43 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
         (void)ops::load_route_table_option(m.route_table);
     }
     if (!first) { return; }
+    ops::set_route_pins({m.prefill_route, m.decode_route, m.moe_path});
     ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
     set_debug_poison(m.debug_poison, m.debug_poison_skip);
 }
 
+// A route pin whose family this build and GPU hold no kernel of is refused before any weight is
+// read, naming the families that run here (ops/route_pins.h).
+template <class Family, std::size_t N>
+void refuse_pin_off_device(Family pin, const Family (&all)[N], const char* option,
+                           const char* (*name)(Family) noexcept) {
+    if (ops::detail::generic::pin_family_on_device(pin)) { return; }
+    std::string here;
+    for (const Family f : all) {
+        if (!ops::detail::generic::pin_family_on_device(f)) { continue; }
+        here += (here.empty() ? "" : ", ") + std::string(name(f));
+    }
+    throw std::invalid_argument(std::string(option) + " " + name(pin) + ": this build and GPU (" +
+                                device_class().id() + ") have no " + name(pin) +
+                                " kernels; the families that run here: " + here);
+}
+
+void refuse_pins_off_device(const MaintainerOptions& m) {
+    static constexpr PrefillRoute kPrefill[] = {PrefillRoute::A16, PrefillRoute::W4a8,
+                                                PrefillRoute::I8, PrefillRoute::Mmq,
+                                                PrefillRoute::W4a4};
+    static constexpr DecodeRoute kDecode[]   = {DecodeRoute::A16, DecodeRoute::R8, DecodeRoute::Vec,
+                                                DecodeRoute::Mmq};
+    refuse_pin_off_device(m.prefill_route, kPrefill, "--prefill-route", &prefill_route_name);
+    refuse_pin_off_device(m.decode_route, kDecode, "--decode-route", &decode_route_name);
+}
+
 DeviceContext initialize_device(const EngineOptions& options, ProcessOptionsLease& lease) {
     StartupPhaseScope phase(options.startup_observer, StartupPhase::CudaInitialize);
     DeviceContext device(options.device, options.pacing.cuda_sync);
+    refuse_pins_off_device(options.maintainer);
     apply_maintainer_options(options.maintainer, lease.first());
     lease.applied();
     phase.complete();
