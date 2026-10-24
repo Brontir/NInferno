@@ -319,6 +319,12 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
                 '/' + std::to_string(reference->stride) + ", this run at " +
                 std::to_string(options.context) + '/' + std::to_string(options.stride));
         }
+        const std::int32_t start = document_start ? static_cast<std::int32_t>(*document_start) : -1;
+        if (reference->window_start != start) {
+            throw std::runtime_error("KLD reference started its windows from token " +
+                                     std::to_string(reference->window_start) + ", this run from " +
+                                     std::to_string(start) + " (-1: none; another tokenizer)");
+        }
         const std::uint64_t vocabulary = load.metadata.vocab_size;
         if (vocabulary > 0) {
             for (const auto& r : reference->streams) {
@@ -348,6 +354,7 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
         recorded.top_k             = options.kld_top_k;
         recorded.context           = options.context;
         recorded.stride            = options.stride;
+        recorded.window_start = document_start ? static_cast<std::int32_t>(*document_start) : -1;
         recorded.model             = load.model_name;
         recorded.prefill_signature = load.prefill_signature;
     }
