@@ -2515,8 +2515,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
-  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.fitctx !== undefined) {
