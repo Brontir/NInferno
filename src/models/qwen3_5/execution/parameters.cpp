@@ -267,10 +267,12 @@ public:
                     const std::array<ops::WeightInput, 3> qkv{
                         model_.input(a.query), model_.input(a.key), model_.input(a.value)};
                     result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
-                    // The fused Q/K/V kernel reads one RowSplit Q8 parent; a published drafter
-                    // whose Q/K/V are one parent in another format (the dflash GGUF's Q4_0
-                    // blocks) runs through the bank (draft.cpp, fused_q8).
-                    if (ops::consecutive_rows_of_one_parent(qkv)) {
+                    // The fused Q/K/V kernel reads one RowSplit Q8 parent of its compiled
+                    // geometry; a published drafter whose Q/K/V are one parent in another format
+                    // (the dflash GGUF's Q4_0 blocks), or another width (Qwen3.5-9B's 4096), runs
+                    // through the bank (draft.cpp, fused_q8).
+                    if (ops::consecutive_rows_of_one_parent(qkv) &&
+                        ops::fused_attn_input_proj_geometry(qkv[0], qkv[1], qkv[2])) {
                         const auto joined = ops::prepare_linear_weight(
                             std::span<const ops::WeightInput>(qkv));
                         if (fused_q8_weight(joined.weight)) {
