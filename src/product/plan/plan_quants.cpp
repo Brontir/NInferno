@@ -96,6 +96,16 @@ DryRunInputs at_context(const DryRunInputs& inputs, std::uint32_t context) {
     return out;
 }
 
+// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
+// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
+// kept), the way a row's launch_context starts.
+DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
+    DryRunInputs out                  = inputs;
+    out.options.max_context           = context;
+    out.options.max_context_automatic = true;
+    return out;
+}
+
 bool own_plan(const runtime::DryRunPlan& plan) {
     const runtime::DryRunRung* chosen = plan.chosen();
     return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
@@ -228,7 +238,10 @@ std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& i
     const runtime::DryRunPlan& plan = served.plan;
     if (!plan.planned) { return 0; }
     if (own_plan(plan)) { return plan.chosen()->rung.max_context; }
-    if (!inputs.options.max_context_automatic) { return 0; }
+    // One stream under an automatic context starts as planned here (no launch context caps it):
+    // a probe at a pinned context takes an explicit capacity, which keeps no class reserve, so it
+    // would call own a context the start serves on a survival rung without the reserve.
+    if (!inputs.options.max_context_automatic || inputs.options.max_concurrency <= 1) { return 0; }
     // An automatic context: the longest pinned context that keeps every stream's own (the plan
     // is monotone in the context: a shorter one fits whenever a longer one does).
     const std::vector<std::uint32_t> probes = probe_contexts(facts.model.native_context);
@@ -289,6 +302,9 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
                        !own_plan(row.planned.plan)) {
                 row.launch_context = row.fit.own_context;
+                // The plan the launch serves under that cap (the one the row shows: the ladder,
+                // the speculation, fits_now), not the uncapped pool the streams would share.
+                row.planned = plan_model(facts, under_context_cap(inputs, row.launch_context));
             }
         } else {
             row.fit.state = why.code == "converted_size_unknown"

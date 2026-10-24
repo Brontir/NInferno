@@ -52,6 +52,8 @@ DECISION_FILES = (
     "src/models/qwen3_5/program/planning/startup.cpp",       # the speculative plan rung
     "src/models/qwen3_5/program/planning/request_plan.cpp",  # the per-request speculation plan
     "src/models/qwen3_5/program/planning/speculation_load.h",
+    "src/models/qwen3_5/program/planning/sequence_bytes.cpp",  # the speculative rung's bytes
+    "src/runtime/engine/plan_dry_run.cpp",                     # the plan the start serves from
     "src/models/qwen3_5/program/prefill.cpp",                # the request's depth at admission
     "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
     "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
