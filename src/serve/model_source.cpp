@@ -131,6 +131,10 @@ ModelSource resolve_model_source(const ServeOptions& options,
     }
     acquire.fetch.log      = log;
     acquire.convert.recipe = options.recipe;
+    // --chat-template: the conversion's template too (a base model ships none).
+    if (!options.chat_template_path.empty()) {
+        acquire.convert.resources.emplace_back("chat_template.jinja", options.chat_template_path);
+    }
     acquire.convert.log    = log;
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();

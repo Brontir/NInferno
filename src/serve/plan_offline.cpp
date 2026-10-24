@@ -188,6 +188,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             facts = convert::hub_support_facts(spec, ask);
         } catch (const std::exception&) {}
         if (facts) {
+            if (!options.chat_template_path.empty()) { facts->chat_template = true; } // --chat-template
             const auto support = convert::model_support(*facts);
             if (support.verdict == convert::Verdict::Unsupported ||
                 support.verdict == convert::Verdict::NeedsToken) {

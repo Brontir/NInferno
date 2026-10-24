@@ -211,8 +211,10 @@ SupportFacts search_support_facts(const Json& item) {
     }
     if (const auto c = item.find("config"); c != item.end() && c->is_object()) {
         out.config = *c;
-        if (!out.gguf) {
-            out.chat_template = has_chat_template(c->value("tokenizer_config", Json::object()));
+        // The hub's summary of tokenizer_config.json shows a template it holds; one it does not
+        // show proves nothing (hub_support_facts reads the file itself).
+        if (!out.gguf && has_chat_template(c->value("tokenizer_config", Json::object()))) {
+            out.chat_template = true;
         }
     }
     if (const auto s = item.find("safetensors"); s != item.end() && s->is_object()) {
@@ -236,12 +238,14 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
     const auto card = fetch_model_card(spec, options);
     if (!card) { return std::nullopt; }
     SupportFacts out = search_support_facts(*card);
-    // The model the fetch takes: top-level safetensors weights, else a GGUF model.
-    bool has_config = false, has_gguf = false, has_safetensors = false;
+    // The model the fetch takes: top-level safetensors weights, else (or with --quant naming one)
+    // a GGUF model.
+    bool has_config = false, has_gguf = false, has_safetensors = false, has_tokenizer = false;
     for (const auto& sibling : card->value("siblings", Json::array())) {
         const auto name  = sibling.value("rfilename", std::string());
         const auto lower = ascii_lower(name);
         has_config       = has_config || name == "config.json";
+        has_tokenizer    = has_tokenizer || name == "tokenizer_config.json";
         has_safetensors  = has_safetensors ||
                           (lower.ends_with(".safetensors") && name.find('/') == std::string::npos);
         has_gguf = has_gguf || (lower.ends_with(".gguf") &&
@@ -250,7 +254,7 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
     const auto gated = card->find("gated");
     const bool is_gated =
         gated != card->end() && !(gated->is_boolean() && !gated->get<bool>()) && !gated->is_null();
-    if (has_gguf && !has_safetensors) {
+    if (has_gguf && (!has_safetensors || !options.quant.empty())) {
         // The GGUF model the fetch would take: its own header, not the hub's reading of one file.
         out.gguf   = true;
         out.config = Json();
@@ -291,6 +295,17 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
             out.full_config = true;
         } catch (const std::exception&) {
             if (is_gated) { out.needs_token = true; }
+        }
+        // The template: the card's summary showed none, so the file decides; a checkpoint
+        // without one has none.
+        if (!out.chat_template.value_or(false) && !out.needs_token) {
+            out.chat_template = false;
+            if (has_tokenizer) {
+                try {
+                    out.chat_template =
+                        has_chat_template(fetch_repo_json(spec, options, "tokenizer_config.json"));
+                } catch (const std::exception&) { out.chat_template.reset(); }
+            }
         }
     }
     return out;

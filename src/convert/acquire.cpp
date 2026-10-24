@@ -527,6 +527,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             facts        = hub_support_facts(repo, ask);
         } catch (const std::exception&) {}
         if (facts) {
+            // A template given (--resource chat_template.jinja=FILE) is the template.
+            if (std::any_of(options.convert.resources.begin(), options.convert.resources.end(),
+                            [](const auto& r) { return r.first == "chat_template.jinja"; })) {
+                facts->chat_template = true;
+            }
             const auto support = model_support(*facts);
             if (support.verdict == Verdict::Unsupported || support.verdict == Verdict::NeedsToken) {
                 throw std::runtime_error(repo + " cannot be converted (nothing was downloaded): " +
