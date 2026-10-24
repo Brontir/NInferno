@@ -54,9 +54,13 @@ def ask(port, msgs, max_tokens):
             "chat_template_kwargs": {"enable_thinking": False}}
     started = time.perf_counter()
     conn.request("POST", "/v1/chat/completions", json.dumps(body), {"Content-Type": "application/json"})
-    reply = json.loads(conn.getresponse().read())
+    response = conn.getresponse()
+    reply = json.loads(response.read())
     seconds = time.perf_counter() - started
-    usage = reply.get("usage", {})
+    # A refused request (a prompt past the served context, ...) is an error, not an empty answer.
+    if response.status != 200 or "usage" not in reply:
+        raise RuntimeError(f"request refused ({response.status}): {json.dumps(reply)[:300]}")
+    usage = reply["usage"]
     return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), seconds
 
 
