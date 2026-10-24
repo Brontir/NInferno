@@ -691,6 +691,12 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
+            } else if (axis == Axis::Quant && !choice.quant_by_worth &&
+                       quants[s.candidate.quant].bits_per_weight == quants[c.quant].bits_per_weight &&
+                       quants[s.candidate.quant].weight_bytes == quants[c.quant].weight_bytes) {
+                // The rule's tie: the same bits and bytes, the smaller label.
+                alt.why_code = "tie_order";
+                alt.why_not  = "the same size: the smaller label, as the quant rule";
             } else if (axis == Axis::Quant && (!choice.quant_by_worth || above(s) != above(chosen))) {
                 // The rule decided it: no worth, or the other side of the floor (the rule's tiers).
                 alt.why_code = "quant_rule";
