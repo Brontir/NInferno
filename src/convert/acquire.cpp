@@ -311,6 +311,19 @@ std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std
                        : ascii_lower(stem).find(ascii_lower(quant)) != std::string::npos);
         if (matches) { found.push_back(path); }
     }
+    // A label that is part of another ("Q4_K_M" of "UD-Q4_K_M") picks the conversion whose own
+    // label it is, as the fetch picks the GGUF model (select_files: an exact label wins).
+    if (found.size() > 1 && width == 0 && !quant.empty()) {
+        std::vector<fs::path> exact;
+        for (const auto& path : found) {
+            const auto base = path.stem().string();
+            const auto stem = base.substr(0, base.rfind('.'));
+            if (ascii_lower(gguf_quant_label(stem + ".gguf")) == ascii_lower(quant)) {
+                exact.push_back(path);
+            }
+        }
+        if (exact.size() == 1) { found = exact; }
+    }
     if (found.size() != 1) { return std::nullopt; }
     return found.front();
 }
