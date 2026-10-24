@@ -1478,7 +1478,7 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 } // namespace
 
 bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
-                          const std::string& repo) {
+                          const std::string& repo, bool projector) {
     std::error_code ec;
     if (!fs::is_directory(snapshot, ec)) { return false; }
     Listing listing;
@@ -1497,22 +1497,26 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
     } catch (const std::exception&) {
         return false; // no model there for options.quant
     }
-    bool weights = false;
+    // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one part
+    // leaves the others unlinked, and the listing above sees only what is there.
+    const auto all_parts = [&](const std::string& path) {
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+        std::smatch match;
+        if (!std::regex_match(path, match, split)) { return true; }
+        const int parts = std::stoi(match[2].str());
+        for (int part = 1; part <= parts; ++part) {
+            char suffix[32];
+            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
+            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
+        }
+        return true;
+    };
+    bool weights = false, gguf = false;
     for (const auto& file : chosen) {
         const auto name = ascii_lower(file.path);
         if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
-        // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one
-        // part leaves the others unlinked, and the listing above sees only what is there.
-        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
-        std::smatch match;
-        if (std::regex_match(file.path, match, split)) {
-            const int parts = std::stoi(match[2].str());
-            for (int part = 1; part <= parts; ++part) {
-                char suffix[32];
-                std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
-                if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
-            }
-        }
+        gguf = gguf || name.ends_with(".gguf");
+        if (!all_parts(file.path)) { return false; }
         // Every shard a safetensors index names.
         if (name.ends_with("model.safetensors.index.json")) {
             try {
@@ -1525,6 +1529,14 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
                 return false;
             }
         }
+    }
+    // A GGUF model asked with its Vision projector (--vision): the projector here too, whole.
+    if (weights && gguf && projector) {
+        const bool here = std::any_of(listing.files.begin(), listing.files.end(), [&](const auto& f) {
+            const auto file = ascii_lower(fs::path(f.path).filename().string());
+            return file.starts_with("mmproj") && file.ends_with(".gguf") && all_parts(f.path);
+        });
+        if (!here) { return false; }
     }
     return weights;
 }
