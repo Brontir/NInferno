@@ -511,6 +511,13 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
         policy != ops::LinearPolicy::A16Only) {
         compute = ActivationCompute::A8;
     }
+    // So does R8 where the dispatch takes it past the section's model of it (without tensor
+    // mma.sync it takes 5..16 tokens in four-token slices, r8_call; a dense-tuner R8 pick): its x
+    // is int8 per 32 values, as at the verify widths.
+    if (taken.family == generic::Family::R8Mma && route == nullptr &&
+        compute == ActivationCompute::A16 && policy != ops::LinearPolicy::A16Only) {
+        compute = ActivationCompute::A8;
+    }
     // ... and where the cost model weighs an A16 tile faster than the int8 ones the section
     // expected (AllowA8 permits int8, it does not require it), x stays BF16.
     const bool a8_route = mmq_route || taken.family == generic::Family::W4a8Mma ||
@@ -845,6 +852,75 @@ int check_r8_invariance(const Format& f, Op op, std::int32_t out_rows, std::int3
                 std::cerr << f.name << " " << op_name(op) << " R8 invariance: route "
                           << generic::route_name(route) << " window " << offset << "+" << t
                           << " token " << token << " differs from T=" << wide << "\n";
+                ++failures;
+                break;
+            }
+        }
+    }
+    return failures;
+}
+
+// R8 past four tokens (Volta's verify widths) runs four-token slices: every token of a 7- or
+// 16-token call gives the bytes it gives alone (T = 1, decode), on every epilogue.
+int check_r8_slices(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                    generic::Route route, std::uint32_t seed) {
+    constexpr std::int32_t kWide = 16;
+    const std::int32_t rows_n    = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host        = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device          = upload_weight(host);
+    const auto activation = make_linear_activation(k, kWide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(std::max(
+        generic::route_workspace_bytes(route, k, kWide),
+        generic::route_workspace_bytes(generic::Route{generic::Family::W4a8Mma, 0}, k,
+                                       generic::kR8MaxTokens)));
+    const auto run = [&](std::int32_t offset, std::int32_t t) {
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+        Tensor tx(static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k,
+                  DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &device.weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = gated(op) ? generic::Epilogue::SwiGlu : generic::Epilogue::Store;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        return download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+    };
+    std::vector<std::vector<std::uint16_t>> alone(kWide);
+    for (std::int32_t token = 0; token < kWide; ++token) alone[token] = run(token, 1);
+    int failures = 0;
+    // Where R8 takes the sliced widths (no tensor mma.sync), a caller sizing an exact width of
+    // 5..16 tokens reserves one slice's planes.
+    if (!ninferno::device_class().features.mma_tensor) {
+        const generic::Problem problem{f.qtype, ops::LinearPolicy::AllowA8, out_rows, k,
+                                       generic::Epilogue::Store};
+        const std::size_t slice = generic::route_workspace_bytes(route, k, 4);
+        for (std::int32_t t = 5; t <= kWide; ++t) {
+            if (generic::workspace_capacity_bytes(problem, &device.weight, t, t) < slice) {
+                std::cerr << f.name << " R8 slices: an exact " << t
+                          << "-token workspace holds no slice's planes\n";
+                ++failures;
+                break;
+            }
+        }
+    }
+    for (const std::int32_t t : {7, kWide}) {
+        const auto bits = run(0, t);
+        for (std::int32_t token = 0; token < t; ++token) {
+            if (std::memcmp(bits.data() + static_cast<std::size_t>(token) * out_rows,
+                            alone[token].data(), static_cast<std::size_t>(out_rows) * 2) != 0) {
+                std::cerr << f.name << " " << op_name(op) << " R8 slices: route "
+                          << generic::route_name(route) << " T=" << t << " token " << token
+                          << " differs from the token alone\n";
                 ++failures;
                 break;
             }
@@ -1598,6 +1674,10 @@ int main() {
                 }
             }
             failures += check_r8_invariance(f, Op::Linear, 136, 2560, r, 67U);
+            if (generic::r8_verify_compiled(f.qtype)) {
+                failures += check_r8_slices(f, Op::Linear, 136, 2560, r, 79U);
+                failures += check_r8_slices(f, Op::SwiGlu, 136, 2560, r, 83U);
+            }
             failures += check_r8_invariance(f, Op::SwiGlu, 136, 2560, r, 71U);
             if (2112 % f.k_multiple == 0 && 2112 % generic::r8_k_values(f.qtype) == 0) {
                 failures += check_r8_invariance(f, Op::Linear, 176, 2112, r, 73U);

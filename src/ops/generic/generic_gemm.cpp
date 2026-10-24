@@ -377,11 +377,24 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
+// Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs: there R8 also takes the
+// verify widths up to kR8SlicedMaxTokens, as kR8VerifyTokens-token slices (run_route), each token
+// summed as at decode (a V100 Q8_0 verify of 5..16 tokens ran the emulated rmma.m1.n1/n2 tiles).
+// Formats with ggml's vector kernel take that first there (vec_rule); this reaches the others.
+constexpr std::int32_t kR8SlicedMaxTokens = 16;
+bool r8_sliced_device() {
+    try {
+        return !device_class().features.mma_tensor;
+    } catch (const std::exception&) { return false; }
+}
+
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits).
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     if (!allows_r8(w, policy)) return false;
     if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= kR8VerifyTokens && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    if (tokens <= kR8VerifyTokens) return r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return tokens <= kR8SlicedMaxTokens && r8_sliced_device() && r8_verify_compiled(w.qtype) &&
+           r8_verify_takes_shape(w.qtype, w.n, w.k);
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -2959,6 +2972,8 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
 
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
+    // R8 past kR8VerifyTokens runs in slices of that many tokens, one after another.
+    if (route.family == Family::R8Mma) tokens = std::min(tokens, kR8VerifyTokens);
     if (route.family == Family::I8Mma) {
         const auto t      = static_cast<std::size_t>(i8_padded_tokens(tokens));
         const auto groups = static_cast<std::size_t>(k / 64);
@@ -3070,7 +3085,9 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     const bool r8_verify = r8_verify_compiled(problem.qtype) && allows_a8(problem.policy) &&
                            (problem.k % r8_k_values(problem.qtype)) == 0 &&
                            (weight == nullptr || allows_r8(*weight, problem.policy)) &&
-                           forced != 0 && max_tokens >= 2 && min_tokens <= kR8VerifyTokens;
+                           forced != 0 && max_tokens >= 2 &&
+                           min_tokens <= (current_features().mma_tensor ? kR8VerifyTokens
+                                                                        : kR8SlicedMaxTokens);
     // ggml's matrix kernel: its activation, the FP32 plane (SwiGlu: gate and up rows) and the
     // stream-k fixup, at the widest call of its band in the interval.
     std::size_t mmq = 0;
@@ -3114,8 +3131,11 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                             problem.qtype == QType::Q6_G64_FP16)
                                ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
                                : 0;
-    return with_gather(std::max(
-        {mmq, i8, route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)}));
+    // R8 alone (no W4A8 width in the interval) reads one slice's planes, reused slice by slice.
+    const std::size_t planes =
+        a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)
+           : route_workspace_bytes(Route{Family::R8Mma, 0}, problem.k, max_tokens);
+    return with_gather(std::max({mmq, i8, planes}));
 }
 
 // GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
@@ -3208,6 +3228,28 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                bool* released) {
     if (released != nullptr) *released = false;
     validate_call(ordered);
+    // R8 past kR8VerifyTokens (r8_call: Volta's verify widths): slices of that many tokens, in
+    // order, each a call R8 takes as it does at those widths, so a token's bytes are its decode
+    // bytes whatever the call's width.
+    if (route.family == Family::R8Mma && ordered.x->ne[1] > kR8VerifyTokens) {
+        const std::int32_t t = ordered.x->ne[1];
+        for (std::int32_t c0 = 0; c0 < t; c0 += kR8VerifyTokens) {
+            const std::int32_t n = std::min(kR8VerifyTokens, t - c0);
+            const Tensor x       = ordered.x->slice(1, c0, n);
+            Tensor outs[kMaxSegments];
+            Call part          = ordered;
+            part.x             = &x;
+            part.join_previous = false;
+            part.release_next  = false;
+            for (int s = 0; s < ordered.segments; ++s) {
+                const Tensor& o = *ordered.out[s];
+                outs[s]         = o.view({o.ne[0], t}).slice(1, c0, n);
+                part.out[s]     = &outs[s];
+            }
+            run_route(route, part, workspace, stream, nullptr);
+        }
+        return;
+    }
     const Weight& w = *ordered.weight;
     if (!supports(w)) throw std::invalid_argument("generic linear: unsupported weight layout");
     // An explicit route parses on every build; one whose kernels this build lacks is refused as
@@ -3274,9 +3316,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
     // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
     // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
-    const bool r8_pre = route.family == Family::R8Mma && args.tokens >= 2 &&
-                        args.tokens <= kR8VerifyTokens && workspace != nullptr &&
-                        r8_verify_compiled(w.qtype);
+    const bool r8_pre =
+        route.family == Family::R8Mma && args.tokens >= 2 && args.tokens <= kR8VerifyTokens &&
+        workspace != nullptr && r8_verify_compiled(w.qtype) &&
+        mmq_fits(*workspace, route_workspace_bytes(route, w.k, args.tokens));
     if (route.family == Family::R8Mma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0 ||
                                           !(r8_pre || r8_fits(w.qtype, args.k, args.tokens)))) {
         const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
