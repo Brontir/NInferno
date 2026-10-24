@@ -70,6 +70,7 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--max-context N` | `2048` | Per-sequence logical context ceiling. |
 | `--kv-capacity N\|auto` | `--max-context` (`2048`) | Shared Main Text KV pool size. `auto` takes the plan ladder's pool rung the free GPU memory fits. Must be at least `--max-context`. |
 | `--prefill-chunk N` | `1024` | Text-prefill chunk. Positive multiple of 128. |
+| `--plan --no-load` | off | Print the plan these options give without loading the weights (the plan ladder, the step that fits, the speculation it would run), then exit; no `--prompt` needed. `--json` prints it as JSON (`ninferno-dry-plan/1`), `--plan-device NAME` plans for a named board. An estimate: the start decides ([reference](reference/serving.md#the-plan-without-the-weights)). |
 | `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV storage. `auto` follows the model family (see [KV storage](#kv-storage-and-context)). |
 | `--sliding-kv-dtype bf16\|fp8` | `bf16` | Storage of sliding-window KV. |
 | `--state-dtype f32\|bf16\|f16` | `f16` for Qwen 3.5 with fast activations, else `f32` | Recurrent-state storage. |

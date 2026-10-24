@@ -24,10 +24,23 @@ ninferno_internal_includes(ninferno_model_loading)
 target_link_libraries(ninferno_model_loading PUBLIC ninferno_artifact ninferno_text ninferno_ops
   ninferno_model_common)
 
+# The byte arithmetic of a sequence plan that needs no bound weights (the persistent layouts every
+# family lays its state out with, the planner's inputs, the CUDA graph allowance): a start and the
+# plan without the weights (runtime/engine/plan_dry_run.cpp) call the same functions.
+add_library(ninferno_sequence_layout STATIC
+  qwen3_5/state/decoder_state.cpp
+  qwen3_5/state/state_image.cpp
+  qwen3_5/program/round_buffers.cpp
+  qwen3_5/program/planning/graph_profiles.cpp
+  qwen3_5/program/planning/sequence_bytes.cpp)
+ninferno_internal_includes(ninferno_sequence_layout)
+target_link_libraries(ninferno_sequence_layout PUBLIC ninferno_core PRIVATE ninferno::cudart)
+
 add_library(ninferno_model_runtime STATIC)
 ninferno_internal_includes(ninferno_model_runtime)
 target_link_libraries(ninferno_model_runtime
-  PUBLIC ninferno_model_loading ninferno_ops ninferno_runtime_support ninferno_chat
+  PUBLIC ninferno_model_loading ninferno_ops ninferno_runtime_support ninferno_sequence_layout
+    ninferno_chat
   PRIVATE ninferno_media_decode ninferno_jinja)
 
 include(qwen3_5/loading_sources.cmake)

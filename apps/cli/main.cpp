@@ -1,6 +1,12 @@
 #include "core/removed_environment.h"
 #include "options.h"
 #include "spec_tune.h"
+
+#include "artifact/source_identity.h"
+#include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
+#include "product/plan/plan_speculation.h"
+#include "spec/gpu_identity.h"
 #include "core/command_line.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
@@ -272,8 +278,10 @@ int main(int argc, char** argv) {
 
     try {
 
+        // --plan --no-load runs no request: it needs no prompt.
         ninferno::PromptInput input =
-            cli.messages_path.empty()
+            cli.plan_only ? ninferno::PromptInput{}
+            : cli.messages_path.empty()
                 ? ninferno::product::prompt_from_text(cli.prompt, cli.enable_thinking)
                 : ninferno::product::prompt_from_messages(cli.messages_path, cli.enable_thinking,
                                                         cli.enable_vision);
@@ -335,6 +343,49 @@ int main(int argc, char** argv) {
         // consumer and must not reserve an extra Device StateImage or run terminal capture.
         engine_options.context_cache.disable();
         engine_options.startup_observer                     = startup_log.observer();
+        // --plan --no-load: the plan from the artifact's own facts, as ninferno-serve's.
+        if (cli.plan_only) {
+            namespace product = ninferno::product;
+            ninferno::runtime::PlanDeviceFacts device;
+            ninferno::spec::GpuKey gpu;
+            if (!cli.plan_device.empty()) {
+                std::string why;
+                const auto board = product::plan_device_of_board(cli.plan_device, &why);
+                if (!board) { throw std::runtime_error("--plan-device: " + why); }
+                device = *board;
+                gpu    = product::gpu_key_of(device);
+            } else {
+                device = product::plan_device_of_cuda(
+                    cli.device, true, ninferno::runtime::plan_automatic_fit(engine_options));
+                gpu    = ninferno::spec::gpu_identity(cli.device).key;
+            }
+            const product::PlanSourceFacts facts =
+                product::plan_facts_of_artifact(cli.artifact_path);
+            const product::SpeculationSubject subject =
+                product::speculation_subject(cli.artifact_path, gpu, cli.spec_profile);
+            product::DryRunInputs inputs;
+            inputs.device              = device;
+            inputs.gpu                 = gpu;
+            inputs.options             = engine_options;
+            inputs.ask                 = product::SpeculationAsk{.automatic = !cli.spec_explicit,
+                                                                 .given     = cli.speculative,
+                                                                 .thinking  = cli.enable_thinking.value_or(true)};
+            inputs.options.speculative = cli.speculative;
+            try {
+                inputs.ask.source_identity =
+                    ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
+            } catch (const std::exception&) {}
+            inputs.subject                            = &subject;
+            const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
+            const std::string source                  = cli.artifact_path.string();
+            std::cout << (cli.plan_json ? product::dry_plan_document(facts, source, "artifact",
+                                                                     inputs, planned, nullptr)
+                                                  .dump(1) +
+                                              '\n'
+                                        : product::render_dry_plan_text(facts, source, inputs,
+                                                                        planned, nullptr));
+            return planned.plan.fits ? 0 : 2;
+        }
 
         // A profile's choice that does not fit the requested context on this device gives way as
         // the server's does (GenerationService): to the profile's fit fallback
@@ -351,7 +402,8 @@ int main(int argc, char** argv) {
                 namespace product = ninferno::product;
                 const std::string reason =
                     product::fit_refusal(product::speculation_label(engine_options.speculative),
-                                         engine_options.max_context, refused.what());
+                                         engine_options.max_context, refused.what(),
+                                         engine_options.max_context_automatic);
                 std::optional<ninferno::Engine> built;
                 // Builds the Engine with `speculative` (the given settings kept): true when it
                 // fits.

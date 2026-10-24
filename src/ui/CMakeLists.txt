@@ -61,7 +61,7 @@ target_include_directories(ninferno_ui PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gener
 if(NINFERNO_SOURCE_TREE_PATHS AND NINFERNO_UI_CHAT AND EXISTS "${NINFERNO_UI_CHAT_DIR}/index.html")
   target_compile_definitions(ninferno_ui PRIVATE NINFERNO_UI_CHAT_BUILD_DIR="${NINFERNO_UI_CHAT_DIR}")
 endif()
-target_link_libraries(ninferno_ui PUBLIC ninferno::json ninferno::httplib Threads::Threads ninferno_product_update
+target_link_libraries(ninferno_ui PUBLIC ninferno::json ninferno::httplib Threads::Threads ninferno_product_update ninferno_product_plan
   PRIVATE ninferno_convert ${CMAKE_DL_LIBS})
 # Installed beside the data, where ninferno-ui looks first after its own directory (chat_ui.cpp).
 if(NINFERNO_UI_CHAT AND EXISTS "${NINFERNO_UI_CHAT_DIR}/index.html")

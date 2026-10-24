@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,10 @@ struct ResolvedSpeculation {
     std::map<std::string, std::string> drafters;
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
+    // Where the profile came from, as data: "own" (this GPU's class, or a local tune), "similar"
+    // (another GPU's standing in), "generic" (the "*" profile), "builtin" (the built-in
+    // drafter's untuned default); "" when none was found.
+    std::string basis;
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
     // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
@@ -88,6 +93,18 @@ struct ResolvedSpeculation {
                                                       const std::string& artifact_id,
                                                       const GpuKey& gpu,
                                                       const std::filesystem::path& local_profile = {});
+
+// The same resolution for a target not converted yet (a dry run: ninferno-serve --plan --no-load,
+// ninferno-ui /api/plan): `manifest` the one the converter would write (convert::plan_drafters,
+// each drafter a start would attach counted as attached), else the registry `entry` of the model's
+// shape over the drafters it will carry as `components` (no manifest: a GGUF hub model without
+// --with-drafters), else nothing. `label` names it in the sources (in place of the artifact). No
+// local tune is read; the built-in drafter's default is the caller's (as for an artifact).
+struct ModelEntry;
+[[nodiscard]] ResolvedSpeculation
+resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
+                            const ModelEntry* entry, const std::set<std::string>& components,
+                            const GpuKey& gpu, const std::filesystem::path& label);
 
 // Why the tune at `tune` would not serve the artifact `artifact_id` on GPU class `gpu_class` (the
 // device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a

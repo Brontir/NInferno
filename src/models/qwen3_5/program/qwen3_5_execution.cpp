@@ -121,7 +121,7 @@ Qwen35Execution::Qwen35Execution(const execution::Parameters& parameters)
                                      parameters.model.config().text.max_position_embeddings,
                                      parameters.model.config().draft->max_position_embeddings)
                                : parameters.model.config().text.max_position_embeddings,
-          .copy_rounds = true,
+          .copy_rounds   = family_copy_rounds(models::StateFamily::Qwen35),
       },
       invariant_(parameters.model.options().activations == ActivationMode::Exact) {}
 

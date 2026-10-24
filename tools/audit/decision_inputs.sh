@@ -48,6 +48,14 @@ decision_patterns=(
   src/runtime/engine/interleave_cost.h
   src/runtime/engine/kv_capacity.cpp
   src/runtime/engine/kv_capacity.h
+  src/runtime/engine/plan_dry_run.cpp
+  src/runtime/engine/plan_dry_run.h
+  src/runtime/engine/quant_rule.cpp
+  src/runtime/engine/quant_rule.h
+  src/product/plan/plan_quants.cpp
+  src/product/plan/plan_quants.h
+  src/product/plan/plan_speculation.cpp
+  src/product/plan/plan_speculation.h
   src/runtime/engine/scheduler.h
   src/runtime/engine/warmup_widths.cpp
   src/runtime/engine/warmup_widths.h

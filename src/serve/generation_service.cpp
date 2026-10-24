@@ -331,35 +331,46 @@ std::uint32_t pool_contexts(const ninferno::MemorySummary& memory) {
     return memory.kv_capacity / memory.max_context;
 }
 
+ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
+    ninferno::EngineOptions engine_options;
+    engine_options.artifact_path           = options.artifact_path;
+    engine_options.chat_template_path      = options.chat_template_path;
+    engine_options.device                  = options.device;
+    // An automatic context under --max-context-cap: its ceiling (plan_context_ceiling).
+    engine_options.max_context =
+        options.max_context != 0 ? options.max_context : options.max_context_cap;
+    engine_options.max_context_automatic   = options.max_context == 0;
+    engine_options.kv_capacity             = options.kv_capacity;
+    engine_options.max_concurrency         = options.max_concurrency;
+    engine_options.max_pending_requests    = options.max_pending_requests;
+    engine_options.pending_timeout_ms      = options.pending_timeout_ms;
+    engine_options.concurrent_prefill      = options.concurrent_prefill;
+    engine_options.prefill_chunk           = options.prefill_chunk;
+    engine_options.prefill_chunk_automatic = !options.prefill_chunk_explicit;
+    engine_options.kv_lease_window         = options.kv_lease_window;
+    engine_options.kv_cache                = options.kv_cache.value_or(KvCacheStorage::BFloat16);
+    engine_options.kv_cache_automatic      = !options.kv_cache.has_value();
+    engine_options.sliding_kv_cache        = options.sliding_kv_cache;
+    engine_options.recurrent_state = options.recurrent_state.value_or(RecurrentStateStorage::FP32);
+    engine_options.recurrent_state_automatic = !options.recurrent_state.has_value();
+    engine_options.activations               = options.activations;
+    engine_options.rope_yarn_factor          = options.rope_yarn_factor;
+    engine_options.enable_vision             = options.enable_vision;
+    engine_options.use_cuda_graph            = options.use_cuda_graph;
+    engine_options.pacing                    = options.pacing;
+    engine_options.maintainer                = options.maintainer;
+    engine_options.speculative               = options.speculative;
+    engine_options.context_cache             = options.context_cache;
+    engine_options.context_cost.preset_path  = options.context_cost_presets;
+    engine_options.media_cache_bytes         = options.media_cache_bytes;
+    engine_options.media_live_bytes          = options.media_live_bytes;
+    engine_options.media_preprocess_threads  = options.media_preprocess_threads;
+    return engine_options;
+}
+
 GenerationService::GenerationService(ServeOptions options, StartupObserver startup_observer)
     : options_(std::move(options)) {
-    ninferno::EngineOptions engine_options;
-    engine_options.artifact_path            = options_.artifact_path;
-    engine_options.chat_template_path       = options_.chat_template_path;
-    engine_options.device                   = options_.device;
-    engine_options.max_context              = options_.max_context;
-    engine_options.max_context_automatic    = options_.max_context == 0;
-    engine_options.kv_capacity              = options_.kv_capacity;
-    engine_options.max_concurrency          = options_.max_concurrency;
-    engine_options.max_pending_requests     = options_.max_pending_requests;
-    engine_options.pending_timeout_ms       = options_.pending_timeout_ms;
-    engine_options.concurrent_prefill       = options_.concurrent_prefill;
-    engine_options.prefill_chunk            = options_.prefill_chunk;
-    engine_options.prefill_chunk_automatic  = !options_.prefill_chunk_explicit;
-    engine_options.kv_lease_window          = options_.kv_lease_window;
-    engine_options.kv_cache                 = options_.kv_cache.value_or(KvCacheStorage::BFloat16);
-    engine_options.kv_cache_automatic       = !options_.kv_cache.has_value();
-    engine_options.sliding_kv_cache         = options_.sliding_kv_cache;
-    engine_options.recurrent_state =
-        options_.recurrent_state.value_or(RecurrentStateStorage::FP32);
-    engine_options.recurrent_state_automatic = !options_.recurrent_state.has_value();
-    engine_options.activations              = options_.activations;
-    engine_options.rope_yarn_factor         = options_.rope_yarn_factor;
-    engine_options.enable_vision            = options_.enable_vision;
-    engine_options.use_cuda_graph           = options_.use_cuda_graph;
-    engine_options.pacing                    = options_.pacing;
-    engine_options.maintainer                = options_.maintainer;
-    engine_options.speculative              = options_.speculative;
+    ninferno::EngineOptions engine_options = engine_options_of(options_);
     // A tune named by --spec-profile serves or the server does not start (whatever --spec says).
     product::require_named_tune(options_.artifact_path, options_.device, options_.spec_profile);
     // An explicit --spec without --drafter drafts with the drafter that came with the model.
@@ -426,11 +437,6 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         served_speculation_->engine.draft_width = speculative.draft_width;
     };
     bound_load(engine_options.speculative);
-    engine_options.context_cache            = options_.context_cache;
-    engine_options.context_cost.preset_path = options_.context_cost_presets;
-    engine_options.media_cache_bytes        = options_.media_cache_bytes;
-    engine_options.media_live_bytes         = options_.media_live_bytes;
-    engine_options.media_preprocess_threads = options_.media_preprocess_threads;
     engine_options.startup_observer         = std::move(startup_observer);
     // The --plan dry run stops here: the ladder of the first Engine the server would build.
     if (options_.plan_only) {
@@ -497,7 +503,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                                                          options_.per_request_speculation,
                                                          options_.spec_profile)) {
             fallback->fit_fallback =
-                product::fit_refusal(refused_label, engine_options.max_context, why);
+                product::fit_refusal(refused_label, engine_options.max_context, why,
+                                     engine_options.max_context_automatic);
             engine_options.speculative =
                 product::with_given_settings(fallback->engine, options_.speculative);
             mark_fit_fallback(engine_options.speculative, "profile_fit_fallback");
@@ -531,7 +538,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 engine_.reset();
                 auto served         = candidate;
                 served.fit_fallback =
-                    product::fit_refusal(refused_label, engine_options.max_context, first_refusal);
+                    product::fit_refusal(refused_label, engine_options.max_context, first_refusal,
+                                         engine_options.max_context_automatic);
                 engine_options.speculative =
                     product::with_given_settings(served.engine, options_.speculative);
                 mark_fit_fallback(engine_options.speculative, fallback);

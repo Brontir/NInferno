@@ -98,8 +98,6 @@ private:
     // max_context): a LongRoPE model's rotation mode follows it, as under ninferno-dense.
     static std::int32_t session_context(const program::ExecutionCore& core);
 
-    // Sliding rings keep every key the widest call can see while it appends its own rows.
-    [[nodiscard]] std::uint32_t ring_capacity(const SequencePlanImpl& plan) const;
     // The most rows one call appends: a prefill chunk, or a speculative verify.
     [[nodiscard]] static std::uint32_t widest_call(const SequencePlanImpl& plan);
 
@@ -127,13 +125,6 @@ private:
     // mask), or a pairing its loader did not establish.
     void check_drafter() const;
 
-    // The drafter's local (sliding) layers as fixed rings of every state image; none without a
-    // sliding layer.
-    [[nodiscard]] std::optional<qwen3_5::DFlashLocalStateSpec> dflash_local_spec() const;
-    // The rest of the drafter's persistent state: its full layers' paged pool (when it has any),
-    // the prefill chunk's tapped features and every lane's pending features.
-    [[nodiscard]] qwen3_5::detail::DFlashPersistentLayout
-    dflash_layout(LayoutBuilder& builder, const SequencePlanImpl& plan) const;
     // dflash_context (a prefill chunk's append) and dflash_round.
     void dflash_workspace(const SequencePlanImpl& plan, WorkspacePlan& out) const;
 

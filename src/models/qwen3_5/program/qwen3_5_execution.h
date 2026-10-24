@@ -104,6 +104,10 @@ void validate_qwen3_5_options(const execution::Parameters& parameters, DeviceCon
                                                          const SequencePlanImpl& plan);
 [[nodiscard]] WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
                                                    const SequencePlanImpl& plan);
+// The shape of the persistent state a Qwen 3.5 config lays out (sequence_bytes.h,
+// plan_persistent_layout): `public_tokens` the ids a request may carry or sample.
+[[nodiscard]] StateShape qwen3_5_state_shape(const qwen3_5::Config& config,
+                                             std::int32_t public_tokens);
 
 // The parameters of the Qwen 3.5 family that built an execution context. Only the Qwen 3.5
 // execution functions call this, and only the Qwen 3.5 family calls them.

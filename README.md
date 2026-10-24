@@ -184,7 +184,7 @@ table, so give `--spec-load` too.
 
 | Flag | Automatic | Set it to |
 |---|---|---|
-| `--max-context N` | the model's context if it fits, else the longest that fits | a shorter context leaves memory for more requests |
+| `--max-context N` | the model's context if it fits, else the longest that fits; a GGUF repository fetched without `--quant` for several requests keeps at most the context each request was planned to hold of its own (`--max-context-cap`) | a shorter context leaves memory for more requests |
 | `--max-concurrency N` | `1` | requests generated at once, `1..8` |
 | `--spec auto\|none\|mtp\|dflash\|dflash2` | `auto`: measured for this model and GPU | `none` turns speculation off |
 | `--draft-tokens N` | with `--spec`: the measured depth, else `3` (MTP) or `7` (DFlash) | draft depth, `1..15` |
