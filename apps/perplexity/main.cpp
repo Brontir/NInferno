@@ -289,7 +289,10 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     // A model whose tokenizer starts a document with a token (Gemma 4's <bos>) scores every window
     // from it in place of the window's first token, as llama.cpp's perplexity and ninferno-gemma4
     // score do: a Gemma 4 window without it degrades along its length (26B at W 4096: ppl 954).
-    const std::optional<ninferno::TokenId> document_start = engine.document_start_token();
+    std::optional<ninferno::TokenId> document_start = engine.document_start_token();
+    if (const char* off = std::getenv("NINFERNO_NO_DOC_START"); off != nullptr && *off) {
+        document_start.reset();
+    }
     std::vector<EvaluationStream> streams;
     streams.reserve(corpus.streams.size());
     std::uint64_t total_scored_tokens = 0;
