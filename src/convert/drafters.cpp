@@ -326,19 +326,33 @@ DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     t.geometry.num_hidden_layers = spec::json_unsigned(text, "num_hidden_layers");
     t.geometry.vocab_size        = spec::json_unsigned(text, "vocab_size");
     t.sliding_window             = spec::json_unsigned(text, "sliding_window");
-    t.builtin_mtp                = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0 ||
-                    spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
-                    fs::exists(dir / "model_mtp.safetensors");
-    if (!t.builtin_mtp && fs::exists(dir / "model.safetensors.index.json")) {
+    // MTP layers are what the weights hold where their listing is here (the index, or the one
+    // weight file's header), not what the configuration declares: a fine-tune saved without them
+    // (autotrust/JEV-9B: mtp_num_hidden_layers 1, no mtp.* tensor) has none. Without a listing,
+    // the declaration.
+    const auto mtp_name = [](const std::string& name) {
+        return name.rfind("mtp.", 0) == 0 || name.find(".mtp.") != std::string::npos;
+    };
+    // (NextN layers are numbered past the decoder's and keep their declaration.)
+    t.builtin_mtp = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0;
+    if (fs::exists(dir / "model.safetensors.index.json")) {
         const auto index   = Json::parse(read_file(dir / "model.safetensors.index.json"));
         const auto weights = index.value("weight_map", Json::object());
+        t.builtin_mtp      = false;
         for (const auto& [name, file] : weights.items()) {
-            if (name.rfind("mtp.", 0) == 0 || name.find(".mtp.") != std::string::npos) {
-                t.builtin_mtp = true;
-                break;
-            }
+            if (mtp_name(name)) { t.builtin_mtp = true; }
         }
+    } else if (fs::exists(dir / "model.safetensors")) {
+        try {
+            const Checkpoint weights(dir);
+            t.builtin_mtp = false;
+            for (const auto& [name, tensor] : weights.tensors()) {
+                if (mtp_name(name)) { t.builtin_mtp = true; }
+            }
+        } catch (const std::exception&) {} // unreadable here: the declaration
     }
+    t.builtin_mtp = t.builtin_mtp || spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
+                    fs::exists(dir / "model_mtp.safetensors");
     if (fs::exists(dir / "tokenizer.json")) {
         t.fingerprint = spec::vocab_fingerprint_file(dir / "tokenizer.json").value;
     }
