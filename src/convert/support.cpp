@@ -107,15 +107,31 @@ Support model_support(const SupportFacts& facts) {
         !method.empty()) {
         return refuse("model", method + " weights: the converter does not read them");
     }
-    const bool quantization_declared =
-        facts.config.is_object() && (facts.config.contains("quantization_config") ||
-                                     facts.config.value("text_config", Json::object())
-                                         .contains("quantization_config"));
-    if (!quantization_declared &&
+    // MLX's quantization (a "quantization" block, or a quantization_config naming no method), and
+    // packed U32 weights any method but the packing ones (GPTQ, AWQ, compressed-tensors,
+    // AutoRound) would leave unread.
+    const auto quantization = [&]() -> Json {
+        if (!facts.config.is_object()) { return Json(); }
+        if (const auto q = facts.config.find("quantization_config"); q != facts.config.end()) {
+            return *q;
+        }
+        return facts.config.value("text_config", Json::object())
+            .value("quantization_config", Json());
+    }();
+    const std::string method =
+        quantization.is_object() ? ascii_lower(quantization.value("quant_method", std::string()))
+                                 : std::string();
+    if (facts.config.is_object() && facts.config.contains("quantization") && method.empty()) {
+        return refuse("model", "MLX quantized weights (Apple's format): the converter does not "
+                               "read them");
+    }
+    static const std::set<std::string> packing = {"gptq", "awq", "compressed-tensors",
+                                                  "auto-round", "intel/auto-round"};
+    if (!packing.contains(method) &&
         std::find(facts.weight_dtypes.begin(), facts.weight_dtypes.end(), "U32") !=
             facts.weight_dtypes.end()) {
-        return refuse("model", "packed U32 weights without a quantization_config (MLX's packing): "
-                               "the converter does not read them");
+        return refuse("model", "packed U32 weights without a packing quantization method (MLX's "
+                               "packing): the converter does not read them");
     }
     // The architecture, by the converter's own lists.
     std::string role = "model";

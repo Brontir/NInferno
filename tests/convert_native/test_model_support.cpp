@@ -65,6 +65,16 @@ int main(int argc, char** argv) {
         expect(says(of(f), Verdict::Unsupported, "packed U32"), "MLX by its packing");
         f.config["quantization_config"] = {{"quant_method", "gptq"}, {"bits", 4}};
         expect(of(f).verdict == Verdict::Supported, "U32 under a GPTQ quantization_config");
+        // openbmb/MiniCPM5-2B-MLX: MLX's own block, repeated as a quantization_config without a
+        // method.
+        auto mlx                           = chat("LlamaForCausalLM");
+        mlx.config["quantization"]         = {{"group_size", 64}, {"bits", 4}, {"mode", "affine"}};
+        mlx.config["quantization_config"]  = mlx.config["quantization"];
+        expect(says(of(mlx), Verdict::Unsupported, "MLX"), "MLX by its quantization block");
+        mlx.config.erase("quantization");
+        mlx.weight_dtypes = {"U32", "BF16"};
+        expect(says(of(mlx), Verdict::Unsupported, "packed U32"),
+               "U32 under a quantization_config without a method");
         f.config["quantization_config"] = {{"quant_method", "bitsandbytes"}, {"load_in_4bit", true}};
         expect(says(of(f), Verdict::Unsupported, "bitsandbytes"), "bitsandbytes");
     }
