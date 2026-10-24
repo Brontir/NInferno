@@ -487,9 +487,16 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (request.refetch && !request.prepare_only) {
         throw std::invalid_argument("refetch is a prepare's");
     }
+    if (!request.recipe.empty() && !is_word(request.recipe)) {
+        throw std::invalid_argument("bad recipe: " + request.recipe);
+    }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
+        if (!request.recipe.empty()) {
+            spec.argv.push_back("--recipe");
+            spec.argv.push_back(request.recipe);
+        }
     } else {
         spec.argv.insert(spec.argv.end(),
                          {"--host", "127.0.0.1", "--port", std::to_string(request.port)});
@@ -1463,7 +1470,9 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         if (entry.path().extension() != ".ninferno" || facts(entry.path()).drafter) { continue; }
         LaunchRequest request;
         request.model        = ref == "main" ? repo : repo + "@" + ref;
-        request.quant        = artifact_name(entry.path().filename().string()).quant;
+        const auto name      = artifact_name(entry.path().filename().string());
+        request.quant        = name.quant;
+        request.recipe       = name.recipe; // the replaced conversion's, official or not
         request.prepare_only = true;
         request.refetch      = true;
         request.gpu          = -1;

@@ -106,6 +106,9 @@ struct LaunchRequest {
     // A prepare of a hub model whose branch moved after its conversion: download the new commit,
     // convert it and remove the old conversion (ninferno-serve --refetch).
     bool refetch = false;
+    // The conversion recipe (ninferno-serve --recipe; "": the official one): a refetch keeps the
+    // replaced artifact's.
+    std::string recipe;
 };
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but

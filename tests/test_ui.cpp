@@ -747,6 +747,12 @@ void test_catalog() {
         check(std::find(argv.begin(), argv.end(), "--refetch") != argv.end() &&
                   std::find(argv.begin(), argv.end(), "--prepare-only") != argv.end(),
               "a refetch prepare");
+        refetch.recipe          = "qwen3_5_q8";
+        const auto with_recipe  = make_launch(refetch_options, refetch).argv;
+        const auto recipe_flag  = std::find(with_recipe.begin(), with_recipe.end(), "--recipe");
+        check(recipe_flag != with_recipe.end() && recipe_flag + 1 != with_recipe.end() &&
+                  recipe_flag[1] == "qwen3_5_q8",
+              "a refetch keeps the replaced artifact's recipe");
         refetch.prepare_only = false;
         bool refused         = false;
         try {
