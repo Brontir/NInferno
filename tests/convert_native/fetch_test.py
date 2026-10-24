@@ -489,6 +489,18 @@ def main() -> int:
             case("an unreachable hub serves the download kept, said",
                  unreachable2[0] == 0 and "could not ask the hub whether org/qwen-gguf2@main moved"
                  in unreachable2[1])
+            # Another quantization of the moved ref than the download kept: the old snapshot does
+            # not hold it, so nothing pins to the old commit; it is fetched at the new one.
+            q4 = blob(MIB, 61)
+            hub.repos["org/qwen-gguf2"]["files"]["model-Q4_0.gguf"] = q4
+            hub.repos["org/qwen-gguf2"]["lfs"].add("model-Q4_0.gguf")
+            hub.blobs[hub.sha(q4)] = q4
+            other_quant = again2("--quant", "Q4_0", "--fetch-only")
+            case("another quantization of a moved ref: fetched at the new commit, not pinned",
+                 other_quant[0] == 0 and "the weights here are of" not in other_quant[1]
+                 and (repo2 / "snapshots" / ("e" * 40) / "model-Q4_0.gguf").exists())
+            del hub.repos["org/qwen-gguf2"]["files"]["model-Q4_0.gguf"]
+            hub.repos["org/qwen-gguf2"]["lfs"].discard("model-Q4_0.gguf")
             refetched2 = again2("--refetch")
             case("--refetch with the download kept converts the new commit, removes the old conversion",
                  refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()

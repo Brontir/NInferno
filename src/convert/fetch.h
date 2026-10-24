@@ -108,6 +108,12 @@ struct FetchResult {
 // file to resume.
 [[nodiscard]] FetchResult fetch_model(const std::string& spec, const FetchOptions& options);
 
+// Whether the cached `snapshot` holds the whole model fetch_model() would choose for `options`
+// (options.quant's GGUF model, else the weights; every shard a safetensors index names): what a
+// start may serve from it without the hub.
+[[nodiscard]] bool snapshot_holds_model(const std::filesystem::path& snapshot,
+                                        const FetchOptions& options, const std::string& repo);
+
 // The first bytes of the GGUF model fetch_model() would choose for `spec` (options.revision,
 // options.quant), to read its metadata before the whole file is downloaded: `bytes` of it by an
 // HTTP range request (all of it when smaller), or the cached file's. A revision pinned to a commit
