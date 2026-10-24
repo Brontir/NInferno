@@ -292,20 +292,12 @@ DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
     return plan;
 }
 
-std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& repo,
-                                      const std::string& revision, const std::string& quant,
-                                      const std::string& recipe) {
-    const auto root = cache / hub_repo_directory(repo);
-    std::ifstream ref(root / "refs" / (revision.empty() ? std::string("main") : revision));
-    std::string commit;
-    if (!(ref >> commit) || commit.find_first_of("/\\.") != std::string::npos) {
-        return std::nullopt;
-    }
-    std::error_code ec;
-    if (fs::exists(root / "snapshots" / commit, ec)) { return std::nullopt; } // the usual path
+std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std::string& quant,
+                                           const std::string& recipe) {
     const int width = quant_width_tag(quant);
     std::vector<fs::path> found;
-    for (const auto& entry : fs::directory_iterator(root / "ninferno" / commit, ec)) {
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
         const auto path = entry.path();
         if (path.extension() != ".ninferno" || !complete(path, false)) { continue; }
         const auto base = path.stem().string(); // <stem>.<recipe>
@@ -321,6 +313,20 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
     }
     if (found.size() != 1) { return std::nullopt; }
     return found.front();
+}
+
+std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& repo,
+                                      const std::string& revision, const std::string& quant,
+                                      const std::string& recipe) {
+    const auto root = cache / hub_repo_directory(repo);
+    std::ifstream ref(root / "refs" / (revision.empty() ? std::string("main") : revision));
+    std::string commit;
+    if (!(ref >> commit) || commit.find_first_of("/\\.") != std::string::npos) {
+        return std::nullopt;
+    }
+    std::error_code ec;
+    if (fs::exists(root / "snapshots" / commit, ec)) { return std::nullopt; } // the usual path
+    return converted_artifact(root / "ninferno" / commit, quant, recipe);
 }
 
 void accept_converted(const fs::path& commit_dir, const std::string& ref,
@@ -428,6 +434,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     ConvertOptions& convert_options = options.convert;
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string preflight_recipe;
+    std::string pinned; // org/name@commit when weights of a moved ref stay (see below)
     if (!url && !options.fetch_only) {
         const auto [repo, revision] = split_spec(spec, options.fetch);
         if (options.reuse && convert_options.out.empty() &&
@@ -436,17 +443,30 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
             auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
                                       convert_options.recipe);
-            // A branch or a tag may have moved since its download was converted and removed. The
-            // converted weights stay unless the user asks for the new commit (a download of many
-            // gigabytes): the start says so (MovedRef::Notice), or the user kept them for good
-            // (Accept), or asked for the new ones (Refetch). The answer is the same whether the
-            // hub can be reached or not: unreachable, it is only unchecked.
-            const std::string ref = revision.empty() ? std::string("main") : revision;
-            if (kept && revision != kept->parent_path().filename().string()) {
-                const auto commit_dir         = kept->parent_path();
-                const std::string kept_commit = commit_dir.filename().string();
-                const std::string label       = repo + "@" + ref;
+            // A branch or a tag may have moved since its weights came here, whether their download
+            // was converted and removed (the kept artifact) or is still in the cache. They stay
+            // unless the user asks for the new commit (a download of many gigabytes): the start
+            // says so (MovedRef::Notice), or the user kept them for good (Accept), or asked for
+            // the new ones (Refetch). The answer is the same whether the hub can be reached or
+            // not: unreachable, it is only unchecked. Weights kept with their download start
+            // pinned to their commit, so the fetch below finds them in the cache.
+            const std::string ref   = revision.empty() ? std::string("main") : revision;
+            const std::string label = repo + "@" + ref;
+            const fs::path repo_dir = cache / hub_repo_directory(repo);
+            std::string held_commit; // the commit of the weights here, when the ref names one
+            if (kept) {
+                held_commit = kept->parent_path().filename().string();
+            } else if (std::ifstream ref_file(repo_dir / "refs" / ref); ref_file) {
+                std::string commit;
+                if (ref_file >> commit && commit.find_first_of("/\\.") == std::string::npos &&
+                    fs::is_directory(repo_dir / "snapshots" / commit)) {
+                    held_commit = commit;
+                }
+            }
+            if (!held_commit.empty() && revision != held_commit) {
+                const fs::path commit_dir = repo_dir / "ninferno" / held_commit;
                 std::optional<std::string> now;
+                bool checked = false;
                 try {
                     now = current_commit(spec, options.fetch);
                     if (!now) {
@@ -456,38 +476,59 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         }
                         say(options, "HF_HUB_OFFLINE: " + label + " not checked against the hub");
                     }
+                    checked = true;
                 } catch (const std::exception& error) {
                     if (options.moved_ref == MovedRef::Refetch) {
                         throw std::runtime_error("--refetch: cannot ask the hub what " + label +
                                                  " names now (" + error.what() +
-                                                 "); the conversion of " +
-                                                 kept_commit.substr(0, 12) + " is kept");
+                                                 "); the weights of " +
+                                                 held_commit.substr(0, 12) + " are kept");
                     }
                     say(options, "warning: could not ask the hub whether " + label +
-                                     " moved (" + error.what() + "); serving its conversion of " +
-                                     kept_commit.substr(0, 12));
+                                     " moved (" + error.what() + "); serving the weights of " +
+                                     held_commit.substr(0, 12));
                 }
-                if (now && *now != kept_commit) {
-                    const std::string moved = label + " is now " + now->substr(0, 12) +
-                                              "; the converted weights are of " +
-                                              kept_commit.substr(0, 12) + " (download removed)";
+                bool refetch = false;
+                if (now && *now != held_commit) {
+                    const std::string moved =
+                        label + " is now " + now->substr(0, 12) + "; the weights here are of " +
+                        held_commit.substr(0, 12) +
+                        (kept ? " (converted, download removed)" : " (downloaded)");
                     if (options.moved_ref == MovedRef::Refetch) {
                         say(options, moved + ": downloading the new commit (--refetch)");
-                        replaced.artifact = *kept;
+                        // The old conversion goes once the new one is there (unless the caller
+                        // keeps it: --keep-replaced); a download kept stays in the hub cache.
+                        if (!options.keep_replaced) {
+                            if (kept) {
+                                replaced.artifact = *kept;
+                            } else if (auto old = converted_artifact(commit_dir,
+                                                                     options.fetch.quant,
+                                                                     convert_options.recipe)) {
+                                replaced.artifact = *old;
+                            }
+                        }
                         kept.reset();
+                        refetch = true;
                     } else if (options.moved_ref == MovedRef::Accept) {
+                        std::error_code ec;
+                        fs::create_directories(commit_dir, ec);
                         accept_converted(commit_dir, ref, *now);
                         say(options, moved + ": kept, now and later (--accept-converted)");
                     } else if (converted_accepted(commit_dir, ref, *now)) {
                         say(options, moved + ": kept, as accepted earlier");
                     } else {
                         const std::string notice =
-                            "warning: " + moved + ". Serving the converted weights; "
-                            "--accept-converted keeps them without this notice, --refetch "
-                            "downloads the new commit and removes these";
+                            "warning: " + moved + ". Serving these weights; --accept-converted "
+                            "keeps them without this notice, --refetch downloads the new commit "
+                            "and removes these";
                         say(options, notice);
                         if (options.on_moved_ref) { options.on_moved_ref(notice); }
                     }
+                }
+                // Weights kept with their download: the start below runs at their commit (the
+                // fetch finds them in the cache, with the hub or without it).
+                if (!kept && !refetch && (!checked || !now || *now != held_commit)) {
+                    pinned = repo + "@" + held_commit;
                 }
             }
             if (kept) {
@@ -515,7 +556,9 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 return out;
             }
         }
-        preflight_recipe = preflight(repo, revision, options);
+        preflight_recipe =
+            preflight(repo, pinned.empty() ? revision : split_spec(pinned, options.fetch).second,
+                      options);
         if (!preflight_recipe.empty()) {
             say(options, "recipe " + preflight_recipe + " (from config.json)");
         }
@@ -526,7 +569,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         check_space(plan);
         if (caller) { caller(plan, preflight_recipe); }
     };
-    out.fetched = fetch_model(spec, fetch);
+    out.fetched = fetch_model(pinned.empty() ? spec : pinned, fetch);
     const FetchResult& fetched = out.fetched;
     say(options, "fetched " + fetched.repo + "@" + fetched.commit.substr(0, 12) + " -> " +
                      fetched.model.string());

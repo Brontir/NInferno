@@ -33,7 +33,8 @@ std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
-           "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch] "
+           "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch "
+           "[--keep-replaced]] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
            "[--kv-auto-headroom-mib N] "
@@ -548,6 +549,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.accept_converted = true;
         } else if (arg == "--refetch") {
             options.refetch = true;
+        } else if (arg == "--keep-replaced") {
+            options.keep_replaced = true;
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(require_value("--log-level"));
         } else {
@@ -579,6 +582,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.plan_json && !options.plan_only) {
         throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.keep_replaced && !options.refetch) {
+        throw std::invalid_argument("--keep-replaced keeps what --refetch replaces: it needs "
+                                    "--refetch");
     }
     if (options.accept_converted && options.refetch) {
         throw std::invalid_argument("--accept-converted keeps the converted weights, --refetch "
