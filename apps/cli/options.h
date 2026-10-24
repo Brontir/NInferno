@@ -31,6 +31,10 @@ struct Options {
     // --state-dtype (omitted: EngineOptions::recurrent_state_automatic).
     std::optional<RecurrentStateStorage> recurrent_state;
     ActivationMode activations = kDefaultActivationMode; // --activations exact|fast
+    // Whether --activations and --sliding-kv-dtype were given: the configuration choice
+    // (product/plan/plan_choice.h) picks what the user left automatic.
+    bool activations_given = false;
+    bool sliding_kv_given  = false;
     float rope_yarn_factor     = 1.0F;                   // --rope-yarn-factor
     SpeculativeOptions speculative;
     // --spec given explicitly (mtp|dflash|dflash2|none); otherwise the artifact's speculation

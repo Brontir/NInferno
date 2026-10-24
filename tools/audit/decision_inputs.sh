@@ -71,6 +71,8 @@ decision_patterns=(
   src/product/choice/choice.cpp
   src/product/choice/choice.h
   src/product/choice/choice_constants.h
+  src/product/plan/plan_choice.cpp
+  src/product/plan/plan_choice.h
   src/ops/generic/route_table.h
   src/ops/wrapper/candidate_selector.cpp
   src/ops/candidate_selector/bf16/candidate_selector_path_plan.cpp

@@ -1,5 +1,7 @@
 #include "product/plan/plan_quants.h"
 
+#include "product/plan/plan_choice.h"
+
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -30,7 +32,11 @@ std::string gib(std::uint64_t bytes) {
     return text;
 }
 
-double round_to(double x, double step) { return std::round(x / step) * step; }
+// Rounded to a step (0.1, 0.01, ...): by the step's inverse, so 61.4 prints as 61.4.
+double round_to(double x, double step) {
+    const double inverse = std::round(1.0 / step);
+    return inverse >= 1 ? std::round(x * inverse) / inverse : std::round(x / step) * step;
+}
 
 std::string context_text(const EngineOptions& options) {
     return options.max_context_automatic ? std::string("auto") : grouped(options.max_context);
@@ -261,6 +267,11 @@ std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& i
     return best;
 }
 
+bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       std::uint32_t context) {
+    return own_plan(plan_model(facts, at_context(inputs, context)).plan);
+}
+
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
                       const DryRunInputs& inputs) {
     QuantPlan out;
@@ -311,11 +322,103 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }
+        if (row.planned.plan.planned) {
+            // The speed of a typical request at the storages this row's plan serves with.
+            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const choice::ModelFacts model = choice_model_of(facts);
+            const choice::CardFacts card   = choice_card_of(inputs.gpu);
+            choice::QuantOption q;
+            q.label           = row.listing.quant;
+            q.weight_bytes    = static_cast<double>(row.weight_bytes);
+            q.bits_per_weight = row.candidate.bits_per_weight;
+            q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
+                                q.label.find("nvfp4") != std::string::npos;
+            // The ternary and two-bit GGML blocks keep BF16 activations (kept_block_policy).
+            for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
+                if (q.label.find(a16) != std::string::npos) { q.int8_route = false; }
+            }
+            choice::Candidate c;
+            c.kv          = row.planned.plan.kv_cache;
+            c.state       = row.planned.plan.recurrent;
+            c.ring        = inputs.options.sliding_kv_cache;
+            c.activations = inputs.options.activations;
+            choice::Task task;
+            task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
+            const std::uint32_t context =
+                ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
+            row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
+            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth);
+            row.request_seconds = choice::request_seconds(model, card, q, c, task);
+        }
         candidates.push_back(row.candidate);
         fits.push_back(row.fit);
         out.rows.push_back(std::move(row));
     }
     out.pick = runtime::largest_fitting_quant(candidates, fits, ask);
+    // A GPU generation that decides weighs the quantizations by worth within the rule's tier: the
+    // rows that keep the same own context per stream on the same side of the floor, each at its own
+    // choice (product/plan/plan_choice.h). Elsewhere the rule's largest stands.
+    if (out.pick && choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&
+        (out.pick->tier == runtime::QuantPickTier::Own ||
+         out.pick->tier == runtime::QuantPickTier::OwnStepped ||
+         out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
+        const ChoicePins& pins = inputs.pins;
+        // Every supported row on the tier's side of the floor, scored at its own choice: a narrower
+        // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
+        // the order of the best worth their weights could reach (no memory planned: a bound); the
+        // memory is planned (one plan a step) only while a row's bound can still beat the best.
+        std::vector<std::pair<double, std::size_t>> bounds;
+        for (std::size_t i = 0; i < out.rows.size(); ++i) {
+            const QuantRow& row = out.rows[i];
+            if (!row.candidate.supported ||
+                out.pick->below_floor != (runtime::quant_rank_bits(row.candidate) <
+                                          runtime::kPlanQualityFloorBits)) {
+                continue;
+            }
+            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis), inputs,
+                                                 pins, row.listing.quant, OwnContext::Unbounded);
+            if (bound && bound->choice.chosen) {
+                bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
+            }
+        }
+        std::stable_sort(bounds.begin(), bounds.end(),
+                         [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::optional<std::size_t> best;
+        double best_worth           = 0;
+        std::uint32_t best_context  = 0;
+        for (const auto& [bound, i] : bounds) {
+            if (best && bound < best_worth - choice::kWorthTie) { break; }
+            const QuantRow& row = out.rows[i];
+            const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                                  inputs, pins, row.listing.quant, OwnContext::Steps);
+            if (!served || !served->choice.chosen ||
+                served->choice.context < out.pick->target_context) {
+                continue;
+            }
+            const double worth = served->choice.scored[*served->choice.chosen].worth;
+            if (!best || worth > best_worth + choice::kWorthTie ||
+                (std::abs(worth - best_worth) <= choice::kWorthTie &&
+                 runtime::quant_ranks_above(row.candidate, out.rows[*best].candidate))) {
+                best         = i;
+                best_worth   = worth;
+                best_context = served->choice.context;
+            }
+        }
+        if (best && *best != out.pick->index) {
+            out.largest_index = out.pick->index;
+            out.pick->index   = *best;
+            out.by_worth      = true;
+            // The launch keeps the own context per stream the row's choice reached (several
+            // streams under an automatic context: never a pool they silently share), as the rule's
+            // pick does: its preliminary plan was made at the family's defaults.
+            QuantRow& row = out.rows[*best];
+            if (ask.automatic && ask.concurrency > 1 && best_context != 0) {
+                row.launch_context = best_context;
+            }
+            row.fit.state       = runtime::QuantFitState::Own;
+            row.fit.own_context = std::max(row.fit.own_context, best_context);
+        }
+    }
     if (out.pick) {
         out.chosen                        = out.pick->index;
         out.rows[out.pick->index].largest = true;
@@ -349,14 +452,22 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
         const std::uint32_t context = row.launch_context != 0    ? row.launch_context
                                       : row.fit.own_context != 0 ? row.fit.own_context
                                                                  : row.fit.context;
-        mutable_plan.rule_code      = "largest_fits";
+        mutable_plan.rule_code      = plan.by_worth ? "best_worth" : "largest_fits";
         params["quant"]             = row.listing.quant;
+        if (plan.by_worth && plan.largest_index) {
+            params["largest"] = plan.rows[*plan.largest_index].listing.quant;
+        }
         params["tier"]              = std::string(runtime::quant_pick_tier_name(k.tier));
         params["planned_context"]   = context;
         params["below_floor"]       = k.below_floor;
         params["low_quality"]       = k.low_quality;
-        std::string line = row.listing.quant + ": the largest that fits on " + where + " at " +
-                           context_words + " × " + stream_text;
+        std::string line =
+            row.listing.quant +
+            (plan.by_worth && plan.largest_index
+                 ? ": the best balance of speed and accuracy (the largest that fits is " +
+                       plan.rows[*plan.largest_index].listing.quant + ") on "
+                 : ": the largest that fits on ") +
+            where + " at " + context_words + " × " + stream_text;
         switch (k.tier) {
         case runtime::QuantPickTier::Own:
         case runtime::QuantPickTier::OwnStepped:
@@ -583,6 +694,17 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"fits_shared", row.fit.state == runtime::QuantFitState::Shared},
                         {"largest", row.largest}};
         item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
+        if (row.estimate) {
+            item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
+                                {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
+                                {"depth", row.estimate_depth},
+                                {"request_seconds", round_to(row.request_seconds, 0.001)},
+                                {"prompt", choice::kRequestPrompt},
+                                {"answer", choice::kRequestAnswer},
+                                {"transferred", row.estimate->transferred}};
+        } else {
+            item["estimate"] = nullptr;
+        }
         rows.push_back(std::move(item));
     }
     Json pick = nullptr;

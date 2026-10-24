@@ -4,6 +4,7 @@
 #include "convert/acquire.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "serve/generation_service.h"
@@ -285,6 +286,15 @@ ModelRead read_model(const ServeOptions& options) {
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
                                      const std::vector<product::QuantListing>& listing);
 
+// The axes the user pinned with flags (the configuration choice picks the others).
+product::ChoicePins pins_of(const ServeOptions& options) {
+    return {.kv          = options.kv_cache.has_value(),
+            .activations = options.activations_given,
+            .state       = options.recurrent_state.has_value(),
+            .ring        = options.sliding_kv_given,
+            .chunk       = options.prefill_chunk_explicit};
+}
+
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
@@ -297,6 +307,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     out.inputs.device  = device;
     out.inputs.gpu     = gpu;
     out.inputs.options = engine_options_of(options);
+    out.inputs.pins    = pins_of(options);
     out.inputs.ask     = product::SpeculationAsk{.automatic   = options.speculation_from_profile,
                                                  .given       = options.speculative,
                                                  .thinking    = options.enable_thinking.value_or(true),
@@ -385,6 +396,14 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
                                              quants ? &*quants : nullptr);
     out.fits = planned.plan.fits;
+    // The configuration choice at the chosen weights: what the start would pick for the axes left
+    // automatic, and what every other value would change.
+    std::string label = model.quant;
+    if (quants && quants->chosen) { label = quants->rows[*quants->chosen].listing.quant; }
+    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options), label)) {
+        out.json["choice"] = product::choice_json(*served);
+        out.text += product::choice_line(*served) + "\n";
+    }
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
         product::DryRunInputs now                = planning.inputs;
@@ -596,6 +615,38 @@ largest_fitting_hub_quant(const ServeOptions& options,
     }
     if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
     return choice_of(row, plan, options, log);
+}
+
+std::optional<product::StartAxes>
+choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
+    const product::ChoicePins pins = pins_of(options);
+    if (pins.kv && pins.activations && pins.state && pins.ring && pins.chunk) { return std::nullopt; }
+    runtime::PlanDeviceFacts device;
+    spec::GpuKey gpu;
+    try {
+        device = product::plan_device_of_cuda(
+            options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
+        gpu = spec::gpu_identity(options.device).key;
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("not planned (no GPU facts: ") + e.what() + ")"); }
+        return std::nullopt;
+    }
+    ServeOptions at_artifact = options;
+    at_artifact.model_source = options.artifact_path;
+    std::optional<product::ServedChoice> served;
+    try {
+        const ModelRead model   = read_model(at_artifact);
+        Planning planning       = planning_of(at_artifact, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        served                  = product::choose_at_weights(model.facts, planning.inputs, pins);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("not planned: ") + e.what()); }
+        return std::nullopt;
+    }
+    if (!served) { return std::nullopt; }
+    if (log) { log(product::choice_line(*served).substr(9)); }
+    if (!served->choice.chosen) { return std::nullopt; }
+    return product::start_axes(*served, pins);
 }
 
 } // namespace ninferno::serve

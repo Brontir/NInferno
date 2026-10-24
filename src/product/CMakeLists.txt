@@ -33,6 +33,14 @@ add_library(ninferno_product_speculation STATIC
 ninferno_internal_includes(ninferno_product_speculation)
 target_link_libraries(ninferno_product_speculation PUBLIC ninferno_spec PRIVATE ninferno_core)
 
+# The configuration choice (choice/choice.h): memory, speed and accuracy of every candidate
+# configuration from facts, and the one rule that picks among them. Pure.
+add_library(ninferno_product_choice STATIC
+  choice/choice.cpp
+)
+ninferno_internal_includes(ninferno_product_choice)
+target_link_libraries(ninferno_product_choice PUBLIC ninferno_core)
+
 # The plan without the weights (runtime/engine/plan_dry_run.h) from what a model says about itself
 # and what a device is, the speculation a start would serve with, and the largest quantization that
 # fits: ninferno-serve --plan --no-load, the quant a hub GGUF is fetched at, ninferno-ui /api/plan.
@@ -41,16 +49,10 @@ add_library(ninferno_product_plan STATIC
   plan/plan_facts.cpp
   plan/plan_speculation.cpp
   plan/plan_quants.cpp
+  plan/plan_choice.cpp
 )
 ninferno_internal_includes(ninferno_product_plan)
 
-# The configuration choice (choice/choice.h): memory, speed and accuracy of every candidate
-# configuration from facts, and the one rule that picks among them. Pure.
-add_library(ninferno_product_choice STATIC
-  choice/choice.cpp
-)
-ninferno_internal_includes(ninferno_product_choice)
-target_link_libraries(ninferno_product_choice PUBLIC ninferno_core)
 target_link_libraries(ninferno_product_plan
-  PUBLIC ninferno_runtime_support ninferno_product_speculation ninferno_spec ninferno::json
+  PUBLIC ninferno_runtime_support ninferno_product_speculation ninferno_product_choice ninferno_spec ninferno::json
   PRIVATE ninferno_convert ninferno_artifact ninferno_core ninferno::cudart)

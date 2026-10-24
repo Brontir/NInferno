@@ -11,6 +11,7 @@
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_speculation.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "product/choice/choice.h"
 #include "runtime/engine/quant_rule.h"
 
 #include <nlohmann/json.hpp>
@@ -42,8 +43,19 @@ struct QuantListing {
 [[nodiscard]] std::optional<std::uint64_t> checkpoint_converted_bytes(const nlohmann::json& config,
                                                                       std::uint64_t bytes);
 
+// The axes the user pinned with flags (what is not pinned the configuration choice picks:
+// product/plan/plan_choice.h), as the command line or the launch gave them, never inferred from the
+// resolved options.
+struct ChoicePins {
+    bool kv          = false; // --kv-dtype other than auto
+    bool activations = false; // --activations given
+    bool state       = false; // --state-dtype given
+    bool ring        = false; // --sliding-kv-dtype given
+    bool chunk       = false; // --prefill-chunk given
+};
+
 // What a dry run plans with: the device, its profile key, the Engine options the server builds,
-// the speculation asked for and the subject it is resolved for.
+// the speculation asked for and the subject it is resolved for, and the axes the user pinned.
 struct DryRunInputs {
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
@@ -51,6 +63,7 @@ struct DryRunInputs {
     SpeculationAsk ask;
     const SpeculationSubject* subject = nullptr;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
+    ChoicePins pins;
 };
 
 // The rule's ask from the inputs: the context (automatic or pinned), the streams, the model's own.
@@ -103,6 +116,14 @@ struct QuantRow {
     // 0 (automatic) otherwise.
     std::uint32_t launch_context = 0;
     bool largest                 = false; // the rule's pick
+    // The choice model's speed at the plan's storages (product/choice/choice.h): one stream of the
+    // asked ones decoding at `estimate_depth` tokens in its window (a quarter of the asked context,
+    // under Auto of its first step min(native, 32K); the same for every row, so the rows compare;
+    // at least 512: an empty context flatters decode), the prefill, and the seconds of a
+    // typical request (choice::kRequestPrompt + kRequestAnswer tokens). Not set for a row not planned.
+    std::optional<choice::Speed> estimate;
+    std::uint32_t estimate_depth = 0;
+    double request_seconds       = 0;
 };
 
 struct QuantPlan {
@@ -112,7 +133,11 @@ struct QuantPlan {
     // "UD-Q6_K_XL: the largest that fits on this RTX 4090 (24 GB) at auto context (49,152 each)
     // x 1 stream" or why none (English, the CLI); `rule_code` and `rule_params` the same as data.
     std::string rule;
-    std::string rule_code; // largest_fits | none_fits | none_served
+    std::string rule_code; // largest_fits | best_worth | none_fits | none_served
+    // The worth picked the quantization within the rule's tier (product/choice: a GPU generation
+    // that decides and the measured quantization curve); `largest` is then the rule's own pick.
+    bool by_worth = false;
+    std::optional<std::size_t> largest_index;
     nlohmann::json rule_params = nlohmann::json::object();
 };
 
@@ -137,6 +162,10 @@ struct QuantPlan {
 // (8K .. the model's own) whose plan at that pinned context keeps every stream's own.
 [[nodiscard]] std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& inputs,
                                            const PlannedSpeculation& served);
+
+// Whether every stream of `inputs` holds `context` of its own (the plan at that pinned context).
+[[nodiscard]] bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                     std::uint32_t context);
 
 // JSON pieces of "ninferno-dry-plan/1" (docs/reference/serving.md, "The plan without the
 // weights").

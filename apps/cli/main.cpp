@@ -3,6 +3,7 @@
 #include "spec_tune.h"
 
 #include "artifact/source_identity.h"
+#include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -376,15 +377,57 @@ int main(int argc, char** argv) {
                     ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
             } catch (const std::exception&) {}
             inputs.subject                            = &subject;
+            inputs.pins                               = {.kv          = cli.kv_cache.has_value(),
+                                                         .activations = cli.activations_given,
+                                                         .state       = cli.recurrent_state.has_value(),
+                                                         .ring        = cli.sliding_kv_given,
+                                                         .chunk       = true};
             const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
             const std::string source                  = cli.artifact_path.string();
-            std::cout << (cli.plan_json ? product::dry_plan_document(facts, source, "artifact",
-                                                                     inputs, planned, nullptr)
-                                                  .dump(1) +
-                                              '\n'
-                                        : product::render_dry_plan_text(facts, source, inputs,
-                                                                        planned, nullptr));
+            // The configuration choice for the axes left automatic, as a start would take it.
+            const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
+                                                     .activations = cli.activations_given,
+                                                     .state       = cli.recurrent_state.has_value(),
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
+            const auto served = product::choose_at_weights(facts, inputs, pins);
+            if (cli.plan_json) {
+                nlohmann::json doc =
+                    product::dry_plan_document(facts, source, "artifact", inputs, planned, nullptr);
+                if (served) { doc["choice"] = product::choice_json(*served); }
+                std::cout << doc.dump(1) << '\n';
+            } else {
+                std::cout << product::render_dry_plan_text(facts, source, inputs, planned, nullptr);
+                if (served) { std::cout << product::choice_line(*served) << '\n'; }
+            }
             return planned.plan.fits ? 0 : 2;
+        }
+        // The axes the user left to the engine: the configuration choice for this artifact on this
+        // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it.
+        {
+            const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
+                                                     .activations = cli.activations_given,
+                                                     .state       = cli.recurrent_state.has_value(),
+                                                     .ring        = cli.sliding_kv_given,
+                                                     .chunk       = true}; // the CLI's chunk is fixed
+            if (!(pins.kv && pins.activations && pins.state && pins.ring)) {
+                ninferno::product::SpeculationAsk ask;
+                ask.automatic = false;
+                ask.given     = engine_options.speculative;
+                ask.thinking  = cli.enable_thinking.value_or(true);
+                std::string why;
+                const auto served = ninferno::product::choose_for_artifact(
+                    cli.artifact_path, cli.device, engine_options, ask, cli.spec_profile, pins, &why);
+                if (served) {
+                    logger->info("{}", ninferno::product::choice_line(*served));
+                    if (served->choice.chosen) {
+                        ninferno::product::apply_start_axes(
+                            engine_options, ninferno::product::start_axes(*served, pins));
+                    }
+                } else if (!why.empty()) {
+                    logger->info("choice | not planned: {}", why);
+                }
+            }
         }
 
         // A profile's choice that does not fit the requested context on this device gives way as

@@ -1586,13 +1586,13 @@ contract.
 | `--max-concurrency N` | maximum admitted requests; valid range `1..8` | `1` |
 | `--max-pending-requests N` | additional requests allowed to wait for admission | `16` |
 | `--pending-timeout-ms N` | maximum preparation-plus-admission wait | `600000` |
-| `--prefill-chunk N` | text-prefill chunk | `1024` (halved down to 128 when needed; an explicit value is kept) |
+| `--prefill-chunk N` | text-prefill chunk; omitted, an MoE on a GPU generation with lab constants (Ada) takes the configuration choice's widest chunk (2048 or 4096 where the prompt fills it: an MoE's prefill grows with the tokens each expert takes) | `1024` (halved down to 128 when needed; an explicit value is kept) |
 | `--kv-lease-window N` | KV a request reserves past its prompt at admission, in output tokens (at least one speculative round); it extends the reservation as it decodes, releasing idle cached context when the pool is short. When a reservation still cannot grow, the request admitted last leaves its lane (recompute preemption, as in vLLM: the older requests keep running), its conversation cached like a cancelled one's, and queues again at the head to resume from its text once another request has finished, recomputing only what the cache lost; its stream does not break. Requests that cannot resume from their text (a media prompt, presence or frequency penalties, a thinking budget, an output constraint) wait instead, their KV kept and no request admitted meanwhile, while the others run and free pages; only when every running request waits does the one furthest into its answer end with its output limit. An agent client asking `max_tokens` 32000 no longer holds a whole context while it answers in a few hundred tokens. Where the pool does not bind it costs nothing measurable (RTX 4090, RTX 5090, A100: decode at 24K and C1/C4 within noise); `0` reserves the whole output budget | `4096` |
 | `--concurrent-prefill` | admit waiting requests while others prefill: the prefilling requests take chunks in turn (a later request's first token comes sooner, an earlier long prompt's later); output unchanged | off |
-| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below | `auto` |
-| `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8` | `bf16` |
-| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds the state to the storage when it stores it and at every 16-token chunk end of a prefill call, so a prefill cut on the chunk grid (a prefill chunk size, a cache capture or restore) leaves the bytes as they are. Omitted, these families take `f16` under `--activations fast` (the startup's capacity line says "state f16") and `f32` under `--activations exact`. One wide call and the same tokens one call each still round differently, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
-| `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below. `auto`: the [configuration choice](#the-plan-without-the-weights) for the model on this GPU (the family's codec where the GPU generation has no lab constants) | `auto` |
+| `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8`. Omitted, the rings follow the KV cache: `fp8` under a narrower KV codec where the family's rings take it, else `bf16` | follows the KV cache |
+| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds the state to the storage when it stores it and at every 16-token chunk end of a prefill call, so a prefill cut on the chunk grid (a prefill chunk size, a cache capture or restore) leaves the bytes as they are. Omitted, the state is one step finer than the KV cache: `f32` under a `bf16` KV cache and under `--activations exact`, else `f16` (the startup's capacity line says which). One wide call and the same tokens one call each still round differently, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
+| `--activations exact\|fast\|int8` | numeric mode; see below. Omitted, the configuration choice picks it (`fast` unless `exact` costs under about 11 % of a typical request's time, and on a GPU generation without lab constants) | chosen (`fast`) |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--decode-steps auto\|N` | ordinary decode steps per round, `1..32` ([decode round pacing](../cli.md#decode-round-pacing)) | `auto` |
@@ -2160,6 +2160,23 @@ and the same flags get the same file. `--plan --no-load` on a live GPU builds it
 idle card too, and reports the free memory now beside it (`device.free_now_bytes`, `fits_now`, and a
 `now |` line when the pick would not start right now).
 
+**The configuration choice.** The axes a start leaves automatic (`--kv-dtype auto`, no
+`--activations`, no `--state-dtype`) are chosen for the model on this GPU by one rule
+([Configuration choice](../maintainer/configuration-choice.md)): among the KV codecs and activation
+modes that keep the asked context per stream, the one with the best worth `-ln(T) - 25 KLD`, T a
+typical request's seconds (2048 prompt tokens, 512 answer tokens) priced on the GPU generation's
+reference card, KLD the measured deviation from the exact reference. Where the generation has no
+reference card on two lab cards (today: every one but Ada), the family's defaults stand. A start
+logs it before the plan:
+
+```text
+choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill, KLD 0.0044 (estimates) | Q4_K_M: the largest quantization whose every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
+```
+
+Pinned flags stay as given; the line then says what the choice kept. `--plan --no-load` prints the
+same line and adds `choice` to its JSON; ninferno-ui shows it with what each other value would
+change.
+
 **JSON** (`--plan --no-load --json`, ninferno-ui `/api/plan`), schema `ninferno-dry-plan/1`:
 
 | Field | Content |
@@ -2169,11 +2186,12 @@ idle card too, and reports the free memory now beside it (`device.free_now_bytes
 | `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (the class reserve the selection keeps beside the free memory, for the growth of what Windows holds), `desktop_bytes` (the desktop's declared share an idle card's free memory lacks); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
 | `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
 | `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
-| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned); a single quantization's row when one was named; empty for a single model |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight`, `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned), `estimate` (`null` when not planned, else the choice model's speeds at the plan's storages: `decode_tok_s` one stream of the asked ones at `depth` tokens in its window, a quarter of the asked context or of Auto's first step and the same for every row, `prefill_tok_s`, `request_seconds` of a `prompt` + `answer` token request, `transferred` a constant taken from another GPU generation); a single quantization's row when one was named; empty for a single model |
 | `chosen` | the rule's quantization, `null` when none fits or there is no listing |
 | `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
 | `rule` | the rule's line (English, for a terminal) |
-| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
+| `choice` | CHOICE: the configuration choice at the chosen quantization's weights |
+| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `best_worth` (the same and `largest`: on a GPU generation that decides, the configuration choice weighed the quantizations of the rule's tier by worth and took `quant` over the largest), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
 
 PLAN:
 
@@ -2193,6 +2211,23 @@ PLAN:
 | `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`) |
 | `ladder` | every rung, top first, as `chosen` |
 | `speculation` | SPEC: the speculation the plan was made with |
+
+CHOICE:
+
+| Field | Content |
+|---|---|
+| `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
+| `why` | the decision in one line (English) |
+| `by_worth` | `true` when the worth decided; `false` when the quant rule and the family's defaults stood (no reference card for this generation, or a constant set still on one lab card: the `why` says which) |
+| `quant_by_worth` | `true` when the worth also weighed the quantizations (the curve was measured on the model's family); `false` when the quant rule's largest stood |
+| `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
+| `chosen` | `null` when nothing fits; else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
+| `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `chunk`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the smaller quantization label, else the listing order), `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
+
+ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
+measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
+on another family), `worth`.
 
 SPEC:
 

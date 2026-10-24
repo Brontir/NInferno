@@ -58,6 +58,7 @@ struct PlanTargetShape {
     double routed_expert_params = 0;
     bool builtin_mtp = false; // MTP / NextN layers in the model (GGUF nextn_predict_layers)
     bool kquant      = false; // GGUF k- or IQ-quant weights
+    bool tied_embeddings = false; // the output head shares the input table (no separate rows to read)
     // The quantized weight formats, as artifact::format_name spells them where known
     // ("ggml_q4_k", "mxfp4", "nvfp4", "bf16"); empty when unknown.
     std::vector<std::string> weight_formats;
