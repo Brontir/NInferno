@@ -588,28 +588,29 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                                              s.candidate.drafter == default_drafter));
     };
     const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
+    // One order over the eligible candidates: where the worth weighs the quantizations, the worth
+    // (better); else the quant rule's largest first, the worth among its candidates.
+    const auto ranks_above = [&](std::size_t i, std::size_t j) {
+        const Scored& a = out.scored[i];
+        const Scored& b = out.scored[j];
+        if (!out.quant_by_worth && a.candidate.quant != b.candidate.quant) {
+            return larger_quant(quants[a.candidate.quant], a.candidate.quant,
+                                quants[b.candidate.quant], b.candidate.quant);
+        }
+        return better(a, i, b, j, quants);
+    };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
-    // every step before any quantization below them (the quant rule's tiers).
+    // every step before any quantization below them (the quant rule's tiers): the first step and
+    // side that holds an eligible candidate takes its best.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
     bool above_floor_settled = true;
     for (const bool above_floor : {true, false}) {
         for (const std::uint32_t context : task.contexts) {
-            // Under the worth, the best eligible candidate of any quantization at or (in the second
-            // pass) below the floor; else among the quant rule's (the largest) candidates.
-            std::optional<std::size_t> quant;
-            for (const Scored& s : out.scored) {
-                if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!quant || larger_quant(quants[s.candidate.quant], s.candidate.quant, quants[*quant], *quant)) {
-                    quant = s.candidate.quant;
-                }
-            }
-            if (!quant) { continue; }
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
                 if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!out.quant_by_worth && s.candidate.quant != *quant) { continue; }
-                if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
+                if (!chosen || ranks_above(i, *chosen)) { chosen = i; }
             }
             if (chosen) {
                 settled             = context;
