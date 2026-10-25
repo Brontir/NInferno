@@ -246,15 +246,33 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     std::vector<const MeasuredPair*> low, high;
     for (const auto& pair : pairs) {
         if (pair.engine != engine || !pair_current(pair)) { continue; }
-        const bool drafts = std::any_of(
+        // That drafter kind, not another of its mode (MTP layers, Gemma's assistant and
+        // Nemotron's MTP block all propose as MTP).
+        const bool kind_of = std::any_of(pair.tune.drafters.begin(), pair.tune.drafters.end(),
+                                         [&](const DrafterRecord& d) { return d.kind == kind; });
+        const bool drafts  = std::any_of(
             pair.tune.measurements.begin(), pair.tune.measurements.end(),
             [&](const Measurement& m) { return m.config.mode == mode; });
-        if (!drafts) { continue; }
-        (pair.target_bits < 4 ? low : high).push_back(&pair);
+        if (!kind_of || !drafts) { continue; }
+        auto& into = pair.target_bits < 4 ? low : high;
+        // One card's record of a target once.
+        const bool again = std::any_of(into.begin(), into.end(), [&](const MeasuredPair* p) {
+            return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu;
+        });
+        if (!again) { into.push_back(&pair); }
     }
-    const bool below = target_bits < 4;
-    auto& same       = below ? low : high;
-    return same.empty() ? (below ? high : low) : same;
+    // A group's choice is a lab constant for targets nobody measured: fitted on two cards or more.
+    const auto enough = [](const std::vector<const MeasuredPair*>& group) {
+        std::set<std::string> cards;
+        for (const auto* p : group) { cards.insert(p->tune.key.gpu); }
+        return cards.size() >= 2;
+    };
+    const bool below  = target_bits < 4;
+    const auto& same  = below ? low : high;
+    const auto& other = below ? high : low;
+    if (enough(same)) { return same; }
+    if (same.empty() && enough(other)) { return other; }
+    return {};
 }
 
 std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,

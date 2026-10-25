@@ -106,12 +106,24 @@ int main() {
     }
     // Below 4 bits drafts pay less: a 2-bit target's group is the 2-bit pairs.
     {
-        const std::vector<sp::MeasuredPair> mtp = {mtp_q4, mtp_iq2};
+        // The same pairs on a second card (an Ada one).
+        auto q4_ada = mtp_q4, iq2_ada = mtp_iq2;
+        q4_ada.tune.key.gpu = iq2_ada.tune.key.gpu = "ad104:60sm";
+        q4_ada.generation = iq2_ada.generation = "sm89";
+        const std::vector<sp::MeasuredPair> mtp = {mtp_q4, mtp_iq2, q4_ada, iq2_ada};
         const auto low  = sp::pair_group(mtp, "qwen3_5", "mtp", 2.7);
         const auto high = sp::pair_group(mtp, "qwen3_5", "mtp", 4.9);
-        expect(low.size() == 1 && low[0]->target_bits < 4 && high.size() == 1 &&
+        expect(low.size() == 2 && low[0]->target_bits < 4 && high.size() == 2 &&
                    high[0]->target_bits >= 4,
                "the bit class splits the group");
+        // One card's measurements are no lab constant: no group from them.
+        const std::vector<sp::MeasuredPair> one = {mtp_q4, mtp_iq2, mtp_q4};
+        expect(sp::pair_group(one, "qwen3_5", "mtp", 4.9).empty() &&
+                   sp::pair_group(one, "qwen3_5", "mtp", 2.7).empty(),
+               "a group measured on one card is no group");
+        // Another drafter of the same mode is not this kind's group.
+        expect(sp::pair_group(mtp, "qwen3_5", "gemma4_assistant", 4.9).empty(),
+               "a group is of the drafter kind, not only of its mode");
     }
     // gpt-oss without thinking gains 1-2 % over plain decode: at a fine-tune's acceptance it would
     // lose, so a target nobody measured decodes plainly there.
