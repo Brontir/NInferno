@@ -1471,17 +1471,21 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
     } catch (const std::exception&) {
         return false; // no model there for options.quant
     }
-    // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one part
-    // leaves the others unlinked, and the listing above sees only what is there.
+    // Every part of a split GGUF or of safetensors shards ("x-00001-of-00003.gguf",
+    // "model-00001-of-00002.safetensors", with or without an index): a download stopped after one
+    // part leaves the others unlinked, and the listing above sees only what is there.
     const auto all_parts = [&](const std::string& path) {
-        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.(gguf|safetensors))",
+                                      std::regex::icase);
         std::smatch match;
         if (!std::regex_match(path, match, split)) { return true; }
         const int parts = std::stoi(match[2].str());
         for (int part = 1; part <= parts; ++part) {
             char suffix[32];
-            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
-            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
+            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.", part, parts);
+            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix + match[3].str()), ec)) {
+                return false;
+            }
         }
         return true;
     };
