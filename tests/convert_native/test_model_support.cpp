@@ -202,6 +202,15 @@ int main(int argc, char** argv) {
             "id": "unsloth/Qwen3.5-9B-GGUF", "pipeline_tag": "image-text-to-text",
             "gguf": {"architecture": "qwen35", "chat_template": "{{ x }}"}})"));
         expect(gguf.gguf && of(gguf).verdict == Verdict::Supported, "a GGUF from the search");
+        // Safetensors beside a GGUF: the fetch takes them, so their config decides.
+        const auto mixed = cv::search_support_facts(Json::parse(R"({
+            "id": "org/mixed", "pipeline_tag": "text-generation",
+            "config": {"architectures": ["Qwen3ForCausalLM"],
+                       "tokenizer_config": {"chat_template": "{{ x }}"}},
+            "gguf": {"architecture": "lfm2", "chat_template": "{{ x }}"},
+            "safetensors": {"parameters": {"BF16": 1}}})"));
+        expect(!mixed.gguf && of(mixed).verdict == Verdict::Supported,
+               "a mixed search result is judged by its safetensors");
     }
     std::cout << (failures == 0 ? "model support: ok\n" : "model support: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
