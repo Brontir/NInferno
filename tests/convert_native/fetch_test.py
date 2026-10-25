@@ -581,6 +581,15 @@ def main() -> int:
             (shards / "model-00002-of-00002.safetensors").write_bytes(b"x")
             case("unindexed safetensors shards: held only with every part",
                  one_part == "false" and holds_shards() == "true")
+            # A --vision start: a text-only checkpoint does not hold what is asked.
+            def holds_shards_vision():
+                run = subprocess.run([str(probe), "org/shards", "--holds-vision", "", str(shards)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            text_only = holds_shards_vision()
+            (shards / "config.json").write_text('{"architectures": ["Qwen3_5ForConditionalGeneration"], "vision_config": {}}')
+            case("a --vision start pins only to a checkpoint with its Vision encoder",
+                 text_only == "false" and holds_shards_vision() == "true")
             (repo2 / "refs" / "main").write_text(old2)
             # The old commit holds another conversion too (of a quantization not downloaded here):
             # the one --refetch replaces is the model the old snapshot serves, the other stays.
