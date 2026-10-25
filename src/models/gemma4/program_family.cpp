@@ -175,9 +175,9 @@ static_assert(gemma4::kMaximumMtpDraftTokens + 1 <= program::kNarrowCallTokens &
 class Gemma4Execution final : public ModelExecution {
 public:
     Gemma4Execution(const Model& model, const Drafter* drafter, DeviceContext& device,
-                    std::int32_t public_tokens, ActivationMode activations)
+                    std::int32_t public_tokens, ActivationMode activations, EnginePurpose purpose)
         : model_(model), c_(model.config()), pass_(model, device), drafter_(drafter),
-          invariant_(activations == ActivationMode::Exact),
+          invariant_(activations == ActivationMode::Exact), purpose_(purpose),
           traits_{.hidden        = c_.hidden_size,
                   .output_rows   = c_.vocab_size,
                   .public_tokens = public_tokens,
@@ -218,17 +218,13 @@ public:
     }
 
     [[nodiscard]] models::LoadOptions load_options() const override {
-        return {.vision      = encoder_.has_value(),
+        return {.purpose     = purpose_,
+                .vision      = encoder_.has_value(),
                 .speculative = drafter_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
                 .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
     }
 
     void validate_options(DeviceContext& device, const EngineOptions& options) const override {
-        if (options.purpose != EnginePurpose::Generation) {
-            throw std::invalid_argument("Gemma 4 serves generation only; ninferno-perplexity "
-                                        "scores Qwen models (a source build "
-                                        "scores this family with ninferno-gemma4 score)");
-        }
         if (options.enable_vision && !encoder_) {
             throw std::invalid_argument("Gemma 4: this artifact was loaded without its vision "
                                         "tower; serve it without --vision");
@@ -312,8 +308,13 @@ public:
                     traits_.public_tokens, 1, width - 1, 1, rows) +
                 DrafterPass::workspace_bytes(*drafter_, context, rows) + 1024;
         }
-        out.general_capacity = std::max(
-            {out.text_prefill, out.ordinary_round, out.mtp_prefill, out.mtp_round});
+        // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+        if (plan.causal_scoring) {
+            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+                traits_.output_rows, model_.weights().output_head);
+        }
+        out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.mtp_prefill,
+                                         out.mtp_round, out.causal_score});
         out.capacity         = out.general_capacity;
         if (plan.features.vision) {
             const VisionConfig& v = vision_config();
@@ -673,6 +674,7 @@ private:
     const Drafter* drafter_ = nullptr;
     std::optional<DrafterPass> drafter_pass_;
     bool invariant_; // ActivationMode::Exact: the invariant route profile
+    EnginePurpose purpose_;
     ModelTraits traits_;
     std::vector<std::uint32_t> index_;
     std::uint32_t full_layers_    = 0;
@@ -830,9 +832,10 @@ std::unique_ptr<const ModelExecution> make_program_execution(const Model& model,
                                                              const Drafter* drafter,
                                                              DeviceContext& device,
                                                              std::int32_t public_tokens,
-                                                             ActivationMode activations) {
+                                                             ActivationMode activations,
+                                                             EnginePurpose purpose) {
     return std::make_unique<const Gemma4Execution>(model, drafter, device, public_tokens,
-                                                   activations);
+                                                   activations, purpose);
 }
 
 } // namespace ninferno::models::gemma4

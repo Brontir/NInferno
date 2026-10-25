@@ -406,6 +406,41 @@ void checkpoint_engine() {
     expect(engine_of("UnknownForCausalLM").empty(), "an unknown architecture has no engine");
 }
 
+// Built-in MTP layers are what the weight index lists: a fine-tune saved without them keeps the
+// declaration in its config.json and has none. Without an index, the declaration.
+void checkpoint_mtp() {
+    const TempDir scratch("ninferno_drafter_plan_mtp");
+    const auto& dir = scratch.path();
+    std::ofstream(dir / "config.json") << Json{{"architectures", Json::array({"Qwen3_5ForCausalLM"})},
+                                               {"hidden_size", 256},
+                                               {"num_hidden_layers", 4},
+                                               {"vocab_size", 1000},
+                                               {"mtp_num_hidden_layers", 1}}
+                                              .dump();
+    expect(cv::describe_checkpoint(dir, "org/model").builtin_mtp,
+           "no weight listing: the declared MTP layers");
+    const auto index = [&](const Json& names) {
+        Json map = Json::object();
+        for (const auto& name : names) { map[name.get<std::string>()] = "model-1.safetensors"; }
+        std::ofstream(dir / "model.safetensors.index.json") << Json{{"weight_map", map}}.dump();
+        return cv::describe_checkpoint(dir, "org/model").builtin_mtp;
+    };
+    expect(!index({"model.embed_tokens.weight", "lm_head.weight"}),
+           "declared MTP layers absent from the index: none");
+    expect(index({"model.embed_tokens.weight", "mtp.fc.weight"}), "MTP layers in the index");
+    // NextN layers (DeepSeek, GLM) are numbered past the decoder's: their declaration stands.
+    const Json nextn  = {{"num_nextn_predict_layers", 1}};
+    const Json listed = {{"weight_map", {{"model.layers.4.eh_proj.weight", "model-2.safetensors"}}}};
+    expect(cv::sharded_checkpoint_mtp(nextn, listed), "declared NextN layers");
+    expect(cv::sharded_checkpoint_mtp({{"text_config", nextn}}, listed),
+           "NextN layers declared in text_config");
+    expect(!cv::sharded_checkpoint_mtp({{"mtp_num_hidden_layers", 1}}, listed),
+           "declared MTP layers the index does not list");
+    expect(cv::sharded_checkpoint_mtp(Json::object(),
+                                      {{"weight_map", {{"mtp.fc.weight", "model-2.safetensors"}}}}),
+           "MTP layers the index lists, the config silent");
+}
+
 // A failed drafter is retried by the next run; a failed own quantization is not.
 void retry_failed_drafter() {
     const TempDir scratch("ninferno_drafter_plan_manifest");
@@ -434,6 +469,7 @@ int main() {
     nemotron_mapper();
     similar();
     checkpoint_engine();
+    checkpoint_mtp();
     retry_failed_drafter();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;

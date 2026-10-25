@@ -308,9 +308,30 @@ bool check_patterns() {
 
 } // namespace
 
+// The special ids a TemplateProcessing puts before a document (what a causal score starts every
+// window from): <s> for "<s> $A", nothing for "$A </s>" or without a template.
+bool check_template_prefix() {
+    const std::string model =
+        R"("added_tokens": [{"id": 3, "content": "<s>", "special": true}, {"id": 4, "content": "</s>", "special": true}], )"
+        R"("model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2}, "merges": ["a b"]})";
+    const auto with = [&](const std::string& single) {
+        return Tokenizer(R"({"post_processor": {"type": "TemplateProcessing", "single": )" + single +
+                         R"(, "special_tokens": {"<s>": {"id": "<s>", "ids": [3], "tokens": ["<s>"]}, )"
+                         R"("</s>": {"id": "</s>", "ids": [4], "tokens": ["</s>"]}}}, )" + model + "}")
+            .template_prefix();
+    };
+    const auto front = with(R"([{"SpecialToken": {"id": "<s>", "type_id": 0}}, {"Sequence": {"id": "A", "type_id": 0}}])");
+    const auto back  = with(R"([{"Sequence": {"id": "A", "type_id": 0}}, {"SpecialToken": {"id": "</s>", "type_id": 0}}])");
+    const auto none  = Tokenizer("{" + model + "}").template_prefix();
+    const bool ok    = front == std::vector<int>{3} && back.empty() && none.empty();
+    if (!ok) { std::cout << "  TEMPLATE PREFIX wrong\n"; }
+    return ok;
+}
+
 int main(int argc, char** argv) {
     bool ok = true;
     ok &= check_patterns();
+    ok &= check_template_prefix();
     ok &= check_refusals();
     ok &= check_overflow_check();
     std::cout << "pattern and refusal checks: " << (ok ? "ok" : "FAILED") << "\n";
