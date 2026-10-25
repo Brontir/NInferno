@@ -22,8 +22,7 @@ namespace ninferno::models::speculation {
 
 struct DecoderOptions {
     std::int32_t max_context      = 0;
-    std::int32_t draft_tokens     = 0; // the deepest round
-    std::int32_t min_draft_tokens = 0; // nonzero and below draft_tokens: the adaptive schedule
+    std::int32_t draft_tokens = 0; // every round's depth
 };
 
 class Decoder {
@@ -52,16 +51,11 @@ public:
                                                           std::int32_t& position,
                                                           std::int32_t& pending);
 
-    // Forgets the adaptive schedule's depth: the next sequence starts from the middle depth, as
-    // a fresh session does, so its rounds cannot depend on what ran before it.
-    void reset_schedule() noexcept { next_depth_ = 0; }
-
-    // Captures the round of every depth the session can run (a session's warm-up): the depth
-    // range, and for a staged round every draft count up to it. The rounds open at the device's
-    // pending token and position, which the caller sets.
+    // Captures the round of every depth the session can run (a session's warm-up): its depth,
+    // and for a staged round every draft count up to it. The rounds open at the device's pending
+    // token and position, which the caller sets.
     void capture_rounds();
 
-    [[nodiscard]] std::int32_t shallowest() const noexcept { return shallowest_; }
     [[nodiscard]] std::int32_t deepest() const noexcept { return deepest_; }
 
 private:
@@ -98,7 +92,7 @@ private:
     std::int32_t max_context_;
     std::int32_t vocab_size_;
     std::int32_t hidden_size_;
-    std::int32_t shallowest_, deepest_; // the draft depth range; equal for a fixed depth
+    std::int32_t deepest_; // every round's draft depth
     DecodeState state_;
     DeviceBuffer verify_positions_; // I32 [k+1]: P..P+k
     DeviceBuffer target_ids_;       // I32 [k+1]: the target's argmax of every verified column
@@ -106,9 +100,7 @@ private:
     std::vector<DecodeGraphExecutable> round_graphs_;    // by draft depth k, captured on first use
     std::vector<DecodeGraphExecutable> profiled_graphs_; // the same with phase events
     std::optional<PhaseEvents> events_;                  // created by the first profiled capture
-    bool marking_            = false;                    // round() records phase events
-    std::int32_t next_depth_ = 0; // the adaptive schedule's depth for the next round
-    std::optional<PinnedHostBuffer> host_stats_; // pinned mirror of stats_ for the schedule
+    bool marking_ = false;                               // round() records phase events
 };
 
 } // namespace ninferno::models::speculation

@@ -24,11 +24,9 @@ enum class Mode : std::uint8_t { None, Mtp, DFlash, DFlash2, Ngram };
 struct SpecConfig {
     Mode mode          = Mode::None;
     std::int32_t k     = 0;
-    std::int32_t k_min = 0; // nonzero and below k: adaptive depth
     bool proposal_head = false;
 
     [[nodiscard]] constexpr bool enabled() const noexcept { return mode != Mode::None; }
-    [[nodiscard]] constexpr bool adaptive() const noexcept { return k_min > 0 && k_min < k; }
     [[nodiscard]] std::string label() const;
     // Throws std::invalid_argument naming the text when it is not a label above.
     [[nodiscard]] static SpecConfig parse(std::string_view label);

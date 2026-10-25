@@ -46,11 +46,7 @@ Decoder::Decoder(DraftTarget& target, DeviceContext& device, DeviceArena& work,
                  const DecoderOptions& options, DecodeState state, DraftRound& round)
     : target_(target), device_(device), work_(work), round_(round),
       max_context_(options.max_context), vocab_size_(target.shape().vocab_size),
-      hidden_size_(target.shape().hidden_size),
-      shallowest_(options.min_draft_tokens > 0
-                      ? std::min(options.min_draft_tokens, options.draft_tokens)
-                      : options.draft_tokens),
-      deepest_(options.draft_tokens), state_(state) {
+      hidden_size_(target.shape().hidden_size), deepest_(options.draft_tokens), state_(state) {
     if (deepest_ < 1) { throw std::invalid_argument("speculation: draft_tokens must be positive"); }
     verify_positions_ = DeviceBuffer(sizeof(std::int32_t) * (deepest_ + 1));
     target_ids_       = DeviceBuffer(sizeof(std::int32_t) * (deepest_ + 1));
@@ -134,7 +130,7 @@ DecodeGraphExecutable& Decoder::round_graph(std::int32_t k, bool profiled) {
 }
 
 void Decoder::capture_rounds() {
-    std::int32_t first = shallowest_;
+    std::int32_t first = deepest_;
     // Defined inputs for the warm-up rounds: the prefill writes the real carried state.
     if (const Tensor carried = round_.carry(); carried.data != nullptr) {
         CUDA_CHECK(cudaMemsetAsync(carried.data, 0, carried.bytes(), device_.stream));
@@ -200,57 +196,21 @@ std::vector<std::int32_t> Decoder::speculate(std::int32_t rounds, std::int32_t& 
     CUDA_CHECK(cudaMemcpyAsync(state_.out_tokens, state_.token, sizeof(std::int32_t),
                                cudaMemcpyDeviceToDevice, s));
     ops::set_i32_scalar(step, 1, s);
-    // Every depth the schedule can reach is captured before the first round, not in the middle
-    // of a sequence the first time the schedule reaches it.
-    for (std::int32_t d = shallowest_; d <= deepest_; ++d) {
-        (void)round_graph(d, profile && trace != nullptr);
-    }
+    // The round is captured before the first one runs, not in the middle of a sequence.
+    auto& graph = round_graph(deepest_, profile && trace != nullptr);
     if (trace != nullptr) {
-        // One synchronization per round: the host reads the round back and follows the same
-        // depth schedule the untraced paths follow.
-        std::int32_t k = deepest_;
-        if (shallowest_ != deepest_) {
-            k = next_depth_ >= shallowest_ && next_depth_ <= deepest_
-                    ? next_depth_
-                    : (shallowest_ + deepest_) / 2;
-        }
+        // One synchronization per round: the host reads the round back.
         for (std::int32_t r = 0; r < rounds; ++r) {
             // The round opens at the device's own pending position.
-            auto& graph = round_graph(k, profile);
             device_.synchronize();
             std::int32_t p = 0;
             CUDA_CHECK(cudaMemcpy(&p, state_.position, sizeof(p), cudaMemcpyDeviceToHost));
             graph.launch(s);
             device_.synchronize();
-            trace->push_back(read_round(p, k, profile));
-            k = next_draft_depth(k, trace->back().accepted, shallowest_, deepest_);
+            trace->push_back(read_round(p, deepest_, profile));
         }
-        if (shallowest_ != deepest_) { next_depth_ = k; }
-    } else if (shallowest_ == deepest_) {
-        auto& graph = round_graph(deepest_);
-        for (std::int32_t r = 0; r < rounds; ++r) { graph.launch(s); }
     } else {
-        // Adaptive depth: after every round the host reads how many drafts were accepted and
-        // picks the next depth. One synchronization per round is the price of the choice.
-        if (!host_stats_) { host_stats_.emplace(sizeof(long long) * 3); }
-        auto* host_stats = static_cast<long long*>(host_stats_->data());
-        std::int32_t k   = next_depth_ >= shallowest_ && next_depth_ <= deepest_
-                               ? next_depth_
-                               : (shallowest_ + deepest_) / 2;
-        CUDA_CHECK(cudaMemcpyAsync(host_stats, stats_.p, sizeof(long long) * 3,
-                                   cudaMemcpyDeviceToHost, s));
-        device_.synchronize();
-        long long accepted_before = host_stats[2];
-        for (std::int32_t r = 0; r < rounds; ++r) {
-            round_graph(k).launch(s);
-            CUDA_CHECK(cudaMemcpyAsync(host_stats, stats_.p, sizeof(long long) * 3,
-                                       cudaMemcpyDeviceToHost, s));
-            device_.synchronize();
-            const auto accepted = static_cast<std::int32_t>(host_stats[2] - accepted_before);
-            accepted_before     = host_stats[2];
-            k                   = next_draft_depth(k, accepted, shallowest_, deepest_);
-        }
-        next_depth_ = k;
+        for (std::int32_t r = 0; r < rounds; ++r) { graph.launch(s); }
     }
     auto out = collect(position);
     // The last emitted token is pending again: the next call emits it first, so it is not part

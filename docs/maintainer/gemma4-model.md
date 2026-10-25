@@ -29,7 +29,7 @@ base class and no shared model graph.
 | `target.h`, `target.cu` | The target forward: KV pools, every layer over T columns, soft-capped and uncapped heads, workspace sizing |
 | `mtp_round.h`, `mtp_round.cu` | The draft phase of a round with the MTP drafter |
 | `dflash_round.h`, `dflash_round.cu` | The draft phase of a round with the DFlash drafter, its context cache and prefill hook |
-| `speculation.h`, `speculation.cu` | Greedy speculative decoding: draft, verify, accept, one CUDA graph per draft depth, adaptive depth |
+| `speculation.h`, `speculation.cu` | Greedy speculative decoding: draft, verify, accept, one CUDA graph for its draft depth |
 | `session.h`, `session.cu` | `Session`: chunked prefill, teacher-forced scoring, graph-captured decode, the public speculation entry |
 | `gemma4.h` | The applications' single include |
 

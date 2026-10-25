@@ -750,29 +750,7 @@
             "tok_s": 496.95355773230466,
             "tokens_per_round": 4.569844789356985
           },
-          "revision": "e2cc93a25f5b",
-          "session": {
-            "default": {
-              "acceptance": 0.6325555243182457,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.2966149626518644,
-              "plain_tok_s": 251.5788056669691,
-              "speedup": 1.781832145129545,
-              "tok_s": 448.27120297070445,
-              "tokens_per_round": 4.198294243070363
-            },
-            "non_thinking": {
-              "acceptance": 0.6193280977312391,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.1762219220770116,
-              "plain_tok_s": 251.80557059461464,
-              "speedup": 1.7285072201168763,
-              "tok_s": 435.2477468384412,
-              "tokens_per_round": 3.824875621890547
-            }
-          }
+          "revision": "e2cc93a25f5b"
         },
         {
           "applies_to": [
@@ -826,16 +804,6 @@
           "load_measured_on": "gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
           "revision": "022eb977b3eb",
           "session": {
-            "default": {
-              "acceptance": 0.6219887955182073,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.5204796564064966,
-              "plain_tok_s": 427.51991886797265,
-              "speedup": 1.5955486343345102,
-              "tok_s": 682.1288227005944,
-              "tokens_per_round": 4.118679775280899
-            },
             "thinking": {
               "acceptance": 0.6236121391561806,
               "config": "dflash:7",
@@ -845,16 +813,6 @@
               "speedup": 1.96633393953365,
               "tok_s": 838.6252130079888,
               "tokens_per_round": 5.365284974093265
-            },
-            "non_thinking": {
-              "acceptance": 0.5993076590220684,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.3878769436555536,
-              "plain_tok_s": 427.8637426249319,
-              "speedup": 1.5374123230474441,
-              "tok_s": 657.8029904967702,
-              "tokens_per_round": 3.6998050682261208
             }
           }
         },
@@ -891,20 +849,10 @@
           "gpu": "NVIDIA GeForce RTX 5080",
           "revision": "7f679adb993c",
           "session": {
-            "default": {
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.5204796564064966
-            },
             "thinking": {
               "config": "dflash:7",
               "drafter": "dflash",
               "floor_tokens_per_round": 2.6982697980199752
-            },
-            "non_thinking": {
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.3878769436555536
             }
           }
         },
@@ -954,29 +902,7 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:26:52Z",
-          "revision": "7c37bfceafac",
-          "session": {
-            "default": {
-              "acceptance": 0.6687116564417178,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.2643824814447493,
-              "plain_tok_s": 280.09272608925846,
-              "speedup": 1.916007197528711,
-              "tok_s": 536.659679162457,
-              "tokens_per_round": 4.470811220621683
-            },
-            "non_thinking": {
-              "acceptance": 0.6387714222123303,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.126470949904708,
-              "plain_tok_s": 280.25577701501913,
-              "speedup": 1.8374531248979376,
-              "tok_s": 514.9568532469465,
-              "tokens_per_round": 3.971014492753623
-            }
-          }
+          "revision": "7c37bfceafac"
         },
         {
           "gpu_class": "*",
@@ -1012,20 +938,10 @@
           "load_measured_on": "fallback for unmeasured GPUs: NVIDIA GeForce RTX 5090 (gb202), gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
           "revision": "add138cfb04c",
           "session": {
-            "default": {
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.5204796564064966
-            },
             "thinking": {
               "config": "dflash:7",
               "drafter": "dflash",
               "floor_tokens_per_round": 2.6982697980199752
-            },
-            "non_thinking": {
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.3878769436555536
             }
           }
         },
@@ -1270,16 +1186,6 @@
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T19:34:04Z",
           "revision": "cda3622c7022",
           "session": {
-            "default": {
-              "acceptance": 0.6313209132931783,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.43166466916095,
-              "plain_tok_s": 90.34610301359398,
-              "speedup": 1.6863079343058593,
-              "tok_s": 152.35135034543802,
-              "tokens_per_round": 4.221586847748392
-            },
             "thinking": {
               "acceptance": 0.5735140771637122,
               "config": "dflash:7",
@@ -1289,16 +1195,6 @@
               "speedup": 2.216577940068418,
               "tok_s": 199.92578908948622,
               "tokens_per_round": 5.014598540145985
-            },
-            "non_thinking": {
-              "acceptance": 0.6013183074633213,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.3053360363109574,
-              "plain_tok_s": 90.39635036330259,
-              "speedup": 1.6211675418387248,
-              "tok_s": 146.54762910966738,
-              "tokens_per_round": 3.794466403162055
             }
           }
         },
@@ -1384,16 +1280,6 @@
           "load_measured_on": "gemma-4-26B-A4B-it-Q4.ninferno, context 8192, kv fp8, NVIDIA A100-SXM4-40GB, greedy, built-in corpus, load 2,4, NVIDIA A100-SXM4-40GB, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T21:11:17Z",
           "revision": "f6b4ab4966ab",
           "session": {
-            "default": {
-              "acceptance": 0.6421914713357808,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.394429095441937,
-              "plain_tok_s": 188.67701677777052,
-              "speedup": 1.737924525763033,
-              "tok_s": 327.90641490589064,
-              "tokens_per_round": 4.300435413642961
-            },
             "thinking": {
               "acceptance": 0.5343185550082101,
               "config": "dflash:7",
@@ -1403,16 +1289,6 @@
               "speedup": 2.0154108096836674,
               "tok_s": 378.8041177640453,
               "tokens_per_round": 4.740229885057471
-            },
-            "non_thinking": {
-              "acceptance": 0.6221689895470384,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.278399057299637,
-              "plain_tok_s": 188.9193278503757,
-              "speedup": 1.678603970547333,
-              "tok_s": 317.12073384277403,
-              "tokens_per_round": 3.900507614213198
             }
           }
         },
@@ -1494,16 +1370,6 @@
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 5060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T22:00:48Z",
           "revision": "43e99139bf54",
           "session": {
-            "default": {
-              "acceptance": 0.6259935852740204,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.5805791365593413,
-              "plain_tok_s": 128.99803867058495,
-              "speedup": 1.5522273892935807,
-              "tok_s": 200.23428878963443,
-              "tokens_per_round": 4.126044568245125
-            },
             "thinking": {
               "acceptance": 0.5645769099006509,
               "config": "dflash:7",
@@ -1513,16 +1379,6 @@
               "speedup": 1.972256284840617,
               "tok_s": 253.89575495479122,
               "tokens_per_round": 4.952038369304557
-            },
-            "non_thinking": {
-              "acceptance": 0.6025641025641025,
-              "config": "mtp:8:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.446682569341144,
-              "plain_tok_s": 129.08640892871978,
-              "speedup": 1.5019879301111227,
-              "tok_s": 193.88622815232577,
-              "tokens_per_round": 3.740524781341108
             }
           }
         },
@@ -1896,16 +1752,6 @@
           ],
           "revision": "2ed2e0cf65f2",
           "session": {
-            "default": {
-              "acceptance": 0.6219887955182073,
-              "config": "mtp:8:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 2.5204796564064966,
-              "plain_tok_s": 427.51991886797265,
-              "speedup": 1.5955486343345102,
-              "tok_s": 682.1288227005944,
-              "tokens_per_round": 4.118679775280899
-            },
             "thinking": {
               "acceptance": 0.6236121391561806,
               "config": "dflash:7",
@@ -1915,16 +1761,6 @@
               "speedup": 1.96633393953365,
               "tok_s": 838.6252130079888,
               "tokens_per_round": 5.365284974093265
-            },
-            "non_thinking": {
-              "acceptance": 0.5993076590220684,
-              "config": "mtp:8:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 2.3878769436555536,
-              "plain_tok_s": 427.8637426249319,
-              "speedup": 1.5374123230474441,
-              "tok_s": 657.8029904967702,
-              "tokens_per_round": 3.6998050682261208
             }
           }
         }
@@ -2055,16 +1891,6 @@
           "load_measured_on": "gemma4_31b_nvfp4.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8 (max_context 1024, prefill chunk 512), temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T04:34:21Z (C=8 bound 5 737.6, bound 7 734.7, plain 467.1 tok/s)",
           "revision": "5927c21c8ba6",
           "session": {
-            "default": {
-              "acceptance": 0.5787191874148396,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.2365213190754134,
-              "plain_tok_s": 81.34173367543677,
-              "speedup": 3.614532510184989,
-              "tok_s": 294.0123408046753,
-              "tokens_per_round": 4.678740157480315
-            },
             "thinking": {
               "acceptance": 0.4162037037037037,
               "config": "dflash:15",
@@ -2074,16 +1900,6 @@
               "speedup": 4.996518454882482,
               "tok_s": 405.6895734553915,
               "tokens_per_round": 7.243055555555555
-            },
-            "non_thinking": {
-              "acceptance": 0.556146684400532,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.2084746393587755,
-              "plain_tok_s": 81.39094667150417,
-              "speedup": 3.3707423171455,
-              "tok_s": 274.3479081781718,
-              "tokens_per_round": 4.140557939914163
             }
           }
         },
@@ -2128,16 +1944,6 @@
           },
           "revision": "03d8c045b163",
           "session": {
-            "default": {
-              "acceptance": 0.5818927994030593,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.1936602587917864,
-              "plain_tok_s": 67.97401254135013,
-              "speedup": 3.7751096075936874,
-              "tok_s": 256.6093478115447,
-              "tokens_per_round": 4.707606973058637
-            },
             "thinking": {
               "acceptance": 0.40710194730813287,
               "config": "dflash:15",
@@ -2147,16 +1953,6 @@
               "speedup": 5.190245096003681,
               "tok_s": 352.1363225015172,
               "tokens_per_round": 7.106529209621993
-            },
-            "non_thinking": {
-              "acceptance": 0.5636851177935261,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.1692286801342555,
-              "plain_tok_s": 68.01685833950184,
-              "speedup": 3.5221490326136164,
-              "tok_s": 239.5655118018938,
-              "tokens_per_round": 4.185064935064935
             }
           }
         },
@@ -2266,29 +2062,7 @@
             }
           ],
           "load_measured_on": "gemma-4-31B-it-qat-UD-Q4_K_XL.ninferno, NVIDIA GeForce RTX 4090, C 2,3,4,6, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-05T12:49:56Z",
-          "revision": "01e89a012d10",
-          "session": {
-            "default": {
-              "acceptance": 0.5873550317994762,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.45688738272817,
-              "plain_tok_s": 50.77302956509781,
-              "speedup": 3.2087898799400842,
-              "tok_s": 162.91998344238453,
-              "tokens_per_round": 4.88934764657308
-            },
-            "non_thinking": {
-              "acceptance": 0.5688448074679113,
-              "config": "mtp:15:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.4156108253031052,
-              "plain_tok_s": 50.81422671504495,
-              "speedup": 2.957340171111898,
-              "tok_s": 150.2749539283898,
-              "tokens_per_round": 4.214285714285714
-            }
-          }
+          "revision": "01e89a012d10"
         },
         {
           "gpu_class": "*",
@@ -2419,16 +2193,6 @@
           ],
           "revision": "69f13210b39b",
           "session": {
-            "default": {
-              "acceptance": 0.5787191874148396,
-              "config": "mtp:15:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.2365213190754134,
-              "plain_tok_s": 81.34173367543677,
-              "speedup": 3.614532510184989,
-              "tok_s": 294.0123408046753,
-              "tokens_per_round": 4.678740157480315
-            },
             "thinking": {
               "acceptance": 0.4162037037037037,
               "config": "dflash:15",
@@ -2438,16 +2202,6 @@
               "speedup": 4.996518454882482,
               "tok_s": 405.6895734553915,
               "tokens_per_round": 7.243055555555555
-            },
-            "non_thinking": {
-              "acceptance": 0.556146684400532,
-              "config": "mtp:15:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.2084746393587755,
-              "plain_tok_s": 81.39094667150417,
-              "speedup": 3.3707423171455,
-              "tok_s": 274.3479081781718,
-              "tokens_per_round": 4.140557939914163
             }
           }
         },
@@ -2671,16 +2425,6 @@
           ],
           "revision": "ff1485492a65",
           "session": {
-            "default": {
-              "acceptance": 0.5818927994030593,
-              "config": "mtp:15:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.1936602587917864,
-              "plain_tok_s": 67.97401254135013,
-              "speedup": 3.7751096075936874,
-              "tok_s": 256.6093478115447,
-              "tokens_per_round": 4.707606973058637
-            },
             "thinking": {
               "acceptance": 0.40710194730813287,
               "config": "dflash:15",
@@ -2690,16 +2434,6 @@
               "speedup": 5.190245096003681,
               "tok_s": 352.1363225015172,
               "tokens_per_round": 7.106529209621993
-            },
-            "non_thinking": {
-              "acceptance": 0.5636851177935261,
-              "config": "mtp:15:2",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.1692286801342555,
-              "plain_tok_s": 68.01685833950184,
-              "speedup": 3.5221490326136164,
-              "tok_s": 239.5655118018938,
-              "tokens_per_round": 4.185064935064935
             }
           }
         }

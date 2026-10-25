@@ -1,8 +1,4 @@
 # The speculation rounds shared by every target (models/speculation): host-side pieces.
-ninferno_add_test(ninferno_speculation_draft_depth_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_draft_depth.cpp"
-  LIBRARIES ninferno_speculation)
-
 ninferno_add_test(ninferno_speculation_ngram_lookup_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ngram_lookup.cpp"
   LIBRARIES ninferno_speculation)

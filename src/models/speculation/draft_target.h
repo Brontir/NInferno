@@ -93,11 +93,4 @@ struct SpeculationRoundTrace {
     float draft_ms = 0, forward_ms = 0, head_ms = 0, commit_ms = 0;
 };
 
-// The adaptive schedule's depth after a round of depth k accepted `accepted` of its drafts: deeper
-// by two after a fully accepted round, one shallower otherwise, within [lo, hi].
-[[nodiscard]] constexpr std::int32_t next_draft_depth(std::int32_t k, std::int32_t accepted,
-                                                      std::int32_t lo, std::int32_t hi) {
-    return accepted == k ? std::min(k + 2, hi) : std::max(k - 1, lo);
-}
-
 } // namespace ninferno::models::speculation

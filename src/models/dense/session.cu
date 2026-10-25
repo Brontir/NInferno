@@ -136,8 +136,7 @@ struct Session::Impl {
                 static_cast<std::int32_t*>(out_tokens.p), static_cast<std::int32_t*>(step.p)};
             speculation.emplace(target, d, work,
                                 speculation::DecoderOptions{options.max_context,
-                                                            options.draft_tokens,
-                                                            options.min_draft_tokens},
+                                                            options.draft_tokens},
                                 state, *round);
         }
     }
@@ -210,7 +209,6 @@ Session::~Session() = default;
 
 void Session::reset() noexcept {
     position_ = 0;
-    if (impl_->speculation) { impl_->speculation->reset_schedule(); }
     impl_->driver.reset();
 }
 
