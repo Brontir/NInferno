@@ -59,17 +59,31 @@ void check_fits(const ServeOptions& options) {
                              "more free memory.");
 }
 
-void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch) {
+// Recipes whose artifact is about as large as the checkpoint's weights (nothing quantized); a
+// GGUF model's blocks are kept as published too.
+bool keeps_weights(const std::string& recipe) {
+    return recipe == "dense_published" || recipe == "moe_published" || recipe == "dense_bf16" ||
+           recipe == "qwen3_5_bf16" || recipe == "qwen3_5_published";
+}
+
+void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
+                const std::string& recipe) {
     if (fetch.missing_bytes == 0) { return; }
     auto asked         = options;
     asked.model_source = fetch.repo + "@" + fetch.commit;
+    bool gguf          = false;
     for (const auto& file : fetch.files) {
         const auto name = ascii_lower(fs::path(file).filename().string());
         if (name.ends_with(".gguf") && !name.starts_with("mmproj")) {
             asked.quant = convert::gguf_quant_label(fs::path(file).filename().string());
+            gguf        = true;
             break;
         }
     }
+    // The plan reads the files' bytes: a recipe that quantizes a checkpoint (the official
+    // Qwen3.6-35B-A3B one takes its BF16 experts to 4-5 bits) makes a smaller artifact, whose
+    // size the start knows.
+    if (!gguf && !keeps_weights(recipe)) { return; }
     check_fits(asked);
 }
 
@@ -118,12 +132,10 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // A GGUF repository without --quant: the largest quantization that fits the asked context x
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
-    bool fitted = false;
     if (options.quant.empty() && !options.prepare_only) {
         if (const auto choice = largest_fitting_hub_quant(options, log)) {
             acquire.fetch.quant = choice->quant;
             out.planned_context = choice->launch_context;
-            fitted              = true;
         }
     }
     acquire.fetch.log      = log;
@@ -133,9 +145,12 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.repository     = fs::current_path();
     acquire.log            = log;
     if (options.with_drafters) { acquire.with_drafters = true; }
-    if (!fitted && !options.prepare_only) {
-        acquire.before_download = [&options](const convert::FetchPlan& fetch, const std::string&) {
-            check_fits(options, fetch);
+    // Also for the quantization chosen above: that choice is for an idle card of this class,
+    // this check for the memory free now.
+    if (!options.prepare_only) {
+        acquire.before_download = [&options](const convert::FetchPlan& fetch,
+                                             const std::string& recipe) {
+            check_fits(options, fetch, recipe);
         };
     }
     acquire.moved_ref = options.refetch            ? convert::MovedRef::Refetch
