@@ -453,6 +453,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string preflight_recipe;
     std::string pinned; // org/name@commit when weights of a moved ref stay (see below)
+    std::string pinned_quant; // the exact quantization of the GGUF model there
     if (!url && !options.fetch_only) {
         const auto [repo, revision] = split_spec(spec, options.fetch);
         if (options.reuse && convert_options.out.empty() &&
@@ -526,11 +527,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                             } else {
                                 // The conversion of the model the old snapshot serves (of several
                                 // a commit may hold, the one this start's selection takes).
-                                auto quant = options.fetch.quant;
-                                if (quant.empty()) {
-                                    quant = snapshot_quant_label(
-                                        repo_dir / "snapshots" / held_commit, options.fetch, repo);
-                                }
+                                // Its exact label: a width selector (--quant 4bit) or none
+                                // matches several.
+                                auto quant = snapshot_quant_label(
+                                    repo_dir / "snapshots" / held_commit, options.fetch, repo);
+                                if (quant.empty()) { quant = options.fetch.quant; }
                                 if (auto old = converted_artifact(commit_dir, quant,
                                                                   convert_options.recipe)) {
                                     replaced.artifact = *old;
@@ -559,6 +560,10 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // fetch finds them in the cache, with the hub or without it).
                 if (!kept && !refetch && (!checked || !now || *now != held_commit)) {
                     pinned = repo + "@" + held_commit;
+                    // The model held there, not what a width selector would take of the
+                    // commit's whole listing (a larger one of that width not downloaded).
+                    pinned_quant = snapshot_quant_label(repo_dir / "snapshots" / held_commit,
+                                                        options.fetch, repo);
                 }
             }
             if (kept) {
@@ -599,6 +604,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         check_space(plan);
         if (caller) { caller(plan, preflight_recipe); }
     };
+    if (!pinned_quant.empty()) { fetch.quant = pinned_quant; }
     out.fetched = fetch_model(pinned.empty() ? spec : pinned, fetch);
     const FetchResult& fetched = out.fetched;
     say(options, "fetched " + fetched.repo + "@" + fetched.commit.substr(0, 12) + " -> " +
@@ -644,7 +650,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             bool given = false;
             for (const auto& [name, _] : convert_options.sources) { given = given || name == "vision"; }
             if (!given) {
-                if (const auto projector = gguf_projector(fetched, fetch, options.log)) {
+                // Pinned to the weights here: the projector here too (snapshot_holds_model found
+                // one whole), not a better one the old commit lists.
+                if (const auto projector = pinned.empty()
+                                               ? gguf_projector(fetched, fetch, options.log)
+                                               : gguf_projector_beside(fetched.model)) {
                     convert_options.sources.emplace_back("vision", *projector);
                     given = true;
                 }
