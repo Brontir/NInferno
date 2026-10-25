@@ -238,7 +238,7 @@ CachedArtifact
 cached_artifact(const std::filesystem::path& path,
                 const std::vector<std::pair<std::string, std::filesystem::path>>& resources,
                 const std::function<void(const std::string&)>& log, bool consume_source,
-                bool vision) {
+                bool vision, bool round_tiny_scales) {
     namespace fs = std::filesystem;
     CachedArtifact out;
     if (!is_convertible(path)) {
@@ -309,8 +309,9 @@ cached_artifact(const std::filesystem::path& path,
     options.model          = path;
     options.recipe         = out.recipe;
     options.out            = out.path;
-    options.consume_source = consume_source;
-    options.sources        = choice.sources;
+    options.consume_source    = consume_source;
+    options.round_tiny_scales = round_tiny_scales;
+    options.sources           = choice.sources;
     if (vision) {
         options.components = "text,vision";
         if (projector) { options.sources.emplace_back("vision", *projector); }

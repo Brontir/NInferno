@@ -82,11 +82,12 @@ struct CachedArtifact {
 // model's Vision encoder (a checkpoint's own, or the mmproj-*.gguf beside a GGUF file) in its own
 // artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it. A cached
 // artifact whose source files changed since it was converted (source_stamp) is converted again
-// while the source is there; one whose source is gone is served as it is.
+// while the source is there; one whose source is gone is served as it is. `round_tiny_scales`
+// converts with --round-tiny-scales (ConvertOptions::round_tiny_scales).
 [[nodiscard]] CachedArtifact
 cached_artifact(const std::filesystem::path& path,
                 const std::vector<std::pair<std::string, std::filesystem::path>>& resources = {},
                 const std::function<void(const std::string&)>& log                          = {},
-                bool consume_source = false, bool vision = false);
+                bool consume_source = false, bool vision = false, bool round_tiny_scales = false);
 
 } // namespace ninferno::convert

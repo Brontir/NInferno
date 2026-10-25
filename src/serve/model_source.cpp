@@ -114,7 +114,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
                 throw std::runtime_error(name + " cannot be run: " + refusal);
             }
             if (log) { log("checkpoint " + name); }
-            const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);
+            const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision,
+                                                         options.round_tiny_scales);
             out.kind            = ModelSource::Kind::Checkpoint;
             out.artifact_path   = cached.path.string();
             out.recipe          = cached.recipe;
@@ -151,7 +152,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
         }
     }
     acquire.fetch.log      = log;
-    acquire.convert.recipe = options.recipe;
+    acquire.convert.recipe            = options.recipe;
+    acquire.convert.round_tiny_scales = options.round_tiny_scales;
     // --chat-template: the conversion's template too (a base model ships none).
     if (!options.chat_template_path.empty()) {
         acquire.convert.resources.emplace_back("chat_template.jinja", options.chat_template_path);

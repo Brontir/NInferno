@@ -1006,9 +1006,17 @@ int test_cost_model() {
                 continue; // fallbacks, and floors serve or spec-bench runs copied or estimated
             }
             const std::string gpu = p.value("gpu", gc);
+            // The published choices (the Engine's), and a Gemma tune's own on ninferno-gemma4's
+            // Session kept beside them as its record (DFlash, adaptive depths: measured, not served).
+            std::vector<const Json*> chosen;
             for (const char* role : {"default", "non_thinking", "thinking", "fit_fallback"}) {
-                if (!p.contains(role)) { continue; }
-                const Json& c = p.at(role);
+                if (p.contains(role)) { chosen.push_back(&p.at(role)); }
+                if (p.contains("session") && p.at("session").contains(role)) {
+                    chosen.push_back(&p.at("session").at(role));
+                }
+            }
+            for (const Json* choice : chosen) {
+                const Json& c = *choice;
                 const std::string label = c.value("config", std::string("plain"));
                 const double floor      = c.value("floor_tokens_per_round", 0.0);
                 if (label == "plain" || floor <= 1.0 || SpecConfig::parse(label).adaptive()) { continue; }
@@ -1017,6 +1025,11 @@ int test_cost_model() {
                 const std::string drafter = split_variant(c.value("drafter", std::string())).first;
                 for (const DrafterDecl& d : m.drafters) {
                     if (d.name == drafter) { f.kind = d.kind; }
+                }
+                // A Session drafter the entry no longer declares (the Engine does not run it): its
+                // kind by name.
+                for (const auto& k : registry.kinds()) {
+                    if (f.kind.empty() && k.name == drafter) { f.kind = k.name; }
                 }
             }
         }
@@ -2199,7 +2212,7 @@ int test_registry_and_corpus() {
     // gb203 boards tune apart. The RTX 5070 Ti (70 SMs) has a profile of its SM variant
     // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS: mtp:2, two
     // deep from two lanes); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
-    // RTX 5080 measured for them (mtp:8:2, two lanes three deep), and a 5080 running a GGUF takes
+    // RTX 5080 measured for them (the Engine's mtp:3, two lanes three deep), and a 5080 running a GGUF takes
     // neither the 5070 Ti's nor a gb203 one: the RTX 5060 Ti's (gb206) stands in, capped to its
     // 84 SMs. Chains as ninferno::gpu_similarity_chain builds them.
     if (const auto* g26 = registry.by_repo("google/gemma-4-26B-A4B-it")) {
@@ -2222,7 +2235,7 @@ int test_registry_and_corpus() {
         const auto* gguf5070ti   = pick(rtx5070ti, "unsloth/gemma-4-26B-A4B-it-GGUF");
         const auto* gguf5080     = pick(rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF");
         failures += check(google5080 != nullptr && google5080->value("gpu_class", "") == "gb203" &&
-                              label(google5080) == "mtp:8:2" &&
+                              label(google5080) == "mtp:3" &&
                               load(google5080) == std::vector<LoadBound>{{2, 3}},
                           "Gemma 4 26B (google) on the RTX 5080: its gb203 profile, 2:3");
         failures += check(google5070ti == google5080,
@@ -2231,7 +2244,7 @@ int test_registry_and_corpus() {
             redhat5070ti != nullptr ? select_load_fallback(g26->profiles, *redhat5070ti) : nullptr;
         failures += check(redhat5070ti != nullptr &&
                               redhat5070ti->value("gpu_class", "") == "gb203" &&
-                              label(redhat5070ti) == "mtp:8:2" && lender == google5080,
+                              label(redhat5070ti) == "mtp:3" && lender == google5080,
                           "Gemma 4 26B (RedHatAI NVFP4) on the RTX 5070 Ti: its gb203 profile, "
                           "the google gb203 load table");
         failures += check(gguf5070ti != nullptr &&
@@ -2241,13 +2254,13 @@ int test_registry_and_corpus() {
                               !measured_elsewhere(rtx5070ti, *gguf5070ti),
                           "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:2, 2:2");
         failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") == "gb206" &&
-                              label(gguf5080) == "mtp:8:2" &&
+                              label(gguf5080) == "mtp:3" &&
                               load(gguf5080) == std::vector<LoadBound>{{2, 3}} &&
                               measured_elsewhere(rtx5080, *gguf5080) &&
                               stand_in_load(load(gguf5080), rtx5080.sms) ==
                                   std::vector<LoadBound>{{2, 3}, {9, 0}},
                           "Gemma 4 26B (unsloth GGUF) on the RTX 5080: the gb206 stand-in, "
-                          "mtp:8:2, 2:3 capped at 9 rows");
+                          "mtp:3, 2:3 capped at 9 rows");
     } else {
         failures += check(false, "registry has google/gemma-4-26B-A4B-it");
     }
@@ -2314,6 +2327,16 @@ int test_registry_and_corpus() {
                           registry.supported("dflash2", "qwen3_5") &&
                           !registry.supported("eagle3", "gemma4"),
                       "kinds");
+    // What a drafter kind serves with is the Engine's (engine_support), never a list of its own:
+    // Gemma 4's Engine runs its assistant only, the dense decoder DFlash only.
+    failures += check(registry.supported("gemma4_assistant", "gemma4") &&
+                          !registry.supported("dflash", "gemma4") &&
+                          registry.supported("dflash", "qwen3_5") &&
+                          registry.supported("dflash", "dense") &&
+                          !registry.supported("mtp", "gemma4") &&
+                          registry.supported("nemotron_h_mtp", "nemotron_h") &&
+                          !registry.supported("dflash2", "dense"),
+                      "a kind runs where the family's Engine runs it");
     const std::regex sha("^[0-9a-f]{40}$");
     for (const auto& model : registry.models()) {
         std::set<std::string> names;
@@ -2342,6 +2365,15 @@ int test_registry_and_corpus() {
                 continue;
             }
             std::vector<const Choice*> choices{&p.overall, &p.non_thinking, &p.thinking};
+            // What the serving Engine runs of the profile (its served choices where a tune chose
+            // more): each must run on the entry's family (spec/engine_support.h), or the server
+            // drops it and decodes plainly.
+            const auto& engine_choices = p.served ? *p.served : ServedChoices{p.overall, p.thinking, p.non_thinking};
+            for (const auto* c : {&engine_choices.overall, &engine_choices.non_thinking,
+                                  &engine_choices.thinking}) {
+                failures += check(engine_family_support(model.engine).runs(c->config),
+                                  model.id + " " + cls + ": the Engine runs " + c->config.label());
+            }
             for (const auto* c : choices) {
                 if (!c->config.enabled()) { continue; }
                 failures += check(names.contains(c->drafter),
