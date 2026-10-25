@@ -207,10 +207,14 @@ Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options)
 Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                            std::string_view generation, const SelectOptions& options) {
     std::vector<const MeasuredPair*> current, home;
+    std::set<std::string> home_cards; // two cards, not two records of one card
     for (const auto* pair : measured) {
         if (!pair_current(*pair)) { continue; }
         current.push_back(pair);
-        if (!generation.empty() && pair->generation == generation) { home.push_back(pair); }
+        if (!generation.empty() && pair->generation == generation &&
+            home_cards.insert(pair->tune.key.gpu).second) {
+            home.push_back(pair);
+        }
     }
     if (current.empty()) {
         return measured.empty() ? Profile{} : not_current(*measured.front());

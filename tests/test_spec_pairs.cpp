@@ -70,6 +70,9 @@ int main() {
         for (auto& m : slower.tune.measurements) {
             if (m.config.k == 15) { m.seconds *= 2; }
         }
+        const auto twice = sp::profile_for_target({&ada_q4, &ada_q4}, "sm89");
+        expect(twice.thinking.config.k <= sp::kPortableDepth,
+               "one card's measurement twice is one card: " + twice.thinking.config.label());
         const auto split = sp::profile_for_target({&ada_q4, &slower}, "sm89");
         expect(split.thinking.config.k <= sp::kPortableDepth,
                "two cards that disagree: the portable depth: " + split.thinking.config.label());

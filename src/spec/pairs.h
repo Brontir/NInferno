@@ -73,7 +73,8 @@ struct MeasuredPair {
 [[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options = {});
 
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
-// on a card of a generation two of them measured and chose alike for (each default's
+// on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose
+// alike for (each default's
 // configuration), their profile with every measured depth, and their load bounds when they are
 // equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
 // from a measurement of this generation if there is one, else the first. Pairs another engine
