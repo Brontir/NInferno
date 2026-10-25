@@ -52,7 +52,8 @@ searched.
 - The served model id is the hub id.
 - `--prepare-only` fetches and converts, then exits (no GPU).
 - `--with-drafters` attaches the drafters of a GGUF hub model too (a separate download). A checkpoint's
-  drafters are attached without it.
+  drafters are attached without it. A quantization once converted with them keeps them: a later
+  start without the flag reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
@@ -2087,8 +2088,9 @@ the same options (`tests/test_plan_dry_run.cpp`).
 **Speculation.** `--spec auto` is resolved as a start resolves it, with the same functions
 (`product/speculation/speculation.h`, `SpeculationSubject`). For an artifact, the resolution is the
 artifact's own. A model not yet converted gets the drafter manifest the converter would write. A
-GGUF hub model gets it only with `--with-drafters`; without it, the registry entry of its shape
-over the MTP layers it carries is used. The start's fallback order is then judged by the dry run
+GGUF hub model gets it only with `--with-drafters`, or for a quantization converted here with its
+drafters (`convert::cached_conversion_has_drafters`: the start reuses that conversion); otherwise
+the registry entry of its shape over the MTP layers it carries is used. The start's fallback order is then judged by the dry run
 instead of an Engine build:
 
 1. the profile's choice;
