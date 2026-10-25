@@ -93,6 +93,22 @@ struct FetchResult {
 // ~/.cache/huggingface/hub.
 [[nodiscard]] std::filesystem::path default_hub_cache();
 
+// The Hugging Face token the hub is asked with, as huggingface_hub finds it: $HF_TOKEN (or
+// $HUGGING_FACE_HUB_TOKEN), else the file `hf auth login` writes (hub_token_path()). `source`
+// names where it came from ("" with no token).
+struct HubToken {
+    std::string value;
+    std::string source;
+};
+[[nodiscard]] HubToken hub_token();
+// $HF_TOKEN_PATH, else $HF_HOME/token, else ~/.cache/huggingface/token.
+[[nodiscard]] std::filesystem::path hub_token_path();
+// Writes the token where `hf auth login` keeps it (read by its owner only); "" removes it.
+void save_hub_token(const std::string& token);
+// The account a Hugging Face token belongs to (/api/whoami-v2); throws naming why the hub refused
+// it (an invalid token: HTTP 401).
+[[nodiscard]] std::string hub_account(const std::string& token, const FetchOptions& options);
+
 // A repository's directory in a hub cache, as Hugging Face's own tools name it: org/name ->
 // models--org--name; and back, "" for a directory that is no repository's.
 [[nodiscard]] std::string hub_repo_directory(std::string_view repo);
@@ -193,10 +209,9 @@ struct HubModel {
     std::string architecture;
     std::int64_t context = 0;
     std::string library; // the weights' library: transformers, gguf, mlx, ... ("" unsaid)
-    // A quantization of the weights the converter does not read (config.json's quant_method:
-    // "bitsandbytes", "hqq", ...; compressed-tensors with transforms or sparse packings); "" when
-    // it reads them (unquantized, FP8, AWQ, GPTQ, compressed-tensors, ModelOpt, AutoRound, MXFP4).
-    std::string unread_quantization;
+    // The search's answer for the model as the hub gave it (Hugging Face; null on ModelScope): the
+    // facts convert::search_support_facts reads.
+    nlohmann::json card;
 };
 
 // The hub's model search, at most `limit` (1 to 100), largest first by `sort`: downloads, likes,
@@ -217,6 +232,20 @@ struct HubModel {
 // The repository's config.json (org/name[@revision]), parsed; one small request. Throws naming
 // what failed (absent, not JSON); ModelScope is not read.
 [[nodiscard]] nlohmann::json fetch_config(const std::string& spec, const FetchOptions& options);
+
+// What Hugging Face says of a repository before any file is downloaded: its model card fields
+// (/api/models/<repo>/revision/<rev>): pipeline_tag, library_name, gated, the part of config.json
+// the hub reads (architectures, model_type, quantization_config, tokenizer_config), gguf (the
+// architecture and chat template of a GGUF model), safetensors (parameters by dtype) and
+// siblings. nullopt on another hub or under $HF_HUB_OFFLINE. Throws when the hub cannot answer.
+[[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
+                                                             const FetchOptions& options);
+
+// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
+// quant_config and the matrix sources it picks): "bitsandbytes", "hqq", compressed-tensors with
+// transforms or sparse packings; "" when it reads it (unquantized, FP8, AWQ, GPTQ,
+// compressed-tensors, ModelOpt, AutoRound, MXFP4).
+[[nodiscard]] std::string unread_quantization(const nlohmann::json& config);
 
 // Another small JSON file of the repository the same way (a native repository's
 // artifact-manifest.json).

@@ -158,8 +158,10 @@ def make_handler(hub: Hub):
                         item.pop("size")
                         item.get("lfs", {}).pop("size", None)
                     siblings.append(item)
-                body = json.dumps({"id": f"{parts[2]}/{parts[3]}", "sha": repo["commit"],
-                                   "siblings": siblings}).encode()
+                answer = {"id": f"{parts[2]}/{parts[3]}", "sha": repo["commit"], "siblings": siblings}
+                # The model card fields the hub adds when asked (pipeline_tag, library_name, ...).
+                answer.update(repo.get("card", {}))
+                body = json.dumps(answer).encode()
                 return self.reply(200, body, {"Content-Type": "application/json"}, head)
             # Hugging Face: /<org>/<name>/resolve/<commit>/<path>
             if len(parts) >= 5 and parts[2] == "resolve":
