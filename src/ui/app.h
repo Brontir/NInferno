@@ -271,10 +271,6 @@ private:
                                const std::string& hub = "huggingface");
     nlohmann::json kv_json(const std::string& repo, const nlohmann::json& listing,
                            const std::string& hub = "huggingface");
-    // What --spec auto runs for `repo` on GPU `gpu` (the registry's profile for its class), with
-    // the drafter's weights and KV the memory estimate adds.
-    nlohmann::json speculation_json(const std::string& repo, int gpu, const nlohmann::json& kv,
-                                    const nlohmann::json& listing);
     // Bytes freed; throws std::invalid_argument for what may not be deleted.
     std::uint64_t delete_artifact(const std::filesystem::path& artifact);
     std::uint64_t delete_original(const std::string& repo);
@@ -315,7 +311,6 @@ private:
     // hub_key -> when a header or config read last failed (tried again after a minute)
     std::map<std::string, std::chrono::steady_clock::time_point> kv_failed_;
     std::map<std::string, nlohmann::json> archs_;    // arch_json, by hub_key
-    std::map<std::string, std::string> base_models_; // repo -> its card's base_model ("-": none)
     std::map<std::string, std::pair<std::int64_t, nlohmann::json>> searches_; // q -> (time, hits)
     std::set<std::uint64_t> originals_done_; // processes already handled
     std::mutex moved_mutex_;
