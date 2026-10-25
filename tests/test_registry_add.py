@@ -210,6 +210,14 @@ class PairTest(unittest.TestCase):
         self.assertEqual(pair["drafters"], {"dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d4"})
         self.assertEqual(pair["target_repo"], "org/m@abc UD-Q4_K_XL")
 
+    def test_local_paths_are_dropped(self):
+        tune = json.loads(json.dumps(self.tune))
+        tune["artifact"] = "/root/x.ninferno"
+        tune["drafters"] = [{"name": "a", "artifact": "/root/a.ninferno"}]
+        pair = registry_add.pair_of(tune, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
+        self.assertNotIn("artifact", pair["tune"])
+        self.assertNotIn("artifact", pair["tune"]["drafters"][0])
+
     def test_labels_and_generations(self):
         self.assertEqual(registry_add.label_bits("TQ1_0"), 1)
         self.assertEqual(registry_add.label_bits("IQ2_M"), 2)

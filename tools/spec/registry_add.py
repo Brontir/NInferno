@@ -295,6 +295,11 @@ def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[s
     for d in manifest.get("drafters", []):
         if d.get("repo") and d.get("status") in ("embedded", "converted", "cached", "attached"):
             drafters[d["kind"]] = d["repo"] + ("@" + d["revision"] if d.get("revision") else "")
+    # The lab's local paths (the artifact, a separate drafter's) are no part of what was measured.
+    tune = json.loads(json.dumps(tune))
+    tune.pop("artifact", None)
+    for d in tune.get("drafters", []):
+        d.pop("artifact", None)
     pair = {"target": ",".join(shas), "target_repo": f"{target} {quant}".strip(), "engine": engine,
             "target_bits": label_bits(quant), "generation": generation_of(gpu), "tune": tune}
     if drafters:
