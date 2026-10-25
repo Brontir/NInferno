@@ -1524,8 +1524,13 @@ async function refreshHf() {
   try { j = await api("/api/hf"); } catch (e) { return; }
   const line = $("hfline");
   const get = `<a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">${esc(t("hfGet"))}</a>`;
+  // A token from the environment is changed there: saving a file would not replace it.
+  const env = j.token && j.source && !j.source.includes("/") && !j.source.includes("\\");
+  if (env && j.error) {
+    line.innerHTML = `<span>${esc(fill(t("hfBad"), {error: j.error}) + " — " + fill(t("hfEnv"), {source: j.source}))}</span> ${get}`;
+    return;
+  }
   if (j.token && !j.error) {
-    const env = j.source && !j.source.includes("/") && !j.source.includes("\\");
     line.innerHTML = `<span data-tip="${esc(env ? fill(t("hfEnv"), {source: j.source}) : fill(t("hfFile"), {path: j.path}))}">${esc(fill(t("hfAs"), {account: j.account || "…"}))}</span>`
       + (env ? "" : ` <button id="hfremove">${esc(t("hfRemove"))}</button>`);
     if (!env) $("hfremove").onclick = async () => { await api("/api/hf", {token: ""}).catch(() => {}); hfChanged(); };

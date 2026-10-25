@@ -930,7 +930,16 @@ void save_hub_token(const std::string& token) {
     fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write,
                     fs::perm_options::replace, ec);
     fs::rename(temp, path, ec);
-    if (ec) { throw std::runtime_error("cannot write " + path.string() + ": " + ec.message()); }
+    if (ec) { // rename does not replace an existing file on Windows
+        ec.clear();
+        fs::remove(path, ec);
+        if (!ec) { fs::rename(temp, path, ec); }
+    }
+    if (ec) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        throw std::runtime_error("cannot write " + path.string() + ": " + ec.message());
+    }
 }
 
 namespace {
@@ -1845,8 +1854,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     std::vector<std::string> headers;
     auto endpoint = sys::env("HF_ENDPOINT");
     if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
-    auto token = sys::env("HF_TOKEN");
-    if (token.empty()) { token = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+    const auto token = hub_token().value;
     if (!token.empty() && url.starts_with(endpoint + "/")) {
         headers.push_back("Authorization: Bearer " + token);
     }

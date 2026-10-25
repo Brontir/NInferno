@@ -746,6 +746,8 @@ std::string hub_key(const std::string& repo, const std::string& hub) {
 }
 
 Json App::listing_of(const std::string& repo, const std::string& hub) {
+    // What the hub answers under another token than the one asked with is not kept.
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = listings_.find(hub_key(repo, hub)); it != listings_.end()) {
@@ -769,11 +771,12 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"mtp_bytes", q.mtp_bytes}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
-    listings_[hub_key(repo, hub)] = list;
+    if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
     return list;
 }
 
 Json App::arch_json(const std::string& repo, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = archs_.find(hub_key(repo, hub)); it != archs_.end()) {
@@ -851,7 +854,7 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
         if (!support->reason.empty()) { out["note"] = support->reason; }
     }
     std::lock_guard lock(sizes_mutex_);
-    if (!out.contains("error")) { archs_[hub_key(repo, hub)] = out; }
+    if (!out.contains("error") && generation == hub_generation_) { archs_[hub_key(repo, hub)] = out; }
     return out;
 }
 
@@ -910,6 +913,7 @@ App::plan_facts(const std::string& repo, const Json& listing, const std::string&
 
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
@@ -1004,7 +1008,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     }
     std::lock_guard lock(sizes_mutex_);
     if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
-    plans_[key] = doc;
+    if (generation == hub_generation_) { plans_[key] = doc; }
     return doc;
 }
 
@@ -1126,6 +1130,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
 }
 
 Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, const Json& listing) {
+    const auto generation = hub_generation();
     Json out             = {{"known", false}};
     const auto& registry = spec::Registry::builtin();
     std::vector<std::string> names{repo}; // the repository and the base model its card names
@@ -1261,7 +1266,7 @@ Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, con
                                      {"drafter", q.drafter}});
                 }
                 std::lock_guard lock(sizes_mutex_);
-                listings_[decl->repo] = files;
+                if (generation == hub_generation_) { listings_[decl->repo] = files; }
             }
             for (const auto& q : files) { bytes = std::max(bytes, q.value("bytes", 0.0)); }
             const auto drafter_kv = kv_json(decl->repo, files);
@@ -1715,6 +1720,7 @@ void App::remove_converted_originals() {
 
 Json App::search_json(const std::string& query, const std::string& sort,
                       const std::string& hub_name) {
+    const auto generation = hub_generation();
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
@@ -1780,7 +1786,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
              {"error", error},
              {"catalog_source", source}};
     std::lock_guard lock(sizes_mutex_);
-    if (error.empty()) { searches_[key] = {now, out}; }
+    if (error.empty() && generation == hub_generation_) { searches_[key] = {now, out}; }
     return out;
 }
 
@@ -1788,6 +1794,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
 // quantization (an 8 MiB head by an HTTP range; 32 MiB when the metadata runs longer), else from
 // its config.json (safetensors weights).
 Json App::kv_json(const std::string& repo, const Json& listing, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = kv_.find(hub_key(repo, hub)); it != kv_.end()) { return it->second; }
@@ -1815,6 +1822,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
     }
     const auto remember = [&](const Json& got, bool read) {
         std::lock_guard lock(sizes_mutex_);
+        if (generation != hub_generation_) { return; }
         if (read) {
             kv_[hub_key(repo, hub)] = got;
             kv_failed_.erase(hub_key(repo, hub));
@@ -1865,8 +1873,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes = mtp;
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] = std::move(facts);
-                configs_[hub_key(repo, hub)] = config;
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] = std::move(facts);
+                    configs_[hub_key(repo, hub)]    = config;
+                }
                 read                         = true;
             }
         } catch (const std::exception&) {}
@@ -1884,8 +1894,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             out = to_json(kv_model_of_gguf(file.metadata));
             {
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] =
-                    product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] =
+                        product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                }
             }
             read = true;
             break;
@@ -2227,6 +2239,12 @@ void App::install(httplib::Server& server) {
         }
         try {
             const auto token = Json::parse(req.body).value("token", std::string());
+            if (const auto set = convert::hub_token(); set.source == "HF_TOKEN" ||
+                                                       set.source == "HUGGING_FACE_HUB_TOKEN") {
+                reply_error(res, 409,
+                            "the token is set by " + set.source + ": change it there");
+                return;
+            }
             if (!token.empty() && !options_.offline) {
                 (void)convert::hub_account(token, {}); // refused: not saved
             }
@@ -2234,6 +2252,7 @@ void App::install(httplib::Server& server) {
             // What the hub answered under the old token (gated listings, searches, headers).
             {
                 std::lock_guard lock(sizes_mutex_);
+                ++hub_generation_; // requests still running under the old token keep nothing
                 listings_.clear();
                 archs_.clear();
                 searches_.clear();
