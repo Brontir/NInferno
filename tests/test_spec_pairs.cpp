@@ -70,9 +70,11 @@ int main() {
         for (auto& m : slower.tune.measurements) {
             if (m.config.k == 15) { m.seconds *= 2; }
         }
-        auto costlier = second; // a second card whose deep rounds cost 3 % more: the same choice
+        // A second card whose plain decode is 2 % faster: every round costs more plain steps (a
+        // higher break-even), the order of the configurations and so the choice unchanged.
+        auto costlier = second;
         for (auto& m : costlier.tune.measurements) {
-            if (m.config.k == 15) { m.seconds *= 1.03; }
+            if (!m.config.enabled()) { m.seconds *= 0.98; }
         }
         const auto ab = sp::profile_for_target({&ada_q4, &costlier}, "sm89");
         const auto ba = sp::profile_for_target({&costlier, &ada_q4}, "sm89");
