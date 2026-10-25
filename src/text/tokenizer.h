@@ -83,6 +83,9 @@ public:
 
     // One past the largest id of the model vocabulary and the added tokens.
     [[nodiscard]] std::size_t vocab_size() const noexcept;
+    // The special ids the TemplateProcessing post_processor puts before a single sequence (what
+    // encode(text, true) adds in front); empty without one.
+    [[nodiscard]] std::vector<int> template_prefix() const;
 
     // Sorted by id.
     [[nodiscard]] std::span<const AddedToken> added_tokens() const noexcept;

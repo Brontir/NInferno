@@ -162,8 +162,10 @@ def make_handler(hub: Hub):
                 # still lists as itself; any other revision lists as the current commit.
                 revision = "/".join(parts[5:])
                 sha = revision if revision in repo.get("history", ()) else repo["commit"]
-                body = json.dumps({"id": f"{parts[2]}/{parts[3]}", "sha": sha,
-                                   "siblings": siblings}).encode()
+                answer = {"id": f"{parts[2]}/{parts[3]}", "sha": sha, "siblings": siblings}
+                # The model card fields the hub adds when asked (pipeline_tag, library_name, ...).
+                answer.update(repo.get("card", {}))
+                body = json.dumps(answer).encode()
                 return self.reply(200, body, {"Content-Type": "application/json"}, head)
             # Hugging Face: /<org>/<name>/resolve/<commit>/<path>
             if len(parts) >= 5 and parts[2] == "resolve":

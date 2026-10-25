@@ -287,6 +287,13 @@ private:
     ProcessPool processes_;
     std::unique_ptr<httplib::Server> server_;
     mutable std::mutex sizes_mutex_;
+    // Which Hugging Face token the caches below hold answers for (under sizes_mutex_): a new one
+    // counts up, and a request started before it keeps nothing.
+    std::uint64_t hub_generation_ = 0;
+    [[nodiscard]] std::uint64_t hub_generation() const {
+        std::lock_guard lock(sizes_mutex_);
+        return hub_generation_;
+    }
     SizeTable sizes_;
     std::map<std::string, nlohmann::json> listings_; // repo -> quant list
     // Artifact path -> (modification time, what its header says).
@@ -314,6 +321,7 @@ private:
     std::shared_ptr<const Catalog> catalog_;
     std::string catalog_source_; // "built in", or the feed and when it was read
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> catalog_wake_{false}; // a new token: the catalog thread reads the feed again
     std::atomic<bool> restart_requested_{false};
     std::mutex update_mutex_;
     std::optional<update::Release> release_; // the manifest's answer, once read

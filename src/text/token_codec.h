@@ -74,6 +74,9 @@ public:
     [[nodiscard]] virtual bool has_exact_token_domain(std::size_t size) const noexcept  = 0;
     // The id of a token whose whole string is `content` (added tokens first), if any.
     [[nodiscard]] virtual std::optional<int> token_id(std::string_view content) const = 0;
+    // The special ids the tokenizer's own post-processing puts before a document (a
+    // tokenizer.json TemplateProcessing); empty when it adds none.
+    [[nodiscard]] virtual std::vector<int> template_prefix() const { return {}; }
 };
 
 } // namespace ninferno::text

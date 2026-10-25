@@ -72,6 +72,10 @@ public:
         return instance_->frontend.tokenize_text(text);
     }
 
+    [[nodiscard]] std::optional<TokenId> document_start_token() const override {
+        return instance_->frontend.document_start_token();
+    }
+
     [[nodiscard]] std::uint32_t count_tokens(PromptInput input,
                                              const PreparationControl& control) const override {
         return instance_->frontend.count_tokens(std::move(input), control);
