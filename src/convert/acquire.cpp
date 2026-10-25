@@ -350,7 +350,8 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
 }
 
 bool cached_conversion_has_drafters(const fs::path& cache, const std::string& repo,
-                                    const std::string& revision, const std::string& quant) {
+                                    const std::string& revision, const std::string& quant,
+                                    const std::string& recipe, bool vision) {
     if (quant.empty()) { return false; }
     const auto root     = cache / hub_repo_directory(repo);
     const std::string rev = revision.empty() ? std::string("main") : revision;
@@ -361,21 +362,44 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
         return false;
     }
     if (commit.find_first_of("/\\.") != std::string::npos) { return false; }
-    const auto artifact = converted_artifact(root / "ninferno" / commit, quant, "");
-    if (!artifact) { return false; }
-    std::error_code ec;
-    if (fs::exists(spec::manifest_path(*artifact), ec)) { return true; }
-    std::ifstream stream(artifact->string() + ".conversion.json");
-    try {
-        const OJson record     = OJson::parse(stream);
-        const OJson components = record.value("components", OJson::object());
-        for (const auto& [component, _] : components.items()) {
-            if (component != "text" && component != "mtp" && component != "vision") {
-                return true;
+    const auto carries = [](const fs::path& artifact) {
+        std::error_code ec;
+        if (fs::exists(spec::manifest_path(artifact), ec)) { return true; }
+        std::ifstream stream(artifact.string() + ".conversion.json");
+        try {
+            const OJson record     = OJson::parse(stream);
+            const OJson components = record.value("components", OJson::object());
+            for (const auto& [component, _] : components.items()) {
+                if (component != "text" && component != "mtp" && component != "vision") {
+                    return true;
+                }
             }
+        } catch (const std::exception&) {}
+        return false;
+    };
+    // <gguf stem>[.vision].<recipe>.ninferno, complete, of exactly this label (converted_artifact's
+    // names), the recipe and the --vision kind the start converts.
+    std::size_t found = 0, with = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(root / "ninferno" / commit, ec)) {
+        const auto path = entry.path();
+        if (path.extension() != ".ninferno" || !complete(path, false)) { continue; }
+        const auto base = path.stem().string(); // <stem>.<recipe>
+        const auto dot  = base.rfind('.');
+        if (dot == std::string::npos || (!recipe.empty() && base.substr(dot + 1) != recipe)) {
+            continue;
         }
-    } catch (const std::exception&) {}
-    return false;
+        std::string stem       = base.substr(0, dot);
+        const bool vision_stem = stem.ends_with(".vision");
+        if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
+        if (vision_stem != vision ||
+            ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) {
+            continue;
+        }
+        ++found;
+        if (carries(path)) { ++with; }
+    }
+    return found > 0 && with == found;
 }
 
 void accept_converted(const fs::path& commit_dir, const std::string& ref,

@@ -923,6 +923,22 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
     return out;
 }
 
+// The conversions of `repo` kept under `root` (names, sizes, times): a plan that depends on what a
+// conversion carries (convert::cached_conversion_has_drafters) is kept per this stamp.
+std::string conversions_stamp(const fs::path& root, const std::string& repo) {
+    std::string out;
+    std::error_code ec;
+    const fs::path dir = root / convert::hub_repo_directory(repo) / "ninferno";
+    for (auto it = fs::recursive_directory_iterator(dir, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
+               std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
+    }
+    return std::to_string(std::hash<std::string>{}(out));
+}
+
 std::string launch_key(const product::LaunchAsk& launch) {
     return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
            launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
@@ -947,7 +963,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
     const std::string key =
-        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch);
+        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
+        "|" + conversions_stamp(hub_root(), repo);
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }

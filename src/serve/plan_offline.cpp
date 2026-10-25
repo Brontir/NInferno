@@ -391,10 +391,12 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         // A GGUF quantization converted here with its drafters (an earlier --with-drafters) is
         // started with them, flag or not (convert::cached_conversion_has_drafters).
         const auto with_drafters = [asked = options.with_drafters, gguf = model.gguf,
-                                    repo = model.repo,
-                                    revision = model.revision](const std::string& quant) {
+                                    repo = model.repo, revision = model.revision,
+                                    recipe = options.recipe,
+                                    vision = options.enable_vision](const std::string& quant) {
             return asked || (gguf && convert::cached_conversion_has_drafters(
-                                         convert::default_hub_cache(), repo, revision, quant));
+                                         convert::default_hub_cache(), repo, revision, quant,
+                                         recipe, vision));
         };
         out.subject = product::planned_subject(
             product::PlannedTarget{.repo          = model.repo,

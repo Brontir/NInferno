@@ -763,6 +763,23 @@ void test_catalog() {
         std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json") << "{}";
         check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
               "a conversion with a speculation manifest beside it");
+        // The conversion the start takes: its --vision kind, its recipe.
+        const auto write = [&](const std::string& name, const char* components) {
+            std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(repo / "ninferno/c0ffee" / (name + ".conversion.json"))
+                << "{\"components\": {" << components << "}}";
+        };
+        write("m-Q6_K.qwen3_5_bf16.ninferno", R"("text": {}, "mtp": {})");
+        write("m-Q6_K.vision.qwen3_5_bf16.ninferno", R"("text": {}, "vision": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_bf16.ninferno", R"("text": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_q8.ninferno", R"("text": {})");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K", "", true),
+              "the text conversion without --vision, the --vision one with it");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_bf16") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_q8"),
+              "the named recipe's conversion; two recipes unnamed: what both carry");
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
