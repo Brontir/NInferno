@@ -14,7 +14,9 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
+#include <regex>
 #include <set>
 #include <stdexcept>
 
@@ -303,8 +305,7 @@ void count_gguf_matrices(const GgufFile& file, SupportFacts& out) {
         if (tensor.ne.size() < 2) { continue; }
         if (tensor.type == ggml::NVFP4) {
             ++out.gguf_nvfp4_matrices;
-        } else if (tensor.type != ggml::F32 && tensor.type != ggml::F16 &&
-                   tensor.type != ggml::BF16) {
+        } else if (!ggml::is_plain(tensor.type)) {
             ++out.gguf_block_matrices;
         }
     }
@@ -340,13 +341,49 @@ void read_gguf_facts(const fs::path& path, SupportFacts& out) {
     } catch (const std::exception& error) { out.gguf_error = error.what(); }
 }
 
+// The other parts of a split GGUF model beside `first` (<stem>-00001-of-0000M.gguf): their headers'
+// matrices count too. A part that cannot be read leaves the counts as they are.
+void count_split_parts(const fs::path& first, SupportFacts& out) {
+    static const std::regex split(R"(^(.*)-00001-of-(\d{5})\.gguf$)", std::regex::icase);
+    std::smatch match;
+    const std::string name = first.filename().string();
+    if (!std::regex_match(name, match, split)) { return; }
+    const int parts = std::stoi(match[2].str());
+    for (int i = 2; i <= parts; ++i) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", i, parts);
+        const fs::path part = first.parent_path() / (match[1].str() + suffix);
+        try {
+            const std::uint64_t size = fs::file_size(part);
+            for (const std::uint64_t want : {8ULL << 20, 64ULL << 20, 512ULL << 20}) {
+                const std::uint64_t n = std::min(want, size);
+                std::string bytes(static_cast<std::size_t>(n), '\0');
+                std::ifstream in(part, std::ios::binary);
+                in.read(bytes.data(), static_cast<std::streamsize>(n));
+                try {
+                    count_gguf_matrices(parse_gguf_head(reinterpret_cast<const std::byte*>(
+                                                            bytes.data()),
+                                                        bytes.size(), size, part.string()),
+                                        out);
+                    break;
+                } catch (const GgufTruncated&) {
+                    if (n == size) { throw; }
+                }
+            }
+        } catch (const std::exception&) {}
+    }
+}
+
 } // namespace
 
 SupportFacts local_support_facts(const fs::path& path) {
     SupportFacts out;
     std::error_code ec;
     if (!fs::is_directory(path, ec)) {
-        if (ascii_lower(path.extension().string()) == ".gguf") { read_gguf_facts(path, out); }
+        if (ascii_lower(path.extension().string()) == ".gguf") {
+            read_gguf_facts(path, out);
+            if (out.gguf_error.empty()) { count_split_parts(path, out); }
+        }
         return out;
     }
     if (std::ifstream in(path / "config.json"); in) {
@@ -422,6 +459,20 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                     if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
                                                 file.has("general.source.huggingface.repository"))) {
                         out.chat_template.reset();
+                    }
+                    // A split model's other parts: their matrices count too.
+                    for (std::size_t part = 1; part < head.parts; ++part) {
+                        for (const std::uint64_t more : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+                            const auto next = fetch_gguf_head(spec, options, more, part);
+                            try {
+                                count_gguf_matrices(
+                                    parse_gguf_head(
+                                        reinterpret_cast<const std::byte*>(next.bytes.data()),
+                                        next.bytes.size(), next.size, next.path),
+                                    out);
+                                break;
+                            } catch (const GgufTruncated&) { continue; }
+                        }
                     }
                     break;
                 } catch (const GgufTruncated&) { continue; }
