@@ -309,10 +309,11 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     }
     const double step     = k.step_seconds + bytes / (k.eta_dram * card.dram_bytes_per_s) + compute;
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
-    // A drafter's gain over plain decode, while its load table lets these many streams speculate.
+    // A drafter's measured gain over plain decode, while its load table lets these many streams
+    // speculate (a gain no measurement gives is not counted: DrafterOption::measured).
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];
-        if (d.plain_from_streams == 0 || rows < d.plain_from_streams) {
+        if (d.measured && (d.plain_from_streams == 0 || rows < d.plain_from_streams)) {
             out.decode_per_stream *= d.speedup;
         }
     }
@@ -769,7 +770,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
             } else if (axis == Axis::Drafter && !choice.drafter_by_worth) {
-                alt.why_code = "default";
+                alt.why_code = choice.by_worth ? "unmeasured" : "default";
                 alt.why_not  = choice.by_worth
                                    ? "the speculation profile's choice stands (its gain is not measured on this card)"
                                    : "the speculation profile's choice stands (no decision constants for this generation)";

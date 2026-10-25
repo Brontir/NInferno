@@ -144,7 +144,7 @@ accuracy term: between plain decode and a drafter the worth weighs the drafter's
 context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
 decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published
 without its speeds (the `*` profile) would weigh a gain of 1 and lose to plain decode on memory
-alone, so there its choice stands (`why_code` `default`, "its gain is not measured on this card").
+alone, so there its choice stands (`why_code` `unmeasured`).
 A faster drafter the asked context leaves out is listed with its gain. `--spec` pins the axis.
 
 Where the chosen configuration does not fit at the start (a DFlash drafter's workspace, a deeper
@@ -172,7 +172,8 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 | `tie_context` | the same worth; the chosen keeps more context per stream (or fewer weight bytes) |
 | `tie_order` | the same in every respect; the smaller quantization label, else the listing's order |
 | `quant_rule` | the quant rule decided: no worth here, or the other side of the 3.5-bit floor |
-| `default` | a gate is closed: the family's default (or the default chunk) stands |
+| `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |
+| `unmeasured` | a drafter's gain is not measured on this card: the speculation profile's choice stands |
 | `coupled` | a ring or state value: it follows the KV codec and the activations |
 
 A caller re-runs `choose` with another task (context, streams, request shape) to show what an input
