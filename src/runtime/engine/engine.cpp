@@ -404,6 +404,11 @@ std::vector<TokenId> Engine::tokenize_text(std::string_view text) const {
     return impl_->backend->tokenize_text(text);
 }
 
+std::optional<TokenId> Engine::document_start_token() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return impl_->backend->document_start_token();
+}
+
 std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32_t first_target) {
     ScoreDetail none;
     return score_tokens(std::move(tokens), first_target, ScoreDetailRequest{}, none);

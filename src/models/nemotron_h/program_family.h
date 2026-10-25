@@ -21,7 +21,8 @@ inline constexpr std::uint32_t kMaximumMtpDraftTokens = 7;
 // `mtp`: the MTP head (null: no speculation); it outlives the execution.
 [[nodiscard]] std::unique_ptr<const qwen3_5::detail::ModelExecution>
 make_program_execution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
-                       std::int32_t public_tokens, ActivationMode activations);
+                       std::int32_t public_tokens, ActivationMode activations,
+                       EnginePurpose purpose);
 
 // The shape of the persistent state the NemotronH `config` lays out
 // (models/qwen3_5/program/planning/sequence_bytes.h, plan_persistent_layout): the attention
