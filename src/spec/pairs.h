@@ -99,9 +99,10 @@ struct MeasuredPair {
 // the highest mean speed relative to each pair's best; its floor the highest any pair measured for
 // it. Plain decode where a pair's tokens per round scaled down by kFineTuneAcceptance would make it
 // gain less than kPreliminaryGain on any pair. One request speculates (load: plain from two rows).
-// nullopt for an empty group.
+// nullopt for an empty group. With `support`, only the depths the serving Engine runs.
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
-                                                       std::string_view kind);
+                                                       std::string_view kind,
+                                                       const EngineSupport* support = nullptr);
 
 // The bits per weight a quantization label names ("Q4_K_M" 4, "UD-IQ2_M" 2, "MXFP4" 4, "BF16" 16):
 // enough to tell the bit classes apart. 16 for "" (a checkpoint's own weights).

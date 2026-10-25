@@ -1,6 +1,7 @@
 #include "spec/pairs.h"
 
 #include "artifact/reader.h"
+#include "spec/engine_support.h"
 
 #include <algorithm>
 #include <cctype>
@@ -289,7 +290,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
 }
 
 std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
-                                         std::string_view kind) {
+                                         std::string_view kind, const EngineSupport* support) {
     if (group.empty()) { return std::nullopt; }
     const Mode mode = mode_of_kind(kind);
     std::vector<std::map<std::pair<std::string, std::string>, Sum>> tables;
@@ -317,7 +318,10 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         std::set<std::string> labels;
         for (const auto& [key, sum] : tables.front()) {
             const auto config = SpecConfig::parse(key.first);
-            if (config.mode == mode && config.k <= kPortableDepth) { labels.insert(key.first); }
+            if (config.mode == mode && config.k <= kPortableDepth &&
+                (support == nullptr || support->runs(config))) {
+                labels.insert(key.first);
+            }
         }
         std::map<std::string, std::vector<Over>> by_label;
         for (const auto& label : labels) {
@@ -399,10 +403,19 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             modes.insert(mode_of_kind(kind));
         } catch (const std::invalid_argument&) {} // a kind no pair drafts with
     }
-    // The target's own measurements, over the drafters it carries only.
+    // What the serving Engine of the family runs: the choices are selected over it (a pair's
+    // fastest configuration may be one it does not run, its served choice then stands).
+    // An engine family it does not know leaves the selection as asked.
+    SelectOptions served = options;
+    if (!served.served && engine_family_support(engine).any()) {
+        served.served = engine_family_support(engine);
+    }
+    const EngineSupport* support = served.served ? &*served.served : nullptr;
+    // The target's own measurements, over the drafters it carries only, of the current engine
+    // version (pair_current) before any card's runs are pooled: a stale record never mixes in.
     std::vector<MeasuredPair> own;
     for (const auto& pair : pairs) {
-        if (pair.target != target) { continue; }
+        if (pair.target != target || !pair_current(pair)) { continue; }
         MeasuredPair p = pair;
         std::erase_if(p.tune.measurements, [&](const Measurement& m) {
             return m.config.enabled() && !modes.contains(m.config.mode);
@@ -446,7 +459,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     if (!own.empty()) {
         std::vector<const MeasuredPair*> measured;
         for (const auto& p : own) { measured.push_back(&p); }
-        return PairChoice{.profile = profile_for_target(measured, generation, options),
+        return PairChoice{.profile = profile_for_target(measured, generation, served),
                           .basis   = "measured",
                           .source  = "registry pair " + own.front().target_repo + " (" +
                                     std::to_string(own.size()) + " lab card(s))"};
@@ -460,7 +473,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             continue;
         }
         const auto group = pair_group(pairs, engine, kind, target_bits);
-        auto profile     = profile_for_group(group, kind);
+        auto profile     = profile_for_group(group, kind, support);
         if (!profile) { continue; }
         if (!best || profile->overall.speedup() > best->profile.overall.speedup()) {
             best = PairChoice{.profile = std::move(*profile),
