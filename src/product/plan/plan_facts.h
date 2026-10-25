@@ -48,16 +48,14 @@ struct GgufFile;
 
 namespace ninferno::product {
 
-// What the speculation menu reads of the target beside the plan facts (spec/load_model.h
-// TargetFacts and the drafter plan's geometry): its layers, experts, weight formats and whether
-// it carries MTP layers of its own.
+// What the configuration choice and the drafter plan read of the target beside the plan facts:
+// its layers, experts, weight formats and whether it carries MTP layers of its own.
 struct PlanTargetShape {
     std::uint64_t hidden_size = 0, num_hidden_layers = 0, vocab_size = 0;
     int experts = 0, experts_per_token = 0;
     double active_params        = 0;
     double routed_expert_params = 0;
     bool builtin_mtp = false; // MTP / NextN layers in the model (GGUF nextn_predict_layers)
-    bool kquant      = false; // GGUF k- or IQ-quant weights
     bool tied_embeddings = false; // the output head shares the input table (no separate rows to read)
     // The quantized weight formats, as artifact::format_name spells them where known
     // ("ggml_q4_k", "mxfp4", "nvfp4", "bf16"); empty when unknown.

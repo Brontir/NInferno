@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -33,6 +34,10 @@ struct SupportFacts {
     bool gguf = false;                      // the model is a GGUF file
     std::string gguf_architecture;          // its general.architecture
     std::string gguf_error;                 // why its header does not parse ("" when it does)
+    // Its matrices (two dimensions or more) in NVFP4 blocks, and in the other quantized GGML blocks
+    // (Q*_K, Q8_0, IQ*, MXFP4, ...: not F32/F16/BF16), from its header's tensor infos.
+    std::size_t gguf_nvfp4_matrices = 0;
+    std::size_t gguf_block_matrices = 0;
 };
 
 enum class Verdict { Supported, NeedsToken, Unsupported, Unknown };

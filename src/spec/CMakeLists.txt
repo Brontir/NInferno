@@ -11,11 +11,9 @@ configure_file(embedded_data.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/spec/emb
 
 add_library(ninferno_spec STATIC
   config.cpp
-  context_class.cpp
   corpus.cpp
   fingerprint.cpp
   load_tune.cpp
-  load_model.cpp
   manifest.cpp
   menu.cpp
   pairs.cpp

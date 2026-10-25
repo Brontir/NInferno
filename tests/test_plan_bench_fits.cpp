@@ -130,7 +130,6 @@ pr::PlanSourceFacts facts_of(const Json& j) {
     t.active_params            = s.at("active_params").get<double>();
     t.routed_expert_params     = s.at("routed_expert_params").get<double>();
     t.builtin_mtp              = s.at("builtin_mtp").get<bool>();
-    t.kquant                   = s.at("kquant").get<bool>();
     t.weight_formats           = s.at("weight_formats").get<std::vector<std::string>>();
     t.base_model               = s.at("base_model").get<std::string>();
     return f;
@@ -283,8 +282,7 @@ int main() {
                                                     .per_request_from_profile =
                                                         serve.speculation_from_profile &&
                                                         !serve.per_request_given,
-                                                    .depth_from_profile = serve.draft_tokens_from_model,
-                                                    .model_repo         = repo};
+                                                    .depth_from_profile = serve.draft_tokens_from_model};
         const pr::SpeculationSubject subject = pr::planned_subject(
             pr::PlannedTarget{.repo          = repo,
                               .facts         = facts,

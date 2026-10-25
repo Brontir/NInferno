@@ -2,7 +2,8 @@
 //
 //     fetch_head_probe SPEC QUANT BYTES CACHE
 //
-// Prints {"commit", "path", "size", "bytes", "cached", "offline"} as one JSON line; an error on
+// Prints {"commit", "path", "size", "bytes", "cached", "offline", "parts"} as one JSON line (QUANT
+// "--include=GLOB,GLOB": the files those globs choose instead of a quantization); an error on
 // stderr, exit 1. With QUANT --list, prints list_quants(SPEC) instead: [{"quant", "format",
 // "bytes", "mtp_bytes", "drafter", "files"}]. With QUANT --holds or --holds-vision (BYTES the
 // quantization, CACHE a snapshot directory), prints whether snapshot_holds_model() finds the model
@@ -43,12 +44,23 @@ int main(int argc, char** argv) {
             std::printf("%s\n", holds ? "true" : "false");
             return 0;
         }
-        options.quant = argv[2];
+        if (const std::string quant = argv[2]; quant.rfind("--include=", 0) == 0) {
+            std::string globs = quant.substr(10);
+            for (std::size_t at = 0; at <= globs.size();) {
+                const std::size_t comma = globs.find(',', at);
+                const std::size_t end   = comma == std::string::npos ? globs.size() : comma;
+                options.include.push_back(globs.substr(at, end - at));
+                at = end + 1;
+            }
+        } else {
+            options.quant = quant;
+        }
         const auto head =
             ninferno::convert::fetch_gguf_head(argv[1], options, std::stoull(argv[3]));
         const nlohmann::json out{{"commit", head.commit},        {"path", head.path},
                                  {"size", head.size},            {"bytes", head.bytes.size()},
-                                 {"cached", head.cached},        {"offline", head.offline}};
+                                 {"cached", head.cached},        {"offline", head.offline},
+                                 {"parts", head.parts}};
         std::printf("%s\n", out.dump().c_str());
         return 0;
     } catch (const std::exception& error) {

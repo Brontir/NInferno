@@ -2101,10 +2101,6 @@ With an automatic pool at an explicit context, the pool rule follows. When the d
 whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if it keeps
 four fifths of plain decode's contexts; otherwise plain decode runs.
 
-The depth per context class (`spec::class_depths`: Short < 1,024 prompt tokens, Mid < 8,192, Long
-< 24,576, Huge) is reported from the card's round cost and the registry's class acceptance factors.
-No request routes by class yet.
-
 **The largest quantization that fits** (`runtime/engine/quant_rule.h`). A hub GGUF repository
 without `--quant` plans every listed quantization at the asked context and `--max-concurrency` on an
 idle card of the device, and the rule picks one. What "fits" means:
@@ -2246,8 +2242,6 @@ SPEC:
 | `depths`, `floor` | the depths the engine captures and the watchdog floor |
 | `load`, `load_label`, `load_basis` | the profile's load table (`[{lanes, depth}]`, after the stand-in cap; `measured` or `none`) |
 | `depth_at_concurrency` | the depth a step of `--max-concurrency` lanes runs at |
-| `modeled_load`, `model_note` | the round-cost model's load table (`spec::modeled_load`) and why it is unsure |
-| `classes` | `[{class, below_tokens, depth, basis, reason}]` for `short`, `mid`, `long`, `huge`: `basis` `modeled` or `no estimate` |
 | `fallbacks` | the start's order as tried: `[{step, label, fits, served, note}]`, `step` one of `profile`, `explicit`, `fit_fallback`, `shallower`, `head`, `plain`, `pool_head`, `pool_plain`; `served` marks the one the start ends on |
 | `notes` | the resolution's notes |
 

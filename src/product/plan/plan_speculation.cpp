@@ -4,7 +4,6 @@
 #include "core/device_class.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
-#include "spec/load_model.h"
 #include "spec/manifest.h"
 #include "spec/registry.h"
 
@@ -20,7 +19,7 @@ namespace {
 using Json = nlohmann::json;
 
 // The registry's engine of a family (the drafter plan's DrafterTarget::engine,
-// TargetFacts::family).
+// the choice's family).
 std::string engine_of(std::string_view model_type) {
     if (model_type == "qwen3_5_text" || model_type == "qwen3_5_moe_text") { return "qwen3_5"; }
     if (model_type == "gemma4_text") { return "gemma4"; }
@@ -43,28 +42,6 @@ std::string drafter_kind_of(spec::Mode mode, std::string_view engine) {
     default:
         return {};
     }
-}
-
-// The decay of acceptance along a block (spec/load_model.h: RTX 4090 grid, DFlash2 0.97, MTP
-// 0.91): a lab constant per drafter kind.
-double decay_of(spec::Mode mode) noexcept { return mode == spec::Mode::Mtp ? 0.91 : 0.97; }
-
-spec::TargetFacts target_facts_of(const PlanSourceFacts& facts) {
-    const runtime::PlanModelFacts& m = facts.model;
-    const PlanTargetShape& s         = facts.shape;
-    spec::TargetFacts out;
-    out.active_params        = s.active_params;
-    out.bytes_per_weight     = m.params > 0 ? static_cast<double>(m.weight_bytes) / m.params : 0.0;
-    out.kquant               = s.kquant;
-    out.hidden_size          = s.hidden_size;
-    out.num_hidden_layers    = s.num_hidden_layers;
-    out.vocab_size           = s.vocab_size;
-    out.experts              = s.experts;
-    out.experts_per_token    = s.experts_per_token;
-    out.routed_expert_params = s.routed_expert_params;
-    out.family               = engine_of(m.model_type);
-    out.weight_formats       = s.weight_formats;
-    return out;
 }
 
 // The bounds of a profile's table the Engine took (SpeculativeOptions::load), as the registry's.
@@ -206,9 +183,7 @@ spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
                         d.sms,
                         d.compute_capability(),
                         d.facts.reference_clock_khz,
-                        d.dram_gbps(),
-                        d.features.mma_slow,
-                        d.facts.source != FactSource::Verified || d.facts.driver_read};
+                        d.dram_gbps()};
 }
 
 bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject) {
@@ -222,7 +197,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const runtime::PlanDeviceFacts& device,
                                          const EngineOptions& options,
                                          const SpeculationSubject* subject,
-                                         const SpeculationAsk& ask, const spec::GpuKey& gpu,
+                                         const SpeculationAsk& ask,
                                          std::uint64_t drafter_bytes,
                                          const std::optional<models::DrafterStateShape>& drafter_state) {
     PlannedSpeculation out;
@@ -429,7 +404,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
     }
 
-    // The served choice's facts: drafter, depths, load, the model's load and class depths.
+    // The served choice's facts: drafter, depths, load.
     const std::string engine_name = engine_of(facts.model.model_type);
     if (r.engine.backend != SpeculativeBackend::None) {
         spec::Mode mode = r.engine.backend == SpeculativeBackend::Mtp      ? spec::Mode::Mtp
@@ -445,74 +420,6 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         r.load                 = bounds_of(r.engine.load);
         r.load_basis           = r.load.empty() ? "none" : "measured";
         r.depth_at_concurrency = depth_at(r.engine, concurrency);
-        // The round cost of this card for this target and drafter, from facts (spec/load_model.h).
-        const spec::DrafterFacts drafter{.kind = r.drafter_kind,
-                                         .proposal_head =
-                                             r.engine.proposal_head == ProposalHead::Optimized};
-        const std::optional<spec::RoundCost> cost =
-            spec::round_cost_of(gpu, target_facts_of(facts), drafter);
-        double tokens               = 0;
-        std::int32_t measured_depth = static_cast<std::int32_t>(r.engine.draft_tokens);
-        if (served) { // the profile's tokens per round at its depth
-            const spec::MenuChoice& primary = served->menu.primary;
-            measured_depth                  = primary.config.k;
-            if (subject != nullptr && subject->resolved) {
-                const spec::Choice& choice = spec::pick(subject->resolved->profile, ask.thinking);
-                if (choice.config.mode == mode && choice.config.k == measured_depth) {
-                    tokens = choice.tokens_per_round;
-                }
-            }
-        }
-        const double d = decay_of(mode);
-        const double a = tokens > 1.0 && measured_depth > 0
-                             ? spec::first_draft_acceptance(tokens, measured_depth, d)
-                             : 0.0;
-        if (!cost) {
-            r.model_note = "no cost model for this card, target or drafter";
-        } else if (!cost->priced || !cost->fit.reliable) {
-            r.model_note = cost->fit.reason;
-        }
-        if (cost && cost->priced && a > 0 && !r.depths.empty()) {
-            r.modeled_load = spec::modeled_load(*cost, a, d, r.depths,
-                                                static_cast<std::int32_t>(kMaximumConcurrency));
-        } else if (a <= 0 && r.model_note.empty()) {
-            r.model_note = "no measured tokens per round for the chosen depth";
-        }
-        // The class factors of the registry for this model pair (spec/context_class.h).
-        spec::AcceptanceKey key;
-        if (const spec::ModelEntry* entry = spec::Registry::builtin().by_repo(ask.model_repo)) {
-            key.model = entry->id;
-        }
-        key.target          = ask.source_identity;
-        key.drafter         = r.drafter_kind;
-        key.depth           = measured_depth;
-        key.lanes           = static_cast<std::int32_t>(concurrency);
-        std::array<spec::ClassFactor, spec::kContextClasses> factors{};
-        for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
-            factors[i] = spec::factor(spec::Registry::builtin().context_classes(), key,
-                                      static_cast<spec::ContextClass>(i));
-        }
-        const std::vector<std::int32_t> captured =
-            r.depths.empty() ? std::vector<std::int32_t>{measured_depth} : r.depths;
-        const auto depths =
-            spec::class_depths(cost && a > 0 ? cost : std::optional<spec::RoundCost>{}, a, d,
-                               captured, factors, measured_depth);
-        for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
-            SpeculationClassRow& row = r.classes[i];
-            row.context_class        = static_cast<spec::ContextClass>(i);
-            row.below  = i < spec::kContextBounds.size() ? spec::kContextBounds[i] : 0;
-            row.depth  = depths[i].depth;
-            row.basis  = depths[i].estimate ? "modeled" : "no estimate";
-            row.reason = depths[i].reason;
-        }
-    } else {
-        for (std::size_t i = 0; i < spec::kContextClasses; ++i) {
-            SpeculationClassRow& row = r.classes[i];
-            row.context_class        = static_cast<spec::ContextClass>(i);
-            row.below  = i < spec::kContextBounds.size() ? spec::kContextBounds[i] : 0;
-            row.basis  = "no estimate";
-            row.reason = "plain decode: nothing speculates";
-        }
     }
     return out;
 }
@@ -529,14 +436,6 @@ Json to_json(const SpeculationReport& r) {
         }
         return out;
     };
-    Json classes = Json::array();
-    for (const SpeculationClassRow& row : r.classes) {
-        classes.push_back({{"class", spec::class_name(row.context_class)},
-                           {"below_tokens", row.below == 0 ? Json(nullptr) : Json(row.below)},
-                           {"depth", row.depth},
-                           {"basis", row.basis},
-                           {"reason", row.reason}});
-    }
     Json fallbacks = Json::array();
     for (const SpeculationFallbackStep& s : r.fallbacks) {
         fallbacks.push_back({{"step", s.step},
@@ -560,9 +459,6 @@ Json to_json(const SpeculationReport& r) {
             {"load_label", spec::load_label(r.load)},
             {"load_basis", r.load_basis.empty() ? std::string("none") : r.load_basis},
             {"depth_at_concurrency", r.depth_at_concurrency},
-            {"modeled_load", bounds(r.modeled_load)},
-            {"model_note", r.model_note},
-            {"classes", std::move(classes)},
             {"fallbacks", std::move(fallbacks)},
             {"notes", r.notes}};
 }
