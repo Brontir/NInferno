@@ -100,6 +100,11 @@ int main(int argc, char** argv) {
                "a drafter is not served alone, a model is");
         expect(says(of(chat("Eagle3DraftModel")), Verdict::Unsupported, "no engine runs"),
                "an EAGLE-3 drafter");
+        // nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark: a drafter, not the model.
+        const auto dspark = of(chat("Qwen3DSparkModel"));
+        expect(dspark.verdict == Verdict::Unsupported && dspark.role == "drafter" &&
+                   dspark.reason.find("no engine runs") != std::string::npos,
+               "a DSpark drafter: " + dspark.reason);
         cv::SupportFacts g;
         g.gguf              = true;
         g.gguf_architecture = "lfm2";
