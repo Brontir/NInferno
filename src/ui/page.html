@@ -2043,7 +2043,9 @@ function schedulePlan() {
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
-    renderBody();
+    // The speed-up block is drawn with the detail header: drawn again when this plan is the first
+    // to say the repository speculates (a hub repository the catalog does not list).
+    if (!document.querySelector(".accel") && planServesSpeculation()) renderDetail(); else renderBody();
   }, 300);
 }
 // The plan row of a quantization of the selected repository (null: no plan, or none for it).
@@ -2069,6 +2071,8 @@ function planSpecNow() {
   return r && r.plan && r.plan.speculation || doc && doc.plan && doc.plan.speculation || null;
 }
 // Auto's speculation is the server's choice: plain when the plan serves plain decode.
+// Whether the plan for the ask serves a speculation (its drafter kind).
+function planServesSpeculation() { const s = planSpecSummary(planSpecNow()); return !!s && !!s.kind; }
 function planServesPlain() { const s = planSpecSummary(planSpecNow()); return !!s && !s.kind; }
 // The context the speed estimates take: the one asked, else (Auto) the selected row's planned one.
 function ctxEff() {
@@ -2532,7 +2536,7 @@ function accelBlock(sel) {
   const drafters = cat.drafters || [];
   // The block (and its Auto / Off / Manual switch) wherever the catalog lists drafters or loads,
   // or the plan serves a speculation (a hub repository the catalog does not list).
-  if (!drafters.length && !loadOf() && !planSpecNow()) return `<div class="sub" id="planspec"></div>`;
+  if (!drafters.length && !loadOf() && !planServesSpeculation()) return `<div class="sub" id="planspec"></div>`;
   const suite = suiteHere(cat);
   sel.suite = suite;
   const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])
