@@ -2154,8 +2154,10 @@ function choicePanel(doc) {
       <td class="num ${cls(r.ddecode, true)}">${pct(r.ddecode)}</td><td class="num ${cls(r.dprefill, true)}">${pct(r.dprefill)}</td>
       <td class="num ${cls(r.dtime, false)}">${pct(r.dtime)}</td><td class="num ${cls(r.dkld, false)}">${kld(r.dkld)}</td>
       <td class="sub">${esc(t("why_" + r.why + (r.axis === "drafter" && r.why === "default" ? "_drafter" : "")) || r.why)}</td></tr>`).join("");
-  // What λ priced: only where the worth decided (else the family's defaults stood).
-  const lambda = c.by_worth && c.task && c.task.accuracy_weight > 0
+  // What λ priced: only where the worth weighed a value against the chosen (the family's defaults
+  // stood, or every accuracy-bearing axis was pinned: nothing was priced).
+  const weighed = c.by_worth && rows.some(r => ["lower_worth", "tie_context", "tie_order"].includes(r.why));
+  const lambda = weighed && c.task && c.task.accuracy_weight > 0
     ? `<div class="sub" data-tip="${esc(t("lambdaTip"))}">${esc(fill(t("lambdaLine"), {l: c.task.accuracy_weight, pct: (c.task.accuracy_weight * 0.1).toFixed(1)}))}</div>` : "";
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis"))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}${lambda}</div>` +
     (rows.length ? `<details class="choice" ${choiceOpen ? "open" : ""}><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th data-tip="${esc(t("lambdaTip"))}">KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
