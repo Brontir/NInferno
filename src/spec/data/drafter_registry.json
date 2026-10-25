@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": 112,
-  "published": "2026-10-22",
+  "version": 113,
+  "published": "2026-10-25",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
     "mtp": {
@@ -750,7 +750,6 @@
             "tok_s": 496.95355773230466,
             "tokens_per_round": 4.569844789356985
           },
-          "revision": "e2cc93a25f5b",
           "session": {
             "default": {
               "acceptance": 0.6325555243182457,
@@ -772,7 +771,8 @@
               "tok_s": 435.2477468384412,
               "tokens_per_round": 3.824875621890547
             }
-          }
+          },
+          "revision": "d402ab72bd75"
         },
         {
           "applies_to": [
@@ -824,7 +824,6 @@
             }
           ],
           "load_measured_on": "gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
-          "revision": "022eb977b3eb",
           "session": {
             "default": {
               "acceptance": 0.6219887955182073,
@@ -856,7 +855,8 @@
               "tok_s": 657.8029904967702,
               "tokens_per_round": 3.6998050682261208
             }
-          }
+          },
+          "revision": "b4c595081123"
         },
         {
           "gpu_class": "gb203",
@@ -889,7 +889,6 @@
           ],
           "load_measured_on": "gemma4_26b_qat_udq4kxl.ninferno + 26b_mtp_gguf.ninferno, RTX 5080, NVIDIA GeForce RTX 5080, C 2,3,4, temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T13:12:11Z (context 2048, prefill chunk 512, one 4-row engine per bound: C=2 plain 388.0, bound 2 610.0, 3 645.7, 4 641.4, 6 647.4, none 661.8; C=3 plain 480.4, 2 727.0, 3 764.9, 4 768.4, 6 756.5, none 769.5; C=4 plain 574.7, 2 840.0, 3 889.3, 4 859.1, 6 872.8, none 886.6)",
           "gpu": "NVIDIA GeForce RTX 5080",
-          "revision": "7f679adb993c",
           "session": {
             "default": {
               "config": "mtp:8:2",
@@ -906,7 +905,8 @@
               "drafter": "assistant",
               "floor_tokens_per_round": 2.3878769436555536
             }
-          }
+          },
+          "revision": "432f2b2de093"
         },
         {
           "applies_to": [
@@ -954,7 +954,6 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:26:52Z",
-          "revision": "7c37bfceafac",
           "session": {
             "default": {
               "acceptance": 0.6687116564417178,
@@ -976,7 +975,8 @@
               "tok_s": 514.9568532469465,
               "tokens_per_round": 3.971014492753623
             }
-          }
+          },
+          "revision": "47651572dacb"
         },
         {
           "gpu_class": "*",
@@ -1010,7 +1010,6 @@
             }
           ],
           "load_measured_on": "fallback for unmeasured GPUs: NVIDIA GeForce RTX 5090 (gb202), gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
-          "revision": "add138cfb04c",
           "session": {
             "default": {
               "config": "mtp:8:2",
@@ -1027,7 +1026,8 @@
               "drafter": "assistant",
               "floor_tokens_per_round": 2.3878769436555536
             }
-          }
+          },
+          "revision": "12a98375346e"
         },
         {
           "applies_to": [
@@ -1101,7 +1101,6 @@
             "tok_s": 599.3263954088518,
             "tokens_per_round": 3.597902097902098
           },
-          "revision": "be304bfcbd44",
           "session": {
             "thinking": {
               "acceptance": 0.42636514065085496,
@@ -1113,7 +1112,8 @@
               "tok_s": 643.486703140798,
               "tokens_per_round": 3.9845559845559846
             }
-          }
+          },
+          "revision": "0ee9fe723306"
         },
         {
           "applies_to": [
@@ -1268,7 +1268,6 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T19:34:04Z",
-          "revision": "cda3622c7022",
           "session": {
             "default": {
               "acceptance": 0.6313209132931783,
@@ -1300,7 +1299,8 @@
               "tok_s": 146.54762910966738,
               "tokens_per_round": 3.794466403162055
             }
-          }
+          },
+          "revision": "21366fcf8a5d"
         },
         {
           "applies_to": [],
@@ -1382,7 +1382,6 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-Q4.ninferno, context 8192, kv fp8, NVIDIA A100-SXM4-40GB, greedy, built-in corpus, load 2,4, NVIDIA A100-SXM4-40GB, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T21:11:17Z",
-          "revision": "f6b4ab4966ab",
           "session": {
             "default": {
               "acceptance": 0.6421914713357808,
@@ -1414,7 +1413,8 @@
               "tok_s": 317.12073384277403,
               "tokens_per_round": 3.900507614213198
             }
-          }
+          },
+          "revision": "cf46a40d703b"
         },
         {
           "applies_to": [],
@@ -1492,7 +1492,6 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 5060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T22:00:48Z",
-          "revision": "43e99139bf54",
           "session": {
             "default": {
               "acceptance": 0.6259935852740204,
@@ -1524,7 +1523,8 @@
               "tok_s": 193.88622815232577,
               "tokens_per_round": 3.740524781341108
             }
-          }
+          },
+          "revision": "4cb3497f7e2f"
         },
         {
           "applies_to": [],
@@ -1894,7 +1894,6 @@
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "2ed2e0cf65f2",
           "session": {
             "default": {
               "acceptance": 0.6219887955182073,
@@ -1926,7 +1925,8 @@
               "tok_s": 657.8029904967702,
               "tokens_per_round": 3.6998050682261208
             }
-          }
+          },
+          "revision": "ac0027552107"
         }
       ],
       "evidence": "2026-09-23: drafter output checked against an FP32 reference; the profiles below are measured on the built-in corpus"
@@ -2053,7 +2053,6 @@
             }
           ],
           "load_measured_on": "gemma4_31b_nvfp4.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8 (max_context 1024, prefill chunk 512), temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T04:34:21Z (C=8 bound 5 737.6, bound 7 734.7, plain 467.1 tok/s)",
-          "revision": "5927c21c8ba6",
           "session": {
             "default": {
               "acceptance": 0.5787191874148396,
@@ -2085,7 +2084,8 @@
               "tok_s": 274.3479081781718,
               "tokens_per_round": 4.140557939914163
             }
-          }
+          },
+          "revision": "cfbf41bf6411"
         },
         {
           "applies_to": [
@@ -2126,7 +2126,6 @@
             "tok_s": 323.56876544870323,
             "tokens_per_round": 6.396923076923077
           },
-          "revision": "03d8c045b163",
           "session": {
             "default": {
               "acceptance": 0.5818927994030593,
@@ -2158,7 +2157,8 @@
               "tok_s": 239.5655118018938,
               "tokens_per_round": 4.185064935064935
             }
-          }
+          },
+          "revision": "1ad6bd8bd72f"
         },
         {
           "applies_to": [
@@ -2266,7 +2266,6 @@
             }
           ],
           "load_measured_on": "gemma-4-31B-it-qat-UD-Q4_K_XL.ninferno, NVIDIA GeForce RTX 4090, C 2,3,4,6, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-05T12:49:56Z",
-          "revision": "01e89a012d10",
           "session": {
             "default": {
               "acceptance": 0.5873550317994762,
@@ -2288,7 +2287,8 @@
               "tok_s": 150.2749539283898,
               "tokens_per_round": 4.214285714285714
             }
-          }
+          },
+          "revision": "3c8248bd39a2"
         },
         {
           "gpu_class": "*",
@@ -2417,7 +2417,6 @@
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "69f13210b39b",
           "session": {
             "default": {
               "acceptance": 0.5787191874148396,
@@ -2449,7 +2448,8 @@
               "tok_s": 274.3479081781718,
               "tokens_per_round": 4.140557939914163
             }
-          }
+          },
+          "revision": "2ec88efafa76"
         },
         {
           "applies_to": [],
@@ -2531,7 +2531,6 @@
             }
           ],
           "load_measured_on": "A100-SXM4-40GB, gemma-4-31B-it Q4 8K, short greedy, fixed MTP depths 1/2/3/6 at C=1/2/4/8 (a request at C4 depth 3 1.35x plain C1, depth 1 1.11; at C8 depth 1 0.87, depth 3 0.71), 2026-10-14",
-          "revision": "92519a78aba6",
           "session": {
             "thinking": {
               "acceptance": 0.6419098143236074,
@@ -2543,7 +2542,8 @@
               "tok_s": 141.22223863248846,
               "tokens_per_round": 5.493368700265252
             }
-          }
+          },
+          "revision": "72c9899e0310"
         },
         {
           "applies_to": [],
@@ -2669,7 +2669,6 @@
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "ff1485492a65",
           "session": {
             "default": {
               "acceptance": 0.5818927994030593,
@@ -2701,7 +2700,8 @@
               "tok_s": 239.5655118018938,
               "tokens_per_round": 4.185064935064935
             }
-          }
+          },
+          "revision": "92926483d2be"
         }
       ],
       "evidence": "2026-09-23: the profiles below are measured on the built-in corpus"
@@ -2774,7 +2774,6 @@
             "tok_s": 356.21092413355916,
             "tokens_per_round": 4.8443627450980395
           },
-          "revision": "8f51a956bfe7",
           "session": {
             "thinking": {
               "acceptance": 0.6442522321428571,
@@ -2786,7 +2785,8 @@
               "tok_s": 431.1221578457018,
               "tokens_per_round": 5.509765625
             }
-          }
+          },
+          "revision": "1a6a2b936e45"
         },
         {
           "applies_to": [
@@ -2827,7 +2827,6 @@
             "tok_s": 496.19424048193423,
             "tokens_per_round": 4.24066091954023
           },
-          "revision": "8d5dfb5d52f5",
           "session": {
             "thinking": {
               "acceptance": 0.6386999244142101,
@@ -2839,7 +2838,8 @@
               "tok_s": 691.4055002687656,
               "tokens_per_round": 5.470899470899471
             }
-          }
+          },
+          "revision": "5f00f53ae67f"
         },
         {
           "applies_to": [],
@@ -3186,14 +3186,14 @@
             "drafter": "assistant",
             "floor_tokens_per_round": 1.4646977560946763
           },
-          "revision": "c55ba6a1a3fa",
           "session": {
             "thinking": {
               "config": "dflash:7",
               "drafter": "dflash",
               "floor_tokens_per_round": 1.4071936855427953
             }
-          }
+          },
+          "revision": "c5a4b0971366"
         }
       ],
       "evidence": "RTX 5080 (gb203) 2026-09-24: spec-bench over the spec-tune configurations and the built-in corpus with a build that has the 12B geometry support and no spec-tune yet; tokenizer fingerprint equal to 26B/31B (tools/spec/tokenize_corpus.py --check on RedHatAI/gemma-4-12B-it-NVFP4); RTX 5090 (gb202) 2026-09-25: spec-tune on the built-in corpus, target and both drafters from ninferno-convert --fetch (the product path); math re-tuned 2026-09-25 on 64 GSM8K Platinum prompts (the built-in corpus's 8 math prompts chose dflash:7, which lost 2.8% to mtp:6 on the larger sample)"
