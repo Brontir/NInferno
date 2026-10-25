@@ -244,12 +244,14 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
     SupportFacts out = search_support_facts(*card);
     // The model the fetch takes: top-level safetensors weights, else (or with --quant naming one)
     // a GGUF model.
-    bool has_config = false, has_gguf = false, has_safetensors = false, has_tokenizer = false;
+    bool has_config = false, has_gguf = false, has_safetensors = false, has_tokenizer = false,
+         has_template = false;
     for (const auto& sibling : card->value("siblings", Json::array())) {
         const auto name  = sibling.value("rfilename", std::string());
         const auto lower = ascii_lower(name);
         has_config       = has_config || name == "config.json";
         has_tokenizer    = has_tokenizer || name == "tokenizer_config.json";
+        has_template     = has_template || name == "chat_template.jinja";
         has_safetensors  = has_safetensors ||
                           (lower.ends_with(".safetensors") && name.find('/') == std::string::npos);
         has_gguf = has_gguf || (lower.ends_with(".gguf") &&
@@ -281,7 +283,8 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                         arch && arch->is_string() ? arch->get<std::string>() : std::string();
                     // Without a template of its own, one its base model ships comes with the
                     // tokenizer files (acquire.cpp, base_tokenizer): not known before.
-                    out.chat_template = file.has("tokenizer.chat_template");
+                    // The fetch takes a chat_template.jinja beside it as the template.
+                    out.chat_template = file.has("tokenizer.chat_template") || has_template;
                     if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
                                                 file.has("general.source.huggingface.repository"))) {
                         out.chat_template.reset();
