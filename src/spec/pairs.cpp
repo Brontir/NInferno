@@ -176,6 +176,10 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
 } // namespace
 
 std::string weights_identity(std::vector<std::string> sha256s) {
+    if (sha256s.empty() ||
+        std::any_of(sha256s.begin(), sha256s.end(), [](const auto& d) { return d.empty(); })) {
+        return {};
+    }
     std::sort(sha256s.begin(), sha256s.end());
     std::string out;
     for (const auto& s : sha256s) { out += (out.empty() ? "" : ",") + s; }

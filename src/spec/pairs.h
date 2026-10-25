@@ -54,7 +54,8 @@ struct MeasuredPair {
 [[nodiscard]] MeasuredPair parse_pair(const nlohmann::json& doc);
 
 // The identity of a set of weight files: their SHA-256 digests (lowercase hex), sorted and
-// comma-joined, as MeasuredPair::target holds it.
+// comma-joined, as MeasuredPair::target holds it; "" (unknown) for no files, or when a digest is
+// missing (a file kept in git, not LFS).
 [[nodiscard]] std::string weights_identity(std::vector<std::string> sha256s);
 // A converted target's weights: its provenance's "base" input files (artifact/source_identity.h).
 // nullopt for an artifact converted before the converter recorded its inputs.

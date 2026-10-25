@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -45,13 +46,7 @@ struct ModelRead {
     std::string weights;
 };
 
-std::string weights_of(const convert::RepoQuant& q) {
-    if (q.sha256.empty() ||
-        std::any_of(q.sha256.begin(), q.sha256.end(), [](const auto& d) { return d.empty(); })) {
-        return {};
-    }
-    return spec::weights_identity(q.sha256);
-}
+std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
 
 std::string ascii_lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -220,7 +215,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                .format  = q.format,
                                .bytes   = q.bytes,
                                .bits    = q.bits,
-                               .drafter = q.drafter});
+                               .drafter = q.drafter,
+                               .weights = weights_of(q)});
         if (q.drafter) { continue; }
         if (q.format == "gguf") {
             const bool named = !quant.empty() && ascii_lower(q.quant) == ascii_lower(quant);
@@ -366,6 +362,8 @@ product::ChoicePins pins_of(const ServeOptions& options) {
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
+    // Each quantization's own subject (inputs.subject_of), made when first asked.
+    std::shared_ptr<std::map<std::string, product::SpeculationSubject>> per_quant;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -401,6 +399,33 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         out.inputs.drafter_bytes = attached_drafter_bytes(*out.subject, model.listing);
         out.inputs.drafter_state = attached_drafter_state(*out.subject, model.facts.model.hidden);
+        // A repository's quantizations each have their weights, and the lab's pairs are of
+        // weights: every row of the table resolves its own (the subject above is the one read).
+        if (model.listing.size() > 1) {
+            out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
+            out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
+                                     facts = model.facts, gguf = model.gguf,
+                                     with_drafters = options.with_drafters,
+                                     gpu](const product::QuantListing& q)
+                -> const product::SpeculationSubject* {
+                if (q.drafter) { return nullptr; }
+                auto it = per_quant->find(q.quant);
+                if (it == per_quant->end()) {
+                    it = per_quant
+                             ->emplace(q.quant,
+                                       product::planned_subject(
+                                           product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = with_drafters,
+                                                                  .weights       = q.weights,
+                                                                  .quant         = q.quant},
+                                           gpu))
+                             .first;
+                }
+                return &it->second;
+            };
+        }
     }
     return out;
 }
@@ -472,15 +497,19 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     // automatic, and what every other value would change.
     std::string label = model.quant;
     if (quants && quants->chosen) { label = quants->rows[*quants->chosen].listing.quant; }
-    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options), label)) {
+    const product::DryRunInputs at_chosen =
+        quants && quants->chosen
+            ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
+            : planning.inputs;
+    if (const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label)) {
         out.json["choice"] = product::choice_json(*served);
         out.text += product::choice_line(*served) + "\n";
     }
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
-        product::DryRunInputs now                = planning.inputs;
-        now.device.free_bytes                    = free_now;
         const product::QuantRow& row             = quants->rows[quants->pick->index];
+        product::DryRunInputs now                = product::inputs_for(planning.inputs, row.listing);
+        now.device.free_bytes                    = free_now;
         const product::PlannedSpeculation at_now = product::plan_model(
             product::with_weights(model.facts, row.weight_bytes, row.basis), now);
         out.json["device"]["free_now_bytes"] = *free_now;

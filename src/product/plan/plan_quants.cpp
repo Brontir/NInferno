@@ -162,6 +162,14 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
     return out;
 }
 
+DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
+    DryRunInputs out = inputs;
+    if (inputs.subject_of) {
+        if (const SpeculationSubject* own = inputs.subject_of(quant)) { out.subject = own; }
+    }
+    return out;
+}
+
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
                                  inputs.gpu, inputs.drafter_bytes, inputs.drafter_state);
@@ -305,9 +313,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.candidate.supported = why.code.empty();
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            row.planned                 = plan_model(facts, inputs);
+            const DryRunInputs own      = inputs_for(inputs, q);
+            row.planned                 = plan_model(facts, own);
             row.fit                     = runtime::quant_fit_of(row.planned.plan,
-                                                                own_context_of(facts, inputs, row.planned), ask);
+                                                                own_context_of(facts, own, row.planned), ask);
             if (!ask.automatic) {
                 row.launch_context = ask.context;
             } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
@@ -315,7 +324,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 row.launch_context = row.fit.own_context;
                 // The plan the launch serves under that cap (the one the row shows: the ladder,
                 // the speculation, fits_now), not the uncapped pool the streams would share.
-                row.planned = plan_model(facts, under_context_cap(inputs, row.launch_context));
+                row.planned = plan_model(facts, under_context_cap(own, row.launch_context));
             }
         } else {
             row.fit.state = why.code == "converted_size_unknown"
@@ -375,8 +384,9 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                           runtime::kPlanQualityFloorBits)) {
                 continue;
             }
-            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis), inputs,
-                                                 pins, row.listing.quant, OwnContext::Unbounded);
+            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                                 inputs_for(inputs, row.listing), pins,
+                                                 row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
                 bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
             }
@@ -390,7 +400,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             if (best && bound < best_worth - choice::kWorthTie) { break; }
             const QuantRow& row = out.rows[i];
             const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
-                                                  inputs, pins, row.listing.quant, OwnContext::Steps);
+                                                  inputs_for(inputs, row.listing), pins,
+                                                  row.listing.quant, OwnContext::Steps);
             if (!served || !served->choice.chosen ||
                 served->choice.context < out.pick->target_context) {
                 continue;

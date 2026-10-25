@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,9 @@ struct QuantListing {
     // A checkpoint converted at start (safetensors): its weights after the start's recipe
     // (checkpoint_converted_bytes), nullopt when not known before the start.
     std::optional<std::uint64_t> converted_bytes;
+    // Its files' identity (spec::weights_identity of the listing's digests; "" unknown): the key
+    // of the lab's speculation pairs.
+    std::string weights;
 };
 
 // A safetensors checkpoint's weights after the recipe a start converts it with (convert.cpp's
@@ -62,11 +66,17 @@ struct DryRunInputs {
     EngineOptions options;
     SpeculationAsk ask;
     const SpeculationSubject* subject = nullptr;
+    // A quantization's own subject (the lab's speculation pairs are of its weights); unset, or
+    // nullptr from it: `subject` for every quantization.
+    std::function<const SpeculationSubject*(const QuantListing&)> subject_of;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
     // A DFlash drafter's state read from its config before it is downloaded (nullopt: unknown).
     std::optional<models::DrafterStateShape> drafter_state;
     ChoicePins pins;
 };
+
+// `inputs` for one quantization: its own subject when DryRunInputs::subject_of gives one.
+[[nodiscard]] DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant);
 
 // The rule's ask from the inputs: the context (automatic or pinned), the streams, the model's own.
 [[nodiscard]] runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs,
