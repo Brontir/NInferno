@@ -204,6 +204,40 @@ int main() {
                    "one card's MTP and DFlash tunes are pooled: DFlash, the faster, chosen");
         }
     }
+    // A record of an older engine version never pools with the current one, in either order.
+    {
+        auto stale       = bw_q4;
+        stale.tune.key.engine = "stale-engine";
+        for (auto& m : stale.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 0.25; } // it would win were it pooled
+        }
+        const auto alone = sp::pair_choice({bw_q4}, bw_q4.target, "qwen3_5", {"dflash"}, 4.9, "sm120");
+        const auto first = sp::pair_choice({stale, bw_q4}, bw_q4.target, "qwen3_5", {"dflash"}, 4.9, "sm120");
+        const auto last  = sp::pair_choice({bw_q4, stale}, bw_q4.target, "qwen3_5", {"dflash"}, 4.9, "sm120");
+        expect(alone && first && last && first->basis == "measured" && last->basis == "measured" &&
+                   first->profile.thinking.config == alone->profile.thinking.config &&
+                   last->profile.thinking.config == alone->profile.thinking.config &&
+                   first->profile.thinking.tok_s == alone->profile.thinking.tok_s &&
+                   last->profile.thinking.tok_s == alone->profile.thinking.tok_s,
+               "a stale record leaves the choice as the current one alone makes it");
+    }
+    // A pair's fastest configuration the family's Engine does not run (Qwen's MTP drafts at most
+    // 5): its served choices are what the Engine runs.
+    {
+        auto deep = mtp_q4;
+        for (auto& m : deep.tune.measurements) {
+            if (m.config.enabled() && m.config.k == 4) {
+                m.config.k = 7;
+                m.seconds *= 0.5;
+            }
+        }
+        const auto choice = sp::pair_choice({deep}, deep.target, "qwen3_5", {"mtp"}, 4.9, "sm120");
+        const auto runs   = [](const sp::Choice& c) { return !c.config.enabled() || c.config.k <= 5; };
+        expect(choice && choice->profile.served &&
+                   runs(choice->profile.served->overall) && runs(choice->profile.served->thinking) &&
+                   runs(choice->profile.served->non_thinking),
+               "the Engine's choices stand beside a faster one it does not run");
+    }
     // Bits per weight from a quantization label.
     expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
                sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16,
