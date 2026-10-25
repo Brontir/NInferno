@@ -240,14 +240,15 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         return out;
     }
     if (weights != nullptr) {
-        out.facts = product::plan_facts_of_config(convert::fetch_config(spec, fetch),
-                                                  weights->bytes, runtime::WeightBasis::FileSize);
+        const Json config = convert::fetch_config(spec, fetch);
+        out.facts         = product::plan_facts_of_config(config, weights->bytes,
+                                                          runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
         // Declared MTP layers the weight index does not list are none, as the converter finds
-        // them (convert::index_lists_mtp); one weight file (no index): the declaration.
+        // them (convert::sharded_checkpoint_mtp); one weight file (no index): the declaration.
         if (out.facts.shape.builtin_mtp && weights->mtp_bytes == 0 && weights->files.size() > 1) {
-            out.facts.shape.builtin_mtp = convert::index_lists_mtp(
-                convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json"));
+            out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(
+                config, convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json"));
         }
         out.listing.clear();
         return out;
@@ -274,7 +275,8 @@ ModelRead read_model(const ServeOptions& options) {
             if (out.facts.shape.builtin_mtp && fs::exists(path / "model.safetensors.index.json") &&
                 !fs::exists(path / "model_mtp.safetensors")) {
                 std::ifstream index(path / "model.safetensors.index.json");
-                out.facts.shape.builtin_mtp = convert::index_lists_mtp(Json::parse(index));
+                out.facts.shape.builtin_mtp =
+                    convert::sharded_checkpoint_mtp(config, Json::parse(index));
             }
             return out;
         }

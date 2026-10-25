@@ -326,6 +326,12 @@ bool index_lists_mtp(const Json& index) {
     return false;
 }
 
+bool sharded_checkpoint_mtp(const Json& config, const Json& index) {
+    return index_lists_mtp(index) ||
+           spec::json_unsigned(text_scope(config), "num_nextn_predict_layers") > 0 ||
+           spec::json_unsigned(config, "num_nextn_predict_layers") > 0;
+}
+
 DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     DrafterTarget t;
     t.checkpoint      = dir;
@@ -362,6 +368,7 @@ DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
         } catch (const std::exception&) {} // unreadable here: the declaration
     }
     t.builtin_mtp = t.builtin_mtp || spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
+                    spec::json_unsigned(config, "num_nextn_predict_layers") > 0 ||
                     fs::exists(dir / "model_mtp.safetensors");
     if (fs::exists(dir / "tokenizer.json")) {
         t.fingerprint = spec::vocab_fingerprint_file(dir / "tokenizer.json").value;

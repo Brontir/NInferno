@@ -105,6 +105,12 @@ struct DrafterPlan {
 // without them keeps mtp_num_hidden_layers).
 [[nodiscard]] bool index_lists_mtp(const nlohmann::json& index);
 
+// Whether a sharded checkpoint has built-in MTP layers: the mtp.* tensors its index lists, or the
+// NextN layers its config.json declares (numbered past the decoder's, they keep their
+// declaration).
+[[nodiscard]] bool sharded_checkpoint_mtp(const nlohmann::json& config,
+                                          const nlohmann::json& index);
+
 // The target as the converter sees it: a checkpoint directory (its README's base_model lineage
 // and its ninferno_speculation.json are read from disk) or a .ninferno artifact.
 [[nodiscard]] DrafterTarget describe_checkpoint(const std::filesystem::path& dir, std::string repo);

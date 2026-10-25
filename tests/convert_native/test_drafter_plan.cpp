@@ -428,6 +428,14 @@ void checkpoint_mtp() {
     expect(!index({"model.embed_tokens.weight", "lm_head.weight"}),
            "declared MTP layers absent from the index: none");
     expect(index({"model.embed_tokens.weight", "mtp.fc.weight"}), "MTP layers in the index");
+    // NextN layers (DeepSeek, GLM) are numbered past the decoder's: their declaration stands.
+    const Json nextn  = {{"num_nextn_predict_layers", 1}};
+    const Json listed = {{"weight_map", {{"model.layers.4.eh_proj.weight", "model-2.safetensors"}}}};
+    expect(cv::sharded_checkpoint_mtp(nextn, listed), "declared NextN layers");
+    expect(cv::sharded_checkpoint_mtp({{"text_config", nextn}}, listed),
+           "NextN layers declared in text_config");
+    expect(!cv::sharded_checkpoint_mtp({{"mtp_num_hidden_layers", 1}}, listed),
+           "declared MTP layers the index does not list");
 }
 
 // A failed drafter is retried by the next run; a failed own quantization is not.
