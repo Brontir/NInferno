@@ -62,7 +62,8 @@ struct DecodeConstants {
 inline constexpr DecodeConstants kDenseDecode{0.90, 0.054, 0.0};
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
-// spec/load_model.h: rows routed apart read 0.30 of the experts independent routing would add.
+// Rows routed apart read 0.30 of the experts independent routing would add (fitted on the
+// registry's speculation floors, audit1018/x3).
 inline constexpr double kMoeRoutedShare = 0.30;
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row

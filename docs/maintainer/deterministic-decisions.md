@@ -128,12 +128,10 @@ This page states the rule and its target. The engine does not meet all of it yet
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
 
-The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model, the
-board distance and the speculation load model read its facts (`DeviceClass::facts`). For a listed
-board that is the table's reference (boost) clock, a chip fact. An unknown PCI id, and a laptop row
-without the bottom of its boost range, take the driver's clock (on the 2^(1/16) grid); the
-speculation load model prices such a device but never trusts it (`GpuKey::facts_extrapolated`:
-unsure, the conservative fallback).
+The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model and
+the board distance read its facts (`DeviceClass::facts`). For a listed board that is the table's
+reference (boost) clock, a chip fact. An unknown PCI id, and a laptop row without the bottom of its
+boost range, take the driver's clock (on the 2^(1/16) grid).
 
 Each gap is closed in its own change, which updates this list.
 
@@ -173,7 +171,7 @@ What the design guarantees once complete:
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
    generation's speed estimates become "no estimate".
-   A constant about a model, such as a drafter's acceptance per context class, records instead
+   A constant about a model, such as a drafter's acceptance on its target, records instead
    what it depends on:
    - the target and drafter by their source identity (below), never by artifact id;
    - the whole B1 byte class it was measured under (activation precision, summation class, KV
