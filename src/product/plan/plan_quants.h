@@ -172,6 +172,14 @@ struct QuantPlan {
     // that decides and the measured quantization curve); `largest` is then the rule's own pick.
     bool by_worth = false;
     std::optional<std::size_t> largest_index;
+    // What the worth weighed against the rule's largest, each at its own choice on the generation's
+    // reference card (choice::Scored::decision_seconds, accuracy): the largest's time per request
+    // over the pick's, and its KLD less the pick's (the trade lambda priced).
+    struct Trade {
+        double time_ratio = 0;
+        double kld_delta  = 0;
+    };
+    std::optional<Trade> trade;
     nlohmann::json rule_params = nlohmann::json::object();
 };
 

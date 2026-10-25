@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iomanip>
 #include <sstream>
 
 namespace ninferno::product {
@@ -454,6 +455,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         std::optional<std::size_t> best;
         double best_worth           = 0;
         std::uint32_t best_context  = 0;
+        choice::Scored best_scored;
         for (const auto& [bound, i] : bounds) {
             if (best && bound < best_worth - choice::kWorthTie) { break; }
             const QuantRow& row = out.rows[i];
@@ -471,9 +473,20 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 best         = i;
                 best_worth   = worth;
                 best_context = served->choice.context;
+                best_scored  = served->choice.scored[*served->choice.chosen];
             }
         }
         if (best && *best != out.pick->index) {
+            // The largest at its own choice: what the trade was against.
+            const QuantRow& largest = out.rows[out.pick->index];
+            if (const auto at = choose_at_weights(with_weights(shape, largest.weight_bytes, largest.basis),
+                                                  inputs_for(inputs, largest.listing), pins,
+                                                  largest.listing.quant, OwnContext::Steps);
+                at && at->choice.chosen && best_scored.decision_seconds > 0) {
+                const choice::Scored& l = at->choice.scored[*at->choice.chosen];
+                out.trade = QuantPlan::Trade{.time_ratio = l.decision_seconds / best_scored.decision_seconds,
+                                             .kld_delta  = l.accuracy.kld - best_scored.accuracy.kld};
+            }
             out.largest_index = out.pick->index;
             out.pick->index   = *best;
             out.by_worth      = true;
@@ -495,6 +508,23 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     out.rule = quant_rule_line(out, inputs);
     return out;
 }
+
+namespace {
+
+// The worth's trade in words: "Q8_0: 26 % more time per request for 0.0030 less KLD; lambda 25:
+// 0.001 KLD is worth 2.5 % of a request's time".
+std::string trade_words(const std::optional<QuantPlan::Trade>& trade) {
+    if (!trade) { return ""; }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(0) << ": " << std::abs(trade->time_ratio - 1) * 100 << " % "
+        << (trade->time_ratio >= 1 ? "more" : "less") << " time per request for " << std::setprecision(4)
+        << std::abs(trade->kld_delta) << (trade->kld_delta <= 0 ? " less" : " more") << " KLD; lambda "
+        << std::setprecision(0) << choice::kAccuracyWeight << ": 0.001 KLD is worth " << std::setprecision(1)
+        << choice::kAccuracyWeight * 0.1 << " % of a request's time";
+    return out.str();
+}
+
+} // namespace
 
 std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
     const std::uint32_t streams = std::max(1U, inputs.options.max_concurrency);
@@ -525,6 +555,11 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
         params["quant"]             = row.listing.quant;
         if (plan.by_worth && plan.largest_index) {
             params["largest"] = plan.rows[*plan.largest_index].listing.quant;
+            if (plan.trade) {
+                params["time_ratio"]      = round_to(plan.trade->time_ratio, 0.001);
+                params["kld_delta"]       = round_to(plan.trade->kld_delta, 0.0001);
+                params["accuracy_weight"] = choice::kAccuracyWeight;
+            }
         }
         params["tier"]              = std::string(runtime::quant_pick_tier_name(k.tier));
         params["planned_context"]   = context;
@@ -534,7 +569,7 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
             row.listing.quant +
             (plan.by_worth && plan.largest_index
                  ? ": the best balance of speed and accuracy (the largest that fits is " +
-                       plan.rows[*plan.largest_index].listing.quant + ") on "
+                       plan.rows[*plan.largest_index].listing.quant + trade_words(plan.trade) + ") on "
                  : ": the largest that fits on ") +
             where + " at " + context_words + " × " + stream_text;
         switch (k.tier) {

@@ -405,6 +405,10 @@ eq(H.choiceRows(null), [], "no document");
                pick: {quant: "Q6_K", tier: "own", target_context: 32768}};
   const en = H.ruleText(doc, {ctx: 0, par: 1, native: 262144}, words("en"));
   ok(en.startsWith("Q6_K, the best balance of speed and accuracy") && en.includes("the largest that fits is Q8_0"), "best_worth in words");
+  ok(!en.includes("λ"), "no trade without its numbers");
+  const traded = {...doc, rule_params: {...doc.rule_params, time_ratio: 1.26, kld_delta: -0.003, accuracy_weight: 25}};
+  const said = H.ruleText(traded, {ctx: 0, par: 1, native: 262144}, words("en"));
+  ok(said.includes("Q8_0: 26 % more time per request for 0.0030 less KLD; λ 25: 0.001 KLD is worth 2.5 % of a request's time"), "the trade in words: " + said);
 }
 // The choice belongs to the quantization it was made at: the panel and the pick's speed only there.
 const atQ4 = {choice: {chosen: {quant: "Q4_K_M"}}};
