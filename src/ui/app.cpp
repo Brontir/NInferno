@@ -928,6 +928,18 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
 std::string conversions_stamp(const fs::path& root, const std::string& repo) {
     std::string out;
     std::error_code ec;
+    // The refs too: a ref that moves to another kept commit selects another conversion.
+    const fs::path refs = root / convert::hub_repo_directory(repo) / "refs";
+    for (auto it = fs::recursive_directory_iterator(refs, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        std::ifstream in(it->path());
+        std::string commit;
+        in >> commit;
+        out += it->path().filename().string() + "=" + commit + ";";
+    }
+    ec.clear();
     const fs::path dir = root / convert::hub_repo_directory(repo) / "ninferno";
     for (auto it = fs::recursive_directory_iterator(dir, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {

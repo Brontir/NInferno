@@ -776,6 +776,8 @@ void test_catalog() {
         check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K") &&
                   cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K", "", true),
               "the text conversion without --vision, the --vision one with it");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M", "", true),
+              "--vision without a --vision conversion: the text one (no projector)");
         check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M") &&
                   cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_bf16") &&
                   !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_q8"),

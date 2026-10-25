@@ -378,8 +378,8 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
         return false;
     };
     // <gguf stem>[.vision].<recipe>.ninferno, complete, of exactly this label (converted_artifact's
-    // names), the recipe and the --vision kind the start converts.
-    std::size_t found = 0, with = 0;
+    // names), the recipe and the --vision kind the start converts: [0] text, [1] --vision.
+    std::size_t found[2] = {0, 0}, with[2] = {0, 0};
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(root / "ninferno" / commit, ec)) {
         const auto path = entry.path();
@@ -392,14 +392,12 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
         std::string stem       = base.substr(0, dot);
         const bool vision_stem = stem.ends_with(".vision");
         if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
-        if (vision_stem != vision ||
-            ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) {
-            continue;
-        }
-        ++found;
-        if (carries(path)) { ++with; }
+        if (ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) { continue; }
+        ++found[vision_stem];
+        if (carries(path)) { ++with[vision_stem]; }
     }
-    return found > 0 && with == found;
+    const int kind = vision && found[1] > 0 ? 1 : 0;
+    return found[kind] > 0 && with[kind] == found[kind];
 }
 
 void accept_converted(const fs::path& commit_dir, const std::string& ref,
