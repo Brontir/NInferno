@@ -1012,7 +1012,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         fetch.hub = hub;
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            subject, listing, facts->model.hidden, options_.offline ? nullptr : &fetch);
+            subject, listing, facts->model.model_type, facts->model.hidden,
+            options_.offline ? nullptr : &fetch);
         inputs.drafter_bytes = drafter.bytes;
         inputs.drafter_state = drafter.state;
     }

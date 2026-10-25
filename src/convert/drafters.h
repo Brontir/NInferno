@@ -33,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::convert {
@@ -176,5 +177,16 @@ resolve_ranking(const std::string& name, const std::filesystem::path& repository
 // How a converted drafter's provenance names a registry ranking: "<name> sha256:<hex>", the same
 // wherever the file lay.
 [[nodiscard]] std::string ranking_label(const std::string& name, const std::filesystem::path& path);
+
+// The bytes a companion drafter (converted into the target's artifact, DrafterDecl::component)
+// takes there, from its published checkpoint's `published_bytes`, as the target family's recipe
+// converts it: a Qwen 3.5 / 3.6 target's DFlash and DFlash2 projections take Q8 in every recipe
+// (qwen3_5.cpp companion_drafter_q8: 8.5 bits per weight with the group scales, BF16 published);
+// DFlash2's dynamic-convolution kernel projections and candidate selector keep BF16 (10.1 % of
+// z-lab/Qwen3.8-27B-DFlash2's bytes: 0.362 of 3.584 GiB, its safetensors header). Any other
+// family or kind: as published.
+[[nodiscard]] std::uint64_t companion_drafter_bytes(std::string_view target_model_type,
+                                                    std::string_view kind,
+                                                    std::uint64_t published_bytes) noexcept;
 
 } // namespace ninferno::convert

@@ -776,6 +776,16 @@ std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path&
     return in_tree(fs::path(NINFERNO_SOURCE_DIR));
 }
 
+std::uint64_t companion_drafter_bytes(std::string_view target_model_type, std::string_view kind,
+                                      std::uint64_t published_bytes) noexcept {
+    const bool qwen = target_model_type.starts_with("qwen3_5") || target_model_type.starts_with("qwen3_6");
+    if (!qwen || (kind != "dflash" && kind != "dflash2")) { return published_bytes; }
+    constexpr double kQ8 = 8.5 / 16.0;            // q8_g32_fp16 against BF16
+    const double kept    = kind == "dflash2" ? 0.101 : 0.0; // stays BF16 (see the header)
+    const double bytes   = static_cast<double>(published_bytes);
+    return static_cast<std::uint64_t>(bytes * kept + bytes * (1.0 - kept) * kQ8);
+}
+
 std::string ranking_label(const std::string& name, const fs::path& path) {
     return name + " sha256:" + ninferno::sha256_hex(read_file(path, "ranking"));
 }

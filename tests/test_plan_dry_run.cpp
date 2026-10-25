@@ -4,6 +4,7 @@
 // family table agrees with the Engine's, ninferno-ui's launch options are ninferno-serve's, and
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
+#include "convert/drafters.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -930,9 +931,18 @@ void test_speculation_order() {
             {.quant = "Q4_K_M", .format = "gguf", .bytes = 5ULL << 30},
             {.quant = "assistant-Q8_0", .format = "gguf", .bytes = 600ULL << 20, .drafter = true},
             {.quant = "mmproj-F16", .format = "gguf", .bytes = 900ULL << 20, .drafter = true}};
-        const auto memory = pr::attached_drafter_memory(attached, listing, 5120, nullptr);
+        const auto memory = pr::attached_drafter_memory(attached, listing, "qwen3_5_text", 5120, nullptr);
         check(memory.bytes == 600ULL << 20 && !memory.state,
               "the GGUF drafter file's size; the repository's not read offline");
+        // A Qwen DFlash companion is stored with its projections at Q8 (the recipe's
+        // companion_drafter_q8): z-lab/Qwen3.5-9B-DFlash's 2.41 GiB of BF16 take 1.28 GiB; a
+        // Gemma drafter stays as published.
+        const std::uint64_t published = 2583816465ULL;
+        const std::uint64_t stored    = ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash", published);
+        check(stored > 1.27 * (1ULL << 30) && stored < 1.29 * (1ULL << 30),
+              "a Qwen DFlash companion at Q8: " + std::to_string(stored));
+        check(ninferno::convert::companion_drafter_bytes("gemma4_text", "dflash", published) == published,
+              "another family's drafter as published");
     }
 }
 
