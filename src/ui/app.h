@@ -112,6 +112,9 @@ struct LaunchRequest {
     // With refetch: the replaced conversion stays for the caller to remove once nothing serves it
     // (ninferno-serve --keep-replaced): ninferno-ui's update of a running model.
     bool keep_replaced = false;
+    // The conversion takes the model's Vision encoder (ninferno-serve --vision): a refetch keeps
+    // the replaced artifact's.
+    bool vision = false;
 };
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
