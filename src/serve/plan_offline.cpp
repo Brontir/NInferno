@@ -267,11 +267,11 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts.model.mtp_bytes = weights->mtp_bytes;
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
-        // (convert::sharded_checkpoint_mtp); one weight file, or no index to read: the
-        // declaration.
+        // (convert::sharded_checkpoint_mtp) whatever the number of weight files; no index to
+        // read: the declaration.
         if (weights->mtp_bytes > 0) {
             out.facts.shape.builtin_mtp = true;
-        } else if (weights->files.size() > 1) {
+        } else {
             Json index;
             try {
                 index = convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json");
