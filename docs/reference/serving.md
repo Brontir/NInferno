@@ -2172,7 +2172,7 @@ reference card on two lab cards (today: every one but Ada), the family's default
 logs it before the plan:
 
 ```text
-choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill, KLD 0.0044 (estimates) | Q4_K_M: the largest quantization whose every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
+choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill, KLD 0.0044 (estimates) | Q4_K_M: every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
 ```
 
 Pinned flags stay as given; the line then says what the choice kept. `--plan --no-load` prints the

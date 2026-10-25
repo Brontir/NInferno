@@ -702,7 +702,11 @@ void test_rule() {
     // rest on two cards); the rule's largest elsewhere (Turing: no reference card), and wherever a
     // row's bits are unknown (it has no place on the curve and would look exact).
     {
-        const auto planned = [&](int cc, std::uint32_t context, bool unknown_row) {
+        // Unknown bits: the model's parameters unknown, so no row's bits per weight (the labels'
+        // bits rank the rule's rows, but the choice's accuracy term reads bits per weight).
+        pr::PlanSourceFacts no_params = shape;
+        no_params.model.params        = 0;
+        const auto planned = [&](int cc, std::uint32_t context, bool unknown_bits) {
             pr::DryRunInputs inputs;
             inputs.device                 = card(24, cc);
             inputs.gpu.compute_capability = cc;
@@ -710,11 +714,7 @@ void test_rule() {
                 pr::launch_options({.max_context = context, .max_concurrency = 1, .spec = "none"});
             inputs.options = o.options;
             inputs.ask     = o.ask;
-            std::vector<pr::QuantListing> rows = listing;
-            if (unknown_row) {
-                rows.push_back({.quant = "custom", .format = "gguf", .bytes = 12 * kGiB});
-            }
-            return pr::plan_quants(shape, rows, inputs);
+            return pr::plan_quants(unknown_bits ? no_params : shape, listing, inputs);
         };
         int weighed = 0;
         for (const std::uint32_t context : {0U, 32768U, 131072U}) {
@@ -740,7 +740,7 @@ void test_rule() {
             check(turing.pick && !turing.by_worth && turing.rule_code != "best_worth",
                   what + ": Turing keeps the rule's largest");
             const pr::QuantPlan unknown = planned(89, context, true);
-            check(!unknown.by_worth, what + ": a row of unknown bits keeps the rule's largest");
+            check(!unknown.by_worth, what + ": unknown bits per weight keep the rule's largest");
         }
         std::cout << "  Ada 27B: " << weighed << " of 3 contexts decided by worth\n";
     }
