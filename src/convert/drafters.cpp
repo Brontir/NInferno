@@ -997,6 +997,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     auto manifest = plan.to_json();
     manifest["target"]["artifact"]    = fs::absolute(target_artifact).string();
     manifest["target"]["artifact_id"] = spec::artifact_id_hex(target_artifact);
+    // The registry the drafters were planned from: another one (an update that names a new
+    // drafter) has drafters_incomplete() plan them again.
+    manifest["registry_sha256"] = spec::Registry::builtin().source_sha256();
     const auto path = spec::manifest_path(target_artifact);
     write_file_atomic(path, manifest.dump(1) + '\n');
     log_line(options.log, "speculation manifest " + path.string());
@@ -1007,7 +1010,11 @@ bool drafters_incomplete(const fs::path& target_artifact) {
     const auto path = spec::manifest_path(target_artifact);
     if (!fs::exists(path)) { return true; }
     try {
-        const auto manifest  = Json::parse(read_file(path));
+        const auto manifest = Json::parse(read_file(path));
+        if (manifest.value("registry_sha256", std::string()) !=
+            spec::Registry::builtin().source_sha256()) {
+            return true;
+        }
         const auto& drafters = manifest.at("drafters");
         return std::any_of(drafters.begin(), drafters.end(), [](const Json& d) {
             return !d.contains("quant") && d.value("status", "").starts_with("failed");

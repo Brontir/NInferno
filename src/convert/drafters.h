@@ -163,7 +163,8 @@ fetch_companions(DrafterPlan& plan, const AttachOptions& options);
 DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& target_artifact,
                             const AttachOptions& options);
 
-// Whether attaching to `target_artifact` is still to do: no manifest, an unreadable one, or one
+// Whether attaching to `target_artifact` is still to do: no manifest, an unreadable one, one planned
+// from another drafter registry than this build's (an update may name a new drafter), or one
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
