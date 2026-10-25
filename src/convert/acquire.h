@@ -103,8 +103,8 @@ converted_artifact(const std::filesystem::path& commit_dir, const std::string& q
 
 // Whether the conversion of `repo`'s GGUF quantization `quant` at the commit `revision` names (a
 // commit, or a ref: "" for main) under `cache` carries drafters: a component from a repository of
-// its own (a Qwen DFlash companion) or a speculation manifest beside it, as an earlier
-// --with-drafters wrote them. A start reuses that conversion, flag or not, and serves them: a plan
+// its own (a Qwen DFlash companion), or a speculation manifest of this artifact beside it with a
+// drafter still usable (not failed, its artifact there), as an earlier --with-drafters wrote them. A start reuses that conversion, flag or not, and serves them: a plan
 // of these weights counts them (product::PlannedTarget::with_drafters). The conversion is the one
 // the start takes: of `recipe` (any when empty), a --vision one with `vision` (the text one when
 // none is: a GGUF model without a projector converts without it); several left (two recipes, none

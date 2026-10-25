@@ -760,9 +760,32 @@ void test_catalog() {
                   !cached_conversion_has_drafters(root, "org/m-GGUF", "dev", "Q4_K_M") &&
                   !cached_conversion_has_drafters(root, "org/m-GGUF", "", ""),
               "a conversion with a companion drafter; its own MTP and vision are no drafters");
-        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json") << "{}";
+        // A manifest of this artifact with a drafter still there (the start serves it); a failed
+        // one, one whose artifact is gone, or another artifact's manifest: none.
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"artifact_id": "a8", "components": {"text": {}, "mtp": {}}})";
+        const auto assistant = repo / "ninferno/c0ffee/assistant.ninferno";
+        const auto manifest  = [&](const std::string& id, const std::string& status) {
+            std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json")
+                << R"({"schema": 1, "target": {"artifact_id": ")" << id
+                << R"("}, "drafters": [{"name": "mtp", "kind": "mtp", "component": "mtp", "status": "embedded"},
+                   {"name": "assistant", "kind": "gemma4_assistant", "status": ")"
+                << status << R"(", "artifact": ")" << assistant.generic_string() << R"("}]})";
+        };
+        std::ofstream(assistant) << "x";
+        manifest("a8", "attached");
         check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
-              "a conversion with a speculation manifest beside it");
+              "a conversion with a usable drafter attached beside it");
+        manifest("a8", "failed: no network");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose separate drafter failed (its MTP layers are no drafter)");
+        manifest("other", "attached");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "another artifact's manifest");
+        manifest("a8", "attached");
+        fs::remove(assistant);
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose drafter artifact is gone");
         // The conversion the start takes: its --vision kind, its recipe.
         const auto write = [&](const std::string& name, const char* components) {
             std::ofstream(repo / "ninferno/c0ffee" / name) << "x";

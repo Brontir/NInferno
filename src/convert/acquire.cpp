@@ -363,11 +363,21 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
     }
     if (commit.find_first_of("/\\.") != std::string::npos) { return false; }
     const auto carries = [](const fs::path& artifact) {
-        std::error_code ec;
-        if (fs::exists(spec::manifest_path(artifact), ec)) { return true; }
         std::ifstream stream(artifact.string() + ".conversion.json");
         try {
-            const OJson record     = OJson::parse(stream);
+            const OJson record = OJson::parse(stream);
+            // A manifest the start serves (resolve_speculation): of this artifact, with a drafter
+            // other than its own MTP layers still there (usable, its artifact present).
+            if (const auto manifest = spec::read_manifest(spec::manifest_path(artifact));
+                manifest && manifest->target_artifact_id == record.value("artifact_id", std::string())) {
+                for (const auto& d : manifest->drafters) {
+                    std::error_code ec;
+                    if (d.usable() && d.kind != "mtp" &&
+                        (d.artifact.empty() ? !d.component.empty() : fs::exists(d.artifact, ec))) {
+                        return true;
+                    }
+                }
+            }
             const OJson components = record.value("components", OJson::object());
             for (const auto& [component, _] : components.items()) {
                 if (component != "text" && component != "mtp" && component != "vision") {
