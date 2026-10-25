@@ -64,6 +64,15 @@ python3 -m tools.convert \
   that changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`,
   `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`, ...) converts again and
   replaces it, and an explicit `--out` is never reused. `--model` needs `--out`.
+- Before any weight is downloaded, a hub model is checked against one rule set
+  (`convert/support.h`), the same one the plan without weights and the UI's search use. It reads
+  only what the hub shows: the model card (task, library, gated, the hub's part of `config.json`,
+  a GGUF's architecture and chat template, safetensors dtypes, the files), the whole `config.json`
+  and the chosen GGUF model's header. A model is refused, nothing downloaded, when its task is not
+  text generation, its weights are a format the converter does not read (MLX, bitsandbytes, ...),
+  no engine runs its architecture (the converter's own recipe choice and field checks; a drafter of
+  a kind no engine runs), its repository is gated and no token is set, or it ships no chat template
+  (a base model; a GGUF naming its base model takes the base's).
 - Without `--recipe`, the official recipe for the checkpoint's architecture is chosen (with its
   quantized source when it needs one).
 - A model runs as published. A quantized checkpoint keeps its encoding (NVFP4, MXFP4, FP8 with

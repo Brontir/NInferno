@@ -5,6 +5,7 @@
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -172,11 +173,31 @@ std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quan
 
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
 // With `vision`, a GGUF model's facts count the projector the start fetches beside it.
-ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision) {
+ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision,
+                   bool template_given = false) {
     ModelRead out;
     out.kind                          = "hub";
     out.source                        = spec;
     convert::FetchOptions fetch       = fetch_options();
+    // A model the engine does not run is not planned: the converter's own rules, from what the
+    // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
+    // the listing below to fail or plan.
+    {
+        auto ask  = fetch;
+        ask.quant = quant;
+        std::optional<convert::SupportFacts> facts;
+        try {
+            facts = convert::hub_support_facts(spec, ask);
+        } catch (const std::exception&) {}
+        if (facts) {
+            if (template_given) { facts->chat_template = true; } // --chat-template
+            const auto support = convert::model_support(*facts);
+            if (support.verdict == convert::Verdict::Unsupported ||
+                support.verdict == convert::Verdict::NeedsToken) {
+                throw std::runtime_error(spec + " cannot be run: " + support.reason);
+            }
+        }
+    }
     const auto quants                 = convert::list_quants(spec, fetch);
     out.repo                          = convert::split_spec(spec, fetch).first;
     const convert::RepoQuant* header  = nullptr;
@@ -300,7 +321,8 @@ ModelRead read_model(const ServeOptions& options) {
     if (!convert::is_repository_spec(name)) {
         throw std::runtime_error("'" + name + "' is neither a file or directory nor a hub id");
     }
-    return read_hub(name, options.quant, options.enable_vision);
+    return read_hub(name, options.quant, options.enable_vision,
+                    !options.chat_template_path.empty());
 }
 
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
@@ -520,7 +542,8 @@ largest_fitting_hub_quant(const ServeOptions& options,
 
     ModelRead model;
     try {
-        model = read_hub(options.model_source, "", options.enable_vision);
+        model = read_hub(options.model_source, "", options.enable_vision,
+                         !options.chat_template_path.empty());
     } catch (const std::exception& e) {
         // The hub cannot be reached: a quantization already here that fits is served (each
         // cached file planned from its own header); otherwise the choice is the user's, never a

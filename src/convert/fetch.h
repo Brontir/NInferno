@@ -153,6 +153,10 @@ struct DownloadRequest {
 // "" when the name ends with none.
 [[nodiscard]] std::string gguf_quant_label(const std::string& file_name);
 
+// Whether a fetch takes the repository file `path` by its --include globs (none: what the
+// converter needs, so true).
+[[nodiscard]] bool include_selects(const FetchOptions& options, const std::string& path);
+
 // One model a repository offers, as a listing shows it: a GGUF quantization (its split parts
 // together), a safetensors checkpoint (quant ""), an artifact in the engine's own format (.ninferno,
 // run as published), or a sidecar (MTP/DFlash/EAGLE drafter, vision
@@ -193,10 +197,9 @@ struct HubModel {
     std::string architecture;
     std::int64_t context = 0;
     std::string library; // the weights' library: transformers, gguf, mlx, ... ("" unsaid)
-    // A quantization of the weights the converter does not read (config.json's quant_method:
-    // "bitsandbytes", "hqq", ...; compressed-tensors with transforms or sparse packings); "" when
-    // it reads them (unquantized, FP8, AWQ, GPTQ, compressed-tensors, ModelOpt, AutoRound, MXFP4).
-    std::string unread_quantization;
+    // The search's answer for the model as the hub gave it (Hugging Face; null on ModelScope): the
+    // facts convert::search_support_facts reads.
+    nlohmann::json card;
 };
 
 // The hub's model search, at most `limit` (1 to 100), largest first by `sort`: downloads, likes,
@@ -217,6 +220,20 @@ struct HubModel {
 // The repository's config.json (org/name[@revision]), parsed; one small request. Throws naming
 // what failed (absent, not JSON); ModelScope is not read.
 [[nodiscard]] nlohmann::json fetch_config(const std::string& spec, const FetchOptions& options);
+
+// What Hugging Face says of a repository before any file is downloaded: its model card fields
+// (/api/models/<repo>/revision/<rev>): pipeline_tag, library_name, gated, the part of config.json
+// the hub reads (architectures, model_type, quantization_config, tokenizer_config), gguf (the
+// architecture and chat template of a GGUF model), safetensors (parameters by dtype) and
+// siblings. nullopt on another hub or under $HF_HUB_OFFLINE. Throws when the hub cannot answer.
+[[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
+                                                             const FetchOptions& options);
+
+// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
+// quant_config and the matrix sources it picks): "bitsandbytes", "hqq", compressed-tensors with
+// transforms or sparse packings; "" when it reads it (unquantized, FP8, AWQ, GPTQ,
+// compressed-tensors, ModelOpt, AutoRound, MXFP4).
+[[nodiscard]] std::string unread_quantization(const nlohmann::json& config);
 
 // Another small JSON file of the repository the same way (a native repository's
 // artifact-manifest.json).

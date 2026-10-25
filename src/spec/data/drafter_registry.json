@@ -61,7 +61,8 @@
     "dspark": {
       "engines": [],
       "architectures": [
-        "DSparkDraftModel"
+        "DSparkDraftModel",
+        "Qwen3DSparkModel"
       ]
     },
     "medusa": {
