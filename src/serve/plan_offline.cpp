@@ -447,6 +447,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
                                              quants ? &*quants : nullptr);
     out.fits = planned.plan.fits;
+    if (!out.fits) { out.reason = planned.plan.reason; }
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
     std::string label = model.quant;
