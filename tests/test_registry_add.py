@@ -190,5 +190,45 @@ class Stamps(unittest.TestCase):
                 self.assertRegex(p.get("measured_at", ""), r"^\d{4}-\d{2}-\d{2}$")
 
 
+class PairTest(unittest.TestCase):
+    """--pair: a lab measurement of one target and its drafters as the registry's pair."""
+
+    tune = {"key": {"engine": "ninferno-spec-1", "gpu": "ad104:60sm"}, "measurements": []}
+    manifest = {"target": {"engine": "qwen3_5"},
+                "drafters": [{"kind": "mtp", "repo": None, "status": "embedded"},
+                             {"kind": "dflash", "repo": "z-lab/Qwen3.5-9B-DFlash",
+                              "revision": "5fc3b3d4", "status": "embedded"}]}
+
+    def test_pair_of_a_tune(self):
+        pair = registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "UD-Q4_K_XL",
+                                    ["B" * 64, "a" * 64])
+        self.assertEqual(pair["target"], "a" * 64 + "," + "b" * 64)
+        self.assertEqual(pair["generation"], "sm89")
+        self.assertEqual(pair["target_bits"], 4)
+        self.assertEqual(pair["engine"], "qwen3_5")
+        self.assertEqual(pair["drafters"], {"dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d4"})
+        self.assertEqual(pair["target_repo"], "org/m@abc UD-Q4_K_XL")
+
+    def test_labels_and_generations(self):
+        self.assertEqual(registry_add.label_bits("TQ1_0"), 1)
+        self.assertEqual(registry_add.label_bits("IQ2_M"), 2)
+        self.assertEqual(registry_add.label_bits(""), 16)
+        self.assertEqual(registry_add.generation_of("gb203:70sm"), "sm120")
+
+    def test_bad_weights_are_refused(self):
+        with self.assertRaises(SystemExit):
+            registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "Q4_K_M", ["abc"])
+
+    def test_a_pair_replaces_its_own(self):
+        pair = registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
+        again = json.loads(json.dumps(pair))
+        again["target_repo"] = "org/m@def Q4_K_M"
+        other = json.loads(json.dumps(pair))
+        other["tune"]["key"]["gpu"] = "ad102:128sm"
+        pairs = registry_add.put_pair(registry_add.put_pair([pair], other), again)
+        self.assertEqual(len(pairs), 2)
+        self.assertIn("org/m@def Q4_K_M", [p["target_repo"] for p in pairs])
+
+
 if __name__ == "__main__":
     unittest.main()

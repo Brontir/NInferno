@@ -51,6 +51,21 @@ from a file today); a revision names the table a server runs. After a hand edit,
     python tools/spec/registry_add.py --restamp [--registry PATH]
 
 stamps the registry the same way.
+
+--pair puts a lab measurement of one target with its drafters into the registry's "pairs"
+(src/spec/pairs.h: a start resolves a pair by the target's weights before any published profile):
+
+    python tools/spec/registry_add.py --pair TUNE.json --manifest MANIFEST.json
+                                      --target REPO@COMMIT --quant LABEL --weights SHA256[,...]
+
+TUNE.json is what `ninferno spec-tune <artifact> --out FILE` saved (its measurements), MANIFEST.json
+the drafter manifest beside the artifact (<artifact>.speculation.json: the engine family and the
+drafters attached, each separate one by repo@revision, recorded as what was measured), --weights the
+SHA-256 of the target's weight files as the hub lists them (the pair's key; order does not matter),
+--quant the quantization label ("Q4_K_M"; "" for a checkpoint's own weights: its bit class). The
+card's generation comes from the tune's GPU class through the PCI facts table
+(src/core/data/gpu_facts.json: "ad104" is sm89). A pair of the same target, generation and GPU class
+is replaced.
 """
 
 from __future__ import annotations
@@ -60,6 +75,7 @@ import copy
 import datetime
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -235,6 +251,61 @@ def put(profiles: list[dict], profile: dict) -> list[dict]:
     return profiles
 
 
+FACTS = Path(__file__).resolve().parents[2] / "src/core/data/gpu_facts.json"
+
+
+def label_bits(label: str) -> float:
+    """A quantization label's bits per weight as spec::label_bits reads it (src/spec/pairs.cpp)."""
+    text = label.lower()
+    if not text or "bf16" in text or "f16" in text:
+        return 16
+    if "f32" in text:
+        return 32
+    if "fp4" in text:
+        return 4
+    match = re.search(r"(?:^|[-_])[it]?q([0-9])", text)
+    return float(match.group(1)) if match else 16
+
+
+def generation_of(gpu_class: str) -> str:
+    """The architecture generation of a GPU class ("ad104:60sm" -> "sm89"), from the facts table."""
+    chip = gpu_class.split(":")[0].lower()
+    for row in json.loads(FACTS.read_text(encoding="utf-8"))["gpus"]:
+        if row.get("chip", "").lower() == chip and row.get("cc"):
+            return f"sm{row['cc']}"
+    raise SystemExit(f"no generation for GPU class {gpu_class!r} in {FACTS.name}")
+
+
+def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[str]) -> dict:
+    """The registry's pair for one tune (src/spec/pairs.h MeasuredPair)."""
+    shas = sorted(w.strip().lower() for w in weights if w.strip())
+    if not shas or any(len(s) != 64 or any(c not in "0123456789abcdef" for c in s) for s in shas):
+        raise SystemExit("--weights: the SHA-256 (64 hex) of every weight file")
+    gpu = (tune.get("key") or {}).get("gpu", "")
+    if not gpu:
+        raise SystemExit("the tune names no GPU class (key.gpu)")
+    engine = (manifest.get("target") or {}).get("engine") or manifest.get("engine", "")
+    if not engine:
+        raise SystemExit("the manifest names no engine family")
+    drafters = {}
+    for d in manifest.get("drafters", []):
+        if d.get("repo") and d.get("status") in ("embedded", "converted", "cached", "attached"):
+            drafters[d["kind"]] = d["repo"] + ("@" + d["revision"] if d.get("revision") else "")
+    pair = {"target": ",".join(shas), "target_repo": f"{target} {quant}".strip(), "engine": engine,
+            "target_bits": label_bits(quant), "generation": generation_of(gpu), "tune": tune}
+    if drafters:
+        pair["drafters"] = drafters
+    return pair
+
+
+def put_pair(pairs: list[dict], pair: dict) -> list[dict]:
+    """`pairs` with `pair` in the place of one of the same target, generation and GPU class."""
+    same = lambda p: (p.get("target") == pair["target"] and p.get("generation") == pair["generation"]
+                      and (p.get("tune") or {}).get("key", {}).get("gpu") == pair["tune"]["key"]["gpu"])
+    kept = [p for p in pairs if not same(p)]
+    return kept + [pair]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", nargs="?")
@@ -246,6 +317,11 @@ def main() -> int:
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--create", action="store_true")
     parser.add_argument("--restamp", action="store_true")
+    parser.add_argument("--pair", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--target", default="")
+    parser.add_argument("--quant", default="")
+    parser.add_argument("--weights", default="")
     args = parser.parse_args()
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     before = copy.deepcopy(registry)
@@ -253,8 +329,19 @@ def main() -> int:
         write_registry(registry, before, args.registry)
         print(f"{args.registry}: version {registry.get('version')}")
         return 0
+    if args.pair is not None:
+        if args.manifest is None or not args.target or not args.weights:
+            parser.error("--pair needs --manifest, --target and --weights")
+        pair = pair_of(json.loads(args.pair.read_text(encoding="utf-8")),
+                       json.loads(args.manifest.read_text(encoding="utf-8")), args.target, args.quant,
+                       args.weights.split(","))
+        registry["pairs"] = put_pair(registry.get("pairs", []), pair)
+        write_registry(registry, before, args.registry)
+        print(f"{pair['target_repo']}: pair on {pair['generation']} ({pair['tune']['key']['gpu']}), "
+              f"{len(registry['pairs'])} pair(s), version {registry.get('version')}")
+        return 0
     if args.model is None or args.published is None:
-        parser.error("MODEL_ID and PUBLISHED.json are required (or --restamp)")
+        parser.error("MODEL_ID and PUBLISHED.json are required (or --restamp, --pair)")
     profile = json.loads(args.published.read_text(encoding="utf-8"))
     if args.load:
         entry = next((m for m in registry["models"] if m["id"] == args.model), None)
