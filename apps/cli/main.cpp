@@ -2,7 +2,6 @@
 #include "options.h"
 #include "spec_tune.h"
 
-#include "artifact/source_identity.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -372,10 +371,6 @@ int main(int argc, char** argv) {
                                                                  .given     = cli.speculative,
                                                                  .thinking  = cli.enable_thinking.value_or(true)};
             inputs.options.speculative = cli.speculative;
-            try {
-                inputs.ask.source_identity =
-                    ninferno::artifact::source_identity(cli.artifact_path).value_or(std::string());
-            } catch (const std::exception&) {}
             inputs.subject                            = &subject;
             inputs.pins                               = {.kv          = cli.kv_cache.has_value(),
                                                          .activations = cli.activations_given,

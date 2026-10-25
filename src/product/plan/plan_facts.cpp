@@ -421,12 +421,6 @@ std::string format_of_ggml(std::uint32_t type) {
     }
 }
 
-// K-quants and i-quants (Q2_K..IQ4_XS, IQ1_M): the k-quant verify route's formats.
-bool ggml_kquant(std::uint32_t type) {
-    return (type >= convert::ggml::Q2_K && type <= convert::ggml::IQ4_XS) ||
-           type == convert::ggml::IQ1_M;
-}
-
 std::string base_model_of(const json& md) {
     const auto it = md.find("general.base_model.0.repo_url");
     if (it == md.end() || !it->is_string()) { return {}; }
@@ -734,7 +728,6 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     Geometry g      = geometry_of_gguf(head.metadata);
     bool has_output = false;
     std::set<std::string> formats;
-    bool kquant                = false;
     std::uint64_t tensor_bytes = 0;
     // The NextN blocks after the trunk (blk.<b>.* for b at least the trunk's layers): the MTP
     // layers the converter moves to the mtp component, uploaded under MTP only.
@@ -760,7 +753,6 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
         formats.insert(format_of_ggml(t.type));
-        kquant = kquant || ggml_kquant(t.type);
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
     // its own tensors, so the listed file sizes stand for the rest.
@@ -771,7 +763,6 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     g.tied                   = whole && !has_output;
     auto out                 = finish(g, whole ? tensor_bytes : file_bytes,
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
-    out.shape.kquant         = kquant;
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.base_model     = base_model_of(head.metadata);
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
@@ -835,12 +826,6 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         const auto it = dir.components.find(component);
         if (it == dir.components.end() || out.model.state.drafter) { continue; }
         out.model.state.drafter = plan_drafter_state_of_config(it->second.config, out.model.hidden);
-    }
-    for (const auto& f : formats) {
-        // ggml_q2_k..ggml_q6_k and the i-quants: the k-quant route's.
-        out.shape.kquant =
-            out.shape.kquant || starts_with(f, "ggml_iq") ||
-            (starts_with(f, "ggml_q") && f.size() > 2 && f.substr(f.size() - 2) == "_k");
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     return out;

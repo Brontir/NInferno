@@ -1,6 +1,5 @@
 #include "serve/plan_offline.h"
 
-#include "artifact/source_identity.h"
 #include "convert/acquire.h"
 #include "convert/cache.h"
 #include "convert/drafters.h"
@@ -380,15 +379,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .given       = options.speculative,
                                                  .thinking    = options.enable_thinking.value_or(true),
                                                  .per_request = options.per_request_speculation,
-                                                 .depth_from_profile = options.draft_tokens_from_model,
-                                                 .model_repo         = model.repo};
+                                                 .depth_from_profile = options.draft_tokens_from_model};
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
-        try {
-            out.inputs.ask.artifact_id = spec::artifact_id_hex(model.artifact);
-            out.inputs.ask.source_identity =
-                artifact::source_identity(model.artifact).value_or(std::string());
-        } catch (const std::exception&) {}
     } else {
         out.subject =
             product::planned_subject(product::PlannedTarget{.repo          = model.repo,

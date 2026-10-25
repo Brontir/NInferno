@@ -978,7 +978,6 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.gpu            = product::gpu_key_of(*device);
     inputs.options        = options.options;
     inputs.ask            = options.ask;
-    inputs.ask.model_repo = repo;
     // The launch pins the KV codec the user chose and --activations exact; the rest is chosen.
     // The exact preset also pins BF16 KV (launch_options resolves it, the launch passes it).
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),

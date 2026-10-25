@@ -103,9 +103,7 @@ eq(H.catalogQuery(1, 0, 4), "/api/catalog?gpu=1&ctx=auto&par=4", "catalog at the
 eq(H.catalogQuery(0, 131072, 20), "/api/catalog?gpu=0&ctx=131072&par=8", "catalog at 128K × 8 (clamped)");
 
 // ---- a synthetic round-2 document: a 24 GB card, Auto × 4 ----
-const spec = {served: "mtp:3", backend: "mtp", depth: 3, basis: "own", depth_at_concurrency: 2,
-              classes: [{class: "short", below_tokens: 1024, depth: 3, basis: "modeled"},
-                        {class: "huge", below_tokens: null, depth: 0, basis: "no estimate"}]};
+const spec = {served: "mtp:3", backend: "mtp", depth: 3, basis: "own", depth_at_concurrency: 2};
 const chosen = {context: 49152, kv_tokens: 200000, survival: false, needed_bytes: 6e9,
                 bytes: {kv: 4e9, states: 5e8, rings: 1e8, workspace: 3e8, graphs: 3.2e7, fixed: 0, total: 4.932e9}};
 const plan = o => ({planned: true, fits: true, kv_dtype: "int8", context: 49152, pool_contexts: 4.1, private_contexts: true,
@@ -357,7 +355,6 @@ eq(H.planMemory(H.planRowOf(doc, "UD-Q8_K_XL").plan), null, "no step, no memory"
 // planSpecSummary and the basis words.
 const sp = H.planSpecSummary(spec);
 eq([sp.served, sp.kind, sp.basis, sp.depth], ["mtp:3", "mtp", "own", 2], "served speculation");
-eq(sp.classes, [{cls: "short", below: 1024, depth: 3, basis: "modeled"}, {cls: "huge", below: 0, depth: 0, basis: "no estimate"}], "classes");
 eq(H.planSpecSummary({served: "plain", backend: "none", depth: 0, basis: "none"}).kind, "", "plain decode");
 eq(H.planSpecSummary(null), null, "no SPEC");
 const plainMeasured = H.planSpecSummary({served: "plain", backend: "none", depth: 0, basis: "measured_plain"});

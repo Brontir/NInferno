@@ -175,7 +175,7 @@ DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
 
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.gpu, inputs.drafter_bytes, inputs.drafter_state);
+                                 inputs.drafter_bytes, inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
@@ -898,12 +898,7 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
     if (s.engine.backend != SpeculativeBackend::None) {
         out << "         load " << spec::load_label(s.load) << ", at "
             << inputs.options.max_concurrency << " streams depth " << s.depth_at_concurrency
-            << "; modeled load " << spec::load_label(s.modeled_load)
-            << (s.model_note.empty() ? "" : " (" + s.model_note + ")") << "\n";
-        for (const SpeculationClassRow& row : s.classes) {
-            out << "         " << spec::class_name(row.context_class) << ": depth " << row.depth
-                << " (" << row.basis << ": " << row.reason << ")\n";
-        }
+            << "\n";
     }
     for (const SpeculationFallbackStep& f : s.fallbacks) {
         out << "         " << (f.served ? "> " : "  ") << f.step << " " << f.label << ": "

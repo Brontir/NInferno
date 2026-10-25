@@ -3,7 +3,9 @@
 // repositories that the plan without weights accepted before (2026-10-25).
 
 #include "convert/fetch.h"
+#include "convert/ggml_quants.h"
 #include "convert/support.h"
+#include "gguf_writer.h"
 
 #include <nlohmann/json.hpp>
 
@@ -122,6 +124,18 @@ int main(int argc, char** argv) {
         expect(says(of(g), Verdict::Unsupported, "lfm2"), "a GGUF of another architecture");
         g.gguf_architecture = "qwen35";
         expect(of(g).verdict == Verdict::Supported, "a Qwen3.5 GGUF");
+        // cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF: 374 NVFP4 matrices beside Q5_K/Q6_K/Q8_0
+        // ones. The official NVFP4 layout (NVFP4 beside unquantized tensors) and a K-quant run.
+        g.gguf_nvfp4_matrices = 374;
+        g.gguf_block_matrices = 122;
+        expect(says(of(g), Verdict::Unsupported, "mixes NVFP4 matrices (374)"),
+               "a GGUF mixing NVFP4 and GGML blocks");
+        g.gguf_block_matrices = 0;
+        expect(of(g).verdict == Verdict::Supported, "an NVFP4 GGUF beside unquantized tensors");
+        g.gguf_nvfp4_matrices = 0;
+        g.gguf_block_matrices = 400;
+        expect(of(g).verdict == Verdict::Supported, "a K-quant GGUF");
+        g.gguf_block_matrices = 0;
         g.gguf_architecture = "clip";
         expect(of(g).verdict == Verdict::Unsupported && of(g).role == "projector", "a projector");
         g.gguf_architecture.clear();
@@ -174,6 +188,45 @@ int main(int argc, char** argv) {
                "Llama 3.2 1B's whole config.json: " + ok.reason);
         f.config["mlp_bias"] = true;
         expect(says(of(f), Verdict::Unsupported, "mlp_bias"), "a field the converter refuses");
+    }
+    // GGUF files on disk: a split model's parts count together (NVFP4 in one, Q8_0 in the other),
+    // and a plain type (F64) is no block encoding beside NVFP4.
+    {
+        namespace gg = ninferno::convert::ggml;
+        const auto dir = std::filesystem::temp_directory_path() / "ninferno_model_support_gguf";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        const auto blocks = [](std::uint32_t type, std::uint64_t elements) {
+            const auto t = gg::traits(type);
+            return std::vector<std::uint8_t>(elements / t->block * t->bytes, 0);
+        };
+        const auto write = [&](const std::string& name, bool head, std::uint32_t type,
+                               std::uint64_t columns) {
+            ninferno::convert::testing::GgufWriter w;
+            if (head) {
+                w.kv_str("general.architecture", "qwen35");
+                w.kv_str("tokenizer.chat_template", "{{ messages }}");
+            }
+            w.tensor(name + ".weight", {columns, 2}, type, blocks(type, columns * 2));
+            const auto bytes = w.finish();
+            std::ofstream(dir / name, std::ios::binary)
+                .write(reinterpret_cast<const char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size()));
+        };
+        write("m-00001-of-00002.gguf", true, gg::NVFP4, 64);
+        write("m-00002-of-00002.gguf", false, gg::Q8_0, 64);
+        const auto split = cv::local_support_facts(dir / "m-00001-of-00002.gguf");
+        expect(split.gguf_nvfp4_matrices == 1 && split.gguf_block_matrices == 1 &&
+                   says(of(split), Verdict::Unsupported, "mixes NVFP4"),
+               "a split GGUF mixing NVFP4 and Q8_0 across its parts");
+        write("plain.gguf", true, gg::NVFP4, 64);
+        auto plain = cv::local_support_facts(dir / "plain.gguf");
+        expect(plain.gguf_block_matrices == 0 && of(plain).verdict == Verdict::Supported,
+               "an NVFP4 GGUF alone");
+        write("f64.gguf", false, gg::F64, 64);
+        const auto f64 = cv::local_support_facts(dir / "f64.gguf");
+        expect(f64.gguf_block_matrices == 0, "an F64 matrix is plain, no block encoding");
+        std::filesystem::remove_all(dir);
     }
     // A checkpoint folder on disk: its config.json and its template files.
     {

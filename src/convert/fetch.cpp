@@ -1723,7 +1723,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
 }
 
 GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                         std::uint64_t bytes) {
+                         std::uint64_t bytes, std::size_t part) {
     if (bytes == 0) { throw std::invalid_argument("fetch_gguf_head: no bytes asked for"); }
     const auto root       = options.cache.empty() ? default_hub_cache() : options.cache;
     auto [repo, revision] = split_spec(spec, options);
@@ -1764,8 +1764,18 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     std::erase_if(files,
                   [](const RemoteFile& f) { return !ascii_lower(f.path).ends_with(".gguf"); });
     if (files.empty()) { throw no_gguf(""); }
-    const auto first = std::min_element(
-        files.begin(), files.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    std::sort(files.begin(), files.end(),
+              [](const auto& a, const auto& b) { return a.path < b.path; });
+    // The model conversion opens: the first file's, with the other parts of its split. Other
+    // GGUFs the --include globs matched (another quantization, a drafter) are not its parts.
+    const std::string model = gguf_group(files.front().path);
+    std::erase_if(files, [&](const RemoteFile& f) { return gguf_group(f.path) != model; });
+    out.parts = files.size();
+    if (part >= files.size()) {
+        throw std::out_of_range(repo + ": GGUF part " + std::to_string(part + 1) + " of " +
+                                std::to_string(files.size()));
+    }
+    const auto first = files.begin() + static_cast<std::ptrdiff_t>(part);
     out.commit      = listing.commit;
     out.path        = first->path;
     const auto link = repo_dir / "snapshots" / listing.commit / first->path;

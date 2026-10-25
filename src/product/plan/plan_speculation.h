@@ -13,11 +13,6 @@
 //                   table (lanes -> depth) and the depth it bounds a step of C lanes at, the
 //                   watchdog floor, where the profile came from (this GPU's, a similar one's, the
 //                   "*" fallback, the built-in drafter's default);
-//   the classes     the depth each prompt-length class would run at (spec::class_depths, idea 32:
-//                   Short < 1K, Mid < 8K, Long < 24K, Huge), from the round cost of this card
-//                   (spec::round_cost_of) and the class acceptance factors of the registry, each
-//                   labelled modeled or no estimate with its reason; no request routes by class
-//                   yet, so these are reported, not served;
 //   the fallbacks   what a start tries when the choice does not fit, in its order: the profile's
 //                   fit fallback, the deepest shallower depth that fits, the model's own MTP head,
 //                   plain decode; and, with an automatic pool, the pool rule (the drafter leaves
@@ -28,7 +23,6 @@
 #include "product/plan/plan_facts.h"
 #include "product/speculation/speculation.h"
 #include "runtime/engine/plan_dry_run.h"
-#include "spec/context_class.h"
 #include "spec/profile.h"
 
 #include <nlohmann/json.hpp>
@@ -72,21 +66,6 @@ struct SpeculationAsk {
     // An explicit --spec without --draft-tokens: the depth the model's profile runs that backend
     // with on this GPU, else product::default_draft_tokens (ServeOptions::draft_tokens_from_model).
     bool depth_from_profile = false;
-    // The model's hub id (the registry entry the class acceptance factors are keyed by; "" when
-    // none), its artifact id when converted, and its source identity (artifact/source_identity.h,
-    // the factors' target key; "" before a conversion or for an artifact that records none: the
-    // factors then say unknown).
-    std::string model_repo;
-    std::string artifact_id;
-    std::string source_identity;
-};
-
-struct SpeculationClassRow {
-    spec::ContextClass context_class = spec::ContextClass::Short;
-    std::int64_t below = 0; // the class's upper bound in prompt tokens (0: none, Huge)
-    std::int32_t depth = 0; // 0: plain decode
-    std::string basis;      // "modeled" | "no estimate"
-    std::string reason;
 };
 
 struct SpeculationFallbackStep {
@@ -113,10 +92,6 @@ struct SpeculationReport {
     std::string load_basis;            // measured | none
     // The depth a step of C lanes runs at under the load table (0: plain), C the asked concurrency.
     std::int32_t depth_at_concurrency = 0;
-    // The load the round-cost model gives (spec::modeled_load), and its fit's reason when unsure.
-    std::vector<spec::LoadBound> modeled_load;
-    std::string model_note;
-    std::array<SpeculationClassRow, spec::kContextClasses> classes{};
     std::vector<SpeculationFallbackStep> fallbacks;
     std::vector<std::string> notes;
 };
@@ -132,12 +107,11 @@ struct PlannedSpeculation {
 // `facts` the target's (the drafter's weights are added for a separate drafter when known:
 // `drafter_bytes`, and a DFlash drafter's state, `drafter_state`, read from its config before it is
 // downloaded), `subject` from speculation_subject or planned_subject (nullptr: no profile at all,
-// as for an explicit --spec), `gpu` the device's identity (the cost model's rates).
+// as for an explicit --spec).
 [[nodiscard]] PlannedSpeculation
 plan_with_speculation(const PlanSourceFacts& facts, const runtime::PlanDeviceFacts& device,
                       const EngineOptions& options, const SpeculationSubject* subject,
-                      const SpeculationAsk& ask, const spec::GpuKey& gpu,
-                      std::uint64_t drafter_bytes = 0,
+                      const SpeculationAsk& ask, std::uint64_t drafter_bytes = 0,
                       const std::optional<models::DrafterStateShape>& drafter_state = std::nullopt);
 
 // The profile key of a device from its facts (a named board's what-if: core/device_class.h
