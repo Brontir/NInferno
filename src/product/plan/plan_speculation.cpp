@@ -162,7 +162,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
         }
         out.resolved = spec::resolve_planned_speculation(manifest, entry, out.components, gpu,
                                                          label, target.weights, target.quant,
-                                                         t.engine);
+                                                         t.engine, target.repo);
     } catch (const std::exception& error) {
         out.resolved = spec::ResolvedSpeculation{};
         out.resolved->notes.push_back(std::string("drafters not planned: ") + error.what());
