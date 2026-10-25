@@ -244,11 +244,17 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
-        // Declared MTP layers the weight index does not list are none, as the converter finds
-        // them (convert::sharded_checkpoint_mtp); one weight file (no index): the declaration.
-        if (out.facts.shape.builtin_mtp && weights->mtp_bytes == 0 && weights->files.size() > 1) {
-            out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(
-                config, convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json"));
+        // MTP layers are what the weight index lists (declared or not), as the converter finds
+        // them (convert::sharded_checkpoint_mtp); one weight file, or no index to read: the
+        // declaration.
+        if (weights->mtp_bytes == 0 && weights->files.size() > 1) {
+            Json index;
+            try {
+                index = convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json");
+            } catch (const std::exception&) {}
+            if (index.is_object()) {
+                out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(config, index);
+            }
         }
         out.listing.clear();
         return out;
@@ -272,7 +278,7 @@ ModelRead read_model(const ServeOptions& options) {
             out.kind          = "checkpoint";
             out.facts         = product::plan_facts_of_config(config, safetensors_bytes(path),
                                                               runtime::WeightBasis::FileSize);
-            if (out.facts.shape.builtin_mtp && fs::exists(path / "model.safetensors.index.json") &&
+            if (fs::exists(path / "model.safetensors.index.json") &&
                 !fs::exists(path / "model_mtp.safetensors")) {
                 std::ifstream index(path / "model.safetensors.index.json");
                 out.facts.shape.builtin_mtp =
