@@ -2026,7 +2026,7 @@ function schedulePlan() {
   const q = planQuery(planAsk(sel));
   if (q === sel.planQ) return;
   sel.planQ = q; clearTimeout(planTimer);
-  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; return; }
+  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
@@ -2035,9 +2035,7 @@ function schedulePlan() {
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
-    // The speed-up block is drawn with the detail header: drawn again when this plan is the first
-    // to say the repository speculates (a hub repository the catalog does not list).
-    if (!document.querySelector(".accel") && planServesSpeculation()) renderDetail(); else renderBody();
+    if (!accelAfterPlan()) renderBody();
   }, 300);
 }
 // The plan row of a quantization of the selected repository (null: no plan, or none for it).
@@ -2063,6 +2061,14 @@ function planSpecNow() {
   return r && r.plan && r.plan.speculation || doc && doc.plan && doc.plan.speculation || null;
 }
 // Auto's speculation is the server's choice: plain when the plan serves plain decode.
+// The speed-up block (and its Auto / Off switch) is drawn with the detail header: drawn again, once,
+// when the plan, fetched or cached, is the first to say the repository speculates (a hub repository
+// the catalog does not list). True when it redraws (the detail draws the body too).
+function accelAfterPlan() {
+  if (document.querySelector(".accel") || !planServesSpeculation()) return false;
+  setTimeout(renderDetail, 0);
+  return true;
+}
 // Whether the plan for the ask serves a speculation (its drafter kind).
 function planServesSpeculation() { const s = planSpecSummary(planSpecNow()); return !!s && !!s.kind; }
 function planServesPlain() { const s = planSpecSummary(planSpecNow()); return !!s && !s.kind; }
