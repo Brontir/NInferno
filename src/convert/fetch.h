@@ -183,6 +183,10 @@ struct DownloadRequest {
 // "" when the name ends with none.
 [[nodiscard]] std::string gguf_quant_label(const std::string& file_name);
 
+// Whether a fetch takes the repository file `path` by its --include globs (none: what the
+// converter needs, so true).
+[[nodiscard]] bool include_selects(const FetchOptions& options, const std::string& path);
+
 // One model a repository offers, as a listing shows it: a GGUF quantization (its split parts
 // together), a safetensors checkpoint (quant ""), an artifact in the engine's own format (.ninferno,
 // run as published), or a sidecar (MTP/DFlash/EAGLE drafter, vision
