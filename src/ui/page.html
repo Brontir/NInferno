@@ -2493,7 +2493,9 @@ function loadGain(n, deep) {
 function accelBlock(sel) {
   const cat = catalogFor(sel.repo) || {};
   const drafters = cat.drafters || [];
-  if (!drafters.length && !loadOf()) return `<div class="sub" id="planspec"></div>`;
+  // The block (and its Auto / Off / Manual switch) wherever the catalog lists drafters or loads,
+  // or the plan serves a speculation (a hub repository the catalog does not list).
+  if (!drafters.length && !loadOf() && !planSpecNow()) return `<div class="sub" id="planspec"></div>`;
   const suite = suiteHere(cat);
   sel.suite = suite;
   const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])

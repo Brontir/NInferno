@@ -424,7 +424,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     // where every supported row's bits place it on the quantization curve (an unknown one has no
     // accuracy term and would look exact). Elsewhere the rule's largest stands.
     const bool bits_known = std::all_of(out.rows.begin(), out.rows.end(), [](const QuantRow& row) {
-        return !row.candidate.supported || runtime::quant_rank_bits(row.candidate) > 0;
+        return !row.candidate.supported || row.candidate.bits_per_weight > 0; // what the choice reads
     });
     if (out.pick && bits_known &&
         choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&

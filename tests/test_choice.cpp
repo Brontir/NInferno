@@ -540,10 +540,10 @@ void weighs_the_drafters(const json& fixture) {
     b.model.drafters = {{"mtp:4", "mtp", 1.9, 2, "measured"}, {"dflash:7", "dflash", 2.5, 2, "measured"}};
     b.model.default_drafter = 1; // the resolved profile's: MTP
     // A drafter's weights take memory from the context: MTP 0.2 GB, DFlash 2.4 GB.
-    const auto oracle_with = [&b](double budget) -> ch::OwnContextFn {
-        return [&b, budget](const ch::Candidate& c) -> std::uint32_t {
+    const auto oracle_with = [&b](double budget, std::size_t quant = 0) -> ch::OwnContextFn {
+        return [&b, budget, quant](const ch::Candidate& c) -> std::uint32_t {
             const double drafter = c.drafter == 1 ? 0.2e9 : c.drafter == 2 ? 2.4e9 : 0.0;
-            const double room    = budget - b.quants[0].weight_bytes - drafter;
+            const double room    = budget - b.quants[quant].weight_bytes - drafter;
             if (room <= 0) { return 0; }
             return static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv));
         };
@@ -566,15 +566,16 @@ void weighs_the_drafters(const json& fixture) {
     check(lost == 2, "plain and MTP explained beside DFlash");
     // The largest quantization's weights leave room for MTP's 0.2 GB but not DFlash's 2.4 GB at 32K:
     // MTP, and DFlash explained with its gain.
-    ch::Pins q8;
-    q8.quant = 0;
+    std::size_t largest = 0;
     for (std::size_t i = 1; i < b.quants.size(); ++i) {
-        if (b.quants[i].weight_bytes > b.quants[*q8.quant].weight_bytes) { q8.quant = i; }
+        if (b.quants[i].weight_bytes > b.quants[largest].weight_bytes) { largest = i; }
     }
     const double per_token = b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
-    const double tight     = b.quants[*q8.quant].weight_bytes + 0.2e9 + 40000 * per_token;
-    q8.kv = KvCacheStorage::Int8Group64;
-    const ch::Choice tight_choice = ch::choose(b.model, b.card, b.quants[0], allowed, q8, task, oracle_with(tight), open);
+    const double tight     = b.quants[largest].weight_bytes + 0.2e9 + 40000 * per_token;
+    ch::Pins int8;
+    int8.kv = KvCacheStorage::Int8Group64;
+    const ch::Choice tight_choice = ch::choose(b.model, b.card, b.quants[largest], allowed, int8, task,
+                                               oracle_with(tight, largest), open);
     check(tight_choice.chosen && chosen(tight_choice).candidate.drafter == 1,
           "DFlash does not hold 32K beside the largest quantization: MTP");
     bool said = false;
