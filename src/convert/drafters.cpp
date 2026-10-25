@@ -356,8 +356,10 @@ DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     // their declaration.)
     t.builtin_mtp = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0;
     if (fs::exists(dir / "model.safetensors.index.json")) {
-        t.builtin_mtp =
-            index_lists_mtp(Json::parse(read_file(dir / "model.safetensors.index.json")));
+        try {
+            t.builtin_mtp =
+                index_lists_mtp(Json::parse(read_file(dir / "model.safetensors.index.json")));
+        } catch (const std::exception&) {} // unreadable: the declaration
     } else if (fs::exists(dir / "model.safetensors")) {
         try {
             const Checkpoint weights(dir);
