@@ -1006,9 +1006,17 @@ int test_cost_model() {
                 continue; // fallbacks, and floors serve or spec-bench runs copied or estimated
             }
             const std::string gpu = p.value("gpu", gc);
+            // The published choices (the Engine's), and a Gemma tune's own on ninferno-gemma4's
+            // Session kept beside them as its record (DFlash, adaptive depths: measured, not served).
+            std::vector<const Json*> chosen;
             for (const char* role : {"default", "non_thinking", "thinking", "fit_fallback"}) {
-                if (!p.contains(role)) { continue; }
-                const Json& c = p.at(role);
+                if (p.contains(role)) { chosen.push_back(&p.at(role)); }
+                if (p.contains("session") && p.at("session").contains(role)) {
+                    chosen.push_back(&p.at("session").at(role));
+                }
+            }
+            for (const Json* choice : chosen) {
+                const Json& c = *choice;
                 const std::string label = c.value("config", std::string("plain"));
                 const double floor      = c.value("floor_tokens_per_round", 0.0);
                 if (label == "plain" || floor <= 1.0 || SpecConfig::parse(label).adaptive()) { continue; }
@@ -1017,6 +1025,11 @@ int test_cost_model() {
                 const std::string drafter = split_variant(c.value("drafter", std::string())).first;
                 for (const DrafterDecl& d : m.drafters) {
                     if (d.name == drafter) { f.kind = d.kind; }
+                }
+                // A Session drafter the entry no longer declares (the Engine does not run it): its
+                // kind by name.
+                for (const auto& k : registry.kinds()) {
+                    if (f.kind.empty() && k.name == drafter) { f.kind = k.name; }
                 }
             }
         }

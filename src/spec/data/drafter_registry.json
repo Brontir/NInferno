@@ -716,60 +716,28 @@
             "RedHatAI/gemma-4-26B-A4B-it-NVFP4"
           ],
           "default": {
-            "acceptance": 0.6325555243182457,
-            "config": "mtp:8:2",
+            "acceptance": 0.7222820236813778,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.2966149626518644,
+            "floor_tokens_per_round": 1.8010119944327059,
             "plain_tok_s": 251.5788056669691,
-            "speedup": 1.781832145129545,
-            "tok_s": 448.27120297070445,
-            "tokens_per_round": 4.198294243070363
+            "speedup": 1.7134637739840914,
+            "tok_s": 431.0711698125352,
+            "tokens_per_round": 3.1668460710441333
           },
           "gpu": "NVIDIA GeForce RTX 5080",
           "gpu_class": "gb203",
           "measured_on": "gemma4_26b_a4b_nvfp4.ninferno + gemma4_26b_assistant_q8_sl98304r2.ninferno, session sized to 16 GB, greedy, built-in corpus; RTX 5080 (native Linux driver 580)",
           "measured_at": "2026-09-26",
           "non_thinking": {
-            "acceptance": 0.6193280977312391,
-            "config": "mtp:8:2",
+            "acceptance": 0.6719201470974521,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.1762219220770116,
+            "floor_tokens_per_round": 1.7992262695559273,
             "plain_tok_s": 251.80557059461464,
-            "speedup": 1.7285072201168763,
-            "tok_s": 435.2477468384412,
-            "tokens_per_round": 3.824875621890547
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.7222820236813778,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.8010119944327059,
-              "plain_tok_s": 251.5788056669691,
-              "speedup": 1.7134637739840914,
-              "tok_s": 431.0711698125352,
-              "tokens_per_round": 3.1668460710441333
-            },
-            "non_thinking": {
-              "acceptance": 0.6719201470974521,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.7992262695559273,
-              "plain_tok_s": 251.80557059461464,
-              "speedup": 1.6519726100609586,
-              "tok_s": 415.97590568307453,
-              "tokens_per_round": 3.015760441292356
-            },
-            "thinking": {
-              "acceptance": 0.7139689578713969,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.2926614070051925,
-              "plain_tok_s": 250.90095485446219,
-              "speedup": 1.9806762314657909,
-              "tok_s": 496.95355773230466,
-              "tokens_per_round": 4.569844789356985
-            }
+            "speedup": 1.6519726100609586,
+            "tok_s": 415.97590568307453,
+            "tokens_per_round": 3.015760441292356
           },
           "source": "spec-tune 2026-09-26T13:32:19Z (ninferno-spec-1, 266 s)",
           "thinking": {
@@ -782,78 +750,68 @@
             "tok_s": 496.95355773230466,
             "tokens_per_round": 4.569844789356985
           },
-          "revision": "e2cc93a25f5b"
+          "revision": "e2cc93a25f5b",
+          "session": {
+            "default": {
+              "acceptance": 0.6325555243182457,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.2966149626518644,
+              "plain_tok_s": 251.5788056669691,
+              "speedup": 1.781832145129545,
+              "tok_s": 448.27120297070445,
+              "tokens_per_round": 4.198294243070363
+            },
+            "non_thinking": {
+              "acceptance": 0.6193280977312391,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.1762219220770116,
+              "plain_tok_s": 251.80557059461464,
+              "speedup": 1.7285072201168763,
+              "tok_s": 435.2477468384412,
+              "tokens_per_round": 3.824875621890547
+            }
+          }
         },
         {
           "applies_to": [
             "RedHatAI/gemma-4-26B-A4B-it-NVFP4"
           ],
           "default": {
-            "acceptance": 0.6219887955182073,
-            "config": "mtp:8:2",
+            "acceptance": 0.7087775408670931,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.5204796564064966,
+            "floor_tokens_per_round": 1.9982077785520787,
             "plain_tok_s": 427.51991886797265,
-            "speedup": 1.5955486343345102,
-            "tok_s": 682.1288227005944,
-            "tokens_per_round": 4.118679775280899
+            "speedup": 1.5206675388642459,
+            "tok_s": 650.115662840402,
+            "tokens_per_round": 3.1263326226012795
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_26b_a4b_nvfp4_r0926.ninferno + gemma4_26b_assistant_q8 + gemma4_26b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.5993076590220684,
-            "config": "mtp:8:2",
+            "acceptance": 0.6490956072351421,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.3878769436555536,
+            "floor_tokens_per_round": 1.9973223814747905,
             "plain_tok_s": 427.8637426249319,
-            "speedup": 1.5374123230474441,
-            "tok_s": 657.8029904967702,
-            "tokens_per_round": 3.6998050682261208
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.7087775408670931,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9982077785520787,
-              "plain_tok_s": 427.51991886797265,
-              "speedup": 1.5206675388642459,
-              "tok_s": 650.115662840402,
-              "tokens_per_round": 3.1263326226012795
-            },
-            "non_thinking": {
-              "acceptance": 0.6490956072351421,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9973223814747905,
-              "plain_tok_s": 427.8637426249319,
-              "speedup": 1.4571901959446487,
-              "tok_s": 623.4788509532352,
-              "tokens_per_round": 2.9472868217054264
-            },
-            "thinking": {
-              "acceptance": 0.7118942731277533,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.528989198355558,
-              "plain_tok_s": 426.49175511199445,
-              "speedup": 1.7837218200822123,
-              "tok_s": 760.7426496784238,
-              "tokens_per_round": 4.559471365638767
-            }
+            "speedup": 1.4571901959446487,
+            "tok_s": 623.4788509532352,
+            "tokens_per_round": 2.9472868217054264
           },
           "source": "spec-tune 2026-09-26T14:26:15Z (ninferno-spec-1, 206 s)",
           "thinking": {
-            "acceptance": 0.6236121391561806,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.6982697980199752,
+            "acceptance": 0.7118942731277533,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.528989198355558,
             "plain_tok_s": 426.49175511199445,
-            "speedup": 1.96633393953365,
-            "tok_s": 838.6252130079888,
-            "tokens_per_round": 5.365284974093265
+            "speedup": 1.7837218200822123,
+            "tok_s": 760.7426496784238,
+            "tokens_per_round": 4.559471365638767
           },
           "load": [
             {
@@ -866,7 +824,39 @@
             }
           ],
           "load_measured_on": "gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
-          "revision": "022eb977b3eb"
+          "revision": "022eb977b3eb",
+          "session": {
+            "default": {
+              "acceptance": 0.6219887955182073,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.5204796564064966,
+              "plain_tok_s": 427.51991886797265,
+              "speedup": 1.5955486343345102,
+              "tok_s": 682.1288227005944,
+              "tokens_per_round": 4.118679775280899
+            },
+            "thinking": {
+              "acceptance": 0.6236121391561806,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.6982697980199752,
+              "plain_tok_s": 426.49175511199445,
+              "speedup": 1.96633393953365,
+              "tok_s": 838.6252130079888,
+              "tokens_per_round": 5.365284974093265
+            },
+            "non_thinking": {
+              "acceptance": 0.5993076590220684,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.3878769436555536,
+              "plain_tok_s": 427.8637426249319,
+              "speedup": 1.5374123230474441,
+              "tok_s": 657.8029904967702,
+              "tokens_per_round": 3.6998050682261208
+            }
+          }
         },
         {
           "gpu_class": "gb203",
@@ -877,36 +867,19 @@
           "measured_at": "2026-09-28",
           "source": "spec-tune 2026-09-26T14:26:15Z (ninferno-spec-1, 206 s)",
           "default": {
-            "config": "mtp:8:2",
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.5204796564064966
+            "floor_tokens_per_round": 1.9982077785520787
           },
           "non_thinking": {
-            "config": "mtp:8:2",
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.3878769436555536
+            "floor_tokens_per_round": 1.9973223814747905
           },
           "thinking": {
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.6982697980199752
-          },
-          "served": {
-            "default": {
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9982077785520787
-            },
-            "non_thinking": {
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9973223814747905
-            },
-            "thinking": {
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.528989198355558
-            }
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.528989198355558
           },
           "load": [
             {
@@ -916,67 +889,52 @@
           ],
           "load_measured_on": "gemma4_26b_qat_udq4kxl.ninferno + 26b_mtp_gguf.ninferno, RTX 5080, NVIDIA GeForce RTX 5080, C 2,3,4, temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T13:12:11Z (context 2048, prefill chunk 512, one 4-row engine per bound: C=2 plain 388.0, bound 2 610.0, 3 645.7, 4 641.4, 6 647.4, none 661.8; C=3 plain 480.4, 2 727.0, 3 764.9, 4 768.4, 6 756.5, none 769.5; C=4 plain 574.7, 2 840.0, 3 889.3, 4 859.1, 6 872.8, none 886.6)",
           "gpu": "NVIDIA GeForce RTX 5080",
-          "revision": "7f679adb993c"
+          "revision": "7f679adb993c",
+          "session": {
+            "default": {
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.5204796564064966
+            },
+            "thinking": {
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.6982697980199752
+            },
+            "non_thinking": {
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.3878769436555536
+            }
+          }
         },
         {
           "applies_to": [
             "google/gemma-4-26B-A4B-it"
           ],
           "default": {
-            "acceptance": 0.6687116564417178,
-            "config": "mtp:8:2",
+            "acceptance": 0.6221757322175733,
+            "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.2643824814447493,
+            "floor_tokens_per_round": 2.1724070054404145,
             "plain_tok_s": 280.09272608925846,
-            "speedup": 1.916007197528711,
-            "tok_s": 536.659679162457,
-            "tokens_per_round": 4.470811220621683
+            "speedup": 1.8283904647611355,
+            "tok_s": 512.1188696305527,
+            "tokens_per_round": 4.110878661087866
           },
           "gpu": "NVIDIA GeForce RTX 4090",
           "gpu_class": "ad102",
           "measured_on": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.ninferno + g26_mtp_Q4_0.ninferno (unsloth MTP Q4_0), RTX 4090, greedy, built-in corpus",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.6387714222123303,
-            "config": "mtp:8:2",
+            "acceptance": 0.6184329710144928,
+            "config": "mtp:4",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.126470949904708,
+            "floor_tokens_per_round": 1.960267562975532,
             "plain_tok_s": 280.25577701501913,
-            "speedup": 1.8374531248979376,
-            "tok_s": 514.9568532469465,
-            "tokens_per_round": 3.971014492753623
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.6221757322175733,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.1724070054404145,
-              "plain_tok_s": 280.09272608925846,
-              "speedup": 1.8283904647611355,
-              "tok_s": 512.1188696305527,
-              "tokens_per_round": 4.110878661087866
-            },
-            "non_thinking": {
-              "acceptance": 0.6184329710144928,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.960267562975532,
-              "plain_tok_s": 280.25577701501913,
-              "speedup": 1.7426458166789602,
-              "tok_s": 488.3865574153346,
-              "tokens_per_round": 3.473731884057971
-            },
-            "thinking": {
-              "acceptance": 0.760752688172043,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.4269046535466203,
-              "plain_tok_s": 279.604709671778,
-              "speedup": 2.268476569955312,
-              "tok_s": 634.2767327395858,
-              "tokens_per_round": 5.564516129032258
-            }
+            "speedup": 1.7426458166789602,
+            "tok_s": 488.3865574153346,
+            "tokens_per_round": 3.473731884057971
           },
           "source": "spec-tune 2026-09-28T13:38:01Z (ninferno-spec-1, 232 s)",
           "thinking": {
@@ -996,7 +954,29 @@
             }
           ],
           "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:26:52Z",
-          "revision": "7c37bfceafac"
+          "revision": "7c37bfceafac",
+          "session": {
+            "default": {
+              "acceptance": 0.6687116564417178,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.2643824814447493,
+              "plain_tok_s": 280.09272608925846,
+              "speedup": 1.916007197528711,
+              "tok_s": 536.659679162457,
+              "tokens_per_round": 4.470811220621683
+            },
+            "non_thinking": {
+              "acceptance": 0.6387714222123303,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.126470949904708,
+              "plain_tok_s": 280.25577701501913,
+              "speedup": 1.8374531248979376,
+              "tok_s": 514.9568532469465,
+              "tokens_per_round": 3.971014492753623
+            }
+          }
         },
         {
           "gpu_class": "*",
@@ -1005,36 +985,19 @@
           "measured_at": "2026-09-28",
           "source": "spec-tune 2026-09-26T14:26:15Z (ninferno-spec-1, 206 s)",
           "default": {
-            "config": "mtp:8:2",
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.5204796564064966
+            "floor_tokens_per_round": 1.9982077785520787
           },
           "non_thinking": {
-            "config": "mtp:8:2",
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.3878769436555536
+            "floor_tokens_per_round": 1.9973223814747905
           },
           "thinking": {
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.6982697980199752
-          },
-          "served": {
-            "default": {
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9982077785520787
-            },
-            "non_thinking": {
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.9973223814747905
-            },
-            "thinking": {
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.528989198355558
-            }
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.528989198355558
           },
           "load": [
             {
@@ -1047,7 +1010,24 @@
             }
           ],
           "load_measured_on": "fallback for unmeasured GPUs: NVIDIA GeForce RTX 5090 (gb202), gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
-          "revision": "add138cfb04c"
+          "revision": "add138cfb04c",
+          "session": {
+            "default": {
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.5204796564064966
+            },
+            "thinking": {
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.6982697980199752
+            },
+            "non_thinking": {
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.3878769436555536
+            }
+          }
         },
         {
           "applies_to": [
@@ -1110,50 +1090,30 @@
               "tokens_per_round": 3.1710323574730355
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.5990453460620525,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.8156032162547575,
-              "plain_tok_s": 344.1489776647255,
-              "speedup": 1.503463419211579,
-              "tok_s": 517.4153986779776,
-              "tokens_per_round": 2.7971360381861574
-            },
-            "non_thinking": {
-              "acceptance": 0.5431074227754725,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.7984579440256765,
-              "plain_tok_s": 343.42340820925375,
-              "speedup": 1.4483168630415078,
-              "tok_s": 497.3859132726496,
-              "tokens_per_round": 2.6293222683264177
-            },
-            "thinking": {
-              "acceptance": 0.6494755244755245,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.069085493905746,
-              "plain_tok_s": 346.34419877403167,
-              "speedup": 1.7304357847780076,
-              "tok_s": 599.3263954088518,
-              "tokens_per_round": 3.597902097902098
-            }
-          },
           "source": "spec-tune 2026-09-29T04:21:34Z (ninferno-spec-1, 264 s)",
           "thinking": {
-            "acceptance": 0.42636514065085496,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.127984856482849,
+            "acceptance": 0.6494755244755245,
+            "config": "mtp:4",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.069085493905746,
             "plain_tok_s": 346.34419877403167,
-            "speedup": 1.8579398916412444,
-            "tok_s": 643.486703140798,
-            "tokens_per_round": 3.9845559845559846
+            "speedup": 1.7304357847780076,
+            "tok_s": 599.3263954088518,
+            "tokens_per_round": 3.597902097902098
           },
-          "revision": "be304bfcbd44"
+          "revision": "be304bfcbd44",
+          "session": {
+            "thinking": {
+              "acceptance": 0.42636514065085496,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.127984856482849,
+              "plain_tok_s": 346.34419877403167,
+              "speedup": 1.8579398916412444,
+              "tok_s": 643.486703140798,
+              "tokens_per_round": 3.9845559845559846
+            }
+          }
         },
         {
           "applies_to": [
@@ -1235,28 +1195,28 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.6313209132931783,
-            "config": "mtp:8:2",
+            "acceptance": 0.7306724199928083,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.43166466916095,
+            "floor_tokens_per_round": 1.8652950611318833,
             "plain_tok_s": 90.34610301359398,
-            "speedup": 1.6863079343058593,
-            "tok_s": 152.35135034543802,
-            "tokens_per_round": 4.221586847748392
+            "speedup": 1.6582153983491281,
+            "tok_s": 149.8132991979781,
+            "tokens_per_round": 3.192017259978425
           },
           "gpu": "NVIDIA GeForce RTX 4060 Ti",
           "gpu_class": "ad106",
           "measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus",
           "measured_at": "2026-10-11",
           "non_thinking": {
-            "acceptance": 0.6013183074633213,
-            "config": "mtp:8:2",
+            "acceptance": 0.6816508937960042,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.3053360363109574,
+            "floor_tokens_per_round": 1.8606193202070553,
             "plain_tok_s": 90.39635036330259,
-            "speedup": 1.6211675418387248,
-            "tok_s": 146.54762910966738,
-            "tokens_per_round": 3.794466403162055
+            "speedup": 1.5991324210592028,
+            "tok_s": 144.55573461138403,
+            "tokens_per_round": 3.0449526813880126
           },
           "portable": {
             "default": {
@@ -1290,48 +1250,16 @@
               "tokens_per_round": 4.157575757575757
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.7306724199928083,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.8652950611318833,
-              "plain_tok_s": 90.34610301359398,
-              "speedup": 1.6582153983491281,
-              "tok_s": 149.8132991979781,
-              "tokens_per_round": 3.192017259978425
-            },
-            "non_thinking": {
-              "acceptance": 0.6816508937960042,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.8606193202070553,
-              "plain_tok_s": 90.39635036330259,
-              "speedup": 1.5991324210592028,
-              "tok_s": 144.55573461138403,
-              "tokens_per_round": 3.0449526813880126
-            },
-            "thinking": {
-              "acceptance": 0.7442922374429224,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.4344162631561432,
-              "plain_tok_s": 90.19569556995376,
-              "speedup": 1.9207064779858007,
-              "tok_s": 173.23945676764538,
-              "tokens_per_round": 4.7214611872146115
-            }
-          },
           "source": "spec-tune 2026-10-11T20:26:44Z (ninferno-spec-1, 905 s)",
           "thinking": {
-            "acceptance": 0.5735140771637122,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.2480456381677594,
+            "acceptance": 0.7442922374429224,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.4344162631561432,
             "plain_tok_s": 90.19569556995376,
-            "speedup": 2.216577940068418,
-            "tok_s": 199.92578908948622,
-            "tokens_per_round": 5.014598540145985
+            "speedup": 1.9207064779858007,
+            "tok_s": 173.23945676764538,
+            "tokens_per_round": 4.7214611872146115
           },
           "load": [
             {
@@ -1340,33 +1268,65 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T19:34:04Z",
-          "revision": "cda3622c7022"
+          "revision": "cda3622c7022",
+          "session": {
+            "default": {
+              "acceptance": 0.6313209132931783,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.43166466916095,
+              "plain_tok_s": 90.34610301359398,
+              "speedup": 1.6863079343058593,
+              "tok_s": 152.35135034543802,
+              "tokens_per_round": 4.221586847748392
+            },
+            "thinking": {
+              "acceptance": 0.5735140771637122,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.2480456381677594,
+              "plain_tok_s": 90.19569556995376,
+              "speedup": 2.216577940068418,
+              "tok_s": 199.92578908948622,
+              "tokens_per_round": 5.014598540145985
+            },
+            "non_thinking": {
+              "acceptance": 0.6013183074633213,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.3053360363109574,
+              "plain_tok_s": 90.39635036330259,
+              "speedup": 1.6211675418387248,
+              "tok_s": 146.54762910966738,
+              "tokens_per_round": 3.794466403162055
+            }
+          }
         },
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.6421914713357808,
-            "config": "mtp:8:2",
+            "acceptance": 0.6020449897750512,
+            "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.394429095441937,
+            "floor_tokens_per_round": 2.341585608704974,
             "plain_tok_s": 188.67701677777052,
-            "speedup": 1.737924525763033,
-            "tok_s": 327.90641490589064,
-            "tokens_per_round": 4.300435413642961
+            "speedup": 1.6584240580093943,
+            "tok_s": 312.9065038176968,
+            "tokens_per_round": 4.010224948875256
           },
           "gpu": "NVIDIA A100-SXM4-40GB",
           "gpu_class": "ga100",
           "measured_on": "gemma-4-26B-A4B-it-Q4.ninferno, kv fp8, NVIDIA A100-SXM4-40GB, greedy, built-in corpus",
           "measured_at": "2026-10-11",
           "non_thinking": {
-            "acceptance": 0.6221689895470384,
-            "config": "mtp:8:2",
+            "acceptance": 0.546236559139785,
+            "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.278399057299637,
+            "floor_tokens_per_round": 2.3354490375759753,
             "plain_tok_s": 188.9193278503757,
-            "speedup": 1.678603970547333,
-            "tok_s": 317.12073384277403,
-            "tokens_per_round": 3.900507614213198
+            "speedup": 1.5771559877276242,
+            "tok_s": 297.95524911669816,
+            "tokens_per_round": 3.7311827956989245
           },
           "portable": {
             "default": {
@@ -1400,48 +1360,16 @@
               "tokens_per_round": 4.653153153153153
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.6020449897750512,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.341585608704974,
-              "plain_tok_s": 188.67701677777052,
-              "speedup": 1.6584240580093943,
-              "tok_s": 312.9065038176968,
-              "tokens_per_round": 4.010224948875256
-            },
-            "non_thinking": {
-              "acceptance": 0.546236559139785,
-              "config": "mtp:5",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.3354490375759753,
-              "plain_tok_s": 188.9193278503757,
-              "speedup": 1.5771559877276242,
-              "tok_s": 297.95524911669816,
-              "tokens_per_round": 3.7311827956989245
-            },
-            "thinking": {
-              "acceptance": 0.6915422885572139,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.567179003114753,
-              "plain_tok_s": 187.95379877093208,
-              "speedup": 1.9844846646855943,
-              "tok_s": 372.9914313303168,
-              "tokens_per_round": 5.149253731343284
-            }
-          },
           "source": "spec-tune 2026-10-11T20:58:50Z (ninferno-spec-1, 438 s)",
           "thinking": {
-            "acceptance": 0.5343185550082101,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.3360229856812436,
+            "acceptance": 0.6915422885572139,
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.567179003114753,
             "plain_tok_s": 187.95379877093208,
-            "speedup": 2.0154108096836674,
-            "tok_s": 378.8041177640453,
-            "tokens_per_round": 4.740229885057471
+            "speedup": 1.9844846646855943,
+            "tok_s": 372.9914313303168,
+            "tokens_per_round": 5.149253731343284
           },
           "load": [
             {
@@ -1454,33 +1382,65 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-Q4.ninferno, context 8192, kv fp8, NVIDIA A100-SXM4-40GB, greedy, built-in corpus, load 2,4, NVIDIA A100-SXM4-40GB, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T21:11:17Z",
-          "revision": "f6b4ab4966ab"
+          "revision": "f6b4ab4966ab",
+          "session": {
+            "default": {
+              "acceptance": 0.6421914713357808,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.394429095441937,
+              "plain_tok_s": 188.67701677777052,
+              "speedup": 1.737924525763033,
+              "tok_s": 327.90641490589064,
+              "tokens_per_round": 4.300435413642961
+            },
+            "thinking": {
+              "acceptance": 0.5343185550082101,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.3360229856812436,
+              "plain_tok_s": 187.95379877093208,
+              "speedup": 2.0154108096836674,
+              "tok_s": 378.8041177640453,
+              "tokens_per_round": 4.740229885057471
+            },
+            "non_thinking": {
+              "acceptance": 0.6221689895470384,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.278399057299637,
+              "plain_tok_s": 188.9193278503757,
+              "speedup": 1.678603970547333,
+              "tok_s": 317.12073384277403,
+              "tokens_per_round": 3.900507614213198
+            }
+          }
         },
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.6259935852740204,
-            "config": "mtp:8:2",
+            "acceptance": 0.7157071783937455,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.5805791365593413,
+            "floor_tokens_per_round": 2.0057228326093908,
             "plain_tok_s": 128.99803867058495,
-            "speedup": 1.5522273892935807,
-            "tok_s": 200.23428878963443,
-            "tokens_per_round": 4.126044568245125
+            "speedup": 1.5233930409470648,
+            "tok_s": 196.51471440658946,
+            "tokens_per_round": 3.1471215351812365
           },
           "gpu": "NVIDIA GeForce RTX 5060 Ti",
           "gpu_class": "gb206",
           "measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, kv fp8, NVIDIA GeForce RTX 5060 Ti, greedy, built-in corpus",
           "measured_at": "2026-10-11",
           "non_thinking": {
-            "acceptance": 0.6025641025641025,
-            "config": "mtp:8:2",
+            "acceptance": 0.6640726329442282,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.446682569341144,
+            "floor_tokens_per_round": 2.000738108632362,
             "plain_tok_s": 129.08640892871978,
-            "speedup": 1.5019879301111227,
-            "tok_s": 193.88622815232577,
-            "tokens_per_round": 3.740524781341108
+            "speedup": 1.4674732672625013,
+            "tok_s": 189.43085426981173,
+            "tokens_per_round": 2.992217898832685
           },
           "portable": {
             "default": {
@@ -1514,48 +1474,16 @@
               "tokens_per_round": 4.668934240362812
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.7157071783937455,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.0057228326093908,
-              "plain_tok_s": 128.99803867058495,
-              "speedup": 1.5233930409470648,
-              "tok_s": 196.51471440658946,
-              "tokens_per_round": 3.1471215351812365
-            },
-            "non_thinking": {
-              "acceptance": 0.6640726329442282,
-              "config": "mtp:3",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.000738108632362,
-              "plain_tok_s": 129.08640892871978,
-              "speedup": 1.4674732672625013,
-              "tok_s": 189.43085426981173,
-              "tokens_per_round": 2.992217898832685
-            },
-            "thinking": {
-              "acceptance": 0.6959798994974874,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 2.8757015724108075,
-              "plain_tok_s": 128.73365236876867,
-              "speedup": 1.789382004232875,
-              "tok_s": 230.35368088784548,
-              "tokens_per_round": 5.175879396984925
-            }
-          },
           "source": "spec-tune 2026-10-11T21:41:20Z (ninferno-spec-1, 687 s)",
           "thinking": {
-            "acceptance": 0.5645769099006509,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.490178898636554,
+            "acceptance": 0.6959798994974874,
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 2.8757015724108075,
             "plain_tok_s": 128.73365236876867,
-            "speedup": 1.972256284840617,
-            "tok_s": 253.89575495479122,
-            "tokens_per_round": 4.952038369304557
+            "speedup": 1.789382004232875,
+            "tok_s": 230.35368088784548,
+            "tokens_per_round": 5.175879396984925
           },
           "load": [
             {
@@ -1564,7 +1492,39 @@
             }
           ],
           "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 5060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T22:00:48Z",
-          "revision": "43e99139bf54"
+          "revision": "43e99139bf54",
+          "session": {
+            "default": {
+              "acceptance": 0.6259935852740204,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.5805791365593413,
+              "plain_tok_s": 128.99803867058495,
+              "speedup": 1.5522273892935807,
+              "tok_s": 200.23428878963443,
+              "tokens_per_round": 4.126044568245125
+            },
+            "thinking": {
+              "acceptance": 0.5645769099006509,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.490178898636554,
+              "plain_tok_s": 128.73365236876867,
+              "speedup": 1.972256284840617,
+              "tok_s": 253.89575495479122,
+              "tokens_per_round": 4.952038369304557
+            },
+            "non_thinking": {
+              "acceptance": 0.6025641025641025,
+              "config": "mtp:8:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.446682569341144,
+              "plain_tok_s": 129.08640892871978,
+              "speedup": 1.5019879301111227,
+              "tok_s": 193.88622815232577,
+              "tokens_per_round": 3.740524781341108
+            }
+          }
         },
         {
           "applies_to": [],
@@ -1886,71 +1846,39 @@
             "RedHatAI/gemma-4-26B-A4B-it-NVFP4"
           ],
           "default": {
-            "acceptance": 0.6219887955182073,
-            "config": "mtp:8:2",
+            "acceptance": 0.7087775408670931,
+            "config": "mtp:3",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 2.5204796564064966,
+            "floor_tokens_per_round": 1.9982077785520787,
             "plain_tok_s": 427.51991886797265,
-            "speedup": 1.5955486343345102,
-            "tok_s": 682.1288227005944,
-            "tokens_per_round": 4.118679775280899
+            "speedup": 1.5206675388642459,
+            "tok_s": 650.115662840402,
+            "tokens_per_round": 3.1263326226012795
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_26b_a4b_nvfp4_r0926.ninferno + gemma4_26b_assistant_q8 + gemma4_26b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus; drafter assistant.nvfp4: (RTX 5090, RedHat NVFP4 target, 20x512 temp 1.0, fixed mtp K=6 26B / K=10 31B): aggregate tok/s bf16/q8/nvfp4 26B C1 441.6/526.7/536.9 C2 675.5/752.4/751.5 C4 956.6/1046.8/1068.8; 31B C1 200.7/224.1/230.1 C2 251.3/274.4/274.5 C4 402.1/417.3/421.5; greedy under --activations exact identical to plain for every drafter",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.5993076590220684,
-            "config": "mtp:8:2",
+            "acceptance": 0.6490956072351421,
+            "config": "mtp:3",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 2.3878769436555536,
+            "floor_tokens_per_round": 1.9973223814747905,
             "plain_tok_s": 427.8637426249319,
-            "speedup": 1.5374123230474441,
-            "tok_s": 657.8029904967702,
-            "tokens_per_round": 3.6998050682261208
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.7087775408670931,
-              "config": "mtp:3",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.9982077785520787,
-              "plain_tok_s": 427.51991886797265,
-              "speedup": 1.5206675388642459,
-              "tok_s": 650.115662840402,
-              "tokens_per_round": 3.1263326226012795
-            },
-            "non_thinking": {
-              "acceptance": 0.6490956072351421,
-              "config": "mtp:3",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.9973223814747905,
-              "plain_tok_s": 427.8637426249319,
-              "speedup": 1.4571901959446487,
-              "tok_s": 623.4788509532352,
-              "tokens_per_round": 2.9472868217054264
-            },
-            "thinking": {
-              "acceptance": 0.7118942731277533,
-              "config": "mtp:5",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 2.528989198355558,
-              "plain_tok_s": 426.49175511199445,
-              "speedup": 1.7837218200822123,
-              "tok_s": 760.7426496784238,
-              "tokens_per_round": 4.559471365638767
-            }
+            "speedup": 1.4571901959446487,
+            "tok_s": 623.4788509532352,
+            "tokens_per_round": 2.9472868217054264
           },
           "source": "spec-tune 2026-09-26T14:26:15Z (ninferno-spec-1, 206 s)",
           "thinking": {
-            "acceptance": 0.6236121391561806,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.6982697980199752,
+            "acceptance": 0.7118942731277533,
+            "config": "mtp:5",
+            "drafter": "assistant.nvfp4",
+            "floor_tokens_per_round": 2.528989198355558,
             "plain_tok_s": 426.49175511199445,
-            "speedup": 1.96633393953365,
-            "tok_s": 838.6252130079888,
-            "tokens_per_round": 5.365284974093265
+            "speedup": 1.7837218200822123,
+            "tok_s": 760.7426496784238,
+            "tokens_per_round": 4.559471365638767
           },
           "load": [
             {
@@ -1966,7 +1894,39 @@
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "2ed2e0cf65f2"
+          "revision": "2ed2e0cf65f2",
+          "session": {
+            "default": {
+              "acceptance": 0.6219887955182073,
+              "config": "mtp:8:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 2.5204796564064966,
+              "plain_tok_s": 427.51991886797265,
+              "speedup": 1.5955486343345102,
+              "tok_s": 682.1288227005944,
+              "tokens_per_round": 4.118679775280899
+            },
+            "thinking": {
+              "acceptance": 0.6236121391561806,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 2.6982697980199752,
+              "plain_tok_s": 426.49175511199445,
+              "speedup": 1.96633393953365,
+              "tok_s": 838.6252130079888,
+              "tokens_per_round": 5.365284974093265
+            },
+            "non_thinking": {
+              "acceptance": 0.5993076590220684,
+              "config": "mtp:8:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 2.3878769436555536,
+              "plain_tok_s": 427.8637426249319,
+              "speedup": 1.5374123230474441,
+              "tok_s": 657.8029904967702,
+              "tokens_per_round": 3.6998050682261208
+            }
+          }
         }
       ],
       "evidence": "2026-09-23: drafter output checked against an FP32 reference; the profiles below are measured on the built-in corpus"
@@ -2012,28 +1972,28 @@
             "RedHatAI/gemma-4-31B-it-NVFP4"
           ],
           "default": {
-            "acceptance": 0.5787191874148396,
-            "config": "mtp:15:2",
+            "acceptance": 0.41174438687392056,
+            "config": "mtp:10",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.2365213190754134,
+            "floor_tokens_per_round": 1.3760808077076032,
             "plain_tok_s": 81.34173367543677,
-            "speedup": 3.614532510184989,
-            "tok_s": 294.0123408046753,
-            "tokens_per_round": 4.678740157480315
+            "speedup": 3.562893286156243,
+            "tok_s": 289.81191679652284,
+            "tokens_per_round": 5.117443868739206
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_31b_nvfp4.ninferno + gemma4_31b_assistant_q8 + gemma4_31b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.556146684400532,
-            "config": "mtp:15:2",
+            "acceptance": 0.36209386281588446,
+            "config": "mtp:10",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.2084746393587755,
+            "floor_tokens_per_round": 1.375286549067691,
             "plain_tok_s": 81.39094667150417,
-            "speedup": 3.3707423171455,
-            "tok_s": 274.3479081781718,
-            "tokens_per_round": 4.140557939914163
+            "speedup": 3.322799090925749,
+            "tok_s": 270.44576360966016,
+            "tokens_per_round": 4.620938628158845
           },
           "portable": {
             "default": {
@@ -2067,48 +2027,16 @@
               "tokens_per_round": 6.379204892966361
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.41174438687392056,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3760808077076032,
-              "plain_tok_s": 81.34173367543677,
-              "speedup": 3.562893286156243,
-              "tok_s": 289.81191679652284,
-              "tokens_per_round": 5.117443868739206
-            },
-            "non_thinking": {
-              "acceptance": 0.36209386281588446,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.375286549067691,
-              "plain_tok_s": 81.39094667150417,
-              "speedup": 3.322799090925749,
-              "tok_s": 270.44576360966016,
-              "tokens_per_round": 4.620938628158845
-            },
-            "thinking": {
-              "acceptance": 0.537920489296636,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3777133901878384,
-              "plain_tok_s": 81.19445112005161,
-              "speedup": 4.545936031762109,
-              "tok_s": 369.10478092578995,
-              "tokens_per_round": 6.379204892966361
-            }
-          },
           "source": "spec-tune 2026-09-26T14:29:45Z (ninferno-spec-1, 607 s)",
           "thinking": {
-            "acceptance": 0.4162037037037037,
-            "config": "dflash:15",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.4232132184285837,
+            "acceptance": 0.537920489296636,
+            "config": "mtp:10",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.3777133901878384,
             "plain_tok_s": 81.19445112005161,
-            "speedup": 4.996518454882482,
-            "tok_s": 405.6895734553915,
-            "tokens_per_round": 7.243055555555555
+            "speedup": 4.545936031762109,
+            "tok_s": 369.10478092578995,
+            "tokens_per_round": 6.379204892966361
           },
           "load": [
             {
@@ -2125,80 +2053,112 @@
             }
           ],
           "load_measured_on": "gemma4_31b_nvfp4.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8 (max_context 1024, prefill chunk 512), temperature 1.0, thinking on, built-in corpus x1, 2026-09-28T04:34:21Z (C=8 bound 5 737.6, bound 7 734.7, plain 467.1 tok/s)",
-          "revision": "5927c21c8ba6"
+          "revision": "5927c21c8ba6",
+          "session": {
+            "default": {
+              "acceptance": 0.5787191874148396,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.2365213190754134,
+              "plain_tok_s": 81.34173367543677,
+              "speedup": 3.614532510184989,
+              "tok_s": 294.0123408046753,
+              "tokens_per_round": 4.678740157480315
+            },
+            "thinking": {
+              "acceptance": 0.4162037037037037,
+              "config": "dflash:15",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.4232132184285837,
+              "plain_tok_s": 81.19445112005161,
+              "speedup": 4.996518454882482,
+              "tok_s": 405.6895734553915,
+              "tokens_per_round": 7.243055555555555
+            },
+            "non_thinking": {
+              "acceptance": 0.556146684400532,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.2084746393587755,
+              "plain_tok_s": 81.39094667150417,
+              "speedup": 3.3707423171455,
+              "tok_s": 274.3479081781718,
+              "tokens_per_round": 4.140557939914163
+            }
+          }
         },
         {
           "applies_to": [
             "nvidia/Gemma-4-31B-IT-NVFP4"
           ],
           "default": {
-            "acceptance": 0.5818927994030593,
-            "config": "mtp:15:2",
+            "acceptance": 0.40458015267175573,
+            "config": "mtp:10",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.1936602587917864,
+            "floor_tokens_per_round": 1.318969023594198,
             "plain_tok_s": 67.97401254135013,
-            "speedup": 3.7751096075936874,
-            "tok_s": 256.6093478115447,
-            "tokens_per_round": 4.707606973058637
+            "speedup": 3.6465676865663608,
+            "tok_s": 247.87183765954396,
+            "tokens_per_round": 5.0458015267175576
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_31b_nvidia_nvfp4.ninferno + gemma4_31b_assistant_q8 + gemma4_31b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus",
           "measured_at": "2026-09-26",
           "non_thinking": {
-            "acceptance": 0.5636851177935261,
-            "config": "mtp:15:2",
+            "acceptance": 0.3531615925058548,
+            "config": "mtp:10",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.1692286801342555,
+            "floor_tokens_per_round": 1.3179601439163873,
             "plain_tok_s": 68.01685833950184,
-            "speedup": 3.5221490326136164,
-            "tok_s": 239.5655118018938,
-            "tokens_per_round": 4.185064935064935
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.40458015267175573,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.318969023594198,
-              "plain_tok_s": 67.97401254135013,
-              "speedup": 3.6465676865663608,
-              "tok_s": 247.87183765954396,
-              "tokens_per_round": 5.0458015267175576
-            },
-            "non_thinking": {
-              "acceptance": 0.3531615925058548,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3179601439163873,
-              "plain_tok_s": 68.01685833950184,
-              "speedup": 3.380643658843763,
-              "tok_s": 229.9407608399114,
-              "tokens_per_round": 4.531615925058548
-            },
-            "thinking": {
-              "acceptance": 0.5396923076923077,
-              "config": "mtp:10",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3213046307645762,
-              "plain_tok_s": 67.84579841376869,
-              "speedup": 4.769179124038989,
-              "tok_s": 323.56876544870323,
-              "tokens_per_round": 6.396923076923077
-            }
+            "speedup": 3.380643658843763,
+            "tok_s": 229.9407608399114,
+            "tokens_per_round": 4.531615925058548
           },
           "source": "spec-tune 2026-09-26T14:50:05Z (ninferno-spec-1, 716 s)",
           "thinking": {
-            "acceptance": 0.40710194730813287,
-            "config": "dflash:15",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.3559669258594553,
+            "acceptance": 0.5396923076923077,
+            "config": "mtp:10",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.3213046307645762,
             "plain_tok_s": 67.84579841376869,
-            "speedup": 5.190245096003681,
-            "tok_s": 352.1363225015172,
-            "tokens_per_round": 7.106529209621993
+            "speedup": 4.769179124038989,
+            "tok_s": 323.56876544870323,
+            "tokens_per_round": 6.396923076923077
           },
-          "revision": "03d8c045b163"
+          "revision": "03d8c045b163",
+          "session": {
+            "default": {
+              "acceptance": 0.5818927994030593,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.1936602587917864,
+              "plain_tok_s": 67.97401254135013,
+              "speedup": 3.7751096075936874,
+              "tok_s": 256.6093478115447,
+              "tokens_per_round": 4.707606973058637
+            },
+            "thinking": {
+              "acceptance": 0.40710194730813287,
+              "config": "dflash:15",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.3559669258594553,
+              "plain_tok_s": 67.84579841376869,
+              "speedup": 5.190245096003681,
+              "tok_s": 352.1363225015172,
+              "tokens_per_round": 7.106529209621993
+            },
+            "non_thinking": {
+              "acceptance": 0.5636851177935261,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.1692286801342555,
+              "plain_tok_s": 68.01685833950184,
+              "speedup": 3.5221490326136164,
+              "tok_s": 239.5655118018938,
+              "tokens_per_round": 4.185064935064935
+            }
+          }
         },
         {
           "applies_to": [
@@ -2261,60 +2221,28 @@
             "google/gemma-4-31B-it"
           ],
           "default": {
-            "acceptance": 0.5873550317994762,
-            "config": "mtp:15:2",
+            "acceptance": 0.5705368289637952,
+            "config": "mtp:6",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.45688738272817,
+            "floor_tokens_per_round": 1.3968988497597745,
             "plain_tok_s": 50.77302956509781,
-            "speedup": 3.2087898799400842,
-            "tok_s": 162.91998344238453,
-            "tokens_per_round": 4.88934764657308
+            "speedup": 3.035622258778562,
+            "tok_s": 154.12773869343292,
+            "tokens_per_round": 4.4232209737827715
           },
           "gpu": "NVIDIA GeForce RTX 4090",
           "gpu_class": "ad102",
           "measured_on": "gemma-4-31B-it-qat-UD-Q4_K_XL.ninferno + gemma4_31b_mtp_Q4_0.ninferno, greedy, built-in corpus; RTX 4090",
           "measured_at": "2026-10-05",
           "non_thinking": {
-            "acceptance": 0.5688448074679113,
-            "config": "mtp:15:2",
+            "acceptance": 0.4922760041194645,
+            "config": "mtp:6",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.4156108253031052,
+            "floor_tokens_per_round": 1.3964445405530785,
             "plain_tok_s": 50.81422671504495,
-            "speedup": 2.957340171111898,
-            "tok_s": 150.2749539283898,
-            "tokens_per_round": 4.214285714285714
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.5705368289637952,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3968988497597745,
-              "plain_tok_s": 50.77302956509781,
-              "speedup": 3.035622258778562,
-              "tok_s": 154.12773869343292,
-              "tokens_per_round": 4.4232209737827715
-            },
-            "non_thinking": {
-              "acceptance": 0.4922760041194645,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.3964445405530785,
-              "plain_tok_s": 50.81422671504495,
-              "speedup": 2.8049835426044107,
-              "tok_s": 142.53306966587047,
-              "tokens_per_round": 3.953656024716787
-            },
-            "thinking": {
-              "acceptance": 0.49173333333333336,
-              "config": "mtp:15",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.773610173080256,
-              "plain_tok_s": 50.64983794514112,
-              "speedup": 4.61882781478008,
-              "tok_s": 233.94288031512139,
-              "tokens_per_round": 8.376
-            }
+            "speedup": 2.8049835426044107,
+            "tok_s": 142.53306966587047,
+            "tokens_per_round": 3.953656024716787
           },
           "source": "spec-tune 2026-09-28T08:13:21Z (ninferno-spec-1, 945 s)",
           "thinking": {
@@ -2338,7 +2266,29 @@
             }
           ],
           "load_measured_on": "gemma-4-31B-it-qat-UD-Q4_K_XL.ninferno, NVIDIA GeForce RTX 4090, C 2,3,4,6, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-05T12:49:56Z",
-          "revision": "01e89a012d10"
+          "revision": "01e89a012d10",
+          "session": {
+            "default": {
+              "acceptance": 0.5873550317994762,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.45688738272817,
+              "plain_tok_s": 50.77302956509781,
+              "speedup": 3.2087898799400842,
+              "tok_s": 162.91998344238453,
+              "tokens_per_round": 4.88934764657308
+            },
+            "non_thinking": {
+              "acceptance": 0.5688448074679113,
+              "config": "mtp:15:2",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4156108253031052,
+              "plain_tok_s": 50.81422671504495,
+              "speedup": 2.957340171111898,
+              "tok_s": 150.2749539283898,
+              "tokens_per_round": 4.214285714285714
+            }
+          }
         },
         {
           "gpu_class": "*",
@@ -2383,28 +2333,28 @@
             "RedHatAI/gemma-4-31B-it-NVFP4"
           ],
           "default": {
-            "acceptance": 0.5787191874148396,
-            "config": "mtp:15:2",
+            "acceptance": 0.41174438687392056,
+            "config": "mtp:10",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 1.2365213190754134,
+            "floor_tokens_per_round": 1.3760808077076032,
             "plain_tok_s": 81.34173367543677,
-            "speedup": 3.614532510184989,
-            "tok_s": 294.0123408046753,
-            "tokens_per_round": 4.678740157480315
+            "speedup": 3.562893286156243,
+            "tok_s": 289.81191679652284,
+            "tokens_per_round": 5.117443868739206
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_31b_nvfp4.ninferno + gemma4_31b_assistant_q8 + gemma4_31b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus; drafter assistant.nvfp4: (RTX 5090, RedHat NVFP4 target, 20x512 temp 1.0, fixed mtp K=6 26B / K=10 31B): aggregate tok/s bf16/q8/nvfp4 26B C1 441.6/526.7/536.9 C2 675.5/752.4/751.5 C4 956.6/1046.8/1068.8; 31B C1 200.7/224.1/230.1 C2 251.3/274.4/274.5 C4 402.1/417.3/421.5; greedy under --activations exact identical to plain for every drafter",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.556146684400532,
-            "config": "mtp:15:2",
+            "acceptance": 0.36209386281588446,
+            "config": "mtp:10",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 1.2084746393587755,
+            "floor_tokens_per_round": 1.375286549067691,
             "plain_tok_s": 81.39094667150417,
-            "speedup": 3.3707423171455,
-            "tok_s": 274.3479081781718,
-            "tokens_per_round": 4.140557939914163
+            "speedup": 3.322799090925749,
+            "tok_s": 270.44576360966016,
+            "tokens_per_round": 4.620938628158845
           },
           "portable": {
             "default": {
@@ -2438,48 +2388,16 @@
               "tokens_per_round": 6.379204892966361
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.41174438687392056,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.3760808077076032,
-              "plain_tok_s": 81.34173367543677,
-              "speedup": 3.562893286156243,
-              "tok_s": 289.81191679652284,
-              "tokens_per_round": 5.117443868739206
-            },
-            "non_thinking": {
-              "acceptance": 0.36209386281588446,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.375286549067691,
-              "plain_tok_s": 81.39094667150417,
-              "speedup": 3.322799090925749,
-              "tok_s": 270.44576360966016,
-              "tokens_per_round": 4.620938628158845
-            },
-            "thinking": {
-              "acceptance": 0.537920489296636,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.3777133901878384,
-              "plain_tok_s": 81.19445112005161,
-              "speedup": 4.545936031762109,
-              "tok_s": 369.10478092578995,
-              "tokens_per_round": 6.379204892966361
-            }
-          },
           "source": "spec-tune 2026-09-26T14:29:45Z (ninferno-spec-1, 607 s)",
           "thinking": {
-            "acceptance": 0.4162037037037037,
-            "config": "dflash:15",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.4232132184285837,
+            "acceptance": 0.537920489296636,
+            "config": "mtp:10",
+            "drafter": "assistant.nvfp4",
+            "floor_tokens_per_round": 1.3777133901878384,
             "plain_tok_s": 81.19445112005161,
-            "speedup": 4.996518454882482,
-            "tok_s": 405.6895734553915,
-            "tokens_per_round": 7.243055555555555
+            "speedup": 4.545936031762109,
+            "tok_s": 369.10478092578995,
+            "tokens_per_round": 6.379204892966361
           },
           "load": [
             {
@@ -2499,7 +2417,39 @@
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "69f13210b39b"
+          "revision": "69f13210b39b",
+          "session": {
+            "default": {
+              "acceptance": 0.5787191874148396,
+              "config": "mtp:15:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 1.2365213190754134,
+              "plain_tok_s": 81.34173367543677,
+              "speedup": 3.614532510184989,
+              "tok_s": 294.0123408046753,
+              "tokens_per_round": 4.678740157480315
+            },
+            "thinking": {
+              "acceptance": 0.4162037037037037,
+              "config": "dflash:15",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.4232132184285837,
+              "plain_tok_s": 81.19445112005161,
+              "speedup": 4.996518454882482,
+              "tok_s": 405.6895734553915,
+              "tokens_per_round": 7.243055555555555
+            },
+            "non_thinking": {
+              "acceptance": 0.556146684400532,
+              "config": "mtp:15:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 1.2084746393587755,
+              "plain_tok_s": 81.39094667150417,
+              "speedup": 3.3707423171455,
+              "tok_s": 274.3479081781718,
+              "tokens_per_round": 4.140557939914163
+            }
+          }
         },
         {
           "applies_to": [],
@@ -2559,48 +2509,16 @@
               "tokens_per_round": 5.294117647058823
             }
           },
-          "served": {
-            "default": {
-              "acceptance": 0.5676850471932439,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.650974493429623,
-              "plain_tok_s": 44.59205006287823,
-              "speedup": 2.574432873932666,
-              "tok_s": 114.79923959792492,
-              "tokens_per_round": 4.406110283159464
-            },
-            "non_thinking": {
-              "acceptance": 0.5068349106203995,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.651104777286281,
-              "plain_tok_s": 44.63481586800267,
-              "speedup": 2.4212046503258837,
-              "tok_s": 108.07002374604761,
-              "tokens_per_round": 4.041009463722397
-            },
-            "thinking": {
-              "acceptance": 0.7156862745098039,
-              "config": "mtp:6",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6497632683154486,
-              "plain_tok_s": 44.46424293889543,
-              "speedup": 3.174911069363542,
-              "tok_s": 141.1700170975688,
-              "tokens_per_round": 5.294117647058823
-            }
-          },
           "source": "spec-tune 2026-10-11T21:12:36Z (ninferno-spec-1, 907 s)",
           "thinking": {
-            "acceptance": 0.6419098143236074,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.710394978399746,
+            "acceptance": 0.7156862745098039,
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.6497632683154486,
             "plain_tok_s": 44.46424293889543,
-            "speedup": 3.176085530716486,
-            "tok_s": 141.22223863248846,
-            "tokens_per_round": 5.493368700265252
+            "speedup": 3.174911069363542,
+            "tok_s": 141.1700170975688,
+            "tokens_per_round": 5.294117647058823
           },
           "load": [
             {
@@ -2613,7 +2531,19 @@
             }
           ],
           "load_measured_on": "A100-SXM4-40GB, gemma-4-31B-it Q4 8K, short greedy, fixed MTP depths 1/2/3/6 at C=1/2/4/8 (a request at C4 depth 3 1.35x plain C1, depth 1 1.11; at C8 depth 1 0.87, depth 3 0.71), 2026-10-14",
-          "revision": "92519a78aba6"
+          "revision": "92519a78aba6",
+          "session": {
+            "thinking": {
+              "acceptance": 0.6419098143236074,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.710394978399746,
+              "plain_tok_s": 44.46424293889543,
+              "speedup": 3.176085530716486,
+              "tok_s": 141.22223863248846,
+              "tokens_per_round": 5.493368700265252
+            }
+          }
         },
         {
           "applies_to": [],
@@ -2702,76 +2632,76 @@
             "nvidia/Gemma-4-31B-IT-NVFP4"
           ],
           "default": {
-            "acceptance": 0.5818927994030593,
-            "config": "mtp:15:2",
+            "acceptance": 0.40458015267175573,
+            "config": "mtp:10",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 1.1936602587917864,
+            "floor_tokens_per_round": 1.318969023594198,
             "plain_tok_s": 67.97401254135013,
-            "speedup": 3.7751096075936874,
-            "tok_s": 256.6093478115447,
-            "tokens_per_round": 4.707606973058637
+            "speedup": 3.6465676865663608,
+            "tok_s": 247.87183765954396,
+            "tokens_per_round": 5.0458015267175576
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
           "measured_on": "gemma4_31b_nvidia_nvfp4.ninferno + gemma4_31b_assistant_q8 + gemma4_31b_dflash_q8, context 4096, chunk 2048, RTX 5090 (575 W), greedy, built-in corpus; drafter assistant.nvfp4: (RTX 5090, RedHat NVFP4 target, 20x512 temp 1.0, fixed mtp K=6 26B / K=10 31B): aggregate tok/s bf16/q8/nvfp4 26B C1 441.6/526.7/536.9 C2 675.5/752.4/751.5 C4 956.6/1046.8/1068.8; 31B C1 200.7/224.1/230.1 C2 251.3/274.4/274.5 C4 402.1/417.3/421.5; greedy under --activations exact identical to plain for every drafter",
           "measured_at": "2026-09-28",
           "non_thinking": {
-            "acceptance": 0.5636851177935261,
-            "config": "mtp:15:2",
+            "acceptance": 0.3531615925058548,
+            "config": "mtp:10",
             "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 1.1692286801342555,
+            "floor_tokens_per_round": 1.3179601439163873,
             "plain_tok_s": 68.01685833950184,
-            "speedup": 3.5221490326136164,
-            "tok_s": 239.5655118018938,
-            "tokens_per_round": 4.185064935064935
-          },
-          "served": {
-            "default": {
-              "acceptance": 0.40458015267175573,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.318969023594198,
-              "plain_tok_s": 67.97401254135013,
-              "speedup": 3.6465676865663608,
-              "tok_s": 247.87183765954396,
-              "tokens_per_round": 5.0458015267175576
-            },
-            "non_thinking": {
-              "acceptance": 0.3531615925058548,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.3179601439163873,
-              "plain_tok_s": 68.01685833950184,
-              "speedup": 3.380643658843763,
-              "tok_s": 229.9407608399114,
-              "tokens_per_round": 4.531615925058548
-            },
-            "thinking": {
-              "acceptance": 0.5396923076923077,
-              "config": "mtp:10",
-              "drafter": "assistant.nvfp4",
-              "floor_tokens_per_round": 1.3213046307645762,
-              "plain_tok_s": 67.84579841376869,
-              "speedup": 4.769179124038989,
-              "tok_s": 323.56876544870323,
-              "tokens_per_round": 6.396923076923077
-            }
+            "speedup": 3.380643658843763,
+            "tok_s": 229.9407608399114,
+            "tokens_per_round": 4.531615925058548
           },
           "source": "spec-tune 2026-09-26T14:50:05Z (ninferno-spec-1, 716 s)",
           "thinking": {
-            "acceptance": 0.40710194730813287,
-            "config": "dflash:15",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.3559669258594553,
+            "acceptance": 0.5396923076923077,
+            "config": "mtp:10",
+            "drafter": "assistant.nvfp4",
+            "floor_tokens_per_round": 1.3213046307645762,
             "plain_tok_s": 67.84579841376869,
-            "speedup": 5.190245096003681,
-            "tok_s": 352.1363225015172,
-            "tokens_per_round": 7.106529209621993
+            "speedup": 4.769179124038989,
+            "tok_s": 323.56876544870323,
+            "tokens_per_round": 6.396923076923077
           },
           "requires": [
             "assistant.nvfp4"
           ],
-          "revision": "ff1485492a65"
+          "revision": "ff1485492a65",
+          "session": {
+            "default": {
+              "acceptance": 0.5818927994030593,
+              "config": "mtp:15:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 1.1936602587917864,
+              "plain_tok_s": 67.97401254135013,
+              "speedup": 3.7751096075936874,
+              "tok_s": 256.6093478115447,
+              "tokens_per_round": 4.707606973058637
+            },
+            "thinking": {
+              "acceptance": 0.40710194730813287,
+              "config": "dflash:15",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.3559669258594553,
+              "plain_tok_s": 67.84579841376869,
+              "speedup": 5.190245096003681,
+              "tok_s": 352.1363225015172,
+              "tokens_per_round": 7.106529209621993
+            },
+            "non_thinking": {
+              "acceptance": 0.5636851177935261,
+              "config": "mtp:15:2",
+              "drafter": "assistant.nvfp4",
+              "floor_tokens_per_round": 1.1692286801342555,
+              "plain_tok_s": 68.01685833950184,
+              "speedup": 3.5221490326136164,
+              "tok_s": 239.5655118018938,
+              "tokens_per_round": 4.185064935064935
+            }
+          }
         }
       ],
       "evidence": "2026-09-23: the profiles below are measured on the built-in corpus"
@@ -2845,9 +2775,18 @@
             "tokens_per_round": 4.8443627450980395
           },
           "revision": "8f51a956bfe7",
-          "notes": [
-            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
-          ]
+          "session": {
+            "thinking": {
+              "acceptance": 0.6442522321428571,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.036524569176732,
+              "plain_tok_s": 111.71717723088977,
+              "speedup": 3.8590498662053254,
+              "tok_s": 431.1221578457018,
+              "tokens_per_round": 5.509765625
+            }
+          }
         },
         {
           "applies_to": [
@@ -2889,9 +2828,18 @@
             "tokens_per_round": 4.24066091954023
           },
           "revision": "8d5dfb5d52f5",
-          "notes": [
-            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
-          ]
+          "session": {
+            "thinking": {
+              "acceptance": 0.6386999244142101,
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.4071936855427953,
+              "plain_tok_s": 179.5761082325659,
+              "speedup": 3.8502087336325297,
+              "tok_s": 691.4055002687656,
+              "tokens_per_round": 5.470899470899471
+            }
+          }
         },
         {
           "applies_to": [],
@@ -3239,9 +3187,13 @@
             "floor_tokens_per_round": 1.4646977560946763
           },
           "revision": "c55ba6a1a3fa",
-          "notes": [
-            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
-          ]
+          "session": {
+            "thinking": {
+              "config": "dflash:7",
+              "drafter": "dflash",
+              "floor_tokens_per_round": 1.4071936855427953
+            }
+          }
         }
       ],
       "evidence": "RTX 5080 (gb203) 2026-09-24: spec-bench over the spec-tune configurations and the built-in corpus with a build that has the 12B geometry support and no spec-tune yet; tokenizer fingerprint equal to 26B/31B (tools/spec/tokenize_corpus.py --check on RedHatAI/gemma-4-12B-it-NVFP4); RTX 5090 (gb202) 2026-09-25: spec-tune on the built-in corpus, target and both drafters from ninferno-convert --fetch (the product path); math re-tuned 2026-09-25 on 64 GSM8K Platinum prompts (the built-in corpus's 8 math prompts chose dflash:7, which lost 2.8% to mtp:6 on the larger sample)"
