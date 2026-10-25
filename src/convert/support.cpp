@@ -350,7 +350,8 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
         const auto name  = sibling.value("rfilename", std::string());
         const auto lower = ascii_lower(name);
         has_config       = has_config || name == "config.json";
-        has_tokenizer    = has_tokenizer || name == "tokenizer_config.json";
+        has_tokenizer    = has_tokenizer ||
+                        (name == "tokenizer_config.json" && include_selects(options, name));
         // A template beside the model is one when the fetch takes it (--include may not).
         has_template     = has_template ||
                        (name == "chat_template.jinja" && include_selects(options, name));
