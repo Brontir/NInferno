@@ -80,6 +80,9 @@ For a hub id:
   - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
   - `--refetch` downloads the new commit, converts it and removes the old conversion
     (`--keep-replaced` leaves it, for ninferno-ui to remove once the new one serves).
+- `--round-tiny-scales` passes the converter's flag (docs/weight-conversion.md): a published integer
+  matrix whose only inexact binary16 scales lie below binary16's normal range is kept with them
+  rounded, the report counting them. Off by default: such a model is refused, naming the flag.
   - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not

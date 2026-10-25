@@ -278,6 +278,7 @@ a.btnlink:hover{background:var(--soft)}
 <div id="tip" hidden></div>
 <div class="drawer" id="drawer" hidden>
   <div class="head"><b id="drawertitle"></b><span style="flex:1"></span><button class="ghost" id="drawerclose">✕</button></div>
+  <div id="logact" hidden style="padding:8px 12px;border-bottom:1px solid var(--line)"></div>
   <pre class="log" id="log"></pre>
 </div>
 
@@ -294,7 +295,7 @@ const T = {
     llama:"llama.cpp",downloads:"downloads",likes:"likes",noDl:"No downloads.",done:"done",failed:"failed",cancel:"Cancel",here:"downloaded",
     localonly:"localhost only",exposed:"open to the network, with a key",nogpu:"no NVIDIA GPU visible",vision:"takes images",spec:"speculative heads",
     ago:"ago",justNow:"just now",min:"min",h:"h",d:"days",tokens:"tok",perReq:"per request",free:"freed",fail:"error",onGpu:"on GPU",openHf:"on Hugging Face",
-    nothing:"nothing found",loading:"loading…",readingRepo:"Reading the repository: its files, then the model header (a large GGUF repository takes a few seconds)…",speculation:"speculation",specFallback:"spec fallback",profOwn:"own profile",profSimilar:"profile from",profGeneric:"generic profile",profNone:"no profile",
+    nothing:"nothing found",loading:"loading…",readingRepo:"Reading the repository: its files, then the model header (a large GGUF repository takes a few seconds)…",speculation:"speculation",specFallback:"spec fallback",rtsRetry:"Run with tiny scales rounded",rtsNote:"Some of this model's scales are too small for the 16-bit format the engine keeps them in: rounding them changes those weights slightly (the conversion report counts them)",profOwn:"own profile",profSimilar:"profile from",profGeneric:"generic profile",profNone:"no profile",
     ctxCol:"Context",quantTip:"The weights' format as the repository publishes it; ★ is what we would pick for this card, ✓ is downloaded",
     sizeTip:"Download size of the weights",
     ctxColTip:"How much context the card holds beside the weights\n256K ×3 + 40K: three requests at the model's full length at once, and 40K of cache left over for one more, shorter one",
@@ -1311,10 +1312,19 @@ async function refreshLog() {
     const el = $("log"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
     el.textContent = j.lines.join("\n");
     if (atEnd) el.scrollTop = el.scrollHeight;
+    renderLogAction(j.lines);
   } catch (e) {}
 }
-function openLog(id, title) { logId = id; $("drawer").hidden = false; $("drawertitle").textContent = title || "#" + id; refreshLog(); }
-function showError(msg) { $("drawer").hidden = false; $("drawertitle").textContent = t("fail"); $("log").textContent = msg; logId = 0; }
+// A start the converter refused because some scales lie below binary16's normal range: the
+// refusal names --round-tiny-scales, and the drawer offers that start again with it.
+function renderLogAction(lines) {
+  const act = $("logact"), p = S.processes && S.processes.find(x => x.id === logId);
+  const offer = !!p && !live(p) && lines.some(l => l.includes("--round-tiny-scales keeps it"));
+  act.hidden = !offer;
+  act.innerHTML = offer ? `<button class="primary" data-rts="${p.id}">${esc(t("rtsRetry"))}</button> <span class="muted">${esc(t("rtsNote"))}</span>` : "";
+}
+function openLog(id, title) { logId = id; $("logact").hidden = true; $("drawer").hidden = false; $("drawertitle").textContent = title || "#" + id; refreshLog(); }
+function showError(msg) { $("logact").hidden = true; $("drawer").hidden = false; $("drawertitle").textContent = t("fail"); $("log").textContent = msg; logId = 0; }
 $("drawerclose").onclick = () => { $("drawer").hidden = true; logId = 0; };
 
 // ---- tabs -------------------------------------------------------------------------------------
@@ -2640,7 +2650,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.fitctx !== undefined) {
@@ -2654,6 +2664,12 @@ document.addEventListener("click", async ev => {
     if (chatUi) openChat(+d.chat); else showError(t("noChat"));
   }
   else if (d.log) { const p = S.processes.find(x => x.id === +d.log); openLog(+d.log, p ? shortName(p.model) : ""); }
+  else if (d.rts) {
+    // The refused launch again as it was, with --round-tiny-scales (/api/retry_rounded).
+    api("/api/retry_rounded", {id: +d.rts})
+      .then(j => { openLog(j.id, $("drawertitle").textContent); refreshState(); })
+      .catch(e => showError(e.message));
+  }
   else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
   else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }
   else if (d.run !== undefined) {
