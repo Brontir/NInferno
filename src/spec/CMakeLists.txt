@@ -18,6 +18,7 @@ add_library(ninferno_spec STATIC
   load_model.cpp
   manifest.cpp
   menu.cpp
+  pairs.cpp
   profile.cpp
   registry.cpp
 )

@@ -1,0 +1,85 @@
+#pragma once
+
+// Speculation measured per pair: a target's weights and the drafter that drafts for them, as the
+// lab's spec-tune measured them on one card. A profile (spec/profile.h) is built from a pair's
+// measurements for the card a model runs on; nothing is estimated from the card's rates and no
+// other model's profile stands in.
+//
+// What carries from the lab card to another (measured on four cards, four families):
+//   - tokens per round (E): the pair's own, on any card (within 2.6 %);
+//   - a round's price in plain decode steps (R): on any card while a round verifies at most
+//     kPortableDepth drafts of one request; deeper drafts and rounds of several requests are the
+//     generation's (Ada and Blackwell part at k >= 8 and under load), so they are taken only on a
+//     card of the lab card's generation.
+//
+// A target nobody measured takes its group's choice (profile_for_group): the pairs of the same
+// engine and drafter kind, of the same bit class (below 4 bits drafts pay less), the depth that is
+// best on average over them, no deeper than kPortableDepth, one request at a time.
+
+#include "spec/profile.h"
+
+#include <nlohmann/json.hpp>
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace ninferno::spec {
+
+// The deepest draft whose round price carries between GPU generations (one request).
+inline constexpr std::int32_t kPortableDepth = 7;
+
+struct MeasuredPair {
+    // The target's weights: the SHA-256 of its weight files, sorted and comma-joined (the
+    // checkpoint's or GGUF's own files, as the hub lists them), so a new commit that changes no
+    // weight keeps the pair.
+    std::string target;
+    std::string target_repo; // org/name@commit: for people and for the download
+    std::string engine;      // qwen3_5 | gemma4 | dense | nemotron_h
+    double target_bits = 0;  // bits per weight of the target's weights (its quantization)
+    // The lab card's architecture generation (DeviceClass's arch key: "sm89", "sm120").
+    std::string generation;
+    // The lab's spec-tune of the pair, as it wrote it: its key (engine version), drafters (kind,
+    // mode, name, repo@commit of a separate one), measurements (one request at a time) and, from
+    // spec-tune --load on that card, its load bounds.
+    Profile tune;
+};
+
+[[nodiscard]] nlohmann::json pair_json(const MeasuredPair& pair);
+// Throws std::runtime_error naming what is missing or malformed.
+[[nodiscard]] MeasuredPair parse_pair(const nlohmann::json& doc);
+
+// The generation key of a device (its chain's architecture, "sm89"); "" when the chain names none.
+[[nodiscard]] std::string gpu_generation(const GpuKey& gpu);
+
+// The profile the pair's measurements give on a card of `generation`: select() over them (and the
+// serving Engine's support, when given), deeper than kPortableDepth only on the lab card's
+// generation; its load bounds there, elsewhere one request speculates and two or more decode
+// plainly.
+[[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
+                                       const SelectOptions& options = {});
+
+// The group of a target nobody measured: the pairs of `engine` drafting with `kind`, of the
+// target's bit class (below 4 bits, or 4 and above) when any is, else of the other.
+[[nodiscard]] std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
+                                                          std::string_view engine,
+                                                          std::string_view kind,
+                                                          double target_bits);
+
+// The choice for a target nobody measured, from its group: per default (overall, thinking,
+// non-thinking) the configuration of that kind up to kPortableDepth, measured on every pair, with
+// the highest mean speed relative to each pair's best; its floor the highest any pair measured for
+// it. Plain decode where a pair's tokens per round scaled down by kFineTuneAcceptance would make it
+// gain less than kPreliminaryGain on any pair. One request speculates (load: plain from two rows).
+// nullopt for an empty group.
+[[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
+                                                       std::string_view kind);
+
+// A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
+// fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
+// 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
+inline constexpr double kFineTuneAcceptance = 0.535;
+inline constexpr double kPreliminaryGain    = 1.05;
+
+} // namespace ninferno::spec
