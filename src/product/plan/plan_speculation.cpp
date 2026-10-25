@@ -258,14 +258,10 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         SpeculationAsk explicit_ask = ask;
         SpeculativeOptions& given   = explicit_ask.given;
         if (ask.depth_from_profile && given.backend != SpeculativeBackend::None) {
-            // GenerationService: the profile's depth for this backend, else the default.
-            given.draft_tokens = default_draft_tokens(given.backend);
-            if (subject != nullptr && subject->resolved && subject->resolved->found()) {
-                const spec::Choice& choice = spec::pick(subject->resolved->profile, ask.thinking);
-                if (backend_of(choice.config.mode) == given.backend && choice.config.k > 0) {
-                    given.draft_tokens = static_cast<std::uint32_t>(choice.config.k);
-                }
-            }
+            // The profile's depth for this backend, else the default (as GenerationService).
+            const auto depth   = subject != nullptr ? profile_depth(*subject, given.backend, ask.thinking)
+                                                    : std::nullopt;
+            given.draft_tokens = depth.value_or(default_draft_tokens(given.backend));
         }
         const bool drafts        = given.backend != SpeculativeBackend::None;
         r.ask                    = drafts ? label_of(given) : "none";

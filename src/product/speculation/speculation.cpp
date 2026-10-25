@@ -226,35 +226,6 @@ spec::EngineSupport engine_support(const std::filesystem::path& artifact) {
     }
 }
 
-std::optional<SpeculativeOptions> speculation_of(const spec::Choice& choice,
-                                                 const spec::ResolvedSpeculation& resolved,
-                                                 bool proposal_head,
-                                                 std::vector<std::string>* notes) {
-    SpeculativeOptions out;
-    if (!choice.config.enabled()) { return out; }
-    if (!drafter_present(choice, resolved)) {
-        if (notes) { notes->push_back("drafter '" + choice.drafter + "' is not in the artifact"); }
-        return std::nullopt;
-    }
-    out.backend       = backend_of(choice.config.mode);
-    out.drafter       = separate_drafter(choice, resolved);
-    out.draft_tokens  = static_cast<std::uint32_t>(choice.config.k);
-    out.proposal_head = choice.config.proposal_head && proposal_head ? ProposalHead::Optimized
-                                                                     : ProposalHead::Full;
-    if (choice.config.proposal_head && !proposal_head && notes) {
-        notes->push_back(choice.config.label() +
-                         ": the artifact has no proposal head; drafting with the full head");
-    }
-    // A profile measured on another GPU (a similar chip's, or the "*" one) brings that GPU's
-    // break-evens: resolve_speculation raised them to the same model's largest on any GPU, or the
-    // registry median for a model measured nowhere (spec::raise_foreign_floors). Nothing is timed.
-    out.acceptance_floor = watchdog_floor(
-        ran_floor(resolved, choice.config, proposal_head, choice.floor_tokens_per_round, notes));
-    out.context_limit = resolved.profile.context_limit; // as the served engine's
-    out.decision_sources = decision_sources_of(resolved);
-    return out;
-}
-
 SpeculativeOptions with_given_settings(SpeculativeOptions picked, const SpeculativeOptions& given) {
     picked.watchdog_window     = given.watchdog_window;
     picked.watchdog_min_rounds = given.watchdog_min_rounds;
@@ -266,29 +237,19 @@ SpeculativeOptions with_given_settings(SpeculativeOptions picked, const Speculat
     return picked;
 }
 
-std::optional<SpeculativeOptions> profile_speculation(const std::filesystem::path& artifact,
-                                                      int device, std::optional<bool> thinking,
-                                                      std::string* source,
-                                                      std::vector<std::string>* notes,
-                                                      const std::filesystem::path& local_profile) {
-    const auto resolved = resolve(artifact, device, local_profile);
-    if (!resolved) { return std::nullopt; }
-    if (notes) { *notes = resolved->notes; }
-    if (!resolved->found()) { return std::nullopt; }
-    const spec::Profile profile = engine_choices(resolved->profile, notes);
-    const auto& choice          = spec::pick(profile, thinking.value_or(true));
-    if (!engine_support(artifact).runs(choice.config)) {
-        if (notes) {
-            notes->push_back(choice.config.label() + ": the Engine does not run it for this model");
-        }
+std::optional<std::uint32_t> profile_depth(const SpeculationSubject& subject,
+                                           SpeculativeBackend backend, bool thinking,
+                                           std::string* source) {
+    const auto& resolved = subject.resolved;
+    if (!resolved || !resolved->found() || backend == SpeculativeBackend::None) { return std::nullopt; }
+    const spec::Profile profile = engine_choices(resolved->profile, nullptr);
+    const spec::Choice& choice  = spec::pick(profile, thinking);
+    if (!choice.config.enabled() || choice.config.k <= 0 || backend_of(choice.config.mode) != backend ||
+        !subject.support.runs(choice.config)) {
         return std::nullopt;
     }
-    const auto out = speculation_of(choice, *resolved, has_proposal_head(artifact), notes);
-    if (out && source) {
-        *source = resolved->source + ": " +
-                  (choice.config.enabled() ? choice.config.label() : std::string("plain decode"));
-    }
-    return out;
+    if (source) { *source = resolved->source + ": " + choice.config.label(); }
+    return static_cast<std::uint32_t>(choice.config.k);
 }
 
 double shallower_floor(const std::vector<std::pair<int, double>>& floors, int depth) {

@@ -321,7 +321,7 @@ const T = {
     estNote:"≈ — estimates from the card (memory, bandwidth, clock) and the model's shape, with speculation from the registry profile of this GPU; not measurements. Red rows do not fit the chosen context × requests.",
     toDark:"Dark theme",toLight:"Light theme",avail:"available",memWeights:"weights",memDrafter:"drafter",
     memStates:"states",memRuntime:"workspace and CUDA",noSpec:"without speculation",estBasis:"Estimate of the configuration choice (src/product/choice): the card's rates and the model's bytes and flops, constants fitted on the lab's measurements (decode 5 %, prefill 2 % rms there); not a measurement",choiceHead:"Engine's choice",choiceLine:"KV {kv}, activations {act}{state}: {sec} s for a {p} + {a} token request, KLD {kld}",choiceState:"state {s}",choiceDrafter:"speculation {d}",lambdaLine:"Accuracy against speed: λ {l}, so 0.001 KLD is worth {pct} % of a request's time; where two cost about the same, the more accurate wins",lambdaTip:"KLD: how far the answers' token probabilities move from the exact model (0: the same). On Qwen 3.5 9B, 0.001 KLD cost about 0.04 points of MMLU-Pro: one point is worth about ×1.87 of a request's time at λ 25 (the lab's calibration: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: {time} % more time per request for {kld} less KLD; λ {l}: 0.001 KLD is worth {pct} % of a request's time",choiceAlt:"What another value would change",colAxis:"Setting",colValue:"Value",colOwn:"Context each",colDecode:"Decode",colPrefill:"Prefill",colTime:"Request time",colWhy:"Why not",ax_kv:"KV cache",ax_activations:"Activations",ax_chunk:"Prefill chunk",ax_drafter:"Speculation",choiceNoFit:"does not fit",why_no_fit:"does not hold the asked context",why_lower_worth:"slower or less accurate on balance",why_default:"the family's default (the lab constants behind this choice are not yet confirmed on two cards)",why_default_drafter:"the speculation profile's choice stands (the lab constants for this card's generation are still to come)",why_unmeasured:"the speculation profile's choice stands: this drafter's gain is not measured on this card",why_coupled:"follows the KV cache and the activations (its own flag pins it)",why_tie_context:"the same worth: the chosen keeps more context per stream",why_tie_order:"the same in every respect: the listing order",ax_state:"Recurrent state",ax_ring:"Window rings",notMeasured:"not measured: the axis's worst",transferred:"measured on Qwen 3.5",busyNow:"Now only {free} is free: other processes hold the rest",
-    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this model: the reason is below",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",diskLabel:"Model from disk",diskPlace:"a .gguf file or a Hugging Face checkpoint folder on this machine",diskBad:"Cannot run it: {reason}",hfAs:"Hugging Face: {account}",hfNone:"No Hugging Face token: gated models (Llama, Gemma originals) need one",hfPlace:"hf_… read token",hfSave:"Save",hfRemove:"Remove",hfGet:"Get a token",hfEnv:"set by {source} (change it there)",hfBad:"Token not accepted: {error}",hfFile:"kept in {path}, as `hf auth login` keeps it",sup_token:"Needs a Hugging Face token\nthe repository is gated: accept its terms on the hub and set HF_TOKEN",supShort_token:"needs a token",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Fits {ctx} × {par} with {free} to spare",recWhyRule:"The most precise quantization that fits and decodes within 10 % of the fastest one of 4 bits or more",recWhySlower:"{name} is more precise but {p} % slower than the fastest of 4 bits or more",recWhyNoFit:"{name} is more precise but does not fit at {ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",recWhyLow:"Only quantizations below 4 bits fit: answers are noticeably worse",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
+    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this model: the reason is below",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",diskLabel:"Model from disk",diskPlace:"a .gguf file or a Hugging Face checkpoint folder on this machine",diskBad:"Cannot run it: {reason}",hfAs:"Hugging Face: {account}",hfNone:"No Hugging Face token: gated models (Llama, Gemma originals) need one",hfPlace:"hf_… read token",hfSave:"Save",hfRemove:"Remove",hfGet:"Get a token",hfEnv:"set by {source} (change it there)",hfBad:"Token not accepted: {error}",hfFile:"kept in {path}, as `hf auth login` keeps it",sup_token:"Needs a Hugging Face token\nthe repository is gated: accept its terms on the hub and set HF_TOKEN",supShort_token:"needs a token",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
   ru:{tabModels:"Мои модели",tabFind:"Найти",tabDownloads:"Загрузки",myModels:"Мои модели",arch:"Архитектура",params:"Параметры",publisher:"Автор",model:"Модель",
     quant:"Квант",size:"Размер",modified:"Изменена",run:"Запустить",chat:"Чат",stop:"Стоп",log:"Лог",del:"Удалить",delq:"Удалить?",yes:"Да",no:"Нет",
     calibrate:"Калибровать спекуляцию",original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
@@ -358,7 +358,7 @@ const T = {
     estNote:"≈ — оценка по карте (память, полоса, такты) и форме модели, со спекуляцией по профилю реестра для этой карты; не замер. Красные строки не влезают при выбранном контексте × числе запросов.",
     toDark:"Тёмная тема",toLight:"Светлая тема",avail:"доступно",memWeights:"веса",memDrafter:"черновик",
     memStates:"состояния",memRuntime:"буферы и CUDA",noSpec:"без спекуляции",estBasis:"Оценка модели выбора (src/product/choice): скорость карты, байты и операции модели, константы подогнаны по замерам на стендах (там ошибка декода 5 %, префилла 2 %); не замер",choiceHead:"Выбор движка",choiceLine:"KV {kv}, активации {act}{state}: {sec} с на запрос {p} + {a} токенов, KLD {kld}",choiceState:"состояние {s}",choiceDrafter:"спекуляция {d}",lambdaLine:"Точность против скорости: λ {l}, то есть 0,001 KLD стоит {pct} % времени запроса; при почти равной цене побеждает более точный",lambdaTip:"KLD — насколько вероятности токенов ответа отходят от точной модели (0 — то же самое). На Qwen 3.5 9B 0,001 KLD стоили около 0,04 пункта MMLU-Pro: один пункт при λ 25 стоит примерно ×1,87 времени запроса (калибровка на стендах: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: на {time} % дольше на запрос ради KLD меньше на {kld}; λ {l}: 0,001 KLD стоит {pct} % времени запроса",choiceAlt:"Что изменится при другом значении",colAxis:"Настройка",colValue:"Значение",colOwn:"Контекст на поток",colDecode:"Декод",colPrefill:"Префилл",colTime:"Время запроса",colWhy:"Почему не выбрано",ax_kv:"KV-кэш",ax_activations:"Активации",ax_chunk:"Чанк префилла",ax_drafter:"Спекуляция",choiceNoFit:"не влезает",why_no_fit:"не держит нужный контекст",why_lower_worth:"в сумме медленнее или менее точно",why_default:"умолчание семейства (константы со стендов для этого выбора ещё не подтверждены на двух картах)",why_default_drafter:"остаётся выбор профиля спекуляции (константы со стендов для поколения этой карты ещё впереди)",why_unmeasured:"остаётся выбор профиля спекуляции: выигрыш этого драфтера на этой карте не замерен",why_coupled:"следует за KV-кэшем и активациями (закрепляется своим флагом)",why_tie_context:"та же полезность: выбранный оставляет больше контекста на поток",why_tie_order:"всё одинаково: решает порядок перечисления",ax_state:"Состояние",ax_ring:"Кольца окна",notMeasured:"нет замера: худшее по оси",transferred:"замер на Qwen 3.5",busyNow:"Сейчас свободно только {free}: остальное занято другими процессами",
-    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nдвижок не запускает эту модель: причина ниже",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",diskLabel:"Модель с диска",diskPlace:"файл .gguf или папка чекпойнта Hugging Face на этой машине",diskBad:"Запустить нельзя: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Нет токена Hugging Face: закрытым моделям (оригиналы Llama, Gemma) он нужен",hfPlace:"hf_… токен для чтения",hfSave:"Сохранить",hfRemove:"Удалить",hfGet:"Получить токен",hfEnv:"задан в {source} (меняйте там)",hfBad:"Токен не принят: {error}",hfFile:"хранится в {path}, как его хранит `hf auth login`",sup_token:"Нужен токен Hugging Face\nрепозиторий закрыт: примите условия на хабе и задайте HF_TOKEN",supShort_token:"нужен токен",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Влезает при {ctx} × {par}, запас {free}",recWhyRule:"Самый точный квант из тех, что влезают и по декоду не медленнее лучшего 4-битного больше чем на 10 %",recWhySlower:"{name} точнее, но на {p} % медленнее лучшего 4-битного",recWhyNoFit:"{name} точнее, но не влезает при {ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",recWhyLow:"Влезают только кванты меньше 4 бит: ответы заметно хуже",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
+    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nдвижок не запускает эту модель: причина ниже",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",diskLabel:"Модель с диска",diskPlace:"файл .gguf или папка чекпойнта Hugging Face на этой машине",diskBad:"Запустить нельзя: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Нет токена Hugging Face: закрытым моделям (оригиналы Llama, Gemma) он нужен",hfPlace:"hf_… токен для чтения",hfSave:"Сохранить",hfRemove:"Удалить",hfGet:"Получить токен",hfEnv:"задан в {source} (меняйте там)",hfBad:"Токен не принят: {error}",hfFile:"хранится в {path}, как его хранит `hf auth login`",sup_token:"Нужен токен Hugging Face\nрепозиторий закрыт: примите условия на хабе и задайте HF_TOKEN",supShort_token:"нужен токен",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
 // New words of every language; a language without a word falls back to English.
 Object.assign(T.en, {
   
@@ -435,10 +435,8 @@ T.uk = {
   basisLoad:"За кількістю запитів: замір на {gpu} ({run})",basisKind:"За кількістю запитів: середнє виміряних {kind}-моделей (RTX 4090)",dense:"щільних",
   extrap:"Далі за виміряну кількість запитів: екстраполяція",
   speedLine:"Декод при {depth} контексту: ≈ {one} ток/с на запит, {all} ток/с на {n}",speedLine1:"Декод при {depth} контексту: ≈ {one} ток/с",
-  ctxTimes:"{ctx} × {par}",recWhyFit:"Вміщується при {ctx} × {par}, запас {free}",
-  recWhyRule:"Найточніший квант з тих, що вміщуються й за декодом не повільніші за найкращий 4-бітний більш ніж на 10 %",
-  recWhySlower:"{name} точніший, але на {p} % повільніший за найкращий 4-бітний",recWhyNoFit:"{name} точніший, але не вміщується при {ctx} × {par}",
-  recWhyLow:"Вміщуються лише кванти менше 4 біт: відповіді помітно гірші",recNone:"Нічого не вміщується при {ctx} × {par}: зменште контекст або кількість запитів",
+  ctxTimes:"{ctx} × {par}",
+  recNone:"Нічого не вміщується при {ctx} × {par}: зменште контекст або кількість запитів",
   selected:"Вибрано",unsupportedRun:"Цю архітектуру рушій не запускає",launching:"Запуск…",maxCtx:"макс",visionProj:"проєктор зображень",
   hubTip:"Де шукати й звідки завантажувати",searchHub:"Пошук у {hub} (можна org/name)",
   chatTitle:"Чат",closeChat:"Закрити чат",newTab:"Відкрити в новій вкладці",language:"Мова",memDetail:"ваги {w} + KV {kv} + інше {o}"};
@@ -575,13 +573,8 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   basisLoad:"Über Anfragen: gemessen auf der {gpu} ({run})",basisKind:"Über Anfragen: Mittel der gemessenen {kind}-Modelle (RTX 4090)",dense:"dichten",
   extrap:"Jenseits der gemessenen Anfragezahlen: extrapoliert",
   speedLine:"Decode bei {depth} Kontext: ≈ {one} Tok/s pro Anfrage, {all} Tok/s für {n}",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"Passt bei {ctx} × {par}, {free} Reserve",
-  recWhyRule:"Die genaueste Quantisierung, die passt und höchstens 10 % langsamer dekodiert als die schnellste mit 4 Bit oder mehr",
-  recWhySlower:"{name} ist genauer, aber {p} % langsamer als die schnellste mit 4 Bit oder mehr",
-  recWhyNoFit:"{name} ist genauer, passt aber nicht bei {ctx} × {par}",
   recNone:"Nichts passt bei {ctx} × {par}: Kontext oder Anfragezahl verringern",
   unsupportedRun:"Die Engine führt diese Architektur nicht aus",
-  recWhyLow:"Nur Quantisierungen unter 4 Bit passen: die Antworten sind merklich schlechter",
   speedLine1:"Decode bei {depth} Kontext: ≈ {one} Tok/s",visionProj:"Bildprojektor",
   
   hubTip:"Wo gesucht und heruntergeladen wird",
@@ -634,13 +627,8 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   basisLoad:"Selon les requêtes : mesuré sur la {gpu} ({run})",basisKind:"Selon les requêtes : moyenne des modèles {kind} mesurés (RTX 4090)",dense:"denses",
   extrap:"Au-delà des nombres de requêtes mesurés : extrapolé",
   speedLine:"Décodage à {depth} de contexte : ≈ {one} tok/s par requête, {all} tok/s pour {n}",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"Tient à {ctx} × {par} avec {free} de marge",
-  recWhyRule:"La quantification la plus précise qui tient et décode à moins de 10 % de la plus rapide de 4 bits ou plus",
-  recWhySlower:"{name} est plus précise mais {p} % plus lente que la plus rapide de 4 bits ou plus",
-  recWhyNoFit:"{name} est plus précise mais ne tient pas à {ctx} × {par}",
   recNone:"Rien ne tient à {ctx} × {par} : réduisez le contexte ou le nombre de requêtes",
   unsupportedRun:"Le moteur n'exécute pas cette architecture",
-  recWhyLow:"Seules des quantifications sous 4 bits tiennent : les réponses sont nettement moins bonnes",
   speedLine1:"Décodage à {depth} de contexte : ≈ {one} tok/s",visionProj:"projecteur d'images",
   
   hubTip:"Où chercher et télécharger",
@@ -693,13 +681,8 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   basisLoad:"Según solicitudes: medido en la {gpu} ({run})",basisKind:"Según solicitudes: media de los modelos {kind} medidos (RTX 4090)",dense:"densos",
   extrap:"Más allá de los números de solicitudes medidos: extrapolado",
   speedLine:"Decodificación con {depth} de contexto: ≈ {one} tok/s por solicitud, {all} tok/s para {n}",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"Cabe con {ctx} × {par} y {free} de margen",
-  recWhyRule:"La cuantización más precisa que cabe y decodifica a menos de un 10 % de la más rápida de 4 bits o más",
-  recWhySlower:"{name} es más precisa pero un {p} % más lenta que la más rápida de 4 bits o más",
-  recWhyNoFit:"{name} es más precisa pero no cabe con {ctx} × {par}",
   recNone:"Nada cabe con {ctx} × {par}: reduzca el contexto o el número de solicitudes",
   unsupportedRun:"El motor no ejecuta esta arquitectura",
-  recWhyLow:"Solo caben cuantizaciones de menos de 4 bits: las respuestas son notablemente peores",
   speedLine1:"Decodificación con {depth} de contexto: ≈ {one} tok/s",visionProj:"proyector de imágenes",
   
   hubTip:"Dónde buscar y descargar",
@@ -752,13 +735,8 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   basisLoad:"Per richieste: misurato sulla {gpu} ({run})",basisKind:"Per richieste: media dei modelli {kind} misurati (RTX 4090)",dense:"densi",
   extrap:"Oltre i numeri di richieste misurati: estrapolato",
   speedLine:"Decodifica con {depth} di contesto: ≈ {one} tok/s per richiesta, {all} tok/s per {n}",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"Entra con {ctx} × {par} con {free} di margine",
-  recWhyRule:"La quantizzazione più precisa che entra e decodifica entro il 10 % della più veloce da 4 bit in su",
-  recWhySlower:"{name} è più precisa ma più lenta del {p} % rispetto alla più veloce da 4 bit in su",
-  recWhyNoFit:"{name} è più precisa ma non entra con {ctx} × {par}",
   recNone:"Niente entra con {ctx} × {par}: riduci il contesto o il numero di richieste",
   unsupportedRun:"Il motore non esegue questa architettura",
-  recWhyLow:"Entrano solo quantizzazioni sotto i 4 bit: le risposte sono sensibilmente peggiori",
   speedLine1:"Decodifica con {depth} di contesto: ≈ {one} tok/s",visionProj:"proiettore di immagini",
   
   hubTip:"Dove cercare e scaricare",
@@ -811,13 +789,8 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   basisLoad:"Według zapytań: zmierzone na {gpu} ({run})",basisKind:"Według zapytań: średnia zmierzonych modeli {kind} (RTX 4090)",dense:"gęstych",
   extrap:"Poza zmierzonymi liczbami zapytań: ekstrapolacja",
   speedLine:"Dekodowanie przy {depth} kontekstu: ≈ {one} tok/s na zapytanie, {all} tok/s dla {n}",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"Mieści się przy {ctx} × {par} z zapasem {free}",
-  recWhyRule:"Najdokładniejsza kwantyzacja, która się mieści i dekoduje najwyżej 10 % wolniej od najszybszej z 4 lub więcej bitami",
-  recWhySlower:"{name} jest dokładniejsza, ale o {p} % wolniejsza od najszybszej z 4 lub więcej bitami",
-  recWhyNoFit:"{name} jest dokładniejsza, ale nie mieści się przy {ctx} × {par}",
   recNone:"Nic się nie mieści przy {ctx} × {par}: zmniejsz kontekst lub liczbę zapytań",
   unsupportedRun:"Silnik nie uruchamia tej architektury",
-  recWhyLow:"Mieszczą się tylko kwantyzacje poniżej 4 bitów: odpowiedzi są zauważalnie gorsze",
   speedLine1:"Dekodowanie przy {depth} kontekstu: ≈ {one} tok/s",visionProj:"projektor obrazów",
   
   hubTip:"Gdzie szukać i skąd pobierać",
@@ -870,13 +843,8 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   basisLoad:"按请求数：在 {gpu} 上测得（{run}）",basisKind:"按请求数：已测 {kind} 模型的平均值（RTX 4090）",dense:"稠密",
   extrap:"超出已测请求数：外推",
   speedLine:"上下文 {depth} 时解码：每个请求 ≈ {one} tok/s，{n} 合计 {all} tok/s",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"在 {ctx} × {par} 下可放下，余 {free}",
-  recWhyRule:"能放下且解码速度不低于 4 位及以上最快量化 90 % 的最精确量化",
-  recWhySlower:"{name} 更精确，但比 4 位及以上最快的慢 {p} %",
-  recWhyNoFit:"{name} 更精确，但在 {ctx} × {par} 下放不下",
   recNone:"在 {ctx} × {par} 下都放不下：请减小上下文或请求数",
   unsupportedRun:"引擎不运行此架构",
-  recWhyLow:"只有低于 4 位的量化能放下：回答质量明显下降",
   speedLine1:"上下文 {depth} 时解码：≈ {one} tok/s",visionProj:"图像投影器",
   
   hubTip:"在哪里搜索和下载",
@@ -929,13 +897,8 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   basisLoad:"リクエスト数ごと：{gpu} で測定（{run}）",basisKind:"リクエスト数ごと：測定済み {kind} モデルの平均（RTX 4090）",dense:"密",
   extrap:"測定したリクエスト数の範囲外：外挿",
   speedLine:"コンテキスト {depth} でのデコード：リクエストあたり ≈ {one} tok/s、{n} 合計 {all} tok/s",ctxTimes:"{ctx} × {par}",
-  recWhyFit:"{ctx} × {par} で収まり、余裕 {free}",
-  recWhyRule:"収まる量子化のうち、4 ビット以上で最速のものとのデコード速度差が 10 % 以内で最も精度の高いもの",
-  recWhySlower:"{name} はより高精度ですが、4 ビット以上で最速のものより {p} % 遅い",
-  recWhyNoFit:"{name} はより高精度ですが、{ctx} × {par} では収まりません",
   recNone:"{ctx} × {par} で収まるものがありません：コンテキストかリクエスト数を減らしてください",
   unsupportedRun:"エンジンはこのアーキテクチャを実行しません",
-  recWhyLow:"4 ビット未満の量子化しか収まりません：回答の質が明らかに落ちます",
   speedLine1:"コンテキスト {depth} でのデコード：≈ {one} tok/s",visionProj:"画像プロジェクター",
   
   hubTip:"検索とダウンロードの場所",
@@ -1807,7 +1770,9 @@ function ruleText(doc, ask, tr) {
   const n = v.concurrency || ask.par || 1, gb = cardGbOf(doc);
   const card = gb > 0 ? tr("cardThisGb", {gb: cardGbText(gb, tr)}) : tr("cardThis");
   const auto = typeof v.automatic === "boolean" ? v.automatic : !(ask.ctx > 0);
-  const ctx = v.context > 0 ? planTok(v.context) : ask.ctx > 0 ? planTok(ask.ctx) : "";
+  // The context the pick was planned at: the asked one, else (auto) the one the plan reached.
+  const ctx = v.context > 0 ? planTok(v.context) : ask.ctx > 0 ? planTok(ask.ctx)
+    : v.planned_context > 0 ? planTok(v.planned_context) : "";
   const at = auto ? (ctx ? tr("ruleAtAuto", {ctx, n}) : tr("ruleAtAutoBare", {n})) : tr("ruleAt", {ctx, n});
   if (c === "none_fits") {
     const smallest = v.smallest ? planRowOf(doc, v.smallest) : null, why = smallest ? reasonText(smallest.plan, tr) : "";
