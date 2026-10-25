@@ -793,11 +793,17 @@ void test_catalog() {
         check(std::find(with_vision.begin(), with_vision.end(), "--round-tiny-scales") ==
                   with_vision.end(),
               "a conversion rounds no tiny scales unless asked");
-        refetch.round_tiny_scales = true;
-        const auto rounded        = make_launch(refetch_options, refetch).argv;
-        check(std::find(rounded.begin(), rounded.end(), "--round-tiny-scales") != rounded.end(),
-              "a start asked to round tiny scales passes --round-tiny-scales");
-        refetch.round_tiny_scales = false;
+        // A refused prepare again as it was (refetch, the replaced artifact's recipe), the flag
+        // added once.
+        refetch.vision         = true;
+        const auto prepare      = make_launch(refetch_options, refetch);
+        const auto rounded      = with_tiny_scales_rounded(prepare, 0);
+        const auto once         = with_tiny_scales_rounded(rounded, 0);
+        check(rounded.argv.size() == prepare.argv.size() + 1 &&
+                  std::equal(prepare.argv.begin(), prepare.argv.end(), rounded.argv.begin()) &&
+                  rounded.argv.back() == "--round-tiny-scales" && once.argv == rounded.argv,
+              "a refused prepare retried as it was, with --round-tiny-scales");
+        refetch.vision = false;
         refetch.refetch = false;
         refused         = false;
         try {

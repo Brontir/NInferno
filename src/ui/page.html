@@ -2634,14 +2634,13 @@ function detailLaunchSettings() {
           par: Math.min(Math.max(parallel, 1), MAX_PAR),
           kv: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "", spec: specMode};
 }
-async function launch(model, quant, button, settings, keys, round) {
+async function launch(model, quant, button, settings, keys) {
   if (button) { button.disabled = true; button.textContent = t("launching"); }
   const s = settings || detailLaunchSettings();
   try {
     const j = await api("/api/launch", {model, quant, gpu, max_context: s.ctx || 0,
       max_context_cap: s.ctx > 0 ? 0 : (s.cap || 0), max_concurrency: s.par,
-      hub: selected && model === selected.repo ? selected.hubName : "", spec: planSpecOf(s.spec), kv_dtype: s.kv,
-      round_tiny_scales: !!round});
+      hub: selected && model === selected.repo ? selected.hubName : "", spec: planSpecOf(s.spec), kv_dtype: s.kv});
     saveLaunch(keys || [], s);
     openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);
   } catch (e) {
@@ -2649,8 +2648,8 @@ async function launch(model, quant, button, settings, keys, round) {
     if (button) { button.disabled = false; button.textContent = t("run"); }
   }
 }
-async function prepare(model, quant, round) {
-  try { await api("/api/prepare", {model, quant, hub: selected && model === selected.repo ? selected.hubName : "", round_tiny_scales: !!round}); setTab("downloads"); refreshState(); }
+async function prepare(model, quant) {
+  try { await api("/api/prepare", {model, quant, hub: selected && model === selected.repo ? selected.hubName : ""}); setTab("downloads"); refreshState(); }
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
@@ -2669,14 +2668,10 @@ document.addEventListener("click", async ev => {
   }
   else if (d.log) { const p = S.processes.find(x => x.id === +d.log); openLog(+d.log, p ? shortName(p.model) : ""); }
   else if (d.rts) {
-    // The refused start again, with --round-tiny-scales: a prepare prepares, a start starts.
-    const p = S.processes.find(x => x.id === +d.rts);
-    if (p) {
-      // "org/name:QUANT" for a hub model's quantization; a path (C:\...) is the model itself.
-      const m = p.model.match(/^([^/:\s]+\/[^/:\s]+(?:@[^:]+)?):(.+)$/);
-      const model = m ? m[1] : p.model, quant = m ? m[2] : "";
-      if (p.kind === "prepare") prepare(model, quant, true); else launch(model, quant, null, null, [], true);
-    }
+    // The refused launch again as it was, with --round-tiny-scales (/api/retry_rounded).
+    api("/api/retry_rounded", {id: +d.rts})
+      .then(j => { openLog(j.id, $("drawertitle").textContent); refreshState(); })
+      .catch(e => showError(e.message));
   }
   else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
   else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }

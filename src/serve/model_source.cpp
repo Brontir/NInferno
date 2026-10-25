@@ -114,7 +114,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
                 throw std::runtime_error(name + " cannot be run: " + refusal);
             }
             if (log) { log("checkpoint " + name); }
-            const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);
+            const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision,
+                                                         options.round_tiny_scales);
             out.kind            = ModelSource::Kind::Checkpoint;
             out.artifact_path   = cached.path.string();
             out.recipe          = cached.recipe;

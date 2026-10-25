@@ -402,6 +402,18 @@ const GpuStat* launch_gpu(const std::vector<GpuStat>& stats, int gpu) {
     return nullptr;
 }
 
+LaunchSpec with_tiny_scales_rounded(LaunchSpec spec, int port) {
+    if (std::find(spec.argv.begin(), spec.argv.end(), "--round-tiny-scales") == spec.argv.end()) {
+        spec.argv.push_back("--round-tiny-scales");
+    }
+    if (spec.kind == "serve") {
+        const auto flag = std::find(spec.argv.begin(), spec.argv.end(), "--port");
+        if (flag != spec.argv.end() && flag + 1 != spec.argv.end()) { flag[1] = std::to_string(port); }
+        spec.port = port;
+    }
+    return spec;
+}
+
 LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, const GpuStat* gpu) {
     auto [model, tag] = split_model_tag(request.model);
     if (model.empty()) { throw std::invalid_argument("no model"); }
@@ -461,7 +473,6 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (!request.recipe.empty() && !is_word(request.recipe)) {
         throw std::invalid_argument("bad recipe: " + request.recipe);
     }
-    if (request.round_tiny_scales) { spec.argv.push_back("--round-tiny-scales"); }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
@@ -2371,9 +2382,27 @@ void App::install(httplib::Server& server) {
         out.kv_dtype        = body.value("kv_dtype", std::string());
         out.hub             = body.value("hub", std::string());
         out.spec_profile    = body.value("spec_profile", false);
-        out.round_tiny_scales = body.value("round_tiny_scales", false);
         return out;
     };
+    // A launch the converter refused for scales below binary16's normal range, again as it was
+    // with --round-tiny-scales (the log drawer offers it when the refusal names the flag).
+    server.Post("/api/retry_rounded", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            const auto id = Json::parse(req.body).value("id", std::uint64_t{0});
+            for (const auto& info : processes_.list()) {
+                if (info.id != id) { continue; }
+                if (info.state != "exited" && info.state != "failed") {
+                    return reply_error(res, 409, "the launch is still running");
+                }
+                const int port = info.spec.kind == "serve" ? processes_.free_port() : 0;
+                const auto next = processes_.start(with_tiny_scales_rounded(info.spec, port));
+                return reply_json(res, {{"id", next}, {"port", port}});
+            }
+            reply_error(res, 404, "no launch " + std::to_string(id));
+        } catch (const Json::exception& error) {
+            reply_error(res, 400, std::string("bad request body: ") + error.what());
+        } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
+    });
     server.Post("/api/launch",
                 [this, parse_request](const httplib::Request& req, httplib::Response& res) {
                     try {
