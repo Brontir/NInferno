@@ -544,7 +544,9 @@ std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
             }
         } else if (!d.repo.empty()) {
             try {
-                for (const auto& q : convert::list_quants(d.repo, fetch_options())) {
+                // At the revision the conversion fetches (the hub's default branch may move).
+                const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+                for (const auto& q : convert::list_quants(spec, fetch_options())) {
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}

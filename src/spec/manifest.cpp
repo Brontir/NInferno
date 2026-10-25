@@ -393,12 +393,13 @@ void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
 
 // 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
 //    weights it was converted from), else its group's preliminary choice. False when the registry
-//    has neither for it: the published profiles answer.
+//    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
+//    the published profiles answer.
 bool resolve_pair_profile(const SpeculationManifest& manifest,
                           const std::filesystem::path& artifact, const GpuKey& gpu,
                           ResolvedSpeculation& out) {
     const auto& registry = Registry::builtin();
-    if (registry.pairs().empty()) { return false; }
+    if (registry.pairs().empty() || manifest.source == "bundle") { return false; }
     std::optional<std::string> weights;
     std::string quant;
     try {
@@ -602,7 +603,8 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
                                                 std::string_view engine) {
     ResolvedSpeculation out;
     const auto& registry = Registry::builtin();
-    if (!registry.pairs().empty()) {
+    // A checkpoint's own declaration (a bundle) overrides the registry, its pairs too.
+    if (!registry.pairs().empty() && !(manifest && manifest->source == "bundle")) {
         std::vector<std::string> kinds;
         if (manifest) {
             for (const auto& d : manifest->drafters) {
