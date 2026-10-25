@@ -79,12 +79,18 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
             served->menu.mode != mode) {
             continue;
         }
-        const spec::Choice& c = spec::pick(p, ask.thinking);
+        // The gain of the default thinking flag's choice. Per request with that choice plain
+        // and the other flag's drafting (served_speculation seeds the menu with it), the gain
+        // is only the other flag's requests': not weighed, so the profile's choice stands.
+        const spec::Choice& own   = spec::pick(p, ask.thinking);
+        const spec::Choice& other = spec::pick(p, !ask.thinking);
+        const bool split = per_request && !own.config.enabled() && other.config.enabled();
+        const spec::Choice& c = split ? other : own;
         choice::DrafterOption option;
         option.label   = served->menu.primary.config.label();
         option.drafter = c.drafter;
         option.speedup = std::max(1.0, c.speedup());
-        option.measured = c.tok_s > 0 && c.plain_tok_s > 0;
+        option.measured = !split && c.tok_s > 0 && c.plain_tok_s > 0;
         option.basis   = subject.resolved->basis;
         for (const spec::LoadBound& bound : p.load) {
             if (bound.depth == 0) {
