@@ -22,6 +22,10 @@
 #include <string>
 #include <vector>
 
+namespace ninferno::convert {
+struct FetchOptions;
+} // namespace ninferno::convert
+
 namespace ninferno::product {
 
 // One file group of a repository listing (convert::RepoQuant's fields the plan reads).
@@ -38,6 +42,21 @@ struct QuantListing {
     // of the lab's speculation pairs.
     std::string weights;
 };
+
+// The weights and the state of the drafters a start attaches beside the target (the subject's
+// attached_drafters, as the converter's drafter plan takes them): a GGUF drafter file's size from
+// the target's own `listing`, a drafter repository's from its listing at the declared revision
+// (the hub's default branch may move), a DFlash drafter's state from that revision's config.json.
+// One code for every plan of a model not converted yet: ninferno-serve --plan --no-load and its
+// start's memory check, ninferno-ui's /api/plan. `fetch` nullptr (offline): only the target's
+// listing is read. What is not known stays 0 / nullopt.
+struct AttachedDrafterMemory {
+    std::uint64_t bytes = 0;
+    std::optional<models::DrafterStateShape> state;
+};
+[[nodiscard]] AttachedDrafterMemory
+attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
+                        std::uint32_t target_hidden, const convert::FetchOptions* fetch);
 
 // A safetensors checkpoint's weights after the recipe a start converts it with (convert.cpp's
 // default recipe choice): a recipe that keeps the published encodings (dense BF16, a published

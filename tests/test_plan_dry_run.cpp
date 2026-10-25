@@ -901,6 +901,28 @@ void test_speculation_order() {
         check(rule(3, 4, 5, std::nullopt).keep == pr::PoolKeep::Plain,
               "the head does not fit: plain decode");
     }
+    // The drafters a start attaches beside the target (product::attached_drafter_memory, the
+    // server's plan and ninferno-ui's): a GGUF drafter file by its size in the target's listing;
+    // a drafter repository read only with a fetch (none here: offline).
+    {
+        pr::SpeculationSubject attached;
+        ninferno::spec::DrafterDecl assistant;
+        assistant.name = "assistant";
+        assistant.kind = "gemma4_assistant";
+        assistant.gguf = "Assistant";
+        ninferno::spec::DrafterDecl dflash;
+        dflash.name = "dflash";
+        dflash.kind = "dflash";
+        dflash.repo = "z-lab/Qwen3.5-9B-DFlash";
+        attached.attached_drafters = {assistant, dflash};
+        const std::vector<pr::QuantListing> listing{
+            {.quant = "Q4_K_M", .format = "gguf", .bytes = 5ULL << 30},
+            {.quant = "assistant-Q8_0", .format = "gguf", .bytes = 600ULL << 20, .drafter = true},
+            {.quant = "mmproj-F16", .format = "gguf", .bytes = 900ULL << 20, .drafter = true}};
+        const auto memory = pr::attached_drafter_memory(attached, listing, 5120, nullptr);
+        check(memory.bytes == 600ULL << 20 && !memory.state,
+              "the GGUF drafter file's size; the repository's not read offline");
+    }
 }
 
 // ---- 5. Facts the device side declares.

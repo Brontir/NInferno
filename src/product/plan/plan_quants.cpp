@@ -2,6 +2,9 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "convert/fetch.h"
+#include "core/ascii.h"
+
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -222,6 +225,38 @@ PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
         {"short_bytes", needed > plan.free_after_weights ? needed - plan.free_after_weights : 0},
         {"context", plan.ladder.empty() ? 0U : plan.ladder.back().rung.max_context},
         {"concurrency", plan.axes.concurrency}};
+    return out;
+}
+
+AttachedDrafterMemory
+attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
+                        std::uint32_t target_hidden, const convert::FetchOptions* fetch) {
+    AttachedDrafterMemory out;
+    for (const spec::DrafterDecl& d : subject.attached_drafters) {
+        std::uint64_t bytes = 0;
+        if (!d.gguf.empty()) {
+            // A GGUF drafter file beside the target's quantizations.
+            for (const QuantListing& q : listing) {
+                if (q.drafter && ascii_lower(q.quant).find(ascii_lower(d.gguf)) != std::string::npos) {
+                    bytes = std::max(bytes, q.bytes);
+                }
+            }
+        } else if (!d.repo.empty() && fetch != nullptr) {
+            const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+            try {
+                for (const auto& q : convert::list_quants(spec, *fetch)) {
+                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
+                }
+            } catch (const std::exception&) {}
+            if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
+                try {
+                    out.state = plan_drafter_state_of_config(convert::fetch_config(spec, *fetch),
+                                                             target_hidden);
+                } catch (const std::exception&) {}
+            }
+        }
+        out.bytes = std::max(out.bytes, bytes);
+    }
     return out;
 }
 

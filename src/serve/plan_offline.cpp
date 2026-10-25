@@ -345,11 +345,6 @@ ModelRead read_model(const ServeOptions& options) {
                     !options.chat_template_path.empty());
 }
 
-std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
-                                     const std::vector<product::QuantListing>& listing);
-std::optional<models::DrafterStateShape>
-attached_drafter_state(const product::SpeculationSubject& subject, std::uint32_t target_hidden);
-
 // The axes the user pinned with flags (the configuration choice picks the others).
 product::ChoicePins pins_of(const ServeOptions& options) {
     return {.kv          = options.kv_cache.has_value(),
@@ -397,8 +392,11 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             .quant         = model.quant},
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
-        out.inputs.drafter_bytes = attached_drafter_bytes(*out.subject, model.listing);
-        out.inputs.drafter_state = attached_drafter_state(*out.subject, model.facts.model.hidden);
+        const convert::FetchOptions fetch = fetch_options();
+        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
+            *out.subject, model.listing, model.facts.model.hidden, &fetch);
+        out.inputs.drafter_bytes = drafter.bytes;
+        out.inputs.drafter_state = drafter.state;
         // A repository's quantizations each have their weights, and the lab's pairs are of
         // weights: every row of the table resolves its own (the subject above is the one read).
         if (model.listing.size() > 1) {
@@ -556,56 +554,6 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
 }
 
 namespace {
-
-// A separate drafter's weights the start would upload beside the target (one attached by the
-// drafter plan with --with-drafters: Gemma 4's assistant, a DFlash drafter of its own repository);
-// the largest when several are attached. 0 when none is, or its listing cannot be read.
-std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
-                                     const std::vector<product::QuantListing>& listing) {
-    std::uint64_t out = 0;
-    for (const spec::DrafterDecl& d : subject.attached_drafters) {
-        std::uint64_t bytes = 0;
-        if (!d.gguf.empty()) {
-            // A GGUF drafter file beside the target's quantizations.
-            for (const product::QuantListing& q : listing) {
-                if (q.drafter &&
-                    ascii_lower(q.quant).find(ascii_lower(d.gguf)) != std::string::npos) {
-                    bytes = std::max(bytes, q.bytes);
-                }
-            }
-        } else if (!d.repo.empty()) {
-            try {
-                // At the revision the conversion fetches (the hub's default branch may move).
-                const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
-                for (const auto& q : convert::list_quants(spec, fetch_options())) {
-                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
-                }
-            } catch (const std::exception&) {}
-        }
-        out = std::max(out, bytes);
-    }
-    return out;
-}
-
-// The state of a DFlash drafter the drafter plan takes from its own repository, from that
-// repository's config.json (one small request, at the declared revision); nullopt when none is
-// taken, or its config cannot be read.
-std::optional<models::DrafterStateShape>
-attached_drafter_state(const product::SpeculationSubject& subject, std::uint32_t target_hidden) {
-    for (const spec::DrafterDecl& d : subject.attached_drafters) {
-        if ((d.kind != "dflash" && d.kind != "dflash2") || d.repo.empty() || !d.gguf.empty()) {
-            continue;
-        }
-        try {
-            const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
-            if (auto state = product::plan_drafter_state_of_config(
-                    convert::fetch_config(spec, fetch_options()), target_hidden)) {
-                return state;
-            }
-        } catch (const std::exception&) {}
-    }
-    return std::nullopt;
-}
 
 // What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
 HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,
