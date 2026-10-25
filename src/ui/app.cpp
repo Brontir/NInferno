@@ -2396,6 +2396,20 @@ void App::install(httplib::Server& server) {
                 }
                 const int port = info.spec.kind == "serve" ? processes_.free_port() : 0;
                 const auto next = processes_.start(with_tiny_scales_rounded(info.spec, port));
+                // A moved model's update waits on its prepares: it follows the retry.
+                {
+                    std::lock_guard moved_lock(moved_mutex_);
+                    for (auto& [key, update] : updates_) {
+                        for (auto& part : update.parts) {
+                            if (part.prepare != id) { continue; }
+                            part.prepare = next;
+                            if (update.state == "failed") {
+                                update.state = "downloading";
+                                update.error.clear();
+                            }
+                        }
+                    }
+                }
                 return reply_json(res, {{"id", next}, {"port", port}});
             }
             reply_error(res, 404, "no launch " + std::to_string(id));
