@@ -520,14 +520,17 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
         for (const auto& p : measured_of(sibling_repo)) {
             nearest = std::min(nearest, std::abs(p.target_bits - target_bits));
         }
-        auto siblings = measured_of([&](const MeasuredPair& pair) {
+        const auto nearest_sibling = [&](const MeasuredPair& pair) {
             return sibling_repo(pair) && std::abs(pair.target_bits - target_bits) == nearest;
-        });
+        };
+        auto siblings = measured_of(nearest_sibling);
         if (!siblings.empty()) {
             std::vector<const MeasuredPair*> measured;
+            for (const auto& p : siblings) { measured.push_back(&p); }
+            // Named before one card's records are pooled.
             std::set<std::string> quants;
-            for (const auto& p : siblings) {
-                measured.push_back(&p);
+            for (const auto& p : pairs) {
+                if (!nearest_sibling(p) || !pair_current(p)) { continue; }
                 const auto space = p.target_repo.rfind(' ');
                 quants.insert(space == std::string::npos ? p.target_repo
                                                          : p.target_repo.substr(space + 1));
