@@ -254,10 +254,17 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
     const auto gated = card->find("gated");
     const bool is_gated =
         gated != card->end() && !(gated->is_boolean() && !gated->get<bool>()) && !gated->is_null();
-    if (has_gguf && (!has_safetensors || !options.quant.empty())) {
-        // The GGUF model the fetch would take: its own header, not the hub's reading of one file.
+    // --include naming GGUF files takes them whatever else the repository holds.
+    const bool include_gguf =
+        std::any_of(options.include.begin(), options.include.end(),
+                    [](const std::string& glob) { return ascii_lower(glob).ends_with(".gguf"); });
+    if (include_gguf || (has_gguf && (!has_safetensors || !options.quant.empty()))) {
+        // The GGUF model the fetch would take: its own header, not the hub's reading of one file;
+        // the repository's other weights (their library, their dtypes) are not what runs.
         out.gguf   = true;
         out.config = Json();
+        out.library.clear();
+        out.weight_dtypes.clear();
         try {
             for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
                 const auto head = fetch_gguf_head(spec, options, bytes);
