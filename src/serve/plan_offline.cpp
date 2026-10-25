@@ -514,8 +514,14 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         const product::QuantRow& row             = quants->rows[quants->pick->index];
         product::DryRunInputs now                = product::inputs_for(planning.inputs, row.listing);
         now.device.free_bytes                    = free_now;
-        const product::PlannedSpeculation at_now = product::plan_model(
-            product::with_weights(model.facts, row.weight_bytes, row.basis), now);
+        const product::PlanSourceFacts at_weights =
+            product::with_weights(model.facts, row.weight_bytes, row.basis);
+        product::PlannedSpeculation at_now = product::plan_model(at_weights, now);
+        // The choice is made at the chosen row: there, the drafter it serves.
+        if (served && quants->chosen && *quants->chosen == quants->pick->index) {
+            at_now = product::plan_at_choice(at_weights, now, *served, pins_of(options),
+                                             std::move(at_now));
+        }
         out.json["device"]["free_now_bytes"] = *free_now;
         out.json["device"]["fits_now"]       = at_now.plan.fits;
         if (!at_now.plan.fits) {

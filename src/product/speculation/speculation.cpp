@@ -406,15 +406,33 @@ void apply_builtin_default(SpeculationSubject& subject) {
 SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
     if (!subject.resolved) { return subject; }
     spec::Profile& p = subject.resolved->profile;
-    if (p.measurements.empty()) { return subject; }
-    std::erase_if(p.measurements, [&](const spec::Measurement& m) {
-        return m.config.enabled() && m.config.mode != mode;
-    });
-    p.served.reset();
-    p.portable.reset();
-    spec::SelectOptions options;
-    options.portable_within = 0;
-    spec::select(p, options);
+    const spec::Mode tuned = p.overall.config.mode;
+    if (p.measurements.empty()) {
+        // A published profile: its fit fallback of that mode (another drafter, measured to fit
+        // where the default does not) as every choice.
+        if (tuned == mode || !p.fit_fallback || p.fit_fallback->config.mode != mode) {
+            return subject;
+        }
+        p.overall = p.thinking = p.non_thinking = *p.fit_fallback;
+        p.fit_fallback.reset();
+        p.served.reset();
+        p.portable.reset();
+    } else {
+        std::erase_if(p.measurements, [&](const spec::Measurement& m) {
+            return m.config.enabled() && m.config.mode != mode;
+        });
+        p.served.reset();
+        p.portable.reset();
+        spec::SelectOptions options;
+        options.portable_within = 0;
+        options.served          = subject.support; // the choices the Engine runs
+        spec::select(p, options);
+    }
+    // A load table was measured with the default's drafter: another kind's is not known, so one
+    // request speculates and two or more decode plainly (as for a pair measured elsewhere).
+    if (tuned != mode && !p.load.empty()) {
+        p.load = {spec::LoadBound{.lanes = 2, .depth = 0}};
+    }
     return subject;
 }
 

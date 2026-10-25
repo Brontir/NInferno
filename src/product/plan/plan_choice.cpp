@@ -70,6 +70,11 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
     }
     if (modes.empty() && base && base->engine.backend != SpeculativeBackend::None) {
         modes.insert(base->menu.mode);
+        // A published profile's fit fallback drafts with another drafter where the default does
+        // not fit (the 27B on GB203: DFlash2, MTP to fit): an option of its own.
+        if (profile.fit_fallback && profile.fit_fallback->config.enabled()) {
+            modes.insert(profile.fit_fallback->config.mode);
+        }
     }
     for (const spec::Mode mode : modes) {
         const SpeculationSubject one = subject_of_mode(subject, mode);
@@ -233,8 +238,9 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const auto own = [&](const choice::Candidate& c) -> std::uint32_t {
         if (memory == OwnContext::Unbounded) { return std::numeric_limits<std::uint32_t>::max(); }
         DryRunInputs pinned = inputs_with(idle, c);
-        // The candidate's drafter planned as given: its weights and state in the memory.
-        if (!axis.options.empty()) {
+        // The candidate's drafter planned as given: its weights and state in the memory. An
+        // explicit --spec pins its option and is planned with its own settings (depth, head).
+        if (!axis.options.empty() && inputs.ask.automatic) {
             pinned.ask.automatic          = false;
             pinned.ask.depth_from_profile = false;
             pinned.ask.given = c.drafter > 0 ? axis.served[c.drafter - 1].engine : SpeculativeOptions{};

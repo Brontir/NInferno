@@ -62,6 +62,35 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
+    // One mode of a published profile (no measurements): its fit fallback of that mode becomes its
+    // choice, and the load table measured with the default's drafter gives way to one request at a
+    // time (Codex on #117).
+    {
+        ninferno::product::SpeculationSubject subject;
+        subject.support = ninferno::spec::engine_support("qwen3_5_text");
+        ninferno::spec::ResolvedSpeculation resolved;
+        resolved.source                       = "test";
+        resolved.profile.overall.config       = ninferno::spec::SpecConfig::parse("dflash2:7");
+        resolved.profile.thinking             = resolved.profile.overall;
+        resolved.profile.non_thinking         = resolved.profile.overall;
+        ninferno::spec::Choice fallback;
+        fallback.config                       = ninferno::spec::SpecConfig::parse("mtp:3");
+        resolved.profile.fit_fallback         = fallback;
+        resolved.profile.load                 = {ninferno::spec::LoadBound{.lanes = 4, .depth = 3}};
+        subject.resolved                      = resolved;
+        const auto mtp = ninferno::product::subject_of_mode(subject, ninferno::spec::Mode::Mtp);
+        failures += check(mtp.resolved->profile.overall.config.label() == "mtp:3" &&
+                              !mtp.resolved->profile.fit_fallback &&
+                              mtp.resolved->profile.load.size() == 1 &&
+                              mtp.resolved->profile.load[0].lanes == 2 &&
+                              mtp.resolved->profile.load[0].depth == 0,
+                          "a published profile's MTP fit fallback as its MTP choice, one request at a time");
+        const auto same = ninferno::product::subject_of_mode(subject, ninferno::spec::Mode::DFlash2);
+        failures += check(same.resolved->profile.overall.config.label() == "dflash2:7" &&
+                              same.resolved->profile.load.size() == 1 &&
+                              same.resolved->profile.load[0].lanes == 4,
+                          "its own mode: kept as it is");
+    }
     // Per request, a default that decodes plainly loads the other flag's drafter: those requests
     // speculate, the default's decode plainly (Codex on #117).
     {

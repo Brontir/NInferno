@@ -106,8 +106,9 @@ void apply_builtin_default(SpeculationSubject& subject);
 
 // The subject with its profile chosen again for one speculation mode (the configuration choice's
 // drafter axis, product/choice/choice.h): over the profile's measurements of that mode alone (a lab
-// pair's, a local tune's), served and portable choices dropped. A profile without measurements is
-// kept as it is (its own choice is its only one).
+// pair's, a local tune's), the Engine's served choices again, portable ones dropped. A profile
+// without measurements offers its fit fallback when that drafts with the mode, else is kept as it
+// is. A load table measured with another drafter kind gives way to one request at a time.
 [[nodiscard]] SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode);
 
 [[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
