@@ -149,10 +149,13 @@ struct GgufHead {
     std::string bytes;      // its first bytes
     bool cached  = false;   // read from the hub cache
     bool offline = false;   // the hub was not asked
+    // The model's parts (a split GGUF's -0000N-of-0000M files, in their order): this is `part`
+    // of them. Offline, the cached first part only (1).
+    std::size_t parts = 1;
 };
 
 [[nodiscard]] GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                                       std::uint64_t bytes);
+                                       std::uint64_t bytes, std::size_t part = 0);
 
 // The Hugging Face repository a GGUF file names as its base model
 // (general.base_model.0.repo_url / general.source.huggingface.repository), if any.

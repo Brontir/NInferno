@@ -306,6 +306,11 @@ def main() -> int:
                  and first.get("bytes") == MIB and ranges == [f"bytes=0-{MIB - 1}"])
             whole = head("Q8_0", 8 * MIB)
             case("gguf head of a short file", whole.get("size") == 2 * MIB and whole.get("bytes") == 2 * MIB)
+            # --include matching two standalone GGUFs: the model conversion opens (the first) is one
+            # part, not a split of both.
+            both = head("--include=*.gguf", MIB)
+            case("gguf head of an --include choosing two models", both.get("path") == "m-Q4_K_M.gguf"
+                 and both.get("parts") == 1)
 
             # The listing a plan reads counts what the fetch takes: the Transformers-named weights with
             # their MTP part, not a second copy beside them (consolidated.safetensors); a small
