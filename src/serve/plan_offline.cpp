@@ -3,6 +3,7 @@
 #include "artifact/source_identity.h"
 #include "convert/acquire.h"
 #include "convert/cache.h"
+#include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "convert/support.h"
@@ -260,9 +261,22 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         return out;
     }
     if (weights != nullptr) {
-        out.facts = product::plan_facts_of_config(convert::fetch_config(spec, fetch),
-                                                  weights->bytes, runtime::WeightBasis::FileSize);
+        const Json config = convert::fetch_config(spec, fetch);
+        out.facts         = product::plan_facts_of_config(config, weights->bytes,
+                                                          runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
+        // MTP layers are what the weight index lists (declared or not), as the converter finds
+        // them (convert::sharded_checkpoint_mtp); one weight file, or no index to read: the
+        // declaration.
+        if (weights->mtp_bytes == 0 && weights->files.size() > 1) {
+            Json index;
+            try {
+                index = convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json");
+            } catch (const std::exception&) {}
+            if (index.is_object()) {
+                out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(config, index);
+            }
+        }
         out.listing.clear();
         return out;
     }
@@ -294,6 +308,12 @@ ModelRead read_model(const ServeOptions& options) {
             out.kind          = "checkpoint";
             out.facts         = product::plan_facts_of_config(config, safetensors_bytes(path),
                                                               runtime::WeightBasis::FileSize);
+            if (fs::exists(path / "model.safetensors.index.json") &&
+                !fs::exists(path / "model_mtp.safetensors")) {
+                std::ifstream index(path / "model.safetensors.index.json");
+                out.facts.shape.builtin_mtp =
+                    convert::sharded_checkpoint_mtp(config, Json::parse(index));
+            }
             return out;
         }
         if (ascii_lower(path.extension().string()) == ".gguf") {
