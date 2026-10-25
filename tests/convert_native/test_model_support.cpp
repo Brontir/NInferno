@@ -79,7 +79,9 @@ int main(int argc, char** argv) {
                "U32 under a quantization_config without a method");
         f.config["quantization_config"] = {{"quant_method", "bitsandbytes"}, {"load_in_4bit", true}};
         expect(says(of(f), Verdict::Unsupported, "bitsandbytes"), "bitsandbytes");
-        // RadixArk/Muse-Glimmer-NVFP4: Model Optimizer's mixed NVFP4 and MXFP8 layers.
+        // RadixArk/Muse-Glimmer-NVFP4: Model Optimizer's mixed NVFP4 and MXFP8 layers (its
+        // tensors U8 and BF16, not the packed U32 above).
+        f.weight_dtypes                 = {"U8", "BF16"};
         f.config["quantization_config"] = {
             {"quant_algo", "MIXED_PRECISION"},
             {"quantized_layers",
