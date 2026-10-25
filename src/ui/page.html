@@ -1039,7 +1039,7 @@ Object.assign(T.en, {
   memReserve:"kept for the system and the desktop",memNeedOf:"needs ≈ {need} of {free}",memCard:"card: {gb}",
   specPlanned:"Auto runs",specPlannedAs:"Runs",specPlain:"no speed-up",specBasis_own:"measured on this GPU",specBasis_similar:"measured on a similar GPU",
   specBasis_generic:"general profile",specBasis_builtin:"the model's own drafter, not tuned",specBasis_explicit:"as chosen",
-  specBasis_none:"not measured for this model",specBasis_measured_plain:"measured faster without it here",specOffChosen:"turned off",
+  specBasis_none:"not measured for this model",specBasis_measured_plain:"measured faster without it here",specBasis_measured:"measured for these weights",specBasis_preliminary:"preliminary: from measured models like it",specOffChosen:"turned off",
   specDepthAt:"{d} tokens ahead with {n} at once",specClassesTip:"Tokens guessed ahead by prompt length (estimate)",
   specClass_short:"short",specClass_mid:"medium",specClass_long:"long",specClass_huge:"very long",
   specDepthN:"{d} ahead",specNoEstimate:"no estimate",specAutoRuns:"Auto runs this",
@@ -1086,7 +1086,7 @@ Object.assign(T.ru, {
   memReserve:"оставлено системе и рабочему столу",memNeedOf:"нужно ≈ {need} из {free}",memCard:"карта: {gb}",
   specPlanned:"В Авто запустится",specPlannedAs:"Запустится",specPlain:"без ускорения",specBasis_own:"замерено на этой видеокарте",specBasis_similar:"замерено на похожей видеокарте",
   specBasis_generic:"общий профиль",specBasis_builtin:"встроенный черновик модели, без настройки",specBasis_explicit:"как выбрано",
-  specBasis_none:"для этой модели не замерено",specBasis_measured_plain:"здесь без ускорения замерено быстрее",specOffChosen:"выключено",
+  specBasis_none:"для этой модели не замерено",specBasis_measured_plain:"здесь без ускорения замерено быстрее",specBasis_measured:"замерено для этих весов",specBasis_preliminary:"предварительно: по похожим замеренным моделям",specOffChosen:"выключено",
   specDepthAt:"угадывает вперёд: {d}, одновременных запросов: {n}",specClassesTip:"Сколько токенов угадывается вперёд, по длине промпта (оценка)",
   specClass_short:"короткий",specClass_mid:"средний",specClass_long:"длинный",specClass_huge:"очень длинный",
   specDepthN:"вперёд: {d}",specNoEstimate:"нет оценки",specAutoRuns:"Запустится в Авто",
@@ -1907,10 +1907,10 @@ function planSpecSummary(s) {
   if (!s) return null;
   const served = s.served || "plain";
   const kind = served === "plain" || s.backend === "none" ? "" : String(served).split(":")[0];
-  return {served, kind, basis: s.basis || "none", depth: s.depth_at_concurrency > 0 ? s.depth_at_concurrency : s.depth || 0,
+  return {served, kind, basis: s.basis || "none", source: s.source || "", depth: s.depth_at_concurrency > 0 ? s.depth_at_concurrency : s.depth || 0,
           classes: (s.classes || []).map(c => ({cls: c.class, below: c.below_tokens || 0, depth: c.depth || 0, basis: c.basis || ""}))};
 }
-const SPEC_BASES = ["own", "similar", "generic", "builtin", "explicit", "none", "measured_plain"];
+const SPEC_BASES = ["own", "similar", "generic", "builtin", "explicit", "none", "measured_plain", "measured", "preliminary"];
 // Where the plan's speculation came from, in words; Off chosen by the user says so.
 function specBasisText(s, mode, tr) {
   if (!s) return "";
@@ -2307,7 +2307,7 @@ function renderPlanSpec() {
   if (el) {
     if (!s) el.innerHTML = planStale() && planSpecNow() ? `<span class="muted">${esc(t("planning"))}</span>` : "";
     else {
-      const tip = [t("specClassesTip"), ...s.classes.map(c => `${t("specClass_" + c.cls)}${c.below ? " (< " + planTok(c.below) + ")" : ""}: ${c.basis === "modeled" ? fill(t("specDepthN"), {d: c.depth}) : t("specNoEstimate")}`), t("planEstNote")].join("\n");
+      const tip = [...(s.source ? [s.source] : []), t("specClassesTip"), ...s.classes.map(c => `${t("specClass_" + c.cls)}${c.below ? " (< " + planTok(c.below) + ")" : ""}: ${c.basis === "modeled" ? fill(t("specDepthN"), {d: c.depth}) : t("specNoEstimate")}`), t("planEstNote")].join("\n");
       el.innerHTML = `<span data-tip="${esc(tip)}">${esc(t(specMode === "auto" ? "specPlanned" : "specPlannedAs"))}: <b class="mono">${esc(s.kind ? s.served : t("specPlain"))}</b> · ${esc(specBasisText(s, specMode, planTr))}${s.kind && s.depth > 0 ? " · " + esc(fill(t("specDepthAt"), {d: s.depth, n: parallel})) : ""}</span>`;
     }
   }
