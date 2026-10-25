@@ -357,6 +357,13 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
         }
         return out;
     }
+    // The checkpoint the fetch takes: the hub's summary of a GGUF beside it (its architecture,
+    // its template) is not its.
+    if (out.gguf) {
+        auto checkpoint = *card;
+        checkpoint.erase("gguf");
+        out = search_support_facts(checkpoint);
+    }
     if (has_config) {
         // The whole file for its fields; the template stays the card's reading (config.json
         // does not carry one).

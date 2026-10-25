@@ -401,6 +401,13 @@ def main() -> int:
                 if not ok:
                     errors.append(refused.stderr[-600:])
                 case(f"{spec} refused before the download: {says}", ok)
+            # Without --include the fetch takes its safetensors: the hub's summary of the GGUF
+            # beside them is not what decides.
+            hub.repos["org/mixed-include"]["card"] = {"gguf": {"architecture": "lfm2zz"}}
+            mixed = subprocess.run([str(native), "--fetch", "org/mixed-include", "--cache", str(work / "cache-support")],
+                                   cwd=repository, capture_output=True, text=True, env=environment)
+            case("a mixed repository's safetensors judged by their config, not the GGUF beside them",
+                 "GGUF architecture" not in mixed.stderr)
             synthetic_gguf.resources(work / "qwen-src" / "twin")
             base_files = {name: (work / "qwen-src" / "twin" / name).read_bytes()
                           for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
