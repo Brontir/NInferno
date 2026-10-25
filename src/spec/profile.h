@@ -224,6 +224,16 @@ void write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 // else the overall default; plain decode when the profile was disabled at run time.
 [[nodiscard]] const Choice& pick(const Profile& profile, std::optional<bool> thinking);
 
+// What running each request at its own thinking flag's choice gains over running every request at
+// the server's default (`thinking_default`'s choice), for the requests of the other flag: their
+// cost at the default's configuration over their cost at their own, on the profile's measurements
+// of their sections (the thinking section, or math, code and prose: as select groups them). 1
+// when the two choices are one configuration, or the measurements do not price the default's on
+// the other flag's sections. Measured (lab pairs, 25.10): with thinking on by default the requests
+// without it lose at most 2 % (9B Q4 DFlash on Ada: dflash:15 for dflash:7); with it off, those
+// with it lose 16 % there.
+[[nodiscard]] double per_request_gain(const Profile& profile, bool thinking_default);
+
 // ---------------------------------------------------------------------------------------------
 // Published profiles: the "profiles" list of a registry model entry or a bundle declaration, one
 // object per (GPU class, applicable repositories), as the maintainer's spec-tune produced them:

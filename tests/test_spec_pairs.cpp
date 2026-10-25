@@ -204,6 +204,26 @@ int main() {
                    "one card's MTP and DFlash tunes are pooled: DFlash, the faster, chosen");
         }
     }
+    // Each request at its own thinking flag's depth, or all at the default's (spec::
+    // per_request_gain): on Ada the 9B's DFlash drafts 15 with thinking and 7 without. With
+    // thinking on by default the requests without it lose 2 % at depth 15 (within the
+    // measurements' spread: one depth serves); with it off, those with it lose 16 % at depth 7.
+    {
+        sp::Profile p = ada_q4.tune;
+        sp::select(p);
+        expect(p.thinking.config.label() == "dflash:15" && p.non_thinking.config.label() == "dflash:7",
+               "Ada 9B DFlash: 15 with thinking, 7 without: " + p.thinking.config.label() + " / " +
+                   p.non_thinking.config.label());
+        const double on  = sp::per_request_gain(p, true);
+        const double off = sp::per_request_gain(p, false);
+        expect(on > 1.0 && on < 1.03, "thinking by default: the others lose under 3 %: " + std::to_string(on));
+        expect(off > 1.10, "thinking off by default: the thinking requests lose over 10 %: " +
+                               std::to_string(off));
+        sp::Profile same = bw_q4.tune;
+        sp::select(same);
+        expect(sp::per_request_gain(same, true) == 1.0 && sp::per_request_gain(same, false) == 1.0,
+               "one configuration for both flags: nothing to gain");
+    }
     // A record of an older engine version never pools with the current one, in either order.
     {
         auto stale       = bw_q4;

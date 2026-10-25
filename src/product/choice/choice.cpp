@@ -235,6 +235,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
              const OwnContextFn& own_context) {
     Scored s;
     s.candidate   = c;
+    if (c.drafter > 0 && c.drafter <= model.drafters.size()) { s.drafter = model.drafters[c.drafter - 1].label; }
     s.own_context = own_context ? own_context(c) : 0;
     s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0,
                              task.prompt);
@@ -308,6 +309,13 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     }
     const double step     = k.step_seconds + bytes / (k.eta_dram * card.dram_bytes_per_s) + compute;
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
+    // A drafter's gain over plain decode, while its load table lets these many streams speculate.
+    if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
+        const DrafterOption& d = model.drafters[candidate.drafter - 1];
+        if (d.plain_from_streams == 0 || rows < d.plain_from_streams) {
+            out.decode_per_stream *= d.speedup;
+        }
+    }
 
     bool prefill_transferred = false;
     const double eta = prefill_eta(model.moe(), gen, route, prefill_transferred);
@@ -538,6 +546,13 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         chunks = {kDefaultChunk};
     }
     const std::uint32_t default_chunk = pins.chunk.value_or(kDefaultChunk);
+    // The drafter: pinned (--spec given), else plain decode and each the model carries.
+    std::vector<std::size_t> drafters;
+    if (pins.drafter) {
+        drafters.push_back(*pins.drafter);
+    } else {
+        for (std::size_t d = 0; d <= model.drafters.size(); ++d) { drafters.push_back(d); }
+    }
     for (const std::size_t q : quant_ids) {
         for (const KvCacheStorage kv : kvs) {
             for (const ActivationMode mode : modes) {
@@ -547,10 +562,13 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                     continue;
                 }
                 const Coupled coupled = coupled_storages(model, kv, mode, pins);
-                for (const std::uint32_t chunk : chunks) {
-                    out.scored.push_back(score(model, card, ref, quants[q],
-                                               {q, kv, coupled.ring, coupled.state, mode, chunk},
-                                               task, own_context));
+                for (const std::size_t drafter : drafters) {
+                    for (const std::uint32_t chunk : chunks) {
+                        out.scored.push_back(
+                            score(model, card, ref, quants[q],
+                                  {q, kv, coupled.ring, coupled.state, mode, chunk, drafter}, task,
+                                  own_context));
+                    }
                 }
             }
         }
@@ -561,34 +579,44 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     // A candidate the selection may take: any under the worth; only the family's defaults else.
     // The chunk is free where its shares decide (it has no accuracy term: the worth among chunks is
     // their speed on the reference card), else the default.
+    // Where the worth does not decide, the drafter is the server's resolved profile's.
+    // A drafter is weighed only where every option's gain is measured: one published without its
+    // speeds would weigh a gain of 1 and lose to plain decode for its memory alone.
+    const std::size_t default_drafter = pins.drafter.value_or(model.default_drafter);
+    out.drafter_by_worth = out.by_worth && !pins.drafter &&
+                           std::all_of(model.drafters.begin(), model.drafters.end(),
+                                       [](const DrafterOption& d) { return d.measured; });
     const auto eligible = [&](const Scored& s) {
-        const bool chunk_ok = out.chunk_by_speed || s.candidate.chunk == default_chunk;
-        return chunk_ok && (out.by_worth || (s.candidate.kv == default_kv &&
-                                             s.candidate.activations == default_activations));
+        const bool chunk_ok   = out.chunk_by_speed || s.candidate.chunk == default_chunk;
+        const bool drafter_ok = out.drafter_by_worth || s.candidate.drafter == default_drafter;
+        return chunk_ok && drafter_ok &&
+               (out.by_worth || (s.candidate.kv == default_kv &&
+                                 s.candidate.activations == default_activations));
     };
     const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
+    // One order over the eligible candidates: where the worth weighs the quantizations, the worth
+    // (better); else the quant rule's largest first, the worth among its candidates.
+    const auto ranks_above = [&](std::size_t i, std::size_t j) {
+        const Scored& a = out.scored[i];
+        const Scored& b = out.scored[j];
+        if (!out.quant_by_worth && a.candidate.quant != b.candidate.quant) {
+            return larger_quant(quants[a.candidate.quant], a.candidate.quant,
+                                quants[b.candidate.quant], b.candidate.quant);
+        }
+        return better(a, i, b, j, quants);
+    };
     // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
-    // every step before any quantization below them (the quant rule's tiers).
+    // every step before any quantization below them (the quant rule's tiers): the first step and
+    // side that holds an eligible candidate takes its best.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
     bool above_floor_settled = true;
     for (const bool above_floor : {true, false}) {
         for (const std::uint32_t context : task.contexts) {
-            // Under the worth, the best eligible candidate of any quantization at or (in the second
-            // pass) below the floor; else among the quant rule's (the largest) candidates.
-            std::optional<std::size_t> quant;
-            for (const Scored& s : out.scored) {
-                if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!quant || larger_quant(quants[s.candidate.quant], s.candidate.quant, quants[*quant], *quant)) {
-                    quant = s.candidate.quant;
-                }
-            }
-            if (!quant) { continue; }
             for (std::size_t i = 0; i < out.scored.size(); ++i) {
                 const Scored& s = out.scored[i];
                 if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!out.quant_by_worth && s.candidate.quant != *quant) { continue; }
-                if (!chosen || better(s, i, out.scored[*chosen], *chosen, quants)) { chosen = i; }
+                if (!chosen || ranks_above(i, *chosen)) { chosen = i; }
             }
             if (chosen) {
                 settled             = context;
@@ -630,7 +658,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                             : ": the family's defaults (" + defaults_why + ")") +
               (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                         ": the fastest prefill on the reference card"
-                                  : "");
+                                  : "") +
+              (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {
@@ -676,6 +705,7 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
         case Axis::State: return std::string(recurrent_state_storage_name(s.candidate.state));
         case Axis::Activations: return activation_name(s.candidate.activations);
         case Axis::Chunk: return std::to_string(s.candidate.chunk);
+        case Axis::Drafter: return s.drafter;
         }
         return "";
     };
@@ -684,11 +714,13 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     const auto same_but = [&](const Candidate& x, Axis axis) {
         const bool main = (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
                           (axis == Axis::Activations || x.activations == c.activations) &&
-                          (axis == Axis::Chunk || x.chunk == c.chunk);
+                          (axis == Axis::Chunk || x.chunk == c.chunk) &&
+                          (axis == Axis::Drafter || x.drafter == c.drafter);
         if (axis != Axis::State && axis != Axis::Ring) { return main; }
         return main && (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
     };
-    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::Chunk, Axis::State, Axis::Ring}) {
+    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::Drafter, Axis::Chunk,
+                            Axis::State, Axis::Ring}) {
         const bool coupled = axis == Axis::State || axis == Axis::Ring;
         for (const Scored& s : choice.scored) {
             if (s.variant != coupled && &s != &chosen) { continue; }
@@ -709,6 +741,12 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (!s.fits) {
                 alt.why_code = "no_fit";
                 alt.why_not  = "does not hold the asked context (" + std::to_string(s.own_context) + " each)";
+                // A faster drafter the asked context and streams leave out: said with its gain.
+                if (axis == Axis::Drafter && s.speed.decode_per_stream > chosen.speed.decode_per_stream) {
+                    alt.why_not += ", though it decodes x" +
+                                   fixed(s.speed.decode_per_stream / chosen.speed.decode_per_stream, 2) +
+                                   " as fast";
+                }
             } else if (axis == Axis::Quant && !choice.quant_by_worth &&
                        quants[s.candidate.quant].bits_per_weight == quants[c.quant].bits_per_weight &&
                        quants[s.candidate.quant].weight_bytes == quants[c.quant].weight_bytes) {
@@ -730,6 +768,11 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (coupled) {
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
+            } else if (axis == Axis::Drafter && !choice.drafter_by_worth) {
+                alt.why_code = "default";
+                alt.why_not  = choice.by_worth
+                                   ? "the speculation profile's choice stands (its gain is not measured on this card)"
+                                   : "the speculation profile's choice stands (no decision constants for this generation)";
             } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = axis == Axis::Chunk

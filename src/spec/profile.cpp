@@ -498,6 +498,29 @@ const Choice& pick(const Profile& profile, std::optional<bool> thinking) {
     return profile.overall;
 }
 
+double per_request_gain(const Profile& profile, bool thinking_default) {
+    const Choice& fixed = pick(profile, thinking_default);
+    const Choice& own   = pick(profile, !thinking_default);
+    if (fixed.config.label() == own.config.label()) { return 1.0; }
+    const auto table = aggregate(profile.measurements);
+    const std::vector<std::string> sections =
+        thinking_default ? std::vector<std::string>{"math", "code", "prose"}
+                         : std::vector<std::string>{"thinking"};
+    // A section's seconds per token at a configuration; 0 when not measured.
+    const auto cost = [&](const SpecConfig& config) {
+        double out = 0;
+        for (const auto& f : sections) {
+            const auto it = table.find({config.enabled() ? config.label() : std::string("plain"), f});
+            if (it == table.end() || it->second.tokens == 0) { return 0.0; }
+            out += seconds_per_token(it->second);
+        }
+        return out;
+    };
+    const double at_fixed = cost(fixed.config);
+    const double at_own   = cost(own.config);
+    return at_fixed > 0 && at_own > 0 ? at_fixed / at_own : 1.0;
+}
+
 bool memory_in_range(std::string_view range, std::uint64_t memory_bytes) {
     if (range.empty()) { return true; }
     if (memory_bytes == 0) { return false; }

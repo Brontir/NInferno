@@ -14,9 +14,12 @@
 #include "runtime/engine/plan_ladder.h"
 #include "serve/generation_service.h"
 #include "serve/serve_options.h"
+#include "spec/registry.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -830,6 +833,85 @@ void test_speculation_order() {
         pr::plan_with_speculation(facts, device, none.options, &subject, none.ask);
     check(plain.speculation.label == "plain" && plain.speculation.fallbacks.size() == 1,
           "--spec none is plain");
+
+    // The start's order itself (product::fit_fallbacks), one code for the server, the CLI and this
+    // plan: shallower drafts with the same drafter (deepest first, then depth 1), then the model's
+    // own MTP head; the candidate returned is the one accepted last.
+    const pr::SpeculationSubject drafted = pr::planned_subject(
+        pr::PlannedTarget{.repo          = "unsloth/Qwen3.8-27B-GGUF",
+                          .facts         = facts,
+                          .gguf          = true,
+                          .with_drafters = true},
+        gpu);
+    const auto choice = pr::served_speculation(drafted, true, false);
+    check(choice && choice->menu.mode != ninferno::spec::Mode::None &&
+              choice->menu.mode != ninferno::spec::Mode::Mtp,
+          "the 27B's profile drafts with a separate drafter");
+    if (choice) {
+        std::vector<std::string> steps;
+        const auto only_head = [&](const pr::ServedSpeculation& candidate, pr::FallbackStep at) {
+            steps.push_back(std::string(pr::fallback_step_name(at)) + " " +
+                            candidate.menu.primary.config.label());
+            return at == pr::FallbackStep::Head;
+        };
+        const auto head = pr::fit_fallbacks(drafted, *choice, false, only_head);
+        const std::int32_t k = choice->menu.primary.config.k;
+        check(head && head->menu.mode == ninferno::spec::Mode::Mtp && !steps.empty() &&
+                  steps.back().rfind("head mtp:", 0) == 0,
+              "nothing shallower fits: the MTP head, last");
+        // A fit fallback, when the profile has one, comes first (and shallower drafts start
+        // from it).
+        const std::size_t first = !steps.empty() && steps[0].rfind("fit_fallback ", 0) == 0;
+        const auto at_depth = [](const std::string& step, std::int32_t depth) {
+            const std::string label = step.substr(step.find(' ') + 1);
+            return label.substr(label.find(':') + 1, label.find_first_not_of("0123456789",
+                                                                     label.find(':') + 1) -
+                                                         label.find(':') - 1) ==
+                   std::to_string(depth);
+        };
+        check(first == 1 || k <= 2 ||
+                  (steps.size() >= 3 && steps[0].rfind("shallower ", 0) == 0 &&
+                   at_depth(steps[0], k - 1) && at_depth(steps[1], 1)),
+              "one draft shallower first, then depth 1");
+        steps.clear();
+        const auto none = pr::fit_fallbacks(
+            drafted, *choice, false,
+            [&](const pr::ServedSpeculation&, pr::FallbackStep at) {
+                steps.push_back(pr::fallback_step_name(at));
+                return false;
+            });
+        check(!none && !steps.empty() && steps.back() == "head", "nothing fits: plain, after the head");
+    }
+    // The pool rule (product::pool_rule): plain decode asked only inside the rule's range, the head
+    // only when plain decode holds more, kept at four fifths of plain decode's contexts.
+    {
+        int plain_asked = 0, head_asked = 0;
+        const auto rule = [&](std::uint32_t with_drafter, std::uint32_t streams,
+                              std::uint32_t plain, std::optional<std::uint32_t> head) {
+            return pr::pool_rule(
+                drafted, false, with_drafter, streams,
+                [&] {
+                    ++plain_asked;
+                    return plain;
+                },
+                [&](const pr::ServedSpeculation&) {
+                    ++head_asked;
+                    return head;
+                });
+        };
+        check(rule(4, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
+              "every context held: the drafter, nothing else planned");
+        check(rule(0, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
+              "no automatic pool: the drafter");
+        check(rule(3, 4, 3, 4).keep == pr::PoolKeep::Drafter && plain_asked == 1 && head_asked == 0,
+              "plain decode holds no more: the drafter");
+        const auto kept = rule(3, 4, 5, 4);
+        check(kept.keep == pr::PoolKeep::Head && kept.head && kept.plain == 5 && head_asked == 1,
+              "the head at 4 of plain's 5 (4 streams): kept");
+        check(rule(3, 4, 5, 3).keep == pr::PoolKeep::Plain, "the head at 3 of 4: plain decode");
+        check(rule(3, 4, 5, std::nullopt).keep == pr::PoolKeep::Plain,
+              "the head does not fit: plain decode");
+    }
     // The drafters a start attaches beside the target (product::attached_drafter_memory, the
     // server's plan and ninferno-ui's): a GGUF drafter file by its size in the target's listing;
     // a drafter repository read only with a fetch (none here: offline).
@@ -880,6 +962,17 @@ void test_device_facts() {
 } // namespace
 
 int main() {
+    // The plan's mechanics on the published profiles: the registry without the lab's measured
+    // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
+    // (a pair group's preliminary choice would stand where the published profile is asked for).
+    {
+        std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/src/spec/data/drafter_registry.json");
+        nlohmann::json doc = nlohmann::json::parse(in);
+        doc["pairs"]       = nlohmann::json::array();
+        const auto path    = std::filesystem::temp_directory_path() / "ninferno_plan_dry_run_registry.json";
+        std::ofstream(path) << doc.dump();
+        ninferno::spec::Registry::use_file(path);
+    }
     test_seams();
     test_family_table();
     test_launch_options_match_serve();

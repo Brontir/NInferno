@@ -121,13 +121,18 @@ struct ServeOptions {
     // The profile was asked for by default rather than by --spec auto: a model without one for
     // this GPU decodes plain without a warning.
     bool speculation_by_default = false;
+    // The configuration choice's speculation mode (product::StartAxes::drafter) for --spec auto:
+    // the profile chosen again for it (product::subject_of_mode). nullopt: the profile's own.
+    std::optional<spec::Mode> speculation_mode;
     // An explicit --spec without --draft-tokens: the service takes the depth the model's profile
     // runs that backend with on this GPU, else product::default_draft_tokens.
     bool draft_tokens_from_model = false;
-    // --spec-select fixed (default) | thinking: with a profile, fixed runs the engine's default
-    // configuration (measured on the whole mixed corpus) for every request; thinking runs each
-    // request at the profile's default for its own thinking flag, at its own depth in one engine.
+    // --spec-select fixed | thinking: with a profile, fixed runs the engine's default
+    // configuration (the default thinking flag's) for every request; thinking runs each request at
+    // the profile's default for its own thinking flag, at its own depth in one engine. Not given:
+    // per request where the profile's measurements say it pays (product::per_request_pays).
     bool per_request_speculation = false;
+    bool per_request_given       = false; // --spec-select given
     // --spec-load LANES:DEPTH,...|none: the speculation's bounds under decode load
     // (SpeculativeOptions::load) instead of the profile's table (spec::Profile::load); with an
     // explicit --spec, its only bounds. Absent: the profile's table (none with an explicit --spec).

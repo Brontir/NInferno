@@ -18,6 +18,7 @@
 #include "spec/profile.h"
 #include "spec/registry.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -103,14 +104,42 @@ speculation_subject(const std::filesystem::path& artifact, const spec::GpuKey& g
 // DFlash2 or DFlash 7), as speculation_subject does for an artifact.
 void apply_builtin_default(SpeculationSubject& subject);
 
+// The subject with its profile chosen again for one speculation mode (the configuration choice's
+// drafter axis, product/choice/choice.h): over the profile's measurements of that mode alone (a lab
+// pair's, a local tune's), the Engine's served choices again, portable ones dropped. A profile
+// without measurements offers its fit fallback when that drafts with the mode, else is kept as it
+// is. A load table measured with another drafter kind gives way to one request at a time.
+[[nodiscard]] SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode);
+
 [[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
                                                                   bool thinking, bool per_request);
+
+// Whether each request should run at its own thinking flag's choice (--spec-select thinking) rather
+// than every request at the server's default (`thinking`'s): where the profile's measurements say
+// the requests of the other flag gain more than kPerRequestMargin (spec::per_request_gain over the
+// configurations the Engine runs). A start without --spec-select, and the plan of one, take it.
+// The margin is above the measurement's spread: tokens per round of one pair agree within 1.8 %
+// across cards and 2.3 % across quantizations of 4 bits or more (choice/SPECULATION.md v4).
+inline constexpr double kPerRequestMargin = 0.03;
+[[nodiscard]] bool per_request_pays(const SpeculationSubject& subject, bool thinking);
+// The served configuration one draft shallower (`config` with k - 1, its watchdog at `floor`),
+// for every default: what a start runs when neither the profile's choice nor its fit fallback fits
+// (a narrower round takes less workspace and graph memory). nullopt at depth 1, for plain decode,
+// or when the subject has no profile with a drafter for the configuration's mode.
 [[nodiscard]] std::optional<ServedSpeculation> served_shallower(const SpeculationSubject& subject,
                                                                 bool per_request,
                                                                 const spec::SpecConfig& config,
                                                                 double floor);
+// The profile's fit fallback (spec::Profile::fit_fallback): what a start runs when the Engine
+// refuses the profile's choice with CapacityError (its drafter does not fit the requested context
+// on this device), as a menu whose every entry is the fallback. nullopt when the profile has none,
+// or the Engine cannot run it. Never for an explicit --spec.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_fit_fallback(const SpeculationSubject& subject, bool per_request);
+// The model's own MTP head in place of a separate drafter (a start's last step before plain
+// decode, and the pool rule's): the built-in MTP default (as for a model with no profile), with the
+// registry's watchdog floors (spec::raise_foreign_floors). nullopt when the profile's choice
+// already drafts with MTP, the model carries no MTP head, or the Engine cannot run it.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_head_fallback(const SpeculationSubject& subject, bool per_request);
 
@@ -122,14 +151,6 @@ served_head_fallback(const SpeculationSubject& subject, bool per_request);
 [[nodiscard]] std::optional<ServedSpeculation>
 served_speculation(const std::filesystem::path& artifact, int device, bool thinking,
                    bool per_request, const std::filesystem::path& local_profile = {});
-
-// The served configuration one draft shallower (`config` with k - 1, its watchdog at `floor`),
-// for every default: what a server runs when neither the profile's choice nor its fit fallback fits
-// (a narrower round takes less workspace and graph memory). nullopt at depth 1, for plain decode,
-// or when the artifact has no profile with a drafter for the configuration's mode.
-[[nodiscard]] std::optional<ServedSpeculation>
-served_shallower(const std::filesystem::path& artifact, int device, bool per_request,
-                 const spec::SpecConfig& config, double floor, const std::filesystem::path& local_profile = {});
 
 // The deepest configuration shallower than `tried` that `fits` accepts, with the same drafter: a
 // server whose profile's choice does not fit the requested context speculates at the deepest depth
@@ -144,6 +165,41 @@ served_shallower(const std::filesystem::path& artifact, int device, bool per_req
     const std::function<std::optional<ServedSpeculation>(const spec::SpecConfig&, double)>&
         shallower,
     const std::function<bool(const ServedSpeculation&)>& fits);
+
+// The start's order for --spec auto, one code for every place a start is judged: the server
+// (GenerationService builds the Engine), the CLI (ninferno builds it) and the plan without the
+// weights (product/plan/plan_speculation.h plans it). Each passes only its own `fits`.
+//
+// After the profile's choice `refused` does not fit: the profile's fit fallback, then the deepest
+// shallower draft (deepest_fitting_shallower) from the last choice tried (the fit fallback when
+// the profile has one, else `refused`), then the model's own MTP head. `fits` builds or plans a
+// candidate at its step and says whether it fits, replacing whatever an earlier call built; the
+// candidate returned is the one `fits` accepted last. nullopt: none fits, and the caller decodes
+// plainly.
+enum class FallbackStep { FitFallback, Shallower, Head };
+[[nodiscard]] const char* fallback_step_name(FallbackStep step) noexcept; // fit_fallback, ...
+[[nodiscard]] std::optional<ServedSpeculation>
+fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refused, bool per_request,
+              const std::function<bool(const ServedSpeculation&, FallbackStep)>& fits);
+
+// The pool rule (--spec auto with an automatic KV pool): when the served drafter leaves the pool
+// `with_drafter` whole contexts, fewer than `concurrency`, and plain decode holds more
+// (`plain_contexts`, 0 when plain decode does not fit), requests waiting for pages cost more than
+// drafting saves. The model's own MTP head runs then when it holds at least four fifths of the
+// contexts plain decode does (or of every one served; `head_contexts`, nullopt when it does not
+// fit), else plain decode. One context always fits a drafter, so a server of one request never
+// loses it. `plain_contexts` is called only inside the rule's range, `head_contexts` only when
+// plain decode holds more; each builds or plans its configuration as `fits` above does.
+enum class PoolKeep { Drafter, Head, Plain };
+struct PoolDecision {
+    PoolKeep keep = PoolKeep::Drafter;
+    std::optional<ServedSpeculation> head; // PoolKeep::Head: the head served
+    std::uint32_t plain = 0;               // the contexts plain decode holds (0: not asked)
+};
+[[nodiscard]] PoolDecision
+pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
+          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
+          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts);
 
 // The profile served_shallower serves: every choice `config` one draft shallower, with the drafter
 // the profile runs `config`'s mode with and the floor shallower_floor finds from `floor` (measured
@@ -178,20 +234,6 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
 [[nodiscard]] std::vector<std::string> speculation_notes(const std::filesystem::path& artifact,
                                                          int device, const std::filesystem::path& local_profile = {});
 
-// The profile's fit fallback (spec::Profile::fit_fallback): what a product runs when the Engine
-// refuses the profile's choice with CapacityError (its drafter does not fit the requested context
-// on this device), as a menu whose every entry is the fallback. nullopt when the profile has none,
-// or the Engine cannot run it. Never for an explicit --spec. The caller logs the switch.
-[[nodiscard]] std::optional<ServedSpeculation>
-served_fit_fallback(const std::filesystem::path& artifact, int device, bool per_request,
-                    const std::filesystem::path& local_profile = {});
-// The model's own MTP head in place of a separate drafter that leaves the KV pool fewer full
-// contexts than the server serves: the built-in MTP default (as for a model with no profile), with
-// the registry's watchdog floors (spec::raise_foreign_floors). nullopt when the served choice already drafts with MTP, the
-// artifact carries no MTP head, or the Engine cannot run it.
-[[nodiscard]] std::optional<ServedSpeculation>
-served_head_fallback(const std::filesystem::path& artifact, int device, bool per_request,
-                     const std::filesystem::path& local_profile = {});
 
 // What the Engine runs of the artifact's speculation (none when its model_type is unreadable).
 [[nodiscard]] spec::EngineSupport engine_support(const std::filesystem::path& artifact);

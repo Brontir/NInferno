@@ -156,6 +156,8 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
     SpeculationAsk& ask                 = out.ask;
     if (launch.spec.empty() || launch.spec == "auto") {
         ask.automatic = true;
+        // A launch passes no --spec-select: the server decides per request by the profile.
+        ask.per_request_from_profile = true;
     } else {
         ask.automatic          = false;
         ask.given.backend      = parse_speculative_backend(launch.spec);
@@ -369,8 +371,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            const choice::ModelFacts model = choice_model_of(facts);
-            const choice::CardFacts card   = choice_card_of(inputs.gpu);
+            choice::ModelFacts model     = choice_model_of(facts);
+            const choice::CardFacts card = choice_card_of(inputs.gpu);
             choice::QuantOption q;
             q.label           = row.listing.quant;
             q.weight_bytes    = static_cast<double>(row.weight_bytes);
@@ -386,6 +388,22 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             c.state       = row.planned.plan.recurrent;
             c.ring        = inputs.options.sliding_kv_cache;
             c.activations = inputs.options.activations;
+            // The drafter this row's plan serves, at the gain the choice weighs it with: the
+            // row's speed is of what the row would run.
+            const SpeculativeBackend served = row.planned.speculation.engine.backend;
+            if (const DryRunInputs own = inputs_for(inputs, row.listing);
+                served != SpeculativeBackend::None && own.subject != nullptr) {
+                const DrafterAxis axis = drafter_axis(*own.subject, own.ask);
+                for (std::size_t i = 0; i < axis.served.size(); ++i) {
+                    if (axis.served[i].engine.backend == served) {
+                        model.drafters       = axis.options;
+                        c.drafter            = i + 1;
+                        // Only a measured gain is counted (the page applies its own else).
+                        if (axis.options[i].measured) { row.estimate_drafter = axis.options[i].label; }
+                        break;
+                    }
+                }
+            }
             choice::Task task;
             task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
             const std::uint32_t context =
@@ -744,6 +762,7 @@ Json quant_plan_json(const QuantPlan& plan) {
             item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
                                 {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
                                 {"depth", row.estimate_depth},
+                                {"drafter", row.estimate_drafter},
                                 {"request_seconds", round_to(row.request_seconds, 0.001)},
                                 {"prompt", choice::kRequestPrompt},
                                 {"answer", choice::kRequestAnswer},

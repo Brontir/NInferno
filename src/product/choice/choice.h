@@ -10,7 +10,12 @@
 //   speed      the seconds of a typical request at it (decode and prefill, choice_constants.h);
 //   accuracy   its KLD against the exact reference (choice_constants.h's measured terms).
 //
-// The candidates are the quantizations x KV codecs x activation modes x prefill chunks (an MoE's)
+// A drafter is one more axis (choice/SPECULATION.md S3): plain decode or one of the drafters the
+// model carries and the serving Engine runs, each at the configuration chosen for it (the lab's
+// measured pair, its group's, a published profile), its memory in the plan and its gain in the
+// decode speed; it changes no output (greedy verification), so no accuracy term.
+//
+// The candidates are the quantizations x KV codecs x activation modes x drafters x prefill chunks (an MoE's)
 // the model, the card and the user's pins allow; the ring and the recurrent state follow the KV
 // codec and the activations (coupled_storages), and their other values are scored beside the
 // chosen one to explain them. A candidate fits when each stream holds the asked context of its
@@ -47,6 +52,23 @@ struct CardFacts {
     bool fp4 = false;           // FP4 tensor cores (NVFP4 weights run W4A4)
 };
 
+// One way to decode beside plain decode: a drafter the model carries at the configuration chosen
+// for it, and its gain.
+struct DrafterOption {
+    std::string label;     // the configuration, as --spec-config takes it ("mtp:4", "dflash:7")
+    std::string drafter;   // the drafter's name in the artifact or manifest
+    double speedup = 1;    // decode of one stream against plain decode's (the tune's choice)
+    // From this many streams a round of every stream decodes plainly (the load table's first
+    // bound at depth 0); 0: any number speculates.
+    std::uint32_t plain_from_streams = 0;
+    std::string basis;     // where the gain comes from (measured, preliminary, the registry's)
+    // Whether a measurement gives the gain (a profile of this card or a similar one, a lab pair);
+    // false for a choice published without its speeds (the "*" profile): its gain is unknown, so
+    // the drafter axis is not weighed and the profile's choice stands (never plain decode for a
+    // gain of 1 nobody measured).
+    bool measured = true;
+};
+
 struct ModelFacts {
     std::string family;               // model_type (qwen3_5_text, gemma4_text, ...)
     double params = 0;                // every weight
@@ -62,6 +84,11 @@ struct ModelFacts {
     std::uint32_t window = 0;         // the sliding window (0: none)
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
+    // The drafters it carries, beside plain decode (Candidate::drafter 0); and the one the server
+    // takes where the worth does not decide (its resolved profile's: an index into the candidates'
+    // drafters, 0 for plain).
+    std::vector<DrafterOption> drafters;
+    std::size_t default_drafter = 0;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -93,6 +120,7 @@ struct Pins {
     std::optional<RecurrentStateStorage> state;
     std::optional<ActivationMode> activations;
     std::optional<std::uint32_t> chunk; // --prefill-chunk
+    std::optional<std::size_t> drafter; // --spec given (0: none); a Candidate::drafter
 };
 
 // The storages that follow the KV codec and the activations (the owner's rule, 23.10): the sliding
@@ -113,6 +141,7 @@ struct Candidate {
     RecurrentStateStorage state = RecurrentStateStorage::FP32;
     ActivationMode activations = ActivationMode::Fast;
     std::uint32_t chunk = kDefaultChunk; // the widest prefill chunk (the ladder may narrow it)
+    std::size_t drafter = 0; // 0: plain decode; i: ModelFacts::drafters[i - 1]
 };
 
 // ---- The three estimates.
@@ -203,6 +232,7 @@ struct Scored {
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
+    std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
 };
 
 // The own context per stream a candidate holds (the plan without the weights), 0 when none.
@@ -215,6 +245,9 @@ struct Choice {
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
     bool quant_by_worth = false;       // and the quantization (else the quant rule's largest)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
+    // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
+    // drafter whose gain no measurement gives).
+    bool drafter_by_worth = false;
     std::string why;                   // one line: what decided it
 };
 

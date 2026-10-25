@@ -63,10 +63,17 @@ struct SpeculationAsk {
     SpeculativeOptions given;
     bool thinking    = true;
     bool per_request = false;
+    // --spec-select not given: per request where the subject's measurements say it pays
+    // (per_request_pays); per_request_of reads it.
+    bool per_request_from_profile = false;
     // An explicit --spec without --draft-tokens: the depth the model's profile runs that backend
     // with on this GPU, else product::default_draft_tokens (ServeOptions::draft_tokens_from_model).
     bool depth_from_profile = false;
 };
+
+// Whether the plan runs each request at its own thinking flag's choice: --spec-select's, or,
+// left to the profile, per_request_pays for `subject` (as GenerationService decides it).
+[[nodiscard]] bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject);
 
 struct SpeculationFallbackStep {
     std::string step;  // profile | fit_fallback | shallower | head | plain | pool_head | pool_plain

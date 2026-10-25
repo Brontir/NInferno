@@ -139,7 +139,7 @@ inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
 
 // ---- Accuracy.
 
-enum class Axis : std::uint8_t { Quant, Kv, Ring, State, Activations, Chunk };
+enum class Axis : std::uint8_t { Quant, Kv, Ring, State, Activations, Chunk, Drafter };
 
 [[nodiscard]] constexpr std::string_view axis_name(Axis axis) noexcept {
     switch (axis) {
@@ -149,6 +149,7 @@ enum class Axis : std::uint8_t { Quant, Kv, Ring, State, Activations, Chunk };
     case Axis::State: return "state";
     case Axis::Activations: return "activations";
     case Axis::Chunk: return "chunk";
+    case Axis::Drafter: return "drafter";
     }
     return "?";
 }

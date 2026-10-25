@@ -403,6 +403,39 @@ void apply_builtin_default(SpeculationSubject& subject) {
     }
 }
 
+SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
+    if (!subject.resolved) { return subject; }
+    spec::Profile& p = subject.resolved->profile;
+    const spec::Mode tuned = p.overall.config.mode;
+    if (p.measurements.empty()) {
+        // A published profile: its fit fallback of that mode (another drafter, measured to fit
+        // where the default does not) as every choice.
+        if (tuned == mode || !p.fit_fallback || p.fit_fallback->config.mode != mode) {
+            return subject;
+        }
+        p.overall = p.thinking = p.non_thinking = *p.fit_fallback;
+        p.fit_fallback.reset();
+        p.served.reset();
+        p.portable.reset();
+    } else {
+        std::erase_if(p.measurements, [&](const spec::Measurement& m) {
+            return m.config.enabled() && m.config.mode != mode;
+        });
+        p.served.reset();
+        p.portable.reset();
+        spec::SelectOptions options;
+        options.portable_within = 0;
+        options.served          = subject.support; // the choices the Engine runs
+        spec::select(p, options);
+    }
+    // A load table was measured with the default's drafter: another kind's is not known, so one
+    // request speculates and two or more decode plainly (as for a pair measured elsewhere).
+    if (tuned != mode && !p.load.empty()) {
+        p.load = {spec::LoadBound{.lanes = 2, .depth = 0}};
+    }
+    return subject;
+}
+
 std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
                                                     bool thinking, bool per_request) {
     const auto& resolved = subject.resolved;
@@ -412,8 +445,13 @@ std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& su
     out.basis                   = resolved->basis;
     out.notes                   = resolved->notes;
     const spec::Profile profile = engine_choices(resolved->profile, &out.notes);
-    return served_of(profile, spec::pick(profile, thinking), *resolved, subject, per_request,
-                     std::move(out));
+    // Per request, a default that decodes plainly still loads the drafter the other flag's
+    // choice drafts with: its requests decode plainly at their own (plain) entry of the menu.
+    const spec::Choice& own   = spec::pick(profile, thinking);
+    const spec::Choice& other = spec::pick(profile, !thinking);
+    const spec::Choice& primary =
+        per_request && !own.config.enabled() && other.config.enabled() ? other : own;
+    return served_of(profile, primary, *resolved, subject, per_request, std::move(out));
 }
 
 std::optional<ServedSpeculation> served_speculation(const std::filesystem::path& artifact,
@@ -475,15 +513,6 @@ std::optional<ServedSpeculation> served_shallower(const SpeculationSubject& subj
     return out;
 }
 
-std::optional<ServedSpeculation> served_shallower(const std::filesystem::path& artifact, int device,
-                                                  bool per_request, const spec::SpecConfig& config,
-                                                  double floor,
-                                                  const std::filesystem::path& local_profile) {
-    if (!config.enabled() || config.k <= 1) { return std::nullopt; }
-    return served_shallower(speculation_subject(artifact, device, local_profile), per_request,
-                            config, floor);
-}
-
 std::optional<ServedSpeculation> deepest_fitting_shallower(
     spec::MenuChoice tried,
     const std::function<std::optional<ServedSpeculation>(const spec::SpecConfig&, double)>&
@@ -526,6 +555,70 @@ std::optional<ServedSpeculation> deepest_fitting_shallower(
     return best;
 }
 
+bool per_request_pays(const SpeculationSubject& subject, bool thinking) {
+    const auto& resolved = subject.resolved;
+    if (!resolved || !resolved->found() || resolved->profile.disabled) { return false; }
+    return spec::per_request_gain(engine_choices(resolved->profile, nullptr), thinking) >=
+           1.0 + kPerRequestMargin;
+}
+
+const char* fallback_step_name(FallbackStep step) noexcept {
+    switch (step) {
+    case FallbackStep::FitFallback:
+        return "fit_fallback";
+    case FallbackStep::Shallower:
+        return "shallower";
+    case FallbackStep::Head:
+        return "head";
+    }
+    return "fit_fallback";
+}
+
+std::optional<ServedSpeculation>
+fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refused, bool per_request,
+              const std::function<bool(const ServedSpeculation&, FallbackStep)>& fits) {
+    spec::MenuChoice tried = refused.menu.primary;
+    if (auto fallback = served_fit_fallback(subject, per_request)) {
+        tried = fallback->menu.primary;
+        if (fits(*fallback, FallbackStep::FitFallback)) { return fallback; }
+    }
+    if (auto deepest = deepest_fitting_shallower(
+            tried,
+            [&](const spec::SpecConfig& config, double floor) {
+                return served_shallower(subject, per_request, config, floor);
+            },
+            [&](const ServedSpeculation& candidate) {
+                return fits(candidate, FallbackStep::Shallower);
+            })) {
+        return deepest;
+    }
+    if (auto head = served_head_fallback(subject, per_request);
+        head && fits(*head, FallbackStep::Head)) {
+        return head;
+    }
+    return std::nullopt;
+}
+
+PoolDecision
+pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
+          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
+          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts) {
+    PoolDecision out;
+    if (with_drafter == 0 || with_drafter >= concurrency) { return out; }
+    out.plain = plain_contexts();
+    if (out.plain <= with_drafter) { return out; }
+    out.keep = PoolKeep::Plain;
+    if (auto head = served_head_fallback(subject, per_request)) {
+        const auto contexts = head_contexts(*head);
+        if (contexts && 5 * static_cast<std::uint64_t>(*contexts) >=
+                            4 * static_cast<std::uint64_t>(std::min(out.plain, concurrency))) {
+            out.keep = PoolKeep::Head;
+            out.head = std::move(head);
+        }
+    }
+    return out;
+}
+
 void require_named_tune(const std::filesystem::path& artifact, int device,
                         const std::filesystem::path& local_profile) {
     if (!local_profile.empty()) { (void)resolve(artifact, device, local_profile); }
@@ -566,12 +659,6 @@ std::optional<ServedSpeculation> served_fit_fallback(const SpeculationSubject& s
     return out;
 }
 
-std::optional<ServedSpeculation> served_fit_fallback(const std::filesystem::path& artifact,
-                                                     int device, bool per_request,
-                                                     const std::filesystem::path& local_profile) {
-    return served_fit_fallback(speculation_subject(artifact, device, local_profile), per_request);
-}
-
 std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& subject,
                                                       bool per_request) {
     const auto& resolved = subject.resolved;
@@ -593,12 +680,6 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     out = served_of(head.profile, head.profile.overall, head, subject, per_request, std::move(out));
     if (out.menu.mode == spec::Mode::None) { return std::nullopt; }
     return out;
-}
-
-std::optional<ServedSpeculation> served_head_fallback(const std::filesystem::path& artifact,
-                                                      int device, bool per_request,
-                                                      const std::filesystem::path& local_profile) {
-    return served_head_fallback(speculation_subject(artifact, device, local_profile), per_request);
 }
 
 std::filesystem::path model_drafter(const std::filesystem::path& artifact,

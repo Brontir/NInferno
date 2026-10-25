@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -56,6 +57,60 @@ Json candidate_json(const choice::Candidate& c) {
 }
 
 } // namespace
+
+DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask) {
+    DrafterAxis out;
+    if (!subject.resolved || subject.resolved->profile.disabled) { return out; }
+    const bool per_request       = per_request_of(ask, &subject);
+    const auto base              = served_speculation(subject, ask.thinking, per_request);
+    const spec::Profile& profile = subject.resolved->profile;
+    std::set<spec::Mode> modes;
+    for (const spec::Measurement& m : profile.measurements) {
+        if (m.config.enabled()) { modes.insert(m.config.mode); }
+    }
+    if (modes.empty() && base && base->engine.backend != SpeculativeBackend::None) {
+        modes.insert(base->menu.mode);
+        // A published profile's fit fallback drafts with another drafter where the default does
+        // not fit (the 27B on GB203: DFlash2, MTP to fit): an option of its own.
+        if (profile.fit_fallback && profile.fit_fallback->config.enabled()) {
+            modes.insert(profile.fit_fallback->config.mode);
+        }
+    }
+    for (const spec::Mode mode : modes) {
+        const SpeculationSubject one = subject_of_mode(subject, mode);
+        const spec::Profile& p       = one.resolved->profile;
+        const auto served            = served_speculation(one, ask.thinking, per_request);
+        if (!served || served->engine.backend == SpeculativeBackend::None ||
+            served->menu.mode != mode) {
+            continue;
+        }
+        // The gain of the default thinking flag's choice. Per request with that choice plain
+        // and the other flag's drafting (served_speculation seeds the menu with it), the gain
+        // is only the other flag's requests': not weighed, so the profile's choice stands.
+        const spec::Choice& own   = spec::pick(p, ask.thinking);
+        const spec::Choice& other = spec::pick(p, !ask.thinking);
+        const bool split = per_request && !own.config.enabled() && other.config.enabled();
+        const spec::Choice& c = split ? other : own;
+        choice::DrafterOption option;
+        option.label   = served->menu.primary.config.label();
+        option.drafter = c.drafter;
+        option.speedup = std::max(1.0, c.speedup());
+        option.measured = !split && c.tok_s > 0 && c.plain_tok_s > 0;
+        option.basis   = subject.resolved->basis;
+        for (const spec::LoadBound& bound : p.load) {
+            if (bound.depth == 0) {
+                option.plain_from_streams = static_cast<std::uint32_t>(bound.lanes);
+                break;
+            }
+        }
+        out.options.push_back(std::move(option));
+        out.served.push_back(*served);
+        if (base && base->engine.backend != SpeculativeBackend::None && base->menu.mode == mode) {
+            out.default_drafter = out.options.size();
+        }
+    }
+    return out;
+}
 
 choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     const runtime::PlanModelFacts m = facts.model;
@@ -123,7 +178,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     DryRunInputs idle  = inputs;
     idle.device.free_bytes.reset();
     ServedChoice out;
-    const choice::ModelFacts model = choice_model_of(facts);
+    choice::ModelFacts model       = choice_model_of(facts);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     choice::QuantOption quant;
     quant.label           = label.empty() ? "the model's weights" : label;
@@ -152,6 +207,24 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
 
     choice::Pins p;
     p.quant = 0;
+    // The drafter: an axis of the choice where the subject's profile offers one; --spec given pins
+    // it (none: plain decode; a backend the axis offers: that option).
+    DrafterAxis axis;
+    if (inputs.subject != nullptr) { axis = drafter_axis(*inputs.subject, inputs.ask); }
+    if (!axis.options.empty() && !inputs.ask.automatic) {
+        std::optional<std::size_t> pinned;
+        if (inputs.ask.given.backend == SpeculativeBackend::None) { pinned = 0; }
+        for (std::size_t i = 0; i < axis.served.size(); ++i) {
+            if (axis.served[i].engine.backend == inputs.ask.given.backend) { pinned = i + 1; }
+        }
+        if (pinned) {
+            p.drafter = pinned;
+        } else {
+            axis = {}; // a speculation the axis does not offer: planned as given, not chosen
+        }
+    }
+    model.drafters       = axis.options;
+    model.default_drafter = axis.default_drafter;
     const EngineOptions& o = inputs.options;
     if (pins.kv) { p.kv = o.kv_cache; }
     if (pins.activations) { p.activations = o.activations; }
@@ -164,7 +237,15 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const std::vector<std::uint32_t> steps = runtime::quant_own_targets(ask);
     const auto own = [&](const choice::Candidate& c) -> std::uint32_t {
         if (memory == OwnContext::Unbounded) { return std::numeric_limits<std::uint32_t>::max(); }
-        const DryRunInputs pinned = inputs_with(idle, c);
+        DryRunInputs pinned = inputs_with(idle, c);
+        // The candidate's drafter planned as given: its weights and state in the memory. An
+        // explicit --spec pins its option and is planned with its own settings (depth, head).
+        if (!axis.options.empty() && inputs.ask.automatic) {
+            pinned.ask.automatic          = false;
+            pinned.ask.depth_from_profile = false;
+            pinned.ask.given = c.drafter > 0 ? axis.served[c.drafter - 1].engine : SpeculativeOptions{};
+            pinned.options.speculative = pinned.ask.given;
+        }
         if (memory == OwnContext::Steps) {
             // The first of Auto's steps it holds of its own (steps are tried longest first).
             for (const std::uint32_t step : steps) {
@@ -179,7 +260,10 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     std::vector<std::pair<choice::Candidate, std::uint32_t>> seen;
     const choice::OwnContextFn cached = [&](const choice::Candidate& c) {
         for (const auto& [k, v] : seen) {
-            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state && k.chunk == c.chunk) { return v; }
+            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state && k.chunk == c.chunk &&
+                k.drafter == c.drafter) {
+                return v;
+            }
         }
         const std::uint32_t v = own(c);
         seen.emplace_back(c, v);
@@ -194,6 +278,8 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.task.contexts  = steps;
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
+    out.drafters       = std::move(axis.served);
+    out.drafter_options = axis.options;
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
     out.depth                 = std::max<std::uint32_t>(512, asked / 4);
     if (out.choice.chosen) {
@@ -202,6 +288,39 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                   .decode_per_stream;
     }
     return out;
+}
+
+PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                  const ServedChoice& served, const ChoicePins& pins,
+                                  PlannedSpeculation planned) {
+    if (!served.choice.chosen || !inputs.ask.automatic || inputs.subject == nullptr) {
+        return planned;
+    }
+    const auto drafter = start_axes(served, pins).drafter;
+    const SpeculativeBackend backend = planned.speculation.engine.backend;
+    const spec::Mode serving = backend == SpeculativeBackend::Mtp       ? spec::Mode::Mtp
+                               : backend == SpeculativeBackend::DFlash  ? spec::Mode::DFlash
+                               : backend == SpeculativeBackend::DFlash2 ? spec::Mode::DFlash2
+                                                                        : spec::Mode::None;
+    if (!drafter || *drafter == serving) { return planned; }
+    DryRunInputs again = inputs;
+    std::optional<SpeculationSubject> chosen;
+    if (*drafter == spec::Mode::None) {
+        again.ask.automatic = false;
+        again.ask.given     = {};
+    } else {
+        chosen        = subject_of_mode(*inputs.subject, *drafter);
+        again.subject = &*chosen;
+    }
+    planned = plan_model(facts, again);
+    if (*drafter == spec::Mode::None) {
+        planned.speculation.ask   = "auto";
+        planned.speculation.basis = "choice";
+        planned.speculation.notes.push_back(
+            "the configuration choice decodes plainly: no drafter it weighed is worth more at the "
+            "asked context and streams");
+    }
+    return planned;
 }
 
 StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
@@ -217,6 +336,10 @@ StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
     if (!pins.state && has(choice::Axis::State)) { out.state = s.candidate.state; }
     if (!pins.ring && has(choice::Axis::Ring)) { out.ring = s.candidate.ring; }
     if (!pins.chunk) { out.chunk = s.candidate.chunk; }
+    if (!served.drafters.empty()) {
+        out.drafter = s.candidate.drafter == 0 ? spec::Mode::None
+                                               : served.drafters[s.candidate.drafter - 1].menu.mode;
+    }
     return out;
 }
 
@@ -291,6 +414,11 @@ Json choice_json(const ServedChoice& served) {
     const choice::Scored& s = served.choice.scored[*served.choice.chosen];
     Json chosen             = candidate_json(s.candidate);
     chosen["quant"]         = served.quants[s.candidate.quant].label;
+    chosen["drafter"]       = s.drafter;
+    // Whether the decode estimates count the drafter's gain (a measured one).
+    chosen["drafter_counted"] = s.candidate.drafter > 0 &&
+                                s.candidate.drafter <= served.drafter_options.size() &&
+                                served.drafter_options[s.candidate.drafter - 1].measured;
     chosen["depth"]         = served.depth;
     chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
     chosen.update(estimates_json(s));

@@ -255,9 +255,14 @@ external entry replaced entirely is not).
 - The server loads the drafter of the profile's default for its thinking default, with that
   choice's proposal head. It captures CUDA graphs for every depth the profile's choices use with
   that drafter.
-- `--spec-select fixed` (the default) runs that configuration for every request.
-  `--spec-select thinking` runs per request the profile's thinking or non-thinking default, by the
-  request's own thinking flag.
+- `--spec-select fixed` runs that configuration for every request. `--spec-select thinking` runs
+  per request the profile's thinking or non-thinking default, by the request's own thinking flag.
+- Without `--spec-select` the profile's measurements decide (`product::per_request_pays`): per
+  request where the requests of the other thinking flag would gain at least 3 % at their own
+  configuration (above the 1.8–2.3 % the measurements spread), else fixed. On the lab's pairs only
+  Ada's 9B DFlash differs (15 drafts with thinking, 7 without): with thinking on by default the
+  requests without it lose 2 % at 15 (fixed serves), with it off those with it lose 16 % at 7 (per
+  request serves).
 - Requests of different depths share batches. A step verifies at the deepest request's depth, each
   request drafting at that launch's width.
 - A choice that needs another drafter runs the default configuration, and the startup log says so.
@@ -1655,7 +1660,7 @@ not take at startup.
 | Option | Meaning | Default |
 |---|---|---:|
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | speculative backend, or `auto`: the model's tuned profile (`off` is `none`) | `auto` |
-| `--spec-select fixed\|thinking` | under `--spec auto`: one configuration for every request, or the profile's thinking/non-thinking default per request | `fixed` |
+| `--spec-select fixed\|thinking` | under `--spec auto`: one configuration for every request, or the profile's thinking/non-thinking default per request | by the profile's measurements |
 | `--spec-load LANES:DEPTH[:block\|drafts],...\|none` | bounds on speculation under decode load instead of the profile's `load` table, each optionally with the DFlash draft width of its launches | the profile's |
 | `--draft-width block\|drafts` | the DFlash draft width of every launch (`block`: every column the drafter was trained on; `drafts`: the anchor and the round's drafts); `--spec auto` drops a width its speculation does not run | `block` at one row, `drafts` from two |
 | `--spec-shared-floor F` | a request below its break-even floor keeps drafting while another request of its step drafts and it emits at least `F` tokens per round (`1` or less: it stops at its floor) | `1.4` |

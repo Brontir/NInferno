@@ -379,6 +379,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .given       = options.speculative,
                                                  .thinking    = options.enable_thinking.value_or(true),
                                                  .per_request = options.per_request_speculation,
+                                                 .per_request_from_profile =
+                                                     options.speculation_from_profile &&
+                                                     !options.per_request_given,
                                                  .depth_from_profile = options.draft_tokens_from_model};
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
@@ -483,14 +486,6 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     } else {
         planned = product::plan_model(model.facts, planning.inputs);
     }
-    const std::string source =
-        model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
-    out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,
-                                          quants ? &*quants : nullptr);
-    out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
-                                             quants ? &*quants : nullptr);
-    out.fits = planned.plan.fits;
-    if (!out.fits) { out.reason = planned.plan.reason; }
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
     std::string label = model.quant;
@@ -499,7 +494,18 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         quants && quants->chosen
             ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
             : planning.inputs;
-    if (const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label)) {
+    const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label);
+    // A start serves the choice's drafter (product::StartAxes::drafter): the plan shown is of it.
+    if (served) { planned = product::plan_at_choice(facts, at_chosen, *served, pins_of(options), planned); }
+    const std::string source =
+        model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
+    out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,
+                                          quants ? &*quants : nullptr);
+    out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
+                                             quants ? &*quants : nullptr);
+    out.fits = planned.plan.fits;
+    if (!out.fits) { out.reason = planned.plan.reason; }
+    if (served) {
         out.json["choice"] = product::choice_json(*served);
         out.text += product::choice_line(*served) + "\n";
     }
@@ -508,8 +514,14 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         const product::QuantRow& row             = quants->rows[quants->pick->index];
         product::DryRunInputs now                = product::inputs_for(planning.inputs, row.listing);
         now.device.free_bytes                    = free_now;
-        const product::PlannedSpeculation at_now = product::plan_model(
-            product::with_weights(model.facts, row.weight_bytes, row.basis), now);
+        const product::PlanSourceFacts at_weights =
+            product::with_weights(model.facts, row.weight_bytes, row.basis);
+        product::PlannedSpeculation at_now = product::plan_model(at_weights, now);
+        // The choice is made at the chosen row: there, the drafter it serves.
+        if (served && quants->chosen && *quants->chosen == quants->pick->index) {
+            at_now = product::plan_at_choice(at_weights, now, *served, pins_of(options),
+                                             std::move(at_now));
+        }
         out.json["device"]["free_now_bytes"] = *free_now;
         out.json["device"]["fits_now"]       = at_now.plan.fits;
         if (!at_now.plan.fits) {
@@ -692,7 +704,11 @@ largest_fitting_hub_quant(const ServeOptions& options,
 std::optional<product::StartAxes>
 choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
     const product::ChoicePins pins = pins_of(options);
-    if (pins.kv && pins.activations && pins.state && pins.ring && pins.chunk) { return std::nullopt; }
+    // Every axis pinned and the drafter given (--spec): nothing left to choose.
+    if (pins.kv && pins.activations && pins.state && pins.ring && pins.chunk &&
+        !options.speculation_from_profile) {
+        return std::nullopt;
+    }
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
     try {

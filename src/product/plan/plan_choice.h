@@ -23,7 +23,22 @@ namespace ninferno::product {
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
 
+// The drafter axis (choice/SPECULATION.md S3): beside plain decode, one option per speculation
+// mode the subject's profile chose or measured and its Engine runs. A profile with measurements
+// (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
+// without offers its own choice. Each option carries the served speculation a start of it runs
+// (served_speculation over the profile of that mode), its gain the profile's choice for the
+// server's thinking flag, and the streams from which its load table decodes plainly.
+struct DrafterAxis {
+    std::vector<choice::DrafterOption> options;
+    std::vector<ServedSpeculation> served;
+    std::size_t default_drafter = 0; // the subject's own served choice (0: plain)
+};
+[[nodiscard]] DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask);
+
 struct ServedChoice {
+    // The drafter axis's options (their gains, measured or not), beside `drafters`.
+    std::vector<choice::DrafterOption> drafter_options;
     std::vector<choice::QuantOption> quants; // the one quantization planned
     choice::Task task;
     choice::Choice choice;
@@ -34,6 +49,9 @@ struct ServedChoice {
     // first step), and the chosen candidate's decode there.
     std::uint32_t depth         = 0;
     double decode_at_depth      = 0;
+    // The drafter axis's speculations (choice::ModelFacts::drafters, in its order): what a start of
+    // each would run. Empty without a speculation subject.
+    std::vector<ServedSpeculation> drafters;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it
@@ -57,8 +75,19 @@ struct StartAxes {
     std::optional<RecurrentStateStorage> state;
     std::optional<ActivationMode> activations;
     std::optional<std::uint32_t> chunk; // the widest prefill chunk
+    // The speculation mode the choice took (None: plain decode), where it chose a drafter: a
+    // --spec auto start serves its profile chosen again for that mode (subject_of_mode).
+    std::optional<spec::Mode> drafter;
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
+
+// The plan a --spec auto start serves at the configuration choice: `planned` (the profile's
+// speculation) planned again with the choice's drafter (StartAxes::drafter) where they differ,
+// plain decode said so. One code for ninferno-serve's plan without the weights and the CLI's.
+[[nodiscard]] PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts,
+                                                const DryRunInputs& inputs,
+                                                const ServedChoice& served, const ChoicePins& pins,
+                                                PlannedSpeculation planned);
 // The axes set on a start's Engine options (the KV codec then no longer automatic, the state
 // likewise).
 void apply_start_axes(EngineOptions& options, const StartAxes& axes);
