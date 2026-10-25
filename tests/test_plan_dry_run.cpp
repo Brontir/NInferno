@@ -686,10 +686,12 @@ void test_rule() {
                                     "reason_code", "reason_params", "fits_instead"}) {
                 check(doc["plan"].contains(key), std::string("plan.") + key);
             }
-            for (const char* key : {"ask", "served", "classes", "fallbacks", "load", "basis"}) {
+            for (const char* key : {"ask", "served", "fallbacks", "load", "basis"}) {
                 check(doc["plan"]["speculation"].contains(key), std::string("speculation.") + key);
             }
-            check(doc["plan"]["speculation"]["classes"].size() == 4, "four context classes");
+            check(!doc["plan"]["speculation"].contains("classes") &&
+                      !doc["plan"]["speculation"].contains("modeled_load"),
+                  "no context classes or modeled load: the round-cost model is gone");
         }
     }
     // A safetensors checkpoint: planned at its converted size, or not planned (never refused).
