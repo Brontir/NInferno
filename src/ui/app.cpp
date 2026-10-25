@@ -994,15 +994,17 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         }
         return &it->second;
     };
-    // A separate drafter the served speculation would upload beside the target (the registry's
-    // size for this model's default drafter).
-    try {
-        const Json sp        = speculation_json(repo, gpu, kv_json(repo, list, hub), list);
-        const std::string kd = sp.value("kind", std::string());
-        if (kd.find("mtp") == std::string::npos) {
-            inputs.drafter_bytes = static_cast<std::uint64_t>(sp.value("drafter_bytes", 0.0));
-        }
-    } catch (const std::exception&) {}
+    // The drafters a start attaches beside the target, their weights and a DFlash drafter's
+    // state: the server's plan reads the same (product::attached_drafter_memory).
+    {
+        convert::FetchOptions fetch;
+        fetch.hub = hub;
+        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
+            subject, listing, facts->model.hidden, options_.offline ? nullptr : &fetch);
+        inputs.drafter_bytes = drafter.bytes;
+        inputs.drafter_state = drafter.state;
+    }
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     std::string planned_label           = quant;
