@@ -335,61 +335,26 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
             step("profile", picked, plan, served->source);
             bool built = plan.fits;
             if (built) { serve(picked, std::move(plan)); }
-            // The profile's fit fallback.
+            // The start's order when the choice does not fit (fit_fallbacks): the profile's fit
+            // fallback, the deepest shallower draft, the model's own MTP head; each step planned
+            // and recorded, the one the order accepts last served.
             if (!built) {
-                if (auto fallback = served_fit_fallback(*subject, ask.per_request)) {
-                    const SpeculativeOptions sp = with_given(*fallback);
-                    runtime::DryRunPlan p       = plan_of(sp);
-                    step("fit_fallback", sp, p, fallback->source);
-                    if (p.fits) {
-                        served = std::move(fallback);
-                        serve(sp, std::move(p));
-                        built = true;
-                    }
-                }
-            }
-            // Shallower drafts with the same drafter: the deepest that fits.
-            if (!built) {
-                std::optional<std::pair<SpeculativeOptions, runtime::DryRunPlan>> last;
-                const auto deepest = deepest_fitting_shallower(
-                    served->menu.primary,
-                    [&](const spec::SpecConfig& config, double floor) {
-                        return served_shallower(*subject, ask.per_request, config, floor);
-                    },
-                    [&](const ServedSpeculation& candidate) {
+                std::optional<runtime::DryRunPlan> accepted;
+                auto fallback = fit_fallbacks(
+                    *subject, *served, ask.per_request,
+                    [&](const ServedSpeculation& candidate, FallbackStep at) {
                         const SpeculativeOptions sp = with_given(candidate);
                         runtime::DryRunPlan p       = plan_of(sp);
-                        step("shallower", sp, p);
+                        step(fallback_step_name(at), sp, p,
+                             at == FallbackStep::Shallower ? std::string() : candidate.source);
                         const bool fits = p.fits;
-                        if (fits) { last.emplace(sp, std::move(p)); }
+                        if (fits) { accepted.emplace(std::move(p)); }
                         return fits;
                     });
-                if (deepest && last) {
-                    // The step the search ended on is the one served.
-                    for (auto& s : r.fallbacks) {
-                        s.served = false;
-                        if (s.step == "shallower" && s.label == label_of(last->first) && s.fits) {
-                            s.served = true;
-                        }
-                    }
-                    served   = *deepest;
-                    r.engine = last->first;
-                    r.label  = label_of(last->first);
-                    out.plan = std::move(last->second);
-                    built    = true;
-                }
-            }
-            // The model's own MTP head, before plain decode.
-            if (!built) {
-                if (auto head = served_head_fallback(*subject, ask.per_request)) {
-                    const SpeculativeOptions sp = with_given(*head);
-                    runtime::DryRunPlan p       = plan_of(sp);
-                    step("head", sp, p, head->source);
-                    if (p.fits) {
-                        served = std::move(head);
-                        serve(sp, std::move(p));
-                        built = true;
-                    }
+                if (fallback && accepted) {
+                    served = std::move(fallback);
+                    serve(with_given(*served), std::move(*accepted));
+                    built = true;
                 }
             }
             if (!built) {
@@ -399,40 +364,39 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 step("plain", plain, p, "nothing speculative fits: --spec auto decodes plainly");
                 serve(plain, std::move(p));
             }
-            // The pool rule: a drafter that leaves the automatic pool fewer whole contexts than C
-            // while plain decode holds more gives way (to the MTP head when it keeps four fifths of
-            // plain decode's contexts).
+            // The pool rule (pool_rule): a drafter that leaves the automatic pool fewer whole
+            // contexts than C while plain decode holds more gives way (to the MTP head when it
+            // keeps four fifths of plain decode's contexts).
             if (served && built) {
                 const std::uint32_t with_drafter = pool_contexts_of(out.plan, options);
-                if (with_drafter > 0 && with_drafter < concurrency) {
+                std::optional<runtime::DryRunPlan> plain_plan, head_plan;
+                const PoolDecision pool = pool_rule(
+                    *subject, ask.per_request, with_drafter, concurrency,
+                    [&] {
+                        plain_plan = plan_of(SpeculativeOptions{});
+                        return pool_contexts_of(*plain_plan, options);
+                    },
+                    [&](const ServedSpeculation& head) -> std::optional<std::uint32_t> {
+                        const SpeculativeOptions sp = with_given(head);
+                        head_plan                   = plan_of(sp);
+                        step("pool_head", sp, *head_plan,
+                             "the drafter leaves " + std::to_string(with_drafter) + " of " +
+                                 std::to_string(concurrency) + " whole contexts");
+                        if (!head_plan->fits) { return std::nullopt; }
+                        return pool_contexts_of(*head_plan, options);
+                    });
+                if (pool.keep == PoolKeep::Head) {
+                    for (auto& s : r.fallbacks) { s.served = false; }
+                    served = pool.head;
+                    serve(with_given(*served), std::move(*head_plan));
+                } else if (pool.keep == PoolKeep::Plain) {
+                    for (auto& s : r.fallbacks) { s.served = false; }
                     const SpeculativeOptions plain;
-                    runtime::DryRunPlan plain_plan = plan_of(plain);
-                    const std::uint32_t plain_pool = pool_contexts_of(plain_plan, options);
-                    bool head_kept                 = false;
-                    if (plain_pool > with_drafter) {
-                        if (auto head = served_head_fallback(*subject, ask.per_request)) {
-                            const SpeculativeOptions sp = with_given(*head);
-                            runtime::DryRunPlan p       = plan_of(sp);
-                            head_kept = p.fits && 5 * pool_contexts_of(p, options) >=
-                                                      4 * std::min(plain_pool, concurrency);
-                            step("pool_head", sp, p,
-                                 "the drafter leaves " + std::to_string(with_drafter) + " of " +
-                                     std::to_string(concurrency) + " whole contexts");
-                            if (head_kept) {
-                                for (auto& s : r.fallbacks) { s.served = false; }
-                                served = std::move(head);
-                                serve(sp, std::move(p));
-                            }
-                        }
-                        if (!head_kept) {
-                            for (auto& s : r.fallbacks) { s.served = false; }
-                            step("pool_plain", plain, plain_plan,
-                                 "plain decode holds " + std::to_string(plain_pool) +
-                                     " whole contexts against " + std::to_string(with_drafter));
-                            served.reset();
-                            serve(plain, std::move(plain_plan));
-                        }
-                    }
+                    step("pool_plain", plain, *plain_plan,
+                         "plain decode holds " + std::to_string(pool.plain) +
+                             " whole contexts against " + std::to_string(with_drafter));
+                    served.reset();
+                    serve(plain, std::move(*plain_plan));
                 }
             }
         }

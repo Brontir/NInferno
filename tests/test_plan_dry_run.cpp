@@ -828,6 +828,79 @@ void test_speculation_order() {
         pr::plan_with_speculation(facts, device, none.options, &subject, none.ask, gpu);
     check(plain.speculation.label == "plain" && plain.speculation.fallbacks.size() == 1,
           "--spec none is plain");
+
+    // The start's order itself (product::fit_fallbacks), one code for the server, the CLI and this
+    // plan: shallower drafts with the same drafter (deepest first, then depth 1), then the model's
+    // own MTP head; the candidate returned is the one accepted last.
+    const pr::SpeculationSubject drafted = pr::planned_subject(
+        pr::PlannedTarget{.repo          = "unsloth/Qwen3.8-27B-GGUF",
+                          .facts         = facts,
+                          .gguf          = true,
+                          .with_drafters = true},
+        gpu);
+    const auto choice = pr::served_speculation(drafted, true, false);
+    check(choice && choice->menu.mode != ninferno::spec::Mode::None &&
+              choice->menu.mode != ninferno::spec::Mode::Mtp,
+          "the 27B's profile drafts with a separate drafter");
+    if (choice) {
+        std::vector<std::string> steps;
+        const auto only_head = [&](const pr::ServedSpeculation& candidate, pr::FallbackStep at) {
+            steps.push_back(std::string(pr::fallback_step_name(at)) + " " +
+                            candidate.menu.primary.config.label());
+            return at == pr::FallbackStep::Head;
+        };
+        const auto head = pr::fit_fallbacks(drafted, *choice, false, only_head);
+        const std::int32_t k = choice->menu.primary.config.k;
+        check(head && head->menu.mode == ninferno::spec::Mode::Mtp && !steps.empty() &&
+                  steps.back().rfind("head mtp:", 0) == 0,
+              "nothing shallower fits: the MTP head, last");
+        // A fit fallback, when the profile has one, comes first (and shallower drafts start
+        // from it).
+        const std::size_t first = !steps.empty() && steps[0].rfind("fit_fallback ", 0) == 0;
+        check(first == 1 || k <= 1 ||
+                  (steps.size() >= 3 && steps[0].rfind("shallower ", 0) == 0 &&
+                   steps[0].find(":" + std::to_string(k - 1)) != std::string::npos &&
+                   steps[1].find(":1") != std::string::npos),
+              "one draft shallower first, then depth 1");
+        steps.clear();
+        const auto none = pr::fit_fallbacks(
+            drafted, *choice, false,
+            [&](const pr::ServedSpeculation&, pr::FallbackStep at) {
+                steps.push_back(pr::fallback_step_name(at));
+                return false;
+            });
+        check(!none && !steps.empty() && steps.back() == "head", "nothing fits: plain, after the head");
+    }
+    // The pool rule (product::pool_rule): plain decode asked only inside the rule's range, the head
+    // only when plain decode holds more, kept at four fifths of plain decode's contexts.
+    {
+        int plain_asked = 0, head_asked = 0;
+        const auto rule = [&](std::uint32_t with_drafter, std::uint32_t streams,
+                              std::uint32_t plain, std::optional<std::uint32_t> head) {
+            return pr::pool_rule(
+                drafted, false, with_drafter, streams,
+                [&] {
+                    ++plain_asked;
+                    return plain;
+                },
+                [&](const pr::ServedSpeculation&) {
+                    ++head_asked;
+                    return head;
+                });
+        };
+        check(rule(4, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
+              "every context held: the drafter, nothing else planned");
+        check(rule(0, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
+              "no automatic pool: the drafter");
+        check(rule(3, 4, 3, 4).keep == pr::PoolKeep::Drafter && plain_asked == 1 && head_asked == 0,
+              "plain decode holds no more: the drafter");
+        const auto kept = rule(3, 4, 5, 4);
+        check(kept.keep == pr::PoolKeep::Head && kept.head && kept.plain == 5 && head_asked == 1,
+              "the head at 4 of plain's 5 (4 streams): kept");
+        check(rule(3, 4, 5, 3).keep == pr::PoolKeep::Plain, "the head at 3 of 4: plain decode");
+        check(rule(3, 4, 5, std::nullopt).keep == pr::PoolKeep::Plain,
+              "the head does not fit: plain decode");
+    }
 }
 
 // ---- 5. Facts the device side declares.

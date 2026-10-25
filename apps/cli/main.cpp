@@ -314,27 +314,10 @@ int main(int argc, char** argv) {
         engine_options.speculative        = cli.speculative;
         // A tune named by --spec-profile serves or the run does not start (whatever --spec says).
         ninferno::product::require_named_tune(cli.artifact_path, cli.device, cli.spec_profile);
-        if (!cli.spec_explicit) {
-            // The speculation the model came with, for this GPU: the profile's default for the
-            // thinking flag (on by default, as the profile's).
-            std::string source;
-            std::vector<std::string> notes;
-            const auto chosen = ninferno::product::profile_speculation(
-                cli.artifact_path, cli.device, cli.enable_thinking, &source, &notes,
-                cli.spec_profile);
-            for (const auto& note : notes) { logger->info("speculation: {}", note); }
-            if (chosen) {
-                engine_options.speculative =
-                    ninferno::product::with_given_settings(*chosen, cli.speculative);
-                logger->info("speculation: {}", source);
-            }
-        } else if (engine_options.speculative.drafter.empty()) {
+        if (cli.spec_explicit && engine_options.speculative.drafter.empty()) {
             // An explicit --spec drafts with the drafter that came with the model, as the server.
             engine_options.speculative.drafter = ninferno::product::model_drafter(
                 cli.artifact_path, engine_options.speculative.backend);
-        }
-        if (cli.acceptance_floor) {
-            engine_options.speculative.acceptance_floor = *cli.acceptance_floor;
         }
         engine_options.enable_vision      = cli.enable_vision;
         engine_options.use_cuda_graph     = cli.use_cuda_graph;
@@ -403,16 +386,18 @@ int main(int argc, char** argv) {
             return planned.plan.fits ? 0 : 2;
         }
         // The axes the user left to the engine: the configuration choice for this artifact on this
-        // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it.
+        // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it, the drafter with
+        // them under --spec auto.
+        std::optional<ninferno::spec::Mode> chosen_drafter;
         {
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
                                                      .activations = cli.activations_given,
                                                      .state       = cli.recurrent_state.has_value(),
                                                      .ring        = cli.sliding_kv_given,
                                                      .chunk       = true}; // the CLI's chunk is fixed
-            if (!(pins.kv && pins.activations && pins.state && pins.ring)) {
+            if (!(pins.kv && pins.activations && pins.state && pins.ring) || !cli.spec_explicit) {
                 ninferno::product::SpeculationAsk ask;
-                ask.automatic = false;
+                ask.automatic = !cli.spec_explicit;
                 ask.given     = engine_options.speculative;
                 ask.thinking  = cli.enable_thinking.value_or(true);
                 std::string why;
@@ -421,27 +406,58 @@ int main(int argc, char** argv) {
                 if (served) {
                     logger->info("{}", ninferno::product::choice_line(*served));
                     if (served->choice.chosen) {
-                        ninferno::product::apply_start_axes(
-                            engine_options, ninferno::product::start_axes(*served, pins));
+                        const auto axes = ninferno::product::start_axes(*served, pins);
+                        ninferno::product::apply_start_axes(engine_options, axes);
+                        chosen_drafter = axes.drafter;
                     }
                 } else if (!why.empty()) {
                     logger->info("choice | not planned: {}", why);
                 }
             }
         }
+        // --spec auto: the profile's choice for the thinking flag (on by default, as the
+        // profile's), chosen again for the drafter the configuration choice took
+        // (product::subject_of_mode), every fallback of the start's order reading the same subject.
+        std::optional<ninferno::product::SpeculationSubject> subject;
+        std::optional<ninferno::product::ServedSpeculation> profiled;
+        if (!cli.spec_explicit) {
+            if (chosen_drafter == ninferno::spec::Mode::None) {
+                logger->info("speculation: plain decode, the configuration choice's");
+            } else {
+                subject = ninferno::product::speculation_subject(cli.artifact_path, cli.device,
+                                                                 cli.spec_profile);
+                if (chosen_drafter) {
+                    subject = ninferno::product::subject_of_mode(std::move(*subject), *chosen_drafter);
+                }
+                if (subject->resolved) {
+                    for (const auto& note : subject->resolved->notes) {
+                        logger->info("speculation: {}", note);
+                    }
+                }
+                profiled = ninferno::product::served_speculation(
+                    *subject, cli.enable_thinking.value_or(true), false);
+                if (profiled && profiled->menu.mode != ninferno::spec::Mode::None) {
+                    engine_options.speculative =
+                        ninferno::product::with_given_settings(profiled->engine, cli.speculative);
+                    logger->info("speculation: {}", profiled->source);
+                } else {
+                    profiled.reset();
+                }
+            }
+        }
+        if (cli.acceptance_floor) {
+            engine_options.speculative.acceptance_floor = *cli.acceptance_floor;
+        }
 
-        // A profile's choice that does not fit the requested context on this device gives way as
-        // the server's does (GenerationService): to the profile's fit fallback
-        // (spec::Profile::fit_fallback), then the deepest shallower draft with the same drafter
-        // (product::deepest_fitting_shallower), then the model's own MTP head, then plain decode,
+        // A profile's choice that does not fit the requested context on this device gives way in
+        // the start's order (product::fit_fallbacks, as the server's and the plan's): the profile's
+        // fit fallback, the deepest shallower draft, the model's own MTP head, then plain decode,
         // the switch logged. An explicit --spec, or neither, keeps the refusal.
-        const bool from_profile = !cli.spec_explicit && engine_options.speculative.backend !=
-                                                            ninferno::SpeculativeBackend::None;
         const auto construct = [&]() -> ninferno::Engine {
             try {
                 return ninferno::Engine(engine_options);
             } catch (const ninferno::CapacityError& refused) {
-                if (!from_profile) { throw; }
+                if (!profiled) { throw; }
                 namespace product = ninferno::product;
                 const std::string reason =
                     product::fit_refusal(product::speculation_label(engine_options.speculative),
@@ -464,31 +480,11 @@ int main(int argc, char** argv) {
                     logger->warn("speculation: {}; running {}", reason, source);
                     return true;
                 };
-                auto served = product::served_fit_fallback(cli.artifact_path, cli.device, false,
-                                                           cli.spec_profile);
-                if (served && fits(served->engine, served->source)) { return std::move(*built); }
-                if (!served) {
-                    served = product::served_speculation(cli.artifact_path, cli.device,
-                                                         cli.enable_thinking.value_or(true), false,
-                                                         cli.spec_profile);
-                }
-                if (served) {
-                    const auto shallower = [&](const ninferno::spec::SpecConfig& config,
-                                               double floor) {
-                        return product::served_shallower(cli.artifact_path, cli.device, false,
-                                                         config, floor, cli.spec_profile);
-                    };
-                    if (product::deepest_fitting_shallower(
-                            served->menu.primary, shallower,
-                            [&](const product::ServedSpeculation& candidate) {
-                                return fits(candidate.engine, candidate.source);
-                            })) {
-                        return std::move(*built);
-                    }
-                }
-                if (auto head = product::served_head_fallback(cli.artifact_path, cli.device, false,
-                                                              cli.spec_profile);
-                    head && fits(head->engine, head->source)) {
+                if (product::fit_fallbacks(*subject, *profiled, false,
+                                           [&](const product::ServedSpeculation& candidate,
+                                               product::FallbackStep) {
+                                               return fits(candidate.engine, candidate.source);
+                                           })) {
                     return std::move(*built);
                 }
                 if (fits(ninferno::SpeculativeOptions{}, "plain decode")) {

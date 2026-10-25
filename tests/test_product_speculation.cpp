@@ -71,9 +71,10 @@ int main() {
             c.k    = k;
             return c;
         };
-        failures += check(!served_shallower(target, 0, true, dflash_at(1), 1.5) &&
-                              !served_shallower(target, 0, true, ninferno::spec::SpecConfig{}, 0) &&
-                              !served_shallower(target, 0, true, dflash_at(3), 1.5),
+        const auto subject = ninferno::product::speculation_subject(target, 0);
+        failures += check(!served_shallower(subject, true, dflash_at(1), 1.5) &&
+                              !served_shallower(subject, true, ninferno::spec::SpecConfig{}, 0) &&
+                              !served_shallower(subject, true, dflash_at(3), 1.5),
                           "served_shallower ran below depth 1, for plain, or without a profile");
     }
     // A server whose choice does not fit runs the deepest depth that fits, with the same drafter:
