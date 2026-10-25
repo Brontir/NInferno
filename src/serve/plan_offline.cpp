@@ -397,7 +397,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         const convert::FetchOptions fetch = fetch_options();
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            *out.subject, model.listing, model.facts.model.hidden, &fetch);
+            *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
         out.inputs.drafter_bytes = drafter.bytes;
         out.inputs.drafter_state = drafter.state;
         // A repository's quantizations each have their weights, and the lab's pairs are of

@@ -40,6 +40,26 @@ std::vector<std::string> referenced(const Profile& p) {
     return out;
 }
 
+// The drafters a profile's measurements drafted with that its choices do not name: a measured
+// pair's other modes, which the configuration choice weighs too (product::subject_of_mode: a 9B
+// MTP GGUF measured with DFlash and MTP drafts with MTP where DFlash does not fit the context).
+// Attached where present, never noted where absent (no choice asks for them).
+std::vector<std::string> measured_only(const Profile& p) {
+    const std::vector<std::string> named = referenced(p);
+    std::vector<std::string> out;
+    for (const auto& d : p.drafters) {
+        const bool measured =
+            std::any_of(p.measurements.begin(), p.measurements.end(), [&](const Measurement& m) {
+                return m.config.enabled() && mode_name(m.config.mode) == d.mode;
+            });
+        if (measured && !d.name.empty() && std::find(named.begin(), named.end(), d.name) == named.end() &&
+            std::find(out.begin(), out.end(), d.name) == out.end()) {
+            out.push_back(d.name);
+        }
+    }
+    return out;
+}
+
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
 // measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
 // bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
@@ -366,28 +386,33 @@ namespace {
 // "component:<name>" inside the target); one not attached, or changed since, is noted.
 void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
                      ResolvedSpeculation& out) {
-    for (const auto& name : referenced(p)) {
+    // `said`: a choice names it, so its absence is noted.
+    const auto attach = [&](const std::string& name, bool said) {
         const auto* d = manifest.drafter(name);
         if (d == nullptr || !d->usable()) {
-            out.notes.push_back("profile drafter '" + name + "' is not attached" +
-                                (d ? " (" + d->status + ")" : std::string()));
-            continue;
+            if (said) {
+                out.notes.push_back("profile drafter '" + name + "' is not attached" +
+                                    (d ? " (" + d->status + ")" : std::string()));
+            }
+            return;
         }
         if (!d->artifact.empty()) {
             try {
                 if (artifact_id_hex(d->artifact) != d->artifact_id) {
                     out.notes.push_back("drafter " + d->artifact + " changed since attach");
-                    continue;
+                    return;
                 }
             } catch (const std::exception& e) {
                 out.notes.push_back("drafter " + d->artifact + ": " + e.what());
-                continue;
+                return;
             }
             out.drafters[name] = d->artifact;
         } else {
             out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
         }
-    }
+    };
+    for (const auto& name : referenced(p)) { attach(name, true); }
+    for (const auto& name : measured_only(p)) { attach(name, false); }
 }
 
 // 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
@@ -465,8 +490,10 @@ bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& co
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
                               label_bits(quant), gpu_generation(gpu));
     if (!choice) { return false; }
-    for (const auto& name : referenced(choice->profile)) {
-        if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+    for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
+        for (const auto& name : names) {
+            if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+        }
     }
     out.floor_sources = entry.profiles;
     out.source        = std::move(choice->source);
@@ -678,8 +705,10 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
                 std::string origin;
                 out.floor_sources = manifest_profiles(*manifest, label, origin);
             } else {
-                for (const auto& name : referenced(choice->profile)) {
-                    if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+                for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
+                    for (const auto& name : names) {
+                        if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+                    }
                 }
                 if (entry != nullptr) { out.floor_sources = entry->profiles; }
             }
