@@ -6,6 +6,7 @@
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
 #include "convert/pyjson.h"
+#include "convert/qwen3_5.h"
 #include "core/ascii.h"
 #include "core/sys.h"
 #include "spec/registry.h"
@@ -95,6 +96,19 @@ std::string config_refusal(const Json& config) {
     return {};
 }
 
+namespace {
+
+// Weights published unquantized: no quantization method, and every tensor dtype the hub lists a
+// plain float (unknown dtypes: not known to be unquantized).
+bool unquantized(const SupportFacts& facts, const std::string& method) {
+    static const std::set<std::string> plain = {"BF16", "F16", "F32"};
+    return method.empty() && !facts.weight_dtypes.empty() &&
+           std::all_of(facts.weight_dtypes.begin(), facts.weight_dtypes.end(),
+                       [](const std::string& dtype) { return plain.contains(dtype); });
+}
+
+} // namespace
+
 Support model_support(const SupportFacts& facts) {
     if (!generative(facts.pipeline)) {
         return refuse("", "not a text generation model (the hub's task: " + facts.pipeline + ")");
@@ -180,6 +194,15 @@ Support model_support(const SupportFacts& facts) {
             return refuse("model", "architecture '" + arch + "' is not one the engine runs");
         } else {
             unchecked = "config.json fields not checked (the hub's part of it only)";
+        }
+        // A Qwen3.5/3.6 MoE checkpoint published unquantized: the engine runs its experts only
+        // as a release quantized them (the converter has no unquantized MoE recipe, and refuses
+        // its own quantization after the download).
+        if (role == "model" && is_qwen3_5_architecture(arch) && unquantized(facts, method) &&
+            facts.config.value("text_config", facts.config).contains("num_experts")) {
+            return refuse("model", "an unquantized Qwen3.5/3.6 MoE checkpoint: the engine runs "
+                                   "its experts only as a quantized release publishes them "
+                                   "(NVFP4, GGUF, GPTQ/AWQ): take one of those");
         }
         if (facts.needs_token) {
             return {Verdict::NeedsToken, role, "the repository is gated: set HF_TOKEN"};

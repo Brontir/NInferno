@@ -113,6 +113,22 @@ int main(int argc, char** argv) {
         g.gguf_error = "output.weight: unknown ggml type 142";
         expect(says(of(g), Verdict::Unsupported, "unknown ggml type"), "an unreadable GGUF");
     }
+    // Qwen/Qwen3.6-35B-A3B: a Qwen3.5/3.6 MoE published unquantized has no recipe the engine
+    // runs as published; a quantized release of it does, and so does the dense model.
+    {
+        auto moe          = chat("Qwen3_5MoeForConditionalGeneration");
+        moe.config["text_config"] = {{"num_experts", 256}};
+        moe.weight_dtypes = {"BF16"};
+        expect(says(of(moe), Verdict::Unsupported, "unquantized Qwen3.5/3.6 MoE"),
+               "an unquantized Qwen3.6 MoE");
+        moe.weight_dtypes = {"BF16", "F8_E4M3", "U8"};
+        expect(of(moe).verdict == Verdict::Supported, "an NVFP4 Qwen3.6 MoE");
+        moe.weight_dtypes.clear();
+        expect(of(moe).verdict == Verdict::Supported, "dtypes not known: not refused");
+        auto dense          = chat("Qwen3_5ForConditionalGeneration");
+        dense.weight_dtypes = {"BF16"};
+        expect(of(dense).verdict == Verdict::Supported, "an unquantized dense Qwen3.5");
+    }
     // A gated repository: a token is what is missing, unless the architecture already refuses.
     {
         auto f        = chat("LlamaForCausalLM");
