@@ -62,6 +62,20 @@ Support refuse(std::string role, std::string reason) {
 
 } // namespace
 
+std::string serve_refusal(const Support& support) {
+    switch (support.verdict) {
+    case Verdict::Unsupported:
+    case Verdict::NeedsToken: return support.reason;
+    case Verdict::Supported:
+        return support.role == "model"
+                   ? std::string()
+                   : "a speculative drafter, which runs beside its model: start the model and "
+                     "give it with --drafter";
+    case Verdict::Unknown: return {};
+    }
+    return {};
+}
+
 std::string_view verdict_name(Verdict verdict) {
     switch (verdict) {
     case Verdict::Supported: return "supported";

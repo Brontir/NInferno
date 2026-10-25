@@ -597,7 +597,10 @@ App::App(UiOptions options, std::unique_ptr<GpuSource> gpus)
             catalog_thread_ = std::thread([this] {
                 while (!stopping_) {
                     (void)refresh_catalog();
-                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_; ++i) {
+                    // Every six hours, or at once after a new Hugging Face token (a private
+                    // feed answers only with one).
+                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_ && !catalog_wake_.exchange(false);
+                         ++i) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 }
@@ -2262,6 +2265,7 @@ void App::install(httplib::Server& server) {
                 plan_facts_.clear();
                 plans_.clear();
             }
+            catalog_wake_ = true;
             const auto now = convert::hub_token();
             reply_json(res, {{"token", !now.value.empty()}, {"source", now.source}});
         } catch (const std::exception& error) { reply_error(res, 400, error.what()); }

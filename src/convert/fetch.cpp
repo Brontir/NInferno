@@ -929,6 +929,11 @@ void save_hub_token(const std::string& token) {
     // Read by its owner only, as huggingface_hub writes it.
     fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write,
                     fs::perm_options::replace, ec);
+    if (ec) { // a credential others could read is not kept
+        const auto why = ec.message();
+        fs::remove(temp, ec);
+        throw std::runtime_error("cannot make " + temp + " readable by its owner only: " + why);
+    }
     fs::rename(temp, path, ec);
     if (ec) { // rename does not replace an existing file on Windows
         ec.clear();

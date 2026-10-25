@@ -54,6 +54,10 @@ struct Support {
 // "supported", "needs_token", "unsupported", "unknown".
 [[nodiscard]] std::string_view verdict_name(Verdict verdict);
 
+// Why a model is not served by itself: its refusal (unsupported, a token missing), or that it is a
+// drafter, which runs beside its model. Empty when it is served (or nothing refuses it: unknown).
+[[nodiscard]] std::string serve_refusal(const Support& support);
+
 // The facts of a hub repository (`spec` as fetch_model takes it, options.quant choosing a GGUF
 // model): its model card, then config.json or the chosen GGUF model's header. nullopt when the
 // hub is not asked (another hub than Hugging Face, $HF_HUB_OFFLINE).

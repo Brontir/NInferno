@@ -1525,7 +1525,7 @@ async function refreshHf() {
   const line = $("hfline");
   const get = `<a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">${esc(t("hfGet"))}</a>`;
   // A token from the environment is changed there: saving a file would not replace it.
-  const env = j.token && j.source && !j.source.includes("/") && !j.source.includes("\\");
+  const env = j.token && (j.source === "HF_TOKEN" || j.source === "HUGGING_FACE_HUB_TOKEN");
   if (env && j.error) {
     line.innerHTML = `<span>${esc(fill(t("hfBad"), {error: j.error}) + " — " + fill(t("hfEnv"), {source: j.source}))}</span> ${get}`;
     return;

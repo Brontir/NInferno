@@ -97,9 +97,9 @@ ModelSource resolve_model_source(const ServeOptions& options,
             // (convert/support.h).
             auto facts = convert::local_support_facts(name);
             if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
-            if (const auto support = convert::model_support(facts);
-                support.verdict == convert::Verdict::Unsupported) {
-                throw std::runtime_error(name + " cannot be run: " + support.reason);
+            if (const auto refusal = convert::serve_refusal(convert::model_support(facts));
+                !refusal.empty()) {
+                throw std::runtime_error(name + " cannot be run: " + refusal);
             }
             if (log) { log("checkpoint " + name); }
             const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);

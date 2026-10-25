@@ -191,10 +191,9 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         } catch (const std::exception&) {}
         if (facts) {
             if (template_given) { facts->chat_template = true; } // --chat-template
-            const auto support = convert::model_support(*facts);
-            if (support.verdict == convert::Verdict::Unsupported ||
-                support.verdict == convert::Verdict::NeedsToken) {
-                throw std::runtime_error(spec + " cannot be run: " + support.reason);
+            if (const auto refusal = convert::serve_refusal(convert::model_support(*facts));
+                !refusal.empty()) {
+                throw std::runtime_error(spec + " cannot be run: " + refusal);
             }
         }
     }
@@ -281,9 +280,9 @@ ModelRead read_model(const ServeOptions& options) {
         if (convert::is_convertible(name)) {
             auto facts = convert::local_support_facts(path);
             if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
-            if (const auto support = convert::model_support(facts);
-                support.verdict == convert::Verdict::Unsupported) {
-                throw std::runtime_error(name + " cannot be run: " + support.reason);
+            if (const auto refusal = convert::serve_refusal(convert::model_support(facts));
+                !refusal.empty()) {
+                throw std::runtime_error(name + " cannot be run: " + refusal);
             }
         }
         if (fs::is_directory(path)) {
