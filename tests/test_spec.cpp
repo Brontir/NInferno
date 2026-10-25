@@ -72,14 +72,15 @@ Measurement measure(const std::string& label, const std::string& family, double 
 
 int test_config() {
     int failures = 0;
-    for (const char* label : {"plain", "mtp:4", "mtp:8:2", "dflash:11", "dflash2:15+head",
+    for (const char* label : {"plain", "mtp:4", "dflash:11", "dflash2:15+head",
                               "mtp:3+head", "ngram:8"}) {
         failures += check(SpecConfig::parse(label).label() == label,
                           std::string("label round trip: ") + label);
     }
-    failures += check(SpecConfig::parse("mtp:8:2").adaptive(), "mtp:8:2 is adaptive");
     failures += check(!SpecConfig::parse("off").enabled(), "off is plain");
-    for (const char* bad : {"mtp", "mtp:0", "mtp:4:4", "dflash:7:2", "eagle:3", "mtp:x", "mtp:17"}) {
+    // No adaptive depth (mtp:K:K0): it never held up on real text.
+    for (const char* bad : {"mtp", "mtp:0", "mtp:8:2", "mtp:4:4", "dflash:7:2", "eagle:3", "mtp:x",
+                            "mtp:17"}) {
         failures += check(rejects([&] { (void)SpecConfig::parse(bad); }),
                           std::string("rejects ") + bad);
     }
@@ -374,7 +375,6 @@ int test_served() {
     failures += check(gemma.runs(SpecConfig::parse("mtp:15")) &&
                           gemma.runs(SpecConfig::parse("plain")) &&
                           !gemma.runs(SpecConfig::parse("mtp:16")) &&
-                          !gemma.runs(SpecConfig::parse("mtp:5:2")) &&
                           !gemma.runs(SpecConfig::parse("dflash:7")) &&
                           !gemma.runs(SpecConfig::parse("mtp:3+head")) &&
                           !gemma.runs(SpecConfig::parse("ngram:4")),
@@ -382,8 +382,7 @@ int test_served() {
     failures += check(qwen.runs(SpecConfig::parse("dflash:15")) &&
                           qwen.runs(SpecConfig::parse("dflash2:11+head")) &&
                           qwen.runs(SpecConfig::parse("mtp:3+head")) &&
-                          !qwen.runs(SpecConfig::parse("dflash:16")) &&
-                          !qwen.runs(SpecConfig::parse("mtp:8:2")),
+                          !qwen.runs(SpecConfig::parse("dflash:16")),
                       "Qwen's Engine runs MTP to 5 and DFlash to 15, fixed");
     const auto dense = engine_support("dense_decoder");
     failures += check(dense.runs(SpecConfig::parse("dflash:15")) &&
@@ -416,18 +415,18 @@ int test_served() {
         p.measurements.push_back(measure(label, "prose", pr, 100, 50, 700));
         p.measurements.push_back(measure(label, "thinking", t, 100, 300, 700));
     };
-    // The Session's best: DFlash on code and thinking, the adaptive window elsewhere. What an
+    // The Session's best: DFlash on code and thinking, a window past 5 elsewhere. What an
     // Engine with MTP windows up to 5 runs: mtp:5 everywhere but prose, where mtp:2 wins.
     const EngineSupport mtp5{.mtp_depth = 5};
     add("dflash:11", 180, 250, 60, 230);
-    add("mtp:8:2", 200, 220, 115, 210);
+    add("mtp:8", 200, 220, 115, 210);
     add("mtp:5", 190, 210, 95, 200);
     add("mtp:2", 150, 160, 112, 150);
     select(p);
     failures += check(!p.served, "no served choices without the Engine's support");
     select(p, {.served = mtp5});
     failures +=
-        check(p.thinking.config.label() == "dflash:11" && p.overall.config.label() == "mtp:8:2",
+        check(p.thinking.config.label() == "dflash:11" && p.overall.config.label() == "mtp:8",
               "the tune's own choices are unchanged");
     failures += check(p.served.has_value(), "served choices when a choice needs more");
     if (p.served) {
@@ -461,7 +460,7 @@ int test_served() {
                       menu.thinking.note.empty(),
                   "the served menu runs every default's choice");
     }
-    // The tune's own choices laid onto the Engine: the primary (adaptive) cannot run, so nothing
+    // The tune's own choices laid onto the Engine: the primary (DFlash) cannot run, so nothing
     // speculates; the served choices exist for exactly this.
     const auto own = build_menu(p, p.thinking, [&](const Choice& c) { return mtp5.runs(c.config); });
     failures += check(own.mode == Mode::None, "the Session's choices give the Engine a plain menu");
@@ -1019,7 +1018,7 @@ int test_cost_model() {
                 const Json& c = *choice;
                 const std::string label = c.value("config", std::string("plain"));
                 const double floor      = c.value("floor_tokens_per_round", 0.0);
-                if (label == "plain" || floor <= 1.0 || SpecConfig::parse(label).adaptive()) { continue; }
+                if (label == "plain" || floor <= 1.0) { continue; }
                 Floors& f = floors[std::make_tuple(m.id, gpu, text, label)];
                 f.measured.push_back(floor);
                 const std::string drafter = split_variant(c.value("drafter", std::string())).first;
@@ -2559,30 +2558,25 @@ int test_resolve() {
     failures += check(r.named_tune_refused.find("was tuned for another") != std::string::npos,
                       "a named tune for another GPU class is refused");
     // A foreign profile's floors: the largest the same model measured for exactly that
-    // configuration on any GPU (another depth, head or an adaptive choice does not count), or the
+    // configuration on any GPU (another depth or head does not count), or the
     // registry median for a model measured nowhere; raised, never lowered.
     {
         const Json sources = Json::parse(R"([
             {"gpu_class": "gb202", "default": {"config": "dflash:7", "floor_tokens_per_round": 1.8}},
             {"gpu_class": "gv100", "default": {"config": "dflash:7", "floor_tokens_per_round": 2.6},
              "thinking": {"config": "dflash:5", "floor_tokens_per_round": 9.0}},
-            {"gpu_class": "ad102", "default": {"config": "dflash:7:3", "floor_tokens_per_round": 9.0},
-             "thinking": {"config": "mtp:7+head", "floor_tokens_per_round": 9.0}}])");
+            {"gpu_class": "ad102", "thinking": {"config": "mtp:7+head", "floor_tokens_per_round": 9.0}}])");
         failures += check(floor_ceiling(sources, SpecConfig::parse("dflash:7")) == 2.6 &&
                               floor_ceiling(sources, SpecConfig::parse("dflash:6")) == 0.0 &&
                               floor_ceiling(sources, SpecConfig{}) == 0.0,
                           "a configuration's floor ceiling: exactly that one, over the model's GPUs");
-        // An adaptive choice (Gemma 4's mtp:8:2) is its own configuration: its floors count,
-        // matched on the floor depth too.
-        const Json adaptive = Json::parse(R"([
-            {"gpu_class": "gb202", "default": {"config": "mtp:8:2", "floor_tokens_per_round": 1.9}},
-            {"gpu_class": "gv100", "default": {"config": "mtp:8", "floor_tokens_per_round": 4.0},
-             "thinking": {"config": "mtp:8:3", "floor_tokens_per_round": 5.0}}])");
-        failures += check(floor_ceiling(adaptive, SpecConfig::parse("mtp:8:2")) == 1.9 &&
-                              floor_ceiling(adaptive, SpecConfig::parse("mtp:8")) == 4.0 &&
-                              floor_ceiling(adaptive, SpecConfig::parse("mtp:15:2")) == 0.0 &&
-                              registry_floor_median(SpecConfig::parse("mtp:8:2")) > 1.0,
-                          "an adaptive configuration's floor ceiling and registry median");
+        // A label of another syntax (an adaptive depth, no longer read) counts for nothing.
+        const Json mtp = Json::parse(R"([
+            {"gpu_class": "gb202", "default": {"config": "mtp:8:2", "floor_tokens_per_round": 9.0}},
+            {"gpu_class": "gv100", "default": {"config": "mtp:8", "floor_tokens_per_round": 4.0}}])");
+        failures += check(floor_ceiling(mtp, SpecConfig::parse("mtp:8")) == 4.0 &&
+                              registry_floor_median(SpecConfig::parse("mtp:8")) > 1.0,
+                          "an MTP configuration's floor ceiling and registry median");
         ResolvedSpeculation from;
         from.foreign_floors = true;
         from.floor_sources  = sources;
@@ -2602,9 +2596,9 @@ int test_resolve() {
                           "profile of this GPU keeps its own");
         ResolvedSpeculation borrowed;
         borrowed.foreign_floors = true;
-        borrowed.floor_sources  = adaptive;
-        failures += check(foreign_floor(borrowed, SpecConfig::parse("mtp:8:2"), 1.1) == 1.9,
-                          "a borrowed adaptive choice's floor rises to its model's ceiling");
+        borrowed.floor_sources  = mtp;
+        failures += check(foreign_floor(borrowed, SpecConfig::parse("mtp:8"), 1.1) == 4.0,
+                          "a borrowed MTP choice's floor rises to its model's ceiling");
         // A "+head" choice drafting with the full head (no proposal head in the artifact): the full
         // head's ceiling, under a profile of this GPU too.
         ResolvedSpeculation here;

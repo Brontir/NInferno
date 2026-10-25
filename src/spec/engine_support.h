@@ -2,9 +2,9 @@
 
 // What the serving Engine (ninferno::Engine: ninferno-serve, the ninferno CLI) runs of a model
 // type's speculation. A profile is tuned where the most configurations run (ninferno-gemma4's
-// Session also runs DFlash and adaptive depths for Gemma 4); a server can run only what its Engine
-// family implements, so spec-tune also records the best of those (Profile::served) and the server's
-// menu takes its choices from there. The Engine families check their own limits against this table
+// Session also runs DFlash for Gemma 4); a server can run only what its Engine family implements,
+// so spec-tune also records the best of those (Profile::served) and the server's menu takes its
+// choices from there. The Engine families check their own limits against this table
 // (static_assert beside their constants), so it cannot drift from them.
 
 #include "spec/config.h"
@@ -23,10 +23,10 @@ struct EngineSupport {
     // anchor and its K drafts only; without it, only the latter.
     bool dflash_block_width = false;
 
-    // Adaptive depths (mtp:K:K0) and prompt lookup run in no Engine family.
+    // Prompt lookup runs in no Engine family.
     [[nodiscard]] constexpr bool runs(const SpecConfig& c) const noexcept {
         if (!c.enabled()) { return true; }
-        if (c.adaptive() || c.k < 1 || (c.proposal_head && !proposal_head)) { return false; }
+        if (c.k < 1 || (c.proposal_head && !proposal_head)) { return false; }
         switch (c.mode) {
         case Mode::Mtp:
             return c.k <= mtp_depth;

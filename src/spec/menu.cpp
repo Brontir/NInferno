@@ -48,8 +48,7 @@ const MenuChoice& SpeculationMenu::pick(std::optional<bool> thinking_request) co
 SpeculationMenu build_menu(const Profile& profile, const Choice& primary,
                            const std::function<bool(const Choice&)>& usable) {
     SpeculationMenu menu;
-    const bool speculative = primary.config.enabled() && !primary.config.adaptive() &&
-                             primary.config.mode != Mode::Ngram && !profile.disabled &&
+    const bool speculative = primary.config.enabled() && primary.config.mode != Mode::Ngram && !profile.disabled &&
                              usable(primary);
     if (speculative) {
         menu.mode          = primary.config.mode;
@@ -67,7 +66,7 @@ SpeculationMenu build_menu(const Profile& profile, const Choice& primary,
         }
         if (!choice.config.enabled()) { return out; } // the profile chose plain decode
         if (choice.config.mode == menu.mode && choice.config.proposal_head == menu.proposal_head &&
-            !choice.config.adaptive() && usable(choice)) {
+            usable(choice)) {
             out.config = choice.config;
             out.floor  = choice.floor_tokens_per_round;
             return out;
@@ -77,7 +76,6 @@ SpeculationMenu build_menu(const Profile& profile, const Choice& primary,
         out.note   = choice.config.label() + " needs " +
                    (choice.config.mode != menu.mode ? std::string("the ") +
                                                           mode_name(choice.config.mode) + " drafter"
-                    : choice.config.adaptive()      ? std::string("an adaptive depth")
                     : choice.config.proposal_head != menu.proposal_head
                         ? std::string("another proposal head")
                         : std::string("a drafter or depth this engine cannot run")) +

@@ -6,8 +6,8 @@
 // entry). The profile comes from spec/manifest.h's resolve_speculation() for this GPU; each entry
 // point's `local_profile` is a maintainer's own tune named by --spec-profile (none: not read). Both run
 // only what the Engine's family implements (spec/engine_support.h, by the artifact's model_type):
-// a profile tuned where more runs (Gemma 4's Session: DFlash, adaptive depths, MTP windows past
-// 5) carries its served choices, the best the tune measured among those, and they are taken; a
+// a profile tuned where more runs (Gemma 4's Session: DFlash, MTP windows past 5) carries its
+// served choices, the best the tune measured among those, and they are taken; a
 // choice the family cannot run is never handed to the Engine.
 
 #include "ninferno/types.h"
