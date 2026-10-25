@@ -72,7 +72,10 @@ python3 -m tools.convert \
   text generation, its weights are a format the converter does not read (MLX, bitsandbytes, ...),
   no engine runs its architecture (the converter's own recipe choice and field checks; a drafter of
   a kind no engine runs), its repository is gated and no token is set, or it ships no chat template
-  (a base model; a GGUF naming its base model takes the base's).
+  (a base model; a GGUF naming its base model takes the base's). A model on disk (a GGUF file or a
+  checkpoint folder given to `ninferno-serve`) is checked the same way before it is converted. A
+  gated repository is read with `$HF_TOKEN`, else the token `hf auth login` saved
+  (`$HF_TOKEN_PATH`, `$HF_HOME/token`, `~/.cache/huggingface/token`).
 - Without `--recipe`, the official recipe for the checkpoint's architecture is chosen (with its
   quantized source when it needs one).
 - A model runs as published. A quantized checkpoint keeps its encoding (NVFP4, MXFP4, FP8 with

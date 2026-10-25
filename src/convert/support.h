@@ -54,11 +54,19 @@ struct Support {
 // "supported", "needs_token", "unsupported", "unknown".
 [[nodiscard]] std::string_view verdict_name(Verdict verdict);
 
+// Why a model is not served by itself: its refusal (unsupported, a token missing), or that it is a
+// drafter, which runs beside its model. Empty when it is served (or nothing refuses it: unknown).
+[[nodiscard]] std::string serve_refusal(const Support& support);
+
 // The facts of a hub repository (`spec` as fetch_model takes it, options.quant choosing a GGUF
 // model): its model card, then config.json or the chosen GGUF model's header. nullopt when the
 // hub is not asked (another hub than Hugging Face, $HF_HUB_OFFLINE).
 [[nodiscard]] std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                                                             const FetchOptions& options);
+
+// The facts of a model on disk: a checkpoint directory (config.json, its tokenizer files and
+// template, its safetensors' dtypes) or a GGUF file (its header).
+[[nodiscard]] SupportFacts local_support_facts(const std::filesystem::path& path);
 
 // The facts a hub search answer carries for one model (an /api/models item with config, gguf,
 // safetensors, pipeline_tag, library_name and tags expanded).

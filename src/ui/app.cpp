@@ -13,6 +13,7 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "convert/cache.h"
 #include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
@@ -596,7 +597,10 @@ App::App(UiOptions options, std::unique_ptr<GpuSource> gpus)
             catalog_thread_ = std::thread([this] {
                 while (!stopping_) {
                     (void)refresh_catalog();
-                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_; ++i) {
+                    // Every six hours, or at once after a new Hugging Face token (a private
+                    // feed answers only with one).
+                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_ && !catalog_wake_.exchange(false);
+                         ++i) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 }
@@ -745,6 +749,8 @@ std::string hub_key(const std::string& repo, const std::string& hub) {
 }
 
 Json App::listing_of(const std::string& repo, const std::string& hub) {
+    // What the hub answers under another token than the one asked with is not kept.
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = listings_.find(hub_key(repo, hub)); it != listings_.end()) {
@@ -768,11 +774,12 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"mtp_bytes", q.mtp_bytes}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
-    listings_[hub_key(repo, hub)] = list;
+    if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
     return list;
 }
 
 Json App::arch_json(const std::string& repo, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = archs_.find(hub_key(repo, hub)); it != archs_.end()) {
@@ -852,7 +859,7 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
         if (!support->reason.empty()) { out["note"] = support->reason; }
     }
     std::lock_guard lock(sizes_mutex_);
-    if (!out.contains("error")) { archs_[hub_key(repo, hub)] = out; }
+    if (!out.contains("error") && generation == hub_generation_) { archs_[hub_key(repo, hub)] = out; }
     return out;
 }
 
@@ -911,6 +918,7 @@ App::plan_facts(const std::string& repo, const Json& listing, const std::string&
 
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
@@ -1005,7 +1013,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     }
     std::lock_guard lock(sizes_mutex_);
     if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
-    plans_[key] = doc;
+    if (generation == hub_generation_) { plans_[key] = doc; }
     return doc;
 }
 
@@ -1127,6 +1135,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
 }
 
 Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, const Json& listing) {
+    const auto generation = hub_generation();
     Json out             = {{"known", false}};
     const auto& registry = spec::Registry::builtin();
     std::vector<std::string> names{repo}; // the repository and the base model its card names
@@ -1262,7 +1271,7 @@ Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, con
                                      {"drafter", q.drafter}});
                 }
                 std::lock_guard lock(sizes_mutex_);
-                listings_[decl->repo] = files;
+                if (generation == hub_generation_) { listings_[decl->repo] = files; }
             }
             for (const auto& q : files) { bytes = std::max(bytes, q.value("bytes", 0.0)); }
             const auto drafter_kv = kv_json(decl->repo, files);
@@ -1716,6 +1725,7 @@ void App::remove_converted_originals() {
 
 Json App::search_json(const std::string& query, const std::string& sort,
                       const std::string& hub_name) {
+    const auto generation = hub_generation();
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
@@ -1781,7 +1791,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
              {"error", error},
              {"catalog_source", source}};
     std::lock_guard lock(sizes_mutex_);
-    if (error.empty()) { searches_[key] = {now, out}; }
+    if (error.empty() && generation == hub_generation_) { searches_[key] = {now, out}; }
     return out;
 }
 
@@ -1789,6 +1799,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
 // quantization (an 8 MiB head by an HTTP range; 32 MiB when the metadata runs longer), else from
 // its config.json (safetensors weights).
 Json App::kv_json(const std::string& repo, const Json& listing, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = kv_.find(hub_key(repo, hub)); it != kv_.end()) { return it->second; }
@@ -1816,6 +1827,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
     }
     const auto remember = [&](const Json& got, bool read) {
         std::lock_guard lock(sizes_mutex_);
+        if (generation != hub_generation_) { return; }
         if (read) {
             kv_[hub_key(repo, hub)] = got;
             kv_failed_.erase(hub_key(repo, hub));
@@ -1866,8 +1878,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes = mtp;
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] = std::move(facts);
-                configs_[hub_key(repo, hub)] = config;
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] = std::move(facts);
+                    configs_[hub_key(repo, hub)]    = config;
+                }
                 read                         = true;
             }
         } catch (const std::exception&) {}
@@ -1885,8 +1899,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             out = to_json(kv_model_of_gguf(file.metadata));
             {
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] =
-                    product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] =
+                        product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                }
             }
             read = true;
             break;
@@ -2178,6 +2194,83 @@ void App::install(httplib::Server& server) {
         try {
             reply_json(res, moved_json());
         } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
+    });
+    // A model on disk the user names (a GGUF file, a checkpoint folder, an artifact): whether the
+    // engine runs it, by the converter's rule set, before it is converted and started.
+    server.Get("/api/disk", [](const httplib::Request& req, httplib::Response& res) {
+        const fs::path path = req.get_param_value("path");
+        std::error_code ec;
+        if (path.empty() || !fs::exists(path, ec)) {
+            reply_error(res, 404, "no such file or folder: " + path.string());
+            return;
+        }
+        if (path.extension() == ".ninferno") {
+            reply_json(res, {{"support", "full"}, {"kind", "artifact"}});
+            return;
+        }
+        if (!convert::is_convertible(path)) {
+            reply_json(res, {{"support", "none"},
+                             {"note", "neither a GGUF file nor a Hugging Face checkpoint folder "
+                                      "(config.json and safetensors weights)"}});
+            return;
+        }
+        const auto support = convert::model_support(convert::local_support_facts(path));
+        reply_json(res, {{"support", support_level(support)},
+                         {"note", support.reason},
+                         {"kind", fs::is_directory(path, ec) ? "checkpoint" : "gguf"}});
+    });
+    // The Hugging Face token gated repositories need: whether one is set, where it comes from and
+    // whose account it is; set or removed from this machine only, where `hf auth login` keeps it.
+    server.Get("/api/hf", [this](const httplib::Request&, httplib::Response& res) {
+        const auto token = convert::hub_token();
+        Json out{{"token", !token.value.empty()},
+                 {"source", token.source},
+                 {"path", convert::hub_token_path().string()}};
+        if (!token.value.empty() && !options_.offline) {
+            try {
+                out["account"] = convert::hub_account(token.value, {});
+            } catch (const std::exception& error) { out["error"] = error.what(); }
+        }
+        reply_json(res, out);
+    });
+    server.Post("/api/hf", [this](const httplib::Request& req, httplib::Response& res) {
+        // A proxy (nginx, Caddy) connects over loopback for every browser: a forwarded request is
+        // not from this machine.
+        const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
+                             req.has_header("X-Real-IP");
+        if (!is_loopback_host(req.remote_addr) || proxied) {
+            reply_error(res, 403, "the Hugging Face token is set on the machine ninferno-ui runs on");
+            return;
+        }
+        try {
+            const auto token = Json::parse(req.body).value("token", std::string());
+            if (const auto set = convert::hub_token(); set.source == "HF_TOKEN" ||
+                                                       set.source == "HUGGING_FACE_HUB_TOKEN") {
+                reply_error(res, 409,
+                            "the token is set by " + set.source + ": change it there");
+                return;
+            }
+            if (!token.empty() && !options_.offline) {
+                (void)convert::hub_account(token, {}); // refused: not saved
+            }
+            convert::save_hub_token(token);
+            // What the hub answered under the old token (gated listings, searches, headers).
+            {
+                std::lock_guard lock(sizes_mutex_);
+                ++hub_generation_; // requests still running under the old token keep nothing
+                listings_.clear();
+                archs_.clear();
+                searches_.clear();
+                configs_.clear();
+                kv_.clear();
+                kv_failed_.clear();
+                plan_facts_.clear();
+                plans_.clear();
+            }
+            catalog_wake_ = true;
+            const auto now = convert::hub_token();
+            reply_json(res, {{"token", !now.value.empty()}, {"source", now.source}});
+        } catch (const std::exception& error) { reply_error(res, 400, error.what()); }
     });
     server.Post("/api/moved", [this](const httplib::Request& req, httplib::Response& res) {
         try {

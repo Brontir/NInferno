@@ -3,6 +3,7 @@
 #include "serve/plan_offline.h"
 
 #include "convert/acquire.h"
+#include "convert/support.h"
 #include "convert/cache.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
@@ -92,6 +93,14 @@ ModelSource resolve_model_source(const ServeOptions& options,
                                             "--model " + name + " --recipe NAME --out FILE)");
         }
         if (convert::is_convertible(name)) {
+            // Whether the engine runs it: the converter's rule set, before converting
+            // (convert/support.h).
+            auto facts = convert::local_support_facts(name);
+            if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
+            if (const auto refusal = convert::serve_refusal(convert::model_support(facts));
+                !refusal.empty()) {
+                throw std::runtime_error(name + " cannot be run: " + refusal);
+            }
             if (log) { log("checkpoint " + name); }
             const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);
             out.kind            = ModelSource::Kind::Checkpoint;

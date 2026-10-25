@@ -93,6 +93,22 @@ struct FetchResult {
 // ~/.cache/huggingface/hub.
 [[nodiscard]] std::filesystem::path default_hub_cache();
 
+// The Hugging Face token the hub is asked with, as huggingface_hub finds it: $HF_TOKEN (or
+// $HUGGING_FACE_HUB_TOKEN), else the file `hf auth login` writes (hub_token_path()). `source`
+// names where it came from ("" with no token).
+struct HubToken {
+    std::string value;
+    std::string source;
+};
+[[nodiscard]] HubToken hub_token();
+// $HF_TOKEN_PATH, else $HF_HOME/token, else ~/.cache/huggingface/token.
+[[nodiscard]] std::filesystem::path hub_token_path();
+// Writes the token where `hf auth login` keeps it (read by its owner only); "" removes it.
+void save_hub_token(const std::string& token);
+// The account a Hugging Face token belongs to (/api/whoami-v2); throws naming why the hub refused
+// it (an invalid token: HTTP 401).
+[[nodiscard]] std::string hub_account(const std::string& token, const FetchOptions& options);
+
 // A repository's directory in a hub cache, as Hugging Face's own tools name it: org/name ->
 // models--org--name; and back, "" for a directory that is no repository's.
 [[nodiscard]] std::string hub_repo_directory(std::string_view repo);
