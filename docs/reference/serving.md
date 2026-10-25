@@ -2193,7 +2193,7 @@ change.
 | `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
 | `rule` | the rule's line (English, for a terminal) |
 | `choice` | CHOICE: the configuration choice at the chosen quantization's weights |
-| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `best_worth` (the same and `largest`: on a GPU generation that decides, the configuration choice weighed the quantizations of the rule's tier by worth and took `quant` over the largest), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
+| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `best_worth` (the same and `largest`: on a GPU generation that decides, the configuration choice weighed the quantizations of the rule's tier by worth and took `quant` over the largest; and the trade, each at its own choice on the generation's reference card: `time_ratio` the largest's seconds per request over the pick's (above 1: the largest is slower), `kld_delta` the largest's KLD less the pick's (below 0: the largest is more accurate), `accuracy_weight` the lambda that priced them), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
 
 PLAN:
 
@@ -2221,10 +2221,9 @@ CHOICE:
 | `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
 | `why` | the decision in one line (English) |
 | `by_worth` | `true` when the worth decided; `false` when the quant rule and the family's defaults stood (no reference card for this generation, or a constant set still on one lab card: the `why` says which) |
-| `quant_by_worth` | `true` when the worth also weighed the quantizations (the curve was measured on the model's family); `false` when the quant rule's largest stood |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
 | `chosen` | `null` when nothing fits; else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
-| `alternatives` | every other value of each axis with the others kept: `axis` (`quant`, `kv`, `activations`, `chunk`, `state`, `ring`), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the smaller quantization label, else the listing order), `quant_rule`, `default`, `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
+| `alternatives` | every other value of each axis with the others kept: `axis` (`kv`, `activations`, `drafter`, `chunk`, `state`, `ring`: the choice is made at one quantization, the quantization table's row), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the listing order), `default` (a gate is closed: the family's default, the default chunk or the speculation profile's drafter stands), `unmeasured` (a drafter's gain is not measured on this card: the profile's drafter stands), `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
 
 ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
 measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
