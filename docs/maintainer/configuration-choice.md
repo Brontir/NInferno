@@ -54,8 +54,11 @@ their options as given.
 
 Among the candidates that fit, the largest worth `-ln(T) - lambda * KLD` wins (`lambda` 25: 0.001
 KLD is worth 2.5 % of a request's time). Where two candidates cost about the same, the more accurate
-one wins; where one is much faster, it wins. Ties: the longer own context, then fewer weight bytes,
-then the smaller quantization label (the quant rule's last key), then the listing's order.
+one wins; where one is much faster, it wins. Ties: the longer own context, then the listing's order.
+
+`choose` decides at one quantization: a listing row's weights. Which row a listing serves is the
+quant rule's (`runtime/engine/quant_rule.h`), weighed by worth where the quantization curve decides
+(`product/plan/plan_quants.cpp`, below): one place, the product's, for every caller.
 
 **Gates.** A constant decides only once it rests on two lab cards (principle 4); until then the
 choice falls back and says why. `choice_constants.h` holds the gates:
@@ -109,8 +112,10 @@ Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_X
 models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
 any model's Q8_0 is its own reference (0). Where the worth decides, the plan weighs the quantizations
 of the quant rule's tier (`runtime/engine/quant_rule.h`: the own context per stream it reached, the
-same side of the 3.5-bit floor) by the worth of each one's own choice, and the rule line says which
-was the largest (`rule_code` `best_worth`). With the gate open, on the RTX 4090 and 4070 Ti
+same side of the 3.5-bit floor, `below_quality_floor`) by the worth of each one's own choice, a tie
+to the rule's order (more bits, then more bytes, then the smaller label), and the rule line says
+which was the largest (`rule_code` `best_worth`). Only where every supported row's bits are known:
+a row of unknown bits has no place on the curve and would look exact. With the gate open, on the RTX 4090 and 4070 Ti
 Qwen3.5-9B takes UD-Q5_K_XL where the largest that fits is UD-Q8_K_XL or Q8_0: Q8_0 costs about
 26 % more time per request than Q6_K for 0.003 KLD, and Q4_K_M saves 20 % for 0.012 more. Elsewhere
 the rule's largest stands.
@@ -169,9 +174,8 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 |---|---|
 | `no_fit` | it does not hold the asked context per stream |
 | `lower_worth` | it fits and its worth is lower |
-| `tie_context` | the same worth; the chosen keeps more context per stream (or fewer weight bytes) |
-| `tie_order` | the same in every respect; the smaller quantization label, else the listing's order |
-| `quant_rule` | the quant rule decided: no worth here, or the other side of the 3.5-bit floor |
+| `tie_context` | the same worth; the chosen keeps more context per stream |
+| `tie_order` | the same in every respect; the listing's order |
 | `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |
 | `unmeasured` | a drafter's gain is not measured on this card: the speculation profile's choice stands |
 | `coupled` | a ring or state value: it follows the KV codec and the activations |

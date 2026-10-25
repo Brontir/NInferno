@@ -15,17 +15,18 @@
 // measured pair, its group's, a published profile), its memory in the plan and its gain in the
 // decode speed; it changes no output (greedy verification), so no accuracy term.
 //
-// The candidates are the quantizations x KV codecs x activation modes x drafters x prefill chunks (an MoE's)
-// the model, the card and the user's pins allow; the ring and the recurrent state follow the KV
-// codec and the activations (coupled_storages), and their other values are scored beside the
-// chosen one to explain them. A candidate fits when each stream holds the asked context of its
-// own. Where the generation's constants and the accuracy terms rest on two lab cards (Gates), the
-// largest worth -ln(T) - lambda KLD wins among the quantizations (within the quant rule's floor
-// tier), KV codecs and activation modes, T priced on the generation's reference card
-// (choice_constants.h: what a decision may read); else the quantization is the quant rule's (the
-// largest that fits) with the family's defaults. An MoE's chunk is the fastest on the reference
-// card where its shares rest on two lab cards (it has no accuracy term). Every candidate keeps the
-// estimates on the board itself for a caller to show (explain).
+// The choice is made at one quantization (a listing row's weights): its candidates are the KV
+// codecs x activation modes x drafters x prefill chunks (an MoE's) the model, the card and the
+// user's pins allow; the ring and the recurrent state follow the KV codec and the activations
+// (coupled_storages), and their other values are scored beside the chosen one to explain them. A
+// candidate fits when each stream holds the asked context of its own. Where the generation's
+// constants and the accuracy terms rest on two lab cards (Gates), the largest worth
+// -ln(T) - lambda KLD wins, T priced on the generation's reference card (choice_constants.h: what a
+// decision may read); else the family's defaults stand. An MoE's chunk is the fastest on the
+// reference card where its shares rest on two lab cards (it has no accuracy term). Every candidate
+// keeps the estimates on the board itself for a caller to show (explain). Which quantization a
+// listing serves is the quant rule's, weighed by the worth of each row's own choice where the
+// quantization curve decides (product/plan/plan_quants.cpp, weighs_quantizations).
 //
 // Pure: no CUDA, no files, no clock.
 
@@ -114,7 +115,6 @@ struct Task {
 
 // What the user pinned with flags; the choice keeps it.
 struct Pins {
-    std::optional<std::size_t> quant; // an index into the options
     std::optional<KvCacheStorage> kv;
     std::optional<KvCacheStorage> ring;
     std::optional<RecurrentStateStorage> state;
@@ -135,7 +135,6 @@ struct Coupled {
                                        ActivationMode activations, const Pins& pins) noexcept;
 
 struct Candidate {
-    std::size_t quant = 0;
     KvCacheStorage kv = KvCacheStorage::BFloat16;
     KvCacheStorage ring = KvCacheStorage::BFloat16;
     RecurrentStateStorage state = RecurrentStateStorage::FP32;
@@ -198,8 +197,9 @@ struct Reference {
 // else the family's defaults stand.
 [[nodiscard]] bool decides_switches(const ModelFacts& model, const CardFacts& card,
                                     const Gates& gates = {});
-// Whether the worth also weighs the quantizations: the curve was measured on its family
-// (kQuantKldFamily); else the quant rule's largest stands.
+// Whether the worth also weighs a listing's quantizations (plan_quants, each row at its own
+// choice): the curve was measured on its family (kQuantKldFamily); else the quant rule's largest
+// stands.
 [[nodiscard]] bool weighs_quantizations(const ModelFacts& model, const CardFacts& card,
                                         const Gates& gates = {});
 
@@ -243,7 +243,6 @@ struct Choice {
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
-    bool quant_by_worth = false;       // and the quantization (else the quant rule's largest)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
@@ -261,10 +260,9 @@ struct Allowed {
 };
 [[nodiscard]] Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv);
 
-[[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card,
-                            const std::vector<QuantOption>& quants, const Allowed& allowed,
-                            const Pins& pins, const Task& task, const OwnContextFn& own_context,
-                            const Gates& gates = {});
+[[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                            const Allowed& allowed, const Pins& pins, const Task& task,
+                            const OwnContextFn& own_context, const Gates& gates = {});
 
 // What each other value of an axis would change against the chosen candidate (the others kept).
 struct Alternative {
@@ -272,9 +270,8 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, tie_context, tie_order, quant_rule, default, unmeasured, coupled
+    std::string why_code; // "" (chosen), no_fit, lower_worth, tie_context, tie_order, default, unmeasured, coupled
 };
-[[nodiscard]] std::vector<Alternative> explain(const Choice& choice,
-                                               const std::vector<QuantOption>& quants);
+[[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
 
 } // namespace ninferno::product::choice

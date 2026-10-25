@@ -146,10 +146,11 @@ Bench nine_b(const json& fixture, const std::string& card) {
     return b;
 }
 
-// A memory oracle: weights plus KV at the context must stay under `budget` bytes.
-ch::OwnContextFn oracle(const Bench& b, double budget) {
-    return [&b, budget](const ch::Candidate& c) -> std::uint32_t {
-        const double room = budget - b.quants[c.quant].weight_bytes;
+// A memory oracle: the quantization's weights plus KV at the context must stay under `budget`
+// bytes.
+ch::OwnContextFn oracle(const Bench& b, double budget, std::size_t quant = 0) {
+    return [&b, budget, quant](const ch::Candidate& c) -> std::uint32_t {
+        const double room = budget - b.quants[quant].weight_bytes;
         if (room <= 0) { return 0; }
         return static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv));
     };
@@ -161,29 +162,27 @@ void chooses(const json& fixture) {
     ch::Task task;
     task.contexts = {32768};
     {
-        // Q8_0 does not leave 32K here; Q4_K_M is the largest that fits. Fast beats exact (+26 %
-        // time for 0.0044 KLD); INT8 KV beats FP8 (same cost, more accurate) and, by a hair, BF16
-        // (on top of fast, INT8 KV adds about nothing: measured 0.00388 -> 0.00403 with the FP16
-        // state).
+        // At Q4_K_M: fast beats exact (+26 % time for 0.0044 KLD); INT8 KV beats FP8 (same cost,
+        // more accurate) and, by a hair, BF16 (on top of fast, INT8 KV adds about nothing: measured
+        // 0.00388 -> 0.00403 with the FP16 state).
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         {}, task, oracle(b, 9.6e9));
         check(c.chosen.has_value(), "4070 Ti: a choice");
         if (c.chosen) {
             const ch::Scored& s = chosen(c);
-            check(b.quants[s.candidate.quant].label == "Q4_K_M", "4070 Ti: Q4_K_M, the largest that fits");
             check(s.candidate.activations == ActivationMode::Fast, "4070 Ti: fast over exact");
             check(s.candidate.kv == KvCacheStorage::Int8Group64, "4070 Ti: INT8 KV");
             check(s.candidate.state == RecurrentStateStorage::FP16, "4070 Ti: FP16 state under fast");
             std::cout << c.why << '\n';
         }
-        const auto alts = ch::explain(c, b.quants);
+        const auto alts = ch::explain(c);
         int named = 0;
         for (const ch::Alternative& a : alts) {
             if (a.why_not.empty()) { ++named; }
             check(a.scored != nullptr, "every alternative scored");
         }
-        check(named == 4, "the chosen value once per axis (quant, kv, activations, state)");
+        check(named == 3, "the chosen value once per axis (kv, activations, state)");
         bool exact = false;
         for (const ch::Alternative& a : alts) {
             if (a.axis == ch::Axis::Activations && a.value == "exact") { exact = true; }
@@ -193,16 +192,9 @@ void chooses(const json& fixture) {
     {
         // RTX 2080 Ti: BF16 and FP8 KV read slowly on Turing; INT8 stays.
         const Bench b = nine_b(fixture, "RTX 2080 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         {}, task, oracle(b, 9.0e9));
         check(c.chosen && chosen(c).candidate.kv == KvCacheStorage::Int8Group64, "2080 Ti: INT8 KV");
-    }
-    {
-        // A big card: Q8_0 fits, so the rule takes it.
-        const Bench b = nine_b(fixture, "RTX 5070 Ti");
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                        {}, task, oracle(b, 14e9));
-        check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q8_0", "5070 Ti: Q8_0 fits");
     }
     {
         // Pins stay: exact asked, BF16 KV asked.
@@ -210,7 +202,7 @@ void chooses(const json& fixture) {
         ch::Pins pins;
         pins.activations = ActivationMode::Exact;
         pins.kv          = KvCacheStorage::BFloat16;
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.activations == ActivationMode::Exact &&
                   chosen(c).candidate.kv == KvCacheStorage::BFloat16 &&
@@ -223,7 +215,7 @@ void chooses(const json& fixture) {
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
         ch::Pins pins;
         pins.kv = KvCacheStorage::BFloat16;
-        const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.state == RecurrentStateStorage::FP32, "BF16 KV: the FP32 state");
         ch::ModelFacts sliding = b.model;
@@ -241,33 +233,11 @@ void chooses(const json& fixture) {
               "a family whose rings take no FP8 keeps BF16 rings");
     }
     {
-        // Below the floor only when nothing above it fits; nothing fits: no choice.
+        // Nothing holds the context: no choice, and why.
         const Bench b = nine_b(fixture, "RTX 4070 Ti");
-        const ch::Choice low = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                          {}, task, oracle(b, 4.4e9));
-        check(low.chosen && b.quants[chosen(low).candidate.quant].label == "IQ3_XXS",
-              "below the floor when nothing above fits");
-        // Unknown bits rank at or above the floor, as in the quant rule: unlabelled weights that
-        // fit come before known ones below the floor (the IQ3_XXS above), whatever their size.
-        Bench unknown           = b;
-        ch::QuantOption unnamed = b.quants[2]; // IQ3_XXS's bytes, less a little
-        unnamed.label           = "unnamed";
-        unnamed.bits_per_weight = 0;
-        unnamed.weight_bytes *= 0.98;
-        unknown.quants.push_back(unnamed);
-        const ch::Choice unlabelled =
-            ch::choose(unknown.model, unknown.card, unknown.quants,
-                       ch::allowed_axes(unknown.model, KvCacheStorage::Int8Group64), {}, task,
-                       oracle(unknown, 4.4e9));
-        check(unlabelled.chosen &&
-                  unknown.quants[chosen(unlabelled).candidate.quant].label == "unnamed",
-              "unknown bits rank at or above the floor");
-        // Unknown bits have no place on the quantization curve: the rule picks the quantization.
-        check(!unlabelled.quant_by_worth && low.quant_by_worth,
-              "unknown bits: the quantization is the rule's, not the worth's");
-        const ch::Choice none = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+        const ch::Choice none = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                            {}, task, oracle(b, 1e9));
-        check(!none.chosen, "nothing fits: no choice");
+        check(!none.chosen && none.why.find("no candidate holds") != std::string::npos, "nothing fits: no choice");
     }
 }
 
@@ -331,25 +301,10 @@ void decides_by_generation(const json& fixture) {
           "the final partial chunk at its own rate");
 }
 
-// Without decision constants the quantization is ranked among the family's defaults only: Q8_0
-// fitting only with NVFP4 KV does not displace Q4_K_M at the default INT8 KV (the 2080 Ti: no
-// reference card).
-void ranks_eligible_only(const json& fixture) {
-    const Bench b = nine_b(fixture, "RTX 2080 Ti");
-    ch::Task task;
-    // Q8_0 + 32K of NVFP4 KV fits, Q8_0 + 32K of INT8 KV does not.
-    const double budget = b.quants[1].weight_bytes + 33000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Nvfp4Group16);
-    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                    {}, task, oracle(b, budget));
-    check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" &&
-              chosen(c).candidate.kv == KvCacheStorage::Int8Group64 && c.context == 32768,
-          "defaults only: Q4_K_M at INT8, not Q8_0 at NVFP4");
-}
-
 // The quantization curve: a measured label takes its point; other bits per weight interpolate in
-// log KLD; at or above Q8_0's bits it is the reference. On Ada (a deciding generation) the worth
-// weighs the quantizations: Q6_K, not the largest (Q8_0: +26 % time for -0.003 KLD) nor the
-// fastest above the floor (Q4_K_M: -20 % time for +0.012 KLD).
+// log KLD; at or above Q8_0's bits it is the reference. The worth weighs the switches at a
+// quantization where its family's terms rest on two cards (which quantization a listing serves is
+// plan_quants', test_plan_dry_run).
 void weighs_the_quantizations(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;
@@ -377,99 +332,49 @@ void weighs_the_quantizations(const json& fixture) {
     q.label           = "Q8_0";
     q.bits_per_weight = 8.5; // another model's Q8_0: its own reference
     check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
-    Bench with6 = b;
-    ch::QuantOption q6 = b.quants[0];
-    q6.label           = "Q6_K";
-    q6.bits_per_weight = 6.77;
-    q6.weight_bytes    = b.quants[0].weight_bytes * 6.77 / b.quants[0].bits_per_weight;
-    with6.quants.push_back(q6);
     ch::Task task;
     const ch::Gates open{true, true};
-    const ch::Choice choice = ch::choose(with6.model, with6.card, with6.quants,
-                                         ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
-                                         oracle(with6, 20e9), open);
-    check(choice.chosen && with6.quants[chosen(choice).candidate.quant].label == "Q6_K" &&
-              choice.why.find("best worth among the quantizations") != std::string::npos,
-          "Ada: the quantizations by worth (Q6_K)");
-    int codes = 0;
-    for (const ch::Alternative& a : ch::explain(choice, with6.quants)) {
-        if (a.axis == ch::Axis::Quant && a.value == "Q8_0") {
-            check(a.why_code == "lower_worth", "Q8_0 fits and lost on worth, not on the rule");
-            ++codes;
-        }
-        if (a.axis == ch::Axis::Quant && a.value == "IQ3_XXS") {
-            check(a.why_code == "quant_rule", "a quantization below the floor: the rule's tiers, not the worth");
-            ++codes;
-        }
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0],
+                                         ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task,
+                                         oracle(b, 20e9), open);
+    check(choice.chosen && choice.by_worth && choice.why.find("best worth on the ada reference card") != std::string::npos,
+          "Ada: the switches by worth");
+    bool fp8 = false;
+    for (const ch::Alternative& a : ch::explain(choice)) {
         if (a.axis == ch::Axis::Kv && a.value == "fp8") {
             check(a.why_code == "lower_worth", "FP8 KV: the same cost, less accurate");
-            ++codes;
+            fp8 = true;
         }
     }
-    check(codes == 3, "Q8_0, IQ3_XXS and FP8 KV explained");
+    check(fp8, "FP8 KV explained");
     // The constants' own gates: the worth decides once the accuracy terms rest on two cards.
-    const ch::Choice gated = ch::choose(with6.model, with6.card, with6.quants,
-                                        ch::allowed_axes(with6.model, KvCacheStorage::Int8Group64), {}, task,
-                                        oracle(with6, 20e9));
+    const ch::Choice gated = ch::choose(b.model, b.card, b.quants[0],
+                                        ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task,
+                                        oracle(b, 20e9));
     check(gated.by_worth == ch::accuracy_decides("ada", "qwen3_5_text"),
           "the worth decides only with the accuracy terms on two cards");
-    // A family the terms were not measured on keeps the rule and its defaults.
-    Bench gemma = with6;
+    check(ch::weighs_quantizations(b.model, b.card, open) &&
+              !ch::weighs_quantizations(nine_b(fixture, "RTX 2080 Ti").model, nine_b(fixture, "RTX 2080 Ti").card, open),
+          "Ada weighs the quantizations (Qwen 3.5 dense's curve); Turing has no reference card");
+    // A family the terms were not measured on keeps its defaults.
+    Bench gemma = b;
     gemma.model.family = "gemma4_text";
-    const ch::Choice other = ch::choose(gemma.model, gemma.card, gemma.quants,
+    const ch::Choice other = ch::choose(gemma.model, gemma.card, gemma.quants[0],
                                         ch::allowed_axes(gemma.model, KvCacheStorage::Fp8E4M3Row256), {}, task,
                                         oracle(gemma, 20e9), open);
     check(!other.by_worth && other.why.find("no accuracy terms were measured on gemma4_text") != std::string::npos,
-          "another family: the rule's largest and its defaults");
+          "another family: its defaults");
     // A dense decoder (its own terms, two cards): the worth decides its KV codec and activations,
-    // while the quantization stays the rule's (the quantization curve is Qwen 3.5 dense's).
-    Bench dense = with6;
+    // while a listing's quantization stays the rule's (the quantization curve is Qwen 3.5 dense's).
+    Bench dense = b;
     dense.model.family = "dense_decoder";
-    const ch::Choice dense_choice = ch::choose(dense.model, dense.card, dense.quants,
+    const ch::Choice dense_choice = ch::choose(dense.model, dense.card, dense.quants[0],
                                                ch::allowed_axes(dense.model, KvCacheStorage::Fp8E4M3Row256), {},
                                                task, oracle(dense, 20e9), open);
     check(ch::accuracy_decides("ada", "dense_decoder") && dense_choice.by_worth,
           "a dense decoder decides by worth on its own terms");
     check(!ch::weighs_quantizations(dense.model, dense.card, open),
           "a dense decoder keeps the quant rule's largest (no curve of its own)");
-    // Two quantizations alike in every respect: a tie, broken by the smaller label.
-    Bench twins           = b;
-    twins.quants          = {b.quants[0], b.quants[0]};
-    twins.quants[1].label = "Q4_K_M copy";
-    const ch::Choice tie = ch::choose(twins.model, twins.card, twins.quants,
-                                      ch::allowed_axes(twins.model, KvCacheStorage::Int8Group64), {}, task,
-                                      oracle(twins, 20e9), open);
-    int ties = 0;
-    for (const ch::Alternative& a : ch::explain(tie, twins.quants)) {
-        if (a.axis == ch::Axis::Quant && a.value == "Q4_K_M copy") {
-            check(a.why_code == "tie_order" && a.why_not.find("int8") == std::string::npos,
-                  "an equal quantization: the smaller label");
-            ++ties;
-        }
-    }
-    check(ties == 1, "the equal quantization explained");
-    // Listed the other way round, the tie still goes to the smaller label, as the quant rule's.
-    Bench swapped           = twins;
-    swapped.quants          = {twins.quants[1], twins.quants[0]};
-    for (const ch::Gates& g : {open, ch::Gates{false, true}}) {
-        const ch::Choice c = ch::choose(swapped.model, swapped.card, swapped.quants,
-                                        ch::allowed_axes(swapped.model, KvCacheStorage::Int8Group64), {}, task,
-                                        oracle(swapped, 20e9), g);
-        check(c.chosen && swapped.quants[chosen(c).candidate.quant].label == "Q4_K_M",
-              "an equal quantization: the smaller label wherever it is listed");
-        for (const ch::Alternative& a : ch::explain(c, swapped.quants)) {
-            if (a.axis == ch::Axis::Quant && a.value == "Q4_K_M copy") {
-                check(a.why_code == "tie_order", "an equal quantization explained as the label tie");
-            }
-        }
-    }
-    // Without decision constants (Turing) the rule's largest stands.
-    const Bench t = nine_b(fixture, "RTX 2080 Ti");
-    Bench t6      = t;
-    t6.quants.push_back(q6);
-    const ch::Choice rule = ch::choose(t6.model, t6.card, t6.quants, ch::allowed_axes(t6.model, KvCacheStorage::Int8Group64),
-                                       {}, task, oracle(t6, 20e9));
-    check(rule.chosen && t6.quants[chosen(rule).candidate.quant].label == "Q8_0", "Turing: the rule's largest (Q8_0)");
 }
 
 // The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
@@ -485,11 +390,11 @@ void chooses_the_chunk(const json& fixture) {
         const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
-    const ch::Choice ada = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
+    const ch::Choice ada = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
     check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed,
           "Ada, an MoE: chunk 2048 for a 2048-token prompt");
     int chunks = 0;
-    for (const ch::Alternative& a : ch::explain(ada, b.quants)) {
+    for (const ch::Alternative& a : ch::explain(ada)) {
         if (a.axis == ch::Axis::Chunk && a.value == "4096") {
             check(a.why_code == "tie_context", "chunk 4096: as fast for this prompt, less context");
             ++chunks;
@@ -502,10 +407,10 @@ void chooses_the_chunk(const json& fixture) {
     check(chunks == 2, "both other chunks explained");
     ch::Pins wide;
     wide.chunk = 4096;
-    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), wide, task, own);
+    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), wide, task, own);
     check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
-    const ch::Choice bw = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
+    const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
     check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
 }
 
@@ -516,26 +421,26 @@ void coarse_quant_keeps_kv(const json& fixture) {
     b.quants = {b.quants[2]}; // IQ3_XXS-like, 3.1 bits: a large interpolated quantization term
     ch::Task task;
     task.contexts = {8192};
-    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                     {}, task, oracle(b, 20e9));
     check(c.chosen && chosen(c).candidate.kv == KvCacheStorage::Int8Group64, "a coarse quantization keeps INT8 KV");
 }
 
-// Auto's steps: every own-context step above the floor bits before any quantization below them.
+// Auto's steps at a quantization: the first own-context step a candidate holds.
 void steps_before_the_floor(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Task task;
     task.contexts = {32768, 16384, 8192};
-    // Q4_K_M leaves room for 20K tokens of INT8 KV, IQ3_XXS for far more: 16K at Q4_K_M wins.
+    // Q4_K_M leaves room for 20K tokens of INT8 KV: 16K.
     const double budget = b.quants[0].weight_bytes + 20000.0 * b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
     // KV pinned to INT8: where the worth decides, a narrower codec would itself reach 32K at
     // Q4_K_M (the KV codec is a memory lever too).
     ch::Pins pins;
     pins.kv = KvCacheStorage::Int8Group64;
-    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                     pins, task, oracle(b, budget));
-    check(c.chosen && b.quants[chosen(c).candidate.quant].label == "Q4_K_M" && c.context == 16384,
-          "16K at Q4_K_M before 32K below the floor");
+    check(c.chosen && c.context == 16384 && c.why.find("every stream holds 16384 tokens") != std::string::npos,
+          "16K at Q4_K_M: Auto's second step");
 }
 
 // The int8 activations' term is a model constant (since ggml's MMQ prefill sums its blocks from
@@ -558,7 +463,7 @@ void activations_by_generation(const json& fixture) {
     check(ch::accuracy_decides("ada", "qwen3_5_text"), "Ada: every term the worth decides by rests on two cards");
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Task task;
-    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                          {}, task, oracle(b, 9.6e9));
     check(choice.by_worth && choice.chosen && chosen(choice).candidate.activations == ActivationMode::Fast,
           "Ada decides: fast over exact");
@@ -567,7 +472,7 @@ void activations_by_generation(const json& fixture) {
 
 // Qwen 3.5 MoE has switch terms of its own (INT8 KV 0.0033, 3.4 times dense's) on two cards and no
 // quantization curve: on Ada the worth decides its KV codec and activations, the quant rule its
-// quantization.
+// quantization (weighs_quantizations false).
 void moe_family(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {}};
@@ -590,11 +495,10 @@ void moe_family(const json& fixture) {
     check(std::abs(kv_term - 0.00329) < 1e-9 && !transferred, "MoE: its own INT8 KV term");
     check(ch::accuracy_decides("ada", "qwen3_5_moe_text"), "MoE: its switch terms on two cards");
     ch::Task task;
-    const ch::Choice choice = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                          {}, task, oracle(b, 40e9));
-    check(choice.by_worth && !choice.quant_by_worth && choice.chosen &&
-              b.quants[chosen(choice).candidate.quant].label == "Q4_K_M",
-          "MoE on Ada: the switches by worth, the quantization by the rule (the largest)");
+    check(choice.by_worth && choice.chosen && !ch::weighs_quantizations(b.model, b.card),
+          "MoE on Ada: the switches by worth, the quantization by the rule");
     if (choice.chosen) { std::cout << choice.why << '\n'; }
 }
 
@@ -604,24 +508,19 @@ void contradictory_pins(const json& fixture) {
     ch::Pins pins;
     pins.activations = ActivationMode::Exact;
     pins.state       = RecurrentStateStorage::FP16;
-    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                     pins, ch::Task{}, oracle(b, 20e9));
     check(!c.chosen && c.why.find("refuses") != std::string::npos, "exact with a pinned FP16 state: refused");
-    pins       = {};
-    pins.quant = 7;
-    const ch::Choice out = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
-                                      pins, ch::Task{}, oracle(b, 20e9));
-    check(!out.chosen && out.why.find("not among") != std::string::npos, "a pinned quantization out of range");
 }
 
 // The coupled storages are explained: the recurrent state's other values beside the chosen.
 void explains_the_state(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Task task;
-    const ch::Choice c = ch::choose(b.model, b.card, b.quants, ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
+    const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64),
                                     {}, task, oracle(b, 9.6e9));
     int states = 0, coupled = 0;
-    for (const ch::Alternative& a : ch::explain(c, b.quants)) {
+    for (const ch::Alternative& a : ch::explain(c)) {
         if (a.axis == ch::Axis::State) {
             ++states;
             if (a.why_code == "coupled") { ++coupled; }
@@ -641,10 +540,10 @@ void weighs_the_drafters(const json& fixture) {
     b.model.drafters = {{"mtp:4", "mtp", 1.9, 2, "measured"}, {"dflash:7", "dflash", 2.5, 2, "measured"}};
     b.model.default_drafter = 1; // the resolved profile's: MTP
     // A drafter's weights take memory from the context: MTP 0.2 GB, DFlash 2.4 GB.
-    const auto oracle_with = [&b](double budget) -> ch::OwnContextFn {
-        return [&b, budget](const ch::Candidate& c) -> std::uint32_t {
+    const auto oracle_with = [&b](double budget, std::size_t quant = 0) -> ch::OwnContextFn {
+        return [&b, budget, quant](const ch::Candidate& c) -> std::uint32_t {
             const double drafter = c.drafter == 1 ? 0.2e9 : c.drafter == 2 ? 2.4e9 : 0.0;
-            const double room    = budget - b.quants[c.quant].weight_bytes - drafter;
+            const double room    = budget - b.quants[quant].weight_bytes - drafter;
             if (room <= 0) { return 0; }
             return static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv));
         };
@@ -653,12 +552,12 @@ void weighs_the_drafters(const json& fixture) {
     const auto allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
     ch::Task task;
     task.contexts = {32768};
-    const ch::Choice roomy = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9), open);
+    const ch::Choice roomy = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle_with(40e9), open);
     check(roomy.chosen && chosen(roomy).candidate.drafter == 2 && chosen(roomy).drafter == "dflash:7" &&
               roomy.why.find("speculation dflash:7") != std::string::npos,
           "room for every drafter: the fastest, DFlash: " + roomy.why);
     int lost = 0;
-    for (const ch::Alternative& a : ch::explain(roomy, b.quants)) {
+    for (const ch::Alternative& a : ch::explain(roomy)) {
         if (a.axis == ch::Axis::Drafter && (a.value == "plain" || a.value == "mtp:4")) {
             check(a.why_code == "lower_worth", a.value + " fits and loses on worth");
             ++lost;
@@ -667,19 +566,20 @@ void weighs_the_drafters(const json& fixture) {
     check(lost == 2, "plain and MTP explained beside DFlash");
     // The largest quantization's weights leave room for MTP's 0.2 GB but not DFlash's 2.4 GB at 32K:
     // MTP, and DFlash explained with its gain.
-    ch::Pins q8;
-    q8.quant = 0;
+    std::size_t largest = 0;
     for (std::size_t i = 1; i < b.quants.size(); ++i) {
-        if (b.quants[i].weight_bytes > b.quants[*q8.quant].weight_bytes) { q8.quant = i; }
+        if (b.quants[i].weight_bytes > b.quants[largest].weight_bytes) { largest = i; }
     }
     const double per_token = b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
-    const double tight     = b.quants[*q8.quant].weight_bytes + 0.2e9 + 40000 * per_token;
-    q8.kv = KvCacheStorage::Int8Group64;
-    const ch::Choice tight_choice = ch::choose(b.model, b.card, b.quants, allowed, q8, task, oracle_with(tight), open);
+    const double tight     = b.quants[largest].weight_bytes + 0.2e9 + 40000 * per_token;
+    ch::Pins int8;
+    int8.kv = KvCacheStorage::Int8Group64;
+    const ch::Choice tight_choice = ch::choose(b.model, b.card, b.quants[largest], allowed, int8, task,
+                                               oracle_with(tight, largest), open);
     check(tight_choice.chosen && chosen(tight_choice).candidate.drafter == 1,
           "DFlash does not hold 32K beside the largest quantization: MTP");
     bool said = false;
-    for (const ch::Alternative& a : ch::explain(tight_choice, b.quants)) {
+    for (const ch::Alternative& a : ch::explain(tight_choice)) {
         if (a.axis == ch::Axis::Drafter && a.value == "dflash:7") {
             said = a.why_code == "no_fit" && a.why_not.find("decodes x") != std::string::npos;
         }
@@ -688,12 +588,12 @@ void weighs_the_drafters(const json& fixture) {
     // Two streams: past the load tables' bound neither drafter gains; plain keeps the most context.
     ch::Task two = task;
     two.concurrency = 2;
-    const ch::Choice pair = ch::choose(b.model, b.card, b.quants, allowed, {}, two, oracle_with(40e9), open);
+    const ch::Choice pair = ch::choose(b.model, b.card, b.quants[0], allowed, {}, two, oracle_with(40e9), open);
     check(pair.chosen && chosen(pair).candidate.drafter == 0, "two streams: plain decode");
     // A pin keeps the drafter; closed gates keep the resolved profile's.
     ch::Pins plain;
     plain.drafter = 0;
-    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants, allowed, plain, task, oracle_with(40e9), open);
+    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants[0], allowed, plain, task, oracle_with(40e9), open);
     check(pinned.chosen && chosen(pinned).candidate.drafter == 0, "--spec none: plain decode");
     // A drafter published without its speeds (the "*" profile) weighs a gain of 1: it is not
     // weighed, and the profile's choice stands (never plain decode for a gain nobody measured).
@@ -701,13 +601,13 @@ void weighs_the_drafters(const json& fixture) {
         Bench star = b;
         star.model.drafters = {{"mtp:5+head", "mtp", 1.0, 0, "generic", false}};
         star.model.default_drafter = 1;
-        const ch::Choice kept = ch::choose(star.model, star.card, star.quants, allowed, {}, task,
+        const ch::Choice kept = ch::choose(star.model, star.card, star.quants[0], allowed, {}, task,
                                            oracle_with(40e9), open);
         check(kept.chosen && kept.by_worth && !kept.drafter_by_worth &&
                   chosen(kept).candidate.drafter == 1,
               "an unmeasured drafter: the profile's choice stands");
         bool said = false;
-        for (const ch::Alternative& a : ch::explain(kept, star.quants)) {
+        for (const ch::Alternative& a : ch::explain(kept)) {
             if (a.axis == ch::Axis::Drafter && a.value == "plain") {
                 said = a.why_code == "unmeasured" && a.why_not.find("not measured") != std::string::npos;
             }
@@ -715,7 +615,7 @@ void weighs_the_drafters(const json& fixture) {
         check(said, "plain decode explained: the drafter's gain is not measured here");
         // Its gain, given or not, is not counted in the decode estimate (the page shows its own).
         star.model.drafters[0].speedup = 3.0;
-        const ch::Candidate at{0, KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
+        const ch::Candidate at{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
                                RecurrentStateStorage::FP16, ActivationMode::Fast, ch::kDefaultChunk, 1};
         ch::Candidate without = at;
         without.drafter       = 0;
@@ -723,7 +623,7 @@ void weighs_the_drafters(const json& fixture) {
                   ch::speed_of(star.model, star.card, star.quants[0], without, 1, 4096).decode_per_stream,
               "an unmeasured gain is not counted in the decode estimate");
     }
-    const ch::Choice closed = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9));
+    const ch::Choice closed = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle_with(40e9));
     check(closed.chosen && (closed.by_worth || chosen(closed).candidate.drafter == 1),
           "the worth not deciding: the profile's drafter");
 }
@@ -735,7 +635,6 @@ int main() {
     chooses(fixture);
     decides_by_generation(fixture);
     steps_before_the_floor(fixture);
-    ranks_eligible_only(fixture);
     weighs_the_quantizations(fixture);
     chooses_the_chunk(fixture);
     coarse_quant_keeps_kv(fixture);

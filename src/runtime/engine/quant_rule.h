@@ -48,6 +48,8 @@ struct QuantCandidate {
 
 // The bits the rule ranks by: bits per weight, else the label's.
 [[nodiscard]] double quant_rank_bits(const QuantCandidate& q) noexcept;
+// Below kPlanQualityFloorBits: known bits under the floor (unknown bits rank at or above it).
+[[nodiscard]] bool below_quality_floor(const QuantCandidate& q) noexcept;
 
 enum class QuantFitState : std::uint8_t {
     Own,         // every stream holds the target context of its own

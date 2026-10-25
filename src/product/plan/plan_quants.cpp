@@ -425,8 +425,14 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     out.pick = runtime::largest_fitting_quant(candidates, fits, ask);
     // A GPU generation that decides weighs the quantizations by worth within the rule's tier: the
     // rows that keep the same own context per stream on the same side of the floor, each at its own
-    // choice (product/plan/plan_choice.h). Elsewhere the rule's largest stands.
-    if (out.pick && choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&
+    // choice (product/plan/plan_choice.h), a tie to the rule's order (quant_ranks_above). Only
+    // where every supported row's bits place it on the quantization curve (an unknown one has no
+    // accuracy term and would look exact). Elsewhere the rule's largest stands.
+    const bool bits_known = std::all_of(out.rows.begin(), out.rows.end(), [](const QuantRow& row) {
+        return !row.candidate.supported || row.candidate.bits_per_weight > 0; // what the choice reads
+    });
+    if (out.pick && bits_known &&
+        choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&
         (out.pick->tier == runtime::QuantPickTier::Own ||
          out.pick->tier == runtime::QuantPickTier::OwnStepped ||
          out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
@@ -439,8 +445,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
             const QuantRow& row = out.rows[i];
             if (!row.candidate.supported ||
-                out.pick->below_floor != (runtime::quant_rank_bits(row.candidate) <
-                                          runtime::kPlanQualityFloorBits)) {
+                out.pick->below_floor != runtime::below_quality_floor(row.candidate)) {
                 continue;
             }
             const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
@@ -752,8 +757,7 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"own_context", row.fit.own_context},
                         {"launch_context", row.launch_context},
                         {"below_floor",
-                         row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
-                             runtime::quant_rank_bits(row.candidate) < runtime::kPlanQualityFloorBits},
+                         row.candidate.supported && runtime::below_quality_floor(row.candidate)},
                         {"low_quality",
                          row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
                              runtime::quant_rank_bits(row.candidate) < runtime::kPlanLowQualityBits},
