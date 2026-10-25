@@ -111,6 +111,11 @@ struct DrafterPlan {
 [[nodiscard]] bool sharded_checkpoint_mtp(const nlohmann::json& config,
                                           const nlohmann::json& index);
 
+// Whether the checkpoint directory `dir` (its config.json `config`) has built-in MTP layers: what
+// its weights hold where their listing is there (a model_mtp.safetensors part, the index, or the
+// one weight file's header), else the declaration; NextN layers keep their declaration.
+[[nodiscard]] bool checkpoint_mtp(const std::filesystem::path& dir, const nlohmann::json& config);
+
 // The target as the converter sees it: a checkpoint directory (its README's base_model lineage
 // and its ninferno_speculation.json are read from disk) or a .ninferno artifact.
 [[nodiscard]] DrafterTarget describe_checkpoint(const std::filesystem::path& dir, std::string repo);
