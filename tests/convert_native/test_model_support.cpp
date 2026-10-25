@@ -95,6 +95,9 @@ int main(int argc, char** argv) {
                "Qwen3.5");
         const auto dflash = of(chat("DFlashDraftModel"));
         expect(dflash.verdict == Verdict::Supported && dflash.role == "drafter", "a DFlash drafter");
+        expect(cv::serve_refusal(dflash).find("beside its model") != std::string::npos &&
+                   cv::serve_refusal(qwen).empty(),
+               "a drafter is not served alone, a model is");
         expect(says(of(chat("Eagle3DraftModel")), Verdict::Unsupported, "no engine runs"),
                "an EAGLE-3 drafter");
         cv::SupportFacts g;
