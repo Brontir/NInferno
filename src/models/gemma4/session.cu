@@ -477,7 +477,7 @@ namespace {
 
 // Device memory a captured graph keeps, per target layer. Measured on the RTX 5080 with 26B-A4B
 // (30 layers): the decode graph took 4 MiB, decode plus one MTP round 9-10 MiB, decode plus seven
-// round graphs (mtp:8:2) 42 MiB: about 180 KiB per layer and graph; rounded up. The slack covers
+// round graphs 42 MiB: about 180 KiB per layer and graph; rounded up. The slack covers
 // the allocator's granularity.
 // NINFERNO-SPECIAL(workaround:graph-memory-estimate): the graphs are captured after the session is
 // sized, so their memory is estimated; capturing them inside the trial session would make it

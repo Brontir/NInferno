@@ -265,6 +265,8 @@ Notes that often matter:
 - Force a backend with `--spec mtp`, `--spec dflash` or `--spec dflash2`, and a depth with
   `--draft-tokens N`. Add `--lm-head-draft` for the optimized proposal head.
 - Disable it with `--spec none`.
+- Every round drafts a fixed depth. There is no adaptive depth (one that moves with the drafts
+  accepted): it was measured and removed, as it gained only on synthetic text.
 - Under concurrency the profile lowers the draft depth per decode step, because deep drafts stop
   paying off on a busy server. `--spec-load LANES:DEPTH,...` replaces those bounds (`none` removes
   them).

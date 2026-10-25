@@ -21,6 +21,10 @@ namespace ninferno::spec {
 
 enum class Mode : std::uint8_t { None, Mtp, DFlash, DFlash2, Ngram };
 
+// A speculation configuration: a drafter's mode and its fixed draft depth k (with the proposal
+// head or not). There is no adaptive depth: one that moves round by round with the drafts
+// accepted (the removed "mtp:K:K0") gained only on synthetic text, never on real requests, so
+// parse() refuses that form (AGENTS.md, Architecture invariants).
 struct SpecConfig {
     Mode mode          = Mode::None;
     std::int32_t k     = 0;

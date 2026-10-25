@@ -22,7 +22,9 @@ namespace ninferno::models::speculation {
 
 struct DecoderOptions {
     std::int32_t max_context      = 0;
-    std::int32_t draft_tokens = 0; // every round's depth
+    // Every round's depth. Fixed by design: an adaptive schedule (deeper after a fully accepted
+    // round, shallower otherwise) was removed, as it gained only on synthetic text (AGENTS.md).
+    std::int32_t draft_tokens = 0;
 };
 
 class Decoder {
