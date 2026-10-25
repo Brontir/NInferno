@@ -51,6 +51,9 @@ struct ServeOptions {
     // converts it and removes the old conversion. Refused together.
     bool accept_converted = false;
     bool refetch          = false;
+    // --keep-replaced (with --refetch): the old conversion stays for the caller to remove once the
+    // new one serves (ninferno-ui switches a running model over first).
+    bool keep_replaced = false;
     std::filesystem::path chat_template_path;
     std::string host = "127.0.0.1";
     int port         = 8080;

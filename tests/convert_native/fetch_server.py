@@ -158,7 +158,11 @@ def make_handler(hub: Hub):
                         item.pop("size")
                         item.get("lfs", {}).pop("size", None)
                     siblings.append(item)
-                answer = {"id": f"{parts[2]}/{parts[3]}", "sha": repo["commit"], "siblings": siblings}
+                # A commit the repository had before (its "history", as a moved branch leaves it)
+                # still lists as itself; any other revision lists as the current commit.
+                revision = "/".join(parts[5:])
+                sha = revision if revision in repo.get("history", ()) else repo["commit"]
+                answer = {"id": f"{parts[2]}/{parts[3]}", "sha": sha, "siblings": siblings}
                 # The model card fields the hub adds when asked (pipeline_tag, library_name, ...).
                 answer.update(repo.get("card", {}))
                 body = json.dumps(answer).encode()
