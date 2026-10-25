@@ -6,6 +6,7 @@
 #include <cctype>
 #include <limits>
 #include <map>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -336,6 +337,83 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
     }
     out.load = {LoadBound{.lanes = 2, .depth = 0}};
     return out;
+}
+
+double label_bits(std::string_view label) {
+    std::string text(label);
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (text.empty() || text.find("bf16") != std::string::npos ||
+        text.find("f16") != std::string::npos) {
+        return 16;
+    }
+    if (text.find("f32") != std::string::npos) { return 32; }
+    if (text.find("fp4") != std::string::npos) { return 4; }
+    static const std::regex bits(R"((?:^|[-_])i?q([0-9]))");
+    std::smatch match;
+    return std::regex_search(text, match, bits) ? std::stod(match[1].str()) : 16;
+}
+
+std::string artifact_quant(const std::filesystem::path& artifact) {
+    const artifact::Reader reader(artifact);
+    return reader.directory().provenance.value("quant", std::string());
+}
+
+std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
+                                      std::string_view target, std::string_view engine,
+                                      const std::vector<std::string>& kinds, double target_bits,
+                                      std::string_view generation, const SelectOptions& options) {
+    std::set<Mode> modes;
+    for (const auto& kind : kinds) {
+        try {
+            modes.insert(mode_of_kind(kind));
+        } catch (const std::invalid_argument&) {} // a kind no pair drafts with
+    }
+    // The target's own measurements, over the drafters it carries only.
+    std::vector<MeasuredPair> own;
+    for (const auto& pair : pairs) {
+        if (pair.target != target) { continue; }
+        MeasuredPair p = pair;
+        std::erase_if(p.tune.measurements, [&](const Measurement& m) {
+            return m.config.enabled() && !modes.contains(m.config.mode);
+        });
+        std::erase_if(p.tune.drafters, [&](const DrafterRecord& d) {
+            return std::find(kinds.begin(), kinds.end(), d.kind) == kinds.end();
+        });
+        // Measured with other drafters only: not measured for the ones it carries.
+        if (std::any_of(p.tune.measurements.begin(), p.tune.measurements.end(),
+                        [](const Measurement& m) { return m.config.enabled(); })) {
+            own.push_back(std::move(p));
+        }
+    }
+    if (!own.empty()) {
+        std::vector<const MeasuredPair*> measured;
+        for (const auto& p : own) { measured.push_back(&p); }
+        return PairChoice{.profile = profile_for_target(measured, generation, options),
+                          .basis   = "measured",
+                          .source  = "registry pair " + own.front().target_repo + " (" +
+                                    std::to_string(own.size()) + " lab card(s))"};
+    }
+    // Nobody measured it: the group of each kind it carries, the fastest overall.
+    std::optional<PairChoice> best;
+    for (const auto& kind : kinds) {
+        try {
+            (void)mode_of_kind(kind);
+        } catch (const std::invalid_argument&) {
+            continue;
+        }
+        const auto group = pair_group(pairs, engine, kind, target_bits);
+        auto profile     = profile_for_group(group, kind);
+        if (!profile) { continue; }
+        if (!best || profile->overall.speedup() > best->profile.overall.speedup()) {
+            best = PairChoice{.profile = std::move(*profile),
+                              .basis   = "preliminary",
+                              .source  = "registry group " + std::string(engine) + " + " + kind +
+                                        " (" + std::to_string(group.size()) +
+                                        " measured pairs; this one not measured)"};
+        }
+    }
+    return best;
 }
 
 } // namespace ninferno::spec

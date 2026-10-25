@@ -139,6 +139,30 @@ int main() {
         expect(sp::pair_group(stale, "qwen3_5", "dflash", 8.5).empty(),
                "an old engine version's pair is in no group");
     }
+    // What the registry's pairs give a target: its own measurement, else its group's.
+    {
+        const std::vector<sp::MeasuredPair> all = {ada_q4, bw_q4, bw_q8, bw_iq2, hauhau, oss_bw,
+                                                   mtp_q4};
+        const auto own = sp::pair_choice(all, bw_q4.target, "qwen3_5", {"dflash"}, 4.9, "sm120");
+        expect(own && own->basis == "measured" && own->profile.thinking.config.label() == "dflash:7",
+               "a measured target takes its own measurement");
+        const auto unknown =
+            sp::pair_choice(all, "sha:not-measured", "qwen3_5", {"dflash"}, 4.9, "sm120");
+        expect(unknown && unknown->basis == "preliminary" &&
+                   unknown->profile.thinking.config.mode == sp::Mode::DFlash,
+               "an unmeasured target takes its group's");
+        // Measured with DFlash, carrying only its MTP layers: unmeasured for those.
+        const auto other = sp::pair_choice(all, bw_q4.target, "qwen3_5", {"mtp"}, 4.9, "sm120");
+        expect(other && other->basis == "preliminary" &&
+                   other->profile.thinking.config.mode != sp::Mode::DFlash,
+               "measured with another drafter: the carried drafter's group");
+        expect(!sp::pair_choice(all, "sha:x", "gemma4", {"gemma4_assistant"}, 4.5, "sm120"),
+               "no measurement and no group: nothing");
+    }
+    // Bits per weight from a quantization label.
+    expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
+               sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16,
+           "quantization labels' bits");
     // The generation of a device: its chain's architecture key.
     {
         sp::GpuKey gpu;

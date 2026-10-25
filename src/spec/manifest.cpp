@@ -363,26 +363,10 @@ namespace {
 // 2. The published profile for this GPU from a manifest (manifest_profiles: the registry's, or
 //    the manifest's own copy for a bundle declaration or a registry entry this binary no longer
 //    knows), over its usable drafters.
-void resolve_manifest_profile(const SpeculationManifest& manifest,
-                              const std::filesystem::path& artifact, const GpuKey& gpu,
-                              ResolvedSpeculation& out) {
-    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
-    std::vector<std::string> available;
-    for (const auto& d : manifest.drafters) {
-        if (d.usable()) { available.push_back(d.name); }
-    }
-    std::string origin;
-    std::string digest;
-    const Json* profiles  = &manifest_profiles(manifest, artifact, origin, &digest);
-    out.floor_sources     = *profiles; // also for a built-in default the caller falls to
-    const auto* published = select_published(*profiles, gpu, manifest.repo, &available);
-    if (published == nullptr) {
-        out.notes.push_back(origin + " has no profile for " + gpu_class +
-                            " along its similarity chain");
-        return;
-    }
-    Profile p;
-    if (!take_published(*profiles, *published, gpu, out, p)) { return; }
+// The manifest's drafters a profile's choices name, into out.drafters (an artifact path, or
+// "component:<name>" inside the target); one not attached, or changed since, is noted.
+void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
+                     ResolvedSpeculation& out) {
     for (const auto& name : referenced(p)) {
         const auto* d = manifest.drafter(name);
         if (d == nullptr || !d->usable()) {
@@ -405,6 +389,64 @@ void resolve_manifest_profile(const SpeculationManifest& manifest,
             out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
         }
     }
+}
+
+// 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
+//    weights it was converted from), else its group's preliminary choice. False when the registry
+//    has neither for it: the published profiles answer.
+bool resolve_pair_profile(const SpeculationManifest& manifest,
+                          const std::filesystem::path& artifact, const GpuKey& gpu,
+                          ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    if (registry.pairs().empty()) { return false; }
+    std::optional<std::string> weights;
+    std::string quant;
+    try {
+        weights = artifact_weights(artifact);
+        quant   = artifact_quant(artifact);
+    } catch (const std::exception& e) {
+        out.notes.push_back(std::string("the artifact's source inputs do not read: ") + e.what());
+        return false;
+    }
+    if (!weights) {
+        out.notes.push_back("the artifact records no source inputs: no lab pair names its weights");
+    }
+    std::vector<std::string> kinds;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable()) { kinds.push_back(d.kind); }
+    }
+    auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
+                              label_bits(quant), gpu_generation(gpu));
+    if (!choice) { return false; }
+    attach_drafters(manifest, choice->profile, out);
+    out.source  = std::move(choice->source);
+    out.basis   = std::move(choice->basis);
+    out.sha256  = registry.source_sha256();
+    out.profile = std::move(choice->profile);
+    return true;
+}
+
+void resolve_manifest_profile(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, const GpuKey& gpu,
+                              ResolvedSpeculation& out) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    std::vector<std::string> available;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable()) { available.push_back(d.name); }
+    }
+    std::string origin;
+    std::string digest;
+    const Json* profiles  = &manifest_profiles(manifest, artifact, origin, &digest);
+    out.floor_sources     = *profiles; // also for a built-in default the caller falls to
+    const auto* published = select_published(*profiles, gpu, manifest.repo, &available);
+    if (published == nullptr) {
+        out.notes.push_back(origin + " has no profile for " + gpu_class +
+                            " along its similarity chain");
+        return;
+    }
+    Profile p;
+    if (!take_published(*profiles, *published, gpu, out, p)) { return; }
+    attach_drafters(manifest, p, out);
     out.source  = published_source(origin, *published);
     out.sha256  = std::move(digest);
     out.profile = std::move(p);
@@ -538,8 +580,10 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 
-    // 2. The published profile for this GPU (manifest_profiles: the registry's, or the manifest's
+    // 2. The lab's measurement of this pair, else its group's (resolve_pair_profile); then the
+    //    published profile for this GPU (manifest_profiles: the registry's, or the manifest's
     //    own copy for a bundle declaration or a registry entry this binary no longer knows).
+    if (manifest && resolve_pair_profile(*manifest, artifact, gpu, out)) { return out; }
     if (manifest) {
         resolve_manifest_profile(*manifest, artifact, gpu, out);
     } else if (std::set<std::string> components;

@@ -12,6 +12,7 @@
 // (a "model" object of this schema without "match"). A bundle declaration wins over the registry.
 
 #include "spec/context_class.h"
+#include "spec/pairs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -139,6 +140,11 @@ public:
     [[nodiscard]] const ModelEntry* nearest(std::string_view engine, const Geometry& geometry,
                                             std::string_view fingerprint, bool with_mtp) const;
 
+    // The pairs the lab measured (spec/pairs.h: a target's weights and its drafters, one card each).
+    [[nodiscard]] const std::vector<MeasuredPair>& pairs() const noexcept { return pairs_; }
+    // The measurements of the target whose weights are `target` (MeasuredPair::target), every card.
+    [[nodiscard]] std::vector<const MeasuredPair*> measured(std::string_view target) const;
+
     // The drafter kind a checkpoint architecture belongs to (nullopt: not a known drafter).
     [[nodiscard]] std::optional<std::string> kind_for_architecture(std::string_view arch) const;
     // Whether an engine family (gemma4, qwen3_5) runs drafters of this kind.
@@ -147,6 +153,7 @@ public:
 private:
     std::vector<ModelEntry> models_;
     std::vector<KindInfo> kinds_;
+    std::vector<MeasuredPair> pairs_;
     std::string published_;
     std::uint64_t version_ = 0;
     ContextFactors context_classes_;

@@ -99,6 +99,28 @@ struct MeasuredPair {
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
                                                        std::string_view kind);
 
+// The bits per weight a quantization label names ("Q4_K_M" 4, "UD-IQ2_M" 2, "MXFP4" 4, "BF16" 16):
+// enough to tell the bit classes apart. 16 for "" (a checkpoint's own weights).
+[[nodiscard]] double label_bits(std::string_view label);
+// A converted target's quantization label (its provenance's "quant"; "" for a checkpoint).
+[[nodiscard]] std::string artifact_quant(const std::filesystem::path& artifact);
+
+// What the lab's pairs give a target carrying drafters of `kinds` (the kinds attached or built in):
+// its own measurements over those drafters (profile_for_target) with basis "measured", else the
+// best of its groups' choices (one per kind, the fastest overall) with basis "preliminary", else
+// nullopt. `source` names where it came from.
+struct PairChoice {
+    Profile profile;
+    std::string basis;
+    std::string source;
+};
+[[nodiscard]] std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
+                                                    std::string_view target,
+                                                    std::string_view engine,
+                                                    const std::vector<std::string>& kinds,
+                                                    double target_bits, std::string_view generation,
+                                                    const SelectOptions& options = {});
+
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
 // 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
