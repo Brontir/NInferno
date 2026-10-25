@@ -60,6 +60,19 @@ one wins; where one is much faster, it wins. Ties: the longer own context, then 
 quant rule's (`runtime/engine/quant_rule.h`), weighed by worth where the quantization curve decides
 (`product/plan/plan_quants.cpp`, below): one place, the product's, for every caller.
 
+**What λ means in answers.** A first calibration of KLD against lost answers (Qwen3.5-9B GGUF,
+2026-10-25): full MMLU-Pro (12,032 questions) and GSM8K (1,319) runs at temperature 0, two runs a
+quantization (Q8_0 on the RTX 5070 Ti and 4090, Q4_K_M on the 4090 and 5070 Ti, UD-IQ2_M twice on
+the 4090), `ninferno_eval` through `ninferno-serve`. The mean reproduces within 0.2 points (MMLU-Pro
+Q8_0 60.88 / 60.67, Q4_K_M 60.13 / 59.97, UD-IQ2_M 56.32 / 56.28), single answers do not (two runs of
+one configuration differ on 10-11 % of MMLU-Pro questions: the batch order of 8 concurrent requests
+moves the bytes under fast). Against Q8_0, with the quantization terms above: Q4_K_M loses 0.73
+points for 0.0172 KLD (0.042 a 0.001), UD-IQ2_M 4.48 points for 0.114 (0.039): about **0.04
+MMLU-Pro points per 0.001 KLD**. At `lambda` 25, 0.001 KLD is worth 2.5 % of a request's time, so
+one MMLU-Pro point (about 0.025 KLD) is worth about x1.87 of it. One family and one model so far:
+the KLD of another family is not on the same scale (Gemma 4's terms are two orders larger for the
+same switches), and its calibration is measured before its terms decide.
+
 **Gates.** A constant decides only once it rests on two lab cards (principle 4); until then the
 choice falls back and says why. `choice_constants.h` holds the gates:
 
