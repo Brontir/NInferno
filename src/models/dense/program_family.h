@@ -29,10 +29,12 @@ namespace ninferno::models::dense {
 // Under ActivationMode::Exact every prefill, decode and capture runs under the invariant route
 // profile (ninferno/ops/prefill_routes.h), so a token's bytes do not depend on its batch neighbours
 // or on where its prompt was cut; load the model with ActivationProfile::A16 to go with it.
+// `purpose` is the Engine's (EngineOptions::purpose): the sequence plan checks the Program's load
+// options against it.
 [[nodiscard]] std::unique_ptr<const qwen3_5::detail::ModelExecution>
 make_program_execution(const Model& model, const speculation::DFlashDrafter* drafter,
                        DeviceContext& device, std::int32_t public_tokens,
-                       ActivationMode activations);
+                       ActivationMode activations, EnginePurpose purpose);
 
 // The shape of the persistent state the dense decoder `config` lays out
 // (models/qwen3_5/program/planning/sequence_bytes.h, plan_persistent_layout): with a DFlash

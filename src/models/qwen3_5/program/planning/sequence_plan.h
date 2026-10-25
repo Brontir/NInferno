@@ -14,6 +14,9 @@
 #include "models/qwen3_5/program/round_buffers.h"
 #include "models/qwen3_5/state/decoder_state.h"
 #include "models/qwen3_5/state/state_image.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/token_distribution.h"
+#include "ninferno/ops/weight_input.h"
 #include "ninferno/types.h"
 
 #include <algorithm>
@@ -28,6 +31,30 @@ class ModelExecution;
 
 using TensorLayout                              = TensorRegion;
 inline constexpr std::uint32_t kCausalScoreTile = 1024;
+
+// The workspace of one causal scoring tile (ProgramImpl::causal_score's flush) for a family whose
+// output head is `head` over `logit_rows` rows: the tile's BF16 logits, its target ids and
+// log-probabilities, the four top-K / given-id planes of the distribution detail, and the head's
+// linear scratch over up to kCausalScoreTile columns at its own policy and at A16 (--activations
+// exact). A family's ModelExecution gives it as WorkspacePlan::causal_score when the plan scores.
+[[nodiscard]] inline std::size_t
+causal_score_workspace_bytes(std::int32_t logit_rows, const ops::SingleProjectionWeight& head) {
+    constexpr std::size_t kAlign = 256;
+    const auto allocation        = [](std::size_t bytes) {
+        return (bytes + kAlign - 1) / kAlign * kAlign + kAlign;
+    };
+    const auto tile   = static_cast<std::size_t>(kCausalScoreTile);
+    std::size_t bytes = allocation(static_cast<std::size_t>(logit_rows) * tile * 2) +
+                        2 * allocation(tile * 4) +
+                        4 * allocation(static_cast<std::size_t>(ops::kTokenTopkMax) * tile * 4);
+    std::size_t scratch = 0;
+    for (const auto policy : {head.policy, ops::LinearPolicy::A16Only}) {
+        scratch = std::max(scratch, ops::linear_workspace_capacity_bytes(
+                                        head.weight.qtype, head.weight.n, head.weight.k, policy, 1,
+                                        static_cast<std::int32_t>(kCausalScoreTile)));
+    }
+    return bytes + scratch + kAlign;
+}
 
 struct DFlashPersistentLayout {
     std::optional<qwen3_5::PagedKVCacheLayout> full;
