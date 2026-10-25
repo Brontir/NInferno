@@ -11,8 +11,8 @@
 //     server's thinking default), with the primary's proposal head;
 //   - every default that uses the same drafter (and head) runs at its own depth with its own
 //     watchdog floor; plain decode stays plain;
-//   - a choice that needs another drafter, another proposal head or an adaptive depth the engine
-//     cannot run runs the primary's configuration instead, and says why (MenuChoice::note).
+//   - a choice that needs another drafter or another proposal head the engine cannot run runs
+//     the primary's configuration instead, and says why (MenuChoice::note).
 //
 // The engine's depths (depths()) are what it must capture; a request picks its entry with
 // pick(), as spec::pick() picks a profile's choice. When a request's acceptance watchdog trips,

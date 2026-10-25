@@ -437,7 +437,6 @@ std::optional<spec::Profile> shallower_profile(const spec::Profile& profile,
     spec::Choice shallower = **same;
     shallower.config       = config;
     shallower.config.k     = config.k - 1;
-    shallower.config.k_min = config.k_min < shallower.config.k ? config.k_min : 0;
     // Its watchdog floor (a round's cost in plain-decode tokens) at the shallower depth, from the
     // floors the profile measured for this mode and head at other depths and the tried depth's own
     // (a proposal head drafts at another cost per round).

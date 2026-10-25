@@ -139,8 +139,7 @@ struct Session::Impl {
                 static_cast<std::int32_t*>(out_tokens.p), static_cast<std::int32_t*>(step.p)};
             speculation.emplace(target, device, work,
                                 speculation::DecoderOptions{options.max_context,
-                                                            options.draft_tokens,
-                                                            options.min_draft_tokens},
+                                                            options.draft_tokens},
                                 state, *round);
         }
     }
@@ -228,7 +227,6 @@ Session::~Session() = default;
 void Session::reset() noexcept {
     position_ = 0;
     impl_->target.poison_kv();
-    if (impl_->speculation) { impl_->speculation->reset_schedule(); }
     impl_->driver.reset();
 }
 
@@ -479,7 +477,7 @@ namespace {
 
 // Device memory a captured graph keeps, per target layer. Measured on the RTX 5080 with 26B-A4B
 // (30 layers): the decode graph took 4 MiB, decode plus one MTP round 9-10 MiB, decode plus seven
-// round graphs (mtp:8:2) 42 MiB: about 180 KiB per layer and graph; rounded up. The slack covers
+// round graphs 42 MiB: about 180 KiB per layer and graph; rounded up. The slack covers
 // the allocator's granularity.
 // NINFERNO-SPECIAL(workaround:graph-memory-estimate): the graphs are captured after the session is
 // sized, so their memory is estimated; capturing them inside the trial session would make it
@@ -498,10 +496,7 @@ std::uint64_t free_device_bytes() {
 std::uint64_t graph_reserve(const Model& model, const SessionOptions& o) {
     std::int64_t graphs = 1; // decode
     if (o.drafter != nullptr || o.dflash != nullptr || o.ngram) {
-        const std::int32_t deepest = std::max(o.draft_tokens, 1);
-        const std::int32_t shallowest =
-            o.min_draft_tokens > 0 && o.min_draft_tokens < deepest ? o.min_draft_tokens : deepest;
-        graphs += deepest - shallowest + 1;
+        graphs += 1; // the round of its depth
     }
     return static_cast<std::uint64_t>(graphs) * model.config().layers * kGraphBytesPerLayer +
            kSlackBytes;

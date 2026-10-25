@@ -46,10 +46,6 @@ struct SessionOptions {
     const Drafter* drafter      = nullptr;
     const DFlashDrafter* dflash = nullptr;
     std::int32_t draft_tokens   = 4;
-    // Nonzero and below draft_tokens: the depth adapts per round within
-    // [min_draft_tokens, draft_tokens] (deeper by two after a fully accepted round, one shallower
-    // otherwise). Zero: every round drafts draft_tokens.
-    std::int32_t min_draft_tokens = 0;
     // Prompt lookup, the model-free fallback (instead of a drafter): each round drafts the tokens
     // that followed the most recent earlier occurrence of the context's last ngram_max ..
     // ngram_min tokens, at most draft_tokens of them; a step without such an occurrence is a
@@ -82,8 +78,7 @@ public:
 
     [[nodiscard]] std::int32_t position() const noexcept { return position_; }
 
-    // Starts a new sequence: the next prefill begins at position 0, and speculation's adaptive
-    // depth schedule starts over from the middle of its range.
+    // Starts a new sequence: the next prefill begins at position 0.
     void reset() noexcept;
 
     // Captures every CUDA graph the session can replay: the plain decode step and, with a
@@ -183,7 +178,7 @@ struct SessionFit {
 // max_context), else the chunk that leaves the most context; then the largest context at that
 // chunk. A fixed context or chunk is kept and
 // only checked. `options` carries the drafter configuration the session will run (drafter or
-// dflash, draft_tokens, min_draft_tokens); its context and chunk are ignored. Throws
+// dflash, draft_tokens); its context and chunk are ignored. Throws
 // std::runtime_error naming the free memory when nothing fits.
 [[nodiscard]] SessionFit fit_session(const Model& model, DeviceContext& device,
                                      SessionOptions options, const SessionFitRequest& request);

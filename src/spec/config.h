@@ -5,7 +5,6 @@
 //   plain            no speculation
 //   mtp:K            an autoregressive drafter (Qwen's built-in MTP head, Gemma 4's assistant),
 //                    K drafts per round
-//   mtp:K:K0         the same with the depth adapting per round within [K0, K] (Gemma 4)
 //   dflash:K         a block drafter (DFlash), the first K drafts of its block verified
 //   dflash2:K        DFlash2 (Qwen companion)
 //   ngram:K          prompt lookup: drafts copied from an earlier occurrence of the context's
@@ -21,14 +20,16 @@ namespace ninferno::spec {
 
 enum class Mode : std::uint8_t { None, Mtp, DFlash, DFlash2, Ngram };
 
+// A speculation configuration: a drafter's mode and its fixed draft depth k (with the proposal
+// head or not). There is no adaptive depth: one that moves round by round with the drafts
+// accepted (the removed "mtp:K:K0") gained only on synthetic text, never on real requests, so
+// parse() refuses that form (AGENTS.md, Architecture invariants).
 struct SpecConfig {
     Mode mode          = Mode::None;
     std::int32_t k     = 0;
-    std::int32_t k_min = 0; // nonzero and below k: adaptive depth
     bool proposal_head = false;
 
     [[nodiscard]] constexpr bool enabled() const noexcept { return mode != Mode::None; }
-    [[nodiscard]] constexpr bool adaptive() const noexcept { return k_min > 0 && k_min < k; }
     [[nodiscard]] std::string label() const;
     // Throws std::invalid_argument naming the text when it is not a label above.
     [[nodiscard]] static SpecConfig parse(std::string_view label);

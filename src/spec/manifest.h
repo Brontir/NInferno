@@ -122,8 +122,8 @@ resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
 void require_named_tune(const ResolvedSpeculation& resolved);
 
 // The largest break-even (floor_tokens_per_round) `profiles` (one model's published profiles,
-// every GPU class) measured for exactly this configuration (mode, depth, proposal head; adaptive
-// choices are not counted): lab constants of the same model on other GPUs. 0 when none.
+// every GPU class) measured for exactly this configuration (mode, depth, proposal head): lab
+// constants of the same model on other GPUs. 0 when none.
 [[nodiscard]] double floor_ceiling(const nlohmann::json& profiles, const SpecConfig& config);
 
 // The median break-even of this configuration over every model and GPU class of the registry: the

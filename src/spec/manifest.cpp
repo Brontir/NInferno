@@ -208,7 +208,7 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
 namespace {
 
 // Every choice object under `j` (a "config" label beside a "floor_tokens_per_round") of exactly
-// `config`: mode, depth, adaptive floor depth and proposal head (mtp:8:2 is not mtp:8).
+// `config`: mode, depth and proposal head.
 void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>& floors) {
     if (j.is_object()) {
         const auto label = j.find("config");
@@ -216,8 +216,7 @@ void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>
         if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
             try {
                 const auto c = SpecConfig::parse(label->get<std::string>());
-                const auto k_min = [](const SpecConfig& s) { return s.adaptive() ? s.k_min : 0; };
-                if (c.mode == config.mode && c.k == config.k && k_min(c) == k_min(config) &&
+                if (c.mode == config.mode && c.k == config.k &&
                     c.proposal_head == config.proposal_head && floor->get<double>() > 1.0) {
                     floors.push_back(floor->get<double>());
                 }
