@@ -302,7 +302,16 @@ PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInpu
                                : backend == SpeculativeBackend::DFlash  ? spec::Mode::DFlash
                                : backend == SpeculativeBackend::DFlash2 ? spec::Mode::DFlash2
                                                                         : spec::Mode::None;
-    if (!drafter || *drafter == serving) { return planned; }
+    // The plan serves the choice's configuration already: its drafter at the depth the choice
+    // weighed (a fit fallback or the model's head of the same mode is another configuration, and
+    // the choice found its own fits: planned again at it).
+    const choice::Scored& chosen_scored = served.choice.scored[*served.choice.chosen];
+    const std::size_t option    = chosen_scored.candidate.drafter;
+    const bool same_config =
+        option == 0 || option > served.drafters.size() ||
+        (served.drafters[option - 1].engine.backend == backend &&
+         served.drafters[option - 1].engine.draft_tokens == planned.speculation.engine.draft_tokens);
+    if (!drafter || (*drafter == serving && same_config)) { return planned; }
     DryRunInputs again = inputs;
     std::optional<SpeculationSubject> chosen;
     if (*drafter == spec::Mode::None) {
