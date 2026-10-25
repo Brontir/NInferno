@@ -1103,12 +1103,18 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
     const bool gguf = std::none_of(list.begin(), list.end(), [](const Json& q) {
         return !q.value("drafter", false) && q.value("format", std::string()) != "gguf";
     });
+    // The repository's whole decision (its task, its weights' format, a token), as the search's;
+    // the architecture alone where that could not be read.
+    const Json decided = arch_json(repo, hub);
     return {
         {"repo", repo},
         {"hub", hub},
         {"architecture", arch},
-        {"support", support_level(convert::model_support(
-                        facts_of_architecture(arch, gguf)))},
+        {"support", decided.contains("support")
+                        ? decided["support"]
+                        : Json(support_level(
+                              convert::model_support(facts_of_architecture(arch, gguf))))},
+        {"note", decided.value("note", std::string())},
         {"quants", out},
         {"rule", plan.is_object() ? plan.value("rule", std::string()) : std::string()},
         {"rule_code", plan.is_object() ? plan.value("rule_code", std::string()) : std::string()},

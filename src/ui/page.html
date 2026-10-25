@@ -1901,7 +1901,7 @@ async function loadRepo() {
       // The architecture read from the weights themselves outranks the hub's word.
       if (j.architecture) {
         const h = sel.hub || found.hub.find(x => x.id === sel.repo);
-        const own = {architecture: j.architecture, support: j.support, arch_file: t("srcGguf")};
+        const own = {architecture: j.architecture, support: j.support, note: j.note, arch_file: t("srcGguf")};
         if (h) Object.assign(h, own); else sel.hub = own;
       }
     }

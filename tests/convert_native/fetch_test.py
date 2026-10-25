@@ -385,8 +385,15 @@ def main() -> int:
                                            else b'{"architectures": ["Qwen3ForCausalLM"]}',
                                            "model.safetensors": blob(MIB, 71)})
             hub.repos["org/mlx-model"]["card"] = {"library_name": "mlx", "pipeline_tag": "text-generation"}
-            for spec, says in (("org/lfm-gguf", "GGUF architecture 'lfm2zz'"), ("org/mlx-model", "MLX")):
-                refused = subprocess.run([str(native), "--fetch", spec, "--cache", str(work / "cache-support")],
+            # A repository of supported safetensors and a GGUF of another architecture: --include
+            # naming the GGUF is what the fetch takes, so its header decides.
+            hub.add_repo("org/mixed-include", {"config.json": b'{"architectures": ["Qwen3ForCausalLM"]}',
+                                               "model.safetensors": blob(MIB, 72),
+                                               "other-Q8_0.gguf": other_arch})
+            for spec, says, extra in (("org/lfm-gguf", "GGUF architecture 'lfm2zz'", []),
+                                      ("org/mlx-model", "MLX", []),
+                                      ("org/mixed-include", "GGUF architecture 'lfm2zz'", ["--include", "*.gguf"])):
+                refused = subprocess.run([str(native), "--fetch", spec, *extra, "--cache", str(work / "cache-support")],
                                          cwd=repository, capture_output=True, text=True, env=environment)
                 cached = list((work / "cache-support").glob(f"models--{spec.replace('/', '--')}/snapshots/*/*"))
                 ok = (refused.returncode != 0 and "nothing was downloaded" in refused.stderr
