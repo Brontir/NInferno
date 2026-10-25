@@ -938,11 +938,19 @@ void test_speculation_order() {
         // companion_drafter_q8): z-lab/Qwen3.5-9B-DFlash's 2.41 GiB of BF16 take 1.28 GiB; a
         // Gemma drafter stays as published.
         const std::uint64_t published = 2583816465ULL;
-        const std::uint64_t stored    = ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash", published);
+        const std::uint64_t stored    = ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash", "", published);
         check(stored > 1.27 * (1ULL << 30) && stored < 1.29 * (1ULL << 30),
               "a Qwen DFlash companion at Q8: " + std::to_string(stored));
-        check(ninferno::convert::companion_drafter_bytes("gemma4_text", "dflash", published) == published,
+        check(ninferno::convert::companion_drafter_bytes("gemma4_text", "dflash", "", published) == published,
               "another family's drafter as published");
+        // A declared quantization (the 27B's DFlash2 declares q8) replaces every projection,
+        // the kernel projections and selector too.
+        const std::uint64_t dflash2 = 3848744960ULL; // z-lab/Qwen3.8-27B-DFlash2, 3.584 GiB
+        check(ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash2", "q8", dflash2) ==
+                      static_cast<std::uint64_t>(static_cast<double>(dflash2) * 8.5 / 16.0) &&
+                  ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash2", "", dflash2) >
+                      ninferno::convert::companion_drafter_bytes("qwen3_5_text", "dflash2", "q8", dflash2),
+              "a declared q8 quantizes the whole drafter; the recipe keeps DFlash2's kernels BF16");
     }
 }
 

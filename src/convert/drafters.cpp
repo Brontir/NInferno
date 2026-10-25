@@ -777,7 +777,13 @@ std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path&
 }
 
 std::uint64_t companion_drafter_bytes(std::string_view target_model_type, std::string_view kind,
+                                      std::string_view declared_quant,
                                       std::uint64_t published_bytes) noexcept {
+    const double declared = declared_quant == "q8"      ? 8.5
+                            : declared_quant == "q4"    ? 4.25
+                            : declared_quant == "nvfp4" ? 4.5
+                                                        : 0.0;
+    if (declared > 0) { return static_cast<std::uint64_t>(static_cast<double>(published_bytes) * declared / 16.0); }
     const bool qwen = target_model_type.starts_with("qwen3_5") || target_model_type.starts_with("qwen3_6");
     if (!qwen || (kind != "dflash" && kind != "dflash2")) { return published_bytes; }
     constexpr double kQ8 = 8.5 / 16.0;            // q8_g32_fp16 against BF16
