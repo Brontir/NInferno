@@ -5,6 +5,7 @@
 #include "core/sha256.h"
 
 #include "spec/embedded_data.h"
+#include "spec/engine_support.h"
 #include "spec/json_fields.h"
 
 #include <algorithm>
@@ -120,7 +121,6 @@ Registry Registry::parse(const std::string& text) {
     for (const auto& [name, info] : kinds.items()) {
         KindInfo kind;
         kind.name          = name;
-        kind.engines       = strings(info, "engines");
         kind.architectures = strings(info, "architectures");
         kind.recipe        = json_text(info, "recipe");
         out.kinds_.push_back(std::move(kind));
@@ -277,12 +277,10 @@ std::optional<std::string> Registry::kind_for_architecture(std::string_view arch
 }
 
 bool Registry::supported(std::string_view kind, std::string_view engine) const {
-    for (const auto& info : kinds_) {
-        if (info.name == kind) {
-            return std::find(info.engines.begin(), info.engines.end(), engine) != info.engines.end();
-        }
-    }
-    return false;
+    // What the serving Engine runs (spec/engine_support.h), for a kind the registry knows.
+    return std::any_of(kinds_.begin(), kinds_.end(),
+                       [&](const KindInfo& info) { return info.name == kind; }) &&
+           engine_runs_kind(engine, kind);
 }
 
 } // namespace ninferno::spec

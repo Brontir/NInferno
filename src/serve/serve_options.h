@@ -54,6 +54,10 @@ struct ServeOptions {
     // --keep-replaced (with --refetch): the old conversion stays for the caller to remove once the
     // new one serves (ninferno-ui switches a running model over first).
     bool keep_replaced = false;
+    // --round-tiny-scales: the conversion keeps an integer matrix whose only inexact binary16
+    // scales lie below binary16's normal range, with those scales rounded (ninferno-convert's
+    // flag; the report counts them). Off: such a matrix is refused, naming the flag.
+    bool round_tiny_scales = false;
     std::filesystem::path chat_template_path;
     std::string host = "127.0.0.1";
     int port         = 8080;

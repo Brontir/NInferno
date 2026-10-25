@@ -34,7 +34,7 @@ std::string serve_usage_text(const char* argv0) {
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
            "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch "
-           "[--keep-replaced]] "
+           "[--keep-replaced]] [--round-tiny-scales] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
            "[--kv-auto-headroom-mib N] "
@@ -553,6 +553,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.refetch = true;
         } else if (arg == "--keep-replaced") {
             options.keep_replaced = true;
+        } else if (arg == "--round-tiny-scales") {
+            options.round_tiny_scales = true;
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(require_value("--log-level"));
         } else {

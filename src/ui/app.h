@@ -117,6 +117,11 @@ struct LaunchRequest {
     bool vision = false;
 };
 
+// A refused launch again as it was (its context, streams, KV, speculation, a prepare's refetch and
+// recipe), with ninferno-serve --round-tiny-scales added: the converter keeps a matrix whose only
+// inexact scales lie below binary16's normal range, with them rounded. A serve listens on `port`.
+[[nodiscard]] LaunchSpec with_tiny_scales_rounded(LaunchSpec spec, int port);
+
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
 // the model is not started by its .ninferno path or the tune beside it does not serve on `gpu`
 // (tune_refusal_on). `gpu`: what NVML says of the GPU the request runs on (nullptr: unknown).
