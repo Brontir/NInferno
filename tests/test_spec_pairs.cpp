@@ -70,6 +70,16 @@ int main() {
         for (auto& m : slower.tune.measurements) {
             if (m.config.k == 15) { m.seconds *= 2; }
         }
+        auto costlier = second; // a second card whose deep rounds cost 3 % more: the same choice
+        for (auto& m : costlier.tune.measurements) {
+            if (m.config.k == 15) { m.seconds *= 1.03; }
+        }
+        const auto ab = sp::profile_for_target({&ada_q4, &costlier}, "sm89");
+        const auto ba = sp::profile_for_target({&costlier, &ada_q4}, "sm89");
+        expect(ab.thinking.config.label() == "dflash:15" &&
+                   ab.thinking.floor_tokens_per_round == ba.thinking.floor_tokens_per_round &&
+                   ab.thinking.floor_tokens_per_round > two.thinking.floor_tokens_per_round,
+               "agreeing cards: the highest break-even, whatever their order");
         const auto twice = sp::profile_for_target({&ada_q4, &ada_q4}, "sm89");
         expect(twice.thinking.config.k <= sp::kPortableDepth,
                "one card's measurement twice is one card: " + twice.thinking.config.label());

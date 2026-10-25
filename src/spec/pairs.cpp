@@ -229,6 +229,14 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
         };
         if (same(&Profile::overall) && same(&Profile::thinking) && same(&Profile::non_thinking)) {
             Profile out = each.front();
+            // The watchdog's break-even: the highest any agreeing card measured (the order of the
+            // records never moves it).
+            for (Choice Profile::*c : {&Profile::overall, &Profile::thinking, &Profile::non_thinking}) {
+                for (const Profile& p : each) {
+                    (out.*c).floor_tokens_per_round =
+                        std::max((out.*c).floor_tokens_per_round, (p.*c).floor_tokens_per_round);
+                }
+            }
             const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
                 return p.load == each.front().load;
             });
