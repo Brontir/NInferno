@@ -3,6 +3,7 @@
 #include "artifact/source_identity.h"
 #include "convert/acquire.h"
 #include "convert/cache.h"
+#include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "convert/support.h"
@@ -260,9 +261,25 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         return out;
     }
     if (weights != nullptr) {
-        out.facts = product::plan_facts_of_config(convert::fetch_config(spec, fetch),
-                                                  weights->bytes, runtime::WeightBasis::FileSize);
+        const Json config = convert::fetch_config(spec, fetch);
+        out.facts         = product::plan_facts_of_config(config, weights->bytes,
+                                                          runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
+        // MTP layers are what the weights hold, declared or not: a part of their own
+        // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
+        // (convert::sharded_checkpoint_mtp) whatever the number of weight files; no index to
+        // read: the declaration.
+        if (weights->mtp_bytes > 0) {
+            out.facts.shape.builtin_mtp = true;
+        } else {
+            Json index;
+            try {
+                index = convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json");
+            } catch (const std::exception&) {}
+            if (index.is_object()) {
+                out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(config, index);
+            }
+        }
         out.listing.clear();
         return out;
     }
@@ -294,6 +311,9 @@ ModelRead read_model(const ServeOptions& options) {
             out.kind          = "checkpoint";
             out.facts         = product::plan_facts_of_config(config, safetensors_bytes(path),
                                                               runtime::WeightBasis::FileSize);
+            // What the converter finds (convert::checkpoint_mtp): the weights' own MTP part, the
+            // index, or the one weight file's header; else the declaration.
+            out.facts.shape.builtin_mtp = convert::checkpoint_mtp(path, config);
             return out;
         }
         if (ascii_lower(path.extension().string()) == ".gguf") {
