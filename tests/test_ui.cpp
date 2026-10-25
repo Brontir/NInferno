@@ -790,6 +790,14 @@ void test_catalog() {
         check(std::find(with_vision.begin(), with_vision.end(), "--vision") != with_vision.end(),
               "a Vision conversion's refetch keeps its Vision encoder");
         refetch.vision = false;
+        check(std::find(with_vision.begin(), with_vision.end(), "--round-tiny-scales") ==
+                  with_vision.end(),
+              "a conversion rounds no tiny scales unless asked");
+        refetch.round_tiny_scales = true;
+        const auto rounded        = make_launch(refetch_options, refetch).argv;
+        check(std::find(rounded.begin(), rounded.end(), "--round-tiny-scales") != rounded.end(),
+              "a start asked to round tiny scales passes --round-tiny-scales");
+        refetch.round_tiny_scales = false;
         refetch.refetch = false;
         refused         = false;
         try {

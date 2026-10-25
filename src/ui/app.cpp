@@ -461,6 +461,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (!request.recipe.empty() && !is_word(request.recipe)) {
         throw std::invalid_argument("bad recipe: " + request.recipe);
     }
+    if (request.round_tiny_scales) { spec.argv.push_back("--round-tiny-scales"); }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
@@ -2370,6 +2371,7 @@ void App::install(httplib::Server& server) {
         out.kv_dtype        = body.value("kv_dtype", std::string());
         out.hub             = body.value("hub", std::string());
         out.spec_profile    = body.value("spec_profile", false);
+        out.round_tiny_scales = body.value("round_tiny_scales", false);
         return out;
     };
     server.Post("/api/launch",

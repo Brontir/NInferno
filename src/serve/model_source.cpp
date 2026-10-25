@@ -151,7 +151,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
         }
     }
     acquire.fetch.log      = log;
-    acquire.convert.recipe = options.recipe;
+    acquire.convert.recipe            = options.recipe;
+    acquire.convert.round_tiny_scales = options.round_tiny_scales;
     // --chat-template: the conversion's template too (a base model ships none).
     if (!options.chat_template_path.empty()) {
         acquire.convert.resources.emplace_back("chat_template.jinja", options.chat_template_path);

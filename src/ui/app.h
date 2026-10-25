@@ -115,6 +115,9 @@ struct LaunchRequest {
     // The conversion takes the model's Vision encoder (ninferno-serve --vision): a refetch keeps
     // the replaced artifact's.
     bool vision = false;
+    // The conversion keeps a matrix whose only inexact scales are below binary16's normal range,
+    // with them rounded (ninferno-serve --round-tiny-scales): asked after a start refused it.
+    bool round_tiny_scales = false;
 };
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
