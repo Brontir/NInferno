@@ -404,6 +404,19 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
     }
 
+    // The profile's choices by the thinking flag, as the Engine runs them.
+    if (ask.automatic && subject != nullptr && subject->resolved && subject->resolved->found() &&
+        !subject->resolved->profile.disabled) {
+        const spec::Profile profile = served_choices(subject->resolved->profile);
+        const auto variant = [](const spec::Choice& c) {
+            return SpeculationReport::ThinkingVariant{
+                .label   = c.config.enabled() ? c.config.label() : std::string("plain"),
+                .speedup = c.tok_s > 0 && c.plain_tok_s > 0 ? c.speedup() : 0.0};
+        };
+        r.with_thinking    = variant(spec::pick(profile, true));
+        r.without_thinking = variant(spec::pick(profile, false));
+        r.per_request      = per_request;
+    }
     // The served choice's facts: drafter, depths, load.
     const std::string engine_name = engine_of(facts.model.model_type);
     if (r.engine.backend != SpeculativeBackend::None) {
@@ -460,7 +473,14 @@ Json to_json(const SpeculationReport& r) {
             {"load_basis", r.load_basis.empty() ? std::string("none") : r.load_basis},
             {"depth_at_concurrency", r.depth_at_concurrency},
             {"fallbacks", std::move(fallbacks)},
-            {"notes", r.notes}};
+            {"notes", r.notes},
+            {"by_thinking", r.with_thinking && r.without_thinking
+                                ? Json{{"thinking", {{"config", r.with_thinking->label},
+                                                     {"speedup", r.with_thinking->speedup}}},
+                                       {"non_thinking", {{"config", r.without_thinking->label},
+                                                         {"speedup", r.without_thinking->speedup}}},
+                                       {"per_request", r.per_request}}
+                                : Json(nullptr)}};
 }
 
 } // namespace ninferno::product
