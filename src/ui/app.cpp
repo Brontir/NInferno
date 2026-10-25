@@ -1575,26 +1575,35 @@ void App::advance_updates() {
     std::lock_guard lock(moved_mutex_);
     for (auto& [key, update] : updates_) {
         if (update.state == "downloading") {
+            // Ended only when every prepare has: a failed one leaves the others to finish, so no
+            // retry starts a second converter beside one still writing.
             bool all = true;
+            std::string failure;
             for (auto& part : update.parts) {
                 ProcessInfo info;
                 if (!processes_.find(part.prepare, info)) {
-                    update.state = "failed";
-                    update.error = "the download's process is gone; the old conversion stays";
-                    break;
+                    if (failure.empty()) {
+                        failure = "the download's process is gone; the old conversion stays";
+                    }
+                    continue;
                 }
                 if (!ended(info.state)) {
                     all = false;
                 } else if (info.state == "failed" || info.exit_code != 0 || info.artifact.empty()) {
-                    update.state = "failed";
-                    update.error = "the new commit's download or conversion failed (" +
-                                   info.last_line + "); the old conversion stays";
-                    break;
+                    if (failure.empty()) {
+                        failure = "the new commit's download or conversion failed (" +
+                                  info.last_line + "); the old conversion stays";
+                    }
                 } else {
                     part.new_artifact = info.artifact;
                 }
             }
-            if (update.state != "downloading" || !all) { continue; }
+            if (!all) { continue; }
+            if (!failure.empty()) {
+                update.state = "failed";
+                update.error = failure;
+                continue;
+            }
             // The models serving an old conversion, each to restart once on its new one.
             for (const auto& info : processes_.list()) {
                 if (info.spec.kind != "serve" || ended(info.state) || info.state == "stopping") {
