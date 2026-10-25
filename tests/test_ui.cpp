@@ -783,6 +783,13 @@ void test_catalog() {
         const auto kept       = make_launch(refetch_options, refetch).argv;
         check(std::find(kept.begin(), kept.end(), "--keep-replaced") != kept.end(),
               "ninferno-ui's update keeps the replaced conversion for itself to remove");
+        check(std::find(kept.begin(), kept.end(), "--vision") == kept.end(),
+              "a text conversion's refetch stays text");
+        refetch.vision        = true;
+        const auto with_vision = make_launch(refetch_options, refetch).argv;
+        check(std::find(with_vision.begin(), with_vision.end(), "--vision") != with_vision.end(),
+              "a Vision conversion's refetch keeps its Vision encoder");
+        refetch.vision = false;
         refetch.refetch = false;
         refused         = false;
         try {

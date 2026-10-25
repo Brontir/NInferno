@@ -465,6 +465,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
         if (request.keep_replaced) { spec.argv.push_back("--keep-replaced"); }
+        if (request.vision) { spec.argv.push_back("--vision"); }
         if (!request.recipe.empty()) {
             spec.argv.push_back("--recipe");
             spec.argv.push_back(request.recipe);
@@ -1513,6 +1514,7 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         request.prepare_only  = true;
         request.refetch       = true;
         request.keep_replaced = true; // removed here once nothing serves it
+        request.vision        = facts(entry.path()).vision; // a Vision conversion stays one
         request.gpu           = -1;
         const auto id = processes_.start(make_launch(options_, request));
         update.parts.push_back({.old_artifact = entry.path(), .new_artifact = {}, .prepare = id});

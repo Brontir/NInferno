@@ -602,6 +602,19 @@ def main() -> int:
             (kept_snapshot / "mmproj-model-BF16.gguf").unlink()
             case("a --vision start pins only to a snapshot with the projector",
                  without == ("true", "false") and with_projector == "true")
+            # Safetensors shards without an index: one part of two is no model held.
+            shards = work / "shards-snapshot"
+            shards.mkdir(exist_ok=True)
+            (shards / "config.json").write_text('{"architectures": ["Qwen3ForCausalLM"]}')
+            (shards / "model-00001-of-00002.safetensors").write_bytes(b"x")
+            def holds_shards():
+                run = subprocess.run([str(probe), "org/shards", "--holds", "", str(shards)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            one_part = holds_shards()
+            (shards / "model-00002-of-00002.safetensors").write_bytes(b"x")
+            case("unindexed safetensors shards: held only with every part",
+                 one_part == "false" and holds_shards() == "true")
             (repo2 / "refs" / "main").write_text(old2)
             # The old commit holds another conversion too (of a quantization not downloaded here):
             # the one --refetch replaces is the model the old snapshot serves, the other stays.
