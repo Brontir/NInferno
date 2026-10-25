@@ -367,8 +367,9 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
     if (fs::exists(spec::manifest_path(*artifact), ec)) { return true; }
     std::ifstream stream(artifact->string() + ".conversion.json");
     try {
-        const OJson record = OJson::parse(stream);
-        for (const auto& [component, _] : record.value("components", OJson::object()).items()) {
+        const OJson record     = OJson::parse(stream);
+        const OJson components = record.value("components", OJson::object());
+        for (const auto& [component, _] : components.items()) {
             if (component != "text" && component != "mtp" && component != "vision") {
                 return true;
             }
