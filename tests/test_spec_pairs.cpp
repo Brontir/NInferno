@@ -291,7 +291,13 @@ int main() {
     {
         std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/src/spec/data/drafter_registry.json");
         nlohmann::json doc = nlohmann::json::parse(in);
-        doc["pairs"]       = nlohmann::json::array({sp::pair_json(ada_q4)});
+        // The pair measured with DFlash and with MTP (the RTX 5070 Ti's MTP runs stand in): the
+        // choice drafts with DFlash, and MTP, measured too, is attached for the drafter axis.
+        auto both = ada_q4;
+        for (const auto& m : mtp_q4.tune.measurements) {
+            if (m.config.enabled()) { both.tune.measurements.push_back(m); }
+        }
+        doc["pairs"]       = nlohmann::json::array({sp::pair_json(both)});
         const auto path    = std::filesystem::temp_directory_path() / "ninferno_spec_pairs_registry.json";
         std::ofstream(path) << doc.dump();
         sp::Registry::use_file(path);
@@ -306,6 +312,8 @@ int main() {
             expect(resolved.basis == "measured" && resolved.floor_sources.is_array() &&
                        !resolved.floor_sources.empty(),
                    "a pair's profile keeps the model's published floors: " + resolved.basis);
+            expect(resolved.drafters.contains("dflash") && resolved.drafters.contains("mtp"),
+                   "every measured drafter is attached, not only the chosen one's");
         }
         std::filesystem::remove(path);
     }
