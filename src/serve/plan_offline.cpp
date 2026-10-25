@@ -274,6 +274,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
+        out.facts.shape.base_model = convert::hub_base_model(spec, fetch);
         out.weights               = weights_of(*weights);
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
@@ -324,6 +325,9 @@ ModelRead read_model(const ServeOptions& options) {
             // What the converter finds (convert::checkpoint_mtp): the weights' own MTP part, the
             // index, or the one weight file's header; else the declaration.
             out.facts.shape.builtin_mtp = convert::checkpoint_mtp(path, config);
+            if (const auto bases = convert::readme_base_models(path / "README.md"); !bases.empty()) {
+                out.facts.shape.base_model = bases.front();
+            }
             return out;
         }
         if (ascii_lower(path.extension().string()) == ".gguf") {

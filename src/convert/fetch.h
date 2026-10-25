@@ -263,6 +263,12 @@ struct HubModel {
 [[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
                                                              const FetchOptions& options);
 
+// The base model a repository's model card names first (cardData.base_model: its README's YAML
+// front matter, what the converter's drafter plan reads from the downloaded README), "" when it
+// names none, offline, or the hub does not answer. The plan of a checkpoint not downloaded yet
+// matches the registry by it as the converter will (a fine-tune finds its base's entry).
+[[nodiscard]] std::string hub_base_model(const std::string& spec, const FetchOptions& options);
+
 // The quantization a config.json declares when the converter has no reader for it (formats.cpp:
 // quant_config and the matrix sources it picks): "bitsandbytes", "hqq", compressed-tensors with
 // transforms or sparse packings; "" when it reads it (unquantized, FP8, AWQ, GPTQ,

@@ -806,6 +806,18 @@ void test_speculation_order() {
     const pr::SpeculationSubject subject = pr::planned_subject(
         pr::PlannedTarget{.repo = "unsloth/Qwen3.8-27B-GGUF", .facts = facts, .gguf = true}, gpu);
     check(subject.components.contains("mtp"), "the MTP layers are a component");
+    // A fine-tune no registry entry names, its model card naming Qwen3.6-27B as its base: the plan
+    // matches the base's entry, as the converter will by the README (not the nearest by shape,
+    // Qwen3.8-27B, which has the same engine, geometry and vocabulary).
+    {
+        pr::PlanSourceFacts tuned = facts;
+        tuned.shape.base_model    = "Qwen/Qwen3.6-27B";
+        const pr::SpeculationSubject descendant = pr::planned_subject(
+            pr::PlannedTarget{.repo = "someone/Qwen3.6-27B-finetune", .facts = tuned}, gpu);
+        check(descendant.resolved && descendant.resolved->source.find("qwen3.6-27b") != std::string::npos,
+              "a checkpoint's model-card lineage finds its base's entry: " +
+                  (descendant.resolved ? descendant.resolved->source : std::string("none")));
+    }
     for (const std::uint32_t context : {0U, 32768U, 262144U}) {
         for (const std::uint32_t streams : {1U, 4U, 8U}) {
             const pr::LaunchPlanOptions o =
