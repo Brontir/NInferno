@@ -272,7 +272,22 @@ void test_resources_beside() {
 
 } // namespace
 
+// Which GGUF files beside a model are not the model (listings on the hub).
+void test_auxiliary_files() {
+    for (const char* aux : {"mmproj-Qwen3.8-27B-F16.gguf", "imatrix.gguf", "imatrix_unsloth.gguf",
+                            "NVIDIA-Nemotron-imatrix.gguf", "mtp-NVIDIA-Nemotron-Q4_0.gguf",
+                            "Qwen3.6-35B-MTP-ONLY-Q8_0.gguf", "dflash-Muse-Glimmer-30B-Q4_K_M.gguf",
+                            "sub/DFlash2-Qwen3.8-27B-Q4_0.gguf", "eagle3-gpt-oss-20b-Q8_0.gguf"}) {
+        check(gguf_auxiliary_file(aux), std::string("auxiliary: ") + aux);
+    }
+    for (const char* model : {"Qwen3.8-27B-iMatrix-NVFP4-MTP.gguf", "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf",
+                              "Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf", "gemma-4-12b-it-Q4_K_M.gguf"}) {
+        check(!gguf_auxiliary_file(model), std::string("a model: ") + model);
+    }
+}
+
 int main() {
+    test_auxiliary_files();
     test_resources_beside();
     test_metadata_and_tensors();
     test_errors();

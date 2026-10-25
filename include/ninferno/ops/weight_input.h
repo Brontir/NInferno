@@ -73,6 +73,10 @@ using ProjectionWeights =
 [[nodiscard]] SingleProjectionWeight prepare_linear_weight(const WeightInput& input);
 // Row order is supplied by the calling implementation, for example a Vision Q/K/V bank.
 [[nodiscard]] SingleProjectionWeight prepare_linear_weight(std::span<const WeightInput> rows);
+// Whether a drafter's Q/K/V have the geometry the fused three-output projection is compiled for;
+// any other runs the generic bank.
+[[nodiscard]] bool fused_attn_input_proj_geometry(const WeightInput& query, const WeightInput& key,
+                                                  const WeightInput& value);
 [[nodiscard]] SingleProjectionWeight prepare_attn_input_proj_weights(const WeightInput& query,
                                                                      const WeightInput& key,
                                                                      const WeightInput& value);

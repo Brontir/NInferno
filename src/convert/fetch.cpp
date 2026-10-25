@@ -1963,18 +1963,21 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
-        // An importance matrix (imatrix*.gguf) or another file too small to be a model.
-        if (name.find("imatrix") != std::string::npos) { continue; }
+        // An importance matrix (imatrix*.gguf, *-imatrix.gguf: gguf_auxiliary_file's rule, not a
+        // model named iMatrix in the middle) or another file too small to be a model.
+        if (name.ends_with(".gguf") && gguf_auxiliary_file(name) &&
+            (name.starts_with("imatrix") || name.ends_with("imatrix.gguf"))) {
+            continue;
+        }
         // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
             file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
-            const bool sidecar = gguf_auxiliary_file(name) ||
-                                 name.find("dflash") != std::string::npos ||
-                                 name.find("eagle") != std::string::npos ||
-                                 name.find("assistant") != std::string::npos;
+            // Beside the model, not a model (gguf_auxiliary_file, the fetch's own rule): a model
+            // whose name holds DFlash2 or Assistant (a merge, a fine-tune) is a quantization.
+            const bool sidecar = gguf_auxiliary_file(name);
             auto label       = gguf_quant_label(file.path);
             const auto group = gguf_group(fs::path(file.path).filename().string());
             const auto key =

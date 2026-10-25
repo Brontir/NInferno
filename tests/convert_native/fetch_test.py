@@ -85,6 +85,11 @@ def main() -> int:
     hub.repos["org/ggufhead"]["no_sizes"] = True
     # A small vision projector without a quantization in its name, beside a model.
     hub.add_repo("org/smallproj", {"m-Q4_0.gguf": blob(MIB, 52), "mmproj-model.gguf": blob(MIB, 53)})
+    # File roles by name: a model named iMatrix in the middle and one named DFlash2 are models; an
+    # importance matrix is skipped; a drafter beside the model is a drafter.
+    hub.add_repo("org/roles", {"M-iMatrix-NVFP4-MTP.gguf": blob(MIB, 54), "M-DFlash2-Q5_K_M.gguf": blob(MIB, 55),
+                               "imatrix.gguf": blob(MIB, 56), "dflash-M-Q4_K_M.gguf": blob(MIB, 57),
+                               "M-Q4_K_M.gguf": blob(MIB, 58)})
     hub.repos["files"] = {"files": {"plain.bin": blob(5 * MIB, 20)}, "lfs": set(), "commit": "", "gated": False}
 
     server, base = fetch_server.start(hub)
@@ -320,6 +325,12 @@ def main() -> int:
                  and weights_row[0]["mtp_bytes"] == len(mtp))
             case("a small projector is listed",
                  any("mmproj-model.gguf" in r["files"] for r in listed("org/smallproj")))
+            roles = {f: r for r in listed("org/roles") for f in r["files"]}
+            case("file roles by name: iMatrix and DFlash2 models listed, the drafter marked, no imatrix",
+                 roles.get("M-iMatrix-NVFP4-MTP.gguf", {}).get("drafter") is False
+                 and roles.get("M-DFlash2-Q5_K_M.gguf", {}).get("drafter") is False
+                 and roles.get("dflash-M-Q4_K_M.gguf", {}).get("drafter") is True
+                 and "imatrix.gguf" not in roles and roles.get("M-Q4_K_M.gguf", {}).get("quant") == "Q4_K_M")
 
         # 11. A plain URL, then its cached copy.
         url = base + "/files/plain.bin"
