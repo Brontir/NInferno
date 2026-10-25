@@ -22,6 +22,7 @@ struct OfflinePlan {
     std::string text;    // the terminal report
     nlohmann::json json; // "ninferno-dry-plan/1"
     bool fits = false;   // the chosen plan fits (exit code 0, else 2)
+    std::string reason;  // why it does not ("" when it fits)
 };
 
 // --plan --no-load. Throws std::runtime_error when the model cannot be read (no listing offline,
