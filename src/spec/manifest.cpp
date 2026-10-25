@@ -429,6 +429,41 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     return true;
 }
 
+// 2, without a manifest: the lab's measurement of this target's weights over the drafters it
+//    carries as components (its built-in MTP layers, a DFlash drafter built in), else its group's,
+//    as a planned target resolves (resolve_planned_speculation). False when the registry has
+//    neither.
+bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& components,
+                        const std::filesystem::path& artifact, const GpuKey& gpu,
+                        ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    if (registry.pairs().empty()) { return false; }
+    std::optional<std::string> weights;
+    std::string quant;
+    try {
+        weights = artifact_weights(artifact);
+        quant   = artifact_quant(artifact);
+    } catch (const std::exception&) {
+        return false;
+    }
+    std::vector<std::string> kinds;
+    for (const char* kind : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(kind)) { kinds.emplace_back(kind); }
+    }
+    auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
+                              label_bits(quant), gpu_generation(gpu));
+    if (!choice) { return false; }
+    for (const auto& name : referenced(choice->profile)) {
+        if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+    }
+    out.floor_sources = entry.profiles;
+    out.source        = std::move(choice->source);
+    out.basis         = std::move(choice->basis);
+    out.sha256        = registry.source_sha256();
+    out.profile       = std::move(choice->profile);
+    return true;
+}
+
 void resolve_manifest_profile(const SpeculationManifest& manifest,
                               const std::filesystem::path& artifact, const GpuKey& gpu,
                               ResolvedSpeculation& out) {
@@ -591,6 +626,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         resolve_manifest_profile(*manifest, artifact, gpu, out);
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {
+        if (resolve_entry_pair(*entry, components, artifact, gpu, out)) { return out; }
         resolve_entry_profile(*entry, components, gpu, out);
     }
     return out;

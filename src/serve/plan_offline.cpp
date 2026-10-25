@@ -345,6 +345,13 @@ ModelRead read_model(const ServeOptions& options) {
                     !options.chat_template_path.empty());
 }
 
+// The quantization label a plan reads a bit class from (spec::label_bits): a hub listing's, or a
+// local GGUF's file name ("Qwen3.5-9B-UD-IQ2_M.gguf"), which names it the same way.
+std::string quant_label_of(const ModelRead& model) {
+    if (!model.quant.empty() || model.kind != "gguf") { return model.quant; }
+    return fs::path(model.source).stem().string();
+}
+
 // The axes the user pinned with flags (the configuration choice picks the others).
 product::ChoicePins pins_of(const ServeOptions& options) {
     return {.kv          = options.kv_cache.has_value(),
@@ -392,7 +399,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             .gguf          = model.gguf,
                                                             .with_drafters = options.with_drafters,
                                                             .weights       = model.weights,
-                                                            .quant         = model.quant},
+                                                            .quant         = quant_label_of(model)},
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         const convert::FetchOptions fetch = fetch_options();
