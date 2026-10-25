@@ -279,7 +279,7 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
         }
     }
     auto served = product::served_speculation(artifact, device, true, false, tuned);
-    if (!served || served->menu.mode == spec::Mode::None) {
+    if (!served || !served->drafts()) {
         throw std::runtime_error("spec-tune --load: the model has no speculation that runs on this "
                                  "GPU (serve --spec auto would decode plainly)");
     }

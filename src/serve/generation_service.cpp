@@ -511,7 +511,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // says so. When that does not fit either, or the profile has none, --spec auto decodes
         // plainly rather than keep a server from starting that plain decode lets start. An
         // explicit --spec keeps the refusal.
-        if (!served_speculation_) { throw; }
+        // A plain choice that does not fit has no drafter to step back from: plain decode's
+        // refusal stands, as the CLI's and the plan's.
+        if (!served_speculation_ || !served_speculation_->drafts()) { throw; }
         const std::string refused_label = product::speculation_label(engine_options.speculative);
         const std::string first_refusal = refused.what();
         std::string why                 = first_refusal;
@@ -566,7 +568,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             }
         }
     }
-    if (served_speculation_ && options_.speculation_from_profile) {
+    if (served_speculation_ && served_speculation_->drafts() && options_.speculation_from_profile) {
         const ninferno::MemorySummary drafting = engine_->memory_summary();
         const std::uint32_t with_drafter     = pool_contexts(drafting);
         const std::string drafted_label = product::speculation_label(engine_options.speculative);

@@ -133,6 +133,33 @@ wider one only costs workspace. A chunk has no accuracy term (under `--activatio
 prompt is cut may move the answer's bytes, not its error), so it is decided by speed on the
 reference card alone, behind its own gate, not the accuracy one.
 
+**The drafter.** Speculative decoding is one more axis: plain decode, or each drafter the model
+carries and the serving Engine runs (an MTP head, a DFlash drafter), each at the configuration its
+speculation profile chose (the lab's measured pair for these weights on this card's generation, the
+pair group's, or a published profile: `src/spec/`). Its memory, the drafter's weights and a DFlash
+drafter's state, enters the plan (`product::attached_drafter_memory`), and its measured gain
+multiplies the decode speed while its load table lets the asked streams speculate
+(`DrafterOption::plain_from_streams`). It changes no output (greedy verification), so it has no
+accuracy term: between plain decode and a drafter the worth weighs the drafter's speed against the
+context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
+decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published
+without its speeds (the `*` profile) would weigh a gain of 1 and lose to plain decode on memory
+alone, so there its choice stands (`why_code` `unmeasured`).
+A faster drafter the asked context leaves out is listed with its gain. `--spec` pins the axis.
+
+Where the chosen configuration does not fit at the start (a DFlash drafter's workspace, a deeper
+round's graphs), the server, the CLI and the plan without the weights take one order
+(`product::fit_fallbacks`): the profile's fit fallback, then the deepest shallower draft, then the
+model's own MTP head, else plain decode; with an automatic KV pool, `product::pool_rule` keeps a
+drafter only while it leaves as many whole contexts as the streams asked, else the MTP head where
+it holds four fifths of plain decode's contexts, else plain decode. The plan is drawn again at the
+choice's drafter (`product::plan_at_choice`), so the plan, the CLI and the server start the same
+configuration. The server thinks by default; each request runs its own thinking flag's
+configuration (`--spec-select thinking`) only where the profile's measurements say the other
+flag's requests gain at least 3 % from it (`product::per_request_pays`; a pair's tokens per round
+agree within 1.8 % across cards and 2.3 % across quantizations of 4 bits or more), else every
+request runs the default's.
+
 ## Explaining
 
 `explain` lists, for each axis, every other value with the chosen candidate's other axes kept: its
@@ -145,7 +172,8 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 | `tie_context` | the same worth; the chosen keeps more context per stream (or fewer weight bytes) |
 | `tie_order` | the same in every respect; the smaller quantization label, else the listing's order |
 | `quant_rule` | the quant rule decided: no worth here, or the other side of the 3.5-bit floor |
-| `default` | a gate is closed: the family's default (or the default chunk) stands |
+| `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |
+| `unmeasured` | a drafter's gain is not measured on this card: the speculation profile's choice stands |
 | `coupled` | a ring or state value: it follows the KV codec and the activations |
 
 A caller re-runs `choose` with another task (context, streams, request shape) to show what an input

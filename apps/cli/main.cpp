@@ -438,7 +438,7 @@ int main(int argc, char** argv) {
                         logger->info("speculation: {}", note);
                     }
                 }
-                if (profiled && profiled->menu.mode != ninferno::spec::Mode::None) {
+                if (profiled && profiled->drafts()) {
                     engine_options.speculative =
                         ninferno::product::with_given_settings(profiled->engine, cli.speculative);
                     logger->info("speculation: {}", profiled->source);
