@@ -2212,7 +2212,7 @@ int test_registry_and_corpus() {
     // gb203 boards tune apart. The RTX 5070 Ti (70 SMs) has a profile of its SM variant
     // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS: mtp:2, two
     // deep from two lanes); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
-    // RTX 5080 measured for them (mtp:8:2, two lanes three deep), and a 5080 running a GGUF takes
+    // RTX 5080 measured for them (the Engine's mtp:3, two lanes three deep), and a 5080 running a GGUF takes
     // neither the 5070 Ti's nor a gb203 one: the RTX 5060 Ti's (gb206) stands in, capped to its
     // 84 SMs. Chains as ninferno::gpu_similarity_chain builds them.
     if (const auto* g26 = registry.by_repo("google/gemma-4-26B-A4B-it")) {
@@ -2235,7 +2235,7 @@ int test_registry_and_corpus() {
         const auto* gguf5070ti   = pick(rtx5070ti, "unsloth/gemma-4-26B-A4B-it-GGUF");
         const auto* gguf5080     = pick(rtx5080, "unsloth/gemma-4-26B-A4B-it-GGUF");
         failures += check(google5080 != nullptr && google5080->value("gpu_class", "") == "gb203" &&
-                              label(google5080) == "mtp:8:2" &&
+                              label(google5080) == "mtp:3" &&
                               load(google5080) == std::vector<LoadBound>{{2, 3}},
                           "Gemma 4 26B (google) on the RTX 5080: its gb203 profile, 2:3");
         failures += check(google5070ti == google5080,
@@ -2244,7 +2244,7 @@ int test_registry_and_corpus() {
             redhat5070ti != nullptr ? select_load_fallback(g26->profiles, *redhat5070ti) : nullptr;
         failures += check(redhat5070ti != nullptr &&
                               redhat5070ti->value("gpu_class", "") == "gb203" &&
-                              label(redhat5070ti) == "mtp:8:2" && lender == google5080,
+                              label(redhat5070ti) == "mtp:3" && lender == google5080,
                           "Gemma 4 26B (RedHatAI NVFP4) on the RTX 5070 Ti: its gb203 profile, "
                           "the google gb203 load table");
         failures += check(gguf5070ti != nullptr &&
@@ -2254,13 +2254,13 @@ int test_registry_and_corpus() {
                               !measured_elsewhere(rtx5070ti, *gguf5070ti),
                           "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:2, 2:2");
         failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") == "gb206" &&
-                              label(gguf5080) == "mtp:8:2" &&
+                              label(gguf5080) == "mtp:3" &&
                               load(gguf5080) == std::vector<LoadBound>{{2, 3}} &&
                               measured_elsewhere(rtx5080, *gguf5080) &&
                               stand_in_load(load(gguf5080), rtx5080.sms) ==
                                   std::vector<LoadBound>{{2, 3}, {9, 0}},
                           "Gemma 4 26B (unsloth GGUF) on the RTX 5080: the gb206 stand-in, "
-                          "mtp:8:2, 2:3 capped at 9 rows");
+                          "mtp:3, 2:3 capped at 9 rows");
     } else {
         failures += check(false, "registry has google/gemma-4-26B-A4B-it");
     }
