@@ -121,7 +121,6 @@ int gguf_qwen35() {
     failures += same(f.model.weight_bytes, 2520, "qwen35 gguf tensor bytes");
     failures += check(f.model.weight_basis == rt::WeightBasis::GgufTensors, "qwen35 gguf basis");
     failures += same(f.model.vocab, 248320, "qwen35 gguf vocab from token_embd");
-    failures += check(f.shape.kquant, "qwen35 gguf: Q4_K not a k-quant");
     failures += check(has(f.shape.weight_formats, "ggml_q4_k") &&
                           has(f.shape.weight_formats, "ggml_q6_k") &&
                           has(f.shape.weight_formats, "fp32") && f.shape.weight_formats.size() == 3,

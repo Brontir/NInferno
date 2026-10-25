@@ -805,7 +805,7 @@ void test_speculation_order() {
             const pr::LaunchPlanOptions o =
                 pr::launch_options({.max_context = context, .max_concurrency = streams});
             const pr::PlannedSpeculation planned =
-                pr::plan_with_speculation(facts, device, o.options, &subject, o.ask, gpu);
+                pr::plan_with_speculation(facts, device, o.options, &subject, o.ask);
             const pr::SpeculationReport& r = planned.speculation;
             check(r.ask == "auto", "auto asked");
             check(!r.fallbacks.empty(), "a fallback step");
@@ -825,7 +825,7 @@ void test_speculation_order() {
     // An explicit --spec none is plain, one step.
     const pr::LaunchPlanOptions none = pr::launch_options({.spec = "none"});
     const pr::PlannedSpeculation plain =
-        pr::plan_with_speculation(facts, device, none.options, &subject, none.ask, gpu);
+        pr::plan_with_speculation(facts, device, none.options, &subject, none.ask);
     check(plain.speculation.label == "plain" && plain.speculation.fallbacks.size() == 1,
           "--spec none is plain");
 }

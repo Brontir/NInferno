@@ -173,7 +173,7 @@ What the design guarantees once complete:
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
    generation's speed estimates become "no estimate".
-   A constant about a model, such as a drafter's acceptance per context class, records instead
+   A constant about a model, such as a drafter's acceptance on its target, records instead
    what it depends on:
    - the target and drafter by their source identity (below), never by artifact id;
    - the whole B1 byte class it was measured under (activation precision, summation class, KV
