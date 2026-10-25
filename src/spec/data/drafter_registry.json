@@ -5,15 +5,9 @@
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
     "mtp": {
-      "engines": [
-        "qwen3_5"
-      ],
       "description": "multi-token-prediction layers inside the target checkpoint"
     },
     "nemotron_h_mtp": {
-      "engines": [
-        "nemotron_h"
-      ],
       "architectures": [
         "NemotronHMtpForCausalLM"
       ],
@@ -21,9 +15,6 @@
       "description": "the NextN head of a NemotronH target, published as its own mtp-*.gguf sidecar"
     },
     "gemma4_assistant": {
-      "engines": [
-        "gemma4"
-      ],
       "architectures": [
         "Gemma4AssistantForCausalLM",
         "Gemma4UnifiedAssistantForCausalLM"
@@ -31,11 +22,6 @@
       "recipe": "gemma4_assistant_published"
     },
     "dflash": {
-      "engines": [
-        "gemma4",
-        "qwen3_5",
-        "dense"
-      ],
       "architectures": [
         "DFlashDraftModel",
         "MuseGlimmerAssistantModel"
@@ -43,15 +29,11 @@
       "recipe": "gemma4_dflash_published"
     },
     "dflash2": {
-      "engines": [
-        "qwen3_5"
-      ],
       "architectures": [
         "DFlash2DraftModel"
       ]
     },
     "eagle3": {
-      "engines": [],
       "architectures": [
         "Eagle3DraftModel",
         "LlamaForCausalLMEagle3",
@@ -59,14 +41,12 @@
       ]
     },
     "dspark": {
-      "engines": [],
       "architectures": [
         "DSparkDraftModel",
         "Qwen3DSparkModel"
       ]
     },
     "medusa": {
-      "engines": [],
       "architectures": [
         "MedusaModel"
       ]
@@ -728,58 +708,9 @@
             "q8",
             "nvfp4"
           ]
-        },
-        {
-          "name": "dflash",
-          "kind": "dflash",
-          "repo": "z-lab/gemma-4-26B-A4B-it-DFlash",
-          "revision": "77d4202772dfe50b2396ec7bac9cfffc7b9e7057",
-          "recipe": "gemma4_dflash_published",
-          "license": "apache-2.0"
         }
       ],
       "profiles": [
-        {
-          "applies_to": [
-            "nvidia/Gemma-4-26B-A4B-NVFP4"
-          ],
-          "default": {
-            "acceptance": 0.6496277205040092,
-            "config": "mtp:8:2",
-            "drafter": "assistant",
-            "floor_tokens_per_round": 2.215723433260192,
-            "plain_tok_s": 347.24703101716597,
-            "speedup": 1.886454606438287,
-            "tok_s": 655.0657612343515,
-            "tokens_per_round": 4.304442825928623
-          },
-          "gpu": "NVIDIA GeForce RTX 5090",
-          "gpu_class": "gb202",
-          "measured_on": "gemma4_26b_a4b_nvidia_nvfp4.ninferno, context 4096, chunk 2048, RTX 5090 (native Linux driver 580.95.05, 575 W), greedy, built-in corpus (8 prompts x 4 families)",
-          "measured_at": "2026-09-25",
-          "non_thinking": {
-            "acceptance": 0.6299160406539991,
-            "config": "mtp:8:2",
-            "drafter": "assistant",
-            "floor_tokens_per_round": 2.1231133104369295,
-            "plain_tok_s": 347.6093172969937,
-            "speedup": 1.8153452769018033,
-            "tok_s": 631.0309323621578,
-            "tokens_per_round": 3.906218144750255
-          },
-          "source": "spec-tune 2026-09-24T21:53:11Z (ninferno-spec-1, 165 s)",
-          "thinking": {
-            "acceptance": 0.6364661654135338,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.3210845888248026,
-            "plain_tok_s": 346.1646890502222,
-            "speedup": 2.321963495065594,
-            "tok_s": 803.7817712553485,
-            "tokens_per_round": 5.455263157894737
-          },
-          "revision": "17edc26ebafd"
-        },
         {
           "applies_to": [
             "RedHatAI/gemma-4-26B-A4B-it-NVFP4"
@@ -1117,50 +1048,6 @@
           ],
           "load_measured_on": "fallback for unmeasured GPUs: NVIDIA GeForce RTX 5090 (gb202), gemma4_26b_a4b_nvfp4_r0926.ninferno, NVIDIA GeForce RTX 5090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, 2026-09-27T22:22:02Z",
           "revision": "add138cfb04c"
-        },
-        {
-          "applies_to": [
-            "nvidia/Gemma-4-26B-A4B-NVFP4"
-          ],
-          "default": {
-            "acceptance": 0.6496277205040092,
-            "config": "mtp:8:2",
-            "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 2.215723433260192,
-            "plain_tok_s": 347.24703101716597,
-            "speedup": 1.886454606438287,
-            "tok_s": 655.0657612343515,
-            "tokens_per_round": 4.304442825928623
-          },
-          "gpu": "NVIDIA GeForce RTX 5090",
-          "gpu_class": "gb202",
-          "measured_on": "gemma4_26b_a4b_nvidia_nvfp4.ninferno, context 4096, chunk 2048, RTX 5090 (native Linux driver 580.95.05, 575 W), greedy, built-in corpus (8 prompts x 4 families); drafter assistant.nvfp4: (RTX 5090, RedHat NVFP4 target, 20x512 temp 1.0, fixed mtp K=6 26B / K=10 31B): aggregate tok/s bf16/q8/nvfp4 26B C1 441.6/526.7/536.9 C2 675.5/752.4/751.5 C4 956.6/1046.8/1068.8; 31B C1 200.7/224.1/230.1 C2 251.3/274.4/274.5 C4 402.1/417.3/421.5; greedy under --activations exact identical to plain for every drafter",
-          "measured_at": "2026-09-28",
-          "non_thinking": {
-            "acceptance": 0.6299160406539991,
-            "config": "mtp:8:2",
-            "drafter": "assistant.nvfp4",
-            "floor_tokens_per_round": 2.1231133104369295,
-            "plain_tok_s": 347.6093172969937,
-            "speedup": 1.8153452769018033,
-            "tok_s": 631.0309323621578,
-            "tokens_per_round": 3.906218144750255
-          },
-          "source": "spec-tune 2026-09-24T21:53:11Z (ninferno-spec-1, 165 s)",
-          "thinking": {
-            "acceptance": 0.6364661654135338,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 2.3210845888248026,
-            "plain_tok_s": 346.1646890502222,
-            "speedup": 2.321963495065594,
-            "tok_s": 803.7817712553485,
-            "tokens_per_round": 5.455263157894737
-          },
-          "requires": [
-            "assistant.nvfp4"
-          ],
-          "revision": "2a4b2ceb2fe0"
         },
         {
           "applies_to": [
@@ -2117,14 +2004,6 @@
             "q8",
             "nvfp4"
           ]
-        },
-        {
-          "name": "dflash",
-          "kind": "dflash",
-          "repo": "z-lab/gemma-4-31B-it-DFlash",
-          "revision": "eabd648301ce28583cc14757912e5e0f84e152e1",
-          "recipe": "gemma4_dflash_published",
-          "license": "apache-2.0"
         }
       ],
       "profiles": [
@@ -2923,14 +2802,6 @@
           "revision": "46d4c6f13f0ac0ad827b915669b8df9b81c64c51",
           "recipe": "gemma4_assistant_published",
           "license": "apache-2.0"
-        },
-        {
-          "name": "dflash",
-          "kind": "dflash",
-          "repo": "z-lab/gemma4-12B-it-DFlash",
-          "revision": "541d351de6dc9cd698fc348612bd5cdf03c636d0",
-          "recipe": "gemma4_dflash_published",
-          "license": "unspecified"
         }
       ],
       "profiles": [
@@ -2964,16 +2835,19 @@
           },
           "source": "spec-bench sweep over the spec-tune configurations, spec-tune selection rules (the any-geometry build has no spec-tune)",
           "thinking": {
-            "acceptance": 0.6442522321428571,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.036524569176732,
-            "plain_tok_s": 111.71717723088977,
-            "speedup": 3.8590498662053254,
-            "tok_s": 431.1221578457018,
-            "tokens_per_round": 5.509765625
+            "acceptance": 0.6407271241830066,
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.0412583909881687,
+            "plain_tok_s": 111.93069999705115,
+            "speedup": 3.182423804576793,
+            "tok_s": 356.21092413355916,
+            "tokens_per_round": 4.8443627450980395
           },
-          "revision": "8f51a956bfe7"
+          "revision": "8f51a956bfe7",
+          "notes": [
+            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
+          ]
         },
         {
           "applies_to": [
@@ -3005,16 +2879,19 @@
           },
           "source": "spec-tune 2026-09-25T03:27:27Z (ninferno-spec-1, 252 s)",
           "thinking": {
-            "acceptance": 0.6386999244142101,
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.4071936855427953,
-            "plain_tok_s": 179.5761082325659,
-            "speedup": 3.8502087336325297,
-            "tok_s": 691.4055002687656,
-            "tokens_per_round": 5.470899470899471
+            "acceptance": 0.540110153256705,
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.4646977560946763,
+            "plain_tok_s": 179.97470815760934,
+            "speedup": 2.757022059162901,
+            "tok_s": 496.19424048193423,
+            "tokens_per_round": 4.24066091954023
           },
-          "revision": "8d5dfb5d52f5"
+          "revision": "8d5dfb5d52f5",
+          "notes": [
+            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
+          ]
         },
         {
           "applies_to": [],
@@ -3357,11 +3234,14 @@
             "floor_tokens_per_round": 1.4642234956347169
           },
           "thinking": {
-            "config": "dflash:7",
-            "drafter": "dflash",
-            "floor_tokens_per_round": 1.4071936855427953
+            "config": "mtp:6",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.4646977560946763
           },
-          "revision": "c55ba6a1a3fa"
+          "revision": "c55ba6a1a3fa",
+          "notes": [
+            "thinking: the tune (ninferno-gemma4's Session) chose dflash:7, which the serving Engine does not run; its default (mtp:6) stands in"
+          ]
         }
       ],
       "evidence": "RTX 5080 (gb203) 2026-09-24: spec-bench over the spec-tune configurations and the built-in corpus with a build that has the 12B geometry support and no spec-tune yet; tokenizer fingerprint equal to 26B/31B (tools/spec/tokenize_corpus.py --check on RedHatAI/gemma-4-12B-it-NVFP4); RTX 5090 (gb202) 2026-09-25: spec-tune on the built-in corpus, target and both drafters from ninferno-convert --fetch (the product path); math re-tuned 2026-09-25 on 64 GSM8K Platinum prompts (the built-in corpus's 8 math prompts chose dflash:7, which lost 2.8% to mtp:6 on the larger sample)"

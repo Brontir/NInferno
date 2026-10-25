@@ -95,9 +95,9 @@ def main() -> int:
         hub.add_repo("evil/gemma-tiny-DFlash", files_of(narrow))
         declared = files_of(target)
         declared["ninferno_speculation.json"] = json.dumps({
-            "drafters": [{"name": "dflash", "kind": "dflash", "repo": "lab/gemma-tiny-DFlash",
-                          "revision": COMMIT, "recipe": "gemma4_dflash_q8"}],
-            "profiles": [{"gpu_class": "*", "default": {"config": "dflash:7", "drafter": "dflash"}}],
+            "drafters": [{"name": "own", "kind": "gemma4_assistant", "repo": "org/gemma-tiny-assistant",
+                          "revision": COMMIT, "recipe": "gemma4_assistant_q8"}],
+            "profiles": [{"gpu_class": "*", "default": {"config": "mtp:3", "drafter": "own"}}],
         }).encode()
         hub.add_repo("vendor/gemma-tiny-bundle", declared)
         hub.add_repo("someone/unknown-gemma", files_of(target))
@@ -110,11 +110,11 @@ def main() -> int:
                    "thinking": {"config": "dflash:11", "drafter": "dflash"}}
         registry = {
             "schema": 1, "published": "test",
-            "kinds": {"gemma4_assistant": {"engines": ["gemma4"], "architectures": ["Gemma4AssistantForCausalLM"],
+            "kinds": {"gemma4_assistant": {"architectures": ["Gemma4AssistantForCausalLM"],
                                            "recipe": "gemma4_assistant_q8"},
-                      "dflash": {"engines": ["gemma4", "qwen3_5"], "architectures": ["DFlashDraftModel"],
+                      "dflash": {"architectures": ["DFlashDraftModel"],
                                  "recipe": "gemma4_dflash_q8"},
-                      "mtp": {"engines": ["qwen3_5"]}},
+                      "mtp": {}},
             "models": [
                 {"id": "gemma-tiny", "engine": "gemma4",
                  "match": {"repos": ["org/gemma-tiny"], "lineage": ["org/gemma-tiny"]},
@@ -173,37 +173,45 @@ def main() -> int:
             path = Path(str(artifact_of(cache, repo)) + ".speculation.json")
             return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
-        # 1. The registry's drafters for the target's repository id.
+        # 1. The registry's drafters for the target's repository id: the ones the serving Engine
+        #    runs (spec/engine_support.h). Gemma 4's assistant is converted; a DFlash drafter, which
+        #    its Engine does not run, is planned as such and never fetched.
         convert("--fetch", "org/gemma-tiny", "--cache", str(work / "c1"))
         m = manifest_of("c1", "org/gemma-tiny")
         drafters = {d["name"]: d for d in (m or {}).get("drafters", [])}
+        dflash_weights = [p for p in served("lab/gemma-tiny-DFlash") if p.endswith(".safetensors")]
+        dflash_status = drafters.get("dflash", {}).get("status", "")
         case("registry by repository id",
              m is not None and m["source"] == "registry" and m["matched_by"] == "repo"
              and m["entry"] == "gemma-tiny" and m["fallback"] == "ngram"
              and drafters.get("assistant", {}).get("status") == "converted"
-             and drafters.get("dflash", {}).get("status") == "converted"
-             and all(Path(d["artifact"]).exists() for d in drafters.values())
+             and Path(drafters.get("assistant", {}).get("artifact", "/nonexistent")).exists()
+             and dflash_status.startswith("unsupported") and "runs no dflash drafter" in dflash_status
+             and not dflash_weights
              and m["profiles"][0]["default"]["config"] == "dflash:7", json.dumps(m)[:800])
-        # The assistant ships a tokenizer (checked before the fetch); the DFlash drafter does not
-        # (vocab size first, its converted artifact's vocabulary after).
+        # The assistant ships a tokenizer, checked before the fetch, and its converted artifact's
+        # vocabulary after.
         case("drafters carry the target's vocabulary",
-             drafters and all(any(c.startswith("ok converted drafter's vocabulary fingerprint")
-                                  for c in d["checks"]) for d in drafters.values())
+             "assistant" in drafters
+             and any(c.startswith("ok converted drafter's vocabulary fingerprint")
+                     for c in drafters["assistant"]["checks"])
              and any(c.startswith("ok vocabulary fingerprint") for c in drafters["assistant"]["checks"]),
              json.dumps([d["checks"] for d in drafters.values()]))
 
         # 2. A fine-tune declaring the target as its base model.
         convert("--fetch", "user/gemma-tiny-finetune", "--cache", str(work / "c2"))
         m = manifest_of("c2", "user/gemma-tiny-finetune")
+        status = {d["name"]: d.get("status", "") for d in (m or {}).get("drafters", [])}
         case("registry by declared base model",
              m is not None and m["source"] == "registry" and m["matched_by"] == "lineage"
-             and all(d.get("status") == "converted" for d in m["drafters"]), json.dumps(m)[:800])
+             and status.get("assistant") == "converted"
+             and status.get("dflash", "").startswith("unsupported"), json.dumps(m)[:800])
 
         # 3. The bundle's own declaration wins.
         convert("--fetch", "vendor/gemma-tiny-bundle", "--cache", str(work / "c3"))
         m = manifest_of("c3", "vendor/gemma-tiny-bundle")
         case("bundle declaration",
-             m is not None and m["source"] == "bundle" and [d["name"] for d in m["drafters"]] == ["dflash"]
+             m is not None and m["source"] == "bundle" and [d["name"] for d in m["drafters"]] == ["own"]
              and m["drafters"][0]["status"] == "converted", json.dumps(m)[:800])
 
         # 4. Unknown to the registry: no drafter, the fallback named; --no-drafters: no manifest.
@@ -225,7 +233,7 @@ def main() -> int:
         case("incompatible drafters rejected",
              result.returncode == 1 and m is not None
              and status.get("assistant", "").startswith("incompatible: vocabulary fingerprint")
-             and status.get("dflash", "").startswith("incompatible: num_target_layers")
+             and status.get("dflash", "").startswith("unsupported")
              and not weights, f"{status} {weights} rc={result.returncode}")
 
         # 6. The plan, offline: an unreachable hub is never contacted.
@@ -234,21 +242,23 @@ def main() -> int:
                                  "org/gemma-tiny"], cwd=repository, capture_output=True, text=True, env=offline)
         plan = json.loads(result.stdout) if result.returncode == 0 else {}
         case("plan without network",
-             plan.get("source") == "registry" and [d["name"] for d in plan.get("drafters", [])] == ["assistant", "dflash"],
-             result.stderr[-500:])
+             plan.get("source") == "registry" and [d["name"] for d in plan.get("drafters", [])] == ["assistant", "dflash"]
+             and [d.get("supported") for d in plan.get("drafters", [])] == [True, False],
+             result.stdout[-500:] + result.stderr[-500:])
 
         # 7. Attach to an existing artifact from given drafter artifacts (no fetch at all).
         existing = artifact_of("c5", "org/gemma-tiny")
-        given = {d["name"]: d["artifact"] for d in manifest_of("c1", "org/gemma-tiny")["drafters"]}
+        given = {d["name"]: d["artifact"] for d in manifest_of("c1", "org/gemma-tiny")["drafters"]
+                 if d.get("artifact")}
         result = subprocess.run([str(native), *registry_flag, "--attach-drafters", "--target-artifact", str(existing),
                                  "--model-id", "org/gemma-tiny",
-                                 "--drafter-artifact", f"assistant={given['assistant']}",
-                                 "--drafter-artifact", f"dflash={given['dflash']}"],
+                                 "--drafter-artifact", f"assistant={given['assistant']}"],
                                 cwd=repository, capture_output=True, text=True, env=offline)
         m = manifest_of("c5", "org/gemma-tiny")
+        attached = {d["name"]: d.get("status", "") for d in (m or {}).get("drafters", [])}
         case("attach given drafters",
-             result.returncode == 0 and m is not None
-             and all(d.get("status") == "attached" for d in m["drafters"]), result.stdout[-800:] + result.stderr[-500:])
+             result.returncode == 0 and attached.get("assistant") == "attached"
+             and attached.get("dflash", "").startswith("unsupported"), result.stdout[-800:] + result.stderr[-500:])
 
         # 8. Drafter variants: NInferno's own quantizations of the assistant, converted from its one
         #    download beside the published one and attached under their own names.

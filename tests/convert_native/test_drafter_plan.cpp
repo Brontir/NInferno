@@ -41,8 +41,7 @@ void expect(bool condition, const std::string& what, const std::string& detail =
 const spec::Registry& registry() {
     static const spec::Registry out = spec::Registry::parse(R"({
       "schema": 1, "published": "test",
-      "kinds": {"dflash": {"engines": ["dense", "qwen3_5"],
-                           "architectures": ["DFlashDraftModel", "MuseGlimmerAssistantModel"],
+      "kinds": {"dflash": {"architectures": ["DFlashDraftModel", "MuseGlimmerAssistantModel"],
                            "recipe": "dflash_published"}},
       "models": [{"id": "muse", "engine": "dense",
                   "match": {"repos": ["org/muse", "org/muse-GGUF"], "lineage": ["org/muse"],

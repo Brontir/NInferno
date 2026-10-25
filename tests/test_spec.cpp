@@ -2314,6 +2314,16 @@ int test_registry_and_corpus() {
                           registry.supported("dflash2", "qwen3_5") &&
                           !registry.supported("eagle3", "gemma4"),
                       "kinds");
+    // What a drafter kind serves with is the Engine's (engine_support), never a list of its own:
+    // Gemma 4's Engine runs its assistant only, the dense decoder DFlash only.
+    failures += check(registry.supported("gemma4_assistant", "gemma4") &&
+                          !registry.supported("dflash", "gemma4") &&
+                          registry.supported("dflash", "qwen3_5") &&
+                          registry.supported("dflash", "dense") &&
+                          !registry.supported("mtp", "gemma4") &&
+                          registry.supported("nemotron_h_mtp", "nemotron_h") &&
+                          !registry.supported("dflash2", "dense"),
+                      "a kind runs where the family's Engine runs it");
     const std::regex sha("^[0-9a-f]{40}$");
     for (const auto& model : registry.models()) {
         std::set<std::string> names;
@@ -2342,6 +2352,15 @@ int test_registry_and_corpus() {
                 continue;
             }
             std::vector<const Choice*> choices{&p.overall, &p.non_thinking, &p.thinking};
+            // What the serving Engine runs of the profile (its served choices where a tune chose
+            // more): each must run on the entry's family (spec/engine_support.h), or the server
+            // drops it and decodes plainly.
+            const auto& engine_choices = p.served ? *p.served : ServedChoices{p.overall, p.thinking, p.non_thinking};
+            for (const auto* c : {&engine_choices.overall, &engine_choices.non_thinking,
+                                  &engine_choices.thinking}) {
+                failures += check(engine_family_support(model.engine).runs(c->config),
+                                  model.id + " " + cls + ": the Engine runs " + c->config.label());
+            }
             for (const auto* c : choices) {
                 if (!c->config.enabled()) { continue; }
                 failures += check(names.contains(c->drafter),
