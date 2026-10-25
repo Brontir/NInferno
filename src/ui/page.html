@@ -2169,7 +2169,9 @@ function choicePanel(doc) {
       <td class="sub">${esc(t("why_" + r.why + (r.axis === "drafter" && r.why === "default" ? "_drafter" : "")) || r.why)}</td></tr>`).join("");
   // What λ priced: only where the worth weighed a value against the chosen (the family's defaults
   // stood, or every accuracy-bearing axis was pinned: nothing was priced).
-  const weighed = c.by_worth && rows.some(r => ["lower_worth", "tie_context", "tie_order"].includes(r.why));
+  // An accuracy-bearing axis (the chunk and the drafter change the speed only, no KLD term).
+  const weighed = c.by_worth && rows.some(r => ["kv", "activations", "state", "ring"].includes(r.axis) &&
+    ["lower_worth", "tie_context", "tie_order"].includes(r.why));
   const lambda = weighed && c.task && c.task.accuracy_weight > 0
     ? `<div class="sub" data-tip="${esc(t("lambdaTip"))}">${esc(fill(t("lambdaLine"), {l: c.task.accuracy_weight, pct: (c.task.accuracy_weight * 0.1).toFixed(1)}))}</div>` : "";
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis"))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}${lambda}</div>` +
