@@ -1999,7 +1999,7 @@ function schedulePlan() {
   const q = planQuery(planAsk(sel));
   if (q === sel.planQ) return;
   sel.planQ = q; clearTimeout(planTimer);
-  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; return; }
+  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
@@ -2008,9 +2008,7 @@ function schedulePlan() {
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
-    // The speed-up block is drawn with the detail header: drawn again when this plan is the first
-    // to say the repository speculates (a hub repository the catalog does not list).
-    if (!document.querySelector(".accel") && planServesSpeculation()) renderDetail(); else renderBody();
+    if (!accelAfterPlan()) renderBody();
   }, 300);
 }
 // The plan row of a quantization of the selected repository (null: no plan, or none for it).
@@ -2036,6 +2034,14 @@ function planSpecNow() {
   return r && r.plan && r.plan.speculation || doc && doc.plan && doc.plan.speculation || null;
 }
 // Auto's speculation is the server's choice: plain when the plan serves plain decode.
+// The speed-up block (and its Auto / Off switch) is drawn with the detail header: drawn again, once,
+// when the plan, fetched or cached, is the first to say the repository speculates (a hub repository
+// the catalog does not list). True when it redraws (the detail draws the body too).
+function accelAfterPlan() {
+  if (document.querySelector(".accel") || !planServesSpeculation()) return false;
+  setTimeout(renderDetail, 0);
+  return true;
+}
 // Whether the plan for the ask serves a speculation (its drafter kind).
 function planServesSpeculation() { const s = planSpecSummary(planSpecNow()); return !!s && !!s.kind; }
 function planServesPlain() { const s = planSpecSummary(planSpecNow()); return !!s && !s.kind; }
@@ -2113,8 +2119,10 @@ function choicePanel(doc) {
       <td class="num ${cls(r.ddecode, true)}">${pct(r.ddecode)}</td><td class="num ${cls(r.dprefill, true)}">${pct(r.dprefill)}</td>
       <td class="num ${cls(r.dtime, false)}">${pct(r.dtime)}</td><td class="num ${cls(r.dkld, false)}">${kld(r.dkld)}</td>
       <td class="sub">${esc(t("why_" + r.why + (r.axis === "drafter" && r.why === "default" ? "_drafter" : "")) || r.why)}</td></tr>`).join("");
-  // What λ priced: only where the worth decided (else the family's defaults stood).
-  const lambda = c.by_worth && c.task && c.task.accuracy_weight > 0
+  // What λ priced: only where the worth weighed a value against the chosen (the family's defaults
+  // stood, or every accuracy-bearing axis was pinned: nothing was priced).
+  const weighed = c.by_worth && rows.some(r => ["lower_worth", "tie_context", "tie_order"].includes(r.why));
+  const lambda = weighed && c.task && c.task.accuracy_weight > 0
     ? `<div class="sub" data-tip="${esc(t("lambdaTip"))}">${esc(fill(t("lambdaLine"), {l: c.task.accuracy_weight, pct: (c.task.accuracy_weight * 0.1).toFixed(1)}))}</div>` : "";
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis"))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}${lambda}</div>` +
     (rows.length ? `<details class="choice" ${choiceOpen ? "open" : ""}><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th data-tip="${esc(t("lambdaTip"))}">KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
