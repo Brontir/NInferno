@@ -558,12 +558,17 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 }
                 // Weights kept with their download: the start below runs at their commit (the
                 // fetch finds them in the cache, with the hub or without it).
-                if (!kept && !refetch && (!checked || !now || *now != held_commit)) {
+                // The ref named the commit here when asked, or moved and the weights here stay:
+                // the start runs at that commit either way, so a move after the question
+                // downloads nothing unannounced.
+                if (!kept && !refetch) {
                     pinned = repo + "@" + held_commit;
-                    // The model held there, not what a width selector would take of the
+                    // Moved: the model held there, not what a width selector would take of the
                     // commit's whole listing (a larger one of that width not downloaded).
-                    pinned_quant = snapshot_quant_label(repo_dir / "snapshots" / held_commit,
-                                                        options.fetch, repo);
+                    if (!checked || !now || *now != held_commit) {
+                        pinned_quant = snapshot_quant_label(
+                            repo_dir / "snapshots" / held_commit, options.fetch, repo);
+                    }
                 }
             }
             if (kept) {
