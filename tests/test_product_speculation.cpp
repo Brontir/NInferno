@@ -62,6 +62,28 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
+    // Per request, a default that decodes plainly loads the other flag's drafter: those requests
+    // speculate, the default's decode plainly (Codex on #117).
+    {
+        ninferno::product::SpeculationSubject subject;
+        subject.support = ninferno::spec::engine_support("qwen3_5_text");
+        ninferno::spec::ResolvedSpeculation resolved;
+        resolved.source                    = "test";
+        resolved.profile.thinking.config     = ninferno::spec::SpecConfig::parse("mtp:4");
+        resolved.profile.thinking.drafter    = "mtp";
+        resolved.profile.overall           = resolved.profile.thinking;
+        resolved.drafters["mtp"]           = "component:mtp";
+        subject.components                 = {"text", "mtp"};
+        subject.resolved                   = resolved;
+        const auto fixed = ninferno::product::served_speculation(subject, false, false);
+        const auto each  = ninferno::product::served_speculation(subject, false, true);
+        failures += check(fixed && fixed->menu.mode == ninferno::spec::Mode::None,
+                          "fixed at the plain default: no drafter");
+        failures += check(each && each->menu.mode == ninferno::spec::Mode::Mtp &&
+                              each->menu.thinking.config.enabled() &&
+                              !each->menu.non_thinking.config.enabled(),
+                          "per request: MTP loaded for thinking, the default plain");
+    }
     // Nothing shallower than one draft, nothing for plain decode, nothing without a profile.
     {
         using ninferno::product::served_shallower;

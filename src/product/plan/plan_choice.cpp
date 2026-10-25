@@ -278,6 +278,39 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     return out;
 }
 
+PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                  const ServedChoice& served, const ChoicePins& pins,
+                                  PlannedSpeculation planned) {
+    if (!served.choice.chosen || !inputs.ask.automatic || inputs.subject == nullptr) {
+        return planned;
+    }
+    const auto drafter = start_axes(served, pins).drafter;
+    const SpeculativeBackend backend = planned.speculation.engine.backend;
+    const spec::Mode serving = backend == SpeculativeBackend::Mtp       ? spec::Mode::Mtp
+                               : backend == SpeculativeBackend::DFlash  ? spec::Mode::DFlash
+                               : backend == SpeculativeBackend::DFlash2 ? spec::Mode::DFlash2
+                                                                        : spec::Mode::None;
+    if (!drafter || *drafter == serving) { return planned; }
+    DryRunInputs again = inputs;
+    std::optional<SpeculationSubject> chosen;
+    if (*drafter == spec::Mode::None) {
+        again.ask.automatic = false;
+        again.ask.given     = {};
+    } else {
+        chosen        = subject_of_mode(*inputs.subject, *drafter);
+        again.subject = &*chosen;
+    }
+    planned = plan_model(facts, again);
+    if (*drafter == spec::Mode::None) {
+        planned.speculation.ask   = "auto";
+        planned.speculation.basis = "choice";
+        planned.speculation.notes.push_back(
+            "the configuration choice decodes plainly: no drafter it weighed is worth more at the "
+            "asked context and streams");
+    }
+    return planned;
+}
+
 StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
     StartAxes out;
     if (!served.choice.chosen) { return out; }

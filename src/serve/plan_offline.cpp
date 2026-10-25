@@ -496,35 +496,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             : planning.inputs;
     const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label);
     // A start serves the choice's drafter (product::StartAxes::drafter): the plan shown is of it.
-    std::optional<product::SpeculationSubject> chosen_subject;
-    if (served && served->choice.chosen && at_chosen.ask.automatic &&
-        at_chosen.subject != nullptr) {
-        const auto mode_of = [](SpeculativeBackend backend) {
-            return backend == SpeculativeBackend::Mtp      ? spec::Mode::Mtp
-                   : backend == SpeculativeBackend::DFlash ? spec::Mode::DFlash
-                   : backend == SpeculativeBackend::DFlash2 ? spec::Mode::DFlash2
-                                                            : spec::Mode::None;
-        };
-        const auto drafter = product::start_axes(*served, pins_of(options)).drafter;
-        if (drafter && *drafter != mode_of(planned.speculation.engine.backend)) {
-            product::DryRunInputs again = at_chosen;
-            if (*drafter == spec::Mode::None) {
-                again.ask.automatic = false;
-                again.ask.given     = {};
-            } else {
-                chosen_subject = product::subject_of_mode(*at_chosen.subject, *drafter);
-                again.subject  = &*chosen_subject;
-            }
-            planned = product::plan_model(facts, again);
-            if (*drafter == spec::Mode::None) {
-                planned.speculation.ask   = "auto";
-                planned.speculation.basis = "choice";
-                planned.speculation.notes.push_back(
-                    "the configuration choice decodes plainly: no drafter it weighed is worth "
-                    "more at the asked context and streams");
-            }
-        }
-    }
+    if (served) { planned = product::plan_at_choice(facts, at_chosen, *served, pins_of(options), planned); }
     const std::string source =
         model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
     out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,

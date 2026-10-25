@@ -427,8 +427,13 @@ std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& su
     out.basis                   = resolved->basis;
     out.notes                   = resolved->notes;
     const spec::Profile profile = engine_choices(resolved->profile, &out.notes);
-    return served_of(profile, spec::pick(profile, thinking), *resolved, subject, per_request,
-                     std::move(out));
+    // Per request, a default that decodes plainly still loads the drafter the other flag's
+    // choice drafts with: its requests decode plainly at their own (plain) entry of the menu.
+    const spec::Choice& own   = spec::pick(profile, thinking);
+    const spec::Choice& other = spec::pick(profile, !thinking);
+    const spec::Choice& primary =
+        per_request && !own.config.enabled() && other.config.enabled() ? other : own;
+    return served_of(profile, primary, *resolved, subject, per_request, std::move(out));
 }
 
 std::optional<ServedSpeculation> served_speculation(const std::filesystem::path& artifact,

@@ -365,7 +365,7 @@ int main(int argc, char** argv) {
                                                          .state       = cli.recurrent_state.has_value(),
                                                          .ring        = cli.sliding_kv_given,
                                                          .chunk       = true};
-            const product::PlannedSpeculation planned = product::plan_model(facts, inputs);
+            product::PlannedSpeculation planned = product::plan_model(facts, inputs);
             const std::string source                  = cli.artifact_path.string();
             // The configuration choice for the axes left automatic, as a start would take it.
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
@@ -374,6 +374,8 @@ int main(int argc, char** argv) {
                                                      .ring        = cli.sliding_kv_given,
                                                      .chunk       = true}; // the CLI's chunk is fixed
             const auto served = product::choose_at_weights(facts, inputs, pins);
+            // A run serves the choice's drafter: the plan shown is of it, as the server's.
+            if (served) { planned = product::plan_at_choice(facts, inputs, *served, pins, planned); }
             if (cli.plan_json) {
                 nlohmann::json doc =
                     product::dry_plan_document(facts, source, "artifact", inputs, planned, nullptr);

@@ -80,6 +80,14 @@ struct StartAxes {
     std::optional<spec::Mode> drafter;
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
+
+// The plan a --spec auto start serves at the configuration choice: `planned` (the profile's
+// speculation) planned again with the choice's drafter (StartAxes::drafter) where they differ,
+// plain decode said so. One code for ninferno-serve's plan without the weights and the CLI's.
+[[nodiscard]] PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts,
+                                                const DryRunInputs& inputs,
+                                                const ServedChoice& served, const ChoicePins& pins,
+                                                PlannedSpeculation planned);
 // The axes set on a start's Engine options (the KV codec then no longer automatic, the state
 // likewise).
 void apply_start_axes(EngineOptions& options, const StartAxes& axes);
