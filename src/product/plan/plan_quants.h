@@ -63,6 +63,8 @@ struct DryRunInputs {
     SpeculationAsk ask;
     const SpeculationSubject* subject = nullptr;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
+    // A DFlash drafter's state read from its config before it is downloaded (nullopt: unknown).
+    std::optional<models::DrafterStateShape> drafter_state;
     ChoicePins pins;
 };
 

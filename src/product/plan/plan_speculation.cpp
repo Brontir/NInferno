@@ -216,7 +216,8 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const EngineOptions& options,
                                          const SpeculationSubject* subject,
                                          const SpeculationAsk& ask, const spec::GpuKey& gpu,
-                                         std::uint64_t drafter_bytes) {
+                                         std::uint64_t drafter_bytes,
+                                         const std::optional<models::DrafterStateShape>& drafter_state) {
     PlannedSpeculation out;
     SpeculationReport& r            = out.speculation;
     const std::uint32_t concurrency = std::max(1U, options.max_concurrency);
@@ -245,6 +246,12 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         if (speculative.backend != SpeculativeBackend::None &&
             (!speculative.drafter.empty() || attached)) {
             m.drafter_bytes = drafter_bytes;
+            // Its state from its config: the family planner sizes its KV and ring.
+            if (!m.state.drafter && drafter_state &&
+                (speculative.backend == SpeculativeBackend::DFlash ||
+                 speculative.backend == SpeculativeBackend::DFlash2)) {
+                m.state.drafter = drafter_state;
+            }
         }
         return runtime::dry_run_plan(m, device, planned);
     };

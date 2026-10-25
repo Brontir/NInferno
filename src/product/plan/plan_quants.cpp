@@ -164,7 +164,7 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
 
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.gpu, inputs.drafter_bytes);
+                                 inputs.gpu, inputs.drafter_bytes, inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {

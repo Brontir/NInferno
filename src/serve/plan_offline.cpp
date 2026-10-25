@@ -351,6 +351,8 @@ ModelRead read_model(const ServeOptions& options) {
 
 std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
                                      const std::vector<product::QuantListing>& listing);
+std::optional<models::DrafterStateShape>
+attached_drafter_state(const product::SpeculationSubject& subject, std::uint32_t target_hidden);
 
 // The axes the user pinned with flags (the configuration choice picks the others).
 product::ChoicePins pins_of(const ServeOptions& options) {
@@ -398,6 +400,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         out.inputs.drafter_bytes = attached_drafter_bytes(*out.subject, model.listing);
+        out.inputs.drafter_state = attached_drafter_state(*out.subject, model.facts.model.hidden);
     }
     return out;
 }
@@ -520,6 +523,26 @@ std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
         out = std::max(out, bytes);
     }
     return out;
+}
+
+// The state of a DFlash drafter the drafter plan takes from its own repository, from that
+// repository's config.json (one small request, at the declared revision); nullopt when none is
+// taken, or its config cannot be read.
+std::optional<models::DrafterStateShape>
+attached_drafter_state(const product::SpeculationSubject& subject, std::uint32_t target_hidden) {
+    for (const spec::DrafterDecl& d : subject.attached_drafters) {
+        if ((d.kind != "dflash" && d.kind != "dflash2") || d.repo.empty() || !d.gguf.empty()) {
+            continue;
+        }
+        try {
+            const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+            if (auto state = product::plan_drafter_state_of_config(
+                    convert::fetch_config(spec, fetch_options()), target_hidden)) {
+                return state;
+            }
+        } catch (const std::exception&) {}
+    }
+    return std::nullopt;
 }
 
 // What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.

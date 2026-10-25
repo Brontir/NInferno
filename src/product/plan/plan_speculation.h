@@ -130,13 +130,15 @@ struct PlannedSpeculation {
 // Runs the start's order over the dry run: `options` the Engine options the server builds with no
 // speculation chosen yet (its --spec settings in options.speculative for an explicit --spec),
 // `facts` the target's (the drafter's weights are added for a separate drafter when known:
-// `drafter_bytes`), `subject` from speculation_subject or planned_subject (nullptr: no profile at
-// all, as for an explicit --spec), `gpu` the device's identity (the cost model's rates).
+// `drafter_bytes`, and a DFlash drafter's state, `drafter_state`, read from its config before it is
+// downloaded), `subject` from speculation_subject or planned_subject (nullptr: no profile at all,
+// as for an explicit --spec), `gpu` the device's identity (the cost model's rates).
 [[nodiscard]] PlannedSpeculation
 plan_with_speculation(const PlanSourceFacts& facts, const runtime::PlanDeviceFacts& device,
                       const EngineOptions& options, const SpeculationSubject* subject,
                       const SpeculationAsk& ask, const spec::GpuKey& gpu,
-                      std::uint64_t drafter_bytes = 0);
+                      std::uint64_t drafter_bytes = 0,
+                      const std::optional<models::DrafterStateShape>& drafter_state = std::nullopt);
 
 // The profile key of a device from its facts (a named board's what-if: core/device_class.h
 // synthetic_device_class from its PCI id, architecture and SMs, the facts table's rates), as
