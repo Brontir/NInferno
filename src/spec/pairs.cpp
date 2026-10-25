@@ -1,5 +1,7 @@
 #include "spec/pairs.h"
 
+#include "artifact/reader.h"
+
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -139,21 +141,22 @@ std::string gpu_generation(const GpuKey& gpu) {
     return {};
 }
 
-Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
-                         const SelectOptions& options) {
-    if (!pair_current(pair)) {
-        Profile plain;
-        plain.overall = plain.thinking = plain.non_thinking = plain_choice();
-        plain.disabled = RuntimeDisable{"measured by speculation engine " + pair.tune.key.engine +
-                                            ", this build runs " + kSpecEngineVersion,
-                                        "registry"};
-        return plain;
-    }
-    Profile p    = pair.tune;
-    const bool home = !generation.empty() && generation == pair.generation;
+namespace {
+
+Profile not_current(const MeasuredPair& pair) {
+    Profile plain;
+    plain.overall = plain.thinking = plain.non_thinking = plain_choice();
+    plain.disabled = RuntimeDisable{"measured by speculation engine " + pair.tune.key.engine +
+                                        ", this build runs " + kSpecEngineVersion,
+                                    "registry"};
+    return plain;
+}
+
+// select() over the pair's measurements: every depth and its load bounds at home, else the
+// portable ones.
+Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options) {
+    Profile p = pair.tune;
     if (!home) {
-        // Away from the lab card's generation, only what carries: one request, at most
-        // kPortableDepth drafts a round.
         std::erase_if(p.measurements,
                       [](const Measurement& m) { return m.config.k > kPortableDepth; });
         p.load = {LoadBound{.lanes = 2, .depth = 0}};
@@ -167,6 +170,69 @@ Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
     select_options.portable_within = 0;
     select(p, select_options);
     return p;
+}
+
+} // namespace
+
+std::string weights_identity(std::vector<std::string> sha256s) {
+    std::sort(sha256s.begin(), sha256s.end());
+    std::string out;
+    for (const auto& s : sha256s) { out += (out.empty() ? "" : ",") + s; }
+    return out;
+}
+
+std::optional<std::string> artifact_weights(const std::filesystem::path& artifact) {
+    const artifact::Reader reader(artifact);
+    const auto& provenance = reader.directory().provenance;
+    const auto inputs      = provenance.find("inputs");
+    if (inputs == provenance.end() || !inputs->is_array()) { return std::nullopt; }
+    for (const auto& input : *inputs) {
+        if (!input.is_object() || input.value("role", std::string()) != "base") { continue; }
+        std::vector<std::string> digests;
+        for (const auto& file : input.value("files", Json::array())) {
+            const auto digest = file.value("sha256", std::string());
+            if (digest.empty()) { return std::nullopt; }
+            digests.push_back(digest);
+        }
+        if (digests.empty()) { return std::nullopt; }
+        return weights_identity(std::move(digests));
+    }
+    return std::nullopt;
+}
+
+Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options) {
+    return pair_current(pair) ? selected(pair, false, options) : not_current(pair);
+}
+
+Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
+                           std::string_view generation, const SelectOptions& options) {
+    std::vector<const MeasuredPair*> current, home;
+    for (const auto* pair : measured) {
+        if (!pair_current(*pair)) { continue; }
+        current.push_back(pair);
+        if (!generation.empty() && pair->generation == generation) { home.push_back(pair); }
+    }
+    if (current.empty()) {
+        return measured.empty() ? Profile{} : not_current(*measured.front());
+    }
+    if (home.size() >= 2) {
+        std::vector<Profile> each;
+        for (const auto* pair : home) { each.push_back(selected(*pair, true, options)); }
+        const auto same = [&](Choice Profile::*c) {
+            return std::all_of(each.begin(), each.end(), [&](const Profile& p) {
+                return (p.*c).config == (each.front().*c).config;
+            });
+        };
+        if (same(&Profile::overall) && same(&Profile::thinking) && same(&Profile::non_thinking)) {
+            Profile out = each.front();
+            const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
+                return p.load == each.front().load;
+            });
+            if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
+            return out;
+        }
+    }
+    return selected(home.empty() ? *current.front() : *home.front(), false, options);
 }
 
 std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,

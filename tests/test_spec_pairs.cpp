@@ -51,15 +51,29 @@ int main() {
                    again.tune.measurements.size() == ada_q4.tune.measurements.size(),
                "a pair round-trips through its JSON");
     }
-    // On the lab card's generation every measured depth counts: Ada verifies deep DFlash blocks
-    // cheaply (dflash:15 thinking). Elsewhere only what carries: up to kPortableDepth drafts, one
-    // request at a time.
+    // Deep drafts and load are a generation's: taken where two cards of the generation measured the
+    // pair and chose alike. Ada verifies deep DFlash blocks cheaply (dflash:15 thinking on the
+    // RTX 4070 Ti); one card is not two, so alone it gives the portable choice.
     {
-        const auto home = sp::profile_for_pair(ada_q4, "sm89");
-        expect(home.thinking.config.label() == "dflash:15",
-               "the lab card's generation takes the measured best depth: " +
-                   home.thinking.config.label());
-        const auto away = sp::profile_for_pair(ada_q4, "sm120");
+        const auto one = sp::profile_for_target({&ada_q4}, "sm89");
+        expect(one.thinking.config.enabled() && one.thinking.config.k <= sp::kPortableDepth,
+               "one card of the generation: the portable depth: " + one.thinking.config.label());
+        auto second = ada_q4; // the same measurement on a second Ada card
+        second.tune.key.gpu = "ad102:128sm";
+        const auto two = sp::profile_for_target({&ada_q4, &second}, "sm89");
+        expect(two.thinking.config.label() == "dflash:15",
+               "two cards of the generation that agree: the measured best depth: " +
+                   two.thinking.config.label());
+        expect(two.load.size() == 1 && two.load[0].lanes == 2 && two.load[0].depth == 0,
+               "no load bounds measured: one request at a time");
+        auto slower = second; // a second card on which depth 15 loses its thinking lead
+        for (auto& m : slower.tune.measurements) {
+            if (m.config.k == 15) { m.seconds *= 2; }
+        }
+        const auto split = sp::profile_for_target({&ada_q4, &slower}, "sm89");
+        expect(split.thinking.config.k <= sp::kPortableDepth,
+               "two cards that disagree: the portable depth: " + split.thinking.config.label());
+        const auto away = sp::profile_for_target({&ada_q4, &second}, "sm120");
         expect(away.thinking.config.enabled() && away.thinking.config.k <= sp::kPortableDepth,
                "another generation takes no deeper than the portable depth: " +
                    away.thinking.config.label());
@@ -68,6 +82,8 @@ int main() {
         expect(away.thinking.floor_tokens_per_round > 1.0,
                "a choice carries its break-even for the watchdog");
     }
+    // The identity of weights: sorted digests, so the listing's order does not matter.
+    expect(sp::weights_identity({"bb", "aa"}) == "aa,bb", "weights identity is order-free");
     // A target nobody measured: its group's depth, best on average over the pairs measured.
     {
         const std::vector<sp::MeasuredPair> others = {ada_q4, bw_q8, hauhau, bw_iq2, oss_bw};
@@ -81,7 +97,7 @@ int main() {
         expect(choice && choice->drafters.size() == 1 && choice->drafters[0].status == "preliminary",
                "the group's drafter is preliminary");
         // Measured, the same target took depth 7 too (within a few percent of the group's).
-        const auto own = sp::profile_for_pair(bw_q4, "sm120");
+        const auto own = sp::profile_for_pair(bw_q4);
         expect(own.thinking.config.label() == "dflash:7", "its own measurement agrees: " +
                                                               own.thinking.config.label());
     }
@@ -113,7 +129,7 @@ int main() {
     {
         auto old           = bw_q8;
         old.tune.key.engine = "ninferno-spec-0";
-        const auto p       = sp::profile_for_pair(old, "sm120");
+        const auto p       = sp::profile_for_pair(old);
         expect(!sp::pair_current(old) && !p.overall.config.enabled() && p.disabled.has_value(),
                "an old engine version's pair decodes plainly");
         const std::vector<sp::MeasuredPair> stale = {old};

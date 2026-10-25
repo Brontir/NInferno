@@ -9,8 +9,9 @@
 //   - tokens per round (E): the pair's own, on any card (within 2.6 %);
 //   - a round's price in plain decode steps (R): on any card while a round verifies at most
 //     kPortableDepth drafts of one request; deeper drafts and rounds of several requests are the
-//     generation's (Ada and Blackwell part at k >= 8 and under load), so they are taken only on a
-//     card of the lab card's generation.
+//     generation's (Ada and Blackwell part at k >= 8 and under load), so they are taken only where
+//     two lab cards of the card's generation measured the pair and chose alike (a lab constant
+//     holds on two cards of a generation: docs/maintainer/deterministic-decisions.md).
 //
 // A target nobody measured takes its group's choice (profile_for_group): the pairs of the same
 // engine and drafter kind, of the same bit class (below 4 bits drafts pay less), the depth that is
@@ -20,6 +21,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -50,6 +52,13 @@ struct MeasuredPair {
 // Throws std::runtime_error naming what is missing or malformed.
 [[nodiscard]] MeasuredPair parse_pair(const nlohmann::json& doc);
 
+// The identity of a set of weight files: their SHA-256 digests (lowercase hex), sorted and
+// comma-joined, as MeasuredPair::target holds it.
+[[nodiscard]] std::string weights_identity(std::vector<std::string> sha256s);
+// A converted target's weights: its provenance's "base" input files (artifact/source_identity.h).
+// nullopt for an artifact converted before the converter recorded its inputs.
+[[nodiscard]] std::optional<std::string> artifact_weights(const std::filesystem::path& artifact);
+
 // Whether the pair was measured by this build's speculation engine (its tune's key names
 // kSpecEngineVersion): a bump of the version invalidates every earlier measurement.
 [[nodiscard]] bool pair_current(const MeasuredPair& pair);
@@ -57,12 +66,21 @@ struct MeasuredPair {
 // The generation key of a device (its chain's architecture, "sm89"); "" when the chain names none.
 [[nodiscard]] std::string gpu_generation(const GpuKey& gpu);
 
-// The profile the pair's measurements give on a card of `generation`: select() over them (and the
-// serving Engine's support, when given), deeper than kPortableDepth only on the lab card's
-// generation; its load bounds there, elsewhere one request speculates and two or more decode
-// plainly. A pair another engine version measured gives plain decode, disabled with the reason.
-[[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
-                                       const SelectOptions& options = {});
+// The portable profile of one measurement: select() over its configurations of at most
+// kPortableDepth drafts (and the serving Engine's support, when given), one request speculating
+// and two or more decoding plainly. A pair another engine version measured gives plain decode,
+// disabled with the reason.
+[[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options = {});
+
+// The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
+// on a card of a generation two of them measured and chose alike for (each default's
+// configuration), their profile with every measured depth, and their load bounds when they are
+// equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
+// from a measurement of this generation if there is one, else the first. Pairs another engine
+// version measured are left out; none left: plain decode, disabled with the reason.
+[[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
+                                         std::string_view generation,
+                                         const SelectOptions& options = {});
 
 // The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with
 // `kind`, of the target's bit class (below 4 bits, or 4 and above) when any is, else of the other.
