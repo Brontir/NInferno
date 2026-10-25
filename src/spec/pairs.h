@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,6 +48,10 @@ struct MeasuredPair {
     // mode, name, repo@commit of a separate one), measurements (one request at a time) and, from
     // spec-tune --load on that card, its load bounds.
     Profile tune;
+    // The drafters measured, by kind: a separate drafter's repo@revision ("" or absent: one built
+    // into the target, or not recorded). A target carrying another drafter of a kind is not
+    // measured for it (pair_choice).
+    std::map<std::string, std::string> drafters;
 };
 
 [[nodiscard]] nlohmann::json pair_json(const MeasuredPair& pair);
@@ -124,7 +129,12 @@ struct PairChoice {
                                                     std::string_view engine,
                                                     const std::vector<std::string>& kinds,
                                                     double target_bits, std::string_view generation,
-                                                    const SelectOptions& options = {});
+                                                    const SelectOptions& options = {},
+                                                    const std::map<std::string, std::string>& attached = {});
+// Whether two drafter identities (repo@revision) name one drafter: the same repository, and the
+// same revision where both say one (either may be a prefix of the other). True when either is
+// unknown ("").
+[[nodiscard]] bool same_drafter(std::string_view a, std::string_view b);
 
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,

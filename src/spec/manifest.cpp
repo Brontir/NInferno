@@ -394,6 +394,17 @@ void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
 //    weights it was converted from), else its group's preliminary choice. False when the registry
 //    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
 //    the published profiles answer.
+// The drafters a manifest attaches from a repository of their own, by kind: repo@revision.
+std::map<std::string, std::string> attached_identities(const SpeculationManifest& manifest) {
+    std::map<std::string, std::string> out;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable() && !d.repo.empty()) {
+            out[d.kind] = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+        }
+    }
+    return out;
+}
+
 bool resolve_pair_profile(const SpeculationManifest& manifest,
                           const std::filesystem::path& artifact, const GpuKey& gpu,
                           ResolvedSpeculation& out) {
@@ -416,7 +427,8 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
         if (d.usable()) { kinds.push_back(d.kind); }
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu));
+                              label_bits(quant), gpu_generation(gpu), {},
+                              attached_identities(manifest));
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
     // The model's own floors bound a fallback the pair does not cover (the head fallback).
@@ -654,8 +666,10 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
             }
         }
         const std::string family = manifest ? manifest->engine : std::string(engine);
+        const auto attached = manifest ? attached_identities(*manifest)
+                                       : std::map<std::string, std::string>{};
         if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
-                                      gpu_generation(gpu))) {
+                                      gpu_generation(gpu), {}, attached)) {
             // The model's own floors bound a fallback the pair does not cover (the head
             // fallback), as for a published profile.
             if (manifest) {
