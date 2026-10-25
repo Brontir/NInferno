@@ -327,6 +327,8 @@ private:
     std::optional<update::Release> release_; // the manifest's answer, once read
     std::uint64_t update_job_ = 0;            // the updater's process (0: none started)
     std::thread health_thread_, prefetch_thread_, catalog_thread_, update_thread_;
+    // The stops of old servers an update restarts (advance_updates, on the health thread).
+    std::vector<std::thread> update_stoppers_;
 };
 
 } // namespace ninferno::ui

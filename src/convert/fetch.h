@@ -127,7 +127,7 @@ void save_hub_token(const std::string& token);
 // Whether the cached `snapshot` holds the whole model fetch_model() would choose for `options`
 // (options.quant's GGUF model, else the weights; every shard a safetensors index names): what a
 // start may serve from it without the hub. With `projector` (--vision), a GGUF model's Vision
-// projector (mmproj-*.gguf, every part) too.
+// projector (mmproj-*.gguf, every part) too, and a checkpoint's Vision encoder (vision_config).
 [[nodiscard]] bool snapshot_holds_model(const std::filesystem::path& snapshot,
                                         const FetchOptions& options, const std::string& repo,
                                         bool projector = false);

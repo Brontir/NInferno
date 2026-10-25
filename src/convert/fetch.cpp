@@ -1,5 +1,7 @@
 #include "convert/fetch.h"
 
+#include "convert/cache.h"
+
 #include "core/ascii.h"
 #include "core/hex.h"
 #include "core/sha256.h"
@@ -1583,6 +1585,8 @@ bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
         });
         if (!here) { return false; }
     }
+    // A checkpoint asked with its Vision encoder: one that has it (its vision_config).
+    if (weights && !gguf && projector && !checkpoint_has_vision(snapshot)) { return false; }
     return weights;
 }
 

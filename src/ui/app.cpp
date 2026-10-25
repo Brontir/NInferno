@@ -633,6 +633,9 @@ App::~App() {
     stop();
     if (update_thread_.joinable()) { update_thread_.join(); }
     if (health_thread_.joinable()) { health_thread_.join(); }
+    for (auto& stopper : update_stoppers_) { // written by the health thread only, joined above
+        if (stopper.joinable()) { stopper.join(); }
+    }
     if (prefetch_thread_.joinable()) { prefetch_thread_.join(); }
     if (catalog_thread_.joinable()) { catalog_thread_.join(); }
 }
@@ -1636,7 +1639,8 @@ void App::advance_updates() {
                         continue;
                     }
                     sw.stopping = true;
-                    std::thread([this, id = sw.old_serve] { processes_.stop(id); }).detach();
+                    // Owned, and joined before the pool goes (~App): a stop outlives no App.
+                    update_stoppers_.emplace_back([this, id = sw.old_serve] { processes_.stop(id); });
                     continue;
                 }
                 if (found && !ended(old.state)) { continue; }
