@@ -394,8 +394,9 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 const DrafterAxis axis = drafter_axis(*own.subject, own.ask);
                 for (std::size_t i = 0; i < axis.served.size(); ++i) {
                     if (axis.served[i].engine.backend == served) {
-                        model.drafters = axis.options;
-                        c.drafter      = i + 1;
+                        model.drafters       = axis.options;
+                        c.drafter            = i + 1;
+                        row.estimate_drafter = axis.options[i].label;
                         break;
                     }
                 }
@@ -758,6 +759,7 @@ Json quant_plan_json(const QuantPlan& plan) {
             item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
                                 {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
                                 {"depth", row.estimate_depth},
+                                {"drafter", row.estimate_drafter},
                                 {"request_seconds", round_to(row.request_seconds, 0.001)},
                                 {"prompt", choice::kRequestPrompt},
                                 {"answer", choice::kRequestAnswer},

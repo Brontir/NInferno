@@ -154,6 +154,9 @@ struct QuantRow {
     // typical request (choice::kRequestPrompt + kRequestAnswer tokens). Not set for a row not planned.
     std::optional<choice::Speed> estimate;
     std::uint32_t estimate_depth = 0;
+    // The drafter the estimate decodes with ("dflash:7"), "" when it counts none: plain decode,
+    // or a drafter the plan serves whose gain no measurement gives (the choice's drafter axis).
+    std::string estimate_drafter;
     double request_seconds       = 0;
 };
 

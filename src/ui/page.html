@@ -2394,9 +2394,12 @@ function renderBody() {
       const st = selSt, here = localFor(sel.repo, q.quant);
       const mem = stale ? null : planMemory(selRow && selRow.plan), need = mem ? mem.need / GiB : 0;
       const cdoc = stale ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice && cdoc.choice.chosen;
-      const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth}
+      // The server's estimate counts the drafter it decodes with (est.drafter); the page's own
+      // gain only where it counts none.
+      const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth,
+                         drafter: cho.drafter && cho.drafter !== "plain" ? cho.drafter : ""}
                       : stale ? null : rowEstimate(rowPlan(q));
-      const plain = est ? est.decode_tok_s : 0, one = plain * specGain();
+      const plain = est ? est.decode_tok_s : 0, one = plain * (est && est.drafter ? 1 : specGain());
       // Run is never disabled on an estimate (M3): a row that does not fit warns.
       const gate = runGate(st, {unsupported, ctxBad, busy: stale}, planTr);
       const others = busyGpuModels(S.processes, gpu);
@@ -2435,7 +2438,7 @@ function renderBody() {
       const bits = x.bits ? x.bits : "";
       if (!st || !x.supported || st.cls === "off") return `<div class="q off" data-qi="${i}"><span></span><span class="mono">${name}</span><span class="muted">${bits}</span>
         <span class="num">${x.size_gib.toFixed(1)} GiB</span><span class="sub" style="grid-column:span ${parallel > 1 ? 4 : 3}">${x.drafter ? t(/mmproj/i.test(x.quant + " " + (x.files || []).join(" ")) ? "visionProj" : "drafter") : esc(st.why || t("over8"))}</span></div>`;
-      const e = stale ? null : rowEstimate(rowPlan(x)), gen = e ? e.decode_tok_s * specGain() : 0, pre = e ? e.prefill_tok_s : 0;
+      const e = stale ? null : rowEstimate(rowPlan(x)), gen = e ? e.decode_tok_s * (e.drafter ? 1 : specGain()) : 0, pre = e ? e.prefill_tok_s : 0;
       const r = rowPlan(x), mem = stale ? null : planMemory(r && r.plan);
       const dotTip = stale ? t("planning") : st.label + "\n" + st.tip;
       const instead = !stale && st.instead.length ? `<div class="fitalt">${t("fitsInstead")}: ${st.instead.map(f => `<button data-fitctx="${f.ctx}" data-fitpar="${f.par}" data-tip="${esc(t("fitsInsteadTip"))}">${esc(f.text)}</button>`).join("")}</div>` : "";
