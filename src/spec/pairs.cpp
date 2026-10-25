@@ -516,9 +516,17 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                    pair.engine == engine && pair.target != target &&
                    (pair.target_bits < 4) == (target_bits < 4);
         };
+        // Each sibling's own bits, before one card's records are pooled (a pooled record keeps
+        // its first pair's); one that measured a kind the target carries.
         double nearest = std::numeric_limits<double>::infinity();
-        for (const auto& p : measured_of(sibling_repo)) {
-            nearest = std::min(nearest, std::abs(p.target_bits - target_bits));
+        for (const auto& pair : pairs) {
+            if (sibling_repo(pair) && pair_current(pair) &&
+                std::any_of(pair.tune.measurements.begin(), pair.tune.measurements.end(),
+                            [&](const Measurement& m) {
+                                return m.config.enabled() && modes.contains(m.config.mode);
+                            })) {
+                nearest = std::min(nearest, std::abs(pair.target_bits - target_bits));
+            }
         }
         const auto nearest_sibling = [&](const MeasuredPair& pair) {
             return sibling_repo(pair) && std::abs(pair.target_bits - target_bits) == nearest;

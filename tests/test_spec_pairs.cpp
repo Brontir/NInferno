@@ -200,7 +200,20 @@ int main() {
         q8.target      = "sha:q8";
         q8.target_repo = "org/m-GGUF@c0ffee Q8_0";
         q8.target_bits = 8;
+        auto q5        = q4;
+        q5.target      = "sha:q5xl";
+        q5.target_repo = "org/m-GGUF@c0ffee UD-Q5_K_XL";
+        q5.target_bits = 5;
         const std::vector<sp::MeasuredPair> all = {q4, q8, bw_iq2, mtp_iq2};
+        // The nearest of one card's siblings, not its first (one card's records are pooled).
+        const std::vector<sp::MeasuredPair> three = {q4, q5, q8};
+        const auto q5m = sp::pair_choice(three, "sha:q5m", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                         "org/m-GGUF");
+        const auto q8x = sp::pair_choice(three, "sha:q8x", "qwen3_5", {"mtp"}, 8, "sm120", {}, {},
+                                         "org/m-GGUF");
+        expect(q5m && q5m->source.find("sibling org/m-GGUF UD-Q5_K_XL (") != std::string::npos &&
+                   q8x && q8x->source.find("sibling org/m-GGUF Q8_0 (") != std::string::npos,
+               "the sibling of the same bits among one card's siblings");
         const auto q5 = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
                                         "org/m-GGUF");
         expect(q5 && q5->basis == "preliminary" &&
