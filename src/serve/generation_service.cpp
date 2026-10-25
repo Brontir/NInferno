@@ -393,21 +393,19 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     // An explicit --spec without --draft-tokens drafts at the depth the model's profile runs that
     // backend with on this GPU (its default for the server's thinking flag), else at the default.
     if (options_.draft_tokens_from_model) {
+        // The profile's depth for this backend (product::profile_depth, as the plan reads it).
         std::string source;
-        std::vector<std::string> notes;
-        const auto profiled =
-            product::profile_speculation(options_.artifact_path, options_.device,
-                                         options_.enable_thinking.value_or(true), &source, &notes,
-                                         options_.spec_profile);
         const SpeculativeBackend backend = engine_options.speculative.backend;
-        if (profiled && profiled->backend == backend && profiled->draft_tokens != 0) {
-            engine_options.speculative.draft_tokens = profiled->draft_tokens;
+        const auto& resolved             = speculation_subject().resolved;
+        if (const auto depth = product::profile_depth(speculation_subject(), backend,
+                                                      options_.enable_thinking.value_or(true), &source)) {
+            engine_options.speculative.draft_tokens = *depth;
             draft_depth_source_                     = "the model's profile (" + source + ")";
         } else {
             engine_options.speculative.draft_tokens = product::default_draft_tokens(backend);
-            draft_depth_source_ = profiled ? "the default (the model's profile drafts with "
-                                             "another backend)"
-                                           : "the default (the model has no profile for this GPU)";
+            draft_depth_source_ = resolved && resolved->found()
+                                      ? "the default (the model's profile drafts otherwise)"
+                                      : "the default (the model has no profile for this GPU)";
         }
         options_.speculative.draft_tokens = engine_options.speculative.draft_tokens;
     }

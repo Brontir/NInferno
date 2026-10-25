@@ -39,21 +39,14 @@ namespace ninferno::product {
 // per round when the profile recorded none.
 [[nodiscard]] double watchdog_floor(double measured) noexcept;
 
-// The speculation an artifact came with for this GPU (a maintainer's local tune, else the
-// published profile in its <artifact>.speculation.json), as one engine configuration: nullopt when
-// there is none, its drafter is not in the artifact or the Engine cannot run the choice (a note
-// says which): the profile's thinking or non-thinking default. `source` names where it came from;
-// `notes` explain passed-over sources. A "+head" choice on an artifact converted without the
-// proposal head drafts with the full head (same drafter and K), and a note says so.
-[[nodiscard]] std::optional<SpeculativeOptions>
-profile_speculation(const std::filesystem::path& artifact, int device, std::optional<bool> thinking,
-                    std::string* source, std::vector<std::string>* notes,
-                    const std::filesystem::path& local_profile = {});
-
-// The same for one choice of an already resolved profile (with the profile's context bound).
-[[nodiscard]] std::optional<SpeculativeOptions>
-speculation_of(const spec::Choice& choice, const spec::ResolvedSpeculation& resolved,
-               bool proposal_head, std::vector<std::string>* notes);
+// The depth an explicit --spec of `backend` takes from the model's profile when --draft-tokens is
+// not given: the profile's served choice for `thinking` (engine_choices, what the Engine runs)
+// where it drafts with that backend. nullopt: the backend's default (no profile, or its choice
+// drafts otherwise). `source` names the profile and its choice. One code for the server's start
+// and the plan of one.
+[[nodiscard]] std::optional<std::uint32_t> profile_depth(const SpeculationSubject& subject,
+                                                         SpeculativeBackend backend, bool thinking,
+                                                         std::string* source = nullptr);
 
 // A choice a product took from the profile (or one of its fallbacks) with the settings the
 // operator gives every configuration: the watchdog's window, minimum rounds and shared trip floor,
