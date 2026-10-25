@@ -23,6 +23,19 @@ namespace ninferno::product {
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
 
+// The drafter axis (choice/SPECULATION.md S3): beside plain decode, one option per speculation
+// mode the subject's profile chose or measured and its Engine runs. A profile with measurements
+// (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
+// without offers its own choice. Each option carries the served speculation a start of it runs
+// (served_speculation over the profile of that mode), its gain the profile's choice for the
+// server's thinking flag, and the streams from which its load table decodes plainly.
+struct DrafterAxis {
+    std::vector<choice::DrafterOption> options;
+    std::vector<ServedSpeculation> served;
+    std::size_t default_drafter = 0; // the subject's own served choice (0: plain)
+};
+[[nodiscard]] DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask);
+
 struct ServedChoice {
     std::vector<choice::QuantOption> quants; // the one quantization planned
     choice::Task task;

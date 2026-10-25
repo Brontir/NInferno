@@ -369,8 +369,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            const choice::ModelFacts model = choice_model_of(facts);
-            const choice::CardFacts card   = choice_card_of(inputs.gpu);
+            choice::ModelFacts model     = choice_model_of(facts);
+            const choice::CardFacts card = choice_card_of(inputs.gpu);
             choice::QuantOption q;
             q.label           = row.listing.quant;
             q.weight_bytes    = static_cast<double>(row.weight_bytes);
@@ -386,6 +386,20 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             c.state       = row.planned.plan.recurrent;
             c.ring        = inputs.options.sliding_kv_cache;
             c.activations = inputs.options.activations;
+            // The drafter this row's plan serves, at the gain the choice weighs it with: the
+            // row's speed is of what the row would run.
+            const SpeculativeBackend served = row.planned.speculation.engine.backend;
+            if (const DryRunInputs own = inputs_for(inputs, row.listing);
+                served != SpeculativeBackend::None && own.subject != nullptr) {
+                const DrafterAxis axis = drafter_axis(*own.subject, own.ask);
+                for (std::size_t i = 0; i < axis.served.size(); ++i) {
+                    if (axis.served[i].engine.backend == served) {
+                        model.drafters = axis.options;
+                        c.drafter      = i + 1;
+                        break;
+                    }
+                }
+            }
             choice::Task task;
             task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
             const std::uint32_t context =

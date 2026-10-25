@@ -436,12 +436,24 @@ int main(int argc, char** argv) {
                 }
                 profiled = ninferno::product::served_speculation(
                     *subject, cli.enable_thinking.value_or(true), false);
+                if (profiled) {
+                    for (const auto& note : profiled->notes) {
+                        logger->info("speculation: {}", note);
+                    }
+                }
                 if (profiled && profiled->menu.mode != ninferno::spec::Mode::None) {
                     engine_options.speculative =
                         ninferno::product::with_given_settings(profiled->engine, cli.speculative);
                     logger->info("speculation: {}", profiled->source);
-                } else {
+                } else if (profiled) {
+                    logger->info("speculation: plain decode, the profile's ({})", profiled->source);
                     profiled.reset();
+                } else {
+                    for (const auto& note : ninferno::product::speculation_notes(
+                             cli.artifact_path, cli.device, cli.spec_profile)) {
+                        logger->info("speculation: {}", note);
+                    }
+                    logger->info("speculation: none (no profile for this model on this GPU)");
                 }
             }
         }

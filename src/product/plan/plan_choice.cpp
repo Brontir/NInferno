@@ -48,17 +48,15 @@ Json estimates_json(const choice::Scored& s) {
             {"worth", round_to(s.worth, 4)}};
 }
 
-// The drafter axis (choice/SPECULATION.md S3): beside plain decode, one option per speculation
-// mode the subject's profile chose or measured and its Engine runs. A profile with measurements
-// (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
-// without offers its own choice. Each option carries the served speculation a start of it runs
-// (served_speculation over the profile of that mode), its gain the profile's choice for the
-// server's thinking flag, and the streams from which its load table decodes plainly.
-struct DrafterAxis {
-    std::vector<choice::DrafterOption> options;
-    std::vector<ServedSpeculation> served;
-    std::size_t default_drafter = 0; // the subject's own served choice (0: plain)
-};
+Json candidate_json(const choice::Candidate& c) {
+    return {{"chunk", c.chunk},
+            {"kv", std::string(kv_cache_storage_name(c.kv))},
+            {"ring", std::string(kv_cache_storage_name(c.ring))},
+            {"state", std::string(recurrent_state_storage_name(c.state))},
+            {"activations", activation_name(c.activations)}};
+}
+
+} // namespace
 
 DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask) {
     DrafterAxis out;
@@ -100,16 +98,6 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
     }
     return out;
 }
-
-Json candidate_json(const choice::Candidate& c) {
-    return {{"chunk", c.chunk},
-            {"kv", std::string(kv_cache_storage_name(c.kv))},
-            {"ring", std::string(kv_cache_storage_name(c.ring))},
-            {"state", std::string(recurrent_state_storage_name(c.state))},
-            {"activations", activation_name(c.activations)}};
-}
-
-} // namespace
 
 choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     const runtime::PlanModelFacts m = facts.model;

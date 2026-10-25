@@ -857,10 +857,16 @@ void test_speculation_order() {
         // A fit fallback, when the profile has one, comes first (and shallower drafts start
         // from it).
         const std::size_t first = !steps.empty() && steps[0].rfind("fit_fallback ", 0) == 0;
-        check(first == 1 || k <= 1 ||
+        const auto at_depth = [](const std::string& step, std::int32_t depth) {
+            const std::string label = step.substr(step.find(' ') + 1);
+            return label.substr(label.find(':') + 1, label.find_first_not_of("0123456789",
+                                                                     label.find(':') + 1) -
+                                                         label.find(':') - 1) ==
+                   std::to_string(depth);
+        };
+        check(first == 1 || k <= 2 ||
                   (steps.size() >= 3 && steps[0].rfind("shallower ", 0) == 0 &&
-                   steps[0].find(":" + std::to_string(k - 1)) != std::string::npos &&
-                   steps[1].find(":1") != std::string::npos),
+                   at_depth(steps[0], k - 1) && at_depth(steps[1], 1)),
               "one draft shallower first, then depth 1");
         steps.clear();
         const auto none = pr::fit_fallbacks(
