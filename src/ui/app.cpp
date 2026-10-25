@@ -1686,7 +1686,7 @@ void App::advance_updates() {
                                " was kept: " + error.what();
             }
         }
-        update.state = "done";
+        update.state = "done"; // switched; an old conversion kept is said in error
     }
 }
 

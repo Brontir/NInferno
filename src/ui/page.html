@@ -1346,6 +1346,8 @@ async function refreshMoved(force) {
     updates[k] = u;
     // Said once, when it ends so: the list shows it only while the old conversion is listed.
     if (u.state === "failed" && updating(was[k])) showError(u.repo + ": " + t("mvFailed").replace("{e}", u.error));
+    // Switched, but the old conversion could not be removed (a model started on it meanwhile).
+    else if (u.state === "done" && u.error && updating(was[k])) showError(u.repo + ": " + u.error);
   }
   for (const e of j.models || []) if (!e.accepted) for (const a of e.artifacts) moved[a] = e;
   if (JSON.stringify([moved, updates]) !== before && tab === "models") refreshMine();
