@@ -436,6 +436,9 @@ void checkpoint_mtp() {
            "NextN layers declared in text_config");
     expect(!cv::sharded_checkpoint_mtp({{"mtp_num_hidden_layers", 1}}, listed),
            "declared MTP layers the index does not list");
+    expect(cv::sharded_checkpoint_mtp(Json::object(),
+                                      {{"weight_map", {{"mtp.fc.weight", "model-2.safetensors"}}}}),
+           "MTP layers the index lists, the config silent");
 }
 
 // A failed drafter is retried by the next run; a failed own quantization is not.
