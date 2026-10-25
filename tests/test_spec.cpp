@@ -365,7 +365,7 @@ int test_select() {
 }
 
 // What the serving Engine runs (spec/engine_support.h), and the served choices a tune records when
-// its own choices need more (Gemma 4: the Session runs DFlash and adaptive depths).
+// its own choices need more (Gemma 4: the Session runs DFlash, the Engine does not).
 int test_served() {
     int failures = 0;
     const auto gemma = engine_support("gemma4_text");

@@ -310,10 +310,12 @@ Notes that often matter:
   carry `Retry-After`. A streamed request has its HTTP 200 and event-stream headers sent when it
   is admitted to the queue, so its queue timeout arrives as the dialect's error event
   (the same code and message) and the stream ends.
-- **Speculation needs a profile.** `--spec auto` speculates with the profile measured for the
-  model and GPU. A model without one for this GPU (most GGUF conversions of models nobody
-  measured) decodes plainly, and the startup log says so; `--spec mtp` or `--spec dflash`
-  speculates anyway at the default depth.
+- **Speculation without a profile.** `--spec auto` speculates with the profile measured for the
+  model and GPU (the lab's measured pair for these weights, its group's, or a published profile).
+  A model without one for this GPU drafts with the drafter it carries at its default (MTP 3, with
+  the proposal head when it has one; else DFlash2 or DFlash 7), its watchdog floors raised so a
+  configuration that does not pay stops, and the startup log says so; a model without a drafter
+  decodes plainly. `--spec mtp` or `--spec dflash` speculates at the default depth.
 - **Speculation needs room.** With `--spec auto`, an explicit `--max-context`, more than one
   request and the automatic KV pool, the drafter's weights and state come out of the pool. When
   the pool then holds fewer full contexts than `--max-concurrency` and plain decode holds more, the server
