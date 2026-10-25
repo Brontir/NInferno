@@ -1491,6 +1491,92 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 
 } // namespace
 
+std::string snapshot_quant_label(const fs::path& snapshot, const FetchOptions& options,
+                                 const std::string& repo) {
+    std::error_code ec;
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    try {
+        for (const auto& file : choose_files(listing, options, repo)) {
+            if (ascii_lower(file.path).ends_with(".gguf")) {
+                return gguf_quant_label(fs::path(file.path).filename().string());
+            }
+        }
+    } catch (const std::exception&) {}
+    return {};
+}
+
+bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
+                          const std::string& repo, bool projector) {
+    std::error_code ec;
+    if (!fs::is_directory(snapshot, ec)) { return false; }
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        // A link to a blob not yet downloaded is no regular file. Its size: a width selector
+        // (--quant 4bit) picks the largest candidate of that width.
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    std::vector<RemoteFile> chosen;
+    try {
+        chosen = choose_files(listing, options, repo);
+    } catch (const std::exception&) {
+        return false; // no model there for options.quant
+    }
+    // Every part of a split GGUF ("x-00001-of-00003.gguf"): a download stopped after one part
+    // leaves the others unlinked, and the listing above sees only what is there.
+    const auto all_parts = [&](const std::string& path) {
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+        std::smatch match;
+        if (!std::regex_match(path, match, split)) { return true; }
+        const int parts = std::stoi(match[2].str());
+        for (int part = 1; part <= parts; ++part) {
+            char suffix[32];
+            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.gguf", part, parts);
+            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix), ec)) { return false; }
+        }
+        return true;
+    };
+    bool weights = false, gguf = false;
+    for (const auto& file : chosen) {
+        const auto name = ascii_lower(file.path);
+        if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        gguf = gguf || name.ends_with(".gguf");
+        if (!all_parts(file.path)) { return false; }
+        // Every shard a safetensors index names.
+        if (name.ends_with("model.safetensors.index.json")) {
+            try {
+                std::ifstream in(snapshot / file.path);
+                const auto index = Json::parse(in);
+                for (const auto& [tensor, shard] : index.at("weight_map").items()) {
+                    if (!fs::is_regular_file(snapshot / shard.get<std::string>(), ec)) { return false; }
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+    }
+    // A GGUF model asked with its Vision projector (--vision): the projector here too, whole.
+    if (weights && gguf && projector) {
+        const bool here = std::any_of(listing.files.begin(), listing.files.end(), [&](const auto& f) {
+            const auto file = ascii_lower(fs::path(f.path).filename().string());
+            return file.starts_with("mmproj") && file.ends_with(".gguf") && all_parts(f.path);
+        });
+        if (!here) { return false; }
+    }
+    return weights;
+}
+
+
 std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
     if (hub_offline()) { return std::nullopt; }
     auto [repo, revision] = split_spec(spec, options);

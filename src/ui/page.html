@@ -193,6 +193,9 @@ a.btnlink:hover{background:var(--soft)}
 .update.required{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .update .msg{flex:1;min-width:200px}
 .update a{color:var(--accent)}
+#mvdlg{border:1px solid var(--line);border-radius:12px;padding:16px 18px;max-width:32em;background:var(--panel);color:var(--fg)}
+#mvdlg::backdrop{background:#0006}
+#mvdlg .acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
 .choicet{border-collapse:collapse;font-size:12px;margin-top:4px}.choicet th,.choicet td{padding:2px 8px;text-align:left;border-bottom:1px solid var(--line, #8883)}.choicet td.num{text-align:right}.choicet .cgood{color:#2e9e5b}.choicet .cbad{color:#d14b4b}.choicet td.sub{max-width:240px}
 </style>
 </head>
@@ -220,6 +223,12 @@ a.btnlink:hover{background:var(--soft)}
   <button class="ghost" id="updlater"></button>
   <button class="primary" id="updgo"></button>
 </div>
+
+<dialog id="mvdlg">
+  <b id="mvtitle"></b>
+  <p id="mvbody"></p>
+  <div class="acts"><button class="ghost" id="mvlater"></button><button class="ghost" id="mvkeep"></button><button class="primary" id="mvget"></button></div>
+</dialog>
 
 <div class="gpus" id="gpus"></div>
 
@@ -989,6 +998,19 @@ for (const [code, words] of Object.entries({
   zh:{hubMoved:"Hub 上有此模型的更新权重",keepThese:"保留当前",keepTip:"将这些权重视为有效（现在及以后）",refetchNew:"下载新权重",refetchTip:"下载新权重、转换并删除当前权重"},
   ja:{hubMoved:"ハブにこのモデルの新しい重みがあります",keepThese:"これを使い続ける",keepTip:"この重みを今後も有効として扱う",refetchNew:"新しい重みを取得",refetchTip:"新しい重みをダウンロード・変換し、これを削除"},
 })) { if (T[code]) Object.assign(T[code], words); }
+// Its update (/api/moved "updates"): the popup that offers it, and how far it is.
+for (const [code, words] of Object.entries({
+  en:{"mvTitle":"The model was updated on the hub","mvBody":"{m}: the hub has newer weights ({old} → {new}). These keep working until you choose. The new download runs in the background; a running model switches to it once, when it has no request.","mvLater":"Later","mvDownloading":"Updating: downloading{p}","mvSwitching":"Updating: switches to the new weights when idle","mvFailed":"Update failed: {e}","mvDone":"Updated to the new weights"},
+  ru:{"mvTitle":"Модель обновилась на хабе","mvBody":"{m}: на хабе новые веса ({old} → {new}). Эти работают, пока вы не решите. Новые качаются в фоне; запущенная модель переключится на них один раз, когда у неё не будет запроса.","mvLater":"Позже","mvDownloading":"Обновление: скачивание{p}","mvSwitching":"Обновление: переключится на новые веса в простое","mvFailed":"Обновление не удалось: {e}","mvDone":"Обновлено на новые веса"},
+  uk:{"mvTitle":"Модель оновилася на хабі","mvBody":"{m}: на хабі нові ваги ({old} → {new}). Ці працюють, доки ви не вирішите. Нові завантажуються у фоні; запущена модель перемкнеться на них один раз, коли в неї не буде запиту.","mvLater":"Пізніше","mvDownloading":"Оновлення: завантаження{p}","mvSwitching":"Оновлення: перемкнеться на нові ваги в простої","mvFailed":"Оновлення не вдалося: {e}","mvDone":"Оновлено на нові ваги"},
+  de:{"mvTitle":"Das Modell wurde auf dem Hub aktualisiert","mvBody":"{m}: Der Hub hat neuere Gewichte ({old} → {new}). Diese laufen weiter, bis Sie entscheiden. Der neue Download läuft im Hintergrund; ein laufendes Modell wechselt einmal darauf, wenn es keine Anfrage hat.","mvLater":"Später","mvDownloading":"Aktualisierung: Download{p}","mvSwitching":"Aktualisierung: wechselt im Leerlauf auf die neuen Gewichte","mvFailed":"Aktualisierung fehlgeschlagen: {e}","mvDone":"Auf die neuen Gewichte aktualisiert"},
+  fr:{"mvTitle":"Le modèle a été mis à jour sur le hub","mvBody":"{m} : le hub a des poids plus récents ({old} → {new}). Ceux-ci restent utilisés jusqu'à votre choix. Le nouveau téléchargement se fait en arrière-plan ; un modèle lancé y bascule une fois, quand il n'a pas de requête.","mvLater":"Plus tard","mvDownloading":"Mise à jour : téléchargement{p}","mvSwitching":"Mise à jour : bascule sur les nouveaux poids au repos","mvFailed":"Échec de la mise à jour : {e}","mvDone":"Mis à jour vers les nouveaux poids"},
+  es:{"mvTitle":"El modelo se actualizó en el hub","mvBody":"{m}: el hub tiene pesos más recientes ({old} → {new}). Estos siguen funcionando hasta que decida. La nueva descarga va en segundo plano; un modelo en marcha cambia a ella una vez, cuando no tenga peticiones.","mvLater":"Más tarde","mvDownloading":"Actualizando: descarga{p}","mvSwitching":"Actualizando: cambia a los pesos nuevos en reposo","mvFailed":"La actualización falló: {e}","mvDone":"Actualizado a los pesos nuevos"},
+  it:{"mvTitle":"Il modello è stato aggiornato sull'hub","mvBody":"{m}: sull'hub ci sono pesi più recenti ({old} → {new}). Questi restano in uso finché non decidi. Il nuovo download va in background; un modello avviato passa ad esso una volta, quando non ha richieste.","mvLater":"Più tardi","mvDownloading":"Aggiornamento: download{p}","mvSwitching":"Aggiornamento: passa ai nuovi pesi quando è inattivo","mvFailed":"Aggiornamento non riuscito: {e}","mvDone":"Aggiornato ai nuovi pesi"},
+  pl:{"mvTitle":"Model zaktualizowano na hubie","mvBody":"{m}: na hubie są nowsze wagi ({old} → {new}). Te działają, dopóki nie zdecydujesz. Nowe pobierają się w tle; uruchomiony model przełączy się na nie raz, gdy nie będzie miał żądania.","mvLater":"Później","mvDownloading":"Aktualizacja: pobieranie{p}","mvSwitching":"Aktualizacja: przełączy się na nowe wagi w bezczynności","mvFailed":"Aktualizacja nie powiodła się: {e}","mvDone":"Zaktualizowano do nowych wag"},
+  zh:{"mvTitle":"模型已在 Hub 上更新","mvBody":"{m}：Hub 上有更新的权重（{old} → {new}）。在您决定之前继续使用当前权重。新权重在后台下载；运行中的模型会在空闲时切换一次。","mvLater":"稍后","mvDownloading":"更新中：下载{p}","mvSwitching":"更新中：空闲时切换到新权重","mvFailed":"更新失败：{e}","mvDone":"已更新到新权重"},
+  ja:{"mvTitle":"ハブでモデルが更新されました","mvBody":"{m}: ハブに新しい重みがあります（{old} → {new}）。決めるまで現在の重みで動きます。新しい重みはバックグラウンドで取得し、実行中のモデルはリクエストがないときに一度だけ切り替わります。","mvLater":"後で","mvDownloading":"更新中: ダウンロード{p}","mvSwitching":"更新中: アイドル時に新しい重みへ切り替え","mvFailed":"更新に失敗しました: {e}","mvDone":"新しい重みに更新しました"},
+})) { if (T[code]) Object.assign(T[code], words); }
 // The plan's words (the fit, the star and the memory come from the server's planner): English and
 // Russian; the other languages show the English ones.
 Object.assign(T.en, {
@@ -1311,17 +1333,65 @@ function setTab(name) {
 let mine = [];
 const confirming = new Set();
 // Converted hub models whose branch the hub now names at another commit and that the user has not
-// kept (/api/moved, asked at most every 10 minutes): artifact path -> {repo, ref, commit, ...}.
-let moved = {}, movedAt = 0;
-async function refreshMoved() {
-  if (Date.now() - movedAt < 600000) return;
+// kept (/api/moved, asked at most every 10 minutes, every 5 s while an update runs): artifact path
+// -> {repo, ref, commit, ...}; and the updates asked for, by repo@ref. Nothing here starts an
+// update: the popup offers it once per new commit ("Later" asks again at the next one), the
+// list keeps the buttons.
+let moved = {}, movedAt = 0, updates = {}, movedAsked = null;
+const updating = u => u && (u.state === "downloading" || u.state === "switching");
+async function refreshMoved(force) {
+  const busy = Object.values(updates).some(updating);
+  if (!force && Date.now() - movedAt < (busy ? 5000 : 600000)) return;
   movedAt = Date.now();
   let j;
   try { j = await api("/api/moved"); } catch (e) { return; }
-  moved = {};
+  const before = JSON.stringify([moved, updates]), was = updates;
+  moved = {}; updates = {};
+  for (const u of j.updates || []) {
+    const k = u.repo + "@" + u.ref;
+    updates[k] = u;
+    // Said once, when it ends so: the list shows it only while the old conversion is listed.
+    if (u.state === "failed" && updating(was[k])) showError(u.repo + ": " + t("mvFailed").replace("{e}", u.error));
+    // Switched, but the old conversion could not be removed (a model started on it meanwhile).
+    else if (u.state === "done" && u.error && updating(was[k])) showError(u.repo + ": " + u.error);
+  }
   for (const e of j.models || []) if (!e.accepted) for (const a of e.artifacts) moved[a] = e;
-  if (Object.keys(moved).length && tab === "models") refreshMine();
+  if (JSON.stringify([moved, updates]) !== before && tab === "models") refreshMine();
+  offerMoved();
+  if (Object.values(updates).some(updating)) setTimeout(() => refreshMoved(), 5000);
 }
+function movedLater(e) { return "ninferno-moved-later:" + e.repo + "@" + e.ref + "@" + e.hub_commit; }
+function offerMoved() {
+  if ($("mvdlg").open) return;
+  for (const e of new Set(Object.values(moved))) {
+    if (updating(updates[e.repo + "@" + e.ref])) continue;
+    let later = false;
+    try { later = !!localStorage.getItem(movedLater(e)); } catch (er) {}
+    if (later) continue;
+    movedAsked = e;
+    $("mvtitle").textContent = t("mvTitle");
+    $("mvbody").textContent = t("mvBody").replace("{m}", e.repo + (e.ref === "main" ? "" : "@" + e.ref))
+      .replace("{old}", e.commit.slice(0, 12)).replace("{new}", e.hub_commit.slice(0, 12));
+    $("mvlater").textContent = t("mvLater");
+    $("mvkeep").textContent = t("keepThese"); $("mvkeep").title = t("keepTip");
+    $("mvget").textContent = t("refetchNew"); $("mvget").title = t("refetchTip");
+    $("mvdlg").showModal();
+    return;
+  }
+}
+async function answerMoved(e, keep) {
+  try { await api("/api/moved", {repo: e.repo, ref: e.ref, commit: e.commit, action: keep ? "accept" : "refetch"}); }
+  catch (er) { showError(er.message); return; }
+  await refreshMoved(true);
+  refreshMine();
+  if (!keep) refreshState();
+}
+$("mvlater").onclick = () => {
+  if (movedAsked) try { localStorage.setItem(movedLater(movedAsked), "1"); } catch (er) {}
+  $("mvdlg").close();
+};
+$("mvkeep").onclick = () => { $("mvdlg").close(); if (movedAsked) answerMoved(movedAsked, true); };
+$("mvget").onclick = () => { $("mvdlg").close(); if (movedAsked) answerMoved(movedAsked, false); };
 async function refreshMine() {
   let j;
   try { j = await api("/api/local"); } catch (e) { setTimeout(refreshMine, 2000); return; }  // ninferno-ui restarting
@@ -1335,10 +1405,14 @@ async function refreshMine() {
                   (m.mtp ? `<span class="icon i-spec" title="${t("spec")}">⚡</span>` : "") +
                   (m.running ? `<span class="icon i-run" title="${t("running")}">▶</span>` : "");
     const key = "d" + i;
-    const mv = m.running ? null : moved[m.artifact];
-    const movedLine = mv ? `<div class="sub"><span class="warn" title="${esc(mv.ref)}: ${esc(mv.commit.slice(0, 12))} → ${esc(mv.hub_commit.slice(0, 12))}">⚠ ${t("hubMoved")}</span>
-        <button class="ghost" data-mvkeep="${i}" title="${t("keepTip")}">${t("keepThese")}</button>
-        <button class="ghost" data-mvget="${i}" title="${t("refetchTip")}">${t("refetchNew")}</button></div>` : "";
+    const mv = moved[m.artifact], up = mv && updates[mv.repo + "@" + mv.ref];
+    const pct = up ? up.prepares.filter(p => p >= 0) : [];
+    const upLine = !up ? "" : updating(up)
+      ? `<span class="warn">⟳ ${esc(up.state === "downloading" ? t("mvDownloading").replace("{p}", pct.length ? " " + Math.min(...pct) + "%" : "") : t("mvSwitching"))}</span>`
+      : up.state === "failed" ? `<span class="warn">⚠ ${esc(t("mvFailed").replace("{e}", up.error))}</span>` : "";
+    const movedLine = !mv ? "" : `<div class="sub">${upLine || `<span class="warn" title="${esc(mv.ref)}: ${esc(mv.commit.slice(0, 12))} → ${esc(mv.hub_commit.slice(0, 12))}">⚠ ${t("hubMoved")}</span>`}
+        ${updating(up) ? "" : `<button class="ghost" data-mvkeep="${i}" title="${t("keepTip")}">${t("keepThese")}</button>
+        <button class="ghost" data-mvget="${i}" title="${t("refetchTip")}">${t("refetchNew")}</button>`}</div>`;
     const del = confirming.has(m.artifact)
       ? `<span class="confirm">${t("delq")} <button class="danger" data-delyes="${i}">${t("yes")}</button><button data-delno="${i}">${t("no")}</button></span>`
       : `<button class="ghost danger" data-del="${i}" title="${t("del")}">🗑</button>`;
@@ -2606,11 +2680,7 @@ document.addEventListener("click", async ev => {
   }
   else if (d.mvkeep !== undefined || d.mvget !== undefined) {
     const keep = d.mvkeep !== undefined, e = moved[mine[+(keep ? d.mvkeep : d.mvget)].artifact];
-    if (!e) return;
-    try { await api("/api/moved", {repo: e.repo, ref: e.ref, commit: e.commit, action: keep ? "accept" : "refetch"}); }
-    catch (er) { showError(er.message); return; }
-    for (const a of e.artifacts) delete moved[a];
-    if (keep) refreshMine(); else { setTab("downloads"); refreshState(); }
+    if (e) answerMoved(e, keep);
   }
   else if (d.hubsel) setHub(d.hubsel);
   else if (d.sort) {
