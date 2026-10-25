@@ -420,6 +420,9 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
                               label_bits(quant), gpu_generation(gpu));
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
+    // The model's own floors bound a fallback the pair does not cover (the head fallback).
+    std::string origin;
+    out.floor_sources = manifest_profiles(manifest, artifact, origin);
     out.source  = std::move(choice->source);
     out.basis   = std::move(choice->basis);
     out.sha256  = registry.source_sha256();
@@ -618,13 +621,18 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
         const std::string family = manifest ? manifest->engine : std::string(engine);
         if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
                                       gpu_generation(gpu))) {
+            // The model's own floors bound a fallback the pair does not cover (the head
+            // fallback), as for a published profile.
             if (manifest) {
                 out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
                 attach_drafters(*manifest, choice->profile, out);
+                std::string origin;
+                out.floor_sources = manifest_profiles(*manifest, label, origin);
             } else {
                 for (const auto& name : referenced(choice->profile)) {
                     if (components.contains(name)) { out.drafters[name] = "component:" + name; }
                 }
+                if (entry != nullptr) { out.floor_sources = entry->profiles; }
             }
             out.source  = std::move(choice->source);
             out.basis   = std::move(choice->basis);

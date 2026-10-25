@@ -2,11 +2,14 @@
 // (tests/fixtures/spec_pairs: Qwen3.5-9B with DFlash and MTP, gpt-oss-20b with DFlash, on an RTX
 // 4070 Ti / 4090 (sm89) and an RTX 5070 Ti (sm120)).
 
+#include "spec/manifest.h"
 #include "spec/pairs.h"
+#include "spec/registry.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -210,6 +213,29 @@ int main() {
         sp::GpuKey gpu;
         gpu.chain = {"ad104:60sm", "ad104", "sm89", "ad102", "*"};
         expect(sp::gpu_generation(gpu) == "sm89", "an Ada card's generation");
+    }
+    // A pair's profile keeps the model's published floors (a head fallback reads them), as a
+    // published profile does: the registry with this pair, resolved for a planned target.
+    {
+        std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/src/spec/data/drafter_registry.json");
+        nlohmann::json doc = nlohmann::json::parse(in);
+        doc["pairs"]       = nlohmann::json::array({sp::pair_json(ada_q4)});
+        const auto path    = std::filesystem::temp_directory_path() / "ninferno_spec_pairs_registry.json";
+        std::ofstream(path) << doc.dump();
+        sp::Registry::use_file(path);
+        const sp::ModelEntry* entry = sp::Registry::builtin().by_id("qwen3.5-9b");
+        expect(entry != nullptr, "the registry has qwen3.5-9b");
+        if (entry != nullptr) {
+            sp::GpuKey gpu;
+            gpu.chain = {"ad104:60sm", "ad104", "sm89", "ad102", "*"};
+            const auto resolved = sp::resolve_planned_speculation(
+                std::nullopt, entry, {"mtp", "dflash"}, gpu, "planned", ada_q4.target, "Q4_K_M",
+                "qwen3_5");
+            expect(resolved.basis == "measured" && resolved.floor_sources.is_array() &&
+                       !resolved.floor_sources.empty(),
+                   "a pair's profile keeps the model's published floors: " + resolved.basis);
+        }
+        std::filesystem::remove(path);
     }
     std::cout << (failures == 0 ? "spec pairs: ok\n" : "spec pairs: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
