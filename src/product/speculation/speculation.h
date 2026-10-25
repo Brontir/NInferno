@@ -39,15 +39,6 @@ namespace ninferno::product {
 // per round when the profile recorded none.
 [[nodiscard]] double watchdog_floor(double measured) noexcept;
 
-// The depth an explicit --spec of `backend` takes from the model's profile when --draft-tokens is
-// not given: the profile's served choice for `thinking` (engine_choices, what the Engine runs)
-// where it drafts with that backend. nullopt: the backend's default (no profile, or its choice
-// drafts otherwise). `source` names the profile and its choice. One code for the server's start
-// and the plan of one.
-[[nodiscard]] std::optional<std::uint32_t> profile_depth(const SpeculationSubject& subject,
-                                                         SpeculativeBackend backend, bool thinking,
-                                                         std::string* source = nullptr);
-
 // A choice a product took from the profile (or one of its fallbacks) with the settings the
 // operator gives every configuration: the watchdog's window, minimum rounds and shared trip floor,
 // and the copy rounds that ride MTP (--ngram-*). The profile picks what drafts and how deep; these
@@ -109,6 +100,15 @@ void apply_builtin_default(SpeculationSubject& subject);
 
 [[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
                                                                   bool thinking, bool per_request);
+
+// The depth an explicit --spec of `backend` takes from the model's profile when --draft-tokens is
+// not given: the profile's served choice for `thinking` (engine_choices, what the Engine runs)
+// where it drafts with that backend. nullopt: the backend's default (no profile, or its choice
+// drafts otherwise). `source` names the profile and its choice. One code for the server's start
+// and the plan of one.
+[[nodiscard]] std::optional<std::uint32_t> profile_depth(const SpeculationSubject& subject,
+                                                         SpeculativeBackend backend, bool thinking,
+                                                         std::string* source = nullptr);
 
 // Whether each request should run at its own thinking flag's choice (--spec-select thinking) rather
 // than every request at the server's default (`thinking`'s): where the profile's measurements say
@@ -229,7 +229,6 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
 // as no manifest beside it); empty when served_speculation finds one.
 [[nodiscard]] std::vector<std::string> speculation_notes(const std::filesystem::path& artifact,
                                                          int device, const std::filesystem::path& local_profile = {});
-
 
 // What the Engine runs of the artifact's speculation (none when its model_type is unreadable).
 [[nodiscard]] spec::EngineSupport engine_support(const std::filesystem::path& artifact);
