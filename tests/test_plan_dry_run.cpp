@@ -733,6 +733,10 @@ void test_rule() {
                       what + ": the worth weighs within the rule's side of the floor");
                 check(pick.fit.own_context >= ada.pick->target_context,
                       what + ": the worth's pick holds the target each");
+                check(ada.trade && ada.trade->time_ratio > 1 && ada.trade->kld_delta < 0 &&
+                          ada.rule.find("lambda 25: 0.001 KLD is worth 2.5 % of a request's time") !=
+                              std::string::npos,
+                      what + ": the trade said (the largest slower and more accurate): " + ada.rule);
             }
             std::cout << "  Ada 27B " << what << ": "
                       << (ada.pick ? ada.rows[ada.pick->index].listing.quant : std::string("-"))
