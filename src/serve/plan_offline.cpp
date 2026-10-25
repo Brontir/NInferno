@@ -515,6 +515,13 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
                 again.subject  = &*chosen_subject;
             }
             planned = product::plan_model(facts, again);
+            if (*drafter == spec::Mode::None) {
+                planned.speculation.ask   = "auto";
+                planned.speculation.basis = "choice";
+                planned.speculation.notes.push_back(
+                    "the configuration choice decodes plainly: no drafter it weighed is worth "
+                    "more at the asked context and streams");
+            }
         }
     }
     const std::string source =
