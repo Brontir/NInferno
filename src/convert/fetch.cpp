@@ -1179,6 +1179,12 @@ fs::path download_lock_path(const fs::path& target) {
 
 } // namespace
 
+bool include_selects(const FetchOptions& options, const std::string& path) {
+    return options.include.empty() ||
+           std::any_of(options.include.begin(), options.include.end(),
+                       [&](const std::string& pattern) { return glob(pattern, path); });
+}
+
 FetchedFile download_file(const DownloadRequest& request, const FetchOptions& options) {
     // Two processes fetching one file into a shared cache (two quantizations of a repository
     // share its small files; ninferno-ui beside the CLI) take turns on a lock beside it, as

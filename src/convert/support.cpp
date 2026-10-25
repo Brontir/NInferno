@@ -251,7 +251,9 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
         const auto lower = ascii_lower(name);
         has_config       = has_config || name == "config.json";
         has_tokenizer    = has_tokenizer || name == "tokenizer_config.json";
-        has_template     = has_template || name == "chat_template.jinja";
+        // A template beside the model is one when the fetch takes it (--include may not).
+        has_template     = has_template ||
+                       (name == "chat_template.jinja" && include_selects(options, name));
         has_safetensors  = has_safetensors ||
                           (lower.ends_with(".safetensors") && name.find('/') == std::string::npos);
         has_gguf = has_gguf || (lower.ends_with(".gguf") &&
