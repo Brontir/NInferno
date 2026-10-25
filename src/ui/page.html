@@ -2055,7 +2055,8 @@ function schedulePlan() {
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
-    if (!accelAfterPlan()) renderBody();
+    renderBody();
+    accelAfterPlan();
   }, 300);
 }
 // The plan row of a quantization of the selected repository (null: no plan, or none for it).
@@ -2083,11 +2084,11 @@ function planSpecNow() {
 // Auto's speculation is the server's choice: plain when the plan serves plain decode.
 // The speed-up block (and its Auto / Off switch) is drawn with the detail header: drawn again, once,
 // when the plan, fetched or cached, is the first to say the repository speculates (a hub repository
-// the catalog does not list). True when it redraws (the detail draws the body too).
+// the catalog does not list). Judged after the body has taken the plan's row (the next task).
 function accelAfterPlan() {
-  if (document.querySelector(".accel") || !planServesSpeculation()) return false;
-  setTimeout(renderDetail, 0);
-  return true;
+  setTimeout(() => {
+    if (!document.querySelector(".accel") && planServesSpeculation()) renderDetail();
+  }, 0);
 }
 // Whether the plan for the ask serves a speculation (its drafter kind).
 function planServesSpeculation() { const s = planSpecSummary(planSpecNow()); return !!s && !!s.kind; }
@@ -2557,7 +2558,9 @@ function accelBlock(sel) {
   const drafters = cat.drafters || [];
   // The block (and its Auto / Off / Manual switch) wherever the catalog lists drafters or loads,
   // or the plan serves a speculation (a hub repository the catalog does not list).
-  if (!drafters.length && !loadOf() && !planServesSpeculation()) return `<div class="sub" id="planspec"></div>`;
+  // A mode other than Auto (Off, a manual drafter) keeps the switch: its plan asks for that mode,
+  // and the way back to Auto is in this block.
+  if (!drafters.length && !loadOf() && !planServesSpeculation() && specMode === "auto") return `<div class="sub" id="planspec"></div>`;
   const suite = suiteHere(cat);
   sel.suite = suite;
   const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])
