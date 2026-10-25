@@ -14,9 +14,12 @@
 #include "runtime/engine/plan_ladder.h"
 #include "serve/generation_service.h"
 #include "serve/serve_options.h"
+#include "spec/registry.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -959,6 +962,17 @@ void test_device_facts() {
 } // namespace
 
 int main() {
+    // The plan's mechanics on the published profiles: the registry without the lab's measured
+    // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
+    // (a pair group's preliminary choice would stand where the published profile is asked for).
+    {
+        std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/src/spec/data/drafter_registry.json");
+        nlohmann::json doc = nlohmann::json::parse(in);
+        doc["pairs"]       = nlohmann::json::array();
+        const auto path    = std::filesystem::temp_directory_path() / "ninferno_plan_dry_run_registry.json";
+        std::ofstream(path) << doc.dump();
+        ninferno::spec::Registry::use_file(path);
+    }
     test_seams();
     test_family_table();
     test_launch_options_match_serve();
