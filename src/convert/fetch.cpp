@@ -1778,6 +1778,21 @@ std::string unread_quantization(const Json& config) {
         "",         "fp8",        "fbgemm_fp8",       "awq",  "gptq", "compressed-tensors",
         "modelopt", "auto-round", "intel/auto-round", "mxfp4"};
     if (!read.contains(method)) { return method; }
+    // Model Optimizer names its formats per layer (quant_algo, MIXED_PRECISION's
+    // quantized_layers): MXFP8 (FP8 with E8M0 block scales, RadixArk/Muse-Glimmer-NVFP4's down
+    // projections) has no reader.
+    std::set<std::string> algos;
+    if (const auto algo = q.find("quant_algo"); algo != q.end() && algo->is_string()) {
+        algos.insert(ascii_upper(algo->get<std::string>()));
+    }
+    if (const auto layers = q.find("quantized_layers"); layers != q.end() && layers->is_object()) {
+        for (const auto& [layer, spec] : layers->items()) {
+            if (const auto algo = spec.find("quant_algo"); algo != spec.end() && algo->is_string()) {
+                algos.insert(ascii_upper(algo->get<std::string>()));
+            }
+        }
+    }
+    if (algos.contains("MXFP8")) { return "Model Optimizer MXFP8"; }
     if (const auto t = q.find("transform_config"); t != q.end() && t->is_object() && !t->empty()) {
         return method + " (transforms)";
     }
