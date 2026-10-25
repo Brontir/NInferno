@@ -153,8 +153,11 @@ int main() {
     }
     // What the registry's pairs give a target: its own measurement, else its group's.
     {
-        const std::vector<sp::MeasuredPair> all = {ada_q4, bw_q4, bw_q8, bw_iq2, hauhau, oss_bw,
-                                                   mtp_q4};
+        auto mtp_ada         = mtp_q4; // its MTP measurement on a second card
+        mtp_ada.tune.key.gpu = "ad104:60sm";
+        mtp_ada.generation   = "sm89";
+        const std::vector<sp::MeasuredPair> all = {ada_q4, bw_q4,  bw_q8,  bw_iq2,
+                                                   hauhau, oss_bw, mtp_q4, mtp_ada};
         const auto own = sp::pair_choice(all, bw_q4.target, "qwen3_5", {"dflash"}, 4.9, "sm120");
         expect(own && own->basis == "measured" && own->profile.thinking.config.label() == "dflash:7",
                "a measured target takes its own measurement");
