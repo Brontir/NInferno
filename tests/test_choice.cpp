@@ -709,10 +709,19 @@ void weighs_the_drafters(const json& fixture) {
         bool said = false;
         for (const ch::Alternative& a : ch::explain(kept, star.quants)) {
             if (a.axis == ch::Axis::Drafter && a.value == "plain") {
-                said = a.why_code == "default" && a.why_not.find("not measured") != std::string::npos;
+                said = a.why_code == "unmeasured" && a.why_not.find("not measured") != std::string::npos;
             }
         }
         check(said, "plain decode explained: the drafter's gain is not measured here");
+        // Its gain, given or not, is not counted in the decode estimate (the page shows its own).
+        star.model.drafters[0].speedup = 3.0;
+        const ch::Candidate at{0, KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
+                               RecurrentStateStorage::FP16, ActivationMode::Fast, ch::kDefaultChunk, 1};
+        ch::Candidate without = at;
+        without.drafter       = 0;
+        check(ch::speed_of(star.model, star.card, star.quants[0], at, 1, 4096).decode_per_stream ==
+                  ch::speed_of(star.model, star.card, star.quants[0], without, 1, 4096).decode_per_stream,
+              "an unmeasured gain is not counted in the decode estimate");
     }
     const ch::Choice closed = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9));
     check(closed.chosen && (closed.by_worth || chosen(closed).candidate.drafter == 1),

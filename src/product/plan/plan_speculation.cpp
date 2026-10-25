@@ -293,7 +293,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         const auto with_given = [&](const ServedSpeculation& s) {
             return with_given_settings(s.engine, ask.given);
         };
-        if (!served || served->menu.mode == spec::Mode::None) {
+        if (!served || !served->drafts()) {
             const SpeculativeOptions plain;
             runtime::DryRunPlan plan = plan_of(plain);
             // The profile's own choice, when it speculates: its drafter is absent here, or the
