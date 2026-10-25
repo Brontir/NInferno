@@ -1951,7 +1951,7 @@ function launchSettingsOf(saved) {
 // ctxValue: the context asked for the model in view, in tokens; 0 is Auto. Each model keeps its own
 // (ctxByRepo, saved in the browser), Auto by default. ctxNote: what the box did to a typed value
 // ("max", "min"); ctxBad: the box holds no context (Run waits). quantNote: the followed quant changed.
-let ctxValue = 0, parallel = 1, quantSel = null, quantPicked = false, catalogCache = {}, useSpec = true;
+let ctxValue = 0, parallel = 1, quantSel = null, quantPicked = false, catalogCache = {};
 let ctxByRepo = {}, ctxNote = "", ctxBad = false, quantNote = "";
 try { ctxByRepo = JSON.parse(localStorage.getItem("ninferno-ctx-by-repo") || "{}") || {}; } catch (e) { ctxByRepo = {}; }
 const ctxOfRepo = repo => ctxByRepo[repo] > 0 ? ctxByRepo[repo] : 0;
@@ -1995,7 +1995,7 @@ async function loadRepo() {
   try {
     const j = await api(`/api/quants?repo=${encodeURIComponent(sel.repo)}&gpu=${gpu}&hub=${sel.hubName}`);
     if (sel === selected) {
-      sel.quants = j.quants; sel.kv = j.kv; sel.spec = j.speculation;
+      sel.quants = j.quants; sel.kv = j.kv;
       // The architecture read from the weights themselves outranks the hub's word.
       if (j.architecture) {
         const h = sel.hub || found.hub.find(x => x.id === sel.repo);
@@ -2038,7 +2038,7 @@ function schedulePlan() {
   const q = planQuery(planAsk(sel));
   if (q === sel.planQ) return;
   sel.planQ = q; clearTimeout(planTimer);
-  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; return; }
+  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
@@ -2048,6 +2048,7 @@ function schedulePlan() {
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
     renderBody();
+    accelAfterPlan();
   }, 300);
 }
 // The plan row of a quantization of the selected repository (null: no plan, or none for it).
@@ -2073,6 +2074,16 @@ function planSpecNow() {
   return r && r.plan && r.plan.speculation || doc && doc.plan && doc.plan.speculation || null;
 }
 // Auto's speculation is the server's choice: plain when the plan serves plain decode.
+// The speed-up block (and its Auto / Off switch) is drawn with the detail header: drawn again, once,
+// when the plan, fetched or cached, is the first to say the repository speculates (a hub repository
+// the catalog does not list). Judged after the body has taken the plan's row (the next task).
+function accelAfterPlan() {
+  setTimeout(() => {
+    if (!document.querySelector(".accel") && planServesSpeculation()) renderDetail();
+  }, 0);
+}
+// Whether the plan for the ask serves a speculation (its drafter kind).
+function planServesSpeculation() { const s = planSpecSummary(planSpecNow()); return !!s && !!s.kind; }
 function planServesPlain() { const s = planSpecSummary(planSpecNow()); return !!s && !s.kind; }
 // The context the speed estimates take: the one asked, else (Auto) the selected row's planned one.
 function ctxEff() {
@@ -2103,7 +2114,6 @@ function kvWhyNot(type, kv) {
   if (kv.kv_head_dim !== 256) return t("kvNeeds256");
   return "";
 }
-function specOf() { const sp = selected && selected.spec; return useSpec && sp && sp.known && sp.config !== "plain" && !(specMode === "auto" && planServesPlain()) ? sp : null; }
 // What other processes hold on the card now is said apart, not counted: the plan is about the card.
 function busyNote(needGib) {
   const g = gpuOf();
@@ -2152,7 +2162,6 @@ function choicePanel(doc) {
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis"))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}</div>` +
     (rows.length ? `<details class="choice" ${choiceOpen ? "open" : ""}><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th>KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
 }
-function specGain() { const sp = specOf(); return parallel === 1 && sp && sp.speedup > 1 ? sp.speedup : 1; }
 function interp(table, n) {
   const pts = Object.entries(table).map(([k, v]) => [Math.log2(+k), v]).sort((a, b) => a[0] - b[0]);
   const x = Math.log2(n);
@@ -2289,8 +2298,8 @@ function renderDetail() {
   num.onkeydown = ev => { if (ev.key === "Enter") applyNum(true); };
   const par = $("par");
   par.oninput = () => { parallel = Math.min(Math.max(+par.value, 1), MAX_PAR); renderBody(); };
-  // The speed-up mode: useSpec follows it (the estimates take speculation when it is not off).
-  const setMode = m => { specMode = m; useSpec = m !== "off"; renderDetail(); };
+  // The speed-up mode: the plan asks for it (planSpecOf), and the estimates are of what it serves.
+  const setMode = m => { specMode = m; renderDetail(); };
   el.querySelectorAll("[data-specmode]").forEach(b => { b.onclick = () => setMode(b.dataset.specmode); });
   const sm = $("specmanual"); if (sm) sm.onchange = () => { if (sm.value) setMode(sm.value); };
   const dg = $("dgpu"); if (dg) dg.onchange = () => { gpu = +dg.value; refreshState(); loadRepo(); };
@@ -2413,12 +2422,11 @@ function renderBody() {
       const st = selSt, here = localFor(sel.repo, q.quant);
       const mem = stale ? null : planMemory(selRow && selRow.plan), need = mem ? mem.need / GiB : 0;
       const cdoc = stale ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice && cdoc.choice.chosen;
-      // The server's estimate counts the drafter it decodes with (est.drafter); the page's own
-      // gain only where it counts none.
-      const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth,
-                         drafter: cho.drafter_counted ? cho.drafter : ""}
+      // The server's estimate, with the drafter it decodes with where a measurement gives its gain
+      // (the choice's drafter_counted): the page adds no gain of its own.
+      const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth}
                       : stale ? null : rowEstimate(rowPlan(q));
-      const plain = est ? est.decode_tok_s : 0, one = plain * (est && est.drafter ? 1 : specGain());
+      const one = est ? est.decode_tok_s : 0;
       // Run is never disabled on an estimate (M3): a row that does not fit warns.
       const gate = runGate(st, {unsupported, ctxBad, busy: stale}, planTr);
       const others = busyGpuModels(S.processes, gpu);
@@ -2436,7 +2444,7 @@ function renderBody() {
         <div class="sub">${status}</div>
         ${warns ? `<div class="sub">${warns}</div>` : ""}
         <div class="sub">${mem ? `<span data-tip="${esc(memTipOf(mem))}">${t("need")} ≈ ${need.toFixed(1)} ${t("of")} ${gib(mem.free)}</span> · ` : ""}${stale ? "" : `<span data-tip="${esc(t("ctxPlanTip") + (st.ctxTip ? "\n" + st.ctxTip : ""))}">${esc(st.ctxText)}</span>`}${mem && busyNote(need) ? ` · <span class="err">${esc(busyNote(need))}</span>` : ""}</div>
-        ${one ? `<div class="sub" data-tip="${esc(t("estBasis"))}">${fill(t(parallel > 1 ? "speedLine" : "speedLine1"), {depth: ctxLabel(est.depth), one: rate(one), all: rate(one * parallel), n: nReq(parallel)})}${one > plain * 1.02 ? ` · ${t("noSpec")} ≈ ${rate(plain)}` : ""}${(() => { const l = loadOf(), lc = loadHere(l) && q.quant === l.quant ? llamaReq(est.depth, parallel) : 0; return lc > 0 ? ` · llama.cpp ≈ ${rate(lc)}` : ""; })()} · ${t("prefill")} ≈ ${rate(est.prefill_tok_s)} ${t("perSec")}</div>` : ""}</div>
+        ${one ? `<div class="sub" data-tip="${esc(t("estBasis"))}">${fill(t(parallel > 1 ? "speedLine" : "speedLine1"), {depth: ctxLabel(est.depth), one: rate(one), all: rate(one * parallel), n: nReq(parallel)})}${(() => { const l = loadOf(), lc = loadHere(l) && q.quant === l.quant ? llamaReq(est.depth, parallel) : 0; return lc > 0 ? ` · llama.cpp ≈ ${rate(lc)}` : ""; })()} · ${t("prefill")} ≈ ${rate(est.prefill_tok_s)} ${t("perSec")}</div>` : ""}</div>
         <span style="flex:1"></span>
         <div class="pickacts">
         ${here ? `<span class="pill ok">✓ ${t("here")}</span>` : `<span ${unsupported ? `data-tip="${esc(t("unsupportedRun"))}"` : ""}><button data-get ${unsupported ? "disabled" : ""}>${t("download")}</button></span>`}
@@ -2457,7 +2465,7 @@ function renderBody() {
       const bits = x.bits ? x.bits : "";
       if (!st || !x.supported || st.cls === "off") return `<div class="q off" data-qi="${i}"><span></span><span class="mono">${name}</span><span class="muted">${bits}</span>
         <span class="num">${x.size_gib.toFixed(1)} GiB</span><span class="sub" style="grid-column:span ${parallel > 1 ? 4 : 3}">${x.drafter ? t(/mmproj/i.test(x.quant + " " + (x.files || []).join(" ")) ? "visionProj" : "drafter") : esc(st.why || t("over8"))}</span></div>`;
-      const e = stale ? null : rowEstimate(rowPlan(x)), gen = e ? e.decode_tok_s * (e.drafter ? 1 : specGain()) : 0, pre = e ? e.prefill_tok_s : 0;
+      const e = stale ? null : rowEstimate(rowPlan(x)), gen = e ? e.decode_tok_s : 0, pre = e ? e.prefill_tok_s : 0;
       const r = rowPlan(x), mem = stale ? null : planMemory(r && r.plan);
       const dotTip = stale ? t("planning") : st.label + "\n" + st.tip;
       const instead = !stale && st.instead.length ? `<div class="fitalt">${t("fitsInstead")}: ${st.instead.map(f => `<button data-fitctx="${f.ctx}" data-fitpar="${f.par}" data-tip="${esc(t("fitsInsteadTip"))}">${esc(f.text)}</button>`).join("")}</div>` : "";
@@ -2535,8 +2543,11 @@ function loadGain(n, deep) {
 function accelBlock(sel) {
   const cat = catalogFor(sel.repo) || {};
   const drafters = cat.drafters || [];
-  const sp = sel.spec && sel.spec.known ? sel.spec : null;
-  if (!sp && !drafters.length) return `<div class="sub" id="planspec"></div>`;
+  // The block (and its Auto / Off / Manual switch) wherever the catalog lists drafters or loads,
+  // or the plan serves a speculation (a hub repository the catalog does not list).
+  // A mode other than Auto (Off, a manual drafter) keeps the switch: its plan asks for that mode,
+  // and the way back to Auto is in this block.
+  if (!drafters.length && !loadOf() && !planServesSpeculation() && specMode === "auto") return `<div class="sub" id="planspec"></div>`;
   const suite = suiteHere(cat);
   sel.suite = suite;
   const runnable = drafters.filter(d => d.engine === "yes" && KIND_SPEC[d.kind])
@@ -2555,7 +2566,7 @@ function accelBlock(sel) {
   // One Auto line: the plan's resolved choice (#planspec), and the measured gain of that same
   // config (#specgain), both filled by renderPlanSpec when the plan is in.
   html += `<div class="sub" id="specgain"></div>`;
-  if (specMode === "auto" && sp) {
+  if (specMode === "auto" && loadOf()) {
     const goals = [];
     const one = loadGain(1, false), long = loadGain(1, true);
     if (one) goals.push(`${t("goalOne")} ×${one.k.toFixed(2)}`);

@@ -404,7 +404,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                     if (axis.served[i].engine.backend == served) {
                         model.drafters       = axis.options;
                         c.drafter            = i + 1;
-                        // Only a measured gain is counted (the page applies its own else).
+                        // Only a measured gain is counted (speed_of); the estimate names it.
                         if (axis.options[i].measured) { row.estimate_drafter = axis.options[i].label; }
                         break;
                     }
