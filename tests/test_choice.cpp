@@ -632,6 +632,74 @@ void explains_the_state(const json& fixture) {
 
 } // namespace
 
+// The drafter is one more axis (choice/SPECULATION.md S3): its memory in the plan, its gain in the
+// decode. The fastest that holds the asked context wins where the worth decides; one the context
+// leaves out is explained with its gain; past its load table's streams it gains nothing; a pin
+// keeps it; where the worth does not decide, the resolved profile's stands.
+void weighs_the_drafters(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    b.model.drafters = {{"mtp:4", "mtp", 1.9, 2, "measured"}, {"dflash:7", "dflash", 2.5, 2, "measured"}};
+    b.model.default_drafter = 1; // the resolved profile's: MTP
+    // A drafter's weights take memory from the context: MTP 0.2 GB, DFlash 2.4 GB.
+    const auto oracle_with = [&b](double budget) -> ch::OwnContextFn {
+        return [&b, budget](const ch::Candidate& c) -> std::uint32_t {
+            const double drafter = c.drafter == 1 ? 0.2e9 : c.drafter == 2 ? 2.4e9 : 0.0;
+            const double room    = budget - b.quants[c.quant].weight_bytes - drafter;
+            if (room <= 0) { return 0; }
+            return static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv));
+        };
+    };
+    const ch::Gates open{true, true};
+    const auto allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    ch::Task task;
+    task.contexts = {32768};
+    const ch::Choice roomy = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9), open);
+    check(roomy.chosen && chosen(roomy).candidate.drafter == 2 && chosen(roomy).drafter == "dflash:7" &&
+              roomy.why.find("speculation dflash:7") != std::string::npos,
+          "room for every drafter: the fastest, DFlash: " + roomy.why);
+    int lost = 0;
+    for (const ch::Alternative& a : ch::explain(roomy, b.quants)) {
+        if (a.axis == ch::Axis::Drafter && (a.value == "plain" || a.value == "mtp:4")) {
+            check(a.why_code == "lower_worth", a.value + " fits and loses on worth");
+            ++lost;
+        }
+    }
+    check(lost == 2, "plain and MTP explained beside DFlash");
+    // The largest quantization's weights leave room for MTP's 0.2 GB but not DFlash's 2.4 GB at 32K:
+    // MTP, and DFlash explained with its gain.
+    ch::Pins q8;
+    q8.quant = 0;
+    for (std::size_t i = 1; i < b.quants.size(); ++i) {
+        if (b.quants[i].weight_bytes > b.quants[*q8.quant].weight_bytes) { q8.quant = i; }
+    }
+    const double per_token = b.model.kv_bytes_per_token(KvCacheStorage::Int8Group64);
+    const double tight     = b.quants[*q8.quant].weight_bytes + 0.2e9 + 40000 * per_token;
+    q8.kv = KvCacheStorage::Int8Group64;
+    const ch::Choice tight_choice = ch::choose(b.model, b.card, b.quants, allowed, q8, task, oracle_with(tight), open);
+    check(tight_choice.chosen && chosen(tight_choice).candidate.drafter == 1,
+          "DFlash does not hold 32K beside the largest quantization: MTP");
+    bool said = false;
+    for (const ch::Alternative& a : ch::explain(tight_choice, b.quants)) {
+        if (a.axis == ch::Axis::Drafter && a.value == "dflash:7") {
+            said = a.why_code == "no_fit" && a.why_not.find("decodes x") != std::string::npos;
+        }
+    }
+    check(said, "the faster drafter the context leaves out is said with its gain");
+    // Two streams: past the load tables' bound neither drafter gains; plain keeps the most context.
+    ch::Task two = task;
+    two.concurrency = 2;
+    const ch::Choice pair = ch::choose(b.model, b.card, b.quants, allowed, {}, two, oracle_with(40e9), open);
+    check(pair.chosen && chosen(pair).candidate.drafter == 0, "two streams: plain decode");
+    // A pin keeps the drafter; closed gates keep the resolved profile's.
+    ch::Pins plain;
+    plain.drafter = 0;
+    const ch::Choice pinned = ch::choose(b.model, b.card, b.quants, allowed, plain, task, oracle_with(40e9), open);
+    check(pinned.chosen && chosen(pinned).candidate.drafter == 0, "--spec none: plain decode");
+    const ch::Choice closed = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9));
+    check(closed.chosen && (closed.by_worth || chosen(closed).candidate.drafter == 1),
+          "the worth not deciding: the profile's drafter");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -647,6 +715,7 @@ int main() {
     contradictory_pins(fixture);
     activations_by_generation(fixture);
     moe_family(fixture);
+    weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
