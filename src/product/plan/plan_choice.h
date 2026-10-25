@@ -39,12 +39,9 @@ struct DrafterAxis {
 struct ServedChoice {
     // The drafter axis's options (their gains, measured or not), beside `drafters`.
     std::vector<choice::DrafterOption> drafter_options;
-    std::vector<choice::QuantOption> quants; // the one quantization planned
+    choice::QuantOption quant; // the quantization planned
     choice::Task task;
     choice::Choice choice;
-    // The own context per stream the choice was asked for: the pinned context, else Auto's targets
-    // in turn (runtime::quant_own_targets: min(native, 32K), then 16K, then 8K).
-    std::uint32_t target_context = 0;
     // The depth the quant table's estimates take (a quarter of the asked context or of Auto's
     // first step), and the chosen candidate's decode there.
     std::uint32_t depth         = 0;

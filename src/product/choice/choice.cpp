@@ -13,14 +13,6 @@ namespace ninferno::product::choice {
 
 namespace {
 
-constexpr double kQuantFloorBits = 3.5; // runtime/engine/quant_rule.h kPlanQualityFloorBits
-
-// At or above the quality floor: unknown bits (0: no label bits, no parameter count) rank so, as in
-// the quant rule (largest_fitting_quant).
-bool at_or_above_floor(const QuantOption& quant) {
-    return quant.bits_per_weight == 0 || quant.bits_per_weight >= kQuantFloorBits;
-}
-
 std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
 }
@@ -201,26 +193,11 @@ std::string activation_name(ActivationMode mode) {
     return mode == ActivationMode::Exact ? "exact" : mode == ActivationMode::Int8 ? "int8" : "fast";
 }
 
-// The order among candidates of equal standing: the larger worth, then the longer own context,
-// then the fewer bytes of weights, then the smaller quantization label (the quant rule's last
-// key, runtime/engine/quant_rule.cpp quant_ranks_above), then the enumeration order.
-bool better(const Scored& a, std::size_t ia, const Scored& b, std::size_t ib,
-            const std::vector<QuantOption>& quants) {
+// The order among candidates: the larger worth, then the longer own context, then the
+// enumeration order.
+bool better(const Scored& a, std::size_t ia, const Scored& b, std::size_t ib) {
     if (std::abs(a.worth - b.worth) > kWorthTie) { return a.worth > b.worth; }
     if (a.own_context != b.own_context) { return a.own_context > b.own_context; }
-    const QuantOption& qa = quants[a.candidate.quant];
-    const QuantOption& qb = quants[b.candidate.quant];
-    if (qa.weight_bytes != qb.weight_bytes) { return qa.weight_bytes < qb.weight_bytes; }
-    if (qa.label != qb.label) { return qa.label < qb.label; }
-    return ia < ib;
-}
-
-// The quantization rule's order (quant_ranks_above): more bits per weight, then more bytes, then
-// the smaller label, then the listing.
-bool larger_quant(const QuantOption& a, std::size_t ia, const QuantOption& b, std::size_t ib) {
-    if (a.bits_per_weight != b.bits_per_weight) { return a.bits_per_weight > b.bits_per_weight; }
-    if (a.weight_bytes != b.weight_bytes) { return a.weight_bytes > b.weight_bytes; }
-    if (a.label != b.label) { return a.label < b.label; }
     return ia < ib;
 }
 
@@ -413,7 +390,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     };
     // The quantization: the measured curve (choice_constants.h).
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
-    // (choose: quant_by_worth needs every candidate's bits).
+    // (plan_quants weighs the quantizations only where every row's bits are known).
     bool measured  = false;
     const double q = quant.bits_per_weight > 0
                          ? quant_kld(quant.bits_per_weight, quant.label, !other_curve, measured)
@@ -503,14 +480,10 @@ Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv) {
     return out;
 }
 
-Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<QuantOption>& quants,
+Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
               const Allowed& allowed, const Pins& pins, const Task& task,
               const OwnContextFn& own_context, const Gates& gates) {
     Choice out;
-    if (pins.quant && *pins.quant >= quants.size()) {
-        out.why = "the pinned quantization is not among the options";
-        return out;
-    }
     if (pins.activations == ActivationMode::Exact && model.recurrent && pins.state &&
         *pins.state != RecurrentStateStorage::FP32) {
         out.why = "--activations exact refuses the rounded recurrent state pinned";
@@ -518,20 +491,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
-    // The quantizations are weighed only where every candidate's bits place it on the curve.
-    out.quant_by_worth = weighs_quantizations(model, card, gates) &&
-                         std::all_of(quants.begin(), quants.end(), [](const QuantOption& q) {
-                             return !q.supported || q.bits_per_weight > 0;
-                         });
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
-    std::vector<std::size_t> quant_ids;
-    if (pins.quant) {
-        quant_ids.push_back(*pins.quant);
-    } else {
-        for (std::size_t i = 0; i < quants.size(); ++i) {
-            if (quants[i].supported) { quant_ids.push_back(i); }
-        }
-    }
     const std::vector<KvCacheStorage> kvs =
         pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
     const std::vector<ActivationMode> modes =
@@ -554,22 +514,19 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     } else {
         for (std::size_t d = 0; d <= model.drafters.size(); ++d) { drafters.push_back(d); }
     }
-    for (const std::size_t q : quant_ids) {
-        for (const KvCacheStorage kv : kvs) {
-            for (const ActivationMode mode : modes) {
-                // --activations exact refuses a rounded recurrent state the user pinned.
-                if (mode == ActivationMode::Exact && model.recurrent && pins.state &&
-                    *pins.state != RecurrentStateStorage::FP32) {
-                    continue;
-                }
-                const Coupled coupled = coupled_storages(model, kv, mode, pins);
-                for (const std::size_t drafter : drafters) {
-                    for (const std::uint32_t chunk : chunks) {
-                        out.scored.push_back(
-                            score(model, card, ref, quants[q],
-                                  {q, kv, coupled.ring, coupled.state, mode, chunk, drafter}, task,
-                                  own_context));
-                    }
+    for (const KvCacheStorage kv : kvs) {
+        for (const ActivationMode mode : modes) {
+            // --activations exact refuses a rounded recurrent state the user pinned.
+            if (mode == ActivationMode::Exact && model.recurrent && pins.state &&
+                *pins.state != RecurrentStateStorage::FP32) {
+                continue;
+            }
+            const Coupled coupled = coupled_storages(model, kv, mode, pins);
+            for (const std::size_t drafter : drafters) {
+                for (const std::uint32_t chunk : chunks) {
+                    out.scored.push_back(score(model, card, ref, quant,
+                                               {kv, coupled.ring, coupled.state, mode, chunk, drafter},
+                                               task, own_context));
                 }
             }
         }
@@ -594,63 +551,41 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
                (out.by_worth || (s.candidate.kv == default_kv &&
                                  s.candidate.activations == default_activations));
     };
-    const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
-    // One order over the eligible candidates: where the worth weighs the quantizations, the worth
-    // (better); else the quant rule's largest first, the worth among its candidates.
-    const auto ranks_above = [&](std::size_t i, std::size_t j) {
-        const Scored& a = out.scored[i];
-        const Scored& b = out.scored[j];
-        if (!out.quant_by_worth && a.candidate.quant != b.candidate.quant) {
-            return larger_quant(quants[a.candidate.quant], a.candidate.quant,
-                                quants[b.candidate.quant], b.candidate.quant);
-        }
-        return better(a, i, b, j, quants);
-    };
-    // Each stream's own context in turn (a pinned one, or Auto's steps), above the floor bits at
-    // every step before any quantization below them (the quant rule's tiers): the first step and
-    // side that holds an eligible candidate takes its best.
+    // Each stream's own context in turn (a pinned one, or Auto's steps): the first that holds an
+    // eligible candidate takes its best.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
-    bool above_floor_settled = true;
-    for (const bool above_floor : {true, false}) {
-        for (const std::uint32_t context : task.contexts) {
-            for (std::size_t i = 0; i < out.scored.size(); ++i) {
-                const Scored& s = out.scored[i];
-                if (!eligible(s) || s.own_context < context || above(s) != above_floor) { continue; }
-                if (!chosen || ranks_above(i, *chosen)) { chosen = i; }
-            }
-            if (chosen) {
-                settled             = context;
-                above_floor_settled = above_floor;
-                break;
-            }
+    for (const std::uint32_t context : task.contexts) {
+        for (std::size_t i = 0; i < out.scored.size(); ++i) {
+            const Scored& s = out.scored[i];
+            if (!eligible(s) || s.own_context < context) { continue; }
+            if (!chosen || better(s, i, out.scored[*chosen], *chosen)) { chosen = i; }
         }
-        if (chosen) { break; }
+        if (chosen) {
+            settled = context;
+            break;
+        }
     }
     if (!chosen) {
         out.why = "no candidate holds " + std::to_string(task.contexts.empty() ? 0 : task.contexts.back()) +
                   " tokens for each of " + std::to_string(task.concurrency) + " streams";
         return out;
     }
+    // Why the family's defaults stand, where they do.
     std::string defaults_why;
     if (!ref) {
         defaults_why = std::string(generation_of(card)) + " has no reference card";
     } else if (!ref->decides) {
         defaults_why = ref->why;
     } else if (accuracy_decides(generation_of(card), model.family, &defaults_why)) {
+        // The terms rest on two cards (no reason written): a closed Gates::accuracy kept them out.
         defaults_why = "the accuracy gate is closed";
     }
     out.chosen  = chosen;
     out.context = settled;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    out.why = quants[c.candidate.quant].label +
-              (quant_ids.size() == 1 ? " (the one quantization): every stream holds "
-               : out.quant_by_worth  ? ": the best worth among the quantizations whose every stream holds "
-                                     : ": the largest quantization whose every stream holds ") +
-              std::to_string(settled) + " tokens" +
-              (above_floor_settled ? "" : " (below " + fixed(kQuantFloorBits, 1) + " bits per weight)") +
-              "; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
+    out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
               activation_name(c.candidate.activations) +
               (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
                                   " reference card (" + fixed(c.decision_seconds, 2) + " s a " +
@@ -684,7 +619,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, ref, quants[v.quant], v, task, own_context);
+        Scored s  = score(model, card, ref, quant, v, task, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));
@@ -692,15 +627,13 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     return out;
 }
 
-std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOption>& quants) {
+std::vector<Alternative> explain(const Choice& choice) {
     std::vector<Alternative> out;
     if (!choice.chosen) { return out; }
     const Scored& chosen = choice.scored[*choice.chosen];
     const Candidate& c   = chosen.candidate;
-    const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
     const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
         switch (axis) {
-        case Axis::Quant: return quants[s.candidate.quant].label;
         case Axis::Kv: return std::string(kv_cache_storage_name(s.candidate.kv));
         case Axis::Ring: return std::string(kv_cache_storage_name(s.candidate.ring));
         case Axis::State: return std::string(recurrent_state_storage_name(s.candidate.state));
@@ -713,15 +646,15 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
     // The chosen candidate but for `axis`: a main axis keeps the other main axes (its coupled
     // storages follow it: exact takes the FP32 state), a coupled one keeps everything else.
     const auto same_but = [&](const Candidate& x, Axis axis) {
-        const bool main = (axis == Axis::Quant || x.quant == c.quant) && (axis == Axis::Kv || x.kv == c.kv) &&
+        const bool main = (axis == Axis::Kv || x.kv == c.kv) &&
                           (axis == Axis::Activations || x.activations == c.activations) &&
                           (axis == Axis::Chunk || x.chunk == c.chunk) &&
                           (axis == Axis::Drafter || x.drafter == c.drafter);
         if (axis != Axis::State && axis != Axis::Ring) { return main; }
         return main && (axis == Axis::State || x.state == c.state) && (axis == Axis::Ring || x.ring == c.ring);
     };
-    for (const Axis axis : {Axis::Quant, Axis::Kv, Axis::Activations, Axis::Drafter, Axis::Chunk,
-                            Axis::State, Axis::Ring}) {
+    for (const Axis axis : {Axis::Kv, Axis::Activations, Axis::Drafter, Axis::Chunk, Axis::State,
+                            Axis::Ring}) {
         const bool coupled = axis == Axis::State || axis == Axis::Ring;
         for (const Scored& s : choice.scored) {
             if (s.variant != coupled && &s != &chosen) { continue; }
@@ -748,24 +681,6 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
                                    fixed(s.speed.decode_per_stream / chosen.speed.decode_per_stream, 2) +
                                    " as fast";
                 }
-            } else if (axis == Axis::Quant && !choice.quant_by_worth &&
-                       quants[s.candidate.quant].bits_per_weight == quants[c.quant].bits_per_weight &&
-                       quants[s.candidate.quant].weight_bytes == quants[c.quant].weight_bytes) {
-                // The rule's tie: the same bits and bytes, the smaller label.
-                alt.why_code = "tie_order";
-                alt.why_not  = "the same size: the smaller label, as the quant rule";
-            } else if (axis == Axis::Quant && (!choice.quant_by_worth || above(s) != above(chosen))) {
-                // The rule decided it: no worth, or the other side of the floor (the rule's tiers).
-                alt.why_code = "quant_rule";
-                if (above(s) != above(chosen)) {
-                    alt.why_not = above(s) ? "does not fit"
-                                           : "below " + fixed(kQuantFloorBits, 1) +
-                                                 " bits per weight: only when nothing above fits";
-                } else {
-                    alt.why_not = quants[s.candidate.quant].bits_per_weight > quants[c.quant].bits_per_weight
-                                      ? "does not fit"
-                                      : "smaller: the rule takes the largest that fits";
-                }
             } else if (coupled) {
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
@@ -779,17 +694,13 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
                 alt.why_not  = axis == Axis::Chunk
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
-            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
-                       (s.own_context != chosen.own_context ||
-                        quants[s.candidate.quant].weight_bytes != quants[c.quant].weight_bytes)) {
+            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie && s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
-                alt.why_not  = "the same worth: the chosen keeps more context per stream (or fewer weight bytes)";
+                alt.why_not  = "the same worth: the chosen keeps more context per stream";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
                 alt.why_code = "tie_order";
                 alt.why_not  = axis == Axis::Activations
                                    ? "the same in every respect (fast and int8 take one route on these weights): the listing's order"
-                               : axis == Axis::Quant
-                                   ? "the same in every respect: the smaller label, as the quant rule"
                                    : "the same in every respect for this request: the listing's order";
             } else {
                 alt.why_code = "lower_worth";

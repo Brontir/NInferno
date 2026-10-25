@@ -203,10 +203,9 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
             if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
         }
     }
-    out.quants = {quant};
+    out.quant = quant;
 
     choice::Pins p;
-    p.quant = 0;
     // The drafter: an axis of the choice where the subject's profile offers one; --spec given pins
     // it (none: plain decode; a backend the axis offers: that option).
     DrafterAxis axis;
@@ -256,7 +255,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         const PlannedSpeculation planned = plan_model(facts, pinned);
         return own_context_of(facts, pinned, planned);
     };
-    // Own contexts cached by what changes the memory (the KV codec, the ring and the state).
+    // Own contexts cached by what changes the memory (the KV codec, ring, state, chunk, drafter).
     std::vector<std::pair<choice::Candidate, std::uint32_t>> seen;
     const choice::OwnContextFn cached = [&](const choice::Candidate& c) {
         for (const auto& [k, v] : seen) {
@@ -276,8 +275,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const choice::Allowed allowed =
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
-    out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
-    out.target_context = out.choice.context;
+    out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
     out.drafter_options = axis.options;
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
@@ -405,7 +403,6 @@ Json choice_json(const ServedChoice& served) {
                   {"accuracy_weight", served.task.accuracy_weight}}},
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
-                {"quant_by_worth", served.choice.quant_by_worth},
                 {"chunk_by_speed", served.choice.chunk_by_speed}};
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
@@ -413,7 +410,7 @@ Json choice_json(const ServedChoice& served) {
     }
     const choice::Scored& s = served.choice.scored[*served.choice.chosen];
     Json chosen             = candidate_json(s.candidate);
-    chosen["quant"]         = served.quants[s.candidate.quant].label;
+    chosen["quant"]         = served.quant.label;
     chosen["drafter"]       = s.drafter;
     // Whether the decode estimates count the drafter's gain (a measured one).
     chosen["drafter_counted"] = s.candidate.drafter > 0 &&
@@ -424,7 +421,7 @@ Json choice_json(const ServedChoice& served) {
     chosen.update(estimates_json(s));
     out["chosen"]    = chosen;
     Json alternatives = Json::array();
-    for (const choice::Alternative& a : choice::explain(served.choice, served.quants)) {
+    for (const choice::Alternative& a : choice::explain(served.choice)) {
         if (a.why_not.empty()) { continue; }
         Json row = {{"axis", std::string(choice::axis_name(a.axis))},
                     {"value", a.value},

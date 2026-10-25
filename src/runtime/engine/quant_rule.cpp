@@ -84,6 +84,11 @@ QuantFit quant_fit_of(const DryRunPlan& plan, std::uint32_t own_context, const Q
     return out;
 }
 
+bool below_quality_floor(const QuantCandidate& q) noexcept {
+    const double bits = quant_rank_bits(q);
+    return bits > 0 && bits < kPlanQualityFloorBits;
+}
+
 bool quant_ranks_above(const QuantCandidate& a, const QuantCandidate& b) noexcept {
     const double x = quant_rank_bits(a), y = quant_rank_bits(b);
     if (x != y) { return x > y; }
@@ -97,11 +102,7 @@ std::optional<QuantPick> largest_fitting_quant(const std::vector<QuantCandidate>
     if (fits.size() != candidates.size()) {
         throw std::invalid_argument("largest_fitting_quant: a fit for every candidate");
     }
-    // Unknown bits (no label bits, no parameter count) rank as at or above the floor.
-    const auto above_floor = [&](std::size_t i) {
-        const double bits = quant_rank_bits(candidates[i]);
-        return bits == 0 || bits >= kPlanQualityFloorBits;
-    };
+    const auto above_floor = [&](std::size_t i) { return !below_quality_floor(candidates[i]); };
     const auto best_of = [&](auto&& admits) -> std::optional<std::size_t> {
         std::optional<std::size_t> best;
         for (std::size_t i = 0; i < candidates.size(); ++i) {
