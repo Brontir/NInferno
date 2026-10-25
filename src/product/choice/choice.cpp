@@ -640,6 +640,7 @@ std::vector<Alternative> explain(const Choice& choice) {
         case Axis::Activations: return activation_name(s.candidate.activations);
         case Axis::Chunk: return std::to_string(s.candidate.chunk);
         case Axis::Drafter: return s.drafter;
+        case Axis::Quant: break; // one quantization: not an axis of the choice
         }
         return "";
     };
