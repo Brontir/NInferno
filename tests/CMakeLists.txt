@@ -29,6 +29,11 @@ ninferno_add_test(ninferno_spec_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec.cpp"
   LIBRARIES ninferno_spec)
 
+# Speculation per measured pair (spec/pairs.h) on the lab's spec-tune measurements: no GPU.
+ninferno_add_test(ninferno_spec_pairs_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_pairs.cpp"
+  LIBRARIES ninferno_spec)
+
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
