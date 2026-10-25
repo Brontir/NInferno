@@ -1770,7 +1770,9 @@ function ruleText(doc, ask, tr) {
   const n = v.concurrency || ask.par || 1, gb = cardGbOf(doc);
   const card = gb > 0 ? tr("cardThisGb", {gb: cardGbText(gb, tr)}) : tr("cardThis");
   const auto = typeof v.automatic === "boolean" ? v.automatic : !(ask.ctx > 0);
-  const ctx = v.context > 0 ? planTok(v.context) : ask.ctx > 0 ? planTok(ask.ctx) : "";
+  // The context the pick was planned at: the asked one, else (auto) the one the plan reached.
+  const ctx = v.context > 0 ? planTok(v.context) : ask.ctx > 0 ? planTok(ask.ctx)
+    : v.planned_context > 0 ? planTok(v.planned_context) : "";
   const at = auto ? (ctx ? tr("ruleAtAuto", {ctx, n}) : tr("ruleAtAutoBare", {n})) : tr("ruleAt", {ctx, n});
   if (c === "none_fits") {
     const smallest = v.smallest ? planRowOf(doc, v.smallest) : null, why = smallest ? reasonText(smallest.plan, tr) : "";
