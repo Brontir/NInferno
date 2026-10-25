@@ -5,7 +5,6 @@
 //   plain            no speculation
 //   mtp:K            an autoregressive drafter (Qwen's built-in MTP head, Gemma 4's assistant),
 //                    K drafts per round
-//   mtp:K:K0         the same with the depth adapting per round within [K0, K] (Gemma 4)
 //   dflash:K         a block drafter (DFlash), the first K drafts of its block verified
 //   dflash2:K        DFlash2 (Qwen companion)
 //   ngram:K          prompt lookup: drafts copied from an earlier occurrence of the context's
