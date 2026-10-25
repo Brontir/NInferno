@@ -77,6 +77,15 @@ int main(int argc, char** argv) {
                "U32 under a quantization_config without a method");
         f.config["quantization_config"] = {{"quant_method", "bitsandbytes"}, {"load_in_4bit", true}};
         expect(says(of(f), Verdict::Unsupported, "bitsandbytes"), "bitsandbytes");
+        // RadixArk/Muse-Glimmer-NVFP4: Model Optimizer's mixed NVFP4 and MXFP8 layers.
+        f.config["quantization_config"] = {
+            {"quant_algo", "MIXED_PRECISION"},
+            {"quantized_layers",
+             {{"model.layers.0.mlp.up_proj", {{"quant_algo", "NVFP4"}, {"group_size", 16}}},
+              {"model.layers.0.mlp.down_proj", {{"quant_algo", "MXFP8"}}}}}};
+        expect(says(of(f), Verdict::Unsupported, "MXFP8"), "Model Optimizer MXFP8 layers");
+        f.config["quantization_config"]["quantized_layers"].erase("model.layers.0.mlp.down_proj");
+        expect(of(f).verdict == Verdict::Supported, "Model Optimizer NVFP4 layers");
     }
     // The architecture: the converter's lists, a drafter's kind, a GGUF's general.architecture.
     {
