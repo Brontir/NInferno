@@ -1292,6 +1292,9 @@ Fidelity fidelity(const Checkpoint& base, const Model& model, const Plan& plan) 
 // recipe's policy. Returns the parameters it changed.
 std::map<QType, std::size_t> keep_published(const Model& model, Recipe& recipe) {
     std::map<QType, std::size_t> kept;
+    const auto selections = recipe.selections;
+    const auto policies   = recipe.policies;
+    std::vector<bool> changed(model.parameters.size(), false);
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& selection = recipe.selections[i];
@@ -1311,8 +1314,28 @@ std::map<QType, std::size_t> keep_published(const Model& model, Recipe& recipe) 
             parameter.name != "text/output_head") {
             recipe.set_policy(i, ActivationPolicy::AllowA8);
         }
+        changed[i] = true;
         ++kept[*format];
     }
+    // An expert bank is one stacked plane of one format: kept whole or not at all. Where some of
+    // its experts cannot be kept word for word (scales not exact in binary16), the bank stays as
+    // the recipe chose, and check_fidelity says why.
+    for (const auto bank : model.expert_banks) {
+        const auto& members = model.packing_groups[bank];
+        const auto kept_here =
+            std::count_if(members.begin(), members.end(), [&](std::size_t m) { return changed[m]; });
+        const auto encoded = std::count_if(members.begin(), members.end(), [&](std::size_t m) {
+            return recipe.selections[m].method == Method::ImportEncoded;
+        });
+        if (kept_here == 0 || encoded == static_cast<std::ptrdiff_t>(members.size())) { continue; }
+        for (const auto m : members) {
+            if (!changed[m]) { continue; }
+            --kept[recipe.selections[m].format];
+            recipe.selections[m] = selections[m];
+            recipe.policies[m]   = policies[m];
+        }
+    }
+    std::erase_if(kept, [](const auto& entry) { return entry.second == 0; });
     return kept;
 }
 
