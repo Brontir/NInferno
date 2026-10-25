@@ -599,6 +599,13 @@ int main() {
               "serve help omits --no-prefix-reuse");
     failures += check(serve_usage_text("ninferno-serve").find("--host-kv-mib") != std::string::npos,
                       "serve help omits context-cache capacities");
+    // The converter's --round-tiny-scales, for a model whose refusal names it (off by default).
+    failures += check(!parse({"ninferno-serve", "org/model"}).round_tiny_scales &&
+                          parse({"ninferno-serve", "org/model", "--round-tiny-scales"})
+                              .round_tiny_scales &&
+                          serve_usage_text("ninferno-serve").find("--round-tiny-scales") !=
+                              std::string::npos,
+                      "serve takes the converter's --round-tiny-scales");
     failures += check(serve_usage_text("ninferno-serve").find("device-state=2x max-concurrency") !=
                           std::string::npos,
                       "serve help omits context-cache defaults");
