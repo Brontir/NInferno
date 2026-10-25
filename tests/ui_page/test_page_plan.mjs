@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specBasisText", "launchSettingsOf",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -354,6 +354,17 @@ eq(H.planMemory(H.planRowOf(doc, "UD-Q8_K_XL").plan), null, "no step, no memory"
 
 // planSpecSummary and the basis words.
 const sp = H.planSpecSummary(spec);
+// The variants by the thinking flag: both, with the second's distance from the first; none when one.
+{
+  const both = H.planSpecSummary({served: "dflash:15", backend: "dflash", basis: "measured",
+    by_thinking: {thinking: {config: "dflash:15", speedup: 3.86}, non_thinking: {config: "dflash:7", speedup: 2.22}, per_request: true}});
+  const line = H.specVariantsLine(both, EN);
+  ok(line.includes("dflash:15 ×3.86") && line.includes("dflash:7 ×2.22 (−1.64)"), "both variants with the delta: " + line);
+  const same = H.planSpecSummary({served: "mtp:4", backend: "mtp", basis: "measured",
+    by_thinking: {thinking: {config: "mtp:4", speedup: 2}, non_thinking: {config: "mtp:4", speedup: 1.8}, per_request: false}});
+  eq(H.specVariantsLine(same, EN), "", "one configuration for both: no line");
+  eq(H.specVariantsLine(H.planSpecSummary({served: "plain", backend: "none", basis: "none"}), EN), "", "no profile: no line");
+}
 eq([sp.served, sp.kind, sp.basis, sp.depth], ["mtp:3", "mtp", "own", 2], "served speculation");
 eq(H.planSpecSummary({served: "plain", backend: "none", depth: 0, basis: "none"}).kind, "", "plain decode");
 eq(H.planSpecSummary(null), null, "no SPEC");

@@ -555,6 +555,8 @@ std::optional<ServedSpeculation> deepest_fitting_shallower(
     return best;
 }
 
+spec::Profile served_choices(const spec::Profile& profile) { return engine_choices(profile, nullptr); }
+
 bool per_request_pays(const SpeculationSubject& subject, bool thinking) {
     const auto& resolved = subject.resolved;
     if (!resolved || !resolved->found() || resolved->profile.disabled) { return false; }

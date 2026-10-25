@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <cstdio>
 #include <sstream>
 
@@ -922,6 +923,17 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
         out << "         load " << spec::load_label(s.load) << ", at "
             << inputs.options.max_concurrency << " streams depth " << s.depth_at_concurrency
             << "\n";
+    }
+    if (s.with_thinking && s.without_thinking) {
+        const auto text = [](const SpeculationReport::ThinkingVariant& v) {
+            std::ostringstream o;
+            o << v.label;
+            if (v.speedup > 0) { o << " x" << std::fixed << std::setprecision(2) << v.speedup; }
+            return o.str();
+        };
+        out << "         thinking " << text(*s.with_thinking) << ", without "
+            << text(*s.without_thinking)
+            << (s.per_request ? " (each request its own)" : " (one for every request)") << "\n";
     }
     for (const SpeculationFallbackStep& f : s.fallbacks) {
         out << "         " << (f.served ? "> " : "  ") << f.step << " " << f.label << ": "
