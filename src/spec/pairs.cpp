@@ -383,7 +383,8 @@ double label_bits(std::string_view label) {
     }
     if (text.find("f32") != std::string::npos) { return 32; }
     if (text.find("fp4") != std::string::npos) { return 4; }
-    static const std::regex bits(R"((?:^|[-_])i?q([0-9]))");
+    // Q4_K_M, IQ2_M, and the ternary TQ1_0 / TQ2_0.
+    static const std::regex bits(R"((?:^|[-_])[it]?q([0-9]))");
     std::smatch match;
     return std::regex_search(text, match, bits) ? std::stod(match[1].str()) : 16;
 }

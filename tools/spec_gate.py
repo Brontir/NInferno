@@ -70,8 +70,8 @@ DECISION_FILES = (
     "src/models/qwen3_5/program/prefill.cpp",                # the request's depth at admission
     "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
     "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
-    "src/models/gemma4/session.h",                           # Gemma 4 depth adaptation
-    "src/models/dense/session.h",                            # dense draft_tokens / min_draft
+    "src/models/gemma4/session.h",                           # Gemma 4 session draft depth
+    "src/models/dense/session.h",                            # dense draft_tokens
     "src/models/dense/program_family.cpp",                   # dense drafter window refusals
     "src/models/nemotron_h/program_family.cpp",              # speculative memory from the window
     "src/serve/serve_options.cpp",                           # no --spec -> --spec auto

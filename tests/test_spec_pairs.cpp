@@ -260,7 +260,8 @@ int main() {
     }
     // Bits per weight from a quantization label.
     expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
-               sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16,
+               sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16 &&
+               sp::label_bits("TQ1_0") == 1 && sp::label_bits("UD-TQ2_0") == 2,
            "quantization labels' bits");
     // The generation of a device: its chain's architecture key.
     {

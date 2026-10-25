@@ -39,9 +39,6 @@ struct SessionOptions {
     // verifies its first draft_tokens.
     const speculation::DFlashDrafter* dflash = nullptr;
     std::int32_t draft_tokens                = 4;
-    // Nonzero and below draft_tokens: the depth adapts per round within
-    // [min_draft_tokens, draft_tokens]. Zero: every round drafts draft_tokens.
-    std::int32_t min_draft_tokens = 0;
     // Prompt lookup instead of a drafter, driven by speculate_until().
     bool ngram             = false;
     std::int32_t ngram_min = 2;
@@ -71,8 +68,8 @@ public:
 
     [[nodiscard]] std::int32_t position() const noexcept { return position_; }
 
-    // Starts a new sequence: the next prefill begins at position 0, and speculation's adaptive
-    // depth schedule and watchdog start over.
+    // Starts a new sequence: the next prefill begins at position 0, and speculation's watchdog
+    // starts over.
     void reset() noexcept;
 
     // Captures every CUDA graph the session can replay: the plain decode step and, with a

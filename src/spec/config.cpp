@@ -47,7 +47,6 @@ const char* mode_name(Mode mode) noexcept {
 std::string SpecConfig::label() const {
     if (mode == Mode::None) { return "plain"; }
     std::string out = std::string(mode_name(mode)) + ":" + std::to_string(k);
-    if (adaptive()) { out += ":" + std::to_string(k_min); }
     if (proposal_head) { out += "+head"; }
     return out;
 }
@@ -61,7 +60,7 @@ SpecConfig SpecConfig::parse(std::string_view label) {
         body.remove_suffix(5);
     }
     const auto parts = split(body, ':');
-    if (parts.size() < 2 || parts.size() > 3) {
+    if (parts.size() != 2) {
         throw std::invalid_argument("invalid speculation config '" + std::string(label) + "'");
     }
     if (parts[0] == "mtp") {
@@ -76,14 +75,7 @@ SpecConfig SpecConfig::parse(std::string_view label) {
         throw std::invalid_argument("invalid speculation config '" + std::string(label) + "'");
     }
     out.k = number(parts[1], label);
-    if (parts.size() == 3) {
-        if (out.mode != Mode::Mtp) {
-            throw std::invalid_argument("adaptive depth is an MTP option: '" + std::string(label) +
-                                        "'");
-        }
-        out.k_min = number(parts[2], label);
-    }
-    if (out.k < 1 || out.k > 16 || (parts.size() == 3 && (out.k_min < 1 || out.k_min >= out.k))) {
+    if (out.k < 1 || out.k > 16) {
         throw std::invalid_argument("invalid speculation depth in '" + std::string(label) + "'");
     }
     return out;

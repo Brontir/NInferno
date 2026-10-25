@@ -10,8 +10,7 @@
 //   ninferno-dense <artifact> spec     --tokens F --decode M [--prompt N] [--repeat R] [--out O]
 //
 // Speculative decoding (greedy): --dflash D (a DFlash drafter artifact paired with this target)
-// or --ngram (prompt lookup), --draft-tokens K (drafts verified per round), --min-draft-tokens J
-// (the depth adapts within [J, K]). chat then generates by speculative rounds. spec prefills the
+// or --ngram (prompt lookup), --draft-tokens K (drafts verified per round). chat then generates by speculative rounds. spec prefills the
 // prompt (the whole token file, or its first N tokens) and decodes M tokens twice from the same
 // state, plainly and by speculative rounds, and reports both speeds, the rounds' acceptance and
 // how far the two greedy continuations agree (--out O writes the speculative one).
@@ -92,7 +91,7 @@ Arguments parse(int argc, char** argv) {
         "a16",       "activations",  "chunk",        "context",
         "cuda-sync", "cuts",         "debug-poison", "debug-poison-skip",
         "decode",    "dense-tune",   "dflash",       "draft-tokens",
-        "dump",      "eager-decode", "kv-dtype",     "min-draft-tokens",
+        "dump",      "eager-decode", "kv-dtype",
         "moe-tune",  "ngram",        "out",          "prompt",
         "repeat",    "route-dir",    "route-table",  "seed",
         "system",    "temperature",  "tokens",       "top-k",
@@ -166,7 +165,6 @@ int main(int argc, char** argv) {
         options.ngram            = args.flag("ngram");
         options.draft_tokens     = static_cast<std::int32_t>(
             args.number("draft-tokens", dflash ? dflash->config().block_size - 1 : 4));
-        options.min_draft_tokens = static_cast<std::int32_t>(args.number("min-draft-tokens", 0));
         const bool speculative   = options.dflash != nullptr || options.ngram;
         std::optional<Frontend> frontend;
         std::vector<std::int32_t> tokens;
@@ -198,11 +196,10 @@ int main(int argc, char** argv) {
                     exact ? "exact" : args.flag("a16") ? "a16" : "artifact", options.prefill_chunk,
                     options.max_context);
         if (speculative) {
-            std::printf("\"drafter\":\"%s\",\"drafter_gib\":%.3f,\"draft_tokens\":%d,"
-                        "\"min_draft_tokens\":%d,",
+            std::printf("\"drafter\":\"%s\",\"drafter_gib\":%.3f,\"draft_tokens\":%d,",
                         dflash ? "dflash" : "ngram",
                         dflash ? dflash->device_bytes() / 1073741824.0 : 0.0,
-                        options.draft_tokens, options.min_draft_tokens);
+                        options.draft_tokens);
         }
 
         if (args.command == "bench") {

@@ -163,11 +163,10 @@ int main() {
         profile.fit_fallback                   = choice(Mode::Mtp, 2, "mtp", 1.3);
         profile.served                         = ninferno::spec::ServedChoices{};
 
-        ninferno::spec::SpecConfig tried = profile.overall.config;
-        tried.k_min                    = 2;
-        const auto dflash6             = shallower_profile(profile, tried, 2.14);
+        const ninferno::spec::SpecConfig tried = profile.overall.config;
+        const auto dflash6                     = shallower_profile(profile, tried, 2.14);
         failures +=
-            check(dflash6 && dflash6->overall.config.k == 6 && dflash6->overall.config.k_min == 2 &&
+            check(dflash6 && dflash6->overall.config.k == 6 &&
                       dflash6->overall.drafter == "dflash" &&
                       near(dflash6->overall.floor_tokens_per_round, 1.9 + 0.5 * 0.24) &&
                       dflash6->thinking.config.k == 6 && dflash6->non_thinking.config.k == 6 &&
@@ -175,12 +174,11 @@ int main() {
                   "DFlash k7 serves k6 everywhere with the floor between k5 and k7");
 
         // The fit fallback's MTP at k3 serves k2 with the fallback's drafter and its measured
-        // floor; a minimum depth not below the new depth is dropped.
-        ninferno::spec::SpecConfig mtp3 = choice(Mode::Mtp, 3, "", 0).config;
-        mtp3.k_min                    = 2;
-        const auto mtp2               = shallower_profile(profile, mtp3, 1.6);
+        // floor.
+        const ninferno::spec::SpecConfig mtp3 = choice(Mode::Mtp, 3, "", 0).config;
+        const auto mtp2                       = shallower_profile(profile, mtp3, 1.6);
         failures += check(mtp2 && mtp2->overall.config.mode == Mode::Mtp &&
-                              mtp2->overall.config.k == 2 && mtp2->overall.config.k_min == 0 &&
+                              mtp2->overall.config.k == 2 &&
                               mtp2->overall.drafter == "mtp" &&
                               near(mtp2->overall.floor_tokens_per_round, 1.3),
                           "MTP k3 serves k2 with the fallback's drafter and floor");
