@@ -2,6 +2,7 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "core/ascii.h"
 
@@ -234,7 +235,8 @@ PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
 
 AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
-                        std::uint32_t target_hidden, const convert::FetchOptions* fetch) {
+                        std::string_view target_model_type, std::uint32_t target_hidden,
+                        const convert::FetchOptions* fetch) {
     AttachedDrafterMemory out;
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
@@ -252,6 +254,9 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}
+            if (!d.component.empty()) {
+                bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+            }
             if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
                 try {
                     out.state = plan_drafter_state_of_config(convert::fetch_config(spec, *fetch),
