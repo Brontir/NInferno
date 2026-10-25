@@ -73,19 +73,9 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         modes.insert(base->menu.mode);
     }
     for (const spec::Mode mode : modes) {
-        SpeculationSubject one = subject;
-        spec::Profile& p       = one.resolved->profile;
-        if (!p.measurements.empty()) {
-            std::erase_if(p.measurements, [&](const spec::Measurement& m) {
-                return m.config.enabled() && m.config.mode != mode;
-            });
-            p.served.reset();
-            p.portable.reset();
-            spec::SelectOptions options;
-            options.portable_within = 0;
-            spec::select(p, options);
-        }
-        const auto served = served_speculation(one, ask.thinking, ask.per_request);
+        const SpeculationSubject one = subject_of_mode(subject, mode);
+        const spec::Profile& p       = one.resolved->profile;
+        const auto served            = served_speculation(one, ask.thinking, ask.per_request);
         if (!served || served->engine.backend == SpeculativeBackend::None ||
             served->menu.mode != mode) {
             continue;
@@ -310,6 +300,10 @@ StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins) {
     if (!pins.state && has(choice::Axis::State)) { out.state = s.candidate.state; }
     if (!pins.ring && has(choice::Axis::Ring)) { out.ring = s.candidate.ring; }
     if (!pins.chunk) { out.chunk = s.candidate.chunk; }
+    if (!served.drafters.empty()) {
+        out.drafter = s.candidate.drafter == 0 ? spec::Mode::None
+                                               : served.drafters[s.candidate.drafter - 1].menu.mode;
+    }
     return out;
 }
 

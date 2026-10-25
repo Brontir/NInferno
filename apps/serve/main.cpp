@@ -216,6 +216,16 @@ int main(int argc, char** argv) {
             if (axes->state) { options.recurrent_state = axes->state; }
             if (axes->ring) { options.sliding_kv_cache = *axes->ring; }
             if (axes->chunk) { options.prefill_chunk = *axes->chunk; } // the widest; not explicit
+            // The drafter the choice weighed for --spec auto: plain decode, or the profile chosen
+            // again for its mode.
+            if (axes->drafter && options.speculation_from_profile) {
+                if (*axes->drafter == ninferno::spec::Mode::None) {
+                    options.speculation_from_profile = false;
+                    logger->info("choice | speculation: plain decode, the configuration choice's");
+                } else {
+                    options.speculation_mode = axes->drafter;
+                }
+            }
         }
         // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
         // bound or served.

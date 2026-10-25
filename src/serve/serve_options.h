@@ -117,6 +117,9 @@ struct ServeOptions {
     // The profile was asked for by default rather than by --spec auto: a model without one for
     // this GPU decodes plain without a warning.
     bool speculation_by_default = false;
+    // The configuration choice's speculation mode (product::StartAxes::drafter) for --spec auto:
+    // the profile chosen again for it (product::subject_of_mode). nullopt: the profile's own.
+    std::optional<spec::Mode> speculation_mode;
     // An explicit --spec without --draft-tokens: the service takes the depth the model's profile
     // runs that backend with on this GPU, else product::default_draft_tokens.
     bool draft_tokens_from_model = false;

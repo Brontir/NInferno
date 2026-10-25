@@ -403,6 +403,21 @@ void apply_builtin_default(SpeculationSubject& subject) {
     }
 }
 
+SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
+    if (!subject.resolved) { return subject; }
+    spec::Profile& p = subject.resolved->profile;
+    if (p.measurements.empty()) { return subject; }
+    std::erase_if(p.measurements, [&](const spec::Measurement& m) {
+        return m.config.enabled() && m.config.mode != mode;
+    });
+    p.served.reset();
+    p.portable.reset();
+    spec::SelectOptions options;
+    options.portable_within = 0;
+    spec::select(p, options);
+    return subject;
+}
+
 std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
                                                     bool thinking, bool per_request) {
     const auto& resolved = subject.resolved;

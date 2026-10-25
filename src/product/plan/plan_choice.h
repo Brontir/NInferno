@@ -60,6 +60,9 @@ struct StartAxes {
     std::optional<RecurrentStateStorage> state;
     std::optional<ActivationMode> activations;
     std::optional<std::uint32_t> chunk; // the widest prefill chunk
+    // The speculation mode the choice took (None: plain decode), where it chose a drafter: a
+    // --spec auto start serves its profile chosen again for that mode (subject_of_mode).
+    std::optional<spec::Mode> drafter;
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 // The axes set on a start's Engine options (the KV codec then no longer automatic, the state

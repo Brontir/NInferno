@@ -368,6 +368,18 @@ ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
     return engine_options;
 }
 
+const product::SpeculationSubject& GenerationService::speculation_subject() {
+    if (!speculation_subject_) {
+        auto subject = product::speculation_subject(options_.artifact_path, options_.device,
+                                                    options_.spec_profile);
+        if (options_.speculation_mode) {
+            subject = product::subject_of_mode(std::move(subject), *options_.speculation_mode);
+        }
+        speculation_subject_ = std::move(subject);
+    }
+    return *speculation_subject_;
+}
+
 GenerationService::GenerationService(ServeOptions options, StartupObserver startup_observer)
     : options_(std::move(options)) {
     ninferno::EngineOptions engine_options = engine_options_of(options_);
@@ -401,8 +413,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     }
     if (options_.speculation_from_profile) {
         served_speculation_ = product::served_speculation(
-            options_.artifact_path, options_.device, options_.enable_thinking.value_or(true),
-            options_.per_request_speculation, options_.spec_profile);
+            speculation_subject(), options_.enable_thinking.value_or(true),
+            options_.per_request_speculation);
         if (served_speculation_) {
             engine_options.speculative =
                 product::with_given_settings(served_speculation_->engine, options_.speculative);
@@ -499,9 +511,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         const std::string refused_label = product::speculation_label(engine_options.speculative);
         std::string why = refused.what();
         bool built      = false;
-        if (auto fallback = product::served_fit_fallback(options_.artifact_path, options_.device,
-                                                         options_.per_request_speculation,
-                                                         options_.spec_profile)) {
+        if (auto fallback = product::served_fit_fallback(speculation_subject(),
+                                                         options_.per_request_speculation)) {
             fallback->fit_fallback =
                 product::fit_refusal(refused_label, engine_options.max_context, why,
                                      engine_options.max_context_automatic);
@@ -526,9 +537,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // prompt plainly at 50.9 tok/s against 99.9 speculating).
         if (!built) {
             const auto shallower = [&](const spec::SpecConfig& config, double floor) {
-                return product::served_shallower(options_.artifact_path, options_.device,
-                                                 options_.per_request_speculation, config, floor,
-                                                 options_.spec_profile);
+                return product::served_shallower(speculation_subject(),
+                                                 options_.per_request_speculation, config, floor);
             };
             const std::string first_refusal = refused.what();
             // A candidate replaces the served speculation and builds the Engine (dropping one an
@@ -562,8 +572,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             // Then the model's own MTP head, before plain decode.
             if (!built) {
                 if (auto head = product::served_head_fallback(
-                        options_.artifact_path, options_.device,
-                        options_.per_request_speculation, options_.spec_profile)) {
+                        speculation_subject(), options_.per_request_speculation)) {
                     built = fits(*head, "head");
                 }
             }
@@ -619,8 +628,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             bool head_kept = false;
             if (plain > with_drafter) {
                 if (auto head = product::served_head_fallback(
-                        options_.artifact_path, options_.device, options_.per_request_speculation,
-                        options_.spec_profile)) {
+                        speculation_subject(), options_.per_request_speculation)) {
                     engine_.reset();
                     head->fit_fallback = drafted_label + " leaves the KV pool " +
                                          std::to_string(with_drafter) + " of " +
