@@ -3,6 +3,7 @@
 #include "convert/checks.h"
 #include "convert/convert.h"
 #include "convert/dense.h"
+#include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
 #include "convert/pyjson.h"
@@ -182,6 +183,21 @@ Support model_support(const SupportFacts& facts) {
         if (std::find(known.begin(), known.end(), arch) == known.end()) {
             return refuse("model", "GGUF architecture '" + arch + "' is not one the engine runs");
         }
+        // A Qwen3.5 GGUF that mixes NVFP4 matrices with other quantized GGML blocks (imatrix
+        // NVFP4 releases: cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF): the NVFP4 recipes keep
+        // NVFP4 beside unquantized tensors only, and the GGUF recipes keep GGML blocks but not
+        // NVFP4 ones (convert.cpp's recipe choice), so no recipe runs it as published.
+        if ((arch == "qwen35" || arch == "qwen35moe") && facts.gguf_nvfp4_matrices > 0 &&
+            facts.gguf_block_matrices > 0) {
+            return refuse("model",
+                          "its GGUF mixes NVFP4 matrices (" +
+                              std::to_string(facts.gguf_nvfp4_matrices) +
+                              ") with other quantized GGML blocks (" +
+                              std::to_string(facts.gguf_block_matrices) +
+                              "): NInferno keeps NVFP4 GGUF blocks only beside unquantized "
+                              "tensors, and GGML blocks only without NVFP4 ones; take a GGUF of "
+                              "one encoding (a K-quant, or the NVFP4 release)");
+        }
         if (arch == "dflash" || arch == "gemma4-assistant") { role = "drafter"; }
         if (facts.needs_token) {
             return {Verdict::NeedsToken, role, kGated};
@@ -281,6 +297,19 @@ SupportFacts search_support_facts(const Json& item) {
 
 namespace {
 
+// The header's matrices by encoding (SupportFacts::gguf_nvfp4_matrices, gguf_block_matrices).
+void count_gguf_matrices(const GgufFile& file, SupportFacts& out) {
+    for (const auto& tensor : file.tensors) {
+        if (tensor.ne.size() < 2) { continue; }
+        if (tensor.type == ggml::NVFP4) {
+            ++out.gguf_nvfp4_matrices;
+        } else if (tensor.type != ggml::F32 && tensor.type != ggml::F16 &&
+                   tensor.type != ggml::BF16) {
+            ++out.gguf_block_matrices;
+        }
+    }
+}
+
 // A GGUF file's facts from its header (the first bytes, read longer until the metadata fits).
 void read_gguf_facts(const fs::path& path, SupportFacts& out) {
     out.gguf = true;
@@ -297,6 +326,7 @@ void read_gguf_facts(const fs::path& path, SupportFacts& out) {
                 const auto* arch = file.find("general.architecture");
                 out.gguf_architecture =
                     arch && arch->is_string() ? arch->get<std::string>() : std::string();
+                count_gguf_matrices(file, out);
                 out.chat_template = file.has("tokenizer.chat_template");
                 if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
                                             file.has("general.source.huggingface.repository"))) {
@@ -384,6 +414,7 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                     const auto* arch = file.find("general.architecture");
                     out.gguf_architecture =
                         arch && arch->is_string() ? arch->get<std::string>() : std::string();
+                    count_gguf_matrices(file, out);
                     // Without a template of its own, one its base model ships comes with the
                     // tokenizer files (acquire.cpp, base_tokenizer): not known before.
                     // The fetch takes a chat_template.jinja beside it as the template.

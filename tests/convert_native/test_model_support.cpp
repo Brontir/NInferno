@@ -122,6 +122,18 @@ int main(int argc, char** argv) {
         expect(says(of(g), Verdict::Unsupported, "lfm2"), "a GGUF of another architecture");
         g.gguf_architecture = "qwen35";
         expect(of(g).verdict == Verdict::Supported, "a Qwen3.5 GGUF");
+        // cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF: 374 NVFP4 matrices beside Q5_K/Q6_K/Q8_0
+        // ones. The official NVFP4 layout (NVFP4 beside unquantized tensors) and a K-quant run.
+        g.gguf_nvfp4_matrices = 374;
+        g.gguf_block_matrices = 122;
+        expect(says(of(g), Verdict::Unsupported, "mixes NVFP4 matrices (374)"),
+               "a GGUF mixing NVFP4 and GGML blocks");
+        g.gguf_block_matrices = 0;
+        expect(of(g).verdict == Verdict::Supported, "an NVFP4 GGUF beside unquantized tensors");
+        g.gguf_nvfp4_matrices = 0;
+        g.gguf_block_matrices = 400;
+        expect(of(g).verdict == Verdict::Supported, "a K-quant GGUF");
+        g.gguf_block_matrices = 0;
         g.gguf_architecture = "clip";
         expect(of(g).verdict == Verdict::Unsupported && of(g).role == "projector", "a projector");
         g.gguf_architecture.clear();
