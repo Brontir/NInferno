@@ -503,7 +503,7 @@ def main() -> int:
             hub.repos["org/qwen-gguf2"]["lfs"].add("model-Q8_K_XL.gguf")
             hub.blobs[hub.sha(wide)] = wide
             reset()
-            wider = again2("--quant", "8bit", "--fetch-only")
+            wider = again2("--quant", "8bit")
             downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
             case("asked by width, a larger one of that width listed: the model here, nothing downloaded",
                  wider[0] == 0 and "the weights here are of" in wider[1] and not downloads
