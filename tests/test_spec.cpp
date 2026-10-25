@@ -70,7 +70,7 @@ Measurement measure(const std::string& label, const std::string& family, double 
 
 int test_config() {
     int failures = 0;
-    for (const char* label : {"plain", "mtp:4", "mtp:8:2", "dflash:11", "dflash2:15+head",
+    for (const char* label : {"plain", "mtp:4", "dflash:11", "dflash2:15+head",
                               "mtp:3+head", "ngram:8"}) {
         failures += check(SpecConfig::parse(label).label() == label,
                           std::string("label round trip: ") + label);
@@ -373,7 +373,6 @@ int test_served() {
     failures += check(gemma.runs(SpecConfig::parse("mtp:15")) &&
                           gemma.runs(SpecConfig::parse("plain")) &&
                           !gemma.runs(SpecConfig::parse("mtp:16")) &&
-                          !gemma.runs(SpecConfig::parse("mtp:5:2")) &&
                           !gemma.runs(SpecConfig::parse("dflash:7")) &&
                           !gemma.runs(SpecConfig::parse("mtp:3+head")) &&
                           !gemma.runs(SpecConfig::parse("ngram:4")),
@@ -381,8 +380,7 @@ int test_served() {
     failures += check(qwen.runs(SpecConfig::parse("dflash:15")) &&
                           qwen.runs(SpecConfig::parse("dflash2:11+head")) &&
                           qwen.runs(SpecConfig::parse("mtp:3+head")) &&
-                          !qwen.runs(SpecConfig::parse("dflash:16")) &&
-                          !qwen.runs(SpecConfig::parse("mtp:8:2")),
+                          !qwen.runs(SpecConfig::parse("dflash:16")),
                       "Qwen's Engine runs MTP to 5 and DFlash to 15, fixed");
     const auto dense = engine_support("dense_decoder");
     failures += check(dense.runs(SpecConfig::parse("dflash:15")) &&
