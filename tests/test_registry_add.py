@@ -193,7 +193,8 @@ class Stamps(unittest.TestCase):
 class PairTest(unittest.TestCase):
     """--pair: a lab measurement of one target and its drafters as the registry's pair."""
 
-    tune = {"key": {"engine": "ninferno-spec-1", "gpu": "ad104:60sm"}, "measurements": []}
+    tune = {"key": {"engine": "ninferno-spec-1", "gpu": "ad104:60sm"},
+            "measurements": [{"config": "plain"}, {"config": "dflash:7"}]}
     manifest = {"target": {"engine": "qwen3_5"},
                 "drafters": [{"kind": "mtp", "repo": None, "status": "embedded"},
                              {"kind": "dflash", "repo": "z-lab/Qwen3.5-9B-DFlash",
@@ -214,6 +215,11 @@ class PairTest(unittest.TestCase):
         self.assertEqual(registry_add.label_bits("IQ2_M"), 2)
         self.assertEqual(registry_add.label_bits(""), 16)
         self.assertEqual(registry_add.generation_of("gb203:70sm"), "sm120")
+
+    def test_a_tune_without_a_drafter_is_refused(self):
+        bare = {"key": self.tune["key"], "measurements": [{"config": "plain"}]}
+        with self.assertRaises(SystemExit):
+            registry_add.pair_of(bare, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
 
     def test_bad_weights_are_refused(self):
         with self.assertRaises(SystemExit):

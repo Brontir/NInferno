@@ -284,6 +284,10 @@ def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[s
     gpu = (tune.get("key") or {}).get("gpu", "")
     if not gpu:
         raise SystemExit("the tune names no GPU class (key.gpu)")
+    # A tune that measured no drafter (none fitted beside the target, or the budget ran out before
+    # one) says nothing of the pair: a start would take it for unmeasured anyway (pair_choice).
+    if not any(m.get("config", "plain") != "plain" for m in tune.get("measurements", [])):
+        raise SystemExit("the tune measured no drafter configuration: nothing to record")
     engine = (manifest.get("target") or {}).get("engine") or manifest.get("engine", "")
     if not engine:
         raise SystemExit("the manifest names no engine family")
