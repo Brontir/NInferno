@@ -204,7 +204,11 @@ SupportFacts search_support_facts(const Json& item) {
     for (const auto& tag : item.value("tags", Json::array())) {
         if (tag.is_string() && tag.get<std::string>() == "mlx") { out.library = "mlx"; }
     }
-    if (const auto g = item.find("gguf"); g != item.end() && g->is_object()) {
+    // A GGUF summary decides only without safetensors weights: the fetch takes those first
+    // (choose_files), so a GGUF beside them is not what runs.
+    const auto safetensors = item.find("safetensors");
+    const bool checkpoint  = safetensors != item.end() && safetensors->is_object();
+    if (const auto g = item.find("gguf"); !checkpoint && g != item.end() && g->is_object()) {
         out.gguf              = true;
         out.gguf_architecture = g->value("architecture", std::string());
         out.chat_template     = g->contains("chat_template");

@@ -835,8 +835,10 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
         std::optional<convert::Support> support;
         if (hub != "modelscope") {
             try {
+                // The model an unqualified fetch takes: safetensors weights when there are
+                // any, else the GGUF read above.
                 auto ask  = fetch;
-                ask.quant = quant;
+                ask.quant = weights ? std::string() : quant;
                 if (const auto facts = convert::hub_support_facts(repo, ask)) {
                     support = convert::model_support(*facts);
                 }
