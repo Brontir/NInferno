@@ -1766,6 +1766,10 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     if (files.empty()) { throw no_gguf(""); }
     std::sort(files.begin(), files.end(),
               [](const auto& a, const auto& b) { return a.path < b.path; });
+    // The model conversion opens: the first file's, with the other parts of its split. Other
+    // GGUFs the --include globs matched (another quantization, a drafter) are not its parts.
+    const std::string model = gguf_group(files.front().path);
+    std::erase_if(files, [&](const RemoteFile& f) { return gguf_group(f.path) != model; });
     out.parts = files.size();
     if (part >= files.size()) {
         throw std::out_of_range(repo + ": GGUF part " + std::to_string(part + 1) + " of " +
