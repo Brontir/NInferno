@@ -72,17 +72,20 @@ For a hub id:
     plan, the fetch's own default applies;
   - the fetch's own default order (when no plan applies) now puts BF16 and F16 files last: the
     engine serves 8 bits or fewer, so a repository without Q8_0 gets a K-quant, not BF16.
-- A converted model whose download was removed (ninferno-ui removes it once the model loads) is
-  served from its converted weights. The hub is asked whether its branch still names the commit
-  they were converted from. If the branch moved, the start says so and serves the converted
-  weights anyway, after a 10-second count-down on a terminal (a new download is many gigabytes).
+- A model already here, whether its download was converted and removed (ninferno-ui removes it
+  once the model loads) or is still in the cache, is served from the commit it came from. The hub
+  is asked whether its branch still names that commit. If the branch moved, the start says so and
+  serves the weights here anyway, after a 10-second count-down on a terminal (a new download is
+  many gigabytes); with the download still in the cache the start runs pinned to its commit.
   - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
-  - `--refetch` downloads the new commit, converts it and removes the old conversion.
+  - `--refetch` downloads the new commit, converts it and removes the old conversion
+    (`--keep-replaced` leaves it, for ninferno-ui to remove once the new one serves).
   - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
-too small.
+too small. Whether the weights fit is the plan without the weights at the asked context and
+streams on this GPU's free memory (the same plan the start makes), with `--quant` named too.
 
 A fuller example for a converted file:
 

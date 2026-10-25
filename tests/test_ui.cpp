@@ -698,7 +698,8 @@ void test_catalog() {
         fs::create_directories(repo / "refs");
         fs::create_directories(repo / "ninferno/c0ffee");
         std::ofstream(repo / "refs/main") << "c0ffee\n";
-        for (const char* name : {"m-Q4_K_M.qwen3_5_bf16.ninferno", "m-Q8_0.qwen3_5_bf16.ninferno"}) {
+        for (const char* name : {"m-Q4_K_M.qwen3_5_bf16.ninferno", "m-Q8_0.qwen3_5_bf16.ninferno",
+                                 "m-UD-Q4_K_M.qwen3_5_bf16.ninferno"}) {
             std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
             std::ofstream(repo / "ninferno/c0ffee" / (std::string(name) + ".conversion.json"))
                 << "{}";
@@ -711,6 +712,24 @@ void test_catalog() {
                   kept_artifact(root, "org/m-GGUF", "", "8bit", "")->filename() ==
                       "m-Q8_0.qwen3_5_bf16.ninferno",
               "a kept artifact by label and by width");
+        // A label inside another (Q4_K_M of UD-Q4_K_M): the conversion whose own label it is.
+        const auto ud = kept_artifact(root, "org/m-GGUF", "", "UD-Q4_K_M", "");
+        check(ud && ud->filename() == "m-UD-Q4_K_M.qwen3_5_bf16.ninferno",
+              "a kept artifact by its exact label beside a longer one");
+        // The same of --vision conversions (<gguf-stem>.vision.<recipe>).
+        const auto vision = root / "models--org--v-GGUF";
+        fs::create_directories(vision / "refs");
+        fs::create_directories(vision / "ninferno/c0ffee");
+        std::ofstream(vision / "refs/main") << "c0ffee\n";
+        for (const char* name : {"v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+                                 "v-UD-Q4_K_M.vision.qwen3_5_bf16.ninferno"}) {
+            std::ofstream(vision / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(vision / "ninferno/c0ffee" / (std::string(name) + ".conversion.json"))
+                << "{}";
+        }
+        const auto vq4 = kept_artifact(root, "org/v-GGUF", "", "Q4_K_M", "");
+        check(vq4 && vq4->filename() == "v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+              "a kept --vision artifact by its exact label beside a longer one");
         check(!kept_artifact(root, "org/m-GGUF", "", "", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "IQ2_XXS", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", "other_recipe") &&
@@ -759,6 +778,24 @@ void test_catalog() {
             (void)make_launch(refetch_options, refetch);
         } catch (const std::invalid_argument&) { refused = true; }
         check(refused, "a serve start does not refetch");
+        refetch.prepare_only  = true;
+        refetch.keep_replaced = true;
+        const auto kept       = make_launch(refetch_options, refetch).argv;
+        check(std::find(kept.begin(), kept.end(), "--keep-replaced") != kept.end(),
+              "ninferno-ui's update keeps the replaced conversion for itself to remove");
+        check(std::find(kept.begin(), kept.end(), "--vision") == kept.end(),
+              "a text conversion's refetch stays text");
+        refetch.vision        = true;
+        const auto with_vision = make_launch(refetch_options, refetch).argv;
+        check(std::find(with_vision.begin(), with_vision.end(), "--vision") != with_vision.end(),
+              "a Vision conversion's refetch keeps its Vision encoder");
+        refetch.vision = false;
+        refetch.refetch = false;
+        refused         = false;
+        try {
+            (void)make_launch(refetch_options, refetch);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "keep_replaced only with a refetch");
     }
     // The Vision projector a start fetches and the plan charges: one choice from the listing, every
     // part of a split one.

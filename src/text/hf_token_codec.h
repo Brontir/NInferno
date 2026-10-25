@@ -36,6 +36,9 @@ public:
         return tokenizer_.is_valid_token(id);
     }
     [[nodiscard]] bool has_exact_token_domain(std::size_t size) const noexcept override;
+    [[nodiscard]] std::vector<int> template_prefix() const override {
+        return tokenizer_.template_prefix();
+    }
     [[nodiscard]] std::optional<int> token_id(std::string_view content) const override {
         return tokenizer_.token_id(content);
     }

@@ -149,6 +149,8 @@ pre.log{margin:0;background:var(--soft);border-top:1px solid var(--line);padding
 .seg button{font-family:inherit}
 .kvsel button.on,.seg button.on,.kvsel button.on:hover:not(:disabled),.seg button.on:hover:not(:disabled){background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .sortline{padding-block:8px}
+.diskline{padding-block:8px;gap:8px;flex-wrap:wrap}.diskline input{flex:1;min-width:200px;font:12px var(--mono)}
+.hfline{padding-block:6px;font-size:12px;gap:6px;flex-wrap:wrap}.hfline input{flex:1;min-width:140px;font:12px var(--mono)}
 .chk{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);cursor:pointer;margin-left:auto}
 .sup{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:11px;font-weight:800;flex:none;cursor:help}
 .sup-star{background:#f5c518;color:#3d2e00}
@@ -158,7 +160,7 @@ pre.log{margin:0;background:var(--soft);border-top:1px solid var(--line);padding
 .accel .drt th,.accel .drt td{text-align:left;padding:4px 6px;border-top:1px solid var(--line, #8883);vertical-align:top}
 .accel details summary{cursor:pointer}
 .sup-full,.sup-pill-full{background:var(--ok-soft);color:var(--ok)}.sup-drafter,.sup-pill-drafter{background:var(--warn-soft);color:var(--warn)}
-.sup-none,.sup-pill-none{background:var(--bad-soft);color:var(--bad)}.sup-unknown,.sup-pill-unknown{background:var(--soft);color:var(--muted)}
+.sup-none,.sup-pill-none{background:var(--bad-soft);color:var(--bad)}.sup-unknown,.sup-pill-unknown,.sup-projector,.sup-pill-projector{background:var(--soft);color:var(--muted)}.sup-token,.sup-pill-token{background:var(--warn-soft);color:var(--warn)}
 .kvsel button:disabled{opacity:.35}
 .langpick{position:relative}
 #lang{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--mono)}
@@ -191,6 +193,9 @@ a.btnlink:hover{background:var(--soft)}
 .update.required{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .update .msg{flex:1;min-width:200px}
 .update a{color:var(--accent)}
+#mvdlg{border:1px solid var(--line);border-radius:12px;padding:16px 18px;max-width:32em;background:var(--panel);color:var(--fg)}
+#mvdlg::backdrop{background:#0006}
+#mvdlg .acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
 .choicet{border-collapse:collapse;font-size:12px;margin-top:4px}.choicet th,.choicet td{padding:2px 8px;text-align:left;border-bottom:1px solid var(--line, #8883)}.choicet td.num{text-align:right}.choicet .cgood{color:#2e9e5b}.choicet .cbad{color:#d14b4b}.choicet td.sub{max-width:240px}
 </style>
 </head>
@@ -219,6 +224,12 @@ a.btnlink:hover{background:var(--soft)}
   <button class="primary" id="updgo"></button>
 </div>
 
+<dialog id="mvdlg">
+  <b id="mvtitle"></b>
+  <p id="mvbody"></p>
+  <div class="acts"><button class="ghost" id="mvlater"></button><button class="ghost" id="mvkeep"></button><button class="primary" id="mvget"></button></div>
+</dialog>
+
 <div class="gpus" id="gpus"></div>
 
 <section id="tab-models">
@@ -232,6 +243,9 @@ a.btnlink:hover{background:var(--soft)}
       <thead><tr><th data-t="arch"></th><th data-t="params"></th><th data-t="publisher"></th><th data-t="model"></th>
         <th data-t="quant"></th><th class="num" data-t="size"></th><th data-t="modified"></th><th></th></tr></thead>
       <tbody id="mine"></tbody></table></div>
+    <div class="bar-line diskline"><b data-t="diskLabel"></b>
+      <input type="text" id="diskpath" autocomplete="off" spellcheck="false">
+      <button id="diskrun" data-t="run"></button><span class="muted" id="disknote"></span></div>
   </div>
 </section>
 
@@ -241,6 +255,7 @@ a.btnlink:hover{background:var(--soft)}
       <div class="bar-line"><input type="search" id="q" style="flex:1;min-width:0" autocomplete="off" spellcheck="false"><span class="seg hubseg" id="hubsel"></span></div>
       <div class="bar-line sortline"><span class="seg" id="sort"></span>
         <label class="chk"><input type="checkbox" id="hidenone"><span data-t="hideNone"></span></label></div>
+      <div class="bar-line hfline" id="hfline"></div>
       <div class="list" id="results"></div>
     </div>
     <div class="panel" id="detail"><div class="empty" data-t="pickOne"></div></div>
@@ -305,7 +320,7 @@ const T = {
     estNote:"≈ — estimates from the card (memory, bandwidth, clock) and the model's shape, with speculation from the registry profile of this GPU; not measurements. Red rows do not fit the chosen context × requests.",
     toDark:"Dark theme",toLight:"Light theme",avail:"available",memWeights:"weights",memDrafter:"drafter",
     memStates:"states",memRuntime:"workspace and CUDA",noSpec:"without speculation",estBasis:"Estimate of the configuration choice (src/product/choice): the card's rates and the model's bytes and flops, constants fitted on the lab's measurements (decode 5 %, prefill 2 % rms there); not a measurement",choiceHead:"Engine's choice",choiceLine:"KV {kv}, activations {act}{state}: {sec} s for a {p} + {a} token request, KLD {kld}",choiceState:"state {s}",choiceAlt:"What another value would change",colAxis:"Setting",colValue:"Value",colOwn:"Context each",colDecode:"Decode",colPrefill:"Prefill",colTime:"Request time",colWhy:"Why not",ax_quant:"Quantization",ax_kv:"KV cache",ax_activations:"Activations",ax_chunk:"Prefill chunk",choiceNoFit:"does not fit",why_no_fit:"does not hold the asked context",why_lower_worth:"slower or less accurate on balance",why_quant_rule:"the quant rule: the largest that fits; below 3.5 bits only when nothing above fits",why_default:"the family's default (the lab constants behind this choice are not yet confirmed on two cards)",why_coupled:"follows the KV cache and the activations (its own flag pins it)",why_tie_context:"the same worth: the chosen keeps more context per stream",why_tie_order:"the same in every respect: the listing order",ax_state:"Recurrent state",ax_ring:"Window rings",notMeasured:"not measured: the axis's worst",transferred:"measured on Qwen 3.5",busyNow:"Now only {free} is free: other processes hold the rest",
-    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this architecture yet",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Fits {ctx} × {par} with {free} to spare",recWhyRule:"The most precise quantization that fits and decodes within 10 % of the fastest one of 4 bits or more",recWhySlower:"{name} is more precise but {p} % slower than the fastest of 4 bits or more",recWhyNoFit:"{name} is more precise but does not fit at {ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",recWhyLow:"Only quantizations below 4 bits fit: answers are noticeably worse",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
+    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this model: the reason is below",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",diskLabel:"Model from disk",diskPlace:"a .gguf file or a Hugging Face checkpoint folder on this machine",diskBad:"Cannot run it: {reason}",hfAs:"Hugging Face: {account}",hfNone:"No Hugging Face token: gated models (Llama, Gemma originals) need one",hfPlace:"hf_… read token",hfSave:"Save",hfRemove:"Remove",hfGet:"Get a token",hfEnv:"set by {source} (change it there)",hfBad:"Token not accepted: {error}",hfFile:"kept in {path}, as `hf auth login` keeps it",sup_token:"Needs a Hugging Face token\nthe repository is gated: accept its terms on the hub and set HF_TOKEN",supShort_token:"needs a token",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Fits {ctx} × {par} with {free} to spare",recWhyRule:"The most precise quantization that fits and decodes within 10 % of the fastest one of 4 bits or more",recWhySlower:"{name} is more precise but {p} % slower than the fastest of 4 bits or more",recWhyNoFit:"{name} is more precise but does not fit at {ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",recWhyLow:"Only quantizations below 4 bits fit: answers are noticeably worse",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
   ru:{tabModels:"Мои модели",tabFind:"Найти",tabDownloads:"Загрузки",myModels:"Мои модели",arch:"Архитектура",params:"Параметры",publisher:"Автор",model:"Модель",
     quant:"Квант",size:"Размер",modified:"Изменена",run:"Запустить",chat:"Чат",stop:"Стоп",log:"Лог",del:"Удалить",delq:"Удалить?",yes:"Да",no:"Нет",
     calibrate:"Калибровать спекуляцию",original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
@@ -342,33 +357,33 @@ const T = {
     estNote:"≈ — оценка по карте (память, полоса, такты) и форме модели, со спекуляцией по профилю реестра для этой карты; не замер. Красные строки не влезают при выбранном контексте × числе запросов.",
     toDark:"Тёмная тема",toLight:"Светлая тема",avail:"доступно",memWeights:"веса",memDrafter:"черновик",
     memStates:"состояния",memRuntime:"буферы и CUDA",noSpec:"без спекуляции",estBasis:"Оценка модели выбора (src/product/choice): скорость карты, байты и операции модели, константы подогнаны по замерам на стендах (там ошибка декода 5 %, префилла 2 %); не замер",choiceHead:"Выбор движка",choiceLine:"KV {kv}, активации {act}{state}: {sec} с на запрос {p} + {a} токенов, KLD {kld}",choiceState:"состояние {s}",choiceAlt:"Что изменится при другом значении",colAxis:"Настройка",colValue:"Значение",colOwn:"Контекст на поток",colDecode:"Декод",colPrefill:"Префилл",colTime:"Время запроса",colWhy:"Почему не выбрано",ax_quant:"Квант",ax_kv:"KV-кэш",ax_activations:"Активации",ax_chunk:"Чанк префилла",choiceNoFit:"не влезает",why_no_fit:"не держит нужный контекст",why_lower_worth:"в сумме медленнее или менее точно",why_quant_rule:"правило квантов: самый крупный, что влезает; ниже 3,5 бита — только если выше ничего не влезает",why_default:"умолчание семейства (константы со стендов для этого выбора ещё не подтверждены на двух картах)",why_coupled:"следует за KV-кэшем и активациями (закрепляется своим флагом)",why_tie_context:"та же полезность: выбранный оставляет больше контекста на поток",why_tie_order:"всё одинаково: решает порядок перечисления",ax_state:"Состояние",ax_ring:"Кольца окна",notMeasured:"нет замера: худшее по оси",transferred:"замер на Qwen 3.5",busyNow:"Сейчас свободно только {free}: остальное занято другими процессами",
-    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nэту архитектуру движок пока не запускает",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Влезает при {ctx} × {par}, запас {free}",recWhyRule:"Самый точный квант из тех, что влезают и по декоду не медленнее лучшего 4-битного больше чем на 10 %",recWhySlower:"{name} точнее, но на {p} % медленнее лучшего 4-битного",recWhyNoFit:"{name} точнее, но не влезает при {ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",recWhyLow:"Влезают только кванты меньше 4 бит: ответы заметно хуже",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
+    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nдвижок не запускает эту модель: причина ниже",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",diskLabel:"Модель с диска",diskPlace:"файл .gguf или папка чекпойнта Hugging Face на этой машине",diskBad:"Запустить нельзя: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Нет токена Hugging Face: закрытым моделям (оригиналы Llama, Gemma) он нужен",hfPlace:"hf_… токен для чтения",hfSave:"Сохранить",hfRemove:"Удалить",hfGet:"Получить токен",hfEnv:"задан в {source} (меняйте там)",hfBad:"Токен не принят: {error}",hfFile:"хранится в {path}, как его хранит `hf auth login`",sup_token:"Нужен токен Hugging Face\nрепозиторий закрыт: примите условия на хабе и задайте HF_TOKEN",supShort_token:"нужен токен",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recWhyFit:"Влезает при {ctx} × {par}, запас {free}",recWhyRule:"Самый точный квант из тех, что влезают и по декоду не медленнее лучшего 4-битного больше чем на 10 %",recWhySlower:"{name} точнее, но на {p} % медленнее лучшего 4-битного",recWhyNoFit:"{name} точнее, но не влезает при {ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",recWhyLow:"Влезают только кванты меньше 4 бит: ответы заметно хуже",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
 // New words of every language; a language without a word falls back to English.
 Object.assign(T.en, {
-  sup_format:"Not supported: the weights format\nthe architecture is the engine's, but {lib} weights are not read",supShort_format:"format not supported",
+  
   hideNone:"Hide unsupported",hubTip:"Where to search and download from",
   searchHub:"Search {hub} (org/name works too)",
-  sup_family:"Probably supported\na variant of a family the engine runs ({family}); not verified yet",
+  
   sup_projector:"Checking…\nthe hub read the image projector (mmproj) instead of the model; reading the model file",
-  sup_checking:"Checking the model file…",supShort_family:"probably supported",supShort_projector:"checking",
+  sup_checking:"Checking the model file…",supShort_projector:"checking",
   basisHub:"Architecture as the hub reads it ({src})",basisOwn:"Architecture read from the model file: {file}",
   srcGguf:"the header of one GGUF file",srcConfig:"config.json",srcTag:"the repository's model_type tag",
   chatTitle:"Chat",closeChat:"Close the chat",newTab:"Open in a new tab",language:"Language",
   memDetail:"weights {w} + KV {kv} + other {o}",
 });
 Object.assign(T.ru, {
-  sup_format:"Не поддерживается формат весов\nархитектура наша, но веса {lib} движок не читает",supShort_format:"формат не поддерживается",
+  
   hideNone:"Скрыть неподдерживаемые",hubTip:"Где искать и откуда скачивать",
   searchHub:"Поиск по {hub} (можно org/name)",
-  sup_family:"Вероятно, поддерживается\nвариант семейства, которое движок запускает ({family}); пока не проверено",
+  
   sup_projector:"Проверяю…\nхаб прочитал проектор картинок (mmproj), а не модель; читаю файл модели",
-  sup_checking:"Проверяю файл модели…",supShort_family:"вероятно, поддерживается",supShort_projector:"проверяю",
+  sup_checking:"Проверяю файл модели…",supShort_projector:"проверяю",
   basisHub:"Архитектура по данным хаба ({src})",basisOwn:"Архитектура прочитана из файла модели: {file}",
   srcGguf:"заголовок одного GGUF-файла",srcConfig:"config.json",srcTag:"тег model_type репозитория",
   chatTitle:"Чат",closeChat:"Закрыть чат",newTab:"Открыть в новой вкладке",language:"Язык",
   memDetail:"веса {w} + KV {kv} + прочее {o}",
 });
-T.uk = {sup_format:"Не підтримується формат ваг\nархітектура наша, але ваги {lib} рушій не читає",supShort_format:"формат не підтримується",
+T.uk = {
   tabModels:"Мої моделі",tabFind:"Знайти",tabDownloads:"Завантаження",myModels:"Мої моделі",arch:"Архітектура",params:"Параметри",publisher:"Автор",model:"Модель",
   quant:"Квант",size:"Розмір",modified:"Змінено",run:"Запустити",chat:"Чат",stop:"Стоп",log:"Лог",del:"Видалити",delq:"Видалити?",yes:"Так",no:"Ні",
   calibrate:"Калібрувати спекуляцію",original:"оригінал",delOriginals:"Видалити оригінали",originalsKept:"оригінали зберігаються",
@@ -401,12 +416,12 @@ T.uk = {sup_format:"Не підтримується формат ваг\nарх�
   noSpec:"без спекуляції",estBasis:"Оцінка моделі вибору (src/product/choice): швидкість карти, байти й операції моделі, константи підігнано за вимірами на стендах; не замір",choiceHead:"Вибір рушія",choiceLine:"KV {kv}, активації {act}{state}: {sec} с на запит {p} + {a} токенів, KLD {kld}",choiceState:"стан {s}",choiceAlt:"Що зміниться за іншого значення",colAxis:"Налаштування",colValue:"Значення",colOwn:"Контекст на потік",colDecode:"Декод",colPrefill:"Префіл",colTime:"Час запиту",colWhy:"Чому ні",ax_quant:"Квант",ax_kv:"KV-кеш",ax_activations:"Активації",ax_chunk:"Чанк префілу",choiceNoFit:"не вміщується",why_no_fit:"не тримає потрібний контекст",why_lower_worth:"загалом повільніше або менш точно",why_quant_rule:"правило квантів: найбільший, що вміщується; нижче 3,5 біта — лише якщо вище нічого не вміщується",why_default:"типове значення сімейства (константи зі стендів для цього вибору ще не підтверджено на двох картах)",why_coupled:"слідує за KV-кешем і активаціями (закріплюється своїм прапорцем)",why_tie_context:"та сама корисність: вибраний залишає більше контексту на потік",why_tie_order:"усе однакове: вирішує порядок переліку",ax_state:"Стан",ax_ring:"Кільця вікна",notMeasured:"немає заміру: найгірше по осі",transferred:"замір на Qwen 3.5",busyNow:"Зараз вільно лише {free}: решту займають інші процеси",
   s_downloads:"↓ Завантаження",s_likes:"♥ Вподобання",s_lastModified:"Свіжі",s_trendingScore:"У тренді",hideNone:"Сховати непідтримувані",
   sup_full:"Повна підтримка\nрушій запускає цю архітектуру: завантажити й запустити",
-  sup_family:"Імовірно, підтримується\nваріант родини, яку рушій запускає ({family}); ще не перевірено",
+  
   sup_drafter:"Чернетка для спекуляції\nпрацює разом зі своєю моделлю, не сама",
-  sup_none:"Не підтримується\nцю архітектуру рушій поки не запускає",
-  sup_unknown:"Архітектура невідома\nхаб не повідомляє, що це за ваги",
+  sup_none:"Не підтримується\nрушій не запускає цю модель: причина нижче",
+  sup_unknown:"Архітектура невідома\nхаб не повідомляє, що це за ваги",diskLabel:"Модель з диска",diskPlace:"файл .gguf або тека чекпойнта Hugging Face на цій машині",diskBad:"Запустити не можна: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Немає токена Hugging Face: закритим моделям (оригінали Llama, Gemma) він потрібен",hfPlace:"hf_… токен для читання",hfSave:"Зберегти",hfRemove:"Видалити",hfGet:"Отримати токен",hfEnv:"заданий у {source} (змінюйте там)",hfBad:"Токен не прийнято: {error}",hfFile:"зберігається в {path}, як його зберігає `hf auth login`",sup_token:"Потрібен токен Hugging Face\nрепозиторій закритий: прийміть умови на хабі й задайте HF_TOKEN",supShort_token:"потрібен токен",
   sup_projector:"Перевіряю…\nхаб прочитав проєктор зображень (mmproj), а не модель; читаю файл моделі",sup_checking:"Перевіряю файл моделі…",
-  supShort_full:"повна підтримка",supShort_family:"імовірно, підтримується",supShort_drafter:"чернетка",supShort_none:"не підтримується",
+  supShort_full:"повна підтримка",supShort_drafter:"чернетка",supShort_none:"не підтримується",
   supShort_unknown:"архітектура невідома",supShort_projector:"перевіряю",archLabel:"Архітектура",
   basisHub:"Архітектура за даними хаба ({src})",basisOwn:"Архітектуру прочитано з файлу моделі: {file}",
   srcGguf:"заголовок одного GGUF-файлу",srcConfig:"config.json",srcTag:"тег model_type репозиторію",
@@ -434,7 +449,7 @@ T.de = {tabModels:"Meine Modelle",tabFind:"Suchen",tabDownloads:"Downloads",myMo
   nothing:"nichts gefunden",loading:"lädt…",speculation:"Spekulation",kvType:"KV-Cache",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",
   decodeOne:"eine Anfrage",decodeTot:"Decode gesamt, tok/s",ctxReq:"Kontext",selected:"Ausgewählt",launching:"Startet…",maxCtx:"max",
   s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Neueste",s_trendingScore:"Im Trend",hideNone:"Nicht unterstützte ausblenden",
-  supShort_full:"voll unterstützt",supShort_family:"wahrscheinlich unterstützt",supShort_none:"nicht unterstützt",supShort_drafter:"Drafter",
+  supShort_full:"voll unterstützt",supShort_none:"nicht unterstützt",supShort_drafter:"Drafter",
   supShort_unknown:"Architektur unbekannt",supShort_projector:"wird geprüft",tested:"getestet",searchHub:"{hub} durchsuchen (org/name geht auch)",
   chatTitle:"Chat",closeChat:"Chat schließen",newTab:"In neuem Tab öffnen",language:"Sprache",toDark:"Dunkles Design",toLight:"Helles Design",
   noModels:"Noch nichts heruntergeladen. Ein Modell unter „Suchen“ finden.",noDl:"Keine Downloads.",cancel:"Abbrechen",done:"fertig",failed:"Fehler"};
@@ -445,7 +460,7 @@ T.fr = {tabModels:"Mes modèles",tabFind:"Chercher",tabDownloads:"Téléchargeme
   nothing:"rien trouvé",loading:"chargement…",speculation:"spéculation",kvType:"Cache KV",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Décodage, tok/s",
   decodeOne:"une requête",decodeTot:"Décodage total, tok/s",ctxReq:"Contexte",selected:"Sélectionné",launching:"Démarrage…",maxCtx:"max",
   s_downloads:"↓ Téléchargements",s_likes:"♥ J'aime",s_lastModified:"Récents",s_trendingScore:"Tendance",hideNone:"Masquer les non pris en charge",
-  supShort_full:"pris en charge",supShort_family:"probablement pris en charge",supShort_none:"non pris en charge",supShort_drafter:"drafter",
+  supShort_full:"pris en charge",supShort_none:"non pris en charge",supShort_drafter:"drafter",
   supShort_unknown:"architecture inconnue",supShort_projector:"vérification",tested:"testé",searchHub:"Chercher sur {hub} (org/name accepté)",
   chatTitle:"Chat",closeChat:"Fermer le chat",newTab:"Ouvrir dans un nouvel onglet",language:"Langue",toDark:"Thème sombre",toLight:"Thème clair",
   noModels:"Rien de téléchargé. Trouvez un modèle dans « Chercher ».",noDl:"Aucun téléchargement.",cancel:"Annuler",done:"terminé",failed:"échec"};
@@ -456,7 +471,7 @@ T.es = {tabModels:"Mis modelos",tabFind:"Buscar",tabDownloads:"Descargas",myMode
   nothing:"nada encontrado",loading:"cargando…",speculation:"especulación",kvType:"Caché KV",bits:"Bits",prefillCol:"Prefill, tok/s",decodeCol:"Decodificación, tok/s",
   decodeOne:"una solicitud",decodeTot:"Decodificación total, tok/s",ctxReq:"Contexto",selected:"Seleccionado",launching:"Iniciando…",maxCtx:"máx",
   s_downloads:"↓ Descargas",s_likes:"♥ Me gusta",s_lastModified:"Recientes",s_trendingScore:"Tendencia",hideNone:"Ocultar no compatibles",
-  supShort_full:"compatible",supShort_family:"probablemente compatible",supShort_none:"no compatible",supShort_drafter:"drafter",
+  supShort_full:"compatible",supShort_none:"no compatible",supShort_drafter:"drafter",
   supShort_unknown:"arquitectura desconocida",supShort_projector:"comprobando",tested:"probado",searchHub:"Buscar en {hub} (también org/name)",
   chatTitle:"Chat",closeChat:"Cerrar el chat",newTab:"Abrir en una pestaña nueva",language:"Idioma",toDark:"Tema oscuro",toLight:"Tema claro",
   noModels:"Aún no hay descargas. Busca un modelo en «Buscar».",noDl:"Sin descargas.",cancel:"Cancelar",done:"listo",failed:"error"};
@@ -467,7 +482,7 @@ T.it = {tabModels:"I miei modelli",tabFind:"Cerca",tabDownloads:"Download",myMod
   nothing:"nessun risultato",loading:"caricamento…",speculation:"speculazione",kvType:"Cache KV",bits:"Bit",prefillCol:"Prefill, tok/s",decodeCol:"Decodifica, tok/s",
   decodeOne:"una richiesta",decodeTot:"Decodifica totale, tok/s",ctxReq:"Contesto",selected:"Selezionato",launching:"Avvio…",maxCtx:"max",
   s_downloads:"↓ Download",s_likes:"♥ Mi piace",s_lastModified:"Recenti",s_trendingScore:"Di tendenza",hideNone:"Nascondi non supportati",
-  supShort_full:"supportato",supShort_family:"probabilmente supportato",supShort_none:"non supportato",supShort_drafter:"drafter",
+  supShort_full:"supportato",supShort_none:"non supportato",supShort_drafter:"drafter",
   supShort_unknown:"architettura sconosciuta",supShort_projector:"verifica",tested:"testato",searchHub:"Cerca su {hub} (anche org/name)",
   chatTitle:"Chat",closeChat:"Chiudi la chat",newTab:"Apri in una nuova scheda",language:"Lingua",toDark:"Tema scuro",toLight:"Tema chiaro",
   noModels:"Ancora niente scaricato. Trova un modello in «Cerca».",noDl:"Nessun download.",cancel:"Annulla",done:"fatto",failed:"errore"};
@@ -478,7 +493,7 @@ T.pl = {tabModels:"Moje modele",tabFind:"Szukaj",tabDownloads:"Pobrane",myModels
   nothing:"nic nie znaleziono",loading:"ładowanie…",speculation:"spekulacja",kvType:"Pamięć KV",bits:"Bity",prefillCol:"Prefill, tok/s",decodeCol:"Dekodowanie, tok/s",
   decodeOne:"jedno zapytanie",decodeTot:"Dekodowanie łącznie, tok/s",ctxReq:"Kontekst",selected:"Wybrany",launching:"Uruchamianie…",maxCtx:"maks",
   s_downloads:"↓ Pobrania",s_likes:"♥ Polubienia",s_lastModified:"Najnowsze",s_trendingScore:"Popularne",hideNone:"Ukryj nieobsługiwane",
-  supShort_full:"pełne wsparcie",supShort_family:"prawdopodobnie obsługiwany",supShort_none:"nieobsługiwany",supShort_drafter:"drafter",
+  supShort_full:"pełne wsparcie",supShort_none:"nieobsługiwany",supShort_drafter:"drafter",
   supShort_unknown:"nieznana architektura",supShort_projector:"sprawdzanie",tested:"przetestowany",searchHub:"Szukaj w {hub} (można org/name)",
   chatTitle:"Czat",closeChat:"Zamknij czat",newTab:"Otwórz w nowej karcie",language:"Język",toDark:"Ciemny motyw",toLight:"Jasny motyw",
   noModels:"Nic jeszcze nie pobrano. Znajdź model w „Szukaj”.",noDl:"Brak pobrań.",cancel:"Anuluj",done:"gotowe",failed:"błąd"};
@@ -489,7 +504,7 @@ T.zh = {tabModels:"我的模型",tabFind:"查找",tabDownloads:"下载",myModels
   nothing:"未找到",loading:"加载中…",speculation:"推测解码",kvType:"KV 缓存",bits:"位",prefillCol:"预填充，tok/s",decodeCol:"解码，tok/s",
   decodeOne:"单个请求",decodeTot:"解码总计，tok/s",ctxReq:"上下文",selected:"已选",launching:"启动中…",maxCtx:"最大",
   s_downloads:"↓ 下载量",s_likes:"♥ 点赞",s_lastModified:"最新",s_trendingScore:"热门",hideNone:"隐藏不支持的",
-  supShort_full:"完全支持",supShort_family:"可能支持",supShort_none:"不支持",supShort_drafter:"草稿模型",
+  supShort_full:"完全支持",supShort_none:"不支持",supShort_drafter:"草稿模型",
   supShort_unknown:"架构未知",supShort_projector:"检查中",tested:"已测试",searchHub:"在 {hub} 搜索（也可输入 org/name）",
   chatTitle:"聊天",closeChat:"关闭聊天",newTab:"在新标签页打开",language:"语言",toDark:"深色主题",toLight:"浅色主题",
   noModels:"尚未下载任何模型。请在“查找”中寻找。",noDl:"没有下载。",cancel:"取消",done:"完成",failed:"失败"};
@@ -500,7 +515,7 @@ T.ja = {tabModels:"マイモデル",tabFind:"検索",tabDownloads:"ダウンロ�
   nothing:"見つかりません",loading:"読み込み中…",speculation:"投機的デコード",kvType:"KV キャッシュ",bits:"ビット",prefillCol:"プリフィル, tok/s",decodeCol:"デコード, tok/s",
   decodeOne:"1 リクエスト",decodeTot:"デコード合計, tok/s",ctxReq:"コンテキスト",selected:"選択中",launching:"起動中…",maxCtx:"最大",
   s_downloads:"↓ ダウンロード数",s_likes:"♥ いいね",s_lastModified:"新着",s_trendingScore:"トレンド",hideNone:"非対応を隠す",
-  supShort_full:"完全対応",supShort_family:"おそらく対応",supShort_none:"非対応",supShort_drafter:"ドラフター",
+  supShort_full:"完全対応",supShort_none:"非対応",supShort_drafter:"ドラフター",
   supShort_unknown:"アーキテクチャ不明",supShort_projector:"確認中",tested:"検証済み",searchHub:"{hub} を検索（org/name も可）",
   chatTitle:"チャット",closeChat:"チャットを閉じる",newTab:"新しいタブで開く",language:"言語",toDark:"ダークテーマ",toLight:"ライトテーマ",
   noModels:"まだ何もダウンロードしていません。「検索」でモデルを探してください。",noDl:"ダウンロードはありません。",cancel:"キャンセル",done:"完了",failed:"失敗"};
@@ -548,8 +563,8 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   busyNow:"Gerade sind nur {free} frei: andere Prozesse belegen den Rest",onlyFull:"Nur voll unterstützte",
   sup_full:"Voll unterstützt\ndie Engine führt diese Architektur aus: herunterladen und starten",
   sup_drafter:"Spekulatives Entwurfsmodell\nläuft neben seinem Modell, nicht allein",
-  sup_none:"Nicht unterstützt\ndie Engine führt diese Architektur noch nicht aus",
-  sup_unknown:"Architektur unbekannt\nder Hub sagt nicht, was die Gewichte sind",archLabel:"Architektur",
+  sup_none:"Nicht unterstützt\ndie Engine führt dieses Modell nicht aus: der Grund steht unten",
+  sup_unknown:"Architektur unbekannt\nder Hub sagt nicht, was die Gewichte sind",diskLabel:"Modell von der Platte",diskPlace:"eine .gguf-Datei oder ein Hugging-Face-Checkpoint-Ordner auf diesem Rechner",diskBad:"Nicht ausführbar: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Kein Hugging-Face-Token: geschützte Modelle (Llama-, Gemma-Originale) brauchen einen",hfPlace:"hf_… Lese-Token",hfSave:"Speichern",hfRemove:"Entfernen",hfGet:"Token holen",hfEnv:"gesetzt in {source} (dort ändern)",hfBad:"Token nicht angenommen: {error}",hfFile:"liegt in {path}, wie `hf auth login` ihn ablegt",sup_token:"Hugging-Face-Token nötig\ndas Repository ist geschützt: Bedingungen auf dem Hub annehmen und HF_TOKEN setzen",supShort_token:"Token nötig",archLabel:"Architektur",
   testedTip:"Auf unseren Prüfständen gemessen\nGeschwindigkeit und Spekulation sind für dieses Repository bekannt",
   measuredTip:"Decode einer Anfrage mit Spekulation, auf unseren Prüfständen mit dieser Karte gemessen",
   kvUnknownHead:"Kopfgröße des Modells unbekannt: nur BF16",
@@ -567,9 +582,9 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   unsupportedRun:"Die Engine führt diese Architektur nicht aus",
   recWhyLow:"Nur Quantisierungen unter 4 Bit passen: die Antworten sind merklich schlechter",
   speedLine1:"Decode bei {depth} Kontext: ≈ {one} Tok/s",visionProj:"Bildprojektor",
-  sup_format:"Nicht unterstützt: das Format der Gewichte\ndie Architektur kennt die Engine, aber {lib}-Gewichte liest sie nicht",supShort_format:"Format nicht unterstützt",
+  
   hubTip:"Wo gesucht und heruntergeladen wird",
-  sup_family:"Wahrscheinlich unterstützt\neine Variante einer Familie, die die Engine ausführt ({family}); noch nicht geprüft",
+  
   sup_projector:"Wird geprüft…\nder Hub las den Bildprojektor (mmproj) statt des Modells; die Modelldatei wird gelesen",
   sup_checking:"Modelldatei wird geprüft…",basisHub:"Architektur laut Hub ({src})",basisOwn:"Architektur aus der Modelldatei gelesen: {file}",
   srcGguf:"der Kopf einer GGUF-Datei",srcConfig:"config.json",srcTag:"das model_type-Tag des Repositorys",memDetail:"Gewichte {w} + KV {kv} + Sonstiges {o}"});
@@ -607,8 +622,8 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   busyNow:"Seuls {free} sont libres : d'autres processus occupent le reste",onlyFull:"Pleinement pris en charge seulement",
   sup_full:"Pleinement pris en charge\nle moteur exécute cette architecture : téléchargez et lancez",
   sup_drafter:"Brouillon spéculatif\ntourne à côté de son modèle, pas seul",
-  sup_none:"Non pris en charge\nle moteur n'exécute pas encore cette architecture",
-  sup_unknown:"Architecture inconnue\nle hub ne dit pas ce que sont les poids",archLabel:"Architecture",
+  sup_none:"Non pris en charge\nle moteur n'exécute pas ce modèle : la raison est ci-dessous",
+  sup_unknown:"Architecture inconnue\nle hub ne dit pas ce que sont les poids",diskLabel:"Modèle sur le disque",diskPlace:"un fichier .gguf ou un dossier de checkpoint Hugging Face sur cette machine",diskBad:"Impossible de le lancer : {reason}",hfAs:"Hugging Face : {account}",hfNone:"Pas de jeton Hugging Face : les modèles protégés (originaux Llama, Gemma) en demandent un",hfPlace:"hf_… jeton de lecture",hfSave:"Enregistrer",hfRemove:"Supprimer",hfGet:"Obtenir un jeton",hfEnv:"défini par {source} (à changer là)",hfBad:"Jeton refusé : {error}",hfFile:"rangé dans {path}, comme le fait `hf auth login`",sup_token:"Jeton Hugging Face requis\nle dépôt est protégé : acceptez ses conditions sur le hub et définissez HF_TOKEN",supShort_token:"jeton requis",archLabel:"Architecture",
   testedTip:"Mesuré sur nos bancs\nvitesse et spéculation connues pour ce dépôt",
   measuredTip:"Décodage d'une requête avec spéculation, mesuré sur nos bancs avec cette carte",
   kvUnknownHead:"taille de tête du modèle inconnue : BF16 seulement",
@@ -626,9 +641,9 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   unsupportedRun:"Le moteur n'exécute pas cette architecture",
   recWhyLow:"Seules des quantifications sous 4 bits tiennent : les réponses sont nettement moins bonnes",
   speedLine1:"Décodage à {depth} de contexte : ≈ {one} tok/s",visionProj:"projecteur d'images",
-  sup_format:"Non pris en charge : le format des poids\nl'architecture est connue du moteur, mais il ne lit pas les poids {lib}",supShort_format:"format non pris en charge",
+  
   hubTip:"Où chercher et télécharger",
-  sup_family:"Probablement pris en charge\nune variante d'une famille que le moteur exécute ({family}) ; pas encore vérifié",
+  
   sup_projector:"Vérification…\nle hub a lu le projecteur d'images (mmproj) au lieu du modèle ; lecture du fichier du modèle",
   sup_checking:"Vérification du fichier du modèle…",basisHub:"Architecture selon le hub ({src})",basisOwn:"Architecture lue dans le fichier du modèle : {file}",
   srcGguf:"l'en-tête d'un fichier GGUF",srcConfig:"config.json",srcTag:"l'étiquette model_type du dépôt",memDetail:"poids {w} + KV {kv} + autre {o}"});
@@ -666,8 +681,8 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   busyNow:"Ahora solo quedan {free} libres: otros procesos ocupan el resto",onlyFull:"Solo con soporte completo",
   sup_full:"Soporte completo\nel motor ejecuta esta arquitectura: descargar y ejecutar",
   sup_drafter:"Borrador especulativo\nfunciona junto a su modelo, no solo",
-  sup_none:"No soportado\nel motor aún no ejecuta esta arquitectura",
-  sup_unknown:"Arquitectura desconocida\nel hub no dice qué son los pesos",archLabel:"Arquitectura",
+  sup_none:"No soportado\nel motor no ejecuta este modelo: el motivo está abajo",
+  sup_unknown:"Arquitectura desconocida\nel hub no dice qué son los pesos",diskLabel:"Modelo del disco",diskPlace:"un archivo .gguf o una carpeta de checkpoint de Hugging Face en esta máquina",diskBad:"No se puede ejecutar: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Sin token de Hugging Face: los modelos restringidos (originales de Llama, Gemma) lo necesitan",hfPlace:"hf_… token de lectura",hfSave:"Guardar",hfRemove:"Quitar",hfGet:"Obtener un token",hfEnv:"definido en {source} (cámbialo allí)",hfBad:"Token no aceptado: {error}",hfFile:"guardado en {path}, como lo guarda `hf auth login`",sup_token:"Se necesita un token de Hugging Face\nel repositorio es restringido: acepta sus condiciones en el hub y define HF_TOKEN",supShort_token:"requiere token",archLabel:"Arquitectura",
   testedTip:"Medido en nuestros bancos\nse conocen la velocidad y la especulación de este repositorio",
   measuredTip:"Decodificación de una solicitud con especulación, medida en nuestros bancos con esta tarjeta",
   kvUnknownHead:"tamaño de cabeza del modelo desconocido: solo BF16",
@@ -685,9 +700,9 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   unsupportedRun:"El motor no ejecuta esta arquitectura",
   recWhyLow:"Solo caben cuantizaciones de menos de 4 bits: las respuestas son notablemente peores",
   speedLine1:"Decodificación con {depth} de contexto: ≈ {one} tok/s",visionProj:"proyector de imágenes",
-  sup_format:"No soportado: el formato de los pesos\nla arquitectura la conoce el motor, pero no lee pesos {lib}",supShort_format:"formato no soportado",
+  
   hubTip:"Dónde buscar y descargar",
-  sup_family:"Probablemente soportado\nuna variante de una familia que ejecuta el motor ({family}); aún sin verificar",
+  
   sup_projector:"Comprobando…\nel hub leyó el proyector de imágenes (mmproj) en lugar del modelo; leyendo el archivo del modelo",
   sup_checking:"Comprobando el archivo del modelo…",basisHub:"Arquitectura según el hub ({src})",basisOwn:"Arquitectura leída del archivo del modelo: {file}",
   srcGguf:"la cabecera de un archivo GGUF",srcConfig:"config.json",srcTag:"la etiqueta model_type del repositorio",memDetail:"pesos {w} + KV {kv} + otros {o}"});
@@ -725,8 +740,8 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   busyNow:"Ora sono liberi solo {free}: altri processi occupano il resto",onlyFull:"Solo pienamente supportati",
   sup_full:"Pienamente supportato\nil motore esegue questa architettura: scarica ed esegui",
   sup_drafter:"Bozza speculativa\ngira accanto al suo modello, non da sola",
-  sup_none:"Non supportato\nil motore non esegue ancora questa architettura",
-  sup_unknown:"Architettura sconosciuta\nl'hub non dice cosa siano i pesi",archLabel:"Architettura",
+  sup_none:"Non supportato\nil motore non esegue questo modello: il motivo è sotto",
+  sup_unknown:"Architettura sconosciuta\nl'hub non dice cosa siano i pesi",diskLabel:"Modello dal disco",diskPlace:"un file .gguf o una cartella di checkpoint Hugging Face su questa macchina",diskBad:"Impossibile avviarlo: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Nessun token Hugging Face: i modelli riservati (originali Llama, Gemma) ne richiedono uno",hfPlace:"hf_… token di lettura",hfSave:"Salva",hfRemove:"Rimuovi",hfGet:"Ottieni un token",hfEnv:"impostato in {source} (cambialo lì)",hfBad:"Token non accettato: {error}",hfFile:"conservato in {path}, come fa `hf auth login`",sup_token:"Serve un token Hugging Face\nil repository è riservato: accetta le condizioni sull'hub e imposta HF_TOKEN",supShort_token:"serve un token",archLabel:"Architettura",
   testedTip:"Misurato sui nostri banchi\nvelocità e speculazione note per questo repository",
   measuredTip:"Decodifica di una richiesta con speculazione, misurata sui nostri banchi con questa scheda",
   kvUnknownHead:"dimensione delle teste sconosciuta: solo BF16",
@@ -744,9 +759,9 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   unsupportedRun:"Il motore non esegue questa architettura",
   recWhyLow:"Entrano solo quantizzazioni sotto i 4 bit: le risposte sono sensibilmente peggiori",
   speedLine1:"Decodifica con {depth} di contesto: ≈ {one} tok/s",visionProj:"proiettore di immagini",
-  sup_format:"Non supportato: il formato dei pesi\nl'architettura è nota al motore, ma i pesi {lib} non vengono letti",supShort_format:"formato non supportato",
+  
   hubTip:"Dove cercare e scaricare",
-  sup_family:"Probabilmente supportato\nuna variante di una famiglia che il motore esegue ({family}); non ancora verificato",
+  
   sup_projector:"Verifica…\nl'hub ha letto il proiettore di immagini (mmproj) invece del modello; lettura del file del modello",
   sup_checking:"Verifica del file del modello…",basisHub:"Architettura secondo l'hub ({src})",basisOwn:"Architettura letta dal file del modello: {file}",
   srcGguf:"l'intestazione di un file GGUF",srcConfig:"config.json",srcTag:"il tag model_type del repository",memDetail:"pesi {w} + KV {kv} + altro {o}"});
@@ -784,8 +799,8 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   busyNow:"Teraz wolne jest tylko {free}: resztę zajmują inne procesy",onlyFull:"Tylko w pełni obsługiwane",
   sup_full:"W pełni obsługiwany\nsilnik uruchamia tę architekturę: pobierz i uruchom",
   sup_drafter:"Model szkicu do spekulacji\ndziała obok swojego modelu, nie sam",
-  sup_none:"Nieobsługiwany\nsilnik jeszcze nie uruchamia tej architektury",
-  sup_unknown:"Architektura nieznana\nhub nie mówi, czym są wagi",archLabel:"Architektura",
+  sup_none:"Nieobsługiwany\nsilnik nie uruchamia tego modelu: powód poniżej",
+  sup_unknown:"Architektura nieznana\nhub nie mówi, czym są wagi",diskLabel:"Model z dysku",diskPlace:"plik .gguf lub folder checkpointu Hugging Face na tym komputerze",diskBad:"Nie można uruchomić: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Brak tokenu Hugging Face: zamknięte modele (oryginały Llama, Gemma) go wymagają",hfPlace:"hf_… token do odczytu",hfSave:"Zapisz",hfRemove:"Usuń",hfGet:"Zdobądź token",hfEnv:"ustawiony w {source} (zmień go tam)",hfBad:"Token nie przyjęty: {error}",hfFile:"zapisany w {path}, jak robi to `hf auth login`",sup_token:"Wymagany token Hugging Face\nrepozytorium jest zamknięte: zaakceptuj warunki na hubie i ustaw HF_TOKEN",supShort_token:"wymaga tokenu",archLabel:"Architektura",
   testedTip:"Zmierzone na naszych stanowiskach\nszybkość i spekulacja są znane dla tego repozytorium",
   measuredTip:"Dekodowanie jednego zapytania ze spekulacją, zmierzone na naszych stanowiskach z tą kartą",
   kvUnknownHead:"rozmiar głowic modelu nieznany: tylko BF16",
@@ -803,9 +818,9 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   unsupportedRun:"Silnik nie uruchamia tej architektury",
   recWhyLow:"Mieszczą się tylko kwantyzacje poniżej 4 bitów: odpowiedzi są zauważalnie gorsze",
   speedLine1:"Dekodowanie przy {depth} kontekstu: ≈ {one} tok/s",visionProj:"projektor obrazów",
-  sup_format:"Nieobsługiwany: format wag\narchitekturę silnik zna, ale wag {lib} nie czyta",supShort_format:"format nieobsługiwany",
+  
   hubTip:"Gdzie szukać i skąd pobierać",
-  sup_family:"Prawdopodobnie obsługiwany\nwariant rodziny, którą silnik uruchamia ({family}); jeszcze niesprawdzony",
+  
   sup_projector:"Sprawdzanie…\nhub odczytał projektor obrazów (mmproj) zamiast modelu; czytam plik modelu",
   sup_checking:"Sprawdzanie pliku modelu…",basisHub:"Architektura według huba ({src})",basisOwn:"Architektura odczytana z pliku modelu: {file}",
   srcGguf:"nagłówek jednego pliku GGUF",srcConfig:"config.json",srcTag:"tag model_type repozytorium",memDetail:"wagi {w} + KV {kv} + inne {o}"});
@@ -843,8 +858,8 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   busyNow:"当前仅有 {free} 空闲：其余被其他进程占用",onlyFull:"仅完全支持",
   sup_full:"完全支持\n引擎可运行此架构：下载即可运行",
   sup_drafter:"推测解码草稿模型\n与其主模型一起运行，不能单独运行",
-  sup_none:"不支持\n引擎尚不能运行此架构",
-  sup_unknown:"架构未知\nhub 未说明权重是什么",archLabel:"架构",
+  sup_none:"不支持\n引擎不运行此模型：原因见下",
+  sup_unknown:"架构未知\nhub 未说明权重是什么",diskLabel:"磁盘上的模型",diskPlace:"本机上的 .gguf 文件或 Hugging Face 检查点文件夹",diskBad:"无法运行：{reason}",hfAs:"Hugging Face：{account}",hfNone:"没有 Hugging Face 令牌：受限模型（Llama、Gemma 原版）需要它",hfPlace:"hf_… 读取令牌",hfSave:"保存",hfRemove:"删除",hfGet:"获取令牌",hfEnv:"由 {source} 设置（请在那里修改）",hfBad:"令牌未被接受：{error}",hfFile:"保存在 {path}，与 `hf auth login` 相同",sup_token:"需要 Hugging Face 令牌\n该仓库受限：在 hub 上接受条款并设置 HF_TOKEN",supShort_token:"需要令牌",archLabel:"架构",
   testedTip:"在我们的测试台上测量过\n该仓库的速度和推测解码已知",
   measuredTip:"在我们的测试台上用这张卡测得的单请求带推测解码的解码速度",
   kvUnknownHead:"模型的头大小未知：仅 BF16",
@@ -862,9 +877,9 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   unsupportedRun:"引擎不运行此架构",
   recWhyLow:"只有低于 4 位的量化能放下：回答质量明显下降",
   speedLine1:"上下文 {depth} 时解码：≈ {one} tok/s",visionProj:"图像投影器",
-  sup_format:"不支持：权重格式\n引擎认识此架构，但不读取 {lib} 权重",supShort_format:"格式不支持",
+  
   hubTip:"在哪里搜索和下载",
-  sup_family:"可能支持\n引擎支持的模型系列（{family}）的变体；尚未验证",
+  
   sup_projector:"检查中…\nhub 读取的是图像投影器（mmproj）而非模型；正在读取模型文件",
   sup_checking:"正在检查模型文件…",basisHub:"hub 给出的架构（{src}）",basisOwn:"从模型文件读取的架构：{file}",
   srcGguf:"一个 GGUF 文件的头部",srcConfig:"config.json",srcTag:"仓库的 model_type 标签",memDetail:"权重 {w} + KV {kv} + 其他 {o}"});
@@ -902,8 +917,8 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   busyNow:"現在空きは {free} のみ：残りは他のプロセスが使用中",onlyFull:"完全対応のみ",
   sup_full:"完全対応\nエンジンはこのアーキテクチャを実行できます：ダウンロードして実行",
   sup_drafter:"投機デコード用ドラフトモデル\n本体モデルと一緒に動作し、単独では動きません",
-  sup_none:"未対応\nエンジンはまだこのアーキテクチャを実行できません",
-  sup_unknown:"アーキテクチャ不明\nhub が重みの種類を示していません",archLabel:"アーキテクチャ",
+  sup_none:"未対応\nエンジンはこのモデルを実行しません：理由は下記",
+  sup_unknown:"アーキテクチャ不明\nhub が重みの種類を示していません",diskLabel:"ディスク上のモデル",diskPlace:"このマシン上の .gguf ファイルまたは Hugging Face チェックポイントのフォルダ",diskBad:"実行できません：{reason}",hfAs:"Hugging Face：{account}",hfNone:"Hugging Face のトークンがありません：制限付きモデル（Llama、Gemma の原本）に必要です",hfPlace:"hf_… 読み取りトークン",hfSave:"保存",hfRemove:"削除",hfGet:"トークンを取得",hfEnv:"{source} で設定済み（そちらで変更）",hfBad:"トークンが受け付けられません：{error}",hfFile:"{path} に保存（`hf auth login` と同じ）",sup_token:"Hugging Face のトークンが必要\nリポジトリは制限付きです：hub で条件に同意し HF_TOKEN を設定してください",supShort_token:"トークンが必要",archLabel:"アーキテクチャ",
   testedTip:"当社のテスト環境で測定済み\nこのリポジトリの速度と投機デコードは既知です",
   measuredTip:"当社のテスト環境でこのカードを使って測定した、投機デコードありの 1 リクエストのデコード",
   kvUnknownHead:"モデルのヘッドサイズが不明：BF16 のみ",
@@ -921,9 +936,9 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   unsupportedRun:"エンジンはこのアーキテクチャを実行しません",
   recWhyLow:"4 ビット未満の量子化しか収まりません：回答の質が明らかに落ちます",
   speedLine1:"コンテキスト {depth} でのデコード：≈ {one} tok/s",visionProj:"画像プロジェクター",
-  sup_format:"未対応：重みの形式\nアーキテクチャはエンジンが対応していますが、{lib} の重みは読み込めません",supShort_format:"形式未対応",
+  
   hubTip:"検索とダウンロードの場所",
-  sup_family:"おそらく対応\nエンジンが実行できるファミリー（{family}）の派生。未検証",
+  
   sup_projector:"確認中…\nhub がモデルではなく画像プロジェクター（mmproj）を読み取りました。モデルファイルを読み込み中",
   sup_checking:"モデルファイルを確認中…",basisHub:"hub によるアーキテクチャ（{src}）",basisOwn:"モデルファイルから読み取ったアーキテクチャ：{file}",
   srcGguf:"GGUF ファイル 1 つのヘッダー",srcConfig:"config.json",srcTag:"リポジトリの model_type タグ",memDetail:"重み {w} + KV {kv} + その他 {o}"});
@@ -982,6 +997,19 @@ for (const [code, words] of Object.entries({
   pl:{hubMoved:"Na hubie są nowsze wagi tego modelu",keepThese:"Zachowaj te",keepTip:"Uznaj te wagi za ważne teraz i w przyszłości",refetchNew:"Pobierz nowe",refetchTip:"Pobierz nowe wagi, przekonwertuj je i usuń te"},
   zh:{hubMoved:"Hub 上有此模型的更新权重",keepThese:"保留当前",keepTip:"将这些权重视为有效（现在及以后）",refetchNew:"下载新权重",refetchTip:"下载新权重、转换并删除当前权重"},
   ja:{hubMoved:"ハブにこのモデルの新しい重みがあります",keepThese:"これを使い続ける",keepTip:"この重みを今後も有効として扱う",refetchNew:"新しい重みを取得",refetchTip:"新しい重みをダウンロード・変換し、これを削除"},
+})) { if (T[code]) Object.assign(T[code], words); }
+// Its update (/api/moved "updates"): the popup that offers it, and how far it is.
+for (const [code, words] of Object.entries({
+  en:{"mvTitle":"The model was updated on the hub","mvBody":"{m}: the hub has newer weights ({old} → {new}). These keep working until you choose. The new download runs in the background; a running model switches to it once, when it has no request.","mvLater":"Later","mvDownloading":"Updating: downloading{p}","mvSwitching":"Updating: switches to the new weights when idle","mvFailed":"Update failed: {e}","mvDone":"Updated to the new weights"},
+  ru:{"mvTitle":"Модель обновилась на хабе","mvBody":"{m}: на хабе новые веса ({old} → {new}). Эти работают, пока вы не решите. Новые качаются в фоне; запущенная модель переключится на них один раз, когда у неё не будет запроса.","mvLater":"Позже","mvDownloading":"Обновление: скачивание{p}","mvSwitching":"Обновление: переключится на новые веса в простое","mvFailed":"Обновление не удалось: {e}","mvDone":"Обновлено на новые веса"},
+  uk:{"mvTitle":"Модель оновилася на хабі","mvBody":"{m}: на хабі нові ваги ({old} → {new}). Ці працюють, доки ви не вирішите. Нові завантажуються у фоні; запущена модель перемкнеться на них один раз, коли в неї не буде запиту.","mvLater":"Пізніше","mvDownloading":"Оновлення: завантаження{p}","mvSwitching":"Оновлення: перемкнеться на нові ваги в простої","mvFailed":"Оновлення не вдалося: {e}","mvDone":"Оновлено на нові ваги"},
+  de:{"mvTitle":"Das Modell wurde auf dem Hub aktualisiert","mvBody":"{m}: Der Hub hat neuere Gewichte ({old} → {new}). Diese laufen weiter, bis Sie entscheiden. Der neue Download läuft im Hintergrund; ein laufendes Modell wechselt einmal darauf, wenn es keine Anfrage hat.","mvLater":"Später","mvDownloading":"Aktualisierung: Download{p}","mvSwitching":"Aktualisierung: wechselt im Leerlauf auf die neuen Gewichte","mvFailed":"Aktualisierung fehlgeschlagen: {e}","mvDone":"Auf die neuen Gewichte aktualisiert"},
+  fr:{"mvTitle":"Le modèle a été mis à jour sur le hub","mvBody":"{m} : le hub a des poids plus récents ({old} → {new}). Ceux-ci restent utilisés jusqu'à votre choix. Le nouveau téléchargement se fait en arrière-plan ; un modèle lancé y bascule une fois, quand il n'a pas de requête.","mvLater":"Plus tard","mvDownloading":"Mise à jour : téléchargement{p}","mvSwitching":"Mise à jour : bascule sur les nouveaux poids au repos","mvFailed":"Échec de la mise à jour : {e}","mvDone":"Mis à jour vers les nouveaux poids"},
+  es:{"mvTitle":"El modelo se actualizó en el hub","mvBody":"{m}: el hub tiene pesos más recientes ({old} → {new}). Estos siguen funcionando hasta que decida. La nueva descarga va en segundo plano; un modelo en marcha cambia a ella una vez, cuando no tenga peticiones.","mvLater":"Más tarde","mvDownloading":"Actualizando: descarga{p}","mvSwitching":"Actualizando: cambia a los pesos nuevos en reposo","mvFailed":"La actualización falló: {e}","mvDone":"Actualizado a los pesos nuevos"},
+  it:{"mvTitle":"Il modello è stato aggiornato sull'hub","mvBody":"{m}: sull'hub ci sono pesi più recenti ({old} → {new}). Questi restano in uso finché non decidi. Il nuovo download va in background; un modello avviato passa ad esso una volta, quando non ha richieste.","mvLater":"Più tardi","mvDownloading":"Aggiornamento: download{p}","mvSwitching":"Aggiornamento: passa ai nuovi pesi quando è inattivo","mvFailed":"Aggiornamento non riuscito: {e}","mvDone":"Aggiornato ai nuovi pesi"},
+  pl:{"mvTitle":"Model zaktualizowano na hubie","mvBody":"{m}: na hubie są nowsze wagi ({old} → {new}). Te działają, dopóki nie zdecydujesz. Nowe pobierają się w tle; uruchomiony model przełączy się na nie raz, gdy nie będzie miał żądania.","mvLater":"Później","mvDownloading":"Aktualizacja: pobieranie{p}","mvSwitching":"Aktualizacja: przełączy się na nowe wagi w bezczynności","mvFailed":"Aktualizacja nie powiodła się: {e}","mvDone":"Zaktualizowano do nowych wag"},
+  zh:{"mvTitle":"模型已在 Hub 上更新","mvBody":"{m}：Hub 上有更新的权重（{old} → {new}）。在您决定之前继续使用当前权重。新权重在后台下载；运行中的模型会在空闲时切换一次。","mvLater":"稍后","mvDownloading":"更新中：下载{p}","mvSwitching":"更新中：空闲时切换到新权重","mvFailed":"更新失败：{e}","mvDone":"已更新到新权重"},
+  ja:{"mvTitle":"ハブでモデルが更新されました","mvBody":"{m}: ハブに新しい重みがあります（{old} → {new}）。決めるまで現在の重みで動きます。新しい重みはバックグラウンドで取得し、実行中のモデルはリクエストがないときに一度だけ切り替わります。","mvLater":"後で","mvDownloading":"更新中: ダウンロード{p}","mvSwitching":"更新中: アイドル時に新しい重みへ切り替え","mvFailed":"更新に失敗しました: {e}","mvDone":"新しい重みに更新しました"},
 })) { if (T[code]) Object.assign(T[code], words); }
 // The plan's words (the fit, the star and the memory come from the server's planner): English and
 // Russian; the other languages show the English ones.
@@ -1305,17 +1333,65 @@ function setTab(name) {
 let mine = [];
 const confirming = new Set();
 // Converted hub models whose branch the hub now names at another commit and that the user has not
-// kept (/api/moved, asked at most every 10 minutes): artifact path -> {repo, ref, commit, ...}.
-let moved = {}, movedAt = 0;
-async function refreshMoved() {
-  if (Date.now() - movedAt < 600000) return;
+// kept (/api/moved, asked at most every 10 minutes, every 5 s while an update runs): artifact path
+// -> {repo, ref, commit, ...}; and the updates asked for, by repo@ref. Nothing here starts an
+// update: the popup offers it once per new commit ("Later" asks again at the next one), the
+// list keeps the buttons.
+let moved = {}, movedAt = 0, updates = {}, movedAsked = null;
+const updating = u => u && (u.state === "downloading" || u.state === "switching");
+async function refreshMoved(force) {
+  const busy = Object.values(updates).some(updating);
+  if (!force && Date.now() - movedAt < (busy ? 5000 : 600000)) return;
   movedAt = Date.now();
   let j;
   try { j = await api("/api/moved"); } catch (e) { return; }
-  moved = {};
+  const before = JSON.stringify([moved, updates]), was = updates;
+  moved = {}; updates = {};
+  for (const u of j.updates || []) {
+    const k = u.repo + "@" + u.ref;
+    updates[k] = u;
+    // Said once, when it ends so: the list shows it only while the old conversion is listed.
+    if (u.state === "failed" && updating(was[k])) showError(u.repo + ": " + t("mvFailed").replace("{e}", u.error));
+    // Switched, but the old conversion could not be removed (a model started on it meanwhile).
+    else if (u.state === "done" && u.error && updating(was[k])) showError(u.repo + ": " + u.error);
+  }
   for (const e of j.models || []) if (!e.accepted) for (const a of e.artifacts) moved[a] = e;
-  if (Object.keys(moved).length && tab === "models") refreshMine();
+  if (JSON.stringify([moved, updates]) !== before && tab === "models") refreshMine();
+  offerMoved();
+  if (Object.values(updates).some(updating)) setTimeout(() => refreshMoved(), 5000);
 }
+function movedLater(e) { return "ninferno-moved-later:" + e.repo + "@" + e.ref + "@" + e.hub_commit; }
+function offerMoved() {
+  if ($("mvdlg").open) return;
+  for (const e of new Set(Object.values(moved))) {
+    if (updating(updates[e.repo + "@" + e.ref])) continue;
+    let later = false;
+    try { later = !!localStorage.getItem(movedLater(e)); } catch (er) {}
+    if (later) continue;
+    movedAsked = e;
+    $("mvtitle").textContent = t("mvTitle");
+    $("mvbody").textContent = t("mvBody").replace("{m}", e.repo + (e.ref === "main" ? "" : "@" + e.ref))
+      .replace("{old}", e.commit.slice(0, 12)).replace("{new}", e.hub_commit.slice(0, 12));
+    $("mvlater").textContent = t("mvLater");
+    $("mvkeep").textContent = t("keepThese"); $("mvkeep").title = t("keepTip");
+    $("mvget").textContent = t("refetchNew"); $("mvget").title = t("refetchTip");
+    $("mvdlg").showModal();
+    return;
+  }
+}
+async function answerMoved(e, keep) {
+  try { await api("/api/moved", {repo: e.repo, ref: e.ref, commit: e.commit, action: keep ? "accept" : "refetch"}); }
+  catch (er) { showError(er.message); return; }
+  await refreshMoved(true);
+  refreshMine();
+  if (!keep) refreshState();
+}
+$("mvlater").onclick = () => {
+  if (movedAsked) try { localStorage.setItem(movedLater(movedAsked), "1"); } catch (er) {}
+  $("mvdlg").close();
+};
+$("mvkeep").onclick = () => { $("mvdlg").close(); if (movedAsked) answerMoved(movedAsked, true); };
+$("mvget").onclick = () => { $("mvdlg").close(); if (movedAsked) answerMoved(movedAsked, false); };
 async function refreshMine() {
   let j;
   try { j = await api("/api/local"); } catch (e) { setTimeout(refreshMine, 2000); return; }  // ninferno-ui restarting
@@ -1329,10 +1405,14 @@ async function refreshMine() {
                   (m.mtp ? `<span class="icon i-spec" title="${t("spec")}">⚡</span>` : "") +
                   (m.running ? `<span class="icon i-run" title="${t("running")}">▶</span>` : "");
     const key = "d" + i;
-    const mv = m.running ? null : moved[m.artifact];
-    const movedLine = mv ? `<div class="sub"><span class="warn" title="${esc(mv.ref)}: ${esc(mv.commit.slice(0, 12))} → ${esc(mv.hub_commit.slice(0, 12))}">⚠ ${t("hubMoved")}</span>
-        <button class="ghost" data-mvkeep="${i}" title="${t("keepTip")}">${t("keepThese")}</button>
-        <button class="ghost" data-mvget="${i}" title="${t("refetchTip")}">${t("refetchNew")}</button></div>` : "";
+    const mv = moved[m.artifact], up = mv && updates[mv.repo + "@" + mv.ref];
+    const pct = up ? up.prepares.filter(p => p >= 0) : [];
+    const upLine = !up ? "" : updating(up)
+      ? `<span class="warn">⟳ ${esc(up.state === "downloading" ? t("mvDownloading").replace("{p}", pct.length ? " " + Math.min(...pct) + "%" : "") : t("mvSwitching"))}</span>`
+      : up.state === "failed" ? `<span class="warn">⚠ ${esc(t("mvFailed").replace("{e}", up.error))}</span>` : "";
+    const movedLine = !mv ? "" : `<div class="sub">${upLine || `<span class="warn" title="${esc(mv.ref)}: ${esc(mv.commit.slice(0, 12))} → ${esc(mv.hub_commit.slice(0, 12))}">⚠ ${t("hubMoved")}</span>`}
+        ${updating(up) ? "" : `<button class="ghost" data-mvkeep="${i}" title="${t("keepTip")}">${t("keepThese")}</button>
+        <button class="ghost" data-mvget="${i}" title="${t("refetchTip")}">${t("refetchNew")}</button>`}</div>`;
     const del = confirming.has(m.artifact)
       ? `<span class="confirm">${t("delq")} <button class="danger" data-delyes="${i}">${t("yes")}</button><button data-delno="${i}">${t("no")}</button></span>`
       : `<button class="ghost danger" data-del="${i}" title="${t("del")}">🗑</button>`;
@@ -1407,15 +1487,12 @@ function catalogFor(repo) {
   return c && hubName === "huggingface" ? c.models.find(m => m.sources.some(s => s.repo === repo)) || null : null;
 }
 // The support levels, best first; the list keeps the hub's order within a level.
-const SUP = {full: "✓", family: "≈", projector: "…", unknown: "?", drafter: "◇", format: "✕", none: "✕"};
-const SUP_RANK = {full: 0, family: 1, projector: 2, unknown: 2, drafter: 3, format: 4, none: 4};
+const SUP = {full: "✓", projector: "…", unknown: "?", token: "⚿", drafter: "◇", none: "✕"};
+const SUP_RANK = {full: 0, projector: 1, unknown: 1, token: 2, drafter: 3, none: 4};
 const supOf = h => SUP[h.support] ? h.support : "unknown";
-function familyOf(arch) { return String(arch || "").replace(/(ForConditionalGeneration|ForCausalLM|Model)$/, ""); }
 function supportTip(h) {
   const s = supOf(h);
-  const head = s === "family" ? fill(t("sup_family"), {family: familyOf(h.architecture)})
-             : s === "format" ? fill(t("sup_format"), {lib: h.weights_format || (h.library || "").toUpperCase()})
-             : h.checking ? t("sup_checking") : t("sup_" + s);
+  const head = h.checking ? t("sup_checking") : t("sup_" + s);
   const src = h.arch_file ? fill(t("basisOwn"), {file: h.arch_file})
             : h.architecture ? fill(t("basisHub"), {src: t(hubName === "modelscope" ? "srcTag" : h.gguf ? "srcGguf" : "srcConfig")}) : "";
     return head + (h.architecture ? "\n" + t("archLabel") + ": " + h.architecture : "") + (src ? "\n" + src : "") + (h.note ? "\n" + h.note : "");
@@ -1449,11 +1526,11 @@ function listRank(h) {
 }
 function renderResults(error) {
   const sel = selected ? selected.key : "";
-  const list = found.hub.filter(h => !hideNone || !["none", "format"].includes(supOf(h)))
+  const list = found.hub.filter(h => !hideNone || supOf(h) !== "none")
     .map((h, i) => [h, i]).sort((a, b) => listRank(a[0]) - listRank(b[0]) || a[1] - b[1]).map(x => x[0]);
   let html = list.map(h => {
     const tested = catalogFor(h.id);
-    return `<button class="item ${sel === "h:" + h.id ? "sel" : ""} ${["none", "format"].includes(supOf(h)) ? "unsup" : ""}" data-hub="${esc(h.id)}">
+    return `<button class="item ${sel === "h:" + h.id ? "sel" : ""} ${supOf(h) === "none" ? "unsup" : ""}" data-hub="${esc(h.id)}">
       <div class="title">${supportBadge(h)}<span class="nm">${esc(h.id.split("/")[1])}</span>${h.gguf ? '<span class="chip">GGUF</span>' : ""}${h.library === "ninferno" ? '<span class="chip">NInferno</span>' : ""}${tested ? `<span class="pill ok" data-tip="${esc(t("testedTip"))}">${t("tested")}</span>` : ""}</div>
       <div class="sub">${esc(h.id.split("/")[0])} · ↓ ${human(h.downloads)} · ♥ ${human(h.likes)}${h.updated ? " · " + esc(ago(h.updated)) : ""}${h.context ? " · " + ctxLabel(h.context) : ""}</div></button>`;
   }).join("");
@@ -1468,7 +1545,7 @@ const archKnown = {}, archAsked = new Set();
 let archRunning = 0, archRender = 0, archQueue = [];
 function verifyDoubtful() {
   const hub = hubName;
-  archQueue = found.hub.filter(h => ["family", "projector", "unknown"].includes(supOf(h)) && !archAsked.has(hub + ":" + h.id))
+  archQueue = found.hub.filter(h => ["projector", "unknown"].includes(supOf(h)) && !archAsked.has(hub + ":" + h.id))
     .map(h => ({h, hub}));
   archNext();
   if (archQueue.length || archRunning) renderResults();
@@ -1493,6 +1570,57 @@ function archNext() {
     });
   }
 }
+// A model on disk: whether the engine runs it (/api/disk), then a start like any other.
+$("diskpath").placeholder = t("diskPlace");
+$("diskrun").onclick = async () => {
+  const path = $("diskpath").value.trim();
+  if (!path) return;
+  $("disknote").textContent = "";
+  try {
+    const j = await api(`/api/disk?path=${encodeURIComponent(path)}`);
+    // Only a model the engine runs alone starts (a drafter runs beside its model).
+    if (j.support !== "full") { $("disknote").textContent = fill(t("diskBad"), {reason: j.note || t("sup_" + j.support) || ""}); return; }
+    // The engine decides the rest, as a start without settings does.
+    launch(path, "", $("diskrun"), {ctx: 0, cap: 0, par: 1, kv: "", spec: "auto"}, []);
+  } catch (e) { $("disknote").textContent = fill(t("diskBad"), {reason: e.message}); }
+};
+// Another token: what the hub answered under the old one is asked again (the server dropped it).
+function hfChanged() {
+  for (const k of Object.keys(archKnown)) delete archKnown[k];
+  archAsked.clear();
+  refreshHf();
+  const q = $("q").value.trim();
+  if (found.hub.length || q) search(q);
+}
+// The Hugging Face token gated models need (/api/hf): whose it is, or a field to give one.
+async function refreshHf() {
+  let j;
+  try { j = await api("/api/hf"); } catch (e) { return; }
+  const line = $("hfline");
+  const get = `<a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">${esc(t("hfGet"))}</a>`;
+  // A token from the environment is changed there: saving a file would not replace it.
+  const env = j.token && (j.source === "HF_TOKEN" || j.source === "HUGGING_FACE_HUB_TOKEN");
+  if (env && j.error) {
+    line.innerHTML = `<span>${esc(fill(t("hfBad"), {error: j.error}) + " — " + fill(t("hfEnv"), {source: j.source}))}</span> ${get}`;
+    return;
+  }
+  if (j.token && !j.error) {
+    line.innerHTML = `<span data-tip="${esc(env ? fill(t("hfEnv"), {source: j.source}) : fill(t("hfFile"), {path: j.path}))}">${esc(fill(t("hfAs"), {account: j.account || "…"}))}</span>`
+      + (env ? "" : ` <button id="hfremove">${esc(t("hfRemove"))}</button>`);
+    if (!env) $("hfremove").onclick = async () => { await api("/api/hf", {token: ""}).catch(() => {}); hfChanged(); };
+    return;
+  }
+  line.innerHTML = `<span>${esc(j.error ? fill(t("hfBad"), {error: j.error}) : t("hfNone"))}</span>`
+    + `<input type="password" id="hftoken" placeholder="${esc(t("hfPlace"))}" autocomplete="off" spellcheck="false">`
+    + `<button id="hfsave">${esc(t("hfSave"))}</button> ${get}`;
+  $("hfsave").onclick = async () => {
+    const token = $("hftoken").value.trim();
+    if (!token) return;
+    try { await api("/api/hf", {token}); hfChanged(); }
+    catch (e) { line.querySelector("span").textContent = fill(t("hfBad"), {error: e.message}); }
+  };
+}
+refreshHf();
 $("q").oninput = () => {
   clearTimeout(searchTimer);
   const v = $("q").value.trim();
@@ -1852,7 +1980,7 @@ async function loadRepo() {
       // The architecture read from the weights themselves outranks the hub's word.
       if (j.architecture) {
         const h = sel.hub || found.hub.find(x => x.id === sel.repo);
-        const own = {architecture: j.architecture, support: j.support, arch_file: t("srcGguf")};
+        const own = {architecture: j.architecture, support: j.support, note: j.note, arch_file: t("srcGguf")};
         if (h) Object.assign(h, own); else sel.hub = own;
       }
     }
@@ -2251,7 +2379,7 @@ function renderBody() {
   else if (!sel.quants) html += `<p class="muted"><span class="sup spin">…</span> ${t("readingRepo")} <span id="readsec"></span></p>`;
   else {
     const h = sel.hub || found.hub.find(x => x.id === sel.repo);
-    const unsupported = h && ["none", "format"].includes(h.support);
+    const unsupported = h && h.support === "none";
     const q = quantSel, ctxNow = ctxEff();
     // The depth the server's estimates take (the same for every row), else a quarter of the context.
     const estAny = (sel.plan && sel.plan.quants || []).map(rowEstimate).find(Boolean);
@@ -2552,11 +2680,7 @@ document.addEventListener("click", async ev => {
   }
   else if (d.mvkeep !== undefined || d.mvget !== undefined) {
     const keep = d.mvkeep !== undefined, e = moved[mine[+(keep ? d.mvkeep : d.mvget)].artifact];
-    if (!e) return;
-    try { await api("/api/moved", {repo: e.repo, ref: e.ref, commit: e.commit, action: keep ? "accept" : "refetch"}); }
-    catch (er) { showError(er.message); return; }
-    for (const a of e.artifacts) delete moved[a];
-    if (keep) refreshMine(); else { setTab("downloads"); refreshState(); }
+    if (e) answerMoved(e, keep);
   }
   else if (d.hubsel) setHub(d.hubsel);
   else if (d.sort) {

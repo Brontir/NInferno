@@ -13,6 +13,8 @@
 #include "convert/convert.h"
 #include "convert/gguf.h"
 #include "convert/gguf_model.h"
+#include "convert/cache.h"
+#include "convert/support.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
@@ -252,67 +254,33 @@ std::string params_label(const std::string& name) {
 
 // An architecture name reduced for comparison: lower case, letters and digits only, the class
 // suffix dropped ("Qwen3_5MoeForCausalLM", "qwen35moe" and model_type "qwen3_5_moe" all qwen35moe).
-std::string arch_key(std::string name) {
-    for (const char* suffix : {"ForConditionalGeneration", "ForCausalLM", "Model"}) {
-        if (name.size() > std::strlen(suffix) && name.ends_with(suffix)) {
-            name.resize(name.size() - std::strlen(suffix));
-            break;
-        }
+// The UI's support level of a model (page.html's SUP), from convert::model_support: "full" (the
+// engine runs it), "drafter" (runs beside its model), "token" (gated: set HF_TOKEN), "projector"
+// (the hub read an image projector, not the model: the model file is read again), "unknown",
+// "none" (with the reason).
+std::string support_level(const convert::Support& support) {
+    switch (support.verdict) {
+    case convert::Verdict::Supported: return support.role == "drafter" ? "drafter" : "full";
+    case convert::Verdict::NeedsToken: return "token";
+    case convert::Verdict::Unknown: return "unknown";
+    case convert::Verdict::Unsupported: return support.role == "projector" ? "projector" : "none";
     }
-    std::string out;
-    for (const unsigned char c : name) {
-        if (std::isalnum(c)) { out += static_cast<char>(std::tolower(c)); }
-    }
-    return out;
+    return "unknown";
 }
 
-// The architectures the engine runs, reduced: map_gguf_model's general.architecture values and
-// the checkpoint architectures the converter names (as config.json does).
-const std::set<std::string>& engine_arch_keys() {
-    static const std::set<std::string> keys = [] {
-        std::set<std::string> out;
-        for (const auto& name : convert::supported_gguf_architectures()) {
-            out.insert(arch_key(name));
-        }
-        static const std::regex name(
-            R"(\b[A-Z][A-Za-z0-9_]*(?:ForCausalLM|ForConditionalGeneration)\b)");
-        const auto& text = convert::supported_architectures_text();
-        for (std::sregex_iterator it(text.begin(), text.end(), name), end; it != end; ++it) {
-            out.insert(arch_key(it->str()));
-        }
-        return out;
-    }();
-    return keys;
-}
-
-// How far the engine runs a hub model, by the architecture named for its weights (the hub's
-// reading, or ours of the weights' own head): "full" (the engine runs exactly it), "family" (a
-// variant of a family it runs: a multimodal wrapper, a newer revision; not verified), "drafter"
-// (a speculative drafter: runs beside its model), "projector" (the hub read an image projector,
-// not the model: unknown until the weights are read), "none" (another family, or a task that is
-// not text generation: speech, embeddings, ranking), "unknown" (nothing said).
-std::string architecture_support(const std::string& architecture, const std::string& pipeline) {
-    static const std::set<std::string> generative = {
-        "",           "text-generation",      "image-text-to-text",
-        "any-to-any", "text2text-generation", "image-to-text",
-        "chat"};
-    if (!generative.contains(pipeline)) { return "none"; }
-    if (architecture.empty()) { return "unknown"; }
-    const auto key = arch_key(architecture);
-    if (key == "clip" || key == "mmproj") { return "projector"; }
-    if (key == "dflash" || key.find("assistant") != std::string::npos ||
-        key.find("draft") != std::string::npos || key.find("dspark") != std::string::npos ||
-        key.ends_with("mtp")) {
-        return "drafter";
+// The facts an architecture name alone gives (ModelScope's search, a GGUF header, config.json).
+convert::SupportFacts facts_of_architecture(const std::string& architecture, bool gguf,
+                                            std::string pipeline = {}, std::string library = {}) {
+    convert::SupportFacts facts;
+    facts.pipeline = std::move(pipeline);
+    facts.library  = std::move(library);
+    facts.gguf     = gguf;
+    if (gguf) {
+        facts.gguf_architecture = architecture;
+    } else if (!architecture.empty()) {
+        facts.config = Json{{"architectures", Json::array({architecture})}};
     }
-    const auto& keys = engine_arch_keys();
-    if (keys.contains(key)) { return "full"; }
-    // A family the engine runs, by the longest known name the key starts with (at least five
-    // characters: "qwen3" covers Qwen3 variants, not "qwen4").
-    for (const auto& known : keys) {
-        if (known.size() >= 5 && key.starts_with(known)) { return "family"; }
-    }
-    return "none";
+    return facts;
 }
 
 // general.architecture from the first bytes of a GGUF file: the header, then key-value pairs until
@@ -487,12 +455,17 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (request.refetch && !request.prepare_only) {
         throw std::invalid_argument("refetch is a prepare's");
     }
+    if (request.keep_replaced && !request.refetch) {
+        throw std::invalid_argument("keep_replaced is a refetch's");
+    }
     if (!request.recipe.empty() && !is_word(request.recipe)) {
         throw std::invalid_argument("bad recipe: " + request.recipe);
     }
     if (request.prepare_only) {
         spec.argv.push_back("--prepare-only");
         if (request.refetch) { spec.argv.push_back("--refetch"); }
+        if (request.keep_replaced) { spec.argv.push_back("--keep-replaced"); }
+        if (request.vision) { spec.argv.push_back("--vision"); }
         if (!request.recipe.empty()) {
             spec.argv.push_back("--recipe");
             spec.argv.push_back(request.recipe);
@@ -629,7 +602,10 @@ App::App(UiOptions options, std::unique_ptr<GpuSource> gpus)
             catalog_thread_ = std::thread([this] {
                 while (!stopping_) {
                     (void)refresh_catalog();
-                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_; ++i) {
+                    // Every six hours, or at once after a new Hugging Face token (a private
+                    // feed answers only with one).
+                    for (int i = 0; i < 6 * 3600 * 10 && !stopping_ && !catalog_wake_.exchange(false);
+                         ++i) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 }
@@ -657,6 +633,9 @@ App::~App() {
     stop();
     if (update_thread_.joinable()) { update_thread_.join(); }
     if (health_thread_.joinable()) { health_thread_.join(); }
+    for (auto& stopper : update_stoppers_) { // written by the health thread only, joined above
+        if (stopper.joinable()) { stopper.join(); }
+    }
     if (prefetch_thread_.joinable()) { prefetch_thread_.join(); }
     if (catalog_thread_.joinable()) { catalog_thread_.join(); }
 }
@@ -778,6 +757,8 @@ std::string hub_key(const std::string& repo, const std::string& hub) {
 }
 
 Json App::listing_of(const std::string& repo, const std::string& hub) {
+    // What the hub answers under another token than the one asked with is not kept.
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = listings_.find(hub_key(repo, hub)); it != listings_.end()) {
@@ -801,11 +782,12 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"mtp_bytes", q.mtp_bytes}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
-    listings_[hub_key(repo, hub)] = list;
+    if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
     return list;
 }
 
 Json App::arch_json(const std::string& repo, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = archs_.find(hub_key(repo, hub)); it != archs_.end()) {
@@ -862,11 +844,30 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
             out["file"]   = "config.json";
         }
     } catch (const std::exception& error) { out["error"] = error.what(); }
+    // Whether the engine runs it: the whole decision from what the hub shows (convert/support.h),
+    // else from the architecture read above.
     if (!out.contains("support")) {
-        out["support"] = architecture_support(out["architecture"].get<std::string>(), "");
+        std::optional<convert::Support> support;
+        if (hub != "modelscope") {
+            try {
+                // The model an unqualified fetch takes: safetensors weights when there are
+                // any, else the GGUF read above.
+                auto ask  = fetch;
+                ask.quant = weights ? std::string() : quant;
+                if (const auto facts = convert::hub_support_facts(repo, ask)) {
+                    support = convert::model_support(*facts);
+                }
+            } catch (const std::exception&) {}
+        }
+        if (!support) {
+            support = convert::model_support(facts_of_architecture(
+                out["architecture"].get<std::string>(), out["source"] == "gguf"));
+        }
+        out["support"] = support_level(*support);
+        if (!support->reason.empty()) { out["note"] = support->reason; }
     }
     std::lock_guard lock(sizes_mutex_);
-    if (!out.contains("error")) { archs_[hub_key(repo, hub)] = out; }
+    if (!out.contains("error") && generation == hub_generation_) { archs_[hub_key(repo, hub)] = out; }
     return out;
 }
 
@@ -925,6 +926,7 @@ App::plan_facts(const std::string& repo, const Json& listing, const std::string&
 
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
@@ -1019,7 +1021,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     }
     std::lock_guard lock(sizes_mutex_);
     if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
-    plans_[key] = doc;
+    if (generation == hub_generation_) { plans_[key] = doc; }
     return doc;
 }
 
@@ -1114,11 +1116,22 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
     auto kv          = kv_json(repo, list, hub);
     auto speculation = speculation_json(repo, gpu, kv, list);
     const auto arch  = kv.value("architecture", std::string());
+    // A GGUF repository's architecture is its general.architecture (no weights of another format).
+    const bool gguf = std::none_of(list.begin(), list.end(), [](const Json& q) {
+        return !q.value("drafter", false) && q.value("format", std::string()) != "gguf";
+    });
+    // The repository's whole decision (its task, its weights' format, a token), as the search's;
+    // the architecture alone where that could not be read.
+    const Json decided = arch_json(repo, hub);
     return {
         {"repo", repo},
         {"hub", hub},
         {"architecture", arch},
-        {"support", architecture_support(arch, "")},
+        {"support", decided.contains("support")
+                        ? decided["support"]
+                        : Json(support_level(
+                              convert::model_support(facts_of_architecture(arch, gguf))))},
+        {"note", decided.value("note", std::string())},
         {"quants", out},
         {"rule", plan.is_object() ? plan.value("rule", std::string()) : std::string()},
         {"rule_code", plan.is_object() ? plan.value("rule_code", std::string()) : std::string()},
@@ -1130,6 +1143,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
 }
 
 Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, const Json& listing) {
+    const auto generation = hub_generation();
     Json out             = {{"known", false}};
     const auto& registry = spec::Registry::builtin();
     std::vector<std::string> names{repo}; // the repository and the base model its card names
@@ -1265,7 +1279,7 @@ Json App::speculation_json(const std::string& repo, int gpu, const Json& kv, con
                                      {"drafter", q.drafter}});
                 }
                 std::lock_guard lock(sizes_mutex_);
-                listings_[decl->repo] = files;
+                if (generation == hub_generation_) { listings_[decl->repo] = files; }
             }
             for (const auto& q : files) { bytes = std::max(bytes, q.value("bytes", 0.0)); }
             const auto drafter_kv = kv_json(decl->repo, files);
@@ -1399,12 +1413,9 @@ Json App::moved_json() {
             std::string commit;
             std::ifstream(ref_file.path()) >> commit;
             const auto dir = repo_dir.path() / "ninferno" / commit;
-            // Only a conversion whose download is gone: with the download there, a start by the
-            // hub id fetches the new commit as any download does.
-            if (commit.size() != 40 || !fs::is_directory(dir, ec) ||
-                fs::exists(repo_dir.path() / "snapshots" / commit, ec)) {
-                continue;
-            }
+            // A conversion of the commit the ref named, its download removed or still here: a
+            // start keeps it either way (convert::acquire_model).
+            if (commit.size() != 40 || !fs::is_directory(dir, ec)) { continue; }
             const auto ref = ref_file.path().filename().string();
             const auto key = repo + "@" + ref;
             std::string hub_commit;
@@ -1437,7 +1448,25 @@ Json App::moved_json() {
                            {"artifacts", artifacts}});
         }
     }
-    return {{"models", out}};
+    Json updates = Json::array();
+    {
+        std::lock_guard lock(moved_mutex_);
+        for (const auto& [key, update] : updates_) {
+            Json percent = Json::array();
+            for (const auto& part : update.parts) {
+                ProcessInfo info;
+                percent.push_back(processes_.find(part.prepare, info) ? info.percent : -1);
+            }
+            updates.push_back({{"repo", update.repo},
+                               {"ref", update.ref},
+                               {"commit", update.old_commit},
+                               {"hub_commit", update.hub_commit},
+                               {"state", update.state},
+                               {"error", update.error},
+                               {"prepares", percent}});
+        }
+    }
+    return {{"models", out}, {"updates", updates}};
 }
 
 Json App::answer_moved(const std::string& repo, const std::string& ref, const std::string& commit,
@@ -1465,20 +1494,221 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         return {{"accepted", true}};
     }
     if (action != "refetch") { throw std::invalid_argument("action is accept or refetch"); }
+    const auto key = repo + "@" + ref;
+    std::lock_guard lock(moved_mutex_);
+    if (const auto it = updates_.find(key);
+        it != updates_.end() && (it->second.state == "downloading" || it->second.state == "switching")) {
+        throw std::invalid_argument(key + " is already being updated");
+    }
+    ModelUpdate update;
+    update.repo       = repo;
+    update.ref        = ref;
+    update.old_commit = commit;
+    update.hub_commit = hub_commit;
+    update.state      = "downloading";
     Json ids = Json::array();
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (entry.path().extension() != ".ninferno" || facts(entry.path()).drafter) { continue; }
         LaunchRequest request;
-        request.model        = ref == "main" ? repo : repo + "@" + ref;
-        const auto name      = artifact_name(entry.path().filename().string());
-        request.quant        = name.quant;
-        request.recipe       = name.recipe; // the replaced conversion's, official or not
-        request.prepare_only = true;
-        request.refetch      = true;
-        request.gpu          = -1;
-        ids.push_back(processes_.start(make_launch(options_, request)));
+        request.model         = ref == "main" ? repo : repo + "@" + ref;
+        const auto name       = artifact_name(entry.path().filename().string());
+        request.quant         = name.quant;
+        request.recipe        = name.recipe; // the replaced conversion's, official or not
+        request.prepare_only  = true;
+        request.refetch       = true;
+        request.keep_replaced = true; // removed here once nothing serves it
+        request.vision        = facts(entry.path()).vision; // a Vision conversion stays one
+        request.gpu           = -1;
+        const auto id = processes_.start(make_launch(options_, request));
+        update.parts.push_back({.old_artifact = entry.path(), .new_artifact = {}, .prepare = id});
+        ids.push_back(id);
     }
+    if (update.parts.empty()) { throw std::invalid_argument("no converted model of " + key); }
+    updates_[key] = std::move(update);
     return {{"ids", ids}};
+}
+
+namespace {
+
+bool ended(const std::string& state) { return state == "exited" || state == "failed"; }
+
+bool same_file(const std::string& a, const fs::path& b) {
+    std::error_code ec;
+    return !a.empty() && fs::equivalent(fs::path(a), b, ec) && !ec;
+}
+
+// The requests a ninferno-serve on `port` has in flight (its /health); nullopt when unanswered.
+std::optional<long> active_requests(int port) {
+    if (port <= 0) { return std::nullopt; }
+    httplib::Client client("127.0.0.1", port);
+    client.set_connection_timeout(std::chrono::milliseconds(300));
+    client.set_read_timeout(std::chrono::seconds(1));
+    const auto res = client.Get("/health");
+    if (!res || res->status != 200) { return std::nullopt; }
+    try {
+        return Json::parse(res->body).at("active_requests").get<long>();
+    } catch (const std::exception&) { return std::nullopt; }
+}
+
+} // namespace
+
+namespace {
+
+// `spec` started on `artifact` by its path: the model argument (argv[1]) is the path, the hub's
+// --quant goes (the path names one quantization); `fresh` (another artifact than the one `spec`
+// ran) also drops --spec-profile, a tune keyed to the old artifact's id that ninferno-serve refuses
+// for another.
+LaunchSpec on_artifact(LaunchSpec spec, const fs::path& artifact, bool fresh) {
+    std::vector<std::string> argv;
+    for (std::size_t i = 0; i < spec.argv.size(); ++i) {
+        const std::string& arg = spec.argv[i];
+        if (i == 1) {
+            argv.push_back(artifact.string());
+        } else if (arg == "--quant" || (fresh && arg == "--spec-profile")) {
+            ++i; // and its value
+        } else {
+            argv.push_back(arg);
+        }
+    }
+    spec.argv  = std::move(argv);
+    spec.model = artifact.string();
+    return spec;
+}
+
+} // namespace
+
+void App::advance_updates() {
+    std::lock_guard lock(moved_mutex_);
+    for (auto& [key, update] : updates_) {
+        if (update.state == "downloading") {
+            // Ended only when every prepare has: a failed one leaves the others to finish, so no
+            // retry starts a second converter beside one still writing.
+            bool all = true;
+            std::string failure;
+            for (auto& part : update.parts) {
+                ProcessInfo info;
+                if (!processes_.find(part.prepare, info)) {
+                    if (failure.empty()) {
+                        failure = "the download's process is gone; the old conversion stays";
+                    }
+                    continue;
+                }
+                if (!ended(info.state)) {
+                    all = false;
+                } else if (info.state == "failed" || info.exit_code != 0 || info.artifact.empty()) {
+                    if (failure.empty()) {
+                        failure = "the new commit's download or conversion failed (" +
+                                  info.last_line + "); the old conversion stays";
+                    }
+                } else {
+                    part.new_artifact = info.artifact;
+                }
+            }
+            if (!all) { continue; }
+            if (!failure.empty()) {
+                update.state = "failed";
+                update.error = failure;
+                continue;
+            }
+            // The models serving an old conversion, each to restart once on its new one.
+            for (const auto& info : processes_.list()) {
+                if (info.spec.kind != "serve" || ended(info.state) || info.state == "stopping") {
+                    continue;
+                }
+                for (const auto& part : update.parts) {
+                    if (!same_file(info.artifact, part.old_artifact)) { continue; }
+                    ModelUpdate::Switch next;
+                    next.old_serve = info.id;
+                    // Both starts name their conversion by its path: a start by the hub id would
+                    // resolve to whatever the ref names now (after the update, the new commit),
+                    // so a revert would start the new conversion again.
+                    next.back = on_artifact(info.spec, part.old_artifact, false);
+                    next.next = on_artifact(info.spec, part.new_artifact, true);
+                    update.switches.push_back(std::move(next));
+                }
+            }
+            update.state = "switching";
+        }
+        if (update.state != "switching") { continue; }
+        bool all = true;
+        for (auto& sw : update.switches) {
+            if (sw.done) { continue; }
+            all = false;
+            if (sw.serve == 0) {
+                ProcessInfo old;
+                const bool found = processes_.find(sw.old_serve, old);
+                if (!sw.stopping) {
+                    // Stopped by the user meanwhile: nothing to restart.
+                    if (!found || ended(old.state) || old.state == "stopping") {
+                        sw.done = true;
+                        continue;
+                    }
+                    // Restarted when it serves no request (its /health): not in a conversation.
+                    if (old.state != "ready" || active_requests(old.spec.port).value_or(1) != 0) {
+                        continue;
+                    }
+                    sw.stopping = true;
+                    // Owned, and joined before the pool goes (~App): a stop outlives no App.
+                    update_stoppers_.emplace_back([this, id = sw.old_serve] { processes_.stop(id); });
+                    continue;
+                }
+                if (found && !ended(old.state)) { continue; }
+                try {
+                    sw.serve = processes_.start(sw.next);
+                } catch (const std::exception& error) {
+                    update.error = sw.next.model + " did not start on the new conversion (" +
+                                   error.what() + "); back on the old one";
+                    sw.reverted = true;
+                    try {
+                        sw.serve = processes_.start(sw.back);
+                    } catch (const std::exception& again) {
+                        update.error += std::string("; it did not start on the old one either (") +
+                                        again.what() + ")";
+                        sw.done = true;
+                    }
+                }
+                continue;
+            }
+            ProcessInfo now;
+            if (!processes_.find(sw.serve, now) || now.state == "ready") {
+                sw.done = true;
+                continue;
+            }
+            if (!ended(now.state)) { continue; }
+            if (sw.reverted) {
+                // Not again: the old conversion did not come back up either.
+                update.error += "; it did not start on the old one either (" + now.last_line + ")";
+                sw.done = true;
+                continue;
+            }
+            update.error = sw.next.model + " did not start on the new conversion (" +
+                           now.last_line + "); back on the old one";
+            sw.reverted = true;
+            try {
+                sw.serve = processes_.start(sw.back);
+            } catch (const std::exception& again) {
+                update.error += std::string("; it did not start on the old one either (") +
+                                again.what() + ")";
+                sw.done = true;
+            }
+        }
+        if (!all) { continue; }
+        if (std::any_of(update.switches.begin(), update.switches.end(),
+                        [](const ModelUpdate::Switch& sw) { return sw.reverted; })) {
+            // The old conversion stays: a model serves it again. The new one stays beside.
+            update.state = "failed";
+            continue;
+        }
+        for (const auto& part : update.parts) {
+            try {
+                (void)delete_artifact(part.old_artifact);
+            } catch (const std::exception& error) {
+                update.error = "the old conversion " + part.old_artifact.filename().string() +
+                               " was kept: " + error.what();
+            }
+        }
+        update.state = "done"; // switched; an old conversion kept is said in error
+    }
 }
 
 fs::path App::hub_root() const {
@@ -1634,6 +1864,11 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     std::uint64_t freed = 0;
+    // Its speculation manifest names the drafters converted for it (read before the sidecars go).
+    std::string manifest;
+    if (std::ifstream in(spec::manifest_path(path)); in) {
+        manifest.assign(std::istreambuf_iterator<char>(in), {});
+    }
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
     const auto prefix = path.filename().string();
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
@@ -1654,6 +1889,23 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     if (!repo_dir.empty()) {
+        // Its commit's directory holding no conversion but the drafters its manifest names:
+        // removed whole, as the converter removes a replaced conversion (acquire.cpp). Another
+        // quantization of the commit keeps it.
+        const auto commit_dir = path.parent_path();
+        if (commit_dir.parent_path() == repo_dir / "ninferno") {
+            bool others = false;
+            for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
+                if (entry.path().extension() == ".ninferno" &&
+                    manifest.find(entry.path().filename().string()) == std::string::npos) {
+                    others = true;
+                }
+            }
+            if (!others) {
+                freed += tree_bytes(commit_dir);
+                fs::remove_all(commit_dir, ec);
+            }
+        }
         bool left = false;
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".ninferno" &&
@@ -1719,6 +1971,7 @@ void App::remove_converted_originals() {
 
 Json App::search_json(const std::string& query, const std::string& sort,
                       const std::string& hub_name) {
+    const auto generation = hub_generation();
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
@@ -1753,6 +2006,11 @@ Json App::search_json(const std::string& query, const std::string& sort,
             convert::FetchOptions fetch;
             fetch.hub = hub_name;
             for (const auto& m : convert::search_models(query, fetch, 40, sort)) {
+                // Hugging Face's answer carries the facts; ModelScope's only the architecture.
+                const auto support = convert::model_support(
+                    m.card.is_object() ? convert::search_support_facts(m.card)
+                                       : facts_of_architecture(m.architecture, m.gguf, m.pipeline,
+                                                               m.library));
                 hub.push_back(
                     {{"id", m.id},
                      {"downloads", m.downloads},
@@ -1763,14 +2021,8 @@ Json App::search_json(const std::string& query, const std::string& sort,
                      {"architecture", m.architecture},
                      {"context", m.context},
                      {"library", m.library},
-                     {"weights_format",
-                      m.library == "mlx" ? std::string("MLX") : m.unread_quantization},
-                     // Apple's MLX weights, a quantization the converter does not read
-                     // (bitsandbytes, HQQ): the architecture may be the engine's, the
-                     // format is not.
-                     {"support", m.library == "mlx" || !m.unread_quantization.empty()
-                                     ? std::string("format")
-                                     : architecture_support(m.architecture, m.pipeline)}});
+                     {"support", support_level(support)},
+                     {"note", support.reason}});
             }
         } catch (const std::exception& e) { error = e.what(); }
     }
@@ -1785,7 +2037,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
              {"error", error},
              {"catalog_source", source}};
     std::lock_guard lock(sizes_mutex_);
-    if (error.empty()) { searches_[key] = {now, out}; }
+    if (error.empty() && generation == hub_generation_) { searches_[key] = {now, out}; }
     return out;
 }
 
@@ -1793,6 +2045,7 @@ Json App::search_json(const std::string& query, const std::string& sort,
 // quantization (an 8 MiB head by an HTTP range; 32 MiB when the metadata runs longer), else from
 // its config.json (safetensors weights).
 Json App::kv_json(const std::string& repo, const Json& listing, const std::string& hub) {
+    const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = kv_.find(hub_key(repo, hub)); it != kv_.end()) { return it->second; }
@@ -1820,6 +2073,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
     }
     const auto remember = [&](const Json& got, bool read) {
         std::lock_guard lock(sizes_mutex_);
+        if (generation != hub_generation_) { return; }
         if (read) {
             kv_[hub_key(repo, hub)] = got;
             kv_failed_.erase(hub_key(repo, hub));
@@ -1870,8 +2124,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes = mtp;
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] = std::move(facts);
-                configs_[hub_key(repo, hub)] = config;
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] = std::move(facts);
+                    configs_[hub_key(repo, hub)]    = config;
+                }
                 read                         = true;
             }
         } catch (const std::exception&) {}
@@ -1889,8 +2145,10 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             out = to_json(kv_model_of_gguf(file.metadata));
             {
                 std::lock_guard lock(sizes_mutex_);
-                plan_facts_[hub_key(repo, hub)] =
-                    product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                if (generation == hub_generation_) {
+                    plan_facts_[hub_key(repo, hub)] =
+                        product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                }
             }
             read = true;
             break;
@@ -1916,6 +2174,7 @@ void App::watch_health() {
             }
         }
         remove_converted_originals();
+        advance_updates();
         processes_.forget_ended(std::chrono::hours(6));
         for (int i = 0; i < 10 && !stopping_; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2182,6 +2441,83 @@ void App::install(httplib::Server& server) {
         try {
             reply_json(res, moved_json());
         } catch (const std::exception& error) { reply_error(res, 500, error.what()); }
+    });
+    // A model on disk the user names (a GGUF file, a checkpoint folder, an artifact): whether the
+    // engine runs it, by the converter's rule set, before it is converted and started.
+    server.Get("/api/disk", [](const httplib::Request& req, httplib::Response& res) {
+        const fs::path path = req.get_param_value("path");
+        std::error_code ec;
+        if (path.empty() || !fs::exists(path, ec)) {
+            reply_error(res, 404, "no such file or folder: " + path.string());
+            return;
+        }
+        if (path.extension() == ".ninferno") {
+            reply_json(res, {{"support", "full"}, {"kind", "artifact"}});
+            return;
+        }
+        if (!convert::is_convertible(path)) {
+            reply_json(res, {{"support", "none"},
+                             {"note", "neither a GGUF file nor a Hugging Face checkpoint folder "
+                                      "(config.json and safetensors weights)"}});
+            return;
+        }
+        const auto support = convert::model_support(convert::local_support_facts(path));
+        reply_json(res, {{"support", support_level(support)},
+                         {"note", support.reason},
+                         {"kind", fs::is_directory(path, ec) ? "checkpoint" : "gguf"}});
+    });
+    // The Hugging Face token gated repositories need: whether one is set, where it comes from and
+    // whose account it is; set or removed from this machine only, where `hf auth login` keeps it.
+    server.Get("/api/hf", [this](const httplib::Request&, httplib::Response& res) {
+        const auto token = convert::hub_token();
+        Json out{{"token", !token.value.empty()},
+                 {"source", token.source},
+                 {"path", convert::hub_token_path().string()}};
+        if (!token.value.empty() && !options_.offline) {
+            try {
+                out["account"] = convert::hub_account(token.value, {});
+            } catch (const std::exception& error) { out["error"] = error.what(); }
+        }
+        reply_json(res, out);
+    });
+    server.Post("/api/hf", [this](const httplib::Request& req, httplib::Response& res) {
+        // A proxy (nginx, Caddy) connects over loopback for every browser: a forwarded request is
+        // not from this machine.
+        const bool proxied = req.has_header("Forwarded") || req.has_header("X-Forwarded-For") ||
+                             req.has_header("X-Real-IP");
+        if (!is_loopback_host(req.remote_addr) || proxied) {
+            reply_error(res, 403, "the Hugging Face token is set on the machine ninferno-ui runs on");
+            return;
+        }
+        try {
+            const auto token = Json::parse(req.body).value("token", std::string());
+            if (const auto set = convert::hub_token(); set.source == "HF_TOKEN" ||
+                                                       set.source == "HUGGING_FACE_HUB_TOKEN") {
+                reply_error(res, 409,
+                            "the token is set by " + set.source + ": change it there");
+                return;
+            }
+            if (!token.empty() && !options_.offline) {
+                (void)convert::hub_account(token, {}); // refused: not saved
+            }
+            convert::save_hub_token(token);
+            // What the hub answered under the old token (gated listings, searches, headers).
+            {
+                std::lock_guard lock(sizes_mutex_);
+                ++hub_generation_; // requests still running under the old token keep nothing
+                listings_.clear();
+                archs_.clear();
+                searches_.clear();
+                configs_.clear();
+                kv_.clear();
+                kv_failed_.clear();
+                plan_facts_.clear();
+                plans_.clear();
+            }
+            catalog_wake_ = true;
+            const auto now = convert::hub_token();
+            reply_json(res, {{"token", !now.value.empty()}, {"source", now.source}});
+        } catch (const std::exception& error) { reply_error(res, 400, error.what()); }
     });
     server.Post("/api/moved", [this](const httplib::Request& req, httplib::Response& res) {
         try {

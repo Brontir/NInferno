@@ -66,6 +66,9 @@ struct AcquireOptions {
     bool vision               = false;
     bool reuse                = false; // load an earlier run's artifact for the same commit
     MovedRef moved_ref        = MovedRef::Notice;
+    // MovedRef::Refetch leaves the replaced conversion in place for the caller to remove once the
+    // new one serves (ninferno-ui switches a running model over first): --keep-replaced.
+    bool keep_replaced        = false;
     // Called with the notice of MovedRef::Notice once it is logged; a console counts down here
     // before the start goes on with the converted weights.
     std::function<void(const std::string& notice)> on_moved_ref;
@@ -90,6 +93,13 @@ struct AcquiredModel {
 [[nodiscard]] std::optional<std::filesystem::path>
 kept_artifact(const std::filesystem::path& cache, const std::string& repo,
               const std::string& revision, const std::string& quant, const std::string& recipe);
+
+// The one complete conversion in `commit_dir` (<cache>/models--org--name/ninferno/<commit>)
+// that matches `quant` (any, a label, or a width: "4bit") and `recipe` (any when empty); nullopt
+// when none or several do.
+[[nodiscard]] std::optional<std::filesystem::path>
+converted_artifact(const std::filesystem::path& commit_dir, const std::string& quant,
+                   const std::string& recipe);
 
 // The record that the user keeps the conversion in `commit_dir` (<cache>/models--org--name/
 // ninferno/<commit>) for the ref `ref` while the hub names `hub_commit` (accepted.json there), and
