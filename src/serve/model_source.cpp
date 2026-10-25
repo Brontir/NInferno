@@ -5,6 +5,7 @@
 #include "convert/acquire.h"
 #include "convert/support.h"
 #include "convert/cache.h"
+#include "core/ascii.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
 
@@ -41,7 +42,10 @@ namespace fs = std::filesystem;
 
 // Before a hub model is downloaded with its quantization named (--quant) or not chosen by the
 // rule (a safetensors repository): whether it fits this GPU now, by the plan without weights (the
-// same memory plan the start makes). A model the plan cannot read is left to the start.
+// same memory plan the start makes). Asked when the fetch is about to download (FetchPlan), so it
+// plans the files the fetch chose (a width selector resolved, the commit a moved branch is pinned
+// to) and nothing is asked when the weights are here. A model the plan cannot read is left to the
+// start.
 void check_fits(const ServeOptions& options) {
     OfflinePlan plan;
     try {
@@ -54,6 +58,20 @@ void check_fits(const ServeOptions& options) {
                              ". Options: a smaller quantization (--quant), a shorter context "
                              "(--max-context), fewer requests (--max-concurrency), or a GPU with "
                              "more free memory.");
+}
+
+void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch) {
+    if (fetch.missing_bytes == 0) { return; }
+    auto asked         = options;
+    asked.model_source = fetch.repo + "@" + fetch.commit;
+    for (const auto& file : fetch.files) {
+        const auto name = ascii_lower(fs::path(file).filename().string());
+        if (name.ends_with(".gguf") && !name.starts_with("mmproj")) {
+            asked.quant = convert::gguf_quant_label(fs::path(file).filename().string());
+            break;
+        }
+    }
+    check_fits(asked);
 }
 
 } // namespace
@@ -117,7 +135,6 @@ ModelSource resolve_model_source(const ServeOptions& options,
             fitted              = true;
         }
     }
-    if (!fitted && !options.prepare_only) { check_fits(options); }
     acquire.fetch.log      = log;
     acquire.convert.recipe = options.recipe;
     // --chat-template: the conversion's template too (a base model ships none).
@@ -130,6 +147,11 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.log            = log;
     if (options.with_drafters) { acquire.with_drafters = true; }
     acquire.keep_replaced = options.keep_replaced;
+    if (!fitted && !options.prepare_only) {
+        acquire.before_download = [&options](const convert::FetchPlan& fetch, const std::string&) {
+            check_fits(options, fetch);
+        };
+    }
     acquire.moved_ref = options.refetch            ? convert::MovedRef::Refetch
                         : options.accept_converted ? convert::MovedRef::Accept
                                                    : convert::MovedRef::Notice;
