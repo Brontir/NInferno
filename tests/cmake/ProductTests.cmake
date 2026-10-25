@@ -132,7 +132,7 @@ ninferno_add_test(ninferno_tool_maintainer_test
 # monotone over synthetic models x cards x contexts x streams x codecs, the largest quantization
 # that fits, the family table and ninferno-serve's options agree, the speculation follows the
 # start's order. CPU, no network.
-ninferno_add_test(ninferno_plan_dry_run_test
+ninferno_add_test(ninferno_plan_dry_run_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_dry_run.cpp"
   LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_dry_run_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
