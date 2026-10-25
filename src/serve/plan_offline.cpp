@@ -485,14 +485,6 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     } else {
         planned = product::plan_model(model.facts, planning.inputs);
     }
-    const std::string source =
-        model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
-    out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,
-                                          quants ? &*quants : nullptr);
-    out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
-                                             quants ? &*quants : nullptr);
-    out.fits = planned.plan.fits;
-    if (!out.fits) { out.reason = planned.plan.reason; }
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
     std::string label = model.quant;
@@ -501,7 +493,39 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         quants && quants->chosen
             ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
             : planning.inputs;
-    if (const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label)) {
+    const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label);
+    // A start serves the choice's drafter (product::StartAxes::drafter): the plan shown is of it.
+    std::optional<product::SpeculationSubject> chosen_subject;
+    if (served && served->choice.chosen && at_chosen.ask.automatic &&
+        at_chosen.subject != nullptr) {
+        const auto mode_of = [](SpeculativeBackend backend) {
+            return backend == SpeculativeBackend::Mtp      ? spec::Mode::Mtp
+                   : backend == SpeculativeBackend::DFlash ? spec::Mode::DFlash
+                   : backend == SpeculativeBackend::DFlash2 ? spec::Mode::DFlash2
+                                                            : spec::Mode::None;
+        };
+        const auto drafter = product::start_axes(*served, pins_of(options)).drafter;
+        if (drafter && *drafter != mode_of(planned.speculation.engine.backend)) {
+            product::DryRunInputs again = at_chosen;
+            if (*drafter == spec::Mode::None) {
+                again.ask.automatic = false;
+                again.ask.given     = {};
+            } else {
+                chosen_subject = product::subject_of_mode(*at_chosen.subject, *drafter);
+                again.subject  = &*chosen_subject;
+            }
+            planned = product::plan_model(facts, again);
+        }
+    }
+    const std::string source =
+        model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
+    out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,
+                                          quants ? &*quants : nullptr);
+    out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
+                                             quants ? &*quants : nullptr);
+    out.fits = planned.plan.fits;
+    if (!out.fits) { out.reason = planned.plan.reason; }
+    if (served) {
         out.json["choice"] = product::choice_json(*served);
         out.text += product::choice_line(*served) + "\n";
     }
