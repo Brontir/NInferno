@@ -2118,6 +2118,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             }
             out[it->second].bytes += file.size;
             out[it->second].files.push_back(file.path);
+            out[it->second].sha256.push_back(file.sha256);
         } else if (name.ends_with(".ninferno") && file.path.find('/') == std::string::npos) {
             RepoQuant quant;
             quant.quant  = native_quant_label(file.path);
@@ -2125,6 +2126,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             quant.bits   = quant_label_bits(quant.quant);
             quant.bytes  = file.size;
             quant.files.push_back(file.path);
+            quant.sha256.push_back(file.sha256);
             out.push_back(std::move(quant));
         } else if (name.ends_with(".safetensors") && name.find("visual") == std::string::npos &&
                    file.path.find('/') == std::string::npos) {
@@ -2141,6 +2143,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         if (!named || transformers_weight_file(file->path)) {
             weights.bytes += file->size;
             weights.files.push_back(file->path);
+            weights.sha256.push_back(file->sha256);
             // A part of its own for the MTP layers (model_mtp.safetensors): fetched and converted
             // with the model, loaded only under MTP.
             if (ascii_lower(file->path).find("mtp") != std::string::npos) {

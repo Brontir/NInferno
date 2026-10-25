@@ -180,8 +180,9 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
                 entry = nullptr;
             }
         }
-        out.resolved =
-            spec::resolve_planned_speculation(manifest, entry, out.components, gpu, label);
+        out.resolved = spec::resolve_planned_speculation(manifest, entry, out.components, gpu,
+                                                         label, target.weights, target.quant,
+                                                         t.engine);
     } catch (const std::exception& error) {
         out.resolved = spec::ResolvedSpeculation{};
         out.resolved->notes.push_back(std::string("drafters not planned: ") + error.what());

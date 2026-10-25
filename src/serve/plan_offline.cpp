@@ -12,6 +12,7 @@
 #include "product/plan/plan_quants.h"
 #include "serve/generation_service.h"
 #include "spec/fingerprint.h"
+#include "spec/pairs.h"
 #include "spec/gpu_identity.h"
 
 #include <algorithm>
@@ -39,7 +40,18 @@ struct ModelRead {
     bool gguf = false;
     fs::path artifact; // a .ninferno file
     std::string quant; // the quantization the facts were read at ("" for a single model)
+    // The weights the facts were read at (spec::weights_identity of their files' digests): the key
+    // of the lab's speculation pairs. "" when the listing gives no digest for one of them.
+    std::string weights;
 };
+
+std::string weights_of(const convert::RepoQuant& q) {
+    if (q.sha256.empty() ||
+        std::any_of(q.sha256.begin(), q.sha256.end(), [](const auto& d) { return d.empty(); })) {
+        return {};
+    }
+    return spec::weights_identity(q.sha256);
+}
 
 std::string ascii_lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -230,6 +242,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     if (header != nullptr) {
         out.gguf    = true;
         out.quant   = header->quant;
+        out.weights = weights_of(*header);
         fetch.quant = header->quant;
         for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
             try {
@@ -256,7 +269,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                      .value("repo_id", out.repo);
         out.facts = product::plan_facts_of_config(convert::fetch_config(base, fetch), native->bytes,
                                                   runtime::WeightBasis::FileSize);
-        out.quant = native->quant;
+        out.quant   = native->quant;
+        out.weights = weights_of(*native);
         out.listing.clear();
         return out;
     }
@@ -265,6 +279,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
+        out.weights               = weights_of(*weights);
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
         // (convert::sharded_checkpoint_mtp) whatever the number of weight files; no index to
@@ -377,7 +392,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
             product::planned_subject(product::PlannedTarget{.repo          = model.repo,
                                                             .facts         = model.facts,
                                                             .gguf          = model.gguf,
-                                                            .with_drafters = options.with_drafters},
+                                                            .with_drafters = options.with_drafters,
+                                                            .weights       = model.weights,
+                                                            .quant         = model.quant},
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         out.inputs.drafter_bytes = attached_drafter_bytes(*out.subject, model.listing);

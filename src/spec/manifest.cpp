@@ -597,8 +597,40 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
                                                 const ModelEntry* entry,
                                                 const std::set<std::string>& components,
                                                 const GpuKey& gpu,
-                                                const std::filesystem::path& label) {
+                                                const std::filesystem::path& label,
+                                                std::string_view weights, std::string_view quant,
+                                                std::string_view engine) {
     ResolvedSpeculation out;
+    const auto& registry = Registry::builtin();
+    if (!registry.pairs().empty()) {
+        std::vector<std::string> kinds;
+        if (manifest) {
+            for (const auto& d : manifest->drafters) {
+                if (d.usable()) { kinds.push_back(d.kind); }
+            }
+        } else {
+            for (const char* kind : {"mtp", "dflash", "dflash2"}) {
+                if (components.contains(kind)) { kinds.emplace_back(kind); }
+            }
+        }
+        const std::string family = manifest ? manifest->engine : std::string(engine);
+        if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
+                                      gpu_generation(gpu))) {
+            if (manifest) {
+                out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
+                attach_drafters(*manifest, choice->profile, out);
+            } else {
+                for (const auto& name : referenced(choice->profile)) {
+                    if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+                }
+            }
+            out.source  = std::move(choice->source);
+            out.basis   = std::move(choice->basis);
+            out.sha256  = registry.source_sha256();
+            out.profile = std::move(choice->profile);
+            return out;
+        }
+    }
     if (manifest) {
         out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
         resolve_manifest_profile(*manifest, label, gpu, out);

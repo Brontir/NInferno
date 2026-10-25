@@ -49,6 +49,10 @@ struct PlannedTarget {
     PlanSourceFacts facts;
     bool gguf          = true;  // converted from a GGUF
     bool with_drafters = false; // --with-drafters (a GGUF's separate drafters are attached)
+    // The weights planned (spec::weights_identity of the listing's digests, "" unknown) and their
+    // quantization label: the key of the lab's speculation pairs and the target's bit class.
+    std::string weights;
+    std::string quant;
 };
 
 // The subject of a planned target: the manifest convert::plan_drafters would give it (each
