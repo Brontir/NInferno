@@ -413,17 +413,30 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
     }
 
-    // The profile's choices by the thinking flag, as the Engine runs them.
-    if (ask.automatic && subject != nullptr && subject->resolved && subject->resolved->found() &&
-        !subject->resolved->profile.disabled) {
+    // The profile's choices by the thinking flag, as this start serves them: only where the plan
+    // serves the profile's own choice (no fit fallback, no pool step, not plain for an absent or
+    // refused drafter), each flag's configuration from the menu served for it (the drafters
+    // attached, what the Engine runs) and its measured gain where the profile measured that one.
+    const bool serves_profile =
+        std::any_of(r.fallbacks.begin(), r.fallbacks.end(), [](const SpeculationFallbackStep& s) {
+            return s.served && s.step == "profile";
+        });
+    if (ask.automatic && serves_profile && subject != nullptr && subject->resolved &&
+        subject->resolved->found()) {
         const spec::Profile profile = served_choices(subject->resolved->profile);
-        const auto variant = [](const spec::Choice& c) {
-            return SpeculationReport::ThinkingVariant{
-                .label   = c.config.enabled() ? c.config.label() : std::string("plain"),
-                .speedup = c.tok_s > 0 && c.plain_tok_s > 0 ? c.speedup() : 0.0};
+        const auto variant = [&](bool thinking) {
+            const auto s = served_speculation(*subject, thinking, false);
+            SpeculationReport::ThinkingVariant v{.label = "plain"};
+            if (!s || !s->drafts()) { return v; }
+            v.label                = s->menu.primary.config.label();
+            const spec::Choice& c  = spec::pick(profile, thinking);
+            if (c.config == s->menu.primary.config && c.tok_s > 0 && c.plain_tok_s > 0) {
+                v.speedup = c.speedup();
+            }
+            return v;
         };
-        r.with_thinking    = variant(spec::pick(profile, true));
-        r.without_thinking = variant(spec::pick(profile, false));
+        r.with_thinking    = variant(true);
+        r.without_thinking = variant(false);
         r.per_request      = per_request;
     }
     // The served choice's facts: drafter, depths, load.
