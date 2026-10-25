@@ -37,7 +37,8 @@ namespace program = qwen3_5::execution;
 class DenseExecution final : public ModelExecution {
 public:
     DenseExecution(const Model& model, const speculation::DFlashDrafter* drafter,
-                   DeviceContext& device, std::int32_t public_tokens, ActivationMode activations);
+                   DeviceContext& device, std::int32_t public_tokens, ActivationMode activations,
+                   EnginePurpose purpose);
 
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
     [[nodiscard]] std::vector<std::string> tune_routes(cudaStream_t stream) const override {
@@ -190,6 +191,7 @@ private:
     DensePass pass_;
     const speculation::DFlashDrafter* drafter_;
     bool invariant_; // ActivationMode::Exact: the invariant route profile
+    EnginePurpose purpose_;
     ModelTraits traits_;
     std::vector<std::uint32_t> index_; // each target layer's place among its kind
     std::uint32_t full_layers_    = 0;

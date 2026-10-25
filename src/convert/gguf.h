@@ -79,8 +79,11 @@ struct GgufTruncated : std::runtime_error {
 };
 
 // A GGUF file beside a model that is not the model: a vision projector (mmproj-*), an importance
-// matrix, an MTP-only sidecar (a4lg's <model>-MTP-ONLY-<quant>.gguf, mtp-*.gguf: the NextN block
-// of a model whose GGUF dropped it, read as a target's mtp source). By file name, case ignored.
+// matrix (imatrix*.gguf, *-imatrix.gguf: not a model named "iMatrix" in the middle, cdiamond's
+// Qwen3.8-27B-iMatrix-NVFP4-MTP.gguf), an MTP-only sidecar (a4lg's <model>-MTP-ONLY-<quant>.gguf,
+// mtp-*.gguf: the NextN block of a model whose GGUF dropped it, read as a target's mtp source), a
+// drafter published beside the model (dflash-*.gguf, eagle*.gguf: meta-models'
+// dflash-Muse-Glimmer-30B-Q4_K_M.gguf next to the Q4_K_M model). By file name, case ignored.
 [[nodiscard]] bool gguf_auxiliary_file(const std::string& file_name);
 
 // The binary32 value `value` as the double of its shortest round-trip decimal.

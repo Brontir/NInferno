@@ -679,8 +679,7 @@ std::runtime_error hub_error(const std::string& what, const Response& response,
 class HuggingFace final : public Hub {
 public:
     explicit HuggingFace(std::string endpoint) : endpoint_(std::move(endpoint)) {
-        token_ = sys::env("HF_TOKEN");
-        if (token_.empty()) { token_ = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+        token_ = hub_token().value;
     }
 
     Listing list(const std::string& repo, const std::string& revision) override {
@@ -884,6 +883,68 @@ fs::path default_hub_cache() {
     }
     const auto home = sys::home_dir();
     return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "hub";
+}
+
+fs::path hub_token_path() {
+    if (const auto path = sys::env("HF_TOKEN_PATH"); !path.empty()) { return path; }
+    if (const auto home = sys::env("HF_HOME"); !home.empty()) { return fs::path(home) / "token"; }
+    if (const auto xdg = sys::env("XDG_CACHE_HOME"); !xdg.empty()) {
+        return fs::path(xdg) / "huggingface" / "token";
+    }
+    const auto home = sys::home_dir();
+    return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "token";
+}
+
+HubToken hub_token() {
+    for (const char* name : {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}) {
+        if (auto value = sys::env(name); !value.empty()) { return {std::move(value), name}; }
+    }
+    std::ifstream in(hub_token_path());
+    std::string value;
+    std::getline(in, value);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    if (value.empty()) { return {}; }
+    return {std::move(value), hub_token_path().string()};
+}
+
+void save_hub_token(const std::string& token) {
+    const auto path = hub_token_path();
+    std::error_code ec;
+    if (token.empty()) {
+        fs::remove(path, ec);
+        return;
+    }
+    if (token.find_first_of("\r\n \t") != std::string::npos) {
+        throw std::invalid_argument("a Hugging Face token is one word");
+    }
+    fs::create_directories(path.parent_path(), ec);
+    const auto temp = path.string() + ".tmp";
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) { throw std::runtime_error("cannot write " + temp); }
+        out << token;
+    }
+    // Read by its owner only, as huggingface_hub writes it.
+    fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+    if (ec) { // a credential others could read is not kept
+        const auto why = ec.message();
+        fs::remove(temp, ec);
+        throw std::runtime_error("cannot make " + temp + " readable by its owner only: " + why);
+    }
+    fs::rename(temp, path, ec);
+    if (ec) { // rename does not replace an existing file on Windows
+        ec.clear();
+        fs::remove(path, ec);
+        if (!ec) { fs::rename(temp, path, ec); }
+    }
+    if (ec) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        throw std::runtime_error("cannot write " + path.string() + ": " + ec.message());
+    }
 }
 
 namespace {
@@ -1819,8 +1880,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     std::vector<std::string> headers;
     auto endpoint = sys::env("HF_ENDPOINT");
     if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
-    auto token = sys::env("HF_TOKEN");
-    if (token.empty()) { token = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+    const auto token = hub_token().value;
     if (!token.empty() && url.starts_with(endpoint + "/")) {
         headers.push_back("Authorization: Bearer " + token);
     }
@@ -1835,6 +1895,19 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
         throw std::runtime_error(url + " is larger than " + std::to_string(max_bytes) + " bytes");
     }
     return response.body;
+}
+
+std::string hub_account(const std::string& token, const FetchOptions& options) {
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    const auto response =
+        request(endpoint + "/api/whoami-v2", {"Authorization: Bearer " + token}, false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("checking the Hugging Face token", response,
+                        response.status == 401 ? "the hub does not accept it" : "");
+    }
+    const auto body = Json::parse(response.body, nullptr, false);
+    return body.is_object() ? body.value("name", std::string()) : std::string();
 }
 
 std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions& options) {
@@ -1918,18 +1991,21 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
-        // An importance matrix (imatrix*.gguf) or another file too small to be a model.
-        if (name.find("imatrix") != std::string::npos) { continue; }
+        // An importance matrix (imatrix*.gguf, *-imatrix.gguf: gguf_auxiliary_file's rule, not a
+        // model named iMatrix in the middle) or another file too small to be a model.
+        if (name.ends_with(".gguf") && gguf_auxiliary_file(name) &&
+            (name.starts_with("imatrix") || name.ends_with("imatrix.gguf"))) {
+            continue;
+        }
         // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
             file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
-            const bool sidecar = gguf_auxiliary_file(name) ||
-                                 name.find("dflash") != std::string::npos ||
-                                 name.find("eagle") != std::string::npos ||
-                                 name.find("assistant") != std::string::npos;
+            // Beside the model, not a model (gguf_auxiliary_file, the fetch's own rule): a model
+            // whose name holds DFlash2 or Assistant (a merge, a fine-tune) is a quantization.
+            const bool sidecar = gguf_auxiliary_file(name);
             auto label       = gguf_quant_label(file.path);
             const auto group = gguf_group(fs::path(file.path).filename().string());
             const auto key =

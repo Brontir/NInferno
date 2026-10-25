@@ -71,7 +71,8 @@ FamilyLoad load_gemma4(const EngineOptions& options, DeviceContext& device) {
         out.experts_per_token = static_cast<std::uint32_t>(model.config().experts_per_token);
     }
     out.execution = models::gemma4::make_program_execution(model, loaded->drafter.get(), device,
-                                                           vocabulary, options.activations);
+                                                           vocabulary, options.activations,
+                                                           options.purpose);
     frontend.complete();
 
     LoadSummary& summary         = out.summary;

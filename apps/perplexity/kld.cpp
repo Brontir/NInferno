@@ -10,8 +10,8 @@
 namespace ninferno::perplexity {
 namespace {
 
-// "NKLDREF1", then little-endian fields (the engine runs on little-endian hosts only).
-constexpr char kMagic[8] = {'N', 'K', 'L', 'D', 'R', 'E', 'F', '1'};
+// "NKLDREF2", then little-endian fields (the engine runs on little-endian hosts only).
+constexpr char kMagic[8] = {'N', 'K', 'L', 'D', 'R', 'E', 'F', '2'};
 
 template <class T>
 void put(std::ofstream& out, const T& value) {
@@ -78,6 +78,7 @@ void write_kld_reference(const std::filesystem::path& path, const KldReference& 
         put(out, reference.top_k);
         put(out, reference.context);
         put(out, reference.stride);
+        put(out, reference.window_start);
         put(out, static_cast<std::uint32_t>(reference.streams.size()));
         put_string(out, reference.model);
         put_string(out, reference.prefill_signature);
@@ -119,6 +120,7 @@ KldReference read_kld_reference(const std::filesystem::path& path) {
     if (reference.context < 2 || reference.stride == 0 || reference.stride >= reference.context) {
         throw std::runtime_error("KLD reference has an invalid context/stride");
     }
+    reference.window_start      = get<std::int32_t>(in);
     const auto streams          = get<std::uint32_t>(in);
     reference.model             = get_string(in, 4096);
     reference.prefill_signature = get_string(in, 1U << 20);

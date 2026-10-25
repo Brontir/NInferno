@@ -89,7 +89,8 @@ FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device) {
         out.experts_per_token = static_cast<std::uint32_t>(config.moe->op.top_k);
     }
     out.execution = models::dense::make_program_execution(model, loaded->drafter.get(), device,
-                                                          vocabulary, options.activations);
+                                                          vocabulary, options.activations,
+                                                          options.purpose);
     frontend.complete();
 
     LoadSummary& summary         = out.summary;
