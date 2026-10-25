@@ -2,6 +2,9 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "convert/fetch.h"
+#include "core/ascii.h"
+
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -162,9 +165,17 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
     return out;
 }
 
+DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
+    DryRunInputs out = inputs;
+    if (inputs.subject_of) {
+        if (const SpeculationSubject* own = inputs.subject_of(quant)) { out.subject = own; }
+    }
+    return out;
+}
+
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.drafter_bytes);
+                                 inputs.drafter_bytes, inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
@@ -214,6 +225,38 @@ PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
         {"short_bytes", needed > plan.free_after_weights ? needed - plan.free_after_weights : 0},
         {"context", plan.ladder.empty() ? 0U : plan.ladder.back().rung.max_context},
         {"concurrency", plan.axes.concurrency}};
+    return out;
+}
+
+AttachedDrafterMemory
+attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
+                        std::uint32_t target_hidden, const convert::FetchOptions* fetch) {
+    AttachedDrafterMemory out;
+    for (const spec::DrafterDecl& d : subject.attached_drafters) {
+        std::uint64_t bytes = 0;
+        if (!d.gguf.empty()) {
+            // A GGUF drafter file beside the target's quantizations.
+            for (const QuantListing& q : listing) {
+                if (q.drafter && ascii_lower(q.quant).find(ascii_lower(d.gguf)) != std::string::npos) {
+                    bytes = std::max(bytes, q.bytes);
+                }
+            }
+        } else if (!d.repo.empty() && fetch != nullptr) {
+            const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+            try {
+                for (const auto& q : convert::list_quants(spec, *fetch)) {
+                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
+                }
+            } catch (const std::exception&) {}
+            if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
+                try {
+                    out.state = plan_drafter_state_of_config(convert::fetch_config(spec, *fetch),
+                                                             target_hidden);
+                } catch (const std::exception&) {}
+            }
+        }
+        out.bytes = std::max(out.bytes, bytes);
+    }
     return out;
 }
 
@@ -305,9 +348,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.candidate.supported = why.code.empty();
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            row.planned                 = plan_model(facts, inputs);
+            const DryRunInputs own      = inputs_for(inputs, q);
+            row.planned                 = plan_model(facts, own);
             row.fit                     = runtime::quant_fit_of(row.planned.plan,
-                                                                own_context_of(facts, inputs, row.planned), ask);
+                                                                own_context_of(facts, own, row.planned), ask);
             if (!ask.automatic) {
                 row.launch_context = ask.context;
             } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
@@ -315,7 +359,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 row.launch_context = row.fit.own_context;
                 // The plan the launch serves under that cap (the one the row shows: the ladder,
                 // the speculation, fits_now), not the uncapped pool the streams would share.
-                row.planned = plan_model(facts, under_context_cap(inputs, row.launch_context));
+                row.planned = plan_model(facts, under_context_cap(own, row.launch_context));
             }
         } else {
             row.fit.state = why.code == "converted_size_unknown"
@@ -375,8 +419,9 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                           runtime::kPlanQualityFloorBits)) {
                 continue;
             }
-            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis), inputs,
-                                                 pins, row.listing.quant, OwnContext::Unbounded);
+            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                                 inputs_for(inputs, row.listing), pins,
+                                                 row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
                 bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
             }
@@ -390,7 +435,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             if (best && bound < best_worth - choice::kWorthTie) { break; }
             const QuantRow& row = out.rows[i];
             const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
-                                                  inputs, pins, row.listing.quant, OwnContext::Steps);
+                                                  inputs_for(inputs, row.listing), pins,
+                                                  row.listing.quant, OwnContext::Steps);
             if (!served || !served->choice.chosen ||
                 served->choice.context < out.pick->target_context) {
                 continue;

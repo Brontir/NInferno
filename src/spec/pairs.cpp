@@ -1,11 +1,14 @@
 #include "spec/pairs.h"
 
 #include "artifact/reader.h"
+#include "core/ascii.h"
+#include "spec/engine_support.h"
 
 #include <algorithm>
 #include <cctype>
 #include <limits>
 #include <map>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -103,9 +106,25 @@ Choice plain_choice() {
 } // namespace
 
 nlohmann::json pair_json(const MeasuredPair& pair) {
-    return Json{{"target", pair.target},       {"target_repo", pair.target_repo},
-                {"engine", pair.engine},       {"target_bits", pair.target_bits},
-                {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
+    Json out{{"target", pair.target},       {"target_repo", pair.target_repo},
+             {"engine", pair.engine},       {"target_bits", pair.target_bits},
+             {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
+    if (!pair.drafters.empty()) { out["drafters"] = pair.drafters; }
+    return out;
+}
+
+bool same_drafter(std::string_view a, std::string_view b) {
+    if (a.empty() || b.empty()) { return true; }
+    const auto split = [](std::string_view id) {
+        const auto at = id.find('@');
+        return std::pair{ascii_lower(id.substr(0, at)),
+                         at == std::string_view::npos ? std::string() : ascii_lower(id.substr(at + 1))};
+    };
+    const auto [ra, va] = split(a);
+    const auto [rb, vb] = split(b);
+    if (ra != rb) { return false; }
+    if (va.empty() || vb.empty()) { return true; }
+    return va.starts_with(vb) || vb.starts_with(va);
 }
 
 MeasuredPair parse_pair(const nlohmann::json& doc) {
@@ -117,6 +136,9 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
         out.target_bits = doc.at("target_bits").get<double>();
         out.generation  = doc.at("generation").get<std::string>();
         out.tune        = profile_from_json(doc.at("tune"));
+        if (const auto it = doc.find("drafters"); it != doc.end()) {
+            out.drafters = it->get<std::map<std::string, std::string>>();
+        }
     } catch (const nlohmann::json::exception& error) {
         throw std::runtime_error(std::string("speculation pair: ") + error.what());
     }
@@ -175,6 +197,10 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
 } // namespace
 
 std::string weights_identity(std::vector<std::string> sha256s) {
+    if (sha256s.empty() ||
+        std::any_of(sha256s.begin(), sha256s.end(), [](const auto& d) { return d.empty(); })) {
+        return {};
+    }
     std::sort(sha256s.begin(), sha256s.end());
     std::string out;
     for (const auto& s : sha256s) { out += (out.empty() ? "" : ",") + s; }
@@ -284,7 +310,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
 }
 
 std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
-                                         std::string_view kind) {
+                                         std::string_view kind, const EngineSupport* support) {
     if (group.empty()) { return std::nullopt; }
     const Mode mode = mode_of_kind(kind);
     std::vector<std::map<std::pair<std::string, std::string>, Sum>> tables;
@@ -312,7 +338,10 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         std::set<std::string> labels;
         for (const auto& [key, sum] : tables.front()) {
             const auto config = SpecConfig::parse(key.first);
-            if (config.mode == mode && config.k <= kPortableDepth) { labels.insert(key.first); }
+            if (config.mode == mode && config.k <= kPortableDepth &&
+                (support == nullptr || support->runs(config))) {
+                labels.insert(key.first);
+            }
         }
         std::map<std::string, std::vector<Over>> by_label;
         for (const auto& label : labels) {
@@ -362,6 +391,131 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
     }
     out.load = {LoadBound{.lanes = 2, .depth = 0}};
     return out;
+}
+
+double label_bits(std::string_view label) {
+    std::string text(label);
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (text.empty() || text.find("bf16") != std::string::npos ||
+        text.find("f16") != std::string::npos) {
+        return 16;
+    }
+    if (text.find("f32") != std::string::npos) { return 32; }
+    if (text.find("fp4") != std::string::npos) { return 4; }
+    // Q4_K_M, IQ2_M, and the ternary TQ1_0 / TQ2_0.
+    static const std::regex bits(R"((?:^|[-_])[it]?q([0-9]))");
+    std::smatch match;
+    return std::regex_search(text, match, bits) ? std::stod(match[1].str()) : 16;
+}
+
+std::string artifact_quant(const std::filesystem::path& artifact) {
+    const artifact::Reader reader(artifact);
+    return reader.directory().provenance.value("quant", std::string());
+}
+
+std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
+                                      std::string_view target, std::string_view engine,
+                                      const std::vector<std::string>& kinds, double target_bits,
+                                      std::string_view generation, const SelectOptions& options,
+                                      const std::map<std::string, std::string>& attached) {
+    std::set<Mode> modes;
+    for (const auto& kind : kinds) {
+        try {
+            modes.insert(mode_of_kind(kind));
+        } catch (const std::invalid_argument&) {} // a kind no pair drafts with
+    }
+    // What the serving Engine of the family runs: the choices are selected over it (a pair's
+    // fastest configuration may be one it does not run, its served choice then stands).
+    // An engine family it does not know leaves the selection as asked.
+    SelectOptions served = options;
+    if (!served.served && engine_family_support(engine).any()) {
+        served.served = engine_family_support(engine);
+    }
+    const EngineSupport* support = served.served ? &*served.served : nullptr;
+    // The target's own measurements, over the drafters it carries only, of the current engine
+    // version (pair_current) before any card's runs are pooled: a stale record never mixes in.
+    std::vector<MeasuredPair> own;
+    for (const auto& pair : pairs) {
+        if (pair.target != target || !pair_current(pair)) { continue; }
+        MeasuredPair p = pair;
+        // A kind measured with another drafter than the one attached: not measured for it.
+        std::set<Mode> carried = modes;
+        for (const auto& [kind, id] : attached) {
+            const auto measured = p.drafters.find(kind);
+            if (measured != p.drafters.end() && !same_drafter(measured->second, id)) {
+                try {
+                    carried.erase(mode_of_kind(kind));
+                } catch (const std::invalid_argument&) {}
+            }
+        }
+        std::erase_if(p.tune.measurements, [&](const Measurement& m) {
+            return m.config.enabled() && !carried.contains(m.config.mode);
+        });
+        std::erase_if(p.tune.drafters, [&](const DrafterRecord& d) {
+            return std::find(kinds.begin(), kinds.end(), d.kind) == kinds.end();
+        });
+        // Measured with other drafters only: not measured for the ones it carries.
+        if (std::any_of(p.tune.measurements.begin(), p.tune.measurements.end(),
+                        [](const Measurement& m) { return m.config.enabled(); })) {
+            own.push_back(std::move(p));
+        }
+    }
+    // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the
+    // pair: their runs pooled, so its choice weighs every drafter the card measured. A load table
+    // or fit fallback is the one drafter's it was measured with: kept only when the tunes agree.
+    std::vector<MeasuredPair> cards;
+    for (auto& p : own) {
+        const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
+            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation;
+        });
+        if (same == cards.end()) {
+            cards.push_back(std::move(p));
+            continue;
+        }
+        Profile& into = same->tune;
+        into.measurements.insert(into.measurements.end(), p.tune.measurements.begin(),
+                                 p.tune.measurements.end());
+        for (const auto& d : p.tune.drafters) {
+            const auto known = std::find_if(into.drafters.begin(), into.drafters.end(),
+                                            [&](const DrafterRecord& r) { return r.name == d.name; });
+            if (known == into.drafters.end()) { into.drafters.push_back(d); }
+        }
+        if (into.load != p.tune.load) { into.load.clear(); }
+        if (!into.fit_fallback || !p.tune.fit_fallback ||
+            into.fit_fallback->config != p.tune.fit_fallback->config) {
+            into.fit_fallback.reset();
+        }
+    }
+    own = std::move(cards);
+    if (!own.empty()) {
+        std::vector<const MeasuredPair*> measured;
+        for (const auto& p : own) { measured.push_back(&p); }
+        return PairChoice{.profile = profile_for_target(measured, generation, served),
+                          .basis   = "measured",
+                          .source  = "registry pair " + own.front().target_repo + " (" +
+                                    std::to_string(own.size()) + " lab card(s))"};
+    }
+    // Nobody measured it: the group of each kind it carries, the fastest overall.
+    std::optional<PairChoice> best;
+    for (const auto& kind : kinds) {
+        try {
+            (void)mode_of_kind(kind);
+        } catch (const std::invalid_argument&) {
+            continue;
+        }
+        const auto group = pair_group(pairs, engine, kind, target_bits);
+        auto profile     = profile_for_group(group, kind, support);
+        if (!profile) { continue; }
+        if (!best || profile->overall.speedup() > best->profile.overall.speedup()) {
+            best = PairChoice{.profile = std::move(*profile),
+                              .basis   = "preliminary",
+                              .source  = "registry group " + std::string(engine) + " + " + kind +
+                                        " (" + std::to_string(group.size()) +
+                                        " measured pairs; this one not measured)"};
+        }
+    }
+    return best;
 }
 
 } // namespace ninferno::spec

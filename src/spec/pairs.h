@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,6 +48,10 @@ struct MeasuredPair {
     // mode, name, repo@commit of a separate one), measurements (one request at a time) and, from
     // spec-tune --load on that card, its load bounds.
     Profile tune;
+    // The drafters measured, by kind: a separate drafter's repo@revision ("" or absent: one built
+    // into the target, or not recorded). A target carrying another drafter of a kind is not
+    // measured for it (pair_choice).
+    std::map<std::string, std::string> drafters;
 };
 
 [[nodiscard]] nlohmann::json pair_json(const MeasuredPair& pair);
@@ -54,7 +59,8 @@ struct MeasuredPair {
 [[nodiscard]] MeasuredPair parse_pair(const nlohmann::json& doc);
 
 // The identity of a set of weight files: their SHA-256 digests (lowercase hex), sorted and
-// comma-joined, as MeasuredPair::target holds it.
+// comma-joined, as MeasuredPair::target holds it; "" (unknown) for no files, or when a digest is
+// missing (a file kept in git, not LFS).
 [[nodiscard]] std::string weights_identity(std::vector<std::string> sha256s);
 // A converted target's weights: its provenance's "base" input files (artifact/source_identity.h).
 // nullopt for an artifact converted before the converter recorded its inputs.
@@ -98,9 +104,37 @@ struct MeasuredPair {
 // the highest mean speed relative to each pair's best; its floor the highest any pair measured for
 // it. Plain decode where a pair's tokens per round scaled down by kFineTuneAcceptance would make it
 // gain less than kPreliminaryGain on any pair. One request speculates (load: plain from two rows).
-// nullopt for an empty group.
+// nullopt for an empty group. With `support`, only the depths the serving Engine runs.
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
-                                                       std::string_view kind);
+                                                       std::string_view kind,
+                                                       const EngineSupport* support = nullptr);
+
+// The bits per weight a quantization label names ("Q4_K_M" 4, "UD-IQ2_M" 2, "MXFP4" 4, "BF16" 16):
+// enough to tell the bit classes apart. 16 for "" (a checkpoint's own weights).
+[[nodiscard]] double label_bits(std::string_view label);
+// A converted target's quantization label (its provenance's "quant"; "" for a checkpoint).
+[[nodiscard]] std::string artifact_quant(const std::filesystem::path& artifact);
+
+// What the lab's pairs give a target carrying drafters of `kinds` (the kinds attached or built in):
+// its own measurements over those drafters (profile_for_target) with basis "measured", else the
+// best of its groups' choices (one per kind, the fastest overall) with basis "preliminary", else
+// nullopt. `source` names where it came from.
+struct PairChoice {
+    Profile profile;
+    std::string basis;
+    std::string source;
+};
+[[nodiscard]] std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
+                                                    std::string_view target,
+                                                    std::string_view engine,
+                                                    const std::vector<std::string>& kinds,
+                                                    double target_bits, std::string_view generation,
+                                                    const SelectOptions& options = {},
+                                                    const std::map<std::string, std::string>& attached = {});
+// Whether two drafter identities (repo@revision) name one drafter: the same repository, and the
+// same revision where both say one (either may be a prefix of the other). True when either is
+// unknown ("").
+[[nodiscard]] bool same_drafter(std::string_view a, std::string_view b);
 
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,

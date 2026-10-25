@@ -6,6 +6,7 @@
 #include "core/device_class.h"
 #include "spec/fingerprint.h"
 #include "spec/manifest.h"
+#include "spec/pairs.h"
 #include "spec/profile.h"
 #include "spec/registry.h"
 #include "convert/fetch.h"
@@ -41,6 +42,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -791,7 +793,8 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"files", q.files},
                         {"bits", q.bits},
                         {"drafter", q.drafter},
-                        {"mtp_bytes", q.mtp_bytes}});
+                        {"mtp_bytes", q.mtp_bytes},
+                        {"weights", spec::weights_identity(q.sha256)}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
     if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
@@ -910,7 +913,8 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
                                   .format  = q.value("format", std::string()),
                                   .bytes   = q.value("bytes", std::uint64_t{0}),
                                   .bits    = q.value("bits", 0),
-                                  .drafter = q.value("drafter", false)};
+                                  .drafter = q.value("drafter", false),
+                                  .weights = q.value("weights", std::string())};
         if (row.format == "safetensors" && !row.drafter && config.is_object()) {
             row.converted_bytes = product::checkpoint_converted_bytes(config, row.bytes);
         }
@@ -983,15 +987,35 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     const product::SpeculationSubject subject = product::planned_subject(
         product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu);
     inputs.subject = &subject;
-    // A separate drafter the served speculation would upload beside the target (the registry's
-    // size for this model's default drafter).
-    try {
-        const Json sp        = speculation_json(repo, gpu, kv_json(repo, list, hub), list);
-        const std::string kd = sp.value("kind", std::string());
-        if (kd.find("mtp") == std::string::npos) {
-            inputs.drafter_bytes = static_cast<std::uint64_t>(sp.value("drafter_bytes", 0.0));
+    // Each quantization resolves its own speculation (the lab's pairs are of its weights).
+    std::map<std::string, product::SpeculationSubject> per_quant;
+    inputs.subject_of = [&](const product::QuantListing& q) -> const product::SpeculationSubject* {
+        if (q.drafter) { return nullptr; }
+        auto it = per_quant.find(q.quant);
+        if (it == per_quant.end()) {
+            it = per_quant
+                     .emplace(q.quant, product::planned_subject(
+                                           product::PlannedTarget{.repo    = repo,
+                                                                  .facts   = *facts,
+                                                                  .gguf    = gguf,
+                                                                  .weights = q.weights,
+                                                                  .quant   = q.quant},
+                                           inputs.gpu))
+                     .first;
         }
-    } catch (const std::exception&) {}
+        return &it->second;
+    };
+    // The drafters a start attaches beside the target, their weights and a DFlash drafter's
+    // state: the server's plan reads the same (product::attached_drafter_memory).
+    {
+        convert::FetchOptions fetch;
+        fetch.hub = hub;
+        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
+            subject, listing, facts->model.hidden, options_.offline ? nullptr : &fetch);
+        inputs.drafter_bytes = drafter.bytes;
+        inputs.drafter_state = drafter.state;
+    }
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     std::string planned_label           = quant;
@@ -1020,14 +1044,20 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         const product::PlanSourceFacts at =
             product::with_weights(*facts, row.weight_bytes, row.basis);
         const product::PlannedSpeculation planned =
-            row.planned.plan.planned ? row.planned : product::plan_model(at, inputs);
+            row.planned.plan.planned ? row.planned
+                                     : product::plan_model(at, product::inputs_for(inputs, row.listing));
         doc = product::dry_plan_document(at, repo + ":" + quant, "hub", inputs, planned, &plan);
         planned_at = at;
     }
     // The configuration choice at those weights (product/plan/plan_choice.h): what the launch
     // leaves automatic is chosen there, and what every other value would change. The launch pins
     // the KV codec the user chose and --activations exact.
-    if (const auto served = product::choose_at_weights(planned_at, inputs, inputs.pins, planned_label)) {
+    product::DryRunInputs at_label = inputs;
+    for (const auto& q : listing) {
+        if (!q.drafter && q.quant == planned_label) { at_label = product::inputs_for(inputs, q); }
+    }
+    if (const auto served =
+            product::choose_at_weights(planned_at, at_label, inputs.pins, planned_label)) {
         doc["choice"] = product::choice_json(*served);
     }
     std::lock_guard lock(sizes_mutex_);

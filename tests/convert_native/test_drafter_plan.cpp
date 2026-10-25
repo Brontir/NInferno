@@ -449,12 +449,21 @@ void retry_failed_drafter() {
         std::ofstream(ninferno::spec::manifest_path(artifact)) << text;
         return cv::drafters_incomplete(artifact);
     };
+    const std::string registry =
+        R"("registry_sha256": ")" + ninferno::spec::Registry::builtin().source_sha256() + R"(", )";
     expect(cv::drafters_incomplete(artifact), "no manifest: attaching is to do");
-    expect(with(R"({"drafters": [{"name": "dflash", "status": "failed: SSL connect error"}]})"),
+    expect(with("{" + registry +
+                R"("drafters": [{"name": "dflash", "status": "failed: SSL connect error"}]})"),
            "a failed published drafter is retried");
-    expect(!with(R"({"drafters": [{"name": "dflash", "status": "converted"},
+    expect(!with("{" + registry + R"("drafters": [{"name": "dflash", "status": "converted"},
                                    {"name": "dflash.q8", "quant": "q8", "status": "failed: x"}]})"),
            "a failed own quantization is not retried");
+    // Planned from another registry (before an update that names a new drafter), or before the
+    // manifest recorded one: planned again.
+    expect(with(R"({"registry_sha256": "0000", "drafters": [{"name": "mtp", "status": "embedded"}]})"),
+           "a manifest of another registry: attaching is to do");
+    expect(with(R"({"drafters": [{"name": "mtp", "status": "embedded"}]})"),
+           "a manifest that names no registry: attaching is to do");
     expect(with("{"), "an unreadable manifest: attaching is to do");
 }
 

@@ -87,8 +87,9 @@ struct SpeculationSubject {
     std::set<std::string> components; // the artifact's (text, mtp, dflash, dflash2, ...)
     bool proposal_head = false;       // it carries Qwen's proposal head
     spec::EngineSupport support;      // what the Engine's family runs
-    // A dry run's separate drafters the converter's drafter plan attaches (uploaded beside the
-    // target: their weights are counted); empty for an artifact.
+    // A dry run's drafters the converter's drafter plan takes from a repository of their own
+    // (uploaded beside the target, or embedded in the artifact as a component: either way their
+    // weights are not the target's and are counted); empty for an artifact.
     std::vector<spec::DrafterDecl> attached_drafters;
 };
 

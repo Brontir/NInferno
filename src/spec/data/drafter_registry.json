@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 115,
+  "version": 116,
   "published": "2026-10-25",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -4863,6 +4863,14 @@
           "name": "mtp",
           "kind": "mtp",
           "component": "mtp"
+        },
+        {
+          "name": "dflash",
+          "kind": "dflash",
+          "repo": "z-lab/Qwen3.5-9B-DFlash",
+          "revision": "5fc3b3d474760f18c516db87d84c37edbfd3ede6",
+          "component": "dflash",
+          "license": "apache-2.0"
         }
       ],
       "profiles": [

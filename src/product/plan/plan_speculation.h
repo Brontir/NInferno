@@ -43,6 +43,10 @@ struct PlannedTarget {
     PlanSourceFacts facts;
     bool gguf          = true;  // converted from a GGUF
     bool with_drafters = false; // --with-drafters (a GGUF's separate drafters are attached)
+    // The weights planned (spec::weights_identity of the listing's digests, "" unknown) and their
+    // quantization label: the key of the lab's speculation pairs and the target's bit class.
+    std::string weights;
+    std::string quant;
 };
 
 // The subject of a planned target: the manifest convert::plan_drafters would give it (each
@@ -101,12 +105,14 @@ struct PlannedSpeculation {
 // Runs the start's order over the dry run: `options` the Engine options the server builds with no
 // speculation chosen yet (its --spec settings in options.speculative for an explicit --spec),
 // `facts` the target's (the drafter's weights are added for a separate drafter when known:
-// `drafter_bytes`), `subject` from speculation_subject or planned_subject (nullptr: no profile at
-// all, as for an explicit --spec).
+// `drafter_bytes`, and a DFlash drafter's state, `drafter_state`, read from its config before it is
+// downloaded), `subject` from speculation_subject or planned_subject (nullptr: no profile at all,
+// as for an explicit --spec).
 [[nodiscard]] PlannedSpeculation
 plan_with_speculation(const PlanSourceFacts& facts, const runtime::PlanDeviceFacts& device,
                       const EngineOptions& options, const SpeculationSubject* subject,
-                      const SpeculationAsk& ask, std::uint64_t drafter_bytes = 0);
+                      const SpeculationAsk& ask, std::uint64_t drafter_bytes = 0,
+                      const std::optional<models::DrafterStateShape>& drafter_state = std::nullopt);
 
 // The profile key of a device from its facts (a named board's what-if: core/device_class.h
 // synthetic_device_class from its PCI id, architecture and SMs, the facts table's rates), as

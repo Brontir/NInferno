@@ -11,12 +11,14 @@
 #include "product/plan/plan_quants.h"
 #include "serve/generation_service.h"
 #include "spec/fingerprint.h"
+#include "spec/pairs.h"
 #include "spec/gpu_identity.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <regex>
 #include <set>
 #include <stdexcept>
@@ -38,7 +40,12 @@ struct ModelRead {
     bool gguf = false;
     fs::path artifact; // a .ninferno file
     std::string quant; // the quantization the facts were read at ("" for a single model)
+    // The weights the facts were read at (spec::weights_identity of their files' digests): the key
+    // of the lab's speculation pairs. "" when the listing gives no digest for one of them.
+    std::string weights;
 };
+
+std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
 
 std::string ascii_lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -207,7 +214,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                .format  = q.format,
                                .bytes   = q.bytes,
                                .bits    = q.bits,
-                               .drafter = q.drafter});
+                               .drafter = q.drafter,
+                               .weights = weights_of(q)});
         if (q.drafter) { continue; }
         if (q.format == "gguf") {
             const bool named = !quant.empty() && ascii_lower(q.quant) == ascii_lower(quant);
@@ -229,6 +237,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     if (header != nullptr) {
         out.gguf    = true;
         out.quant   = header->quant;
+        out.weights = weights_of(*header);
         fetch.quant = header->quant;
         for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
             try {
@@ -255,7 +264,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                      .value("repo_id", out.repo);
         out.facts = product::plan_facts_of_config(convert::fetch_config(base, fetch), native->bytes,
                                                   runtime::WeightBasis::FileSize);
-        out.quant = native->quant;
+        out.quant   = native->quant;
+        out.weights = weights_of(*native);
         out.listing.clear();
         return out;
     }
@@ -264,6 +274,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
+        out.weights               = weights_of(*weights);
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
         // (convert::sharded_checkpoint_mtp) whatever the number of weight files; no index to
@@ -333,8 +344,12 @@ ModelRead read_model(const ServeOptions& options) {
                     !options.chat_template_path.empty());
 }
 
-std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
-                                     const std::vector<product::QuantListing>& listing);
+// The quantization label a plan reads a bit class from (spec::label_bits): a hub listing's, or a
+// local GGUF's file name ("Qwen3.5-9B-UD-IQ2_M.gguf"), which names it the same way.
+std::string quant_label_of(const ModelRead& model) {
+    if (!model.quant.empty() || model.kind != "gguf") { return model.quant; }
+    return fs::path(model.source).stem().string();
+}
 
 // The axes the user pinned with flags (the configuration choice picks the others).
 product::ChoicePins pins_of(const ServeOptions& options) {
@@ -348,6 +363,8 @@ product::ChoicePins pins_of(const ServeOptions& options) {
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
+    // Each quantization's own subject (inputs.subject_of), made when first asked.
+    std::shared_ptr<std::map<std::string, product::SpeculationSubject>> per_quant;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -370,10 +387,43 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
             product::planned_subject(product::PlannedTarget{.repo          = model.repo,
                                                             .facts         = model.facts,
                                                             .gguf          = model.gguf,
-                                                            .with_drafters = options.with_drafters},
+                                                            .with_drafters = options.with_drafters,
+                                                            .weights       = model.weights,
+                                                            .quant         = quant_label_of(model)},
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
-        out.inputs.drafter_bytes = attached_drafter_bytes(*out.subject, model.listing);
+        const convert::FetchOptions fetch = fetch_options();
+        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
+            *out.subject, model.listing, model.facts.model.hidden, &fetch);
+        out.inputs.drafter_bytes = drafter.bytes;
+        out.inputs.drafter_state = drafter.state;
+        // A repository's quantizations each have their weights, and the lab's pairs are of
+        // weights: every row of the table resolves its own (the subject above is the one read).
+        if (model.listing.size() > 1) {
+            out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
+            out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
+                                     facts = model.facts, gguf = model.gguf,
+                                     with_drafters = options.with_drafters,
+                                     gpu](const product::QuantListing& q)
+                -> const product::SpeculationSubject* {
+                if (q.drafter) { return nullptr; }
+                auto it = per_quant->find(q.quant);
+                if (it == per_quant->end()) {
+                    it = per_quant
+                             ->emplace(q.quant,
+                                       product::planned_subject(
+                                           product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = with_drafters,
+                                                                  .weights       = q.weights,
+                                                                  .quant         = q.quant},
+                                           gpu))
+                             .first;
+                }
+                return &it->second;
+            };
+        }
     }
     return out;
 }
@@ -445,15 +495,19 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     // automatic, and what every other value would change.
     std::string label = model.quant;
     if (quants && quants->chosen) { label = quants->rows[*quants->chosen].listing.quant; }
-    if (const auto served = product::choose_at_weights(facts, planning.inputs, pins_of(options), label)) {
+    const product::DryRunInputs at_chosen =
+        quants && quants->chosen
+            ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
+            : planning.inputs;
+    if (const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label)) {
         out.json["choice"] = product::choice_json(*served);
         out.text += product::choice_line(*served) + "\n";
     }
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
-        product::DryRunInputs now                = planning.inputs;
-        now.device.free_bytes                    = free_now;
         const product::QuantRow& row             = quants->rows[quants->pick->index];
+        product::DryRunInputs now                = product::inputs_for(planning.inputs, row.listing);
+        now.device.free_bytes                    = free_now;
         const product::PlannedSpeculation at_now = product::plan_model(
             product::with_weights(model.facts, row.weight_bytes, row.basis), now);
         out.json["device"]["free_now_bytes"] = *free_now;
@@ -469,34 +523,6 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
 }
 
 namespace {
-
-// A separate drafter's weights the start would upload beside the target (one attached by the
-// drafter plan with --with-drafters: Gemma 4's assistant, a DFlash drafter of its own repository);
-// the largest when several are attached. 0 when none is, or its listing cannot be read.
-std::uint64_t attached_drafter_bytes(const product::SpeculationSubject& subject,
-                                     const std::vector<product::QuantListing>& listing) {
-    std::uint64_t out = 0;
-    for (const spec::DrafterDecl& d : subject.attached_drafters) {
-        std::uint64_t bytes = 0;
-        if (!d.gguf.empty()) {
-            // A GGUF drafter file beside the target's quantizations.
-            for (const product::QuantListing& q : listing) {
-                if (q.drafter &&
-                    ascii_lower(q.quant).find(ascii_lower(d.gguf)) != std::string::npos) {
-                    bytes = std::max(bytes, q.bytes);
-                }
-            }
-        } else if (!d.repo.empty()) {
-            try {
-                for (const auto& q : convert::list_quants(d.repo, fetch_options())) {
-                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
-                }
-            } catch (const std::exception&) {}
-        }
-        out = std::max(out, bytes);
-    }
-    return out;
-}
 
 // What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
 HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,

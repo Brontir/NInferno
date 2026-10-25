@@ -102,6 +102,14 @@ ModelEntry parse_model_entry(const Json& item) {
     return entry;
 }
 
+std::vector<const MeasuredPair*> Registry::measured(std::string_view target) const {
+    std::vector<const MeasuredPair*> out;
+    for (const auto& pair : pairs_) {
+        if (pair.target == target) { out.push_back(&pair); }
+    }
+    return out;
+}
+
 Registry Registry::parse(const std::string& text) {
     const auto doc = Json::parse(text);
     if (doc.value("schema", 0) != 1) { throw std::runtime_error("drafter registry: unknown schema"); }
@@ -118,6 +126,9 @@ Registry Registry::parse(const std::string& text) {
         out.kinds_.push_back(std::move(kind));
     }
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
+    for (const auto& item : doc.value("pairs", Json::array())) {
+        out.pairs_.push_back(parse_pair(item));
+    }
     return out;
 }
 

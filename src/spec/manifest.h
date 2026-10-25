@@ -101,10 +101,15 @@ struct ResolvedSpeculation {
 // --with-drafters), else nothing. `label` names it in the sources (in place of the artifact). No
 // local tune is read; the built-in drafter's default is the caller's (as for an artifact).
 struct ModelEntry;
+// The lab's pairs answer first (spec/pairs.h): by `weights` (the planned files' identity, "":
+// unknown), the drafters the manifest attaches or the components carry, `quant`'s bit class and
+// the `engine` family; then the published profiles as above.
 [[nodiscard]] ResolvedSpeculation
 resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
                             const ModelEntry* entry, const std::set<std::string>& components,
-                            const GpuKey& gpu, const std::filesystem::path& label);
+                            const GpuKey& gpu, const std::filesystem::path& label,
+                            std::string_view weights = {}, std::string_view quant = {},
+                            std::string_view engine = {});
 
 // Why the tune at `tune` would not serve the artifact `artifact_id` on GPU class `gpu_class` (the
 // device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a

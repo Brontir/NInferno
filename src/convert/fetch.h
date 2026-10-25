@@ -201,6 +201,7 @@ struct RepoQuant {
     int bits            = 0; // from the label (Q4_K_M -> 4, BF16 -> 16); 0 when it says none
     bool drafter        = false;
     std::vector<std::string> files;
+    std::vector<std::string> sha256; // each file's LFS digest, as files lists them ("": in git)
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;
