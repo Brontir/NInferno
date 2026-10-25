@@ -211,6 +211,13 @@ spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
                         d.facts.source != FactSource::Verified || d.facts.driver_read};
 }
 
+bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject) {
+    if (ask.automatic && ask.per_request_from_profile) {
+        return subject != nullptr && per_request_pays(*subject, ask.thinking);
+    }
+    return ask.per_request;
+}
+
 PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const runtime::PlanDeviceFacts& device,
                                          const EngineOptions& options,
@@ -221,6 +228,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
     PlannedSpeculation out;
     SpeculationReport& r            = out.speculation;
     const std::uint32_t concurrency = std::max(1U, options.max_concurrency);
+    const bool per_request          = per_request_of(ask, subject);
     const auto plan_of              = [&](const SpeculativeOptions& speculative) {
         EngineOptions planned     = options;
         planned.speculative       = speculative;
@@ -300,7 +308,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
     } else {
         r.ask = "auto";
         if (subject != nullptr) {
-            served = served_speculation(*subject, ask.thinking, ask.per_request);
+            served = served_speculation(*subject, ask.thinking, per_request);
             if (subject->resolved) {
                 for (const std::string& note : subject->resolved->notes) {
                     r.notes.push_back(note);
@@ -341,7 +349,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
             if (!built) {
                 std::optional<runtime::DryRunPlan> accepted;
                 auto fallback = fit_fallbacks(
-                    *subject, *served, ask.per_request,
+                    *subject, *served, per_request,
                     [&](const ServedSpeculation& candidate, FallbackStep at) {
                         const SpeculativeOptions sp = with_given(candidate);
                         runtime::DryRunPlan p       = plan_of(sp);
@@ -371,7 +379,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 const std::uint32_t with_drafter = pool_contexts_of(out.plan, options);
                 std::optional<runtime::DryRunPlan> plain_plan, head_plan;
                 const PoolDecision pool = pool_rule(
-                    *subject, ask.per_request, with_drafter, concurrency,
+                    *subject, per_request, with_drafter, concurrency,
                     [&] {
                         plain_plan = plan_of(SpeculativeOptions{});
                         return pool_contexts_of(*plain_plan, options);

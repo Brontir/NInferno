@@ -61,7 +61,8 @@ Json candidate_json(const choice::Candidate& c) {
 DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask) {
     DrafterAxis out;
     if (!subject.resolved || subject.resolved->profile.disabled) { return out; }
-    const auto base              = served_speculation(subject, ask.thinking, ask.per_request);
+    const bool per_request       = per_request_of(ask, &subject);
+    const auto base              = served_speculation(subject, ask.thinking, per_request);
     const spec::Profile& profile = subject.resolved->profile;
     std::set<spec::Mode> modes;
     for (const spec::Measurement& m : profile.measurements) {
@@ -73,7 +74,7 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
     for (const spec::Mode mode : modes) {
         const SpeculationSubject one = subject_of_mode(subject, mode);
         const spec::Profile& p       = one.resolved->profile;
-        const auto served            = served_speculation(one, ask.thinking, ask.per_request);
+        const auto served            = served_speculation(one, ask.thinking, per_request);
         if (!served || served->engine.backend == SpeculativeBackend::None ||
             served->menu.mode != mode) {
             continue;

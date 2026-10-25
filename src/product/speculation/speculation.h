@@ -112,6 +112,15 @@ void apply_builtin_default(SpeculationSubject& subject);
 
 [[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
                                                                   bool thinking, bool per_request);
+
+// Whether each request should run at its own thinking flag's choice (--spec-select thinking) rather
+// than every request at the server's default (`thinking`'s): where the profile's measurements say
+// the requests of the other flag gain more than kPerRequestMargin (spec::per_request_gain over the
+// configurations the Engine runs). A start without --spec-select, and the plan of one, take it.
+// The margin is above the measurement's spread: tokens per round of one pair agree within 1.8 %
+// across cards and 2.3 % across quantizations of 4 bits or more (choice/SPECULATION.md v4).
+inline constexpr double kPerRequestMargin = 0.03;
+[[nodiscard]] bool per_request_pays(const SpeculationSubject& subject, bool thinking);
 // The served configuration one draft shallower (`config` with k - 1, its watchdog at `floor`),
 // for every default: what a start runs when neither the profile's choice nor its fit fallback fits
 // (a narrower round takes less workspace and graph memory). nullopt at depth 1, for plain decode,

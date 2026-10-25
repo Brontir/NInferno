@@ -156,6 +156,8 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
     SpeculationAsk& ask                 = out.ask;
     if (launch.spec.empty() || launch.spec == "auto") {
         ask.automatic = true;
+        // A launch passes no --spec-select: the server decides per request by the profile.
+        ask.per_request_from_profile = true;
     } else {
         ask.automatic          = false;
         ask.given.backend      = parse_speculative_backend(launch.spec);

@@ -411,6 +411,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         options_.speculative.draft_tokens = engine_options.speculative.draft_tokens;
     }
+    if (options_.speculation_from_profile && !options_.per_request_given) {
+        options_.per_request_speculation =
+            product::per_request_pays(speculation_subject(), options_.enable_thinking.value_or(true));
+    }
     if (options_.speculation_from_profile) {
         served_speculation_ = product::served_speculation(
             speculation_subject(), options_.enable_thinking.value_or(true),

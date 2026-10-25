@@ -373,6 +373,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .given       = options.speculative,
                                                  .thinking    = options.enable_thinking.value_or(true),
                                                  .per_request = options.per_request_speculation,
+                                                 .per_request_from_profile =
+                                                     options.speculation_from_profile &&
+                                                     !options.per_request_given,
                                                  .depth_from_profile = options.draft_tokens_from_model,
                                                  .model_repo         = model.repo};
     if (!model.artifact.empty()) {

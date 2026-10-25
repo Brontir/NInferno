@@ -196,9 +196,10 @@ std::string serve_usage_text(const char* argv0) {
            "       --spec auto (the default without --spec, --draft-tokens, --drafter or\n"
            "       --lm-head-draft; --spec none decodes plain) runs the speculation the model\n"
            "       came with for this GPU (its tuned profile): one drafter at the profile's\n"
-           "       default, tuned on the whole mixed corpus, for every request\n"
-           "       (--spec-select fixed, the default); --spec-select thinking runs each\n"
-           "       request at the profile's default for its own thinking flag.\n"
+           "       default for the thinking default, for every request (--spec-select fixed),\n"
+           "       or each request at the profile's default for its own thinking flag\n"
+           "       (--spec-select thinking). Without --spec-select the profile's measurements\n"
+           "       decide: per request where the requests of the other flag gain 3 % or more.\n"
            "       --spec-load bounds speculation under decode load instead of the profile's\n"
            "       table: 2:7,3:3,5:0 caps a step of 2+ rows at 7 drafts per row, of 3+ rows\n"
            "       at 3, and turns speculation off from 5 rows (none: no bound); 2:7:drafts\n"
@@ -449,6 +450,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--spec-select must be fixed or thinking");
             }
             options.per_request_speculation = value == "thinking";
+            options.per_request_given       = true;
         } else if (arg == "--spec-load") {
             options.speculation_load = spec::parse_load(require_value("--spec-load"));
         } else if (arg == "--spec-profile") {

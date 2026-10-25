@@ -533,6 +533,13 @@ std::optional<ServedSpeculation> deepest_fitting_shallower(
     return best;
 }
 
+bool per_request_pays(const SpeculationSubject& subject, bool thinking) {
+    const auto& resolved = subject.resolved;
+    if (!resolved || !resolved->found() || resolved->profile.disabled) { return false; }
+    return spec::per_request_gain(engine_choices(resolved->profile, nullptr), thinking) >=
+           1.0 + kPerRequestMargin;
+}
+
 const char* fallback_step_name(FallbackStep step) noexcept {
     switch (step) {
     case FallbackStep::FitFallback:
