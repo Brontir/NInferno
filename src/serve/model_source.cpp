@@ -78,6 +78,9 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
         if (name.ends_with(".gguf") && !name.starts_with("mmproj")) {
             asked.quant = convert::gguf_quant_label(fs::path(file).filename().string());
             gguf        = true;
+            // A name without a quantization label (model.gguf): the plan could not name this
+            // file, so the start checks it.
+            if (asked.quant.empty()) { return; }
             break;
         }
     }
