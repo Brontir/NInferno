@@ -279,8 +279,7 @@ int main() {
                                                     .given              = serve.speculative,
                                                     .thinking           = serve.enable_thinking.value_or(true),
                                                     .per_request        = serve.per_request_speculation,
-                                                    .depth_from_profile = serve.draft_tokens_from_model,
-                                                    .model_repo         = repo};
+                                                    .depth_from_profile = serve.draft_tokens_from_model};
         const pr::SpeculationSubject subject = pr::planned_subject(
             pr::PlannedTarget{.repo          = repo,
                               .facts         = facts,
