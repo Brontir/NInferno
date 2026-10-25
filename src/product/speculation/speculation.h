@@ -110,6 +110,10 @@ void apply_builtin_default(SpeculationSubject& subject);
                                                          SpeculativeBackend backend, bool thinking,
                                                          std::string* source = nullptr);
 
+// The choices a product of the Engine runs: the profile's served choices when its tune recorded
+// them (it chose configurations the Engine cannot run), else its own.
+[[nodiscard]] spec::Profile served_choices(const spec::Profile& profile);
+
 // Whether each request should run at its own thinking flag's choice (--spec-select thinking) rather
 // than every request at the server's default (`thinking`'s): where the profile's measurements say
 // the requests of the other flag gain more than kPerRequestMargin (spec::per_request_gain over the

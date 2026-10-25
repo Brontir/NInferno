@@ -1004,7 +1004,7 @@ Object.assign(T.en, {
   specPlanned:"Auto runs",specPlannedAs:"Runs",specPlain:"no speed-up",specBasis_own:"measured on this GPU",specBasis_similar:"measured on a similar GPU",
   specBasis_generic:"general profile",specBasis_builtin:"the model's own drafter, not tuned",specBasis_explicit:"as chosen",
   specBasis_none:"not measured for this model",specBasis_measured_plain:"measured faster without it here",specBasis_choice:"the configuration choice: faster without it at this context",specBasis_measured:"measured for these weights",specBasis_preliminary:"preliminary: from measured models like it",specBasis_drafter_missing:"its drafter is not attached",specBasis_engine_refuses:"the engine does not run its configuration",specOffChosen:"turned off",
-  specDepthAt:"{d} tokens ahead with {n} at once",
+  specDepthAt:"{d} tokens ahead with {n} at once",specVariants:"with thinking {t}, without {n}",specVariantsEach:"each request its own",specVariantsTip:"The profile's choice for requests with thinking and without, as measured (× decode against plain). The server runs thinking by default; each request runs its own where the measurements say it pays.",
   specAutoRuns:"Auto runs this",
   quantTip:"The weights' format as the repository publishes it; ★ is the largest that fits the chosen context × requests on this card (the server's plan), ✓ is downloaded",
   cardGb:"{gb} GB",cardThisGb:"this {gb} card",cardThis:"this card",
@@ -1050,7 +1050,7 @@ Object.assign(T.ru, {
   specPlanned:"В Авто запустится",specPlannedAs:"Запустится",specPlain:"без ускорения",specBasis_own:"замерено на этой видеокарте",specBasis_similar:"замерено на похожей видеокарте",
   specBasis_generic:"общий профиль",specBasis_builtin:"встроенный черновик модели, без настройки",specBasis_explicit:"как выбрано",
   specBasis_none:"для этой модели не замерено",specBasis_measured_plain:"здесь без ускорения замерено быстрее",specBasis_choice:"единый выбор: при этом контексте без ускорения выгоднее",specBasis_measured:"замерено для этих весов",specBasis_preliminary:"предварительно: по похожим замеренным моделям",specBasis_drafter_missing:"черновик не подключён",specBasis_engine_refuses:"движок не запускает её конфигурацию",specOffChosen:"выключено",
-  specDepthAt:"угадывает вперёд: {d}, одновременных запросов: {n}",
+  specDepthAt:"угадывает вперёд: {d}, одновременных запросов: {n}",specVariants:"с рассуждениями {t}, без {n}",specVariantsEach:"у каждого запроса своя",specVariantsTip:"Выбор профиля для запросов с рассуждениями и без, по замеру (× к декоду без ускорения). Сервер по умолчанию рассуждает; каждый запрос идёт со своей, где замер говорит, что это окупается.",
   specAutoRuns:"Запустится в Авто",
   quantTip:"Формат весов, как его публикует репозиторий; ★ — самый большой квант, который влезает при выбранных контексте × запросах на эту карту (расчёт сервера), ✓ — уже скачано",
   cardGb:"{gb} ГБ",cardThisGb:"эту карту на {gb}",cardThis:"эту карту",
@@ -1888,7 +1888,19 @@ function planSpecSummary(s) {
   if (!s) return null;
   const served = s.served || "plain";
   const kind = served === "plain" || s.backend === "none" ? "" : String(served).split(":")[0];
-  return {served, kind, basis: s.basis || "none", source: s.source || "", depth: s.depth_at_concurrency > 0 ? s.depth_at_concurrency : s.depth || 0};
+  const v = s.by_thinking;
+  const variant = x => x ? {config: x.config || "plain", speedup: x.speedup || 0} : null;
+  return {served, kind, basis: s.basis || "none", source: s.source || "", depth: s.depth_at_concurrency > 0 ? s.depth_at_concurrency : s.depth || 0,
+          thinking: v ? variant(v.thinking) : null, nonThinking: v ? variant(v.non_thinking) : null, perRequest: !!(v && v.per_request)};
+}
+// The profile's choice with thinking and without, and how far the second is from the first
+// (the server thinks by default): shown only where they differ.
+function specVariantsLine(s, tr) {
+  if (!s || !s.thinking || !s.nonThinking || s.thinking.config === s.nonThinking.config) return "";
+  const one = v => v.config + (v.speedup > 0 ? " ×" + v.speedup.toFixed(2) : "");
+  const delta = s.thinking.speedup > 0 && s.nonThinking.speedup > 0
+    ? " (" + (s.nonThinking.speedup >= s.thinking.speedup ? "+" : "−") + Math.abs(s.nonThinking.speedup - s.thinking.speedup).toFixed(2) + ")" : "";
+  return tr("specVariants", {t: one(s.thinking), n: one(s.nonThinking) + delta}) + (s.perRequest ? " · " + tr("specVariantsEach") : "");
 }
 const SPEC_BASES = ["own", "similar", "generic", "builtin", "explicit", "none", "measured_plain", "measured", "preliminary", "choice", "drafter_missing", "engine_refuses"];
 // Where the plan's speculation came from, in words; Off chosen by the user says so.
@@ -2303,7 +2315,7 @@ function renderPlanSpec() {
     if (!s) el.innerHTML = planStale() && planSpecNow() ? `<span class="muted">${esc(t("planning"))}</span>` : "";
     else {
       const tip = [...(s.source ? [s.source] : []), t("planEstNote")].join("\n");
-      el.innerHTML = `<span data-tip="${esc(tip)}">${esc(t(specMode === "auto" ? "specPlanned" : "specPlannedAs"))}: <b class="mono">${esc(s.kind ? s.served : t("specPlain"))}</b> · ${esc(specBasisText(s, specMode, planTr))}${s.kind && s.depth > 0 ? " · " + esc(fill(t("specDepthAt"), {d: s.depth, n: parallel})) : ""}</span>`;
+      el.innerHTML = `<span data-tip="${esc(tip)}">${esc(t(specMode === "auto" ? "specPlanned" : "specPlannedAs"))}: <b class="mono">${esc(s.kind ? s.served : t("specPlain"))}</b> · ${esc(specBasisText(s, specMode, planTr))}${s.kind && s.depth > 0 ? " · " + esc(fill(t("specDepthAt"), {d: s.depth, n: parallel})) : ""}</span>${specVariantsLine(s, planTr) ? `<div class="sub" data-tip="${esc(t("specVariantsTip"))}">${esc(specVariantsLine(s, planTr))}</div>` : ""}`;
     }
   }
   const gain = $("specgain"), suite = selected && selected.suite;

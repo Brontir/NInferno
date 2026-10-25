@@ -101,6 +101,15 @@ struct SpeculationReport {
     std::int32_t depth_at_concurrency = 0;
     std::vector<SpeculationFallbackStep> fallbacks;
     std::vector<std::string> notes;
+    // The profile's choice for requests with thinking and for those without (its configuration
+    // and gain, 0 when not measured), and whether each request runs its own (per_request_of): what
+    // a thinking default changes, shown beside the served speculation. Empty with no profile.
+    struct ThinkingVariant {
+        std::string label;  // "dflash:15", "plain"
+        double speedup = 0; // decode against plain decode's, as measured (0: not measured)
+    };
+    std::optional<ThinkingVariant> with_thinking, without_thinking;
+    bool per_request = false;
 };
 
 // The plan of a model with the speculation a start ends on, and the report of how it got there.
