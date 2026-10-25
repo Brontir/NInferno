@@ -398,7 +398,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                     if (axis.served[i].engine.backend == served) {
                         model.drafters       = axis.options;
                         c.drafter            = i + 1;
-                        row.estimate_drafter = axis.options[i].label;
+                        // Only a measured gain is counted (the page applies its own else).
+                        if (axis.options[i].measured) { row.estimate_drafter = axis.options[i].label; }
                         break;
                     }
                 }

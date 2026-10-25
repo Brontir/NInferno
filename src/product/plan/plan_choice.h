@@ -37,6 +37,8 @@ struct DrafterAxis {
 [[nodiscard]] DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask);
 
 struct ServedChoice {
+    // The drafter axis's options (their gains, measured or not), beside `drafters`.
+    std::vector<choice::DrafterOption> drafter_options;
     std::vector<choice::QuantOption> quants; // the one quantization planned
     choice::Task task;
     choice::Choice choice;

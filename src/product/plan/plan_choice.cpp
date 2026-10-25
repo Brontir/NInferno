@@ -84,6 +84,7 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         option.label   = served->menu.primary.config.label();
         option.drafter = c.drafter;
         option.speedup = std::max(1.0, c.speedup());
+        option.measured = c.tok_s > 0 && c.plain_tok_s > 0;
         option.basis   = subject.resolved->basis;
         for (const spec::LoadBound& bound : p.load) {
             if (bound.depth == 0) {
@@ -266,6 +267,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
     out.drafters       = std::move(axis.served);
+    out.drafter_options = axis.options;
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
     out.depth                 = std::max<std::uint32_t>(512, asked / 4);
     if (out.choice.chosen) {
@@ -368,6 +370,10 @@ Json choice_json(const ServedChoice& served) {
     Json chosen             = candidate_json(s.candidate);
     chosen["quant"]         = served.quants[s.candidate.quant].label;
     chosen["drafter"]       = s.drafter;
+    // Whether the decode estimates count the drafter's gain (a measured one).
+    chosen["drafter_counted"] = s.candidate.drafter > 0 &&
+                                s.candidate.drafter <= served.drafter_options.size() &&
+                                served.drafter_options[s.candidate.drafter - 1].measured;
     chosen["depth"]         = served.depth;
     chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
     chosen.update(estimates_json(s));

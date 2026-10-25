@@ -62,6 +62,11 @@ struct DrafterOption {
     // bound at depth 0); 0: any number speculates.
     std::uint32_t plain_from_streams = 0;
     std::string basis;     // where the gain comes from (measured, preliminary, the registry's)
+    // Whether a measurement gives the gain (a profile of this card or a similar one, a lab pair);
+    // false for a choice published without its speeds (the "*" profile): its gain is unknown, so
+    // the drafter axis is not weighed and the profile's choice stands (never plain decode for a
+    // gain of 1 nobody measured).
+    bool measured = true;
 };
 
 struct ModelFacts {
@@ -240,6 +245,9 @@ struct Choice {
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
     bool quant_by_worth = false;       // and the quantization (else the quant rule's largest)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
+    // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
+    // drafter whose gain no measurement gives).
+    bool drafter_by_worth = false;
     std::string why;                   // one line: what decided it
 };
 

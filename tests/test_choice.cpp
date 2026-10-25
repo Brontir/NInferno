@@ -695,6 +695,25 @@ void weighs_the_drafters(const json& fixture) {
     plain.drafter = 0;
     const ch::Choice pinned = ch::choose(b.model, b.card, b.quants, allowed, plain, task, oracle_with(40e9), open);
     check(pinned.chosen && chosen(pinned).candidate.drafter == 0, "--spec none: plain decode");
+    // A drafter published without its speeds (the "*" profile) weighs a gain of 1: it is not
+    // weighed, and the profile's choice stands (never plain decode for a gain nobody measured).
+    {
+        Bench star = b;
+        star.model.drafters = {{"mtp:5+head", "mtp", 1.0, 0, "generic", false}};
+        star.model.default_drafter = 1;
+        const ch::Choice kept = ch::choose(star.model, star.card, star.quants, allowed, {}, task,
+                                           oracle_with(40e9), open);
+        check(kept.chosen && kept.by_worth && !kept.drafter_by_worth &&
+                  chosen(kept).candidate.drafter == 1,
+              "an unmeasured drafter: the profile's choice stands");
+        bool said = false;
+        for (const ch::Alternative& a : ch::explain(kept, star.quants)) {
+            if (a.axis == ch::Axis::Drafter && a.value == "plain") {
+                said = a.why_code == "default" && a.why_not.find("not measured") != std::string::npos;
+            }
+        }
+        check(said, "plain decode explained: the drafter's gain is not measured here");
+    }
     const ch::Choice closed = ch::choose(b.model, b.card, b.quants, allowed, {}, task, oracle_with(40e9));
     check(closed.chosen && (closed.by_worth || chosen(closed).candidate.drafter == 1),
           "the worth not deciding: the profile's drafter");

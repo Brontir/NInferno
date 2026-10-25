@@ -580,12 +580,18 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const std::vector<
     // The chunk is free where its shares decide (it has no accuracy term: the worth among chunks is
     // their speed on the reference card), else the default.
     // Where the worth does not decide, the drafter is the server's resolved profile's.
+    // A drafter is weighed only where every option's gain is measured: one published without its
+    // speeds would weigh a gain of 1 and lose to plain decode for its memory alone.
     const std::size_t default_drafter = pins.drafter.value_or(model.default_drafter);
+    out.drafter_by_worth = out.by_worth && !pins.drafter &&
+                           std::all_of(model.drafters.begin(), model.drafters.end(),
+                                       [](const DrafterOption& d) { return d.measured; });
     const auto eligible = [&](const Scored& s) {
-        const bool chunk_ok = out.chunk_by_speed || s.candidate.chunk == default_chunk;
-        return chunk_ok && (out.by_worth || (s.candidate.kv == default_kv &&
-                                             s.candidate.activations == default_activations &&
-                                             s.candidate.drafter == default_drafter));
+        const bool chunk_ok   = out.chunk_by_speed || s.candidate.chunk == default_chunk;
+        const bool drafter_ok = out.drafter_by_worth || s.candidate.drafter == default_drafter;
+        return chunk_ok && drafter_ok &&
+               (out.by_worth || (s.candidate.kv == default_kv &&
+                                 s.candidate.activations == default_activations));
     };
     const auto above = [&](const Scored& s) { return at_or_above_floor(quants[s.candidate.quant]); };
     // One order over the eligible candidates: where the worth weighs the quantizations, the worth
@@ -762,9 +768,11 @@ std::vector<Alternative> explain(const Choice& choice, const std::vector<QuantOp
             } else if (coupled) {
                 alt.why_code = "coupled";
                 alt.why_not  = "follows the KV codec and the activations (pin it with its flag)";
-            } else if (axis == Axis::Drafter && !choice.by_worth) {
+            } else if (axis == Axis::Drafter && !choice.drafter_by_worth) {
                 alt.why_code = "default";
-                alt.why_not  = "the speculation profile's choice stands (no decision constants for this generation)";
+                alt.why_not  = choice.by_worth
+                                   ? "the speculation profile's choice stands (its gain is not measured on this card)"
+                                   : "the speculation profile's choice stands (no decision constants for this generation)";
             } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = axis == Axis::Chunk
