@@ -14,8 +14,9 @@
 //     holds on two cards of a generation: docs/maintainer/deterministic-decisions.md).
 //
 // A target nobody measured takes its group's choice (profile_for_group): the pairs of the same
-// engine and drafter kind, of the same bit class (below 4 bits drafts pay less), the depth that is
-// best on average over them, no deeper than kPortableDepth, one request at a time.
+// engine and drafter kind, of the same bit class (below 4 bits drafts pay less), measured on two
+// lab cards or more, the depth that is best on average over them, no deeper than kPortableDepth,
+// one request at a time.
 
 #include "spec/profile.h"
 
@@ -84,7 +85,9 @@ struct MeasuredPair {
                                          const SelectOptions& options = {});
 
 // The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with
-// `kind`, of the target's bit class (below 4 bits, or 4 and above) when any is, else of the other.
+// `kind` (a drafter of that kind, not only of its mode), each target once per card, of the target's
+// bit class (below 4 bits, or 4 and above) when any is, else of the other. Its choice is a lab
+// constant: empty unless the group's pairs were measured on two cards or more.
 [[nodiscard]] std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
                                                           std::string_view engine,
                                                           std::string_view kind,
