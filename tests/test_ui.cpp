@@ -746,9 +746,28 @@ void test_catalog() {
                   !converted_accepted(commit_dir, "main", "beef") &&
                   !converted_accepted(commit_dir, "dev", "d00d"),
               "kept for that ref and hub commit only");
+        // A conversion that carries drafters (a companion component, or a manifest beside it, as
+        // --with-drafters wrote them) is started with them: the plan counts them.
+        using ninferno::convert::cached_conversion_has_drafters;
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "dflash": {}}})";
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "vision": {}}})";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "UD-Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "IQ2_XXS") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "dev", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", ""),
+              "a conversion with a companion drafter; its own MTP and vision are no drafters");
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json") << "{}";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a conversion with a speculation manifest beside it");
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "a conversion's drafters, its download there or not");
         fs::remove_all(root);
     }
     // A prepare that downloads a moved branch's new commit and removes the old conversion; only a

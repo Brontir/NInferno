@@ -349,6 +349,34 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
     return converted_artifact(root / "ninferno" / commit, quant, recipe);
 }
 
+bool cached_conversion_has_drafters(const fs::path& cache, const std::string& repo,
+                                    const std::string& revision, const std::string& quant) {
+    if (quant.empty()) { return false; }
+    const auto root     = cache / hub_repo_directory(repo);
+    const std::string rev = revision.empty() ? std::string("main") : revision;
+    std::string commit;
+    if (rev.size() == 40 && rev.find_first_not_of("0123456789abcdef") == std::string::npos) {
+        commit = rev;
+    } else if (std::ifstream ref(root / "refs" / rev); !(ref >> commit)) {
+        return false;
+    }
+    if (commit.find_first_of("/\\.") != std::string::npos) { return false; }
+    const auto artifact = converted_artifact(root / "ninferno" / commit, quant, "");
+    if (!artifact) { return false; }
+    std::error_code ec;
+    if (fs::exists(spec::manifest_path(*artifact), ec)) { return true; }
+    std::ifstream stream(artifact->string() + ".conversion.json");
+    try {
+        const OJson record = OJson::parse(stream);
+        for (const auto& [component, _] : record.value("components", OJson::object()).items()) {
+            if (component != "text" && component != "mtp" && component != "vision") {
+                return true;
+            }
+        }
+    } catch (const std::exception&) {}
+    return false;
+}
+
 void accept_converted(const fs::path& commit_dir, const std::string& ref,
                       const std::string& hub_commit) {
     const OJson record = {{"ref", ref}, {"hub_commit", hub_commit}};

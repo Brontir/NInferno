@@ -22,6 +22,7 @@
 #include <regex>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace ninferno::serve {
 
@@ -37,6 +38,7 @@ struct ModelRead {
     std::vector<product::QuantListing> listing; // empty for a single file or artifact
     std::string source, kind;                   // kind: hub | gguf | checkpoint | artifact
     std::string repo;                           // a hub id
+    std::string revision;                       // its revision asked for ("": main)
     bool gguf = false;
     fs::path artifact; // a .ninferno file
     std::string quant; // the quantization the facts were read at ("" for a single model)
@@ -205,7 +207,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         }
     }
     const auto quants                 = convert::list_quants(spec, fetch);
-    out.repo                          = convert::split_spec(spec, fetch).first;
+    std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
     const convert::RepoQuant* native  = nullptr;
@@ -386,18 +388,42 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
     } else {
-        out.subject =
-            product::planned_subject(product::PlannedTarget{.repo          = model.repo,
-                                                            .facts         = model.facts,
-                                                            .gguf          = model.gguf,
-                                                            .with_drafters = options.with_drafters,
-                                                            .weights       = model.weights,
-                                                            .quant         = quant_label_of(model)},
-                                     gpu);
-        // A separate drafter attached with --with-drafters is uploaded beside the target.
+        // A GGUF quantization converted here with its drafters (an earlier --with-drafters) is
+        // started with them, flag or not (convert::cached_conversion_has_drafters).
+        const auto with_drafters = [asked = options.with_drafters, gguf = model.gguf,
+                                    repo = model.repo,
+                                    revision = model.revision](const std::string& quant) {
+            return asked || (gguf && convert::cached_conversion_has_drafters(
+                                         convert::default_hub_cache(), repo, revision, quant));
+        };
+        out.subject = product::planned_subject(
+            product::PlannedTarget{.repo          = model.repo,
+                                   .facts         = model.facts,
+                                   .gguf          = model.gguf,
+                                   .with_drafters = with_drafters(quant_label_of(model)),
+                                   .weights       = model.weights,
+                                   .quant         = quant_label_of(model)},
+            gpu);
+        // A separate drafter attached (--with-drafters, or kept with a cached conversion) is
+        // uploaded beside the target: its memory counts for each quantization started with it.
+        const bool any_with_drafters =
+            std::any_of(model.listing.begin(), model.listing.end(), [&](const auto& q) {
+                return !q.drafter && with_drafters(q.quant);
+            });
+        const product::SpeculationSubject attaching =
+            out.subject->attached_drafters.empty() && any_with_drafters
+                ? product::planned_subject(
+                      product::PlannedTarget{.repo          = model.repo,
+                                             .facts         = model.facts,
+                                             .gguf          = model.gguf,
+                                             .with_drafters = true,
+                                             .weights       = model.weights,
+                                             .quant         = quant_label_of(model)},
+                      gpu)
+                : *out.subject;
         const convert::FetchOptions fetch = fetch_options();
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
+            attaching, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
         out.inputs.drafter_bytes = drafter.bytes;
         out.inputs.drafter_state = drafter.state;
         // A repository's quantizations each have their weights, and the lab's pairs are of
@@ -405,8 +431,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         if (model.listing.size() > 1) {
             out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
             out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     facts = model.facts, gguf = model.gguf,
-                                     with_drafters = options.with_drafters,
+                                     facts = model.facts, gguf = model.gguf, with_drafters,
                                      gpu](const product::QuantListing& q)
                 -> const product::SpeculationSubject* {
                 if (q.drafter) { return nullptr; }
@@ -418,7 +443,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                            product::PlannedTarget{.repo          = repo,
                                                                   .facts         = facts,
                                                                   .gguf          = gguf,
-                                                                  .with_drafters = with_drafters,
+                                                                  .with_drafters = with_drafters(q.quant),
                                                                   .weights       = q.weights,
                                                                   .quant         = q.quant},
                                            gpu))
@@ -591,8 +616,9 @@ largest_fitting_hub_quant(const ServeOptions& options,
         // default that ignores the card.
         if (!cached.empty() && gpu) {
             ModelRead local;
-            local.kind  = "hub";
-            local.repo  = repo;
+            local.kind     = "hub";
+            local.repo     = repo;
+            local.revision = convert::split_spec(options.model_source, fetch_options()).second;
             local.gguf  = true;
             bool shaped = false;
             for (const auto& [label, path] : cached) {

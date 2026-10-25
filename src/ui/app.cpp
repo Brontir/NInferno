@@ -983,9 +983,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
-    // attached, its MTP layers are.
+    // attached, its MTP layers are, unless the quantization was converted here with them (an
+    // earlier --with-drafters): the start reuses that conversion and serves them.
+    const auto with_drafters = [&](const std::string& label) {
+        return gguf && convert::cached_conversion_has_drafters(hub_root(), repo, "", label);
+    };
     const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu);
+        product::PlannedTarget{
+            .repo = repo, .facts = *facts, .gguf = gguf, .with_drafters = with_drafters(quant)},
+        inputs.gpu);
     inputs.subject = &subject;
     // Each quantization resolves its own speculation (the lab's pairs are of its weights).
     std::map<std::string, product::SpeculationSubject> per_quant;
@@ -995,11 +1001,12 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         if (it == per_quant.end()) {
             it = per_quant
                      .emplace(q.quant, product::planned_subject(
-                                           product::PlannedTarget{.repo    = repo,
-                                                                  .facts   = *facts,
-                                                                  .gguf    = gguf,
-                                                                  .weights = q.weights,
-                                                                  .quant   = q.quant},
+                                           product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = *facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = with_drafters(q.quant),
+                                                                  .weights       = q.weights,
+                                                                  .quant         = q.quant},
                                            inputs.gpu))
                      .first;
         }
@@ -1011,8 +1018,20 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         convert::FetchOptions fetch;
         fetch.hub = hub;
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        // A quantization started with its kept drafters counts them though the one read has none.
+        const bool any_with_drafters =
+            std::any_of(listing.begin(), listing.end(),
+                        [&](const auto& q) { return !q.drafter && with_drafters(q.quant); });
+        const product::SpeculationSubject attaching =
+            subject.attached_drafters.empty() && any_with_drafters
+                ? product::planned_subject(product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = *facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = true},
+                                           inputs.gpu)
+                : subject;
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            subject, listing, facts->model.model_type, facts->model.hidden,
+            attaching, listing, facts->model.model_type, facts->model.hidden,
             options_.offline ? nullptr : &fetch);
         inputs.drafter_bytes = drafter.bytes;
         inputs.drafter_state = drafter.state;
