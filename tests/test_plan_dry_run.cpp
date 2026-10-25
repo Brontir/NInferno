@@ -806,14 +806,15 @@ void test_speculation_order() {
     const pr::SpeculationSubject subject = pr::planned_subject(
         pr::PlannedTarget{.repo = "unsloth/Qwen3.8-27B-GGUF", .facts = facts, .gguf = true}, gpu);
     check(subject.components.contains("mtp"), "the MTP layers are a component");
-    // A fine-tune no registry entry names, its model card naming Qwen3.6-27B as its base: the plan
-    // matches the base's entry, as the converter will by the README (not the nearest by shape,
-    // Qwen3.8-27B, which has the same engine, geometry and vocabulary).
+    // A checkpoint fine-tune no registry entry names, its model card naming Qwen3.6-27B as its
+    // base: the plan matches the base's entry, as the converter's drafter plan will by the README
+    // (not the nearest by shape, Qwen3.8-27B: the same engine, geometry and vocabulary). A GGUF
+    // without its drafters has no manifest: the start and the plan both take the entry by shape.
     {
         pr::PlanSourceFacts tuned = facts;
         tuned.shape.base_model    = "Qwen/Qwen3.6-27B";
         const pr::SpeculationSubject descendant = pr::planned_subject(
-            pr::PlannedTarget{.repo = "someone/Qwen3.6-27B-finetune", .facts = tuned}, gpu);
+            pr::PlannedTarget{.repo = "someone/Qwen3.6-27B-finetune", .facts = tuned, .gguf = false}, gpu);
         check(descendant.resolved && descendant.resolved->source.find("qwen3.6-27b") != std::string::npos,
               "a checkpoint's model-card lineage finds its base's entry: " +
                   (descendant.resolved ? descendant.resolved->source : std::string("none")));
