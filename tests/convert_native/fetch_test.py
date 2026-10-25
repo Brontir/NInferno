@@ -496,6 +496,20 @@ def main() -> int:
             case("a moved branch asked by width: the download kept holds it, pinned, with a notice",
                  by_width[0] == 0 and "org/qwen-gguf2@main is now eeeeeeeeeeee" in by_width[1]
                  and not downloads)
+            # The old commit lists a larger model of that width too, not downloaded: the start
+            # serves the one here (its exact label), not the one the width picks of the listing.
+            wide = blob(len(gguf_file.read_bytes()) + MIB, 62)
+            hub.repos["org/qwen-gguf2"]["files"]["model-Q8_K_XL.gguf"] = wide
+            hub.repos["org/qwen-gguf2"]["lfs"].add("model-Q8_K_XL.gguf")
+            hub.blobs[hub.sha(wide)] = wide
+            reset()
+            wider = again2("--quant", "8bit", "--fetch-only")
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("asked by width, a larger one of that width listed: the model here, nothing downloaded",
+                 wider[0] == 0 and "the weights here are of" in wider[1] and not downloads
+                 and not (repo2 / "snapshots" / old2 / "model-Q8_K_XL.gguf").exists())
+            del hub.repos["org/qwen-gguf2"]["files"]["model-Q8_K_XL.gguf"]
+            hub.repos["org/qwen-gguf2"]["lfs"].discard("model-Q8_K_XL.gguf")
             # Another quantization of the moved ref than the download kept: the old snapshot does
             # not hold it, so nothing pins to the old commit; it is fetched at the new one.
             q4 = blob(MIB, 61)
