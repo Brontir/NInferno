@@ -50,18 +50,22 @@ struct MeasuredPair {
 // Throws std::runtime_error naming what is missing or malformed.
 [[nodiscard]] MeasuredPair parse_pair(const nlohmann::json& doc);
 
+// Whether the pair was measured by this build's speculation engine (its tune's key names
+// kSpecEngineVersion): a bump of the version invalidates every earlier measurement.
+[[nodiscard]] bool pair_current(const MeasuredPair& pair);
+
 // The generation key of a device (its chain's architecture, "sm89"); "" when the chain names none.
 [[nodiscard]] std::string gpu_generation(const GpuKey& gpu);
 
 // The profile the pair's measurements give on a card of `generation`: select() over them (and the
 // serving Engine's support, when given), deeper than kPortableDepth only on the lab card's
 // generation; its load bounds there, elsewhere one request speculates and two or more decode
-// plainly.
+// plainly. A pair another engine version measured gives plain decode, disabled with the reason.
 [[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
                                        const SelectOptions& options = {});
 
-// The group of a target nobody measured: the pairs of `engine` drafting with `kind`, of the
-// target's bit class (below 4 bits, or 4 and above) when any is, else of the other.
+// The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with
+// `kind`, of the target's bit class (below 4 bits, or 4 and above) when any is, else of the other.
 [[nodiscard]] std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
                                                           std::string_view engine,
                                                           std::string_view kind,

@@ -124,6 +124,8 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
     return out;
 }
 
+bool pair_current(const MeasuredPair& pair) { return pair.tune.key.engine == kSpecEngineVersion; }
+
 std::string gpu_generation(const GpuKey& gpu) {
     for (const auto& key : gpu.chain) {
         if (key.size() > 2 && key.starts_with("sm") &&
@@ -139,6 +141,14 @@ std::string gpu_generation(const GpuKey& gpu) {
 
 Profile profile_for_pair(const MeasuredPair& pair, std::string_view generation,
                          const SelectOptions& options) {
+    if (!pair_current(pair)) {
+        Profile plain;
+        plain.overall = plain.thinking = plain.non_thinking = plain_choice();
+        plain.disabled = RuntimeDisable{"measured by speculation engine " + pair.tune.key.engine +
+                                            ", this build runs " + kSpecEngineVersion,
+                                        "registry"};
+        return plain;
+    }
     Profile p    = pair.tune;
     const bool home = !generation.empty() && generation == pair.generation;
     if (!home) {
@@ -165,7 +175,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     const Mode mode = mode_of_kind(kind);
     std::vector<const MeasuredPair*> low, high;
     for (const auto& pair : pairs) {
-        if (pair.engine != engine) { continue; }
+        if (pair.engine != engine || !pair_current(pair)) { continue; }
         const bool drafts = std::any_of(
             pair.tune.measurements.begin(), pair.tune.measurements.end(),
             [&](const Measurement& m) { return m.config.mode == mode; });

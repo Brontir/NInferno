@@ -109,6 +109,17 @@ int main() {
         expect(!sp::profile_for_group(sp::pair_group(none, "gemma4", "mtp", 4.5), "mtp"),
                "no pair of the group: no choice");
     }
+    // A pair another speculation engine measured: no choice from it, not in a group.
+    {
+        auto old           = bw_q8;
+        old.tune.key.engine = "ninferno-spec-0";
+        const auto p       = sp::profile_for_pair(old, "sm120");
+        expect(!sp::pair_current(old) && !p.overall.config.enabled() && p.disabled.has_value(),
+               "an old engine version's pair decodes plainly");
+        const std::vector<sp::MeasuredPair> stale = {old};
+        expect(sp::pair_group(stale, "qwen3_5", "dflash", 8.5).empty(),
+               "an old engine version's pair is in no group");
+    }
     // The generation of a device: its chain's architecture key.
     {
         sp::GpuKey gpu;
