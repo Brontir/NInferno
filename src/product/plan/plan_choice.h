@@ -34,6 +34,9 @@ struct ServedChoice {
     // first step), and the chosen candidate's decode there.
     std::uint32_t depth         = 0;
     double decode_at_depth      = 0;
+    // The drafter axis's speculations (choice::ModelFacts::drafters, in its order): what a start of
+    // each would run. Empty without a speculation subject.
+    std::vector<ServedSpeculation> drafters;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -45,6 +46,69 @@ Json estimates_json(const choice::Scored& s) {
             {"kld", round_to(s.accuracy.kld, 5)},
             {"kld_terms", terms},
             {"worth", round_to(s.worth, 4)}};
+}
+
+// The drafter axis (choice/SPECULATION.md S3): beside plain decode, one option per speculation
+// mode the subject's profile chose or measured and its Engine runs. A profile with measurements
+// (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
+// without offers its own choice. Each option carries the served speculation a start of it runs
+// (served_speculation over the profile of that mode), its gain the profile's choice for the
+// server's thinking flag, and the streams from which its load table decodes plainly.
+struct DrafterAxis {
+    std::vector<choice::DrafterOption> options;
+    std::vector<ServedSpeculation> served;
+    std::size_t default_drafter = 0; // the subject's own served choice (0: plain)
+};
+
+DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask) {
+    DrafterAxis out;
+    if (!subject.resolved || subject.resolved->profile.disabled) { return out; }
+    const auto base              = served_speculation(subject, ask.thinking, ask.per_request);
+    const spec::Profile& profile = subject.resolved->profile;
+    std::set<spec::Mode> modes;
+    for (const spec::Measurement& m : profile.measurements) {
+        if (m.config.enabled()) { modes.insert(m.config.mode); }
+    }
+    if (modes.empty() && base && base->engine.backend != SpeculativeBackend::None) {
+        modes.insert(base->menu.mode);
+    }
+    for (const spec::Mode mode : modes) {
+        SpeculationSubject one = subject;
+        spec::Profile& p       = one.resolved->profile;
+        if (!p.measurements.empty()) {
+            std::erase_if(p.measurements, [&](const spec::Measurement& m) {
+                return m.config.enabled() && m.config.mode != mode;
+            });
+            p.served.reset();
+            p.portable.reset();
+            spec::SelectOptions options;
+            options.portable_within = 0;
+            spec::select(p, options);
+        }
+        const auto served = served_speculation(one, ask.thinking, ask.per_request);
+        if (!served || served->engine.backend == SpeculativeBackend::None ||
+            served->menu.mode != mode) {
+            continue;
+        }
+        const spec::Choice& c = spec::pick(p, ask.thinking);
+        choice::DrafterOption option;
+        option.label   = served->menu.primary.config.label();
+        option.drafter = c.drafter;
+        option.speedup = std::max(1.0, c.speedup());
+        option.basis   = subject.resolved->basis;
+        for (const spec::LoadBound& bound : p.load) {
+            if (bound.depth == 0) {
+                option.plain_from_streams = static_cast<std::uint32_t>(bound.lanes);
+                break;
+            }
+        }
+        out.options.push_back(std::move(option));
+        out.served.push_back(*served);
+        if (base && base->engine.backend != SpeculativeBackend::None && base->menu.mode == mode) {
+            out.default_drafter = out.options.size();
+        }
+    }
+    return out;
 }
 
 Json candidate_json(const choice::Candidate& c) {
@@ -123,7 +187,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     DryRunInputs idle  = inputs;
     idle.device.free_bytes.reset();
     ServedChoice out;
-    const choice::ModelFacts model = choice_model_of(facts);
+    choice::ModelFacts model       = choice_model_of(facts);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     choice::QuantOption quant;
     quant.label           = label.empty() ? "the model's weights" : label;
@@ -152,6 +216,24 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
 
     choice::Pins p;
     p.quant = 0;
+    // The drafter: an axis of the choice where the subject's profile offers one; --spec given pins
+    // it (none: plain decode; a backend the axis offers: that option).
+    DrafterAxis axis;
+    if (inputs.subject != nullptr) { axis = drafter_axis(*inputs.subject, inputs.ask); }
+    if (!axis.options.empty() && !inputs.ask.automatic) {
+        std::optional<std::size_t> pinned;
+        if (inputs.ask.given.backend == SpeculativeBackend::None) { pinned = 0; }
+        for (std::size_t i = 0; i < axis.served.size(); ++i) {
+            if (axis.served[i].engine.backend == inputs.ask.given.backend) { pinned = i + 1; }
+        }
+        if (pinned) {
+            p.drafter = pinned;
+        } else {
+            axis = {}; // a speculation the axis does not offer: planned as given, not chosen
+        }
+    }
+    model.drafters       = axis.options;
+    model.default_drafter = axis.default_drafter;
     const EngineOptions& o = inputs.options;
     if (pins.kv) { p.kv = o.kv_cache; }
     if (pins.activations) { p.activations = o.activations; }
@@ -164,7 +246,14 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const std::vector<std::uint32_t> steps = runtime::quant_own_targets(ask);
     const auto own = [&](const choice::Candidate& c) -> std::uint32_t {
         if (memory == OwnContext::Unbounded) { return std::numeric_limits<std::uint32_t>::max(); }
-        const DryRunInputs pinned = inputs_with(idle, c);
+        DryRunInputs pinned = inputs_with(idle, c);
+        // The candidate's drafter planned as given: its weights and state in the memory.
+        if (!axis.options.empty()) {
+            pinned.ask.automatic          = false;
+            pinned.ask.depth_from_profile = false;
+            pinned.ask.given = c.drafter > 0 ? axis.served[c.drafter - 1].engine : SpeculativeOptions{};
+            pinned.options.speculative = pinned.ask.given;
+        }
         if (memory == OwnContext::Steps) {
             // The first of Auto's steps it holds of its own (steps are tried longest first).
             for (const std::uint32_t step : steps) {
@@ -179,7 +268,10 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     std::vector<std::pair<choice::Candidate, std::uint32_t>> seen;
     const choice::OwnContextFn cached = [&](const choice::Candidate& c) {
         for (const auto& [k, v] : seen) {
-            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state && k.chunk == c.chunk) { return v; }
+            if (k.kv == c.kv && k.ring == c.ring && k.state == c.state && k.chunk == c.chunk &&
+                k.drafter == c.drafter) {
+                return v;
+            }
         }
         const std::uint32_t v = own(c);
         seen.emplace_back(c, v);
@@ -194,6 +286,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.task.contexts  = steps;
     out.choice         = choice::choose(model, card, out.quants, allowed, p, out.task, cached);
     out.target_context = out.choice.context;
+    out.drafters       = std::move(axis.served);
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
     out.depth                 = std::max<std::uint32_t>(512, asked / 4);
     if (out.choice.chosen) {
@@ -291,6 +384,7 @@ Json choice_json(const ServedChoice& served) {
     const choice::Scored& s = served.choice.scored[*served.choice.chosen];
     Json chosen             = candidate_json(s.candidate);
     chosen["quant"]         = served.quants[s.candidate.quant].label;
+    chosen["drafter"]       = s.drafter;
     chosen["depth"]         = served.depth;
     chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
     chosen.update(estimates_json(s));
