@@ -3,6 +3,7 @@
 #include "serve/plan_offline.h"
 
 #include "convert/acquire.h"
+#include "convert/support.h"
 #include "convert/cache.h"
 #include "core/ascii.h"
 #include "core/host_memory.h"
@@ -104,6 +105,14 @@ ModelSource resolve_model_source(const ServeOptions& options,
                                             "--model " + name + " --recipe NAME --out FILE)");
         }
         if (convert::is_convertible(name)) {
+            // Whether the engine runs it: the converter's rule set, before converting
+            // (convert/support.h).
+            auto facts = convert::local_support_facts(name);
+            if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
+            if (const auto refusal = convert::serve_refusal(convert::model_support(facts));
+                !refusal.empty()) {
+                throw std::runtime_error(name + " cannot be run: " + refusal);
+            }
             if (log) { log("checkpoint " + name); }
             const auto cached = convert::cached_artifact(name, {}, log, false, options.enable_vision);
             out.kind            = ModelSource::Kind::Checkpoint;
@@ -143,11 +152,16 @@ ModelSource resolve_model_source(const ServeOptions& options,
     }
     acquire.fetch.log      = log;
     acquire.convert.recipe = options.recipe;
+    // --chat-template: the conversion's template too (a base model ships none).
+    if (!options.chat_template_path.empty()) {
+        acquire.convert.resources.emplace_back("chat_template.jinja", options.chat_template_path);
+    }
     acquire.convert.log    = log;
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();
     acquire.log            = log;
     if (options.with_drafters) { acquire.with_drafters = true; }
+    acquire.keep_replaced = options.keep_replaced;
     // Also for the quantization chosen above: that choice is for an idle card of this class,
     // this check for the memory free now.
     if (!options.prepare_only) {

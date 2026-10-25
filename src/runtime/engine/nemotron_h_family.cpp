@@ -70,7 +70,7 @@ FamilyLoad load_nemotron_h(const EngineOptions& options, DeviceContext& device) 
         out, loaded->text, options, static_cast<std::size_t>(config.vocab_size), "nemotron_h");
     out.execution = models::nemotron_h::make_program_execution(
         model, loaded->mtp ? &loaded->mtp->weights() : nullptr, device, vocabulary,
-        options.activations);
+        options.activations, options.purpose);
     frontend.complete();
 
     LoadSummary& summary         = out.summary;

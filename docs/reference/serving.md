@@ -765,7 +765,8 @@ This applies across Chat Completions, Responses, and Anthropic Messages.
 ### Chat template and message order
 
 - `--chat-template FILE` selects a local Jinja template. By default the server uses the template
-  stored in the artifact. See the [CLI guide](../cli.md#input-and-output) for an example.
+  stored in the artifact. A hub or local checkpoint that ships none (a base model) is converted
+  with it, so it can be served. See the [CLI guide](../cli.md#input-and-output) for an example.
 - Messages enter the selected template in their input order. The maintained Qwen templates keep
   system/developer messages at their original positions.
 - A stock template that refuses a system or developer message after the first ("System message must

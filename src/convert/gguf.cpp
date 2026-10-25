@@ -142,10 +142,11 @@ double f32_shortest(float value) {
 
 bool gguf_auxiliary_file(const std::string& file_name) {
     const std::string name = ascii_lower(file_name.substr(file_name.find_last_of('/') + 1));
-    return name.find("mmproj") != std::string::npos || name.find("imatrix") != std::string::npos ||
-           name.find("mtp-only") != std::string::npos ||
+    const std::string stem = name.ends_with(".gguf") ? name.substr(0, name.size() - 5) : name;
+    return name.find("mmproj") != std::string::npos || stem.starts_with("imatrix") ||
+           stem.ends_with("imatrix") || name.find("mtp-only") != std::string::npos ||
            name.find("mtp_only") != std::string::npos || name.starts_with("mtp-") ||
-           name.starts_with("mtp_");
+           name.starts_with("mtp_") || name.starts_with("dflash") || name.starts_with("eagle");
 }
 
 namespace {

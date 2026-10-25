@@ -1,5 +1,7 @@
 #include "convert/fetch.h"
 
+#include "convert/cache.h"
+
 #include "core/ascii.h"
 #include "core/hex.h"
 #include "core/sha256.h"
@@ -679,8 +681,7 @@ std::runtime_error hub_error(const std::string& what, const Response& response,
 class HuggingFace final : public Hub {
 public:
     explicit HuggingFace(std::string endpoint) : endpoint_(std::move(endpoint)) {
-        token_ = sys::env("HF_TOKEN");
-        if (token_.empty()) { token_ = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+        token_ = hub_token().value;
     }
 
     Listing list(const std::string& repo, const std::string& revision) override {
@@ -884,6 +885,68 @@ fs::path default_hub_cache() {
     }
     const auto home = sys::home_dir();
     return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "hub";
+}
+
+fs::path hub_token_path() {
+    if (const auto path = sys::env("HF_TOKEN_PATH"); !path.empty()) { return path; }
+    if (const auto home = sys::env("HF_HOME"); !home.empty()) { return fs::path(home) / "token"; }
+    if (const auto xdg = sys::env("XDG_CACHE_HOME"); !xdg.empty()) {
+        return fs::path(xdg) / "huggingface" / "token";
+    }
+    const auto home = sys::home_dir();
+    return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "token";
+}
+
+HubToken hub_token() {
+    for (const char* name : {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}) {
+        if (auto value = sys::env(name); !value.empty()) { return {std::move(value), name}; }
+    }
+    std::ifstream in(hub_token_path());
+    std::string value;
+    std::getline(in, value);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    if (value.empty()) { return {}; }
+    return {std::move(value), hub_token_path().string()};
+}
+
+void save_hub_token(const std::string& token) {
+    const auto path = hub_token_path();
+    std::error_code ec;
+    if (token.empty()) {
+        fs::remove(path, ec);
+        return;
+    }
+    if (token.find_first_of("\r\n \t") != std::string::npos) {
+        throw std::invalid_argument("a Hugging Face token is one word");
+    }
+    fs::create_directories(path.parent_path(), ec);
+    const auto temp = path.string() + ".tmp";
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) { throw std::runtime_error("cannot write " + temp); }
+        out << token;
+    }
+    // Read by its owner only, as huggingface_hub writes it.
+    fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+    if (ec) { // a credential others could read is not kept
+        const auto why = ec.message();
+        fs::remove(temp, ec);
+        throw std::runtime_error("cannot make " + temp + " readable by its owner only: " + why);
+    }
+    fs::rename(temp, path, ec);
+    if (ec) { // rename does not replace an existing file on Windows
+        ec.clear();
+        fs::remove(path, ec);
+        if (!ec) { fs::rename(temp, path, ec); }
+    }
+    if (ec) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        throw std::runtime_error("cannot write " + path.string() + ": " + ec.message());
+    }
 }
 
 namespace {
@@ -1179,6 +1242,12 @@ fs::path download_lock_path(const fs::path& target) {
 
 } // namespace
 
+bool include_selects(const FetchOptions& options, const std::string& path) {
+    return options.include.empty() ||
+           std::any_of(options.include.begin(), options.include.end(),
+                       [&](const std::string& pattern) { return glob(pattern, path); });
+}
+
 FetchedFile download_file(const DownloadRequest& request, const FetchOptions& options) {
     // Two processes fetching one file into a shared cache (two quantizations of a repository
     // share its small files; ninferno-ui beside the CLI) take turns on a lock beside it, as
@@ -1429,6 +1498,98 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 }
 
 } // namespace
+
+std::string snapshot_quant_label(const fs::path& snapshot, const FetchOptions& options,
+                                 const std::string& repo) {
+    std::error_code ec;
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    try {
+        for (const auto& file : choose_files(listing, options, repo)) {
+            if (ascii_lower(file.path).ends_with(".gguf")) {
+                return gguf_quant_label(fs::path(file.path).filename().string());
+            }
+        }
+    } catch (const std::exception&) {}
+    return {};
+}
+
+bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
+                          const std::string& repo, bool projector) {
+    std::error_code ec;
+    if (!fs::is_directory(snapshot, ec)) { return false; }
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        // A link to a blob not yet downloaded is no regular file. Its size: a width selector
+        // (--quant 4bit) picks the largest candidate of that width.
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    std::vector<RemoteFile> chosen;
+    try {
+        chosen = choose_files(listing, options, repo);
+    } catch (const std::exception&) {
+        return false; // no model there for options.quant
+    }
+    // Every part of a split GGUF or of safetensors shards ("x-00001-of-00003.gguf",
+    // "model-00001-of-00002.safetensors", with or without an index): a download stopped after one
+    // part leaves the others unlinked, and the listing above sees only what is there.
+    const auto all_parts = [&](const std::string& path) {
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.(gguf|safetensors))",
+                                      std::regex::icase);
+        std::smatch match;
+        if (!std::regex_match(path, match, split)) { return true; }
+        const int parts = std::stoi(match[2].str());
+        for (int part = 1; part <= parts; ++part) {
+            char suffix[32];
+            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.", part, parts);
+            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix + match[3].str()), ec)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool weights = false, gguf = false;
+    for (const auto& file : chosen) {
+        const auto name = ascii_lower(file.path);
+        if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        gguf = gguf || name.ends_with(".gguf");
+        if (!all_parts(file.path)) { return false; }
+        // Every shard a safetensors index names.
+        if (name.ends_with("model.safetensors.index.json")) {
+            try {
+                std::ifstream in(snapshot / file.path);
+                const auto index = Json::parse(in);
+                for (const auto& [tensor, shard] : index.at("weight_map").items()) {
+                    if (!fs::is_regular_file(snapshot / shard.get<std::string>(), ec)) { return false; }
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+    }
+    // A GGUF model asked with its Vision projector (--vision): the projector here too, whole.
+    if (weights && gguf && projector) {
+        const bool here = std::any_of(listing.files.begin(), listing.files.end(), [&](const auto& f) {
+            const auto file = ascii_lower(fs::path(f.path).filename().string());
+            return file.starts_with("mmproj") && file.ends_with(".gguf") && all_parts(f.path);
+        });
+        if (!here) { return false; }
+    }
+    // A checkpoint asked with its Vision encoder: one that has it (its vision_config).
+    if (weights && !gguf && projector && !checkpoint_has_vision(snapshot)) { return false; }
+    return weights;
+}
+
 
 std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
     if (hub_offline()) { return std::nullopt; }
@@ -1699,9 +1860,7 @@ std::vector<HubModel> search_modelscope(const std::string& term, const FetchOpti
 
 } // namespace
 
-// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
-// quant_config and the matrix sources it picks), "" otherwise.
-static std::string unread_quantization(const Json& config) {
+std::string unread_quantization(const Json& config) {
     auto q = config.value("quantization_config", Json::object());
     if (q.empty()) {
         q = config.value("text_config", Json::object())
@@ -1713,6 +1872,21 @@ static std::string unread_quantization(const Json& config) {
         "",         "fp8",        "fbgemm_fp8",       "awq",  "gptq", "compressed-tensors",
         "modelopt", "auto-round", "intel/auto-round", "mxfp4"};
     if (!read.contains(method)) { return method; }
+    // Model Optimizer names its formats per layer (quant_algo, MIXED_PRECISION's
+    // quantized_layers): MXFP8 (FP8 with E8M0 block scales, RadixArk/Muse-Glimmer-NVFP4's down
+    // projections) has no reader.
+    std::set<std::string> algos;
+    if (const auto algo = q.find("quant_algo"); algo != q.end() && algo->is_string()) {
+        algos.insert(ascii_upper(algo->get<std::string>()));
+    }
+    if (const auto layers = q.find("quantized_layers"); layers != q.end() && layers->is_object()) {
+        for (const auto& [layer, spec] : layers->items()) {
+            if (const auto algo = spec.find("quant_algo"); algo != spec.end() && algo->is_string()) {
+                algos.insert(ascii_upper(algo->get<std::string>()));
+            }
+        }
+    }
+    if (algos.contains("MXFP8")) { return "Model Optimizer MXFP8"; }
     if (const auto t = q.find("transform_config"); t != q.end() && t->is_object() && !t->empty()) {
         return method + " (transforms)";
     }
@@ -1751,7 +1925,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                       (term.empty() ? "&filter=gguf" : "") + "&sort=" + sort +
                       "&direction=-1&limit=" + std::to_string(std::clamp(limit, 1, 100));
     for (const char* field : {"downloads", "likes", "lastModified", "pipeline_tag", "tags",
-                              "config", "gguf", "library_name"}) {
+                              "config", "gguf", "library_name", "safetensors", "gated"}) {
         url += std::string("&expand%5B%5D=") + field;
     }
     const HuggingFace hub(endpoint);
@@ -1778,9 +1952,6 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                 model.context = n->get<std::int64_t>();
             }
         }
-        if (const auto config = item.find("config"); config != item.end() && config->is_object()) {
-            model.unread_quantization = unread_quantization(*config);
-        }
         if (const auto config = item.find("config");
             model.architecture.empty() && config != item.end() && config->is_object()) {
             const auto archs   = config->value("architectures", Json::array());
@@ -1788,6 +1959,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                                      ? archs[0].get<std::string>()
                                      : config->value("model_type", std::string());
         }
+        model.card = item;
         if (!model.id.empty()) { out.push_back(std::move(model)); }
     }
     return out;
@@ -1802,8 +1974,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     std::vector<std::string> headers;
     auto endpoint = sys::env("HF_ENDPOINT");
     if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
-    auto token = sys::env("HF_TOKEN");
-    if (token.empty()) { token = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+    const auto token = hub_token().value;
     if (!token.empty() && url.starts_with(endpoint + "/")) {
         headers.push_back("Authorization: Bearer " + token);
     }
@@ -1818,6 +1989,43 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
         throw std::runtime_error(url + " is larger than " + std::to_string(max_bytes) + " bytes");
     }
     return response.body;
+}
+
+std::string hub_account(const std::string& token, const FetchOptions& options) {
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    const auto response =
+        request(endpoint + "/api/whoami-v2", {"Authorization: Bearer " + token}, false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("checking the Hugging Face token", response,
+                        response.status == 401 ? "the hub does not accept it" : "");
+    }
+    const auto body = Json::parse(response.body, nullptr, false);
+    return body.is_object() ? body.value("name", std::string()) : std::string();
+}
+
+std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions& options) {
+    if (!is_hugging_face_hub(options.hub) || hub_offline()) { return std::nullopt; }
+    auto [repo, revision] = split_spec(spec, options);
+    if (revision.empty()) { revision = "main"; }
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    std::string url = endpoint + "/api/models/" + repo + "/revision/" + url_path(revision) + "?";
+    for (const char* field : {"pipeline_tag", "library_name", "gated", "config", "gguf",
+                              "safetensors", "siblings", "sha"}) {
+        url += std::string("expand%5B%5D=") + field + "&";
+    }
+    url.pop_back();
+    const HuggingFace hub(endpoint);
+    const auto response = request(url, hub.credentials(), false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("reading " + repo + "'s model card", response, "");
+    }
+    auto parsed = Json::parse(response.body, nullptr, false);
+    if (!parsed.is_object()) {
+        throw std::runtime_error(repo + "'s model card is not a JSON object");
+    }
+    return parsed;
 }
 
 Json fetch_config(const std::string& spec, const FetchOptions& options) {
@@ -1877,18 +2085,21 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
-        // An importance matrix (imatrix*.gguf) or another file too small to be a model.
-        if (name.find("imatrix") != std::string::npos) { continue; }
+        // An importance matrix (imatrix*.gguf, *-imatrix.gguf: gguf_auxiliary_file's rule, not a
+        // model named iMatrix in the middle) or another file too small to be a model.
+        if (name.ends_with(".gguf") && gguf_auxiliary_file(name) &&
+            (name.starts_with("imatrix") || name.ends_with("imatrix.gguf"))) {
+            continue;
+        }
         // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
             file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
-            const bool sidecar = gguf_auxiliary_file(name) ||
-                                 name.find("dflash") != std::string::npos ||
-                                 name.find("eagle") != std::string::npos ||
-                                 name.find("assistant") != std::string::npos;
+            // Beside the model, not a model (gguf_auxiliary_file, the fetch's own rule): a model
+            // whose name holds DFlash2 or Assistant (a merge, a fine-tune) is a quantization.
+            const bool sidecar = gguf_auxiliary_file(name);
             auto label       = gguf_quant_label(file.path);
             const auto group = gguf_group(fs::path(file.path).filename().string());
             const auto key =
