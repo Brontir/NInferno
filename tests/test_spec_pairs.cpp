@@ -238,6 +238,23 @@ int main() {
                    runs(choice->profile.served->non_thinking),
                "the Engine's choices stand beside a faster one it does not run");
     }
+    // A pair measured with another drafter of the kind (the registry replaced its repository or
+    // revision) is not measured for the one attached; the same drafter, or one not recorded, is.
+    {
+        auto with = bw_q4;
+        with.drafters = {{"dflash", "z-lab/Qwen3.5-9B-DFlash@5fc3b3d4"}};
+        const auto same = sp::pair_choice({with}, with.target, "qwen3_5", {"dflash"}, 4.9, "sm120", {},
+                                          {{"dflash", "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18"}});
+        const auto other = sp::pair_choice({with}, with.target, "qwen3_5", {"dflash"}, 4.9, "sm120", {},
+                                           {{"dflash", "z-lab/Qwen3.5-9B-DFlash@0123abcd"}});
+        expect(same && same->basis == "measured", "the drafter measured: measured");
+        expect(!other || other->basis != "measured", "another revision of the drafter: not measured");
+        expect(sp::same_drafter("Org/D@abc", "org/d@abcdef") && !sp::same_drafter("org/d@abc", "org/d@abd") &&
+                   !sp::same_drafter("org/d", "org/e") && sp::same_drafter("", "org/d@x"),
+               "drafter identities");
+        const auto back = sp::parse_pair(sp::pair_json(with));
+        expect(back.drafters == with.drafters, "the measured drafters round-trip through the JSON");
+    }
     // Bits per weight from a quantization label.
     expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
                sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16 &&

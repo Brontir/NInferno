@@ -1,6 +1,7 @@
 #include "spec/pairs.h"
 
 #include "artifact/reader.h"
+#include "core/ascii.h"
 #include "spec/engine_support.h"
 
 #include <algorithm>
@@ -105,9 +106,25 @@ Choice plain_choice() {
 } // namespace
 
 nlohmann::json pair_json(const MeasuredPair& pair) {
-    return Json{{"target", pair.target},       {"target_repo", pair.target_repo},
-                {"engine", pair.engine},       {"target_bits", pair.target_bits},
-                {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
+    Json out{{"target", pair.target},       {"target_repo", pair.target_repo},
+             {"engine", pair.engine},       {"target_bits", pair.target_bits},
+             {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
+    if (!pair.drafters.empty()) { out["drafters"] = pair.drafters; }
+    return out;
+}
+
+bool same_drafter(std::string_view a, std::string_view b) {
+    if (a.empty() || b.empty()) { return true; }
+    const auto split = [](std::string_view id) {
+        const auto at = id.find('@');
+        return std::pair{ascii_lower(id.substr(0, at)),
+                         at == std::string_view::npos ? std::string() : ascii_lower(id.substr(at + 1))};
+    };
+    const auto [ra, va] = split(a);
+    const auto [rb, vb] = split(b);
+    if (ra != rb) { return false; }
+    if (va.empty() || vb.empty()) { return true; }
+    return va.starts_with(vb) || vb.starts_with(va);
 }
 
 MeasuredPair parse_pair(const nlohmann::json& doc) {
@@ -119,6 +136,9 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
         out.target_bits = doc.at("target_bits").get<double>();
         out.generation  = doc.at("generation").get<std::string>();
         out.tune        = profile_from_json(doc.at("tune"));
+        if (const auto it = doc.find("drafters"); it != doc.end()) {
+            out.drafters = it->get<std::map<std::string, std::string>>();
+        }
     } catch (const nlohmann::json::exception& error) {
         throw std::runtime_error(std::string("speculation pair: ") + error.what());
     }
@@ -397,7 +417,8 @@ std::string artifact_quant(const std::filesystem::path& artifact) {
 std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                                       std::string_view target, std::string_view engine,
                                       const std::vector<std::string>& kinds, double target_bits,
-                                      std::string_view generation, const SelectOptions& options) {
+                                      std::string_view generation, const SelectOptions& options,
+                                      const std::map<std::string, std::string>& attached) {
     std::set<Mode> modes;
     for (const auto& kind : kinds) {
         try {
@@ -418,8 +439,18 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     for (const auto& pair : pairs) {
         if (pair.target != target || !pair_current(pair)) { continue; }
         MeasuredPair p = pair;
+        // A kind measured with another drafter than the one attached: not measured for it.
+        std::set<Mode> carried = modes;
+        for (const auto& [kind, id] : attached) {
+            const auto measured = p.drafters.find(kind);
+            if (measured != p.drafters.end() && !same_drafter(measured->second, id)) {
+                try {
+                    carried.erase(mode_of_kind(kind));
+                } catch (const std::invalid_argument&) {}
+            }
+        }
         std::erase_if(p.tune.measurements, [&](const Measurement& m) {
-            return m.config.enabled() && !modes.contains(m.config.mode);
+            return m.config.enabled() && !carried.contains(m.config.mode);
         });
         std::erase_if(p.tune.drafters, [&](const DrafterRecord& d) {
             return std::find(kinds.begin(), kinds.end(), d.kind) == kinds.end();
