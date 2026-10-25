@@ -311,17 +311,9 @@ ModelRead read_model(const ServeOptions& options) {
             out.kind          = "checkpoint";
             out.facts         = product::plan_facts_of_config(config, safetensors_bytes(path),
                                                               runtime::WeightBasis::FileSize);
-            // As for a hub checkpoint (read_hub): the weights' own MTP part, else the index;
-            // an index not readable leaves the declaration.
-            if (fs::exists(path / "model_mtp.safetensors")) {
-                out.facts.shape.builtin_mtp = true;
-            } else if (fs::exists(path / "model.safetensors.index.json")) {
-                try {
-                    std::ifstream index(path / "model.safetensors.index.json");
-                    out.facts.shape.builtin_mtp =
-                        convert::sharded_checkpoint_mtp(config, Json::parse(index));
-                } catch (const std::exception&) {}
-            }
+            // What the converter finds (convert::checkpoint_mtp): the weights' own MTP part, the
+            // index, or the one weight file's header; else the declaration.
+            out.facts.shape.builtin_mtp = convert::checkpoint_mtp(path, config);
             return out;
         }
         if (ascii_lower(path.extension().string()) == ".gguf") {

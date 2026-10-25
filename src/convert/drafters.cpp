@@ -332,6 +332,33 @@ bool sharded_checkpoint_mtp(const Json& config, const Json& index) {
            spec::json_unsigned(config, "num_nextn_predict_layers") > 0;
 }
 
+bool checkpoint_mtp(const fs::path& dir, const Json& config) {
+    const auto& text = text_scope(config);
+    // MTP layers are what the weights hold where their listing is here (the index, or the one
+    // weight file's header), not what the configuration declares: a fine-tune saved without them
+    // (XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B: mtp_num_hidden_layers 1, no mtp.* tensor) has none.
+    // Without a listing, the declaration. (NextN layers are numbered past the decoder's and keep
+    // their declaration.)
+    bool mtp = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0;
+    if (fs::exists(dir / "model.safetensors.index.json")) {
+        try {
+            mtp = index_lists_mtp(Json::parse(read_file(dir / "model.safetensors.index.json")));
+        } catch (const std::exception&) {} // unreadable: the declaration
+    } else if (fs::exists(dir / "model.safetensors")) {
+        try {
+            const Checkpoint weights(dir);
+            bool listed = false;
+            for (const auto& [name, tensor] : weights.tensors()) {
+                if (mtp_tensor(name)) { listed = true; }
+            }
+            mtp = listed;
+        } catch (const std::exception&) {} // unreadable here: the declaration
+    }
+    return mtp || spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
+           spec::json_unsigned(config, "num_nextn_predict_layers") > 0 ||
+           fs::exists(dir / "model_mtp.safetensors");
+}
+
 DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     DrafterTarget t;
     t.checkpoint      = dir;
@@ -349,29 +376,7 @@ DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     t.geometry.num_hidden_layers = spec::json_unsigned(text, "num_hidden_layers");
     t.geometry.vocab_size        = spec::json_unsigned(text, "vocab_size");
     t.sliding_window             = spec::json_unsigned(text, "sliding_window");
-    // MTP layers are what the weights hold where their listing is here (the index, or the one
-    // weight file's header), not what the configuration declares: a fine-tune saved without them
-    // (XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B: mtp_num_hidden_layers 1, no mtp.* tensor) has none.
-    // Without a listing, the declaration. (NextN layers are numbered past the decoder's and keep
-    // their declaration.)
-    t.builtin_mtp = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0;
-    if (fs::exists(dir / "model.safetensors.index.json")) {
-        try {
-            t.builtin_mtp =
-                index_lists_mtp(Json::parse(read_file(dir / "model.safetensors.index.json")));
-        } catch (const std::exception&) {} // unreadable: the declaration
-    } else if (fs::exists(dir / "model.safetensors")) {
-        try {
-            const Checkpoint weights(dir);
-            t.builtin_mtp = false;
-            for (const auto& [name, tensor] : weights.tensors()) {
-                if (mtp_tensor(name)) { t.builtin_mtp = true; }
-            }
-        } catch (const std::exception&) {} // unreadable here: the declaration
-    }
-    t.builtin_mtp = t.builtin_mtp || spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
-                    spec::json_unsigned(config, "num_nextn_predict_layers") > 0 ||
-                    fs::exists(dir / "model_mtp.safetensors");
+    t.builtin_mtp = checkpoint_mtp(dir, config);
     if (fs::exists(dir / "tokenizer.json")) {
         t.fingerprint = spec::vocab_fingerprint_file(dir / "tokenizer.json").value;
     }
