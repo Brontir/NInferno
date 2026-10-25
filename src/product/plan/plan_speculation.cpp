@@ -415,24 +415,22 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
 
     // The profile's choices by the thinking flag, as this start serves them: only where the plan
     // serves the profile's own choice (no fit fallback, no pool step, not plain for an absent or
-    // refused drafter), each flag's configuration from the menu served for it (the drafters
-    // attached, what the Engine runs) and its measured gain where the profile measured that one.
+    // refused drafter), each flag's entry of the menu that step serves (one drafter loaded: an
+    // alternate the drafter cannot run takes the primary, build_menu) and the gain the profile
+    // measured for that very configuration (1 for a plain decode it chose).
     const bool serves_profile =
         std::any_of(r.fallbacks.begin(), r.fallbacks.end(), [](const SpeculationFallbackStep& s) {
             return s.served && s.step == "profile";
         });
-    if (ask.automatic && serves_profile && subject != nullptr && subject->resolved &&
+    if (ask.automatic && serves_profile && served && subject != nullptr && subject->resolved &&
         subject->resolved->found()) {
         const spec::Profile profile = served_choices(subject->resolved->profile);
         const auto variant = [&](bool thinking) {
-            const auto s = served_speculation(*subject, thinking, false);
-            SpeculationReport::ThinkingVariant v{.label = "plain"};
-            if (!s || !s->drafts()) { return v; }
-            v.label                = s->menu.primary.config.label();
-            const spec::Choice& c  = spec::pick(profile, thinking);
-            if (c.config == s->menu.primary.config && c.tok_s > 0 && c.plain_tok_s > 0) {
-                v.speedup = c.speedup();
-            }
+            const spec::MenuChoice& entry = served->menu.pick(thinking);
+            const spec::Choice& c         = spec::pick(profile, thinking);
+            SpeculationReport::ThinkingVariant v{
+                .label = entry.config.enabled() ? entry.config.label() : std::string("plain")};
+            if (c.config == entry.config && c.tok_s > 0 && c.plain_tok_s > 0) { v.speedup = c.speedup(); }
             return v;
         };
         r.with_thinking    = variant(true);
