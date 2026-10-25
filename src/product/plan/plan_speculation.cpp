@@ -302,7 +302,26 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         if (!served || served->menu.mode == spec::Mode::None) {
             const SpeculativeOptions plain;
             runtime::DryRunPlan plan = plan_of(plain);
-            if (served) {
+            // The profile's own choice, when it speculates: its drafter is absent here, or the
+            // Engine does not run it (never "measured faster without speculation").
+            const spec::Choice* wanted = nullptr;
+            if (served && subject != nullptr && subject->resolved) {
+                const spec::Choice& c = spec::pick(subject->resolved->profile, ask.thinking);
+                if (c.config.enabled()) { wanted = &c; }
+            }
+            if (wanted != nullptr) {
+                const std::string name =
+                    wanted->drafter.empty() ? spec::mode_name(wanted->config.mode) : wanted->drafter;
+                const bool absent = !subject->resolved->drafters.contains(name);
+                r.source = served->source;
+                r.basis  = absent ? "drafter_missing" : "engine_refuses";
+                step("plain", plain, plan,
+                     absent ? "the profile's " + wanted->config.label() + " needs the drafter '" + name +
+                                  "', which is not attached (a GGUF model takes its separate "
+                                  "drafters with --with-drafters)"
+                            : "the profile's " + wanted->config.label() +
+                                  " is not one this model's Engine runs");
+            } else if (served) {
                 // A profile whose choice is plain decode: measured faster without speculation.
                 r.source = served->source;
                 r.basis  = "measured_plain";

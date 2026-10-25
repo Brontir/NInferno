@@ -211,8 +211,7 @@ def main() -> int:
         hub.add_repo("lab/qwen-tiny-DFlash2-GGUF", {"dflash2-qwen-tiny-Q4_0.gguf": drafter.read_bytes()})
         registry = {
             "schema": 1, "published": "test",
-            "kinds": {"dflash2": {"engines": ["qwen3_5"], "architectures": ["DFlash2DraftModel"]},
-                      "mtp": {"engines": ["qwen3_5"]}},
+            "kinds": {"dflash2": {"architectures": ["DFlash2DraftModel"]}, "mtp": {}},
             "models": [{"id": "qwen-tiny", "engine": "qwen3_5",
                         "match": {"repos": ["org/qwen-tiny-GGUF"], "geometry": geometry},
                         "drafters": [{"name": "dflash2", "kind": "dflash2",

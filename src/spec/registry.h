@@ -87,7 +87,7 @@ struct ModelEntry {
 
 struct KindInfo {
     std::string name;
-    std::vector<std::string> engines, architectures;
+    std::vector<std::string> architectures;
     std::string recipe;
 };
 
@@ -141,7 +141,8 @@ public:
 
     // The drafter kind a checkpoint architecture belongs to (nullopt: not a known drafter).
     [[nodiscard]] std::optional<std::string> kind_for_architecture(std::string_view arch) const;
-    // Whether an engine family (gemma4, qwen3_5) runs drafters of this kind.
+    // Whether an engine family (gemma4, qwen3_5, dense, nemotron_h) serves drafters of this kind:
+    // the serving Engine's answer (spec/engine_support.h engine_runs_kind), for a kind listed here.
     [[nodiscard]] bool supported(std::string_view kind, std::string_view engine) const;
 
 private:
