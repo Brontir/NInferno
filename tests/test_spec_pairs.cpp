@@ -159,6 +159,21 @@ int main() {
         expect(!sp::pair_choice(all, "sha:x", "gemma4", {"gemma4_assistant"}, 4.5, "sm120"),
                "no measurement and no group: nothing");
     }
+    // One card's tunes of one target, a drafter each (MTP, then DFlash): one measurement of the
+    // pair over both drafters, in either order.
+    {
+        auto mtp   = mtp_q4;
+        mtp.target = bw_q4.target;
+        for (const auto& pairs : {std::vector<sp::MeasuredPair>{mtp, bw_q4},
+                                  std::vector<sp::MeasuredPair>{bw_q4, mtp}}) {
+            const auto both =
+                sp::pair_choice(pairs, bw_q4.target, "qwen3_5", {"mtp", "dflash"}, 4.9, "sm120");
+            expect(both && both->basis == "measured" &&
+                       both->profile.thinking.config.label() == "dflash:7" &&
+                       both->source.find("(1 lab card(s))") != std::string::npos,
+                   "one card's MTP and DFlash tunes are pooled: DFlash, the faster, chosen");
+        }
+    }
     // Bits per weight from a quantization label.
     expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
                sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16,

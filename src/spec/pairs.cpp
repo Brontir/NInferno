@@ -386,6 +386,33 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             own.push_back(std::move(p));
         }
     }
+    // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the
+    // pair: their runs pooled, so its choice weighs every drafter the card measured. A load table
+    // or fit fallback is the one drafter's it was measured with: kept only when the tunes agree.
+    std::vector<MeasuredPair> cards;
+    for (auto& p : own) {
+        const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
+            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation;
+        });
+        if (same == cards.end()) {
+            cards.push_back(std::move(p));
+            continue;
+        }
+        Profile& into = same->tune;
+        into.measurements.insert(into.measurements.end(), p.tune.measurements.begin(),
+                                 p.tune.measurements.end());
+        for (const auto& d : p.tune.drafters) {
+            const auto known = std::find_if(into.drafters.begin(), into.drafters.end(),
+                                            [&](const DrafterRecord& r) { return r.name == d.name; });
+            if (known == into.drafters.end()) { into.drafters.push_back(d); }
+        }
+        if (into.load != p.tune.load) { into.load.clear(); }
+        if (!into.fit_fallback || !p.tune.fit_fallback ||
+            into.fit_fallback->config != p.tune.fit_fallback->config) {
+            into.fit_fallback.reset();
+        }
+    }
+    own = std::move(cards);
     if (!own.empty()) {
         std::vector<const MeasuredPair*> measured;
         for (const auto& p : own) { measured.push_back(&p); }

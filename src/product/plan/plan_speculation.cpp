@@ -164,6 +164,9 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
                 } else if (!d.decl.component.empty()) {
                     item["status"] = "embedded";
                     out.components.insert(d.decl.component);
+                    // Embedded from a repository of its own (a DFlash drafter of Qwen 3.5): its
+                    // weights are not the target's listing, and are counted as an attached one's.
+                    if (!d.decl.repo.empty()) { out.attached_drafters.push_back(d.decl); }
                 } else {
                     item["status"] = "attached";
                     out.attached_drafters.push_back(d.decl);
@@ -223,8 +226,8 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         runtime::PlanModelFacts m = facts.model;
         // A separate drafter (an artifact of its own: Gemma 4's assistant, gpt-oss's DFlash) is
         // uploaded beside the target: one named by the options, or, before a conversion names its
-        // path (an explicit --spec with --with-drafters), one the drafter plan attaches for this
-        // backend.
+        // path (an explicit --spec with --with-drafters), one the drafter plan takes from its own
+        // repository for this backend (attached, or embedded as a component).
         const auto drafts_for = [](const std::string& kind) {
             if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
                 return SpeculativeBackend::Mtp;
@@ -237,7 +240,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
             subject != nullptr &&
             std::any_of(subject->attached_drafters.begin(), subject->attached_drafters.end(),
                         [&](const spec::DrafterDecl& d) {
-                            return d.component.empty() && drafts_for(d.kind) == speculative.backend;
+                            return drafts_for(d.kind) == speculative.backend;
                         });
         if (speculative.backend != SpeculativeBackend::None &&
             (!speculative.drafter.empty() || attached)) {
