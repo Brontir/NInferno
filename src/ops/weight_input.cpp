@@ -199,14 +199,20 @@ SingleProjectionWeight prepare_linear_weight(std::span<const WeightInput> rows) 
     return single(rows);
 }
 
+bool fused_attn_input_proj_geometry(const WeightInput& query, const WeightInput& key,
+                                    const WeightInput& value) {
+    // NINFERNO-SPECIAL(model:qwen35-27b,qwen35-35b-a3b): the fused drafter Q/K/V kernel is
+    // compiled for the hidden widths of these two targets' drafters.
+    const auto& q = matrix(query);
+    return (q == std::vector<std::uint64_t>{4096, 2048} ||
+            q == std::vector<std::uint64_t>{4096, 5120}) &&
+           matrix(key) == std::vector<std::uint64_t>{1024, q[1]} && matrix(value) == matrix(key);
+}
+
 SingleProjectionWeight prepare_attn_input_proj_weights(const WeightInput& query,
                                                        const WeightInput& key,
                                                        const WeightInput& value) {
-    const auto& q = matrix(query);
-    require((q == std::vector<std::uint64_t>{4096, 2048} ||
-             q == std::vector<std::uint64_t>{4096, 5120}) &&
-                matrix(key) == std::vector<std::uint64_t>{1024, q[1]} &&
-                matrix(value) == matrix(key),
+    require(fused_attn_input_proj_geometry(query, key, value),
             "QKV input projection: unsupported logical geometry");
     const std::array inputs{query, key, value};
     auto result = single(inputs);

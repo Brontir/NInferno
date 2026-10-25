@@ -421,6 +421,17 @@ void weighs_the_quantizations(const json& fixture) {
                                         oracle(gemma, 20e9), open);
     check(!other.by_worth && other.why.find("no accuracy terms were measured on gemma4_text") != std::string::npos,
           "another family: the rule's largest and its defaults");
+    // A dense decoder (its own terms, two cards): the worth decides its KV codec and activations,
+    // while the quantization stays the rule's (the quantization curve is Qwen 3.5 dense's).
+    Bench dense = with6;
+    dense.model.family = "dense_decoder";
+    const ch::Choice dense_choice = ch::choose(dense.model, dense.card, dense.quants,
+                                               ch::allowed_axes(dense.model, KvCacheStorage::Fp8E4M3Row256), {},
+                                               task, oracle(dense, 20e9), open);
+    check(ch::accuracy_decides("ada", "dense_decoder") && dense_choice.by_worth,
+          "a dense decoder decides by worth on its own terms");
+    check(!ch::weighs_quantizations(dense.model, dense.card, open),
+          "a dense decoder keeps the quant rule's largest (no curve of its own)");
     // Two quantizations alike in every respect: a tie, broken by the smaller label.
     Bench twins           = b;
     twins.quants          = {b.quants[0], b.quants[0]};
