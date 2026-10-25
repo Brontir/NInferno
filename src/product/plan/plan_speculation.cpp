@@ -307,6 +307,15 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                   "drafters with --with-drafters)"
                             : "the profile's " + wanted->config.label() +
                                   " is not one this model's Engine runs");
+            } else if (served && served->basis == "preliminary") {
+                // A group's choice for a target nobody measured is plain decode: a fine-tune's
+                // acceptance may fall short of the group's (spec::profile_for_group), not a
+                // measurement of this target.
+                r.source = served->source;
+                r.basis  = "preliminary";
+                step("plain", plain, plan,
+                     "the group's choice for an unmeasured target: plain decode (a fine-tune may "
+                     "accept less than the measured pairs)");
             } else if (served) {
                 // A profile whose choice is plain decode: measured faster without speculation.
                 r.source = served->source;
