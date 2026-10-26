@@ -349,19 +349,21 @@ std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& 
     return converted_artifact(root / "ninferno" / commit, quant, recipe);
 }
 
-bool cached_conversion_has_drafters(const fs::path& cache, const std::string& repo,
-                                    const std::string& revision, const std::string& quant,
-                                    const std::string& recipe, bool vision) {
-    if (quant.empty()) { return false; }
+std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
+                                                        const std::string& repo,
+                                                        const std::string& revision,
+                                                        const std::string& quant,
+                                                        const std::string& recipe, bool vision) {
+    if (quant.empty()) { return std::nullopt; }
     const auto root     = cache / hub_repo_directory(repo);
     const std::string rev = revision.empty() ? std::string("main") : revision;
     std::string commit;
     if (rev.size() == 40 && rev.find_first_not_of("0123456789abcdef") == std::string::npos) {
         commit = rev;
     } else if (std::ifstream ref(root / "refs" / rev); !(ref >> commit)) {
-        return false;
+        return std::nullopt;
     }
-    if (commit.find_first_of("/\\.") != std::string::npos) { return false; }
+    if (commit.find_first_of("/\\.") != std::string::npos) { return std::nullopt; }
     const auto carries = [](const fs::path& artifact) {
         std::ifstream stream(artifact.string() + ".conversion.json");
         try {
@@ -389,7 +391,7 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
     };
     // <gguf stem>[.vision].<recipe>.ninferno, complete, of exactly this label (converted_artifact's
     // names), the recipe and the --vision kind the start converts: [0] text, [1] --vision.
-    std::size_t found[2] = {0, 0}, with[2] = {0, 0};
+    std::vector<std::pair<fs::path, bool>> found[2];
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(root / "ninferno" / commit, ec)) {
         const auto path = entry.path();
@@ -403,11 +405,22 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
         const bool vision_stem = stem.ends_with(".vision");
         if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
         if (ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) { continue; }
-        ++found[vision_stem];
-        if (carries(path)) { ++with[vision_stem]; }
+        found[vision_stem].emplace_back(path, carries(path));
     }
-    const int kind = vision && found[1] > 0 ? 1 : 0;
-    return found[kind] > 0 && with[kind] == found[kind];
+    auto& kept = found[vision && !found[1].empty() ? 1 : 0];
+    if (kept.empty() ||
+        !std::all_of(kept.begin(), kept.end(), [](const auto& k) { return k.second; })) {
+        return std::nullopt;
+    }
+    std::sort(kept.begin(), kept.end());
+    return kept.front().first;
+}
+
+bool cached_conversion_has_drafters(const fs::path& cache, const std::string& repo,
+                                    const std::string& revision, const std::string& quant,
+                                    const std::string& recipe, bool vision) {
+    return cached_conversion_with_drafters(cache, repo, revision, quant, recipe, vision)
+        .has_value();
 }
 
 void accept_converted(const fs::path& commit_dir, const std::string& ref,

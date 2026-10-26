@@ -389,23 +389,27 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
     } else {
         // A GGUF quantization converted here with its drafters (an earlier --with-drafters) is
-        // started with them, flag or not (convert::cached_conversion_has_drafters).
-        const auto with_drafters = [asked = options.with_drafters, gguf = model.gguf,
-                                    repo = model.repo, revision = model.revision,
-                                    recipe = options.recipe,
-                                    vision = options.enable_vision](const std::string& quant) {
-            return asked || (gguf && convert::cached_conversion_has_drafters(
-                                         convert::default_hub_cache(), repo, revision, quant,
-                                         recipe, vision));
+        // started from that conversion, flag or not: planned as the start resolves it.
+        const auto cached = [gguf = model.gguf, repo = model.repo, revision = model.revision,
+                             recipe = options.recipe,
+                             vision = options.enable_vision](const std::string& quant) {
+            return gguf ? convert::cached_conversion_with_drafters(convert::default_hub_cache(),
+                                                                   repo, revision, quant, recipe,
+                                                                   vision)
+                        : std::nullopt;
         };
-        out.subject = product::planned_subject(
+        const auto with_drafters = [asked = options.with_drafters,
+                                    cached](const std::string& quant) {
+            return asked || cached(quant).has_value();
+        };
+        out.subject = product::hub_quant_subject(
             product::PlannedTarget{.repo          = model.repo,
                                    .facts         = model.facts,
                                    .gguf          = model.gguf,
-                                   .with_drafters = with_drafters(quant_label_of(model)),
+                                   .with_drafters = options.with_drafters,
                                    .weights       = model.weights,
                                    .quant         = quant_label_of(model)},
-            gpu);
+            gpu, cached(quant_label_of(model)), options.spec_profile);
         // A separate drafter attached (--with-drafters, or kept with a cached conversion) is
         // uploaded beside the target: its memory counts for each quantization started with it.
         const bool any_with_drafters =
@@ -433,7 +437,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         if (model.listing.size() > 1) {
             out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
             out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     facts = model.facts, gguf = model.gguf, with_drafters,
+                                     facts = model.facts, gguf = model.gguf,
+                                     asked = options.with_drafters, cached,
+                                     profile = options.spec_profile,
                                      gpu](const product::QuantListing& q)
                 -> const product::SpeculationSubject* {
                 if (q.drafter) { return nullptr; }
@@ -441,14 +447,14 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                 if (it == per_quant->end()) {
                     it = per_quant
                              ->emplace(q.quant,
-                                       product::planned_subject(
+                                       product::hub_quant_subject(
                                            product::PlannedTarget{.repo          = repo,
                                                                   .facts         = facts,
                                                                   .gguf          = gguf,
-                                                                  .with_drafters = with_drafters(q.quant),
+                                                                  .with_drafters = asked,
                                                                   .weights       = q.weights,
                                                                   .quant         = q.quant},
-                                           gpu))
+                                           gpu, cached(q.quant), profile))
                              .first;
                 }
                 return &it->second;

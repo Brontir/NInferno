@@ -171,6 +171,17 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
     return out;
 }
 
+SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
+                                     const std::optional<std::filesystem::path>& cached,
+                                     const std::filesystem::path& spec_profile) {
+    if (!cached) { return planned_subject(target, gpu); }
+    PlannedTarget attached  = target;
+    attached.with_drafters  = true;
+    SpeculationSubject out  = speculation_subject(*cached, gpu, spec_profile);
+    out.attached_drafters   = planned_subject(attached, gpu).attached_drafters;
+    return out;
+}
+
 spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
     DeviceClass d =
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,

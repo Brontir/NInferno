@@ -109,6 +109,12 @@ converted_artifact(const std::filesystem::path& commit_dir, const std::string& q
 // the start takes: of `recipe` (any when empty), a --vision one with `vision` (the text one when
 // none is: a GGUF model without a projector converts without it); several left (two recipes, none
 // named) answer what all of them carry.
+// That conversion (the first by path when several recipes all carry them), for a plan to
+// resolve as the start does; nullopt where cached_conversion_has_drafters is false.
+[[nodiscard]] std::optional<std::filesystem::path>
+cached_conversion_with_drafters(const std::filesystem::path& cache, const std::string& repo,
+                                const std::string& revision, const std::string& quant,
+                                const std::string& recipe = {}, bool vision = false);
 [[nodiscard]] bool cached_conversion_has_drafters(const std::filesystem::path& cache,
                                                   const std::string& repo,
                                                   const std::string& revision,

@@ -1014,13 +1014,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
     // attached, its MTP layers are, unless the quantization was converted here with them (an
     // earlier --with-drafters): the start reuses that conversion and serves them.
-    const auto with_drafters = [&](const std::string& label) {
-        return gguf && convert::cached_conversion_has_drafters(hub_root(), repo, "", label);
+    const auto cached = [&](const std::string& label) {
+        return gguf ? convert::cached_conversion_with_drafters(hub_root(), repo, "", label)
+                    : std::nullopt;
     };
-    const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{
-            .repo = repo, .facts = *facts, .gguf = gguf, .with_drafters = with_drafters(quant)},
-        inputs.gpu);
+    const auto with_drafters = [&](const std::string& label) { return cached(label).has_value(); };
+    const product::SpeculationSubject subject = product::hub_quant_subject(
+        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu,
+        cached(quant));
     inputs.subject = &subject;
     // Each quantization resolves its own speculation (the lab's pairs are of its weights).
     std::map<std::string, product::SpeculationSubject> per_quant;
@@ -1029,14 +1030,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         auto it = per_quant.find(q.quant);
         if (it == per_quant.end()) {
             it = per_quant
-                     .emplace(q.quant, product::planned_subject(
-                                           product::PlannedTarget{.repo          = repo,
-                                                                  .facts         = *facts,
-                                                                  .gguf          = gguf,
-                                                                  .with_drafters = with_drafters(q.quant),
-                                                                  .weights       = q.weights,
-                                                                  .quant         = q.quant},
-                                           inputs.gpu))
+                     .emplace(q.quant, product::hub_quant_subject(
+                                           product::PlannedTarget{.repo    = repo,
+                                                                  .facts   = *facts,
+                                                                  .gguf    = gguf,
+                                                                  .weights = q.weights,
+                                                                  .quant   = q.quant},
+                                           inputs.gpu, cached(q.quant)))
                      .first;
         }
         return &it->second;
