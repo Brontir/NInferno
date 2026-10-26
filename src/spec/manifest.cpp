@@ -493,6 +493,10 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
     }
 }
 
+// 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
+//    weights it was converted from), else its group's preliminary choice. False when the registry
+//    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
+//    the published profiles answer.
 bool resolve_pair_profile(const SpeculationManifest& manifest,
                           const std::filesystem::path& artifact, const GpuKey& gpu,
                           ResolvedSpeculation& out) {
