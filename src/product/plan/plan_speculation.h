@@ -56,10 +56,6 @@ struct PlannedTarget {
     std::string commit;
 };
 
-// The subject of a planned target: the manifest convert::plan_drafters would give it (each
-// drafter a start would attach counted as attached, a component one as embedded), resolved for
-// `gpu` with spec::resolve_planned_speculation, its built-in drafter's default when nothing is
-// found.
 // A hub quantization's subject: with `cached`, the conversion kept here that carries drafters
 // (convert::cached_conversion_with_drafters), resolved as the start resolves it (its manifest, its
 // components, speculation_subject), the drafters the target declares with --with-drafters beside it
@@ -69,6 +65,10 @@ hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
                   const std::optional<std::filesystem::path>& cached,
                   const std::filesystem::path& spec_profile = {});
 
+// The subject of a planned target: the manifest convert::plan_drafters would give it (each
+// drafter a start would attach counted as attached, a component one as embedded), resolved for
+// `gpu` with spec::resolve_planned_speculation, its built-in drafter's default when nothing is
+// found.
 [[nodiscard]] SpeculationSubject planned_subject(const PlannedTarget& target,
                                                  const spec::GpuKey& gpu);
 
