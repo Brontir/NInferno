@@ -313,6 +313,9 @@ void test_base_repository() {
               !of(J{{"general.base_model.0.repo_url", "https://huggingface.co/spaces/org/s"}}) &&
               !of(J{{"general.base_model.0.repo_url", "github.com/org/m"}}),
           "a dataset, a Space, another host: no model repository");
+    check(of(J{{"general.base_model.0.repo_url", "acme.ai/model"}}) ==
+              std::optional<std::string>("acme.ai/model"),
+          "a bare id whose organization has a dot");
     check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
               !of(J::object()),
           "none named");

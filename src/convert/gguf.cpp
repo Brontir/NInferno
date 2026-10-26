@@ -278,19 +278,18 @@ std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& m
             }
         }
         text = text.substr(0, text.find_first_of("?#")); // a query or an anchor is no part of it
-        // org/name only: a /tree/<rev> or /resolve/... tail is not the repository. Another site's
-        // address names none (a scheme left, or a host where no hub prefix was), nor a dataset's,
-        // a Space's or a collection's.
+        // org/name only. A hub address's /tree/<rev> or /resolve/... tail is not the repository; a
+        // bare id is org/name and nothing more (a name with dots, "acme.ai/model", is one, while
+        // "github.com/org/name" is another site's address). A scheme left names another site; a
+        // dataset's, a Space's or a collection's address names no model.
         const auto slash = text.find('/');
         if (slash == 0 || slash == std::string_view::npos || slash + 1 == text.size() ||
-            text[slash + 1] == '/' || text.find(':') != std::string_view::npos) {
+            text[slash + 1] == '/' || text.find(':') != std::string_view::npos ||
+            (!hub_address && text.find('/', slash + 1) != std::string_view::npos)) {
             continue;
         }
         const std::string_view org = text.substr(0, slash);
-        if ((!hub_address && org.find('.') != std::string_view::npos) || org == "datasets" ||
-            org == "spaces" || org == "collections") {
-            continue;
-        }
+        if (org == "datasets" || org == "spaces" || org == "collections") { continue; }
         return std::string(text.substr(0, text.find('/', slash + 1)));
     }
     return std::nullopt;
