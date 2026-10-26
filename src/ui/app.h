@@ -307,7 +307,7 @@ private:
     // Artifact path -> (modification time, what its header says).
     std::mutex kinds_mutex_;
     std::map<std::string, std::pair<std::filesystem::file_time_type, ArtifactFacts>> kinds_;
-    std::map<std::string, nlohmann::json> kv_; // repo -> KvModel json
+    std::map<std::string, nlohmann::json> kv_; // repo -> kv_summary
     // Whether a GGUF quantization's file carries MTP layers (gguf_mtp), by hub key, commit and
     // quantization.
     std::map<std::string, std::optional<bool>> mtp_;

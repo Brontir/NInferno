@@ -6,6 +6,8 @@
 #include "core/sys.h"
 #include "spec/fingerprint.h"
 #include "spec/profile.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_dry_run.h"
 #include "ui/access.h"
 #include "ui/app.h"
 #include "ui/browser.h"
@@ -786,6 +788,24 @@ void test_catalog() {
         fs::remove(assistant);
         check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
               "a manifest whose drafter artifact is gone");
+        // What the rule reads, stamped: an attached drafter, the commits downloaded, a ref.
+        {
+            using ninferno::convert::conversions_stamp;
+            const auto before = conversions_stamp(root, "org/m-GGUF");
+            check(conversions_stamp(root, "org/m-GGUF") == before, "a stamp of the same cache");
+            std::ofstream(assistant) << "x";
+            const auto attached = conversions_stamp(root, "org/m-GGUF");
+            fs::create_directories(repo / "snapshots/c0ffee");
+            const auto downloaded = conversions_stamp(root, "org/m-GGUF");
+            std::ofstream(repo / "refs/dev") << "c0ffee\n";
+            const auto moved = conversions_stamp(root, "org/m-GGUF");
+            check(attached != before && downloaded != attached && moved != downloaded,
+                  "a drafter, a download and a ref each change the stamp");
+            fs::remove_all(repo / "snapshots");
+            fs::remove(repo / "refs/dev");
+            fs::remove(assistant);
+            check(conversions_stamp(root, "org/m-GGUF") == before, "and back");
+        }
         // The conversion the start takes: its --vision kind, its recipe.
         const auto write = [&](const std::string& name, const char* components) {
             std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
@@ -894,180 +914,47 @@ void test_catalog() {
                   best_projector({"m-Q4_K_M.gguf", "README.md"}).empty(),
               "the projector: BF16, F32, F16, then any; ties to the first name; all its parts");
     }
-    // KV per token from GGUF metadata: a plain stack, a hybrid one, a sliding-window one.
+    // What the page reads of a model's KV, from the plan's facts (their own tests cover the
+    // geometry): a dense GGUF, a config's full layers with their own key size, latent attention and
+    // an unread shape unknown, and nothing without facts.
     {
-        const nlohmann::json dense{
-            {"general.architecture", "llama"},  {"llama.block_count", 32},
-            {"llama.context_length", 131072},   {"llama.embedding_length", 4096},
-            {"llama.attention.head_count", 32}, {"llama.attention.head_count_kv", 8}};
-        const auto kv = kv_model_of_gguf(dense);
-        check(kv.known && kv.full_bytes_per_token == 2 * 32 * 8 * 256 &&
-                  kv.native_context == 131072,
-              "KV of a dense GQA stack (INT8: 64 KiB per token)");
-        check(kv_bytes(kv, 1000) == 2 * 1000.0 * 32 * 8 * 256, "KV bytes scale with the context");
-        const nlohmann::json hybrid{
-            {"general.architecture", "qwen35"},    {"qwen35.block_count", 32},
-            {"qwen35.full_attention_interval", 4}, {"qwen35.attention.head_count", 16},
-            {"qwen35.attention.head_count_kv", 4}, {"qwen35.attention.key_length", 256},
-            {"qwen35.attention.value_length", 256}};
-        check(kv_model_of_gguf(hybrid).full_bytes_per_token == 2 * 8 * 4 * 512,
-              "KV of a hybrid stack: its attention layers only");
-        const nlohmann::json swa{
-            {"general.architecture", "gemma4"},
-            {"gemma4.block_count", 4},
-            {"gemma4.attention.head_count", 8},
-            {"gemma4.attention.head_count_kv", 2},
-            {"gemma4.attention.key_length", 128},
-            {"gemma4.attention.sliding_window", 1024},
-            {"gemma4.attention.sliding_window_pattern", {true, true, true, false}}};
-        const auto s = kv_model_of_gguf(swa);
-        check(s.full_bytes_per_token == 2 * 2 * 256 &&
-                  s.window_bytes_per_token == 2 * 3 * 2 * 256 &&
-                  kv_bytes(s, 4096) == 2 * (4096.0 * 512 + 1024.0 * 1536),
-              "KV of a sliding-window stack stops at the window");
-        check(!kv_model_of_gguf(nlohmann::json{{"general.architecture", "x"}}).known,
-              "unknown geometry");
-
-        // The same from config.json: a hybrid's layer_types under text_config (Qwen3.5: one full
-        // layer in four), gpt-oss's sliding layers, NemotronH's pattern, a dense model's
-        // hidden_size / heads, a global head geometry; latent attention unknown.
-        const nlohmann::json qwen{
-            {"text_config",
-             {{"num_hidden_layers", 8},
-              {"num_attention_heads", 16},
-              {"num_key_value_heads", 4},
-              {"head_dim", 256},
-              {"max_position_embeddings", 262144},
-              {"layer_types",
-               {"linear_attention", "linear_attention", "linear_attention", "full_attention",
-                "linear_attention", "linear_attention", "linear_attention", "full_attention"}}}}};
-        const auto q = kv_model_of_config(qwen);
-        check(q.known && q.full_bytes_per_token == 2 * 2 * 4 * 2 * 256 &&
-                  q.window_bytes_per_token == 0 && q.native_context == 262144,
-              "config.json KV: full layers of a hybrid under text_config");
-        const auto g = kv_model_of_config(
-            {{"num_hidden_layers", 4},
-             {"num_attention_heads", 64},
-             {"num_key_value_heads", 8},
-             {"head_dim", 64},
-             {"sliding_window", 128},
-             {"layer_types",
-              {"sliding_attention", "full_attention", "sliding_attention", "full_attention"}}});
-        check(g.full_bytes_per_token == 2 * 2 * 8 * 2 * 64 &&
-                  g.window_bytes_per_token == 2 * 2 * 8 * 2 * 64 && g.window == 128 &&
-                  kv_bytes(g, 4096) == 2 * (4096.0 * 2048 + 128.0 * 2048),
-              "config.json KV: sliding layers stop at the window");
-        const auto n = kv_model_of_config({{"num_hidden_layers", 6},
-                                           {"num_attention_heads", 32},
-                                           {"num_key_value_heads", 2},
-                                           {"head_dim", 128},
-                                           {"hybrid_override_pattern", "M-M*-M"}});
-        check(n.full_bytes_per_token == 2 * 2 * 2 * 128,
-              "config.json KV: NemotronH's attention layer");
-        const auto d = kv_model_of_config({{"num_hidden_layers", 2},
-                                           {"num_attention_heads", 32},
-                                           {"num_key_value_heads", 8},
-                                           {"hidden_size", 4096}});
-        check(d.full_bytes_per_token == 2 * 2 * 8 * 2 * 128,
-              "config.json KV: head_dim from the width");
-        const auto w =
-            kv_model_of_config({{"num_hidden_layers", 2},
-                                {"num_attention_heads", 16},
-                                {"num_key_value_heads", 8},
-                                {"head_dim", 256},
-                                {"global_head_dim", 512},
-                                {"num_global_key_value_heads", 2},
-                                {"sliding_window", 1024},
-                                {"layer_types", {"sliding_attention", "full_attention"}}});
-        check(w.full_bytes_per_token == 2 * 2 * 2 * 512 &&
-                  w.window_bytes_per_token == 2 * 8 * 2 * 256,
-              "config.json KV: the full layers' own geometry");
-        check(!kv_model_of_config({{"num_hidden_layers", 2},
-                                   {"num_attention_heads", 16},
-                                   {"head_dim", 128},
-                                   {"kv_lora_rank", 512}})
-                   .known,
-              "config.json KV: latent attention is not estimated");
-        // gpt-oss-20b: 20.9B parameters, 3.6B a token reads (4 of 32 experts).
-        const auto o = kv_model_of_config({{"num_hidden_layers", 24},
-                                           {"num_attention_heads", 64},
-                                           {"num_key_value_heads", 8},
-                                           {"head_dim", 64},
-                                           {"hidden_size", 2880},
-                                           {"intermediate_size", 2880},
-                                           {"num_local_experts", 32},
-                                           {"num_experts_per_tok", 4},
-                                           {"vocab_size", 201088}});
-        check(o.params > 20.5e9 && o.params < 21.5e9 && o.active_params > 3.3e9 &&
-                  o.active_params < 3.9e9 && o.experts_used == 0.125 && o.routed_share > 0.85,
-              "config.json shape: a mixture of experts' total and active parameters");
-        const auto t       = kv_model_of_config({{"num_hidden_layers", 2},
-                                                 {"num_attention_heads", 32},
-                                                 {"num_key_value_heads", 8},
-                                                 {"hidden_size", 4096},
-                                                 {"intermediate_size", 14336},
-                                                 {"vocab_size", 1000},
-                                                 {"tie_word_embeddings", true}});
-        const double layer = 4096.0 * 128 * (64 + 16) + 3.0 * 4096 * 14336;
-        check(t.params == 2 * layer + 1000.0 * 4096 && t.active_params == t.params &&
-                  t.experts_used == 0,
-              "config.json shape: a dense model reads all of it");
-        // Qwen3.6 35B's GGUF: 10 attention layers keep bf16 KV, 30 GatedDeltaNet layers a 2 MiB
-        // fp32 state each (what serve's capacity line showed on the 4090: 60 MiB a sequence).
-        const auto h = kv_model_of_gguf({{"general.architecture", "qwen35moe"},
-                                         {"qwen35moe.block_count", 40},
-                                         {"qwen35moe.embedding_length", 2048},
-                                         {"qwen35moe.attention.head_count", 16},
-                                         {"qwen35moe.attention.head_count_kv", 2},
-                                         {"qwen35moe.attention.key_length", 256},
-                                         {"qwen35moe.attention.value_length", 256},
-                                         {"qwen35moe.full_attention_interval", 4},
-                                         {"qwen35moe.expert_count", 256},
-                                         {"qwen35moe.expert_used_count", 8},
-                                         {"qwen35moe.expert_feed_forward_length", 512},
-                                         {"qwen35moe.expert_shared_feed_forward_length", 512},
-                                         {"qwen35moe.ssm.conv_kernel", 4},
-                                         {"qwen35moe.ssm.state_size", 128},
-                                         {"qwen35moe.ssm.group_count", 16},
-                                         {"qwen35moe.ssm.time_step_rank", 32},
-                                         {"qwen35moe.ssm.inner_size", 4096}});
-        check(h.full_layers == 10 && h.full_bytes_per_token == 10 * 2 * 512 * 2 &&
-                  h.state_bytes == 30 * (4096.0 * 128 * 4 + 3 * (4096 + 2 * 16 * 128) * 2) &&
-                  h.workspace_bytes == 1024.0 * (12 * 2048 + 3 * (8 * 512 + 512)) * 2,
-              "GGUF memory: a hybrid's KV layers, recurrent states and workspace");
-        // NemotronH: attention, Mamba2 and MoE layers apart (6 + 24 + 23 of 53), not every layer
-        // with experts.
-        std::vector<int> kv_heads(53, 0), ffn(53, 0);
-        for (int i : {5, 12, 19, 26, 33, 42}) { kv_heads[static_cast<std::size_t>(i)] = 2; }
-        for (int i = 1, n = 0; i < 53 && n < 23; i += 2) {
-            if (kv_heads[static_cast<std::size_t>(i)] == 0) {
-                ffn[static_cast<std::size_t>(i)] = 1856;
-                ++n;
-            }
-        }
-        const auto nh =
-            kv_model_of_gguf({{"general.architecture", "nemotron_h_moe"},
-                              {"nemotron_h_moe.block_count", 53},
-                              {"nemotron_h_moe.embedding_length", 2688},
-                              {"nemotron_h_moe.attention.head_count", 32},
-                              {"nemotron_h_moe.attention.head_count_kv", kv_heads},
-                              {"nemotron_h_moe.attention.key_length", 128},
-                              {"nemotron_h_moe.attention.value_length", 128},
-                              {"nemotron_h_moe.feed_forward_length", ffn},
-                              {"nemotron_h_moe.expert_count", 128},
-                              {"nemotron_h_moe.expert_used_count", 6},
-                              {"nemotron_h_moe.expert_feed_forward_length", 1856},
-                              {"nemotron_h_moe.expert_shared_feed_forward_length", 3712},
-                              {"nemotron_h_moe.vocab_size", 131072},
-                              {"nemotron_h_moe.ssm.conv_kernel", 4},
-                              {"nemotron_h_moe.ssm.state_size", 128},
-                              {"nemotron_h_moe.ssm.group_count", 8},
-                              {"nemotron_h_moe.ssm.inner_size", 4096},
-                              {"nemotron_h_moe.ssm.time_step_rank", 64}});
-        check(nh.full_layers == 6 && nh.params > 28e9 && nh.params < 34e9 &&
-                  nh.active_params > 2.5e9 && nh.active_params < 4.5e9 &&
-                  nh.state_bytes > 24 * 2.0 * 1024 * 1024,
-              "GGUF shape: NemotronH counts each layer by its kind");
+        namespace pr      = ninferno::product;
+        const auto basis  = ninferno::runtime::WeightBasis::Unknown;
+        const auto dense  = pr::plan_facts_of_gguf_metadata(
+            {{"general.architecture", "llama"},  {"llama.block_count", 32},
+             {"llama.context_length", 131072},   {"llama.embedding_length", 4096},
+             {"llama.attention.head_count", 32}, {"llama.attention.head_count_kv", 8}},
+            0);
+        const auto kv = kv_summary(&dense);
+        check(kv["known"] == true && kv["architecture"] == "llama" && kv["kv_head_dim"] == 128 &&
+                  kv["native_context"] == 131072,
+              "a dense stack's KV: its key size and context");
+        const auto global = pr::plan_facts_of_config({{"architectures", {"Gemma4ForCausalLM"}},
+                                                      {"num_hidden_layers", 2},
+                                                      {"num_attention_heads", 16},
+                                                      {"num_key_value_heads", 8},
+                                                      {"head_dim", 256},
+                                                      {"global_head_dim", 512},
+                                                      {"num_global_key_value_heads", 2},
+                                                      {"sliding_window", 1024},
+                                                      {"max_position_embeddings", 262144},
+                                                      {"layer_types",
+                                                       {"sliding_attention", "full_attention"}}},
+                                                     0, basis);
+        check(kv_summary(&global)["kv_head_dim"] == 512 &&
+                  kv_summary(&global)["architecture"] == "Gemma4ForCausalLM",
+              "the full layers' own key size");
+        const auto latent = pr::plan_facts_of_config({{"num_hidden_layers", 2},
+                                                      {"num_attention_heads", 16},
+                                                      {"head_dim", 128},
+                                                      {"kv_lora_rank", 512}},
+                                                     0, basis);
+        const auto unread = pr::plan_facts_of_gguf_metadata({{"general.architecture", "x"}}, 0);
+        check(kv_summary(&latent)["known"] == false && kv_summary(&unread)["known"] == false &&
+                  kv_summary(&unread)["architecture"] == "x",
+              "latent attention and an unread shape: KV unknown");
+        check(kv_summary(nullptr)["known"] == false && kv_summary(nullptr)["architecture"] == "",
+              "no facts");
     }
 
     // Parallel requests reach ninferno-serve as --max-concurrency.

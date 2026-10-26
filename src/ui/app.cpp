@@ -854,8 +854,9 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
             out["source"]       = "gguf";
             out["file"]         = head.path;
         } else if (weights && hub != "modelscope") {
-            out["architecture"] =
-                kv_model_of_config(convert::fetch_config(repo, fetch)).architecture;
+            out["architecture"] = product::plan_facts_of_config(convert::fetch_config(repo, fetch),
+                                                                0, runtime::WeightBasis::Unknown)
+                                      .model.architecture;
             out["source"] = "config";
             out["file"]   = "config.json";
         }
@@ -924,51 +925,6 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
     return out;
 }
 
-// The conversions of `repo` kept under `root` (names, sizes, times), and the separate drafters
-// their manifests attach (another repository's, removed or replaced apart from them): a plan that
-// depends on what a conversion carries (convert::cached_conversion_with_drafters) is kept per this
-// stamp.
-std::string conversions_stamp(const fs::path& root, const std::string& repo) {
-    std::string out;
-    std::error_code ec;
-    // The refs too: a ref that moves to another kept commit selects another conversion.
-    const fs::path refs = root / convert::hub_repo_directory(repo) / "refs";
-    for (auto it = fs::recursive_directory_iterator(refs, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        std::error_code e;
-        if (!it->is_regular_file(e)) { continue; }
-        std::ifstream in(it->path());
-        std::string commit;
-        in >> commit;
-        out += it->path().filename().string() + "=" + commit + ";";
-    }
-    ec.clear();
-    const fs::path dir = root / convert::hub_repo_directory(repo) / "ninferno";
-    for (auto it = fs::recursive_directory_iterator(dir, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        std::error_code e;
-        if (!it->is_regular_file(e)) { continue; }
-        out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
-               std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
-        const auto name = it->path().filename().string();
-        if (!name.ends_with(".speculation.json")) { continue; }
-        const auto manifest = spec::read_manifest(it->path());
-        if (!manifest) { continue; }
-        for (const auto& d : manifest->drafters) {
-            if (d.artifact.empty()) { continue; }
-            std::error_code gone;
-            const auto size = fs::file_size(d.artifact, gone);
-            out += d.artifact + (gone ? std::string(":gone") :
-                                        ":" + std::to_string(size) + ":" +
-                                            std::to_string(fs::last_write_time(d.artifact, gone)
-                                                               .time_since_epoch()
-                                                               .count())) +
-                   ";";
-        }
-    }
-    return std::to_string(std::hash<std::string>{}(out));
-}
-
 std::string launch_key(const product::LaunchAsk& launch) {
     return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
            launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
@@ -994,7 +950,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
     const std::string key =
         hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
-        "|" + conversions_stamp(hub_root(), repo);
+        "|" + convert::conversions_stamp(hub_root(), repo);
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -2038,7 +1994,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             smallest = bytes;
         }
     }
-    Json out = to_json(KvModel{});
+    Json out = kv_summary(nullptr);
     if (options_.offline) { return out; }
     // A read that failed is tried again after a minute (a network blip is not the model's shape).
     {
@@ -2087,7 +2043,6 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                                  .value("repo_id", repo);
                 }
                 const Json config     = convert::fetch_config(source, fetch);
-                out                   = to_json(kv_model_of_config(config));
                 // The largest listed weights, with their MTP part (a checkpoint's
                 // model_mtp.safetensors: loaded only under MTP), as the server's plan counts them.
                 std::uint64_t weights = 0, mtp = 0;
@@ -2101,6 +2056,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 auto facts =
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes   = mtp;
+                out                     = kv_summary(&facts);
                 facts.shape.base_models = convert::hub_base_models(repo, fetch);
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
@@ -2121,12 +2077,12 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             const auto file =
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
-            out = to_json(kv_model_of_gguf(file.metadata));
+            auto facts = product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+            out        = kv_summary(&facts);
             {
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
-                    plan_facts_[hub_key(repo, hub)] =
-                        product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                    plan_facts_[hub_key(repo, hub)] = std::move(facts);
                 }
             }
             read = true;
