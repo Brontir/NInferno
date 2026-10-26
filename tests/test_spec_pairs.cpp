@@ -8,9 +8,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -139,6 +141,31 @@ int main() {
         // Another drafter of the same mode is not this kind's group.
         expect(sp::pair_group(mtp, "qwen3_5", "gemma4_assistant", 4.9).empty(),
                "a group is of the drafter kind, not only of its mode");
+    }
+    // Three cards, no depth all of them measured (one 1-3, one 3-5, one 1 and 5): each depth on
+    // two cards stands, the group speculates (it decoded plainly for want of a common label).
+    {
+        const auto keep = [](sp::MeasuredPair pair, const std::string& gpu,
+                             std::initializer_list<const char*> labels) {
+            pair.tune.key.gpu = gpu;
+            std::erase_if(pair.tune.measurements, [&](const sp::Measurement& m) {
+                if (!m.config.enabled()) { return false; }
+                const auto label = m.config.label();
+                return std::none_of(labels.begin(), labels.end(),
+                                    [&](const char* l) { return label == l; });
+            });
+            return pair;
+        };
+        const std::vector<sp::MeasuredPair> apart = {
+            keep(mtp_q4, "gb203:70sm", {"mtp:1", "mtp:2", "mtp:3"}),
+            keep(mtp_q4, "ad104:60sm", {"mtp:3", "mtp:4", "mtp:5"}),
+            keep(mtp_q4, "ad102:128sm", {"mtp:1", "mtp:5"})};
+        const auto group = sp::pair_group(apart, "qwen3_5", "mtp", 4.9);
+        const auto choice = sp::profile_for_group(group, "mtp");
+        expect(group.size() == 3 && choice && choice->overall.config.enabled() &&
+                   choice->overall.speedup() >= sp::kPreliminaryGain,
+               "no depth common to every card: the group still speculates (" +
+                   (choice ? choice->overall.config.label() : std::string("none")) + ")");
     }
     // gpt-oss without thinking gains 1-2 % over plain decode: at a fine-tune's acceptance it would
     // lose, so a target nobody measured decodes plainly there.
@@ -338,8 +365,8 @@ int main() {
                                            {{"dflash", "z-lab/Qwen3.5-9B-DFlash@0123abcd"}});
         expect(same && same->basis == "measured", "the drafter measured: measured");
         expect(!other || other->basis != "measured", "another revision of the drafter: not measured");
-        expect(sp::same_drafter("Org/D@abc", "org/d@abcdef") && !sp::same_drafter("org/d@abc", "org/d@abd") &&
-                   !sp::same_drafter("org/d", "org/e") && sp::same_drafter("", "org/d@x"),
+        expect(sp::same_repo_revision("Org/D@abc", "org/d@abcdef") && !sp::same_repo_revision("org/d@abc", "org/d@abd") &&
+                   !sp::same_repo_revision("org/d", "org/e") && sp::same_repo_revision("", "org/d@x"),
                "drafter identities");
         const auto back = sp::parse_pair(sp::pair_json(with));
         expect(back.drafters == with.drafters, "the measured drafters round-trip through the JSON");
