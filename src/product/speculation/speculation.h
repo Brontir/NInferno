@@ -32,6 +32,11 @@ namespace ninferno::product {
 
 [[nodiscard]] SpeculativeBackend backend_of(spec::Mode mode) noexcept;
 
+// The backend a manifest drafter of `kind` drafts with: mtp, gemma4_assistant and nemotron_h_mtp
+// (a separate drafter artifact drafting through the Mtp backend) MTP; dflash; dflash2; None for
+// another kind.
+[[nodiscard]] SpeculativeBackend backend_of_drafter_kind(std::string_view kind) noexcept;
+
 // Whether the artifact carries the proposal head that "+head" configurations draft with.
 [[nodiscard]] bool has_proposal_head(const std::filesystem::path& artifact);
 
