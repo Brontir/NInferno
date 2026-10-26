@@ -2093,7 +2093,7 @@ artifact's own. A model not yet converted gets the drafter manifest the converte
 GGUF hub model gets it with its separate drafters planned as attached (a start attaches them
 when the speculation it serves drafts with one), or, for a quantization converted here with its
 drafters, from that conversion (`convert::cached_conversion_with_drafters`: the start reuses it);
-their memory counts only for the speculation that drafts with them (`product::HubSubjects`, the
+their memory counts only for the speculation that drafts with them (`product::PlannedSubjects`, the
 same for ninferno-ui's plan). The start's fallback order is then judged by the dry run
 instead of an Engine build:
 
