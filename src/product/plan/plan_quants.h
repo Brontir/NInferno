@@ -61,6 +61,12 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                         std::string_view target_model_type, std::uint32_t target_hidden,
                         const convert::FetchOptions* fetch);
 
+// The memory of a drafter artifact given with --drafter, which drafts in place of the model's
+// own: its tensors' bytes, and a DFlash drafter's state from its components' config (beside a
+// target of hidden width `target_hidden`). Throws when the artifact cannot be read.
+[[nodiscard]] AttachedDrafterMemory
+supplied_drafter_memory(const std::filesystem::path& artifact, std::uint32_t target_hidden);
+
 // A safetensors checkpoint's weights after the recipe a start converts it with (convert.cpp's
 // default recipe choice): a recipe that keeps the published encodings (dense BF16, a published
 // checkpoint) keeps its bytes; Qwen3.5/3.6 MoE BF16 takes qwen3_6_35b_a3b's (routed experts Q4

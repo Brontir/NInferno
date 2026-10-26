@@ -415,10 +415,16 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         gpu, std::move(conversion_of), options.spec_profile);
     out.subject = out.subjects->of(quant_label_of(model), model.weights);
     // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
-    // where the speculation served drafts with one.
+    // where the speculation served drafts with one: a drafter file given (--drafter), which
+    // drafts in place of the model's own, else the model's.
     const convert::FetchOptions fetch = fetch_options();
-    const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-        *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
+    const product::AttachedDrafterMemory drafter =
+        options.speculative.drafter.empty()
+            ? product::attached_drafter_memory(*out.subject, model.listing,
+                                               model.facts.model.model_type,
+                                               model.facts.model.hidden, &fetch)
+            : product::supplied_drafter_memory(options.speculative.drafter,
+                                               model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;
     out.inputs.drafter_state = drafter.state;
     // A repository's quantizations each have their weights, and the lab's pairs are of weights:
