@@ -45,6 +45,7 @@ struct ModelRead {
     // The weights the facts were read at (spec::weights_identity of their files' digests): the key
     // of the lab's speculation pairs. "" when the listing gives no digest for one of them.
     std::string weights;
+    std::string commit; // the commit the hub listing was read at ("" unknown)
 };
 
 std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
@@ -208,6 +209,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     }
     const auto quants                 = convert::list_quants(spec, fetch);
     std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
+    out.commit                        = quants.empty() ? std::string() : quants.front().commit;
     std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
@@ -416,7 +418,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                    .gguf          = model.gguf,
                                    .with_drafters = options.with_drafters,
                                    .weights       = model.weights,
-                                   .quant         = quant_label_of(model)},
+                                   .quant         = quant_label_of(model),
+                                   .commit        = model.commit},
             gpu, cached(quant_label_of(model)), options.spec_profile);
         // A separate drafter attached (--with-drafters, or kept with a cached conversion) is
         // uploaded beside the target: its memory counts for each quantization started with it.
@@ -432,7 +435,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                              .gguf          = model.gguf,
                                              .with_drafters = true,
                                              .weights       = model.weights,
-                                             .quant         = quant_label_of(model)},
+                                             .quant         = quant_label_of(model),
+                                             .commit        = model.commit},
                       gpu)
                 : *out.subject;
         const convert::FetchOptions fetch = fetch_options();
@@ -445,7 +449,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         if (model.listing.size() > 1) {
             out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
             out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     facts = model.facts, gguf = model.gguf,
+                                     commit = model.commit, facts = model.facts, gguf = model.gguf,
                                      asked = options.with_drafters, cached,
                                      profile = options.spec_profile,
                                      gpu](const product::QuantListing& q)
@@ -461,7 +465,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                                   .gguf          = gguf,
                                                                   .with_drafters = asked,
                                                                   .weights       = q.weights,
-                                                                  .quant         = q.quant},
+                                                                  .quant         = q.quant,
+                                                                  .commit        = commit},
                                            gpu, cached(q.quant), profile))
                              .first;
                 }

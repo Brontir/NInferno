@@ -1239,6 +1239,7 @@ RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::stri
     out.format = "gguf";
     out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf"));
     out.bytes  = groups.at(chosen);
+    out.commit = of.front().entry->commit;
     for (const auto& m : of) {
         out.files.push_back(m.entry->files[m.file]);
         if (m.file < m.entry->sha256.size()) { out.sha256.push_back(m.entry->sha256[m.file]); }
@@ -2220,6 +2221,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
+    for (auto& q : out) { q.commit = listing.commit; }
     return out;
 }
 
