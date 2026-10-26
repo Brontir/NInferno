@@ -37,23 +37,51 @@ const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route
     return nullptr;
 }
 
+bool has_prefill_rows(std::string_view generation) noexcept {
+    return std::any_of(std::begin(kPrefillEta), std::end(kPrefillEta),
+                       [&](const PrefillEta& row) { return row.generation == generation; });
+}
+
+// The generation whose prefill rows one without its own takes: kTransferGeneration, unless another
+// generation with rows runs the same BF16 tensor rate per SM (the same tensor path: Volta's composed
+// one is Turing's) and the transfer generation does not.
+std::string_view prefill_stand_in(std::string_view generation) noexcept {
+    const auto row_of = [](std::string_view name) -> const GenerationRow* {
+        for (const GenerationRow& row : kGenerations) {
+            if (row.name == name) { return &row; }
+        }
+        return nullptr;
+    };
+    const GenerationRow* own      = row_of(generation);
+    const GenerationRow* transfer = row_of(kTransferGeneration);
+    if (own != nullptr && (transfer == nullptr || transfer->bf16 != own->bf16)) {
+        for (const GenerationRow& row : kGenerations) {
+            if (row.name != generation && row.bf16 == own->bf16 && has_prefill_rows(row.name)) {
+                return row.name;
+            }
+        }
+    }
+    return kTransferGeneration;
+}
+
 // The prefill efficiency of (kind, generation, route): its own row, else its kind's on the
 // transfer generation; a route its kind has no row for takes its kind's int8 row times the dense
 // rows' ratio of the two routes (the route's cost is the kernels', not the model kind's); else the
-// dense row. `transferred` when not its own.
+// dense row; another generation's: prefill_stand_in's. `transferred` when not its own.
 double prefill_eta(bool moe, std::string_view generation, Route route, bool& transferred) noexcept {
-    const Route base = route == Route::Fp4 ? Route::Int8 : route;
-    transferred      = route == Route::Fp4;
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    const Route base            = route == Route::Fp4 ? Route::Int8 : route;
+    const std::string_view away = prefill_stand_in(generation);
+    transferred                 = transferred || route == Route::Fp4;
+    for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(moe, gen, base)) {
             transferred = transferred || gen != generation;
             return row->eta;
         }
     }
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    for (const std::string_view gen : {generation, away}) {
         const PrefillEta* own_int8 = prefill_row(moe, gen, Route::Int8);
         if (own_int8 == nullptr) { continue; }
-        for (const std::string_view dense_gen : {gen, generation, kTransferGeneration}) {
+        for (const std::string_view dense_gen : {gen, generation, away}) {
             const PrefillEta* dense_route = prefill_row(false, dense_gen, base);
             const PrefillEta* dense_int8  = prefill_row(false, dense_gen, Route::Int8);
             if (dense_route != nullptr && dense_int8 != nullptr) {
@@ -62,7 +90,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
             }
         }
     }
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(false, gen, base)) {
             transferred = true;
             return row->eta;
@@ -127,7 +155,7 @@ double worst_term(Axis axis) noexcept {
 }
 
 double attention_eta(std::string_view generation, bool& transferred) noexcept {
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    for (const std::string_view gen : {generation, prefill_stand_in(generation)}) {
         for (const GenerationEta& row : kPrefillAttentionEta) {
             if (row.generation == gen) {
                 transferred = transferred || gen != generation;

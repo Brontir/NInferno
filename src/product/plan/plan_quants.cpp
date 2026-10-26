@@ -444,7 +444,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             const std::uint32_t context =
                 ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
             row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
-            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth);
+            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth,
+                                            task.prompt);
             row.request_seconds = choice::request_seconds(model, card, q, c, task);
         }
         candidates.push_back(row.candidate);

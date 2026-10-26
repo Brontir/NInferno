@@ -129,6 +129,15 @@
    "moe": true,
    "experts_per_token": 8,
    "experts": 256
+  },
+  "Qwen3.8-27B-GGUF_UD-IQ3_XXS": {
+   "active_params": 25106841600.0,
+   "full_width": 196608.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
   }
  },
  "rows": [
@@ -214,6 +223,27 @@
    "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
    "n": 21405,
    "prefill": 3487.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 2759.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 2847.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 2595.0,
    "chunk": 1024
   },
   {
@@ -319,6 +349,27 @@
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 21363,
    "prefill": 7555.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1851,
+   "prefill": 7579.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7118,
+   "prefill": 7645.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21158,
+   "prefill": 6738.0,
    "chunk": 1024
   },
   {
@@ -470,6 +521,27 @@
   },
   {
    "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1851,
+   "prefill": 4069.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7118,
+   "prefill": 4015.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21158,
+   "prefill": 3519.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 1992.0,
@@ -509,6 +581,152 @@
    "n": 21365,
    "prefill": 3305.0,
    "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 2950.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 3081.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2864.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 1476.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 1171.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 738.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2418.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2373.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2365.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5707.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5688.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5695.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2420.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5703.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 6697.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.8-27B-GGUF_UD-IQ3_XXS",
+   "n": 21365,
+   "prefill": 2064.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 21365,
+   "prefill": 7334.0,
+   "chunk": 1024,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
+   "n": 21365,
+   "prefill": 3376.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 21365,
+   "prefill": 13777.0,
+   "chunk": 1024,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   }
  ]
 }
