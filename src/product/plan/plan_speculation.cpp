@@ -107,12 +107,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
 
     convert::DrafterTarget t;
     t.repo    = target.repo;
-    t.lineage = target.lineage;
-    for (const auto& base : facts.shape.base_models) {
-        if (std::find(t.lineage.begin(), t.lineage.end(), base) == t.lineage.end()) {
-            t.lineage.push_back(base);
-        }
-    }
+    t.lineage = facts.shape.base_models; // a GGUF's general.base_model, a model card's entries
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
     t.geometry     = spec::Geometry{facts.shape.hidden_size, facts.shape.num_hidden_layers,
