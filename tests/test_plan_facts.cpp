@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -128,6 +129,12 @@ int gguf_qwen35() {
     failures += same(f.shape.base_models.empty() ? std::string() : f.shape.base_models.front(),
                      std::string("Qwen/Qwen3.6-27B"), "qwen35 base model");
     failures += same(f.model.architecture, std::string("qwen35"), "qwen35 architecture");
+    // Bits per weight over the tensor table's elements (exact), not the geometry's estimate.
+    const double elements = 2.0 * 5120 * 248320 + 5120.0 * 10240 + 5120;
+    failures += check(f.model.weight_elements == elements,
+                      "qwen35 gguf elements " + std::to_string(f.model.weight_elements));
+    failures += check(std::abs(pr::bits_per_weight(f.model, 2520) - 2520 * 8 / elements) < 1e-12,
+                      "bits per weight over the elements");
 
     // A split GGUF's head lists its own part's tensors: the listed file sizes stand.
     GgufFile split                = file;
@@ -136,6 +143,9 @@ int gguf_qwen35() {
     failures += check(s.model.weight_basis == rt::WeightBasis::FileSize, "split gguf basis");
     failures += same(s.model.weight_bytes, 17000000000ULL, "split gguf bytes");
     failures += same(s.model.full_layers, 16, "split gguf shape kept");
+    failures += check(s.model.weight_elements == 0 &&
+                          pr::bits_per_weight(s.model, 8) == (s.model.params > 0 ? 64 / s.model.params : 0),
+                      "a split part's elements unknown: the parameter count");
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);

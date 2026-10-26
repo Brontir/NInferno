@@ -22,7 +22,7 @@
    },
    "quants": {
     "Q4_K_M": {
-     "bits_per_weight": 5.16,
+     "bits_per_weight": 5.08,
      "weight_bytes": 5680522464
     }
    }
@@ -48,11 +48,11 @@
    },
    "quants": {
     "UD-IQ3_XXS": {
-     "bits_per_weight": 3.32,
+     "bits_per_weight": 3.2,
      "weight_bytes": 10934860704
     },
     "UD-Q4_K_XL": {
-     "bits_per_weight": 5.33,
+     "bits_per_weight": 5.14,
      "weight_bytes": 17559178144
     }
    }
@@ -78,11 +78,11 @@
    },
    "quants": {
     "UD-IQ3_XXS": {
-     "bits_per_weight": 3.06,
+     "bits_per_weight": 3.05,
      "weight_bytes": 13211155424
     },
     "UD-Q4_K_M": {
-     "bits_per_weight": 5.12,
+     "bits_per_weight": 5.11,
      "weight_bytes": 22134528992
     }
    }

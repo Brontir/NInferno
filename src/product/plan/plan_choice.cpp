@@ -183,7 +183,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     choice::QuantOption quant;
     quant.label           = label.empty() ? "the model's weights" : label;
     quant.weight_bytes    = static_cast<double>(facts.model.weight_bytes);
-    quant.bits_per_weight = facts.model.params > 0 ? quant.weight_bytes * 8 / facts.model.params : 0;
+    quant.bits_per_weight = bits_per_weight(facts.model, quant.weight_bytes);
     const auto& formats   = facts.shape.weight_formats;
     quant.nvfp4      = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
     // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks

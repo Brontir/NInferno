@@ -173,6 +173,10 @@ struct PlanModelFacts {
     std::uint32_t ffn_active = 0;
     std::uint32_t vocab      = 0;
     double params            = 0; // every weight (0: unknown)
+    // The weights' elements as a whole GGUF tensor table counts them (0: unknown): the
+    // denominator of bits per weight (product::bits_per_weight), exact where the geometry's
+    // parameter count above is an estimate (Gemma 4's runs 18 % over its tensors).
+    double weight_elements = 0;
     // The weights the Device holds (the target's; a separate drafter's apart).
     std::uint64_t weight_bytes  = 0;
     WeightBasis weight_basis    = WeightBasis::Unknown;

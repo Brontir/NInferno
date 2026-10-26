@@ -233,20 +233,21 @@ struct QuantKldPoint {
 inline constexpr std::string_view kQuantKldSource =
     "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean";
 inline constexpr int kQuantKldCards = 2;
-// Bits per weight as the plan counts them (the weight bytes over the parameters); the two cards'
+// Bits per weight as the plan counts them (the weight bytes over the GGUF tensor table's elements,
+// 8 953 803 264; first recorded over the geometry's 8 815 378 432 parameters, rescaled); the two cards'
 // KLD (within 2 % at every point: the exact route's bytes do not depend on the card), perplexity
 // and top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD
 // 0.068 above 0.028).
 inline constexpr QuantKldPoint kQuantKld[] = {
-    {8.65, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
-    {6.77, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
-    {5.97, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
-    {5.16, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
-    {4.69, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
-    {4.24, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
-    {3.64, 0.10710, "UD-IQ3_XXS"}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
-    {3.31, 0.16145, "UD-IQ2_M"},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
-    {2.90, 0.33460, "UD-IQ2_XXS"}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
+    {8.516, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
+    {6.665, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
+    {5.878, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
+    {5.080, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
+    {4.617, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
+    {4.174, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
+    {3.584, 0.10710, "UD-IQ3_XXS"}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
+    {3.259, 0.16145, "UD-IQ2_M"},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
+    {2.855, 0.33460, "UD-IQ2_XXS"}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
 };
 
 // ---- The trade.
