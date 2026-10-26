@@ -1,6 +1,7 @@
 #include "product/plan/plan_speculation.h"
 
 #include "convert/drafters.h"
+#include "core/hub_revision.h"
 #include "core/device_class.h"
 #include "product/plan/plan_quants.h"
 #include "product/speculative_options.h"
@@ -198,7 +199,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
                                                          engine,
                                                          target.repo.empty() || target.commit.empty()
                                                              ? std::string()
-                                                             : target.repo + "@" + target.commit);
+                                                             : HubRevision{target.repo, target.commit}.id());
     } catch (const std::exception& error) {
         out.resolved = spec::ResolvedSpeculation{};
         out.resolved->notes.push_back(std::string("drafters not planned: ") + error.what());

@@ -2,6 +2,7 @@
 
 #include "artifact/reader.h"
 #include "core/ascii.h"
+#include "core/hub_revision.h"
 #include "core/quant_label.h"
 #include "spec/engine_support.h"
 
@@ -126,20 +127,6 @@ nlohmann::json pair_json(const MeasuredPair& pair) {
              {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
     if (!pair.drafters.empty()) { out["drafters"] = pair.drafters; }
     return out;
-}
-
-bool same_repo_revision(std::string_view a, std::string_view b) {
-    if (a.empty() || b.empty()) { return true; }
-    const auto split = [](std::string_view id) {
-        const auto at = id.find('@');
-        return std::pair{ascii_lower(id.substr(0, at)),
-                         at == std::string_view::npos ? std::string() : ascii_lower(id.substr(at + 1))};
-    };
-    const auto [ra, va] = split(a);
-    const auto [rb, vb] = split(b);
-    if (ra != rb) { return false; }
-    if (va.empty() || vb.empty()) { return true; }
-    return va.starts_with(vb) || vb.starts_with(va);
 }
 
 MeasuredPair parse_pair(const nlohmann::json& doc) {
@@ -469,7 +456,10 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
     std::set<Mode> carried = query.modes;
     for (const auto& [kind, id] : query.attached) {
         const auto measured = p.drafters.find(kind);
-        if (measured == p.drafters.end() || same_repo_revision(measured->second, id)) { continue; }
+        if (measured == p.drafters.end() ||
+            HubRevision::parse(measured->second).same_as(HubRevision::parse(id))) {
+            continue;
+        }
         if (const auto mode = try_mode_of_kind(kind)) { carried.erase(*mode); }
     }
     std::erase_if(p.tune.measurements, [&](const Measurement& m) {
@@ -543,7 +533,8 @@ Siblings nearest_siblings(const std::vector<MeasuredPair>& pairs, const PairQuer
         const auto at       = revision.find('@');
         // The same repository (case aside) at the same commit (a prefix of it).
         if (at == std::string_view::npos || at + 1 == revision.size() ||
-            !same_repo_revision(revision, repo_at_commit) || pair.engine != query.engine ||
+            !HubRevision::parse(revision).same_as(HubRevision::parse(repo_at_commit)) ||
+            pair.engine != query.engine ||
             pair.target == query.target || !same_bit_class(pair.target_bits, query.target_bits)) {
             continue;
         }

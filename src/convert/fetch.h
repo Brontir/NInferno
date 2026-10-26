@@ -20,6 +20,8 @@
 //              the cache; a listing that fails falls back to it only for a commit (a branch or a
 //              tag may have moved: the error says so).
 
+#include "core/hub_revision.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -110,16 +112,11 @@ void save_hub_token(const std::string& token);
 // it (an invalid token: HTTP 401).
 [[nodiscard]] std::string hub_account(const std::string& token, const FetchOptions& options);
 
-// A repository's directory in a hub cache, as Hugging Face's own tools name it: org/name ->
-// models--org--name; and back, "" for a directory that is no repository's.
-[[nodiscard]] std::string hub_repo_directory(std::string_view repo);
-
 // The commit `revision` ("" for main) names in a hub cache's repository directory `repo_dir`
 // (<cache>/models--org--name): a commit id itself, else the commit its ref file (refs/<revision>)
 // records; nullopt when none is recorded or what is recorded is no commit id.
 [[nodiscard]] std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
                                                       const std::string& revision);
-[[nodiscard]] std::string hub_repo_of_directory(std::string_view directory);
 
 // org/name[@revision] -> (org/name, revision); without @, the options' revision ("": the hub's
 // default branch). Throws for anything that is not one org and one name.

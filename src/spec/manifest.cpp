@@ -1,6 +1,7 @@
 #include "spec/manifest.h"
 
 #include "artifact/reader.h"
+#include "core/hub_revision.h"
 #include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
@@ -426,30 +427,25 @@ void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
 std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
     const auto commit_dir = artifact.parent_path();
     if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
-    const std::string dir = commit_dir.parent_path().parent_path().filename().string();
-    if (!dir.starts_with("models--")) { return {}; }
-    std::string repo = dir.substr(8);
-    const auto separator = repo.find("--");
-    if (separator == std::string::npos) { return {}; }
-    repo.replace(separator, 2, "/");
-    return repo + "@" + commit_dir.filename().string();
+    const std::string repo =
+        hub_repo_of_directory(commit_dir.parent_path().parent_path().filename().string());
+    if (repo.find('/') == std::string::npos) { return {}; }
+    return HubRevision{repo, commit_dir.filename().string()}.id();
+}
+
+// The drafters a manifest attaches from a repository of their own, by kind: repo@revision.
+std::map<std::string, std::string> attached_identities(const SpeculationManifest& manifest) {
+    std::map<std::string, std::string> out;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable() && !d.repo.empty()) { out[d.kind] = HubRevision{d.repo, d.revision}.id(); }
+    }
+    return out;
 }
 
 // 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
 //    weights it was converted from), else its group's preliminary choice. False when the registry
 //    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
 //    the published profiles answer.
-// The drafters a manifest attaches from a repository of their own, by kind: repo@revision.
-std::map<std::string, std::string> attached_identities(const SpeculationManifest& manifest) {
-    std::map<std::string, std::string> out;
-    for (const auto& d : manifest.drafters) {
-        if (d.usable() && !d.repo.empty()) {
-            out[d.kind] = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
-        }
-    }
-    return out;
-}
-
 bool resolve_pair_profile(const SpeculationManifest& manifest,
                           const std::filesystem::path& artifact, const GpuKey& gpu,
                           ResolvedSpeculation& out) {

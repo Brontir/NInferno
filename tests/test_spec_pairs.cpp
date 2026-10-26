@@ -3,6 +3,7 @@
 // 4070 Ti / 4090 (sm89) and an RTX 5070 Ti (sm120)).
 
 #include "core/quant_label.h"
+#include "core/hub_revision.h"
 #include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
@@ -366,8 +367,13 @@ int main() {
                                            {{"dflash", "z-lab/Qwen3.5-9B-DFlash@0123abcd"}});
         expect(same && same->basis == "measured", "the drafter measured: measured");
         expect(!other || other->basis != "measured", "another revision of the drafter: not measured");
-        expect(sp::same_repo_revision("Org/D@abc", "org/d@abcdef") && !sp::same_repo_revision("org/d@abc", "org/d@abd") &&
-                   !sp::same_repo_revision("org/d", "org/e") && sp::same_repo_revision("", "org/d@x"),
+        const auto same = [](const char* a, const char* b) {
+            return ninferno::HubRevision::parse(a).same_as(ninferno::HubRevision::parse(b));
+        };
+        expect(same("Org/D@abc", "org/d@abcdef") && !same("org/d@abc", "org/d@abd") &&
+                   !same("org/d", "org/e") && same("", "org/d@x") &&
+                   ninferno::HubRevision::parse("org/d@abc").id() == "org/d@abc" &&
+                   ninferno::HubRevision{"org/d", ""}.id() == "org/d",
                "drafter identities");
         const auto back = sp::parse_pair(sp::pair_json(with));
         expect(back.drafters == with.drafters, "the measured drafters round-trip through the JSON");
