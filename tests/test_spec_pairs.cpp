@@ -367,11 +367,11 @@ int main() {
                                            {{"dflash", "z-lab/Qwen3.5-9B-DFlash@0123abcd"}});
         expect(same && same->basis == "measured", "the drafter measured: measured");
         expect(!other || other->basis != "measured", "another revision of the drafter: not measured");
-        const auto same = [](const char* a, const char* b) {
+        const auto same_revision = [](const char* a, const char* b) {
             return ninferno::HubRevision::parse(a).same_as(ninferno::HubRevision::parse(b));
         };
-        expect(same("Org/D@abc", "org/d@abcdef") && !same("org/d@abc", "org/d@abd") &&
-                   !same("org/d", "org/e") && same("", "org/d@x") &&
+        expect(same_revision("Org/D@abc", "org/d@abcdef") && !same_revision("org/d@abc", "org/d@abd") &&
+                   !same_revision("org/d", "org/e") && same_revision("", "org/d@x") &&
                    ninferno::HubRevision::parse("org/d@abc").id() == "org/d@abc" &&
                    ninferno::HubRevision{"org/d", ""}.id() == "org/d",
                "drafter identities");
