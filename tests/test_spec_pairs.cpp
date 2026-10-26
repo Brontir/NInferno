@@ -124,6 +124,13 @@ int main() {
                    sp::generation_round_costs(lab, "sm89", "sm120").empty() &&
                    sp::generation_round_costs(one_ampere, "sm89", "sm86").empty(),
                "a round's cost on another generation, from a target two cards of each measured");
+        // Two cards in all, but one of them never measured dflash:7: that ratio rests on one card.
+        auto no_df7 = on(ampere, "ga104:48sm");
+        std::erase_if(no_df7.tune.measurements,
+                      [](const auto& m) { return m.config.label() == "dflash:7"; });
+        const std::vector<sp::MeasuredPair> split = {ada_q4, on(ada_q4, "ad102:128sm"), ampere, no_df7};
+        expect(!sp::generation_round_costs(split, "sm89", "sm86").contains("dflash:7"),
+               "a configuration's ratio rests on two cards of each generation that measured it");
         auto other   = ada_q4; // a target measured on Ada only
         other.target = "other-weights";
         const auto as_ada    = sp::profile_for_target({&other}, "sm86");
