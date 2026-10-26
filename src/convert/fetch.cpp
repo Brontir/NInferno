@@ -1132,52 +1132,12 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     std::map<std::string, std::vector<const RemoteFile*>> groups;
     for (const auto* file : ggufs) { groups[gguf_group(file->path)].push_back(file); }
     std::string chosen;
-    if (const int width = quant_width_tag(options.quant); width > 0) {
-        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
-        std::uint64_t largest = 0;
+    if (!options.quant.empty()) {
+        std::map<std::string, std::uint64_t> sizes;
         for (const auto& [group, files] : groups) {
-            const auto name = std::filesystem::path(files.front()->path).filename().string();
-            if (quant_label_bits(gguf_quant_label(name)) != width) { continue; }
-            std::uint64_t bytes = 0;
-            for (const auto* file : files) { bytes += file->size; }
-            if (bytes > largest) {
-                largest = bytes;
-                chosen  = group;
-            }
+            for (const auto* file : files) { sizes[group] += file->size; }
         }
-        if (chosen.empty()) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches no " +
-                                     std::to_string(width) + "-bit GGUF model; available:" + names);
-        }
-    } else if (!options.quant.empty()) {
-        std::vector<std::string> matches;
-        const auto want = ascii_lower(options.quant);
-        for (const auto& [group, files] : groups) {
-            if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
-        }
-        // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
-        if (matches.size() > 1) {
-            std::vector<std::string> exact;
-            for (const auto& group : matches) {
-                const auto text = ascii_lower(group);
-                const auto at   = text.find(want);
-                const auto next = at + want.size();
-                if (next == text.size() || text.compare(next, 5, ".gguf") == 0) {
-                    exact.push_back(group);
-                }
-            }
-            if (exact.size() == 1) { matches = exact; }
-        }
-        if (matches.size() != 1) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches " +
-                                     std::to_string(matches.size()) + " GGUF models; available:" +
-                                     names);
-        }
-        chosen = matches.front();
+        chosen = gguf_group_for_quant(sizes, options.quant, repo);
     } else {
         int best = 1 << 30;
         for (const auto& [group, files] : groups) {
@@ -1191,6 +1151,103 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     for (const auto* file : groups[chosen]) { out.push_back(*file); }
     return out;
 }
+
+} // namespace
+
+std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
+                                 const std::string& quant, const std::string& repo) {
+    const auto available = [&] {
+        std::string names;
+        for (const auto& [group, _] : groups) { names += "\n  " + group; }
+        return names;
+    };
+    if (const int width = quant_width_tag(quant); width > 0) {
+        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
+        std::string chosen;
+        std::uint64_t largest = 0;
+        for (const auto& [group, bytes] : groups) {
+            // A split model's stem names no file; a whole one's is its file name.
+            const auto file = ascii_lower(group).ends_with(".gguf") ? group : group + ".gguf";
+            if (quant_label_bits(gguf_quant_label(file)) != width) { continue; }
+            if (bytes > largest) {
+                largest = bytes;
+                chosen  = group;
+            }
+        }
+        if (chosen.empty()) {
+            throw std::runtime_error(repo + ": --quant " + quant + " matches no " +
+                                     std::to_string(width) + "-bit GGUF model; available:" +
+                                     available());
+        }
+        return chosen;
+    }
+    std::vector<std::string> matches;
+    const auto want = ascii_lower(quant);
+    for (const auto& [group, _] : groups) {
+        if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
+    }
+    // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
+    if (matches.size() > 1) {
+        std::vector<std::string> exact;
+        for (const auto& group : matches) {
+            const auto text = ascii_lower(group);
+            const auto at   = text.find(want);
+            const auto next = at + want.size();
+            if (next == text.size() || text.compare(next, 5, ".gguf") == 0) { exact.push_back(group); }
+        }
+        if (exact.size() == 1) { matches = exact; }
+    }
+    if (matches.size() != 1) {
+        throw std::runtime_error(repo + ": --quant " + quant + " matches " +
+                                 std::to_string(matches.size()) + " GGUF models; available:" +
+                                 available());
+    }
+    return matches.front();
+}
+
+RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
+                           const std::string& repo) {
+    // Every file in the fetch's own group (gguf_group of its path, a folder's name with it): one
+    // label's entry may hold several models (A-Q4_K_M, B-Q4_K_M), a split model without a label
+    // be listed a part at a time.
+    struct Member {
+        const RepoQuant* entry;
+        std::size_t file;
+    };
+    std::map<std::string, std::uint64_t> groups;
+    std::map<std::string, std::vector<Member>> members;
+    for (const auto& q : quants) {
+        if (q.drafter || q.format != "gguf") { continue; }
+        for (std::size_t i = 0; i < q.files.size(); ++i) {
+            const auto group = gguf_group(q.files[i]);
+            groups[group] += i < q.sizes.size() ? q.sizes[i] : q.bytes / q.files.size();
+            members[group].push_back({&q, i});
+        }
+    }
+    const auto chosen   = gguf_group_for_quant(groups, quant, repo);
+    const auto& of      = members.at(chosen);
+    const RepoQuant* one = of.front().entry;
+    const bool whole     = std::all_of(of.begin(), of.end(), [&](const Member& m) {
+                           return m.entry == one;
+                       }) && of.size() == one->files.size();
+    if (whole) { return *one; }
+    // The group's files alone, named by the group, its folder with it (what the fetch matches
+    // --quant against again when it reads the header: one name in two folders stays apart).
+    RepoQuant out;
+    out.quant = chosen; // a whole file's ends .gguf
+    if (ascii_lower(out.quant).ends_with(".gguf")) { out.quant.resize(out.quant.size() - 5); }
+    out.format = "gguf";
+    out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf"));
+    out.bytes  = groups.at(chosen);
+    for (const auto& m : of) {
+        out.files.push_back(m.entry->files[m.file]);
+        if (m.file < m.entry->sha256.size()) { out.sha256.push_back(m.entry->sha256[m.file]); }
+        if (m.file < m.entry->sizes.size()) { out.sizes.push_back(m.entry->sizes[m.file]); }
+    }
+    return out;
+}
+
+namespace {
 
 // A relative symlink from snapshots/<commit>/<path> to blobs/<digest>.
 void link_snapshot(const fs::path& repo_dir, const std::string& commit, const std::string& path,
@@ -2129,6 +2186,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             out[it->second].bytes += file.size;
             out[it->second].files.push_back(file.path);
             out[it->second].sha256.push_back(file.sha256);
+            out[it->second].sizes.push_back(file.size);
         } else if (name.ends_with(".ninferno") && file.path.find('/') == std::string::npos) {
             RepoQuant quant;
             quant.quant  = native_quant_label(file.path);

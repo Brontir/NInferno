@@ -208,6 +208,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     }
     const auto quants                 = convert::list_quants(spec, fetch);
     std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
+    std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
     const convert::RepoQuant* native  = nullptr;
@@ -220,15 +221,20 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                .weights = weights_of(q)});
         if (q.drafter) { continue; }
         if (q.format == "gguf") {
-            const bool named = !quant.empty() && ascii_lower(q.quant) == ascii_lower(quant);
-            if (named || (quant.empty() && (header == nullptr || q.bytes < header->bytes))) {
-                header = &q;
-            }
+            if (quant.empty() && (header == nullptr || q.bytes < header->bytes)) { header = &q; }
         } else if (q.format == "safetensors") {
             weights = &q;
         } else if (q.format == "ninferno") {
             native = &q;
         }
+    }
+    // --quant: the GGUF model the fetch takes for it (convert::listed_quant_for: "Q4_K_M" takes
+    // UD-Q4_K_M where that is the one, "4bit" the largest 4-bit model), throwing as the fetch does.
+    if (!quant.empty() &&
+        std::any_of(quants.begin(), quants.end(),
+                    [](const auto& q) { return !q.drafter && q.format == "gguf"; })) {
+        named  = convert::listed_quant_for(quants, quant, out.repo);
+        header = &*named;
     }
     // No --quant: a revision with top-level safetensors weights is fetched as them, whatever GGUF
     // files it also holds (convert/fetch.cpp choose_files), so the plan is theirs.

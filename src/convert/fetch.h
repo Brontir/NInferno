@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -202,6 +203,7 @@ struct RepoQuant {
     bool drafter        = false;
     std::vector<std::string> files;
     std::vector<std::string> sha256; // each file's LFS digest, as files lists them ("": in git)
+    std::vector<std::uint64_t> sizes; // each GGUF file's bytes, as files lists them
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;
@@ -214,6 +216,19 @@ struct RepoQuant {
 
 // The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
 // is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
+// The GGUF model `quant` names among `groups` (each model's split stem and its bytes), as the
+// fetch picks it: a width ("4bit") the largest model of that width; else the models whose stem
+// holds the label, "Q4_K_M" matching "UD-Q4_K_M", an exact label when several do. Throws naming
+// the models when none or several match.
+[[nodiscard]] std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
+                                               const std::string& quant, const std::string& repo);
+// The listing's GGUF quantization the fetch takes for --quant `quant` (gguf_group_for_quant over
+// list_quants' models): the plan without weights plans the files the start downloads. A split
+// model the listing gives a part at a time (no quantization label in its names) is one entry of
+// all its parts, named by its group.
+[[nodiscard]] RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants,
+                                         const std::string& quant, const std::string& repo);
+
 [[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
                                                  const FetchOptions& options);
 
