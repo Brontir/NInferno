@@ -102,6 +102,11 @@ std::set<std::string> own_components(const PlanSourceFacts& facts) {
     return out;
 }
 
+// The shape the registry matches a target by.
+spec::Geometry geometry_of(const PlanSourceFacts& facts) {
+    return {facts.shape.hidden_size, facts.shape.num_hidden_layers, facts.shape.vocab_size};
+}
+
 // The target as the converter's drafter plan sees it (convert::describe_checkpoint and
 // describe_gguf_artifact): repository, lineage (the target's, then the base models its facts
 // name), engine, shape, built-in MTP and components.
@@ -117,8 +122,7 @@ convert::DrafterTarget drafter_target(const PlannedTarget& target) {
     }
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
-    t.geometry     = spec::Geometry{facts.shape.hidden_size, facts.shape.num_hidden_layers,
-                                facts.shape.vocab_size};
+    t.geometry     = geometry_of(facts);
     t.builtin_mtp  = facts.shape.builtin_mtp;
     const auto components = own_components(facts);
     t.components.assign(components.begin(), components.end());
@@ -186,8 +190,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
         } else {
             // No manifest (a GGUF hub model without --with-drafters): the registry entry of its
             // shape (spec::resolve_speculation's third source), its vocabulary unread.
-            const spec::Geometry geometry{facts.shape.hidden_size, facts.shape.num_hidden_layers,
-                                          facts.shape.vocab_size};
+            const spec::Geometry geometry = geometry_of(facts);
             entry = spec::Registry::builtin().nearest(engine, geometry, "", facts.shape.builtin_mtp);
             if (entry != nullptr &&
                 (geometry.hidden_size == 0 || geometry.num_hidden_layers == 0 ||
@@ -216,7 +219,7 @@ SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::Gp
     SpeculationSubject out = speculation_subject(*cached, gpu, spec_profile);
     try {
         out.attached_drafters = declared_drafters(target).attached;
-    } catch (const std::exception&) {} // none planned: none counted, as planned_subject
+    } catch (const std::exception&) {} // the drafters not planned: none counted
     return out;
 }
 
