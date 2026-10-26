@@ -783,19 +783,19 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
     convert::FetchOptions fetch;
     fetch.hub = hub;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-    const auto quants = convert::list_quants(repo, fetch);
-    Json list         = Json::array();
+    const auto listing = convert::list_quants(repo, fetch);
+    Json list          = Json::array();
     std::lock_guard lock(sizes_mutex_);
-    for (const auto& q : quants) {
+    for (const auto& q : listing.quants) {
         list.push_back({{"quant", q.quant},
                         {"format", q.format},
                         {"bytes", q.bytes},
-                        {"files", q.files},
+                        {"files", q.paths()},
                         {"bits", q.bits},
                         {"drafter", q.drafter},
                         {"mtp_bytes", q.mtp_bytes},
-                        {"weights", spec::weights_identity(q.sha256)},
-                        {"commit", q.commit}});
+                        {"weights", spec::weights_identity(q.digests())},
+                        {"commit", listing.commit}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
     if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
@@ -1301,7 +1301,7 @@ Json App::moved_json() {
     const std::int64_t now = std::time(nullptr);
     std::error_code ec;
     for (const auto& repo_dir : fs::directory_iterator(root, ec)) {
-        const auto repo = convert::hub_repo_of_directory(repo_dir.path().filename().string());
+        const auto repo = hub_repo_of_directory(repo_dir.path().filename().string());
         if (repo.empty() || !fs::is_directory(repo_dir.path() / "ninferno", ec)) { continue; }
         // The branches (refs/<name>) and the commit each named when it was fetched.
         for (const auto& ref_file : fs::directory_iterator(repo_dir.path() / "refs", ec)) {
@@ -1373,7 +1373,7 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         !std::regex_match(commit, hex40) || !std::regex_match(ref, ref_name)) {
         throw std::invalid_argument("bad repo, ref or commit");
     }
-    const auto dir = hub_root() / convert::hub_repo_directory(repo) / "ninferno" / commit;
+    const auto dir = hub_root() / hub_repo_directory(repo) / "ninferno" / commit;
     std::string hub_commit;
     {
         std::lock_guard lock(moved_mutex_);
@@ -1692,7 +1692,7 @@ Json App::local_json() {
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
     if (fs::is_directory(root, ec)) {
         for (const auto& repo_dir : fs::directory_iterator(root, ec)) {
-            const auto repo = convert::hub_repo_of_directory(repo_dir.path().filename().string());
+            const auto repo = hub_repo_of_directory(repo_dir.path().filename().string());
             if (repo.empty()) { continue; }
             const auto converted = repo_dir.path() / "ninferno";
             if (!fs::is_directory(converted, ec)) { continue; }
@@ -1733,7 +1733,7 @@ Json App::local_json() {
 
 fs::path App::local_artifact(const std::string& repo, const std::string& quant) {
     std::error_code ec;
-    const auto dir = hub_root() / convert::hub_repo_directory(repo) / "ninferno";
+    const auto dir = hub_root() / hub_repo_directory(repo) / "ninferno";
     if (!fs::is_directory(dir, ec)) { return {}; }
     for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
         if (!entry.is_regular_file(ec) || entry.path().extension() != ".ninferno") { continue; }
@@ -1779,7 +1779,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     fs::path repo_dir;
     for (auto p = path.parent_path(); !p.empty() && p != p.parent_path(); p = p.parent_path()) {
         if (p.parent_path() == root &&
-            !convert::hub_repo_of_directory(p.filename().string()).empty()) {
+            !hub_repo_of_directory(p.filename().string()).empty()) {
             repo_dir = p;
             break;
         }
@@ -1823,7 +1823,7 @@ std::uint64_t App::delete_original(const std::string& repo) {
     if (!convert::is_repository_spec(repo) || repo.find('@') != std::string::npos) {
         throw std::invalid_argument("repo must be org/name");
     }
-    const auto dir = hub_root() / convert::hub_repo_directory(repo);
+    const auto dir = hub_root() / hub_repo_directory(repo);
     std::error_code ec;
     if (!fs::is_directory(dir / "ninferno", ec)) {
         throw std::invalid_argument(repo + " has no converted model here; its download is kept");

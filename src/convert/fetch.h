@@ -20,6 +20,8 @@
 //              the cache; a listing that fails falls back to it only for a commit (a branch or a
 //              tag may have moved: the error says so).
 
+#include "core/hub_revision.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -110,16 +112,11 @@ void save_hub_token(const std::string& token);
 // it (an invalid token: HTTP 401).
 [[nodiscard]] std::string hub_account(const std::string& token, const FetchOptions& options);
 
-// A repository's directory in a hub cache, as Hugging Face's own tools name it: org/name ->
-// models--org--name; and back, "" for a directory that is no repository's.
-[[nodiscard]] std::string hub_repo_directory(std::string_view repo);
-
 // The commit `revision` ("" for main) names in a hub cache's repository directory `repo_dir`
 // (<cache>/models--org--name): a commit id itself, else the commit its ref file (refs/<revision>)
 // records; nullopt when none is recorded or what is recorded is no commit id.
 [[nodiscard]] std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
                                                       const std::string& revision);
-[[nodiscard]] std::string hub_repo_of_directory(std::string_view directory);
 
 // org/name[@revision] -> (org/name, revision); without @, the options' revision ("": the hub's
 // default branch). Throws for anything that is not one org and one name.
@@ -216,6 +213,14 @@ rate_limit_reset_seconds(const std::map<std::string, std::string>& headers);
 // converter needs, so true).
 [[nodiscard]] bool include_selects(const FetchOptions& options, const std::string& path);
 
+// A file of a hub repository, as its listing shows it.
+struct RemoteFile {
+    std::string path;
+    std::uint64_t size = 0;
+    std::string sha256;   // LFS files
+    std::string git_sha1; // small files kept in git
+};
+
 // One model a repository offers, as a listing shows it: a GGUF quantization (its split parts
 // together), a safetensors checkpoint (quant ""), an artifact in the engine's own format (.ninferno,
 // run as published), or a sidecar (MTP/DFlash/EAGLE drafter, vision
@@ -226,13 +231,20 @@ struct RepoQuant {
     std::uint64_t bytes = 0;
     int bits            = 0; // from the label (Q4_K_M -> 4, BF16 -> 16); 0 when it says none
     bool drafter        = false;
-    std::vector<std::string> files;
-    std::vector<std::string> sha256; // each file's LFS digest, as files lists them ("": in git)
-    std::vector<std::uint64_t> sizes; // each GGUF file's bytes, as files lists them
+    std::vector<RemoteFile> files;
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;
+
+    [[nodiscard]] std::vector<std::string> paths() const;
+    // Each file's LFS digest, as files lists them ("": a file kept in git).
+    [[nodiscard]] std::vector<std::string> digests() const;
+};
+
+// A repository's models at one commit (list_quants).
+struct RepoListing {
     std::string commit; // the commit the listing was read at ("" unknown)
+    std::vector<RepoQuant> quants;
 };
 
 // The commit `spec`'s revision names on the hub now (one listing request); nullopt under
@@ -255,8 +267,7 @@ struct RepoQuant {
 
 // The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
 // is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
-[[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
-                                                 const FetchOptions& options);
+[[nodiscard]] RepoListing list_quants(const std::string& spec, const FetchOptions& options);
 
 // A model the hub's search found: its id and what the hub says of it.
 struct HubModel {
@@ -304,11 +315,13 @@ struct HubModel {
 [[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
                                                              const FetchOptions& options);
 
-// The base models a repository's model card names, in its order (cardData.base_model: its
-// README's YAML front matter, what the converter's drafter plan reads from the downloaded README;
-// a merge names several), none when it names none, offline, or the hub does not answer. The plan of
-// a checkpoint not downloaded yet matches the registry by them as the converter will (a fine-tune
+// The base models a model card (fetch_model_card's answer) names, in its order
+// (cardData.base_model: its README's YAML front matter, what the converter's drafter plan reads
+// from the downloaded README; a merge names several), none when it names none. The plan of a
+// checkpoint not downloaded yet matches the registry by them as the converter will (a fine-tune
 // finds its base's entry).
+[[nodiscard]] std::vector<std::string> card_base_models(const nlohmann::json& card);
+// card_base_models of `spec`'s model card: none offline or when the hub does not answer.
 [[nodiscard]] std::vector<std::string> hub_base_models(const std::string& spec,
                                                        const FetchOptions& options);
 

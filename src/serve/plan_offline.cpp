@@ -49,7 +49,7 @@ struct ModelRead {
     std::string commit; // the commit the hub listing was read at ("" unknown)
 };
 
-std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
+std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.digests()); }
 
 std::string ascii_lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -117,7 +117,7 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     std::error_code error;
     // The requested revision's snapshot alone (a commit, or the commit its ref names: "main" when
     // none was asked), never another revision's files.
-    const fs::path repo_dir = convert::default_hub_cache() / convert::hub_repo_directory(repo);
+    const fs::path repo_dir = convert::default_hub_cache() / hub_repo_directory(repo);
     const auto commit       = convert::local_commit(repo_dir, revision);
     if (!commit) { return out; }
     const fs::path root = repo_dir / "snapshots" / *commit;
@@ -159,13 +159,15 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
 // choice: convert::best_projector, every part of a split one); 0 when there is none.
 std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quants) {
     std::vector<std::string> names;
-    for (const auto& q : quants) { names.insert(names.end(), q.files.begin(), q.files.end()); }
+    for (const auto& q : quants) {
+        for (const auto& file : q.files) { names.push_back(file.path); }
+    }
     const auto parts = convert::best_projector(names);
     std::uint64_t bytes = 0;
     for (const auto& q : quants) {
         // A projector file is a listing entry of its own (a sidecar), its bytes its own.
         if (q.files.size() == 1 &&
-            std::find(parts.begin(), parts.end(), q.files.front()) != parts.end()) {
+            std::find(parts.begin(), parts.end(), q.files.front().path) != parts.end()) {
             bytes += q.bytes;
         }
     }
@@ -182,7 +184,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     convert::FetchOptions fetch       = fetch_options();
     // A model the engine does not run is not planned: the converter's own rules, from what the
     // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
-    // the listing below to fail or plan.
+    // the listing below to fail or plan. The card read for it names the base models too.
+    std::vector<std::string> base_models;
     {
         auto ask  = fetch;
         ask.quant = quant;
@@ -191,6 +194,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             facts = convert::hub_support_facts(spec, ask);
         } catch (const std::exception&) {}
         if (facts) {
+            base_models = facts->base_models;
             if (template_given) { facts->chat_template = true; } // --chat-template
             if (const auto refusal = convert::serve_refusal(convert::model_support(*facts));
                 !refusal.empty()) {
@@ -198,9 +202,10 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             }
         }
     }
-    const auto quants                 = convert::list_quants(spec, fetch);
+    const auto listing                = convert::list_quants(spec, fetch);
+    const auto& quants                = listing.quants;
     std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
-    out.commit                        = quants.empty() ? std::string() : quants.front().commit;
+    out.commit                        = listing.commit;
     std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
@@ -275,7 +280,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
-        out.facts.shape.base_models = convert::hub_base_models(spec, fetch);
+        out.facts.shape.base_models = base_models;
         out.weights               = weights_of(*weights);
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them

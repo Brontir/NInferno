@@ -195,8 +195,8 @@ void test_access() {
 
 // The hub cache's directory names, both ways, as the page lists and deletes converted models.
 void test_hub_directories() {
-    using ninferno::convert::hub_repo_directory;
-    using ninferno::convert::hub_repo_of_directory;
+    using ninferno::hub_repo_directory;
+    using ninferno::hub_repo_of_directory;
     check(hub_repo_directory("Qwen/Qwen3.6-27B") == "models--Qwen--Qwen3.6-27B",
           "repo to directory");
     check(hub_repo_of_directory("models--Qwen--Qwen3.6-27B") == "Qwen/Qwen3.6-27B",

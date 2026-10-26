@@ -260,7 +260,8 @@ SupportFacts search_support_facts(const Json& item) {
         gated != item.end() && !gated->is_null() && !(gated->is_boolean() && !gated->get<bool>())) {
         out.needs_token = hub_token().value.empty();
     }
-    out.library  = item.value("library_name", std::string());
+    out.library     = item.value("library_name", std::string());
+    out.base_models = card_base_models(item);
     for (const auto& tag : item.value("tags", Json::array())) {
         if (tag.is_string() && tag.get<std::string>() == "mlx") { out.library = "mlx"; }
     }
