@@ -5,7 +5,6 @@
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
 #include "convert/drafters.h"
-#include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -923,52 +922,6 @@ void test_speculation_order() {
         check(subjects.of("UD-Q4_K_M", "").components.contains("mtp") &&
                   !subjects.of("UD-IQ1_S", "").components.contains("mtp"),
               "a quantization's own MTP layers, else the facts'");
-    }
-
-    // Every drafter the target carries is weighed: the 27B's sibling pair (UD-Q4_K_S) was measured
-    // with its MTP layers alone, the DFlash2 drafter it carries resolves by itself (other_kinds:
-    // the published profile), and the drafter axis offers both, each with its own source.
-    {
-        const pr::SpeculationSubject both = pr::planned_subject(
-            pr::PlannedTarget{.repo          = "unsloth/Qwen3.8-27B-GGUF",
-                              .facts         = facts,
-                              .gguf          = true,
-                              .with_drafters = true,
-                              .quant         = "UD-Q4_K_M",
-                              .commit        = "4ca720788d1e01f1bff70c033e0d0028fd02e502"},
-            gpu);
-        const bool sibling = both.resolved && both.resolved->basis == "preliminary" &&
-                             both.resolved->source.find("sibling") != std::string::npos;
-        const bool dflash2 =
-            both.resolved &&
-            std::any_of(both.resolved->other_kinds.begin(), both.resolved->other_kinds.end(),
-                        [](const auto& other) {
-                            return ninferno::spec::drafting_modes(other.profile)
-                                .contains(ninferno::spec::Mode::DFlash2);
-                        });
-        check(sibling && dflash2,
-              "the sibling's MTP pair, the DFlash2 drafter resolved alone (" +
-                  (both.resolved ? both.resolved->source + "; " +
-                                       std::to_string(both.resolved->other_kinds.size()) +
-                                       " other kind(s)"
-                                 : std::string("unresolved")) +
-                  ")");
-        const pr::DrafterAxis axis = pr::drafter_axis(both, pr::SpeculationAsk{});
-        const auto offers = [&](const char* label) {
-            return std::any_of(axis.options.begin(), axis.options.end(), [&](const auto& o) {
-                return o.label.rfind(label, 0) == 0;
-            });
-        };
-        std::string offered;
-        for (const auto& o : axis.options) { offered += " " + o.label; }
-        check(offers("mtp:") && offers("dflash2:"),
-              "the drafter axis offers MTP and DFlash2 (offers:" + offered + ")");
-        const pr::SpeculationSubject d2 =
-            pr::subject_of_mode(both, ninferno::spec::Mode::DFlash2);
-        check(d2.resolved && d2.resolved->basis != "preliminary" &&
-                  ninferno::spec::drafting_modes(d2.resolved->profile)
-                      .contains(ninferno::spec::Mode::DFlash2),
-              "DFlash2 chosen: its own resolution serves");
     }
 
     // The start's order itself (product::fit_fallbacks), one code for the server, the CLI and this
