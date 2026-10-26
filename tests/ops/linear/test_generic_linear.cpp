@@ -1320,7 +1320,7 @@ int check_mmq_code_sums(const Format& f) {
 }
 
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
-// the generic W4A8 from 17 tokens on every device with its int8 MMA (Volta has none: A16 there),
+// the generic W4A8 from 17 tokens wherever the build and device run it (not on Volta: A16 there),
 // decode and verify widths unchanged; the same
 // weight under AllowA4 (it carries its activation divisor) keeps W4A4 where the build has it and
 // is never W4A8's there, nor is it without a divisor (A16 then, as before). Through the public
@@ -1340,11 +1340,18 @@ int check_nvfp4_a8_routes() {
     no_divisor.input_scale_divisor = 0.0F;
     const generic::Problem p8{QType::NVFP4, a8, 384, 1024, generic::Epilogue::Store};
     const generic::Problem p4{QType::NVFP4, a4, 384, 1024, generic::Epilogue::Store};
+    // Whether this build and device run the generic W4A8 at all (Volta has no tile of it).
+    bool w4a8_here = false;
+    for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
+        w4a8_here = w4a8_here ||
+                    generic::route_admits({generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)},
+                                          dw.weight, a8);
+    }
     for (const std::int32_t t : {1, 4, 16, 17, 64, 200}) {
         const generic::Route r8 = generic::select_route(p8, dw.weight, t, false);
         const generic::Route r4 = generic::select_route(p4, dw.weight, t, false);
         const generic::Route r0 = generic::select_route(p4, no_divisor, t, false);
-        const bool wide = t >= 17 && device_class().features.mma_bf16;
+        const bool wide = t >= 17 && w4a8_here;
         const ops::ScopedPrefillRoutes prefill(true);
         if ((r8.family == generic::Family::W4a8Mma) != wide ||
             generic::owned_prefill_w4a8(dw.weight, a8, t) != wide) {
