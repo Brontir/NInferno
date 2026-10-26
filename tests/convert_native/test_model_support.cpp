@@ -328,14 +328,28 @@ int main(int argc, char** argv) {
         listing[2].format  = "gguf";
         listing[2].drafter = true;
         listing[2].files   = {"mtp-m-Q4_K_M.gguf"};
-        const auto* q4 = cv::listed_quant_for(listing, "Q4_K_M", "r");
-        const auto* q8 = cv::listed_quant_for(listing, "q8_0", "r");
-        expect(q4 == &listing[0] && q8 == &listing[1],
+        const auto q4 = cv::listed_quant_for(listing, "Q4_K_M", "r");
+        const auto q8 = cv::listed_quant_for(listing, "q8_0", "r");
+        expect(q4.quant == "UD-Q4_K_M" && q8.quant == "Q8_0" && q8.files.size() == 2,
                "the listing's quantization for --quant, a drafter beside them not one");
         // A whole file's group is its file name (gguf_group): a width reads its label from it.
         listing[0].files = {"m-UD-Q4_K_M.gguf"};
-        expect(cv::listed_quant_for(listing, "4bit", "r") == &listing[0],
+        expect(cv::listed_quant_for(listing, "4bit", "r").quant == "UD-Q4_K_M",
                "a width over whole files");
+        // A split model without a label in its names, listed a part at a time: one entry of both
+        // parts, named by its group, as the fetch matches --quant.
+        std::vector<cv::RepoQuant> parts(2);
+        for (int i = 0; i < 2; ++i) {
+            parts[i].quant  = "model-0000" + std::to_string(i + 1) + "-of-00002";
+            parts[i].format = "gguf";
+            parts[i].bytes  = 7;
+            parts[i].files  = {parts[i].quant + ".gguf"};
+            parts[i].sha256 = {std::string(64, char('a' + i))};
+        }
+        const auto whole = cv::listed_quant_for(parts, "model", "r");
+        expect(whole.quant == "model" && whole.bytes == 14 && whole.files.size() == 2 &&
+                   whole.sha256.size() == 2,
+               "an unlabelled split model is one entry of its parts");
         const std::map<std::string, std::uint64_t> files = {{"m-UD-Q4_K_M.gguf", 10},
                                                              {"m-Q8_0.gguf", 20}};
         expect(cv::gguf_group_for_quant(files, "4bit", "r") == "m-UD-Q4_K_M.gguf",

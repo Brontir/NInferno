@@ -206,6 +206,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     }
     const auto quants                 = convert::list_quants(spec, fetch);
     out.repo                          = convert::split_spec(spec, fetch).first;
+    std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
     const convert::RepoQuant* native  = nullptr;
@@ -230,7 +231,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     if (!quant.empty() &&
         std::any_of(quants.begin(), quants.end(),
                     [](const auto& q) { return !q.drafter && q.format == "gguf"; })) {
-        header = convert::listed_quant_for(quants, quant, out.repo);
+        named  = convert::listed_quant_for(quants, quant, out.repo);
+        header = &*named;
     }
     // No --quant: a revision with top-level safetensors weights is fetched as them, whatever GGUF
     // files it also holds (convert/fetch.cpp choose_files), so the plan is theirs.

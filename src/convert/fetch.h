@@ -222,10 +222,11 @@ struct RepoQuant {
 [[nodiscard]] std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
                                                const std::string& quant, const std::string& repo);
 // The listing's GGUF quantization the fetch takes for --quant `quant` (gguf_group_for_quant over
-// list_quants' models): the plan without weights plans the file the start downloads.
-[[nodiscard]] const RepoQuant* listed_quant_for(const std::vector<RepoQuant>& quants,
-                                                const std::string& quant,
-                                                const std::string& repo);
+// list_quants' models): the plan without weights plans the files the start downloads. A split
+// model the listing gives a part at a time (no quantization label in its names) is one entry of
+// all its parts, named by its group.
+[[nodiscard]] RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants,
+                                         const std::string& quant, const std::string& repo);
 
 [[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
                                                  const FetchOptions& options);

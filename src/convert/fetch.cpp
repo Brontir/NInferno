@@ -1205,18 +1205,32 @@ std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& gro
     return matches.front();
 }
 
-const RepoQuant* listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
-                                  const std::string& repo) {
+RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
+                           const std::string& repo) {
     std::map<std::string, std::uint64_t> groups;
-    std::map<std::string, const RepoQuant*> of;
+    std::map<std::string, std::vector<const RepoQuant*>> of;
     for (const auto& q : quants) {
         if (q.drafter || q.format != "gguf" || q.files.empty()) { continue; }
         // Keyed as the fetch keys its files (gguf_group of the path, a folder's name with it).
         const auto group = gguf_group(q.files.front());
         groups[group] += q.bytes;
-        of[group] = &q;
+        of[group].push_back(&q);
     }
-    return of.at(gguf_group_for_quant(groups, quant, repo));
+    const auto chosen = gguf_group_for_quant(groups, quant, repo);
+    const auto& entries = of.at(chosen);
+    if (entries.size() == 1) { return *entries.front(); }
+    // A split model whose names hold no quantization label is listed a part at a time: one entry
+    // of all its parts, named by its group (what the fetch matches --quant against).
+    RepoQuant out;
+    out.quant  = std::filesystem::path(chosen).filename().string();
+    out.format = "gguf";
+    out.bits   = quant_label_bits(out.quant);
+    for (const auto* q : entries) {
+        out.bytes += q->bytes;
+        out.files.insert(out.files.end(), q->files.begin(), q->files.end());
+        out.sha256.insert(out.sha256.end(), q->sha256.begin(), q->sha256.end());
+    }
+    return out;
 }
 
 namespace {
