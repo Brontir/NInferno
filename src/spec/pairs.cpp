@@ -185,10 +185,10 @@ Profile not_current(const MeasuredPair& pair) {
 Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options,
                  const RoundCostRatios& round_costs = {}) {
     Profile p = pair.tune;
-    if (!round_costs.empty()) {
+    if (round_costs.known) {
         const auto cost = [&](const SpecConfig& c) {
-            const auto r = round_costs.find(c.label());
-            return r != round_costs.end() ? std::optional<double>{r->second} : std::nullopt;
+            const auto r = round_costs.ratio.find(c.label());
+            return r != round_costs.ratio.end() ? std::optional<double>{r->second} : std::nullopt;
         };
         std::erase_if(p.measurements,
                       [&](const Measurement& m) { return m.config.enabled() && !cost(m.config); });
@@ -298,8 +298,9 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
         if (a.generation != from || !pair_current(a)) { continue; }
         const auto at_from = round_costs(a.tune);
         for (const auto& b : lab) {
+            // The same weights with the same drafters (their revisions), else another pair.
             if (b.generation != to || b.target != a.target || b.engine != a.engine ||
-                !pair_current(b)) {
+                b.drafters != a.drafters || !pair_current(b)) {
                 continue;
             }
             for (const auto& [label, cost] : round_costs(b.tune)) {
@@ -314,9 +315,12 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
     RoundCostRatios out;
     for (auto& [label, each] : ratios) {
         if (cards[label].first.size() < 2 || cards[label].second.size() < 2) { continue; }
+        out.known = true;
         std::sort(each.begin(), each.end());
+        // Cards that disagree make it the hardware's, not the generation's: no estimate.
+        if (each.back() > each.front() * (1 + kRoundCostAgreement)) { continue; }
         const std::size_t n = each.size();
-        out[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
+        out.ratio[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
     }
     return out;
 }

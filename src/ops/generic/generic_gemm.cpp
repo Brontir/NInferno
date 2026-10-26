@@ -1739,8 +1739,10 @@ bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tok
 }
 
 bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
+    // Without tensor mma.sync the tiled route owns such a call, as in select_route.
     return tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
-           weight.qtype == QType::NVFP4 && supports(weight) && allows_w4a8(weight, policy);
+           weight.qtype == QType::NVFP4 && supports(weight) && allows_w4a8(weight, policy) &&
+           !volta_tiled_route(weight, policy, tokens);
 }
 
 bool nvfp4_prefill_a8_policy(QType qtype, LinearPolicy policy) {

@@ -1,0 +1,921 @@
+{
+ "version": 113,
+ "models": {
+  "qwen3.5-9b": {
+   "drafters": {
+    "mtp": {
+     "e": []
+    },
+    "dflash": {
+     "repo": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d47476",
+     "e": []
+    }
+   },
+   "variants": {
+    "unsloth/Qwen3.5-9B-GGUF@3885219b6810": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "BF16": "Qwen3.5-9B-BF16.gguf",
+      "IQ4_NL": "Qwen3.5-9B-IQ4_NL.gguf",
+      "IQ4_XS": "Qwen3.5-9B-IQ4_XS.gguf",
+      "Q3_K_M": "Qwen3.5-9B-Q3_K_M.gguf",
+      "Q3_K_S": "Qwen3.5-9B-Q3_K_S.gguf",
+      "Q4_0": "Qwen3.5-9B-Q4_0.gguf",
+      "Q4_1": "Qwen3.5-9B-Q4_1.gguf",
+      "Q4_K_M": "Qwen3.5-9B-Q4_K_M.gguf",
+      "Q4_K_S": "Qwen3.5-9B-Q4_K_S.gguf",
+      "Q5_K_M": "Qwen3.5-9B-Q5_K_M.gguf",
+      "Q5_K_S": "Qwen3.5-9B-Q5_K_S.gguf",
+      "Q6_K": "Qwen3.5-9B-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-9B-Q8_0.gguf",
+      "UD-IQ2_M": "Qwen3.5-9B-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "Qwen3.5-9B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_XXS": "Qwen3.5-9B-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "Qwen3.5-9B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "Qwen3.5-9B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_XL": "Qwen3.5-9B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "Qwen3.5-9B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Qwen3.5-9B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive@0a41c68809d3": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "BF16": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+      "Q4_K_M": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+      "Q6_K": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0.gguf",
+      "mmproj": "mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+     }
+    },
+    "autotrust/JEV-9B@7ac669b8fb47": {
+     "drafters": [
+      "mtp",
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "lmstudio-community/Qwen3.5-9B-GGUF@1379f25c6b50": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "Q4_K_M": "Qwen3.5-9B-Q4_K_M.gguf",
+      "Q6_K": "Qwen3.5-9B-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-9B-Q8_0.gguf",
+      "mmproj": "mmproj-Qwen3.5-9B-BF16.gguf"
+     }
+    },
+    "AxionML/Qwen3.5-9B-NVFP4@97aef92393f1": {
+     "drafters": [
+      "mtp",
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    }
+   }
+  },
+  "qwen3.5-4b": {
+   "drafters": {
+    "mtp": {
+     "e": []
+    },
+    "dflash": {
+     "repo": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887",
+     "e": []
+    }
+   },
+   "variants": {
+    "unsloth/Qwen3.5-4B-GGUF@e87f176479d0": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "BF16": "Qwen3.5-4B-BF16.gguf",
+      "IQ4_NL": "Qwen3.5-4B-IQ4_NL.gguf",
+      "IQ4_XS": "Qwen3.5-4B-IQ4_XS.gguf",
+      "Q3_K_M": "Qwen3.5-4B-Q3_K_M.gguf",
+      "Q3_K_S": "Qwen3.5-4B-Q3_K_S.gguf",
+      "Q4_0": "Qwen3.5-4B-Q4_0.gguf",
+      "Q4_1": "Qwen3.5-4B-Q4_1.gguf",
+      "Q4_K_M": "Qwen3.5-4B-Q4_K_M.gguf",
+      "Q4_K_S": "Qwen3.5-4B-Q4_K_S.gguf",
+      "Q5_K_M": "Qwen3.5-4B-Q5_K_M.gguf",
+      "Q5_K_S": "Qwen3.5-4B-Q5_K_S.gguf",
+      "Q6_K": "Qwen3.5-4B-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-4B-Q8_0.gguf",
+      "UD-IQ2_M": "Qwen3.5-4B-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "Qwen3.5-4B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_XXS": "Qwen3.5-4B-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "Qwen3.5-4B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "Qwen3.5-4B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_XL": "Qwen3.5-4B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "Qwen3.5-4B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Qwen3.5-4B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "cyankiwi/Qwen3.5-4B-AWQ-4bit@d3e78b50c727": {
+     "drafters": [
+      "mtp",
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "lmstudio-community/Qwen3.5-4B-GGUF@f9f88ac3e234": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "Q4_K_M": "Qwen3.5-4B-Q4_K_M.gguf",
+      "Q6_K": "Qwen3.5-4B-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-4B-Q8_0.gguf",
+      "mmproj": "mmproj-Qwen3.5-4B-BF16.gguf"
+     }
+    },
+    "bartowski/Qwen_Qwen3.5-4B-GGUF@4168f45a16a1": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "IQ2_M": "Qwen_Qwen3.5-4B-IQ2_M.gguf",
+      "IQ3_M": "Qwen_Qwen3.5-4B-IQ3_M.gguf",
+      "IQ3_XS": "Qwen_Qwen3.5-4B-IQ3_XS.gguf",
+      "IQ3_XXS": "Qwen_Qwen3.5-4B-IQ3_XXS.gguf",
+      "IQ4_NL": "Qwen_Qwen3.5-4B-IQ4_NL.gguf",
+      "IQ4_XS": "Qwen_Qwen3.5-4B-IQ4_XS.gguf",
+      "Q2_K": "Qwen_Qwen3.5-4B-Q2_K.gguf",
+      "Q2_K_L": "Qwen_Qwen3.5-4B-Q2_K_L.gguf",
+      "Q3_K_L": "Qwen_Qwen3.5-4B-Q3_K_L.gguf",
+      "Q3_K_M": "Qwen_Qwen3.5-4B-Q3_K_M.gguf",
+      "Q3_K_S": "Qwen_Qwen3.5-4B-Q3_K_S.gguf",
+      "Q3_K_XL": "Qwen_Qwen3.5-4B-Q3_K_XL.gguf",
+      "Q4_0": "Qwen_Qwen3.5-4B-Q4_0.gguf",
+      "Q4_1": "Qwen_Qwen3.5-4B-Q4_1.gguf",
+      "Q4_K_L": "Qwen_Qwen3.5-4B-Q4_K_L.gguf",
+      "Q4_K_M": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+      "Q4_K_S": "Qwen_Qwen3.5-4B-Q4_K_S.gguf",
+      "Q5_K_L": "Qwen_Qwen3.5-4B-Q5_K_L.gguf",
+      "Q5_K_M": "Qwen_Qwen3.5-4B-Q5_K_M.gguf",
+      "Q5_K_S": "Qwen_Qwen3.5-4B-Q5_K_S.gguf",
+      "Q6_K": "Qwen_Qwen3.5-4B-Q6_K.gguf",
+      "Q6_K_L": "Qwen_Qwen3.5-4B-Q6_K_L.gguf",
+      "Q8_0": "Qwen_Qwen3.5-4B-Q8_0.gguf",
+      "BF16": "Qwen_Qwen3.5-4B-bf16.gguf",
+      "mmproj": "mmproj-Qwen_Qwen3.5-4B-bf16.gguf"
+     }
+    },
+    "unsloth/Qwen3.5-4B-MTP-GGUF@86835bf9949e": {
+     "drafters": [
+      "mtp",
+      "dflash"
+     ],
+     "files": {
+      "BF16": "Qwen3.5-4B-BF16.gguf",
+      "IQ4_NL": "Qwen3.5-4B-IQ4_NL.gguf",
+      "IQ4_XS": "Qwen3.5-4B-IQ4_XS.gguf",
+      "Q3_K_M": "Qwen3.5-4B-Q3_K_M.gguf",
+      "Q3_K_S": "Qwen3.5-4B-Q3_K_S.gguf",
+      "Q4_0": "Qwen3.5-4B-Q4_0.gguf",
+      "Q4_1": "Qwen3.5-4B-Q4_1.gguf",
+      "Q4_K_M": "Qwen3.5-4B-Q4_K_M.gguf",
+      "Q4_K_S": "Qwen3.5-4B-Q4_K_S.gguf",
+      "Q5_K_M": "Qwen3.5-4B-Q5_K_M.gguf",
+      "Q5_K_S": "Qwen3.5-4B-Q5_K_S.gguf",
+      "Q6_K": "Qwen3.5-4B-Q6_K.gguf",
+      "Q8_0": "Qwen3.5-4B-Q8_0.gguf",
+      "UD-IQ2_M": "Qwen3.5-4B-UD-IQ2_M.gguf",
+      "UD-IQ3_XXS": "Qwen3.5-4B-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "Qwen3.5-4B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "Qwen3.5-4B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_XL": "Qwen3.5-4B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "Qwen3.5-4B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Qwen3.5-4B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    }
+   }
+  },
+  "qwen3.8-27b": {
+   "drafters": {
+    "mtp": {
+     "e": []
+    },
+    "dflash2": {
+     "repo": "z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde",
+     "e": []
+    }
+   },
+   "variants": {
+    "unsloth/Qwen3.8-27B-GGUF@4ca720788d1e": {
+     "drafters": [
+      "mtp",
+      "dflash2"
+     ],
+     "files": {
+      "BF16": "BF16/Qwen3.8-27B-BF16-00001-of-00002.gguf",
+      "Q4_0": "Qwen3.8-27B-Q4_0.gguf",
+      "Q4_1": "Qwen3.8-27B-Q4_1.gguf",
+      "Q8_0": "Qwen3.8-27B-Q8_0.gguf",
+      "UD-IQ1_M": "Qwen3.8-27B-UD-IQ1_M.gguf",
+      "UD-IQ1_S": "Qwen3.8-27B-UD-IQ1_S.gguf",
+      "UD-IQ2_S": "Qwen3.8-27B-UD-IQ2_S.gguf",
+      "UD-IQ2_XXS": "Qwen3.8-27B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_S": "Qwen3.8-27B-UD-IQ3_S.gguf",
+      "UD-IQ3_XXS": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+      "UD-IQ4_XS": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+      "UD-Q2_K_XL": "Qwen3.8-27B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_M": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "UD-Q4_K_S": "Qwen3.8-27B-UD-Q4_K_S.gguf",
+      "UD-Q4_K_XL": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_M": "Qwen3.8-27B-UD-Q5_K_M.gguf",
+      "UD-Q5_K_S": "Qwen3.8-27B-UD-Q5_K_S.gguf",
+      "UD-Q5_K_XL": "Qwen3.8-27B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K": "Qwen3.8-27B-UD-Q6_K.gguf",
+      "UD-Q6_K_L": "Qwen3.8-27B-UD-Q6_K_L.gguf",
+      "UD-Q6_K_M": "Qwen3.8-27B-UD-Q6_K_M.gguf",
+      "UD-Q6_K_XL": "Qwen3.8-27B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_L": "Qwen3.8-27B-UD-Q8_K_L.gguf",
+      "UD-Q8_K_XL": "Qwen3.8-27B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF@ac343e8f44ca": {
+     "drafters": [
+      "mtp",
+      "dflash2"
+     ],
+     "files": {
+      "NVFP4": "Qwen3.8-27B-iMatrix-NVFP4-MTP.gguf",
+      "mmproj": "mmproj-Qwen3.8-27B-F16.gguf"
+     }
+    },
+    "autotrust/JEV-27B@14b425269ed2": {
+     "drafters": [
+      "mtp",
+      "dflash2"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "ReadyArt/Dark-Scarlett-27B-v2.0@c44c2d6ffa33": {
+     "drafters": [
+      "mtp",
+      "dflash2"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "JonathanColetti/Qwen3.8-27B-Uncensored@5bb7aa90f0ef": {
+     "drafters": [
+      "mtp",
+      "dflash2"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    }
+   }
+  },
+  "qwen3.6-35b-a3b": {
+   "drafters": {
+    "mtp": {
+     "e": []
+    },
+    "dflash": {
+     "repo": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646a",
+     "e": []
+    },
+    "dflash2": {
+     "repo": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad",
+     "e": []
+    }
+   },
+   "variants": {
+    "nvidia/Qwen3.6-35B-A3B-NVFP4@1355db6a0524": {
+     "drafters": [
+      "mtp",
+      "dflash",
+      "dflash2"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/Qwen3.6-35B-A3B-GGUF@a483e9e6cbd5": {
+     "drafters": [
+      "dflash",
+      "dflash2"
+     ],
+     "files": {
+      "BF16": "BF16/Qwen3.6-35B-A3B-BF16-00001-of-00002.gguf",
+      "MXFP4_MOE": "Qwen3.6-35B-A3B-MXFP4_MOE.gguf",
+      "Q8_0": "Qwen3.6-35B-A3B-Q8_0.gguf",
+      "UD-IQ1_M": "Qwen3.6-35B-A3B-UD-IQ1_M.gguf",
+      "UD-IQ2_M": "Qwen3.6-35B-A3B-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "Qwen3.6-35B-A3B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_S": "Qwen3.6-35B-A3B-UD-IQ3_S.gguf",
+      "UD-IQ3_XXS": "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+      "UD-IQ4_NL": "Qwen3.6-35B-A3B-UD-IQ4_NL.gguf",
+      "UD-IQ4_NL_XL": "Qwen3.6-35B-A3B-UD-IQ4_NL_XL.gguf",
+      "UD-IQ4_XS": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+      "UD-Q2_K_XL": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_M": "Qwen3.6-35B-A3B-UD-Q3_K_M.gguf",
+      "UD-Q3_K_S": "Qwen3.6-35B-A3B-UD-Q3_K_S.gguf",
+      "UD-Q3_K_XL": "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_M": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "UD-Q4_K_S": "Qwen3.6-35B-A3B-UD-Q4_K_S.gguf",
+      "UD-Q4_K_XL": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_M": "Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
+      "UD-Q5_K_S": "Qwen3.6-35B-A3B-UD-Q5_K_S.gguf",
+      "UD-Q5_K_XL": "Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K": "Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+      "UD-Q6_K_XL": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "unsloth/Qwen3.6-35B-A3B-MTP-GGUF@5bc3e238d916": {
+     "drafters": [
+      "mtp",
+      "dflash",
+      "dflash2"
+     ],
+     "files": {
+      "BF16": "BF16/Qwen3.6-35B-A3B-BF16-00001-of-00002.gguf",
+      "MXFP4_MOE": "Qwen3.6-35B-A3B-MXFP4_MOE.gguf",
+      "Q8_0": "Qwen3.6-35B-A3B-Q8_0.gguf",
+      "UD-IQ1_M": "Qwen3.6-35B-A3B-UD-IQ1_M.gguf",
+      "UD-IQ2_M": "Qwen3.6-35B-A3B-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "Qwen3.6-35B-A3B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_S": "Qwen3.6-35B-A3B-UD-IQ3_S.gguf",
+      "UD-IQ3_XXS": "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+      "UD-IQ4_NL": "Qwen3.6-35B-A3B-UD-IQ4_NL.gguf",
+      "UD-IQ4_XS": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+      "UD-Q2_K_XL": "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_M": "Qwen3.6-35B-A3B-UD-Q3_K_M.gguf",
+      "UD-Q3_K_XL": "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_M": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "UD-Q4_K_S": "Qwen3.6-35B-A3B-UD-Q4_K_S.gguf",
+      "UD-Q4_K_XL": "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_M": "Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
+      "UD-Q5_K_S": "Qwen3.6-35B-A3B-UD-Q5_K_S.gguf",
+      "UD-Q5_K_XL": "Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K": "Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+      "UD-Q6_K_XL": "Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "RedHatAI/Qwen3.6-35B-A3B-NVFP4@e94a930c8e9b": {
+     "drafters": [
+      "mtp",
+      "dflash",
+      "dflash2"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive@f12a584fecbe": {
+     "drafters": [
+      "dflash",
+      "dflash2"
+     ],
+     "files": {
+      "IQ2_M": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ2_M.gguf",
+      "IQ3_M": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ3_M.gguf",
+      "IQ4_NL": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_NL.gguf",
+      "IQ4_XS": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf",
+      "Q2_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q2_K_P.gguf",
+      "Q3_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q3_K_P.gguf",
+      "Q4_K_M": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+      "Q4_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf",
+      "Q5_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q5_K_P.gguf",
+      "Q6_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q6_K_P.gguf",
+      "Q8_K_P": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+      "mmproj": "mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf"
+     }
+    }
+   }
+  },
+  "gemma-4-12b": {
+   "drafters": {
+    "assistant": {
+     "repo": "google/gemma-4-12B-it-assistant@46d4c6f13f0a",
+     "e": []
+    }
+   },
+   "variants": {
+    "unsloth/gemma-4-12b-it-GGUF@fc034cfff751": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "BF16": "gemma-4-12b-it-BF16.gguf",
+      "IQ4_NL": "gemma-4-12b-it-IQ4_NL.gguf",
+      "IQ4_XS": "gemma-4-12b-it-IQ4_XS.gguf",
+      "Q3_K_M": "gemma-4-12b-it-Q3_K_M.gguf",
+      "Q3_K_S": "gemma-4-12b-it-Q3_K_S.gguf",
+      "Q4_0": "gemma-4-12b-it-Q4_0.gguf",
+      "Q4_1": "gemma-4-12b-it-Q4_1.gguf",
+      "Q4_K_M": "gemma-4-12b-it-Q4_K_M.gguf",
+      "Q4_K_S": "gemma-4-12b-it-Q4_K_S.gguf",
+      "Q5_K_M": "gemma-4-12b-it-Q5_K_M.gguf",
+      "Q5_K_S": "gemma-4-12b-it-Q5_K_S.gguf",
+      "Q6_K": "gemma-4-12b-it-Q6_K.gguf",
+      "Q8_0": "gemma-4-12b-it-Q8_0.gguf",
+      "UD-IQ2_M": "gemma-4-12b-it-UD-IQ2_M.gguf",
+      "UD-IQ3_XXS": "gemma-4-12b-it-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "gemma-4-12b-it-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "gemma-4-12b-it-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "gemma-4-12b-it-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_XL": "gemma-4-12b-it-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "gemma-4-12b-it-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "gemma-4-12b-it-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced@ae8045ac2bd2": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "Q4_K_M": "Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+      "mmproj": "mmproj-Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-BF16.gguf"
+     }
+    },
+    "RedHatAI/gemma-4-12B-it-NVFP4@8965ad1c93dc": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "lmstudio-community/gemma-4-12B-it-GGUF@40b870babe39": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "Q4_K_M": "gemma-4-12B-it-Q4_K_M.gguf",
+      "Q6_K": "gemma-4-12B-it-Q6_K.gguf",
+      "Q8_0": "gemma-4-12B-it-Q8_0.gguf",
+      "mmproj": "mmproj-gemma-4-12B-it-BF16.gguf"
+     }
+    },
+    "google/gemma-4-12B-it@707f0a3b8a3c": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    }
+   }
+  },
+  "gemma-4-26b-a4b": {
+   "drafters": {
+    "assistant": {
+     "repo": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b",
+     "e": []
+    }
+   },
+   "variants": {
+    "nvidia/Gemma-4-26B-A4B-NVFP4@a19cfe00be84": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/gemma-4-26B-A4B-it-GGUF@c099eb48e663": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "BF16": "BF16/gemma-4-26B-A4B-it-BF16-00001-of-00002.gguf",
+      "MXFP4_MOE": "gemma-4-26B-A4B-it-MXFP4_MOE.gguf",
+      "Q8_0": "gemma-4-26B-A4B-it-Q8_0.gguf",
+      "UD-IQ2_M": "gemma-4-26B-A4B-it-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "gemma-4-26B-A4B-it-UD-IQ2_XXS.gguf",
+      "UD-IQ3_S": "gemma-4-26B-A4B-it-UD-IQ3_S.gguf",
+      "UD-IQ3_XXS": "gemma-4-26B-A4B-it-UD-IQ3_XXS.gguf",
+      "UD-IQ4_NL": "gemma-4-26B-A4B-it-UD-IQ4_NL.gguf",
+      "UD-IQ4_XS": "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf",
+      "UD-Q2_K_XL": "gemma-4-26B-A4B-it-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_M": "gemma-4-26B-A4B-it-UD-Q3_K_M.gguf",
+      "UD-Q3_K_XL": "gemma-4-26B-A4B-it-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_M": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+      "UD-Q4_K_S": "gemma-4-26B-A4B-it-UD-Q4_K_S.gguf",
+      "UD-Q4_K_XL": "gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_M": "gemma-4-26B-A4B-it-UD-Q5_K_M.gguf",
+      "UD-Q5_K_S": "gemma-4-26B-A4B-it-UD-Q5_K_S.gguf",
+      "UD-Q5_K_XL": "gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf",
+      "UD-Q6_K": "gemma-4-26B-A4B-it-UD-Q6_K.gguf",
+      "UD-Q6_K_XL": "gemma-4-26B-A4B-it-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP@f9093662a2e7": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "Q4_K_M": "Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+      "mmproj": "mmproj-Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-BF16.gguf"
+     }
+    },
+    "RedHatAI/gemma-4-26B-A4B-it-NVFP4@5557756b8dce": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/gemma-4-26B-A4B-it-qat-GGUF@7b92b5b28818": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "UD-Q4_K_XL": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    }
+   }
+  },
+  "gemma-4-31b": {
+   "drafters": {
+    "assistant": {
+     "repo": "google/gemma-4-31B-it-assistant@627c5ec1458b",
+     "e": []
+    }
+   },
+   "variants": {
+    "nvidia/Gemma-4-31B-IT-NVFP4@4135a98a9b72": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "QuantTrio/gemma-4-31B-it-AWQ@37cf6a076672": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/gemma-4-31B-it-GGUF@c1ac76e99d55": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "BF16": "BF16/gemma-4-31B-it-BF16-00001-of-00002.gguf",
+      "IQ4_NL": "gemma-4-31B-it-IQ4_NL.gguf",
+      "IQ4_XS": "gemma-4-31B-it-IQ4_XS.gguf",
+      "Q3_K_M": "gemma-4-31B-it-Q3_K_M.gguf",
+      "Q3_K_S": "gemma-4-31B-it-Q3_K_S.gguf",
+      "Q4_0": "gemma-4-31B-it-Q4_0.gguf",
+      "Q4_1": "gemma-4-31B-it-Q4_1.gguf",
+      "Q4_K_M": "gemma-4-31B-it-Q4_K_M.gguf",
+      "Q4_K_S": "gemma-4-31B-it-Q4_K_S.gguf",
+      "Q5_K_M": "gemma-4-31B-it-Q5_K_M.gguf",
+      "Q5_K_S": "gemma-4-31B-it-Q5_K_S.gguf",
+      "Q6_K": "gemma-4-31B-it-Q6_K.gguf",
+      "Q8_0": "gemma-4-31B-it-Q8_0.gguf",
+      "UD-IQ2_M": "gemma-4-31B-it-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "gemma-4-31B-it-UD-IQ2_XXS.gguf",
+      "UD-IQ3_XXS": "gemma-4-31B-it-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "gemma-4-31B-it-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "gemma-4-31B-it-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "gemma-4-31B-it-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_XL": "gemma-4-31B-it-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "gemma-4-31B-it-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "gemma-4-31B-it-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    },
+    "RedHatAI/gemma-4-31B-it-NVFP4@5df75ccad9b7": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/gemma-4-31B-it-qat-GGUF@43cc1aeb31ad": {
+     "drafters": [
+      "assistant"
+     ],
+     "files": {
+      "UD-Q4_K_XL": "gemma-4-31B-it-qat-UD-Q4_K_XL.gguf",
+      "mmproj": "mmproj-BF16.gguf"
+     }
+    }
+   }
+  },
+  "gpt-oss-20b": {
+   "drafters": {
+    "dflash": {
+     "repo": "z-lab/gpt-oss-20b-DFlash@d53f65515432",
+     "e": []
+    }
+   },
+   "variants": {
+    "openai/gpt-oss-20b@6cee5e81ee83": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/gpt-oss-20b-GGUF@d449b42d93e1": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "F16": "gpt-oss-20b-F16.gguf",
+      "Q2_K": "gpt-oss-20b-Q2_K.gguf",
+      "Q2_K_L": "gpt-oss-20b-Q2_K_L.gguf",
+      "Q3_K_M": "gpt-oss-20b-Q3_K_M.gguf",
+      "Q3_K_S": "gpt-oss-20b-Q3_K_S.gguf",
+      "Q4_0": "gpt-oss-20b-Q4_0.gguf",
+      "Q4_1": "gpt-oss-20b-Q4_1.gguf",
+      "Q4_K_M": "gpt-oss-20b-Q4_K_M.gguf",
+      "Q4_K_S": "gpt-oss-20b-Q4_K_S.gguf",
+      "Q5_K_M": "gpt-oss-20b-Q5_K_M.gguf",
+      "Q5_K_S": "gpt-oss-20b-Q5_K_S.gguf",
+      "Q6_K": "gpt-oss-20b-Q6_K.gguf",
+      "Q8_0": "gpt-oss-20b-Q8_0.gguf",
+      "UD-Q4_K_XL": "gpt-oss-20b-UD-Q4_K_XL.gguf",
+      "UD-Q6_K_XL": "gpt-oss-20b-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "gpt-oss-20b-UD-Q8_K_XL.gguf"
+     }
+    },
+    "ggml-org/gpt-oss-20b-GGUF@15dcfc7e7c60": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "MXFP4": "gpt-oss-20b-MXFP4.gguf"
+     }
+    },
+    "lmstudio-community/gpt-oss-20b-GGUF@21f8a86825e3": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "MXFP4": "gpt-oss-20b-MXFP4.gguf"
+     }
+    },
+    "openai/gpt-oss-safeguard-20b@8a11e17b25c9": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    }
+   }
+  },
+  "nemotron-3.5-lightning-30b-a3b": {
+   "drafters": {
+    "mtp": {
+     "repo": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@8cd082170ed3",
+     "file": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+     "e": []
+    }
+   },
+   "variants": {
+    "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@8cd082170ed3": {
+     "drafters": [
+      "mtp"
+     ],
+     "files": {
+      "BF16": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.gguf",
+      "Q4_0": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf",
+      "Q8_0": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf"
+     }
+    },
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark@6d127b50ecd9": {
+     "drafters": [
+      "mtp"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@f2d3fe369450": {
+     "drafters": [
+      "mtp"
+     ],
+     "files": {
+      "BF16": "BF16/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16-00001-of-00002.gguf",
+      "MXFP4_MOE": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf",
+      "Q8_0": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+      "UD-IQ1_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ1_M.gguf",
+      "UD-IQ2_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ2_M.gguf",
+      "UD-IQ2_XXS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ3_S.gguf",
+      "UD-IQ3_XXS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ3_XXS.gguf",
+      "UD-IQ4_NL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-IQ4_NL.gguf",
+      "UD-Q3_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_M.gguf",
+      "UD-Q4_K_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_S.gguf",
+      "UD-Q4_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_M.gguf",
+      "UD-Q5_K_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_S.gguf",
+      "UD-Q5_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q8_K_XL.gguf"
+     }
+    },
+    "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@f0eec2267ae8": {
+     "drafters": [
+      "mtp"
+     ],
+     "files": {
+      "IQ2_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ2_M.gguf",
+      "IQ2_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ2_S.gguf",
+      "IQ2_XS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ2_XS.gguf",
+      "IQ2_XXS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ2_XXS.gguf",
+      "IQ3_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ3_M.gguf",
+      "IQ3_XS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ3_XS.gguf",
+      "IQ3_XXS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ3_XXS.gguf",
+      "IQ4_NL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ4_NL.gguf",
+      "IQ4_XS": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ4_XS.gguf",
+      "Q2_K": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q2_K.gguf",
+      "Q2_K_L": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q2_K_L.gguf",
+      "Q3_K_L": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q3_K_L.gguf",
+      "Q3_K_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q3_K_M.gguf",
+      "Q3_K_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q3_K_S.gguf",
+      "Q3_K_XL": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q3_K_XL.gguf",
+      "Q4_0": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf",
+      "Q4_1": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_1.gguf",
+      "Q4_K_L": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_L.gguf",
+      "Q4_K_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf",
+      "Q4_K_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_S.gguf",
+      "Q5_K_L": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_L.gguf",
+      "Q5_K_M": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_M.gguf",
+      "Q5_K_S": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_S.gguf",
+      "Q6_K": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q6_K.gguf",
+      "Q6_K_L": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q6_K_L.gguf",
+      "Q8_0": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+      "BF16": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-bf16/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-bf16-00001-of-00002.gguf"
+     }
+    },
+    "useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-W4A16@cc977f002c7a": {
+     "drafters": [
+      "mtp"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    }
+   }
+  },
+  "muse-glimmer-30b": {
+   "drafters": {
+    "dflash": {
+     "repo": "meta-models/Muse-Glimmer-30B-GGUF@b44f1072cf75",
+     "file": "dflash-Muse-Glimmer-30B-Q4_K_M.gguf",
+     "e": []
+    }
+   },
+   "variants": {
+    "unsloth/Muse-Glimmer-30B-GGUF@faa5b025c584": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "BF16": "BF16/Muse-Glimmer-30B-BF16-00001-of-00002.gguf",
+      "Q8_0": "Muse-Glimmer-30B-Q8_0.gguf",
+      "UD-IQ2_M": "Muse-Glimmer-30B-UD-IQ2_M.gguf",
+      "UD-IQ2_XS": "Muse-Glimmer-30B-UD-IQ2_XS.gguf",
+      "UD-IQ2_XXS": "Muse-Glimmer-30B-UD-IQ2_XXS.gguf",
+      "UD-IQ3_M": "Muse-Glimmer-30B-UD-IQ3_M.gguf",
+      "UD-IQ3_XXS": "Muse-Glimmer-30B-UD-IQ3_XXS.gguf",
+      "UD-Q2_K_XL": "Muse-Glimmer-30B-UD-Q2_K_XL.gguf",
+      "UD-Q3_K_XL": "Muse-Glimmer-30B-UD-Q3_K_XL.gguf",
+      "UD-Q4_K_XL": "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+      "UD-Q5_K_L": "Muse-Glimmer-30B-UD-Q5_K_L.gguf",
+      "UD-Q5_K_M": "Muse-Glimmer-30B-UD-Q5_K_M.gguf",
+      "UD-Q5_K_XL": "Muse-Glimmer-30B-UD-Q5_K_XL.gguf",
+      "UD-Q6_K_XL": "Muse-Glimmer-30B-UD-Q6_K_XL.gguf",
+      "UD-Q8_K_XL": "Muse-Glimmer-30B-UD-Q8_K_XL.gguf",
+      "mmproj": "mmproj-Muse-Glimmer-30B-BF16.gguf"
+     }
+    },
+    "RadixArk/Muse-Glimmer-NVFP4@1416629950af": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "weights": "safetensors"
+     }
+    },
+    "meta-models/Muse-Glimmer-30B-GGUF@b44f1072cf75": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "Q4_K_M": "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf",
+      "Q4_K_XL": "Muse-Glimmer-30B-KQuant-Dynamic-Q4_K_XL.gguf",
+      "mmproj": "mmproj-Muse-Glimmer-30B-Q4_K_M.gguf"
+     }
+    },
+    "0bserverx/Muse-Glimmer-30B-Heretic-Uncensored-GGUF@eaf39674f48f": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "BF16": "Muse-Glimmer-30B-Heretic-BF16.gguf",
+      "F16": "Muse-Glimmer-30B-Heretic-F16.gguf",
+      "IQ1_M": "Muse-Glimmer-30B-Heretic-IQ1_M.gguf",
+      "IQ1_S": "Muse-Glimmer-30B-Heretic-IQ1_S.gguf",
+      "IQ2_M": "Muse-Glimmer-30B-Heretic-IQ2_M.gguf",
+      "IQ2_S": "Muse-Glimmer-30B-Heretic-IQ2_S.gguf",
+      "IQ2_XS": "Muse-Glimmer-30B-Heretic-IQ2_XS.gguf",
+      "IQ2_XXS": "Muse-Glimmer-30B-Heretic-IQ2_XXS.gguf",
+      "IQ3_M": "Muse-Glimmer-30B-Heretic-IQ3_M.gguf",
+      "IQ3_S": "Muse-Glimmer-30B-Heretic-IQ3_S.gguf",
+      "IQ3_XS": "Muse-Glimmer-30B-Heretic-IQ3_XS.gguf",
+      "IQ3_XXS": "Muse-Glimmer-30B-Heretic-IQ3_XXS.gguf",
+      "IQ4_NL": "Muse-Glimmer-30B-Heretic-IQ4_NL.gguf",
+      "IQ4_XS": "Muse-Glimmer-30B-Heretic-IQ4_XS.gguf",
+      "Q2_K": "Muse-Glimmer-30B-Heretic-Q2_K.gguf",
+      "Q2_K_S": "Muse-Glimmer-30B-Heretic-Q2_K_S.gguf",
+      "Q3_K_L": "Muse-Glimmer-30B-Heretic-Q3_K_L.gguf",
+      "Q3_K_M": "Muse-Glimmer-30B-Heretic-Q3_K_M.gguf",
+      "Q3_K_S": "Muse-Glimmer-30B-Heretic-Q3_K_S.gguf",
+      "Q4_K_M": "Muse-Glimmer-30B-Heretic-Q4_K_M.gguf",
+      "Q4_K_S": "Muse-Glimmer-30B-Heretic-Q4_K_S.gguf",
+      "Q5_K_M": "Muse-Glimmer-30B-Heretic-Q5_K_M.gguf",
+      "Q5_K_S": "Muse-Glimmer-30B-Heretic-Q5_K_S.gguf",
+      "Q6_K": "Muse-Glimmer-30B-Heretic-Q6_K.gguf",
+      "Q8_0": "Muse-Glimmer-30B-Heretic-Q8_0.gguf"
+     }
+    },
+    "bartowski/Muse-Glimmer-30B-GGUF@01e1b7c30e19": {
+     "drafters": [
+      "dflash"
+     ],
+     "files": {
+      "IQ2_M": "Muse-Glimmer-30B-IQ2_M.gguf",
+      "IQ2_S": "Muse-Glimmer-30B-IQ2_S.gguf",
+      "IQ2_XS": "Muse-Glimmer-30B-IQ2_XS.gguf",
+      "IQ2_XXS": "Muse-Glimmer-30B-IQ2_XXS.gguf",
+      "IQ3_M": "Muse-Glimmer-30B-IQ3_M.gguf",
+      "IQ3_XS": "Muse-Glimmer-30B-IQ3_XS.gguf",
+      "IQ3_XXS": "Muse-Glimmer-30B-IQ3_XXS.gguf",
+      "IQ4_NL": "Muse-Glimmer-30B-IQ4_NL.gguf",
+      "IQ4_XS": "Muse-Glimmer-30B-IQ4_XS.gguf",
+      "Q2_K": "Muse-Glimmer-30B-Q2_K.gguf",
+      "Q2_K_L": "Muse-Glimmer-30B-Q2_K_L.gguf",
+      "Q3_K_L": "Muse-Glimmer-30B-Q3_K_L.gguf",
+      "Q3_K_M": "Muse-Glimmer-30B-Q3_K_M.gguf",
+      "Q3_K_S": "Muse-Glimmer-30B-Q3_K_S.gguf",
+      "Q3_K_XL": "Muse-Glimmer-30B-Q3_K_XL.gguf",
+      "Q4_0": "Muse-Glimmer-30B-Q4_0.gguf",
+      "Q4_1": "Muse-Glimmer-30B-Q4_1.gguf",
+      "Q4_K_L": "Muse-Glimmer-30B-Q4_K_L.gguf",
+      "Q4_K_M": "Muse-Glimmer-30B-Q4_K_M.gguf",
+      "Q4_K_S": "Muse-Glimmer-30B-Q4_K_S.gguf",
+      "Q5_K_L": "Muse-Glimmer-30B-Q5_K_L.gguf",
+      "Q5_K_M": "Muse-Glimmer-30B-Q5_K_M.gguf",
+      "Q5_K_S": "Muse-Glimmer-30B-Q5_K_S.gguf",
+      "Q6_K": "Muse-Glimmer-30B-Q6_K.gguf",
+      "Q6_K_L": "Muse-Glimmer-30B-Q6_K_L.gguf",
+      "Q8_0": "Muse-Glimmer-30B-Q8_0.gguf",
+      "BF16": "Muse-Glimmer-30B-bf16/Muse-Glimmer-30B-bf16-00001-of-00002.gguf",
+      "mmproj": "mmproj-Muse-Glimmer-30B-bf16.gguf"
+     }
+    }
+   }
+  }
+ }
+}
