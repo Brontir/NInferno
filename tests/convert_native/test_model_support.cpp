@@ -299,6 +299,14 @@ int main(int argc, char** argv) {
             "safetensors": {"parameters": {"BF16": 1}}})"));
         expect(!mixed.gguf && of(mixed).verdict == Verdict::Supported,
                "a mixed search result is judged by its safetensors");
+        // A model card's base models, in its order: one named, a merge's several, none.
+        const auto merge = cv::search_support_facts(Json::parse(R"({
+            "id": "org/merge", "cardData": {"base_model": ["org/a", "org/b"]}})"));
+        expect(merge.base_models == std::vector<std::string>{"org/a", "org/b"} &&
+                   cv::card_base_models(Json::parse(R"({"cardData": {"base_model": "org/a"}})")) ==
+                       std::vector<std::string>{"org/a"} &&
+                   facts.base_models.empty(),
+               "the card's base models");
     }
     // --quant picks one GGUF model as the fetch does, for the plan without weights too
     // (convert::gguf_group_for_quant, convert::listed_quant_for): "Q4_K_M" takes UD-Q4_K_M where

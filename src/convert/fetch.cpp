@@ -2246,21 +2246,24 @@ RepoListing list_quants(const std::string& spec, const FetchOptions& options) {
     return {listing.commit, std::move(out)};
 }
 
-std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
+std::vector<std::string> card_base_models(const Json& card) {
     std::vector<std::string> out;
-    try {
-        const auto card = fetch_model_card(spec, options);
-        if (!card) { return out; }
-        const Json data = card->value("cardData", Json::object());
-        const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
-        if (base.is_string()) { out.push_back(base.get<std::string>()); }
-        if (base.is_array()) {
-            for (const auto& item : base) {
-                if (item.is_string()) { out.push_back(item.get<std::string>()); }
-            }
+    const Json data = card.value("cardData", Json::object());
+    const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
+    if (base.is_string()) { out.push_back(base.get<std::string>()); }
+    if (base.is_array()) {
+        for (const auto& item : base) {
+            if (item.is_string()) { out.push_back(item.get<std::string>()); }
         }
-    } catch (const std::exception&) {}
+    }
     return out;
+}
+
+std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
+    try {
+        if (const auto card = fetch_model_card(spec, options)) { return card_base_models(*card); }
+    } catch (const std::exception&) {}
+    return {};
 }
 
 } // namespace ninferno::convert

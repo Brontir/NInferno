@@ -38,6 +38,9 @@ struct SupportFacts {
     // (Q*_K, Q8_0, IQ*, MXFP4, ...: not F32/F16/BF16), from its header's tensor infos.
     std::size_t gguf_nvfp4_matrices = 0;
     std::size_t gguf_block_matrices = 0;
+    // The base models the model card names (card_base_models): none when it names none or the
+    // answer does not carry the card's data (a search's).
+    std::vector<std::string> base_models;
 };
 
 enum class Verdict { Supported, NeedsToken, Unsupported, Unknown };

@@ -184,7 +184,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     convert::FetchOptions fetch       = fetch_options();
     // A model the engine does not run is not planned: the converter's own rules, from what the
     // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
-    // the listing below to fail or plan.
+    // the listing below to fail or plan. The card read for it names the base models too.
+    std::vector<std::string> base_models;
     {
         auto ask  = fetch;
         ask.quant = quant;
@@ -193,6 +194,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             facts = convert::hub_support_facts(spec, ask);
         } catch (const std::exception&) {}
         if (facts) {
+            base_models = facts->base_models;
             if (template_given) { facts->chat_template = true; } // --chat-template
             if (const auto refusal = convert::serve_refusal(convert::model_support(*facts));
                 !refusal.empty()) {
@@ -278,7 +280,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         out.facts         = product::plan_facts_of_config(config, weights->bytes,
                                                           runtime::WeightBasis::FileSize);
         out.facts.model.mtp_bytes = weights->mtp_bytes;
-        out.facts.shape.base_models = convert::hub_base_models(spec, fetch);
+        out.facts.shape.base_models = base_models;
         out.weights               = weights_of(*weights);
         // MTP layers are what the weights hold, declared or not: a part of their own
         // (model_mtp.safetensors), else what the weight index lists, as the converter finds them

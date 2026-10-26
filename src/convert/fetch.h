@@ -311,11 +311,13 @@ struct HubModel {
 [[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
                                                              const FetchOptions& options);
 
-// The base models a repository's model card names, in its order (cardData.base_model: its
-// README's YAML front matter, what the converter's drafter plan reads from the downloaded README;
-// a merge names several), none when it names none, offline, or the hub does not answer. The plan of
-// a checkpoint not downloaded yet matches the registry by them as the converter will (a fine-tune
+// The base models a model card (fetch_model_card's answer) names, in its order
+// (cardData.base_model: its README's YAML front matter, what the converter's drafter plan reads
+// from the downloaded README; a merge names several), none when it names none. The plan of a
+// checkpoint not downloaded yet matches the registry by them as the converter will (a fine-tune
 // finds its base's entry).
+[[nodiscard]] std::vector<std::string> card_base_models(const nlohmann::json& card);
+// card_base_models of `spec`'s model card: none offline or when the hub does not answer.
 [[nodiscard]] std::vector<std::string> hub_base_models(const std::string& spec,
                                                        const FetchOptions& options);
 
