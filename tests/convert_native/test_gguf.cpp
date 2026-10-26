@@ -317,7 +317,28 @@ void test_metadata_prefix() {
     check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
               reinterpret_cast<const std::byte*>(plain.data()), plain.size(), "plain.gguf")) ==
               std::optional<bool>(false),
-          "a tokenizer after the architecture's keys, none named: no MTP layers");
+          "all the metadata read, none named: no MTP layers");
+    // A head that ends within the tokenizer: the architecture's block closed before it says none;
+    // a tokenizer written before the architecture's keys leaves it unknown.
+    GgufWriter cut;
+    cut.kv_str("general.architecture", "qwen35");
+    cut.kv_u32("qwen35.block_count", 64);
+    cut.kv_str("tokenizer.ggml.model", "gpt2");
+    cut.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto closed = cut.finish();
+    check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(closed.data()), 200, "cut.gguf")) ==
+              std::optional<bool>(false),
+          "the architecture's block closed before the head ends: no MTP layers");
+    GgufWriter early;
+    early.kv_str("general.architecture", "qwen35");
+    early.kv_str("tokenizer.ggml.model", "gpt2");
+    early.kv_u32("qwen35.block_count", 64);
+    early.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto mixed = early.finish();
+    check(!gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(mixed.data()), 200, "early.gguf")),
+          "a tokenizer key before the architecture's: unknown");
 }
 
 int main() {

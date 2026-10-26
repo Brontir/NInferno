@@ -1002,11 +1002,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
     product::PlannedSubjects::MtpOf mtp_of;
     if (gguf && !options_.offline) {
+        // The table's every quantization, read together; a quantization named, its own alone.
         std::vector<std::string> quants;
         for (const auto& q : listing) {
-            if (!q.drafter && q.format == "gguf") { quants.push_back(q.quant); }
+            if (!q.drafter && q.format == "gguf" && (quant.empty() || q.quant == quant)) {
+                quants.push_back(q.quant);
+            }
         }
-        gguf_mtps(repo, hub, commit, quants); // read together, once
+        gguf_mtps(repo, hub, commit, quants); // read once
         mtp_of = [this, repo, hub, commit](const std::string& label) {
             return gguf_mtp(repo, hub, commit, label);
         };

@@ -79,15 +79,17 @@ struct GgufFile {
 // the header is no GGUF one, as parse_gguf does.
 struct GgufMetadataPrefix {
     nlohmann::json metadata = nlohmann::json::object();
+    std::vector<std::string> keys; // in the file's order
     bool complete           = false;
 };
 [[nodiscard]] GgufMetadataPrefix parse_gguf_metadata_prefix(const std::byte* data, std::size_t size,
                                                             const std::string& label);
 
 // Whether a GGUF model carries MTP (NextN) layers by its metadata (<arch>.nextn_predict_layers,
-// as plan_facts and gguf_model.cpp read it): nullopt when the metadata read ends before the
-// architecture's keys could hold it (neither all of it nor a tokenizer key, written after them,
-// was read).
+// as plan_facts and gguf_model.cpp read it): false when all the metadata was read without it, or
+// the architecture's block of keys was (its keys, then another namespace's, none of its after: the
+// order llama.cpp's writers keep; the specification orders no keys); nullopt when the read ends
+// before.
 [[nodiscard]] std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix);
 
 struct GgufTruncated : std::runtime_error {

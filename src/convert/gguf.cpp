@@ -177,8 +177,8 @@ Header read_header(Reader& in, std::uint64_t file_size) {
     return out;
 }
 
-// One metadata key/value pair into `out` (its value as JSON, its type).
-void read_pair(Reader& in, std::uint64_t file_size, GgufFile& out) {
+// One metadata key/value pair into `out` (its value as JSON, its type); its key.
+std::string read_pair(Reader& in, std::uint64_t file_size, GgufFile& out) {
     auto key        = in.string();
     const auto type = in.read<std::uint32_t>();
     if (!valid_type(type)) { in.fail(key + ": invalid metadata type " + std::to_string(type)); }
@@ -202,6 +202,7 @@ void read_pair(Reader& in, std::uint64_t file_size, GgufFile& out) {
         out.types[key]    = {static_cast<GgufValueType>(type), false};
         out.metadata[key] = scalar(in, static_cast<GgufValueType>(type));
     }
+    return key;
 }
 
 // The file's first `size` bytes of `file_size`: the header, the metadata and the tensor infos read
@@ -214,7 +215,7 @@ GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
     out.version             = header.version;
     const auto tensor_count = header.tensor_count;
     const auto kv_count     = header.kv_count;
-    for (std::uint64_t i = 0; i < kv_count; ++i) { read_pair(in, file_size, out); }
+    for (std::uint64_t i = 0; i < kv_count; ++i) { (void)read_pair(in, file_size, out); }
     if (const auto* alignment = out.find("general.alignment")) {
         if (!alignment->is_number_unsigned() || alignment->get<std::uint64_t>() == 0 ||
             (alignment->get<std::uint64_t>() & (alignment->get<std::uint64_t>() - 1))) {
@@ -298,7 +299,9 @@ GgufMetadataPrefix parse_gguf_metadata_prefix(const std::byte* data, std::size_t
     GgufFile file;
     GgufMetadataPrefix out;
     try {
-        for (std::uint64_t i = 0; i < header.kv_count; ++i) { read_pair(in, kAnySize, file); }
+        for (std::uint64_t i = 0; i < header.kv_count; ++i) {
+            out.keys.push_back(read_pair(in, kAnySize, file));
+        }
         out.complete = true;
     } catch (const GgufTruncated&) {} // the pairs read whole before the bytes ended
     out.metadata = std::move(file.metadata);
@@ -315,11 +318,19 @@ std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix) 
         nextn != md.end()) {
         return nextn->is_number() && nextn->get<double>() > 0;
     }
-    bool past_the_architecture = prefix.complete;
-    for (const auto& [key, _] : md.items()) {
-        past_the_architecture = past_the_architecture || key.starts_with("tokenizer.");
+    if (prefix.complete) { return false; }
+    // The architecture's block closed: its keys read, then another namespace's, none of its after.
+    const std::string own = arch->get<std::string>() + ".";
+    bool in_block = false, closed = false;
+    for (const auto& key : prefix.keys) {
+        if (key.starts_with(own)) {
+            if (closed) { return std::nullopt; } // its keys interleaved: no block to rely on
+            in_block = true;
+        } else if (in_block && !key.starts_with("general.")) {
+            closed = true;
+        }
     }
-    return past_the_architecture ? std::optional<bool>(false) : std::nullopt;
+    return closed ? std::optional<bool>(false) : std::nullopt;
 }
 
 } // namespace ninferno::convert
