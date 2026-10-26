@@ -93,6 +93,9 @@ struct Geometry {
     // The attention layers' projections, each at its own widths (add_attention): Gemma 4's
     // full layers are twice as wide as its sliding ones.
     double attention_params = 0;
+    // What a token attends with: heads x (key + value) summed over the full layers and over the
+    // sliding ones (PlanTargetShape).
+    double full_attention_width = 0, sliding_attention_width = 0;
     std::uint32_t full_layers = 0, full_kv_total = 0, full_key = 0, full_value = 0;
     std::uint32_t sliding_layers = 0, sliding_kv_total = 0, sliding_key = 0, sliding_value = 0;
     std::uint32_t window = 0;
@@ -112,6 +115,7 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double 
                    double key, double value, bool keys_are_values = false) {
     ++g.attention_layers;
     g.attention_params += g.hidden * heads * (key + value);
+    (sliding ? g.sliding_attention_width : g.full_attention_width) += heads * (key + value);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
     g.attention_params += g.hidden * kv_heads * (keys_are_values ? key : key + value);
     if (sliding) {
@@ -253,6 +257,8 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     s.experts_per_token = moe ? static_cast<int>(g.experts_used) : 0;
     s.builtin_mtp       = g.mtp;
     s.tied_embeddings   = g.tied;
+    s.full_attention_width    = g.full_attention_width;
+    s.sliding_attention_width = g.sliding_attention_width;
 
     if (g.layers != 0 && g.hidden != 0) {
         const double hidden    = g.hidden;

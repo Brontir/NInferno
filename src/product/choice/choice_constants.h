@@ -87,6 +87,16 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "gb20x", Route::Int8, 0.118},   // RTX 5070 Ti, 35B-A3B
 };
 
+// The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
+// every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak.
+// PENDING FIT.
+struct GenerationEta {
+    std::string_view generation;
+    double eta;
+};
+
+inline constexpr GenerationEta kPrefillAttentionEta[] = {{"ada", 0.30}};
+
 // What the exact route's compute costs a decode step over the int8 route's flops at the int8 peak,
 // its FP32 state's bytes apart (run_sw.sh, 9B at a 22K prompt: exact decode 61.7 against 85.3
 // tok/s on the RTX 2080 Ti; 69.9 against 80.6 on the 4070 Ti, 127.9 against 150.2 on the 4090).

@@ -787,6 +787,10 @@ Json model_json(const PlanSourceFacts& facts, const std::string& source, const s
               {"nvfp4", runtime::plan_kv_bytes_per_token(m, KvCacheStorage::Nvfp4Group16)},
               {"k8v4", runtime::plan_kv_bytes_per_token(m, KvCacheStorage::Fp8KeyNvfp4Value)}}},
             {"window", m.window},
+            {"active_params", facts.shape.active_params},
+            {"attention_width",
+             {{"full", facts.shape.full_attention_width},
+              {"sliding", facts.shape.sliding_attention_width}}},
             {"builtin_mtp", facts.shape.builtin_mtp}};
 }
 
