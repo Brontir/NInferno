@@ -146,6 +146,13 @@ target_include_directories(ninferno_plan_bench_fits_test PRIVATE ${PROJECT_SOURC
 target_compile_definitions(ninferno_plan_bench_fits_test PRIVATE
   NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# Every drafter a target carries is weighed, each by its own evidence: the shipped registry's pairs
+# (spec::ResolvedSpeculation::other_kinds, the drafter axis, subject_of_mode).
+ninferno_add_test(ninferno_plan_drafter_kinds_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_drafter_kinds.cpp"
+  LIBRARIES ninferno_product_plan ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_drafter_kinds_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 # The plan without the weights takes a start's bytes: every family's state shape from a config.json
 # or a GGUF header is the family planner's, and a dry-run rung's bytes are the start planner's
 # (sequence_bytes.h) to the byte but for the estimated workspace, over concurrencies, speculation,

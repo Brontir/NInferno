@@ -1354,6 +1354,42 @@ FetchedFile download_file(const DownloadRequest& request, const FetchOptions& op
     return transfer.run();
 }
 
+std::optional<bool> gguf_carries_mtp(const std::string& spec, const FetchOptions& options) {
+    for (const std::uint64_t bytes : {1ULL << 20, 8ULL << 20}) {
+        try {
+            const auto head   = fetch_gguf_head(spec, options, bytes);
+            const auto prefix = parse_gguf_metadata_prefix(
+                reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(), head.path);
+            if (const auto carries = gguf_metadata_carries_mtp(prefix)) { return carries; }
+            if (head.bytes.size() >= head.size) { return std::nullopt; } // the whole file read
+        } catch (const std::exception&) { return std::nullopt; }
+    }
+    return std::nullopt;
+}
+
+std::map<std::string, std::optional<bool>>
+gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
+                      const std::vector<std::string>& quants) {
+    constexpr std::size_t kAtOnce = 8; // range reads of one hub at a time
+    std::map<std::string, std::optional<bool>> out;
+    std::mutex out_mutex;
+    std::atomic<std::size_t> next{0};
+    std::vector<std::thread> threads;
+    for (std::size_t t = 0; t < std::min(kAtOnce, quants.size()); ++t) {
+        threads.emplace_back([&] {
+            for (std::size_t i = next++; i < quants.size(); i = next++) {
+                FetchOptions one = options;
+                one.quant        = quants[i];
+                const auto carries = gguf_carries_mtp(spec, one); // nullopt where it fails
+                std::lock_guard lock(out_mutex);
+                out[quants[i]] = carries;
+            }
+        });
+    }
+    for (auto& thread : threads) { thread.join(); }
+    return out;
+}
+
 std::optional<std::string> gguf_base_repository(const fs::path& gguf) {
     const int fd = sys::open(gguf, O_RDONLY | O_CLOEXEC);
     if (fd < 0) { return std::nullopt; }
