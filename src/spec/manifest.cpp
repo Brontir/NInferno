@@ -415,6 +415,21 @@ void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
     for (const auto& name : measured_only(p)) { attach(name, false); }
 }
 
+// The hub repository and commit (org/name@commit) of an artifact converted into the hub cache
+// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: the repository revision
+// whose sibling quantizations the lab measured (pair_choice).
+std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
+    const auto commit_dir = artifact.parent_path();
+    if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
+    const std::string dir = commit_dir.parent_path().parent_path().filename().string();
+    if (!dir.starts_with("models--")) { return {}; }
+    std::string repo = dir.substr(8);
+    const auto separator = repo.find("--");
+    if (separator == std::string::npos) { return {}; }
+    repo.replace(separator, 2, "/");
+    return repo + "@" + commit_dir.filename().string();
+}
+
 // 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
 //    weights it was converted from), else its group's preliminary choice. False when the registry
 //    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
@@ -470,21 +485,6 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
 //    carries as components (its built-in MTP layers, a DFlash drafter built in), else its group's,
 //    as a planned target resolves (resolve_planned_speculation). False when the registry has
 //    neither.
-// The hub repository and commit (org/name@commit) of an artifact converted into the hub cache
-// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: the repository revision
-// whose sibling quantizations the lab measured (pair_choice).
-std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
-    const auto commit_dir = artifact.parent_path();
-    if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
-    const std::string dir = commit_dir.parent_path().parent_path().filename().string();
-    if (!dir.starts_with("models--")) { return {}; }
-    std::string repo = dir.substr(8);
-    const auto separator = repo.find("--");
-    if (separator == std::string::npos) { return {}; }
-    repo.replace(separator, 2, "/");
-    return repo + "@" + commit_dir.filename().string();
-}
-
 bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& components,
                         const std::filesystem::path& artifact, const GpuKey& gpu,
                         ResolvedSpeculation& out) {
