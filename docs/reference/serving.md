@@ -51,9 +51,11 @@ searched.
 - `HF_HUB_OFFLINE=1` uses the cache only.
 - The served model id is the hub id.
 - `--prepare-only` fetches and converts, then exits (no GPU).
-- `--with-drafters` attaches the drafters of a GGUF hub model too (a separate download). A checkpoint's
-  drafters are attached without it. A quantization once converted with them keeps them: a later
-  start without the flag reuses that conversion and serves them.
+- A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
+  drafter) are an axis of the configuration choice: a start attaches them when the choice on this
+  GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
+  attaches them. A checkpoint's drafters are attached either way. A quantization once converted
+  with them keeps them: a later start reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
@@ -1564,7 +1566,7 @@ contract.
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
 | `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
-| `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
+| `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download) | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
 | `--device N` | CUDA device index | `0` |
@@ -2088,9 +2090,11 @@ the same options (`tests/test_plan_dry_run.cpp`).
 **Speculation.** `--spec auto` is resolved as a start resolves it, with the same functions
 (`product/speculation/speculation.h`, `SpeculationSubject`). For an artifact, the resolution is the
 artifact's own. A model not yet converted gets the drafter manifest the converter would write. A
-GGUF hub model gets it only with `--with-drafters`, or for a quantization converted here with its
-drafters (`convert::cached_conversion_has_drafters`: the start reuses that conversion); otherwise
-the registry entry of its shape over the MTP layers it carries is used. The start's fallback order is then judged by the dry run
+GGUF hub model gets it with its separate drafters planned as attached (a start attaches them
+when the speculation it serves drafts with one), or, for a quantization converted here with its
+drafters, from that conversion (`convert::cached_conversion_with_drafters`: the start reuses it);
+their memory counts only for the speculation that drafts with them (`product::PlannedSubjects`, the
+same for ninferno-ui's plan). The start's fallback order is then judged by the dry run
 instead of an Engine build:
 
 1. the profile's choice;
@@ -2152,7 +2156,7 @@ A start without `--quant` does the same before the download:
 - when the hub cannot be reached, the cached quantizations are planned from their own headers and
   the rule picks among those that fit; when none fits it refuses (`can't reach the hub ...; pass
   --quant`); with none it can plan, the fetch's own default applies, as before;
-- a separate drafter attached with `--with-drafters` counts its weights (its listing's size);
+- a separate drafter counts its weights (its listing's size) where the speculation drafts with it;
 - when the shape cannot be read it does not refuse: the fetch's default order applies (`can't plan
   before download`).
 
