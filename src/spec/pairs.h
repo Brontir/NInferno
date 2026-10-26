@@ -100,10 +100,12 @@ struct MeasuredPair {
                                                           double target_bits);
 
 // The choice for a target nobody measured, from its group: per default (overall, thinking,
-// non-thinking) the configuration of that kind up to kPortableDepth, measured on every pair, with
-// the highest mean speed relative to each pair's best; its floor the highest any pair measured for
-// it. Plain decode where a pair's tokens per round scaled down by kFineTuneAcceptance would make it
-// gain less than kPreliminaryGain on any pair. One request speculates (load: plain from two rows).
+// non-thinking) the configuration of that kind up to kPortableDepth, measured on two cards or
+// more, whose gain at a fine-tune's acceptance (each pair's drafted tokens accepted at
+// kFineTuneAcceptance of its measured rate) is highest on average over the pairs that measured it;
+// that gain its tok_s, its floor the highest any of them measured. Plain decode only where no
+// configuration gains kPreliminaryGain so (choice/DECISIONS 49). One request speculates (load:
+// plain from two rows).
 // nullopt for an empty group. With `support`, only the depths the serving Engine runs.
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
                                                        std::string_view kind,
