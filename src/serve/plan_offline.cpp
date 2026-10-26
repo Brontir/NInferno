@@ -376,7 +376,7 @@ struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
     // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
-    std::shared_ptr<product::HubSubjects> subjects;
+    std::shared_ptr<product::PlannedSubjects> subjects;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -401,7 +401,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     }
     // A quantization converted here with its drafters is started from that conversion, the
     // --with-drafters flag or not (convert::cached_conversion_with_drafters).
-    product::HubSubjects::ConversionOf conversion_of;
+    product::PlannedSubjects::ConversionOf conversion_of;
     if (model.gguf) {
         conversion_of = [repo = model.repo, revision = model.revision, recipe = options.recipe,
                          vision = options.enable_vision](const std::string& quant) {
@@ -409,7 +409,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             revision, quant, recipe, vision);
         };
     }
-    out.subjects = std::make_shared<product::HubSubjects>(
+    out.subjects = std::make_shared<product::PlannedSubjects>(
         product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
                                .commit = model.commit},
         gpu, std::move(conversion_of), options.spec_profile);
@@ -538,7 +538,8 @@ namespace {
 bool attaches_at(const product::PlanSourceFacts& facts, const product::DryRunInputs& at,
                  const ServeOptions& options, const std::string& label,
                  const product::PlannedSpeculation& planned) {
-    if (at.subject == nullptr) { return false; }
+    // A drafter file given (--drafter) drafts in place of the model's own.
+    if (at.subject == nullptr || !options.speculative.drafter.empty()) { return false; }
     const auto served = product::choose_at_weights(facts, at, pins_of(options), label);
     const product::PlannedSpeculation chosen =
         served ? product::plan_at_choice(facts, at, *served, pins_of(options), planned) : planned;

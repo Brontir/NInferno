@@ -72,13 +72,14 @@ hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
 [[nodiscard]] SpeculationSubject planned_subject(const PlannedTarget& target,
                                                  const spec::GpuKey& gpu);
 
-// The speculation subjects of one hub model's quantizations, as a start resolves each, made once
-// per quantization (the lab's pairs are of weights, so every row resolves its own): its separate
-// drafters planned as attached, an axis of the choice (a start attaches them when the choice
-// drafts with one: choice/DECISIONS 45); a quantization converted here with its drafters planned
-// from that conversion, which the start serves (hub_quant_subject). The server's plan without
-// weights and ninferno-ui's plan both plan a hub model through it.
-class HubSubjects {
+// The speculation subjects of a model not converted yet, one per quantization, as a start resolves
+// each (the lab's pairs are of weights, so every row resolves its own). A hub model's separate
+// drafters are planned as attached, an axis of the choice: a start attaches them when the choice
+// drafts with one (choice/DECISIONS 45); a local GGUF's start attaches none, so none is planned.
+// A quantization converted here with its drafters is planned from that conversion, which the start
+// serves (hub_quant_subject). The server's plan without weights and ninferno-ui's plan both plan
+// through it.
+class PlannedSubjects {
 public:
     // The conversion kept here with its drafters of a quantization (convert::
     // cached_conversion_with_drafters), nullopt when none; empty for a model not converted from
@@ -86,7 +87,7 @@ public:
     using ConversionOf =
         std::function<std::optional<std::filesystem::path>(const std::string& quant)>;
 
-    HubSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
+    PlannedSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
                 std::filesystem::path spec_profile = {});
 
     // The subject of quantization `quant` ("" for the model read without one) whose files are
@@ -162,7 +163,8 @@ struct SpeculationReport {
 };
 
 // Whether the speculation `report` serves drafts with one of `subject`'s separate drafters
-// (attached_drafters): its backend, or, each request its own, either thinking flag's. What decides
+// (attached_drafters): its backend, or, each request its own, either thinking flag's; never with
+// a drafter file given (--drafter: it drafts in their place). What decides
 // whether a start attaches a GGUF hub model's separate drafter when --with-drafters does not.
 [[nodiscard]] bool uses_attached_drafter(const SpeculationSubject& subject,
                                          const SpeculationReport& report);

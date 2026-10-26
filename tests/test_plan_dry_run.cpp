@@ -1026,6 +1026,10 @@ void test_speculation_order() {
         report.per_request = false;
         check(!pr::uses_attached_drafter(mtp_only, report),
               "one speculation for every request: only the served one counts");
+        report.engine.backend = ninferno::SpeculativeBackend::DFlash;
+        report.engine.drafter = "local.ninferno";
+        check(!pr::uses_attached_drafter(mtp_only, report),
+              "a drafter file given (--drafter) drafts in place of the model's own");
         check(pr::backend_of_drafter_kind("gemma4_assistant") == ninferno::SpeculativeBackend::Mtp &&
                   pr::backend_of_drafter_kind("dflash2") == ninferno::SpeculativeBackend::DFlash2 &&
                   pr::backend_of_drafter_kind("eagle") == ninferno::SpeculativeBackend::None,

@@ -1031,19 +1031,19 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
     // drafters when the choice drafts with one (choice/DECISIONS 45) and starts a quantization
-    // converted here with its drafters from that conversion; product::HubSubjects plans both as
+    // converted here with its drafters from that conversion; product::PlannedSubjects plans both as
     // the server's plan does.
     // The commit the listing was read at: a sibling quantization's measurement counts from it.
     const std::string commit = list.empty() || !list.front().is_object()
                                    ? std::string()
                                    : list.front().value("commit", std::string());
-    product::HubSubjects::ConversionOf conversion_of;
+    product::PlannedSubjects::ConversionOf conversion_of;
     if (gguf) {
         conversion_of = [root = hub_root(), repo](const std::string& label) {
             return convert::cached_conversion_with_drafters(root, repo, "", label);
         };
     }
-    product::HubSubjects subjects(
+    product::PlannedSubjects subjects(
         product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
         inputs.gpu, std::move(conversion_of));
     std::string weights; // the named quantization's (none for the table: each row its own)

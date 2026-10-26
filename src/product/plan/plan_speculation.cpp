@@ -187,16 +187,16 @@ SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::Gp
     return out;
 }
 
-HubSubjects::HubSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
+PlannedSubjects::PlannedSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
                          std::filesystem::path spec_profile)
     : model_(std::move(model)),
       gpu_(std::move(gpu)),
       conversion_of_(std::move(conversion_of)),
       spec_profile_(std::move(spec_profile)) {
-    model_.with_drafters = true;
+    model_.with_drafters = !model_.repo.empty(); // a hub model's start attaches them, a local one's not
 }
 
-const SpeculationSubject& HubSubjects::of(const std::string& quant, const std::string& weights) {
+const SpeculationSubject& PlannedSubjects::of(const std::string& quant, const std::string& weights) {
     if (const auto it = made_.find(quant); it != made_.end()) { return it->second; }
     PlannedTarget target = model_;
     target.weights       = weights;
@@ -207,7 +207,7 @@ const SpeculationSubject& HubSubjects::of(const std::string& quant, const std::s
         .first->second;
 }
 
-std::function<const SpeculationSubject*(const QuantListing&)> HubSubjects::lookup() {
+std::function<const SpeculationSubject*(const QuantListing&)> PlannedSubjects::lookup() {
     return [this](const QuantListing& q) -> const SpeculationSubject* {
         return q.drafter ? nullptr : &of(q.quant, q.weights);
     };
@@ -246,6 +246,8 @@ SpeculativeBackend backend_of_label(std::string_view label) {
 } // namespace
 
 bool uses_attached_drafter(const SpeculationSubject& subject, const SpeculationReport& report) {
+    // A drafter file given (--drafter) drafts in their place.
+    if (!report.engine.drafter.empty()) { return false; }
     std::set<SpeculativeBackend> served = {report.engine.backend};
     if (report.per_request) {
         for (const auto* variant : {&report.with_thinking, &report.without_thinking}) {
