@@ -783,19 +783,19 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
     convert::FetchOptions fetch;
     fetch.hub = hub;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-    const auto quants = convert::list_quants(repo, fetch);
-    Json list         = Json::array();
+    const auto listing = convert::list_quants(repo, fetch);
+    Json list          = Json::array();
     std::lock_guard lock(sizes_mutex_);
-    for (const auto& q : quants) {
+    for (const auto& q : listing.quants) {
         list.push_back({{"quant", q.quant},
                         {"format", q.format},
                         {"bytes", q.bytes},
-                        {"files", q.files},
+                        {"files", q.paths()},
                         {"bits", q.bits},
                         {"drafter", q.drafter},
                         {"mtp_bytes", q.mtp_bytes},
-                        {"weights", spec::weights_identity(q.sha256)},
-                        {"commit", q.commit}});
+                        {"weights", spec::weights_identity(q.digests())},
+                        {"commit", listing.commit}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
     if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }

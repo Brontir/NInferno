@@ -49,7 +49,7 @@ struct ModelRead {
     std::string commit; // the commit the hub listing was read at ("" unknown)
 };
 
-std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
+std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.digests()); }
 
 std::string ascii_lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -159,13 +159,15 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
 // choice: convert::best_projector, every part of a split one); 0 when there is none.
 std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quants) {
     std::vector<std::string> names;
-    for (const auto& q : quants) { names.insert(names.end(), q.files.begin(), q.files.end()); }
+    for (const auto& q : quants) {
+        for (const auto& file : q.files) { names.push_back(file.path); }
+    }
     const auto parts = convert::best_projector(names);
     std::uint64_t bytes = 0;
     for (const auto& q : quants) {
         // A projector file is a listing entry of its own (a sidecar), its bytes its own.
         if (q.files.size() == 1 &&
-            std::find(parts.begin(), parts.end(), q.files.front()) != parts.end()) {
+            std::find(parts.begin(), parts.end(), q.files.front().path) != parts.end()) {
             bytes += q.bytes;
         }
     }
@@ -198,9 +200,10 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
             }
         }
     }
-    const auto quants                 = convert::list_quants(spec, fetch);
+    const auto listing                = convert::list_quants(spec, fetch);
+    const auto& quants                = listing.quants;
     std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
-    out.commit                        = quants.empty() ? std::string() : quants.front().commit;
+    out.commit                        = listing.commit;
     std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;

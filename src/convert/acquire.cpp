@@ -54,8 +54,8 @@ std::optional<fs::path> gguf_projector(const FetchResult& fetched, const FetchOp
     auto listing     = fetch;
     listing.revision = fetched.commit;
     std::vector<std::string> names;
-    for (const auto& quant : list_quants(fetched.repo + "@" + fetched.commit, listing)) {
-        names.insert(names.end(), quant.files.begin(), quant.files.end());
+    for (const auto& quant : list_quants(fetched.repo + "@" + fetched.commit, listing).quants) {
+        for (const auto& file : quant.files) { names.push_back(file.path); }
     }
     const auto parts = best_projector(names);
     if (parts.empty()) { return std::nullopt; }

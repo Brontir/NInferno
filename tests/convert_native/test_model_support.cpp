@@ -319,21 +319,21 @@ int main(int argc, char** argv) {
         listing[0].quant  = "UD-Q4_K_M";
         listing[0].format = "gguf";
         listing[0].bytes  = 10;
-        listing[0].files  = {"m-UD-Q4_K_M.gguf"};
+        listing[0].files  = {{.path = "m-UD-Q4_K_M.gguf", .size = 10}};
         listing[1].quant  = "Q8_0";
         listing[1].format = "gguf";
         listing[1].bytes  = 20;
-        listing[1].files  = {"Q8_0/m-Q8_0-00001-of-00002.gguf", "Q8_0/m-Q8_0-00002-of-00002.gguf"};
+        listing[1].files  = {{.path = "Q8_0/m-Q8_0-00001-of-00002.gguf", .size = 10},
+                             {.path = "Q8_0/m-Q8_0-00002-of-00002.gguf", .size = 10}};
         listing[2].quant   = "mtp-m";
         listing[2].format  = "gguf";
         listing[2].drafter = true;
-        listing[2].files   = {"mtp-m-Q4_K_M.gguf"};
+        listing[2].files   = {{.path = "mtp-m-Q4_K_M.gguf"}};
         const auto q4 = cv::listed_quant_for(listing, "Q4_K_M", "r");
         const auto q8 = cv::listed_quant_for(listing, "q8_0", "r");
         expect(q4.quant == "UD-Q4_K_M" && q8.quant == "Q8_0" && q8.files.size() == 2,
                "the listing's quantization for --quant, a drafter beside them not one");
         // A whole file's group is its file name (gguf_group): a width reads its label from it.
-        listing[0].files = {"m-UD-Q4_K_M.gguf"};
         expect(cv::listed_quant_for(listing, "4bit", "r").quant == "UD-Q4_K_M",
                "a width over whole files");
         // A split model without a label in its names, listed a part at a time: one entry of both
@@ -343,33 +343,33 @@ int main(int argc, char** argv) {
             parts[i].quant  = "model-0000" + std::to_string(i + 1) + "-of-00002";
             parts[i].format = "gguf";
             parts[i].bytes  = 7;
-            parts[i].files  = {parts[i].quant + ".gguf"};
-            parts[i].sha256 = {std::string(64, char('a' + i))};
+            parts[i].files  = {{.path   = parts[i].quant + ".gguf",
+                                .size   = 7,
+                                .sha256 = std::string(64, char('a' + i))}};
         }
         const auto whole = cv::listed_quant_for(parts, "model", "r");
         expect(whole.quant == "model" && whole.bytes == 14 && whole.files.size() == 2 &&
-                   whole.sha256.size() == 2,
+                   whole.digests() == std::vector<std::string>{std::string(64, 'a'),
+                                                               std::string(64, 'b')},
                "an unlabelled split model is one entry of its parts");
         // Two models one label's entry holds (A-Q4_K_M, B-Q4_K_M): each addressable by its own
         // name, a width comparing each model's own bytes.
         std::vector<cv::RepoQuant> two(2);
         two[0].quant  = "Q4_K_M";
         two[0].format = "gguf";
-        two[0].files  = {"A-Q4_K_M.gguf", "B-Q4_K_M.gguf"};
-        two[0].sha256 = {std::string(64, 'a'), std::string(64, 'b')};
-        two[0].sizes  = {5, 9};
+        two[0].files  = {{.path = "A-Q4_K_M.gguf", .size = 5, .sha256 = std::string(64, 'a')},
+                         {.path = "B-Q4_K_M.gguf", .size = 9, .sha256 = std::string(64, 'b')}};
         two[0].bytes  = 14;
         two[1].quant  = "Q4_0";
         two[1].format = "gguf";
-        two[1].files  = {"A-Q4_0.gguf"};
-        two[1].sizes  = {12};
+        two[1].files  = {{.path = "A-Q4_0.gguf", .size = 12}};
         two[1].bytes  = 12;
         const auto b = cv::listed_quant_for(two, "B-Q4_K_M", "r");
         expect(b.quant == "B-Q4_K_M" && b.bits == 4 &&
-                   b.files == std::vector<std::string>{"B-Q4_K_M.gguf"} && b.bytes == 9 &&
-                   b.sha256 == std::vector<std::string>{std::string(64, 'b')},
+                   b.paths() == std::vector<std::string>{"B-Q4_K_M.gguf"} && b.bytes == 9 &&
+                   b.digests() == std::vector<std::string>{std::string(64, 'b')},
                "a second model of one label's entry, by its name");
-        expect(cv::listed_quant_for(two, "4bit", "r").files ==
+        expect(cv::listed_quant_for(two, "4bit", "r").paths() ==
                    std::vector<std::string>{"A-Q4_0.gguf"},
                "a width compares each model's own bytes (12 over B's 9, not the label's 14)");
         // One name in two folders: the entry keeps the folder, the fetch's second selection (its
@@ -377,8 +377,8 @@ int main(int argc, char** argv) {
         std::vector<cv::RepoQuant> dirs(1);
         dirs[0].quant  = "Q4_K_M";
         dirs[0].format = "gguf";
-        dirs[0].files  = {"A/model-Q4_K_M.gguf", "B/model-Q4_K_M.gguf"};
-        dirs[0].sizes  = {5, 9};
+        dirs[0].files  = {{.path = "A/model-Q4_K_M.gguf", .size = 5},
+                          {.path = "B/model-Q4_K_M.gguf", .size = 9}};
         dirs[0].bytes  = 14;
         const auto wide = cv::listed_quant_for(dirs, "4bit", "r");
         const std::map<std::string, std::uint64_t> fetch_groups = {{"A/model-Q4_K_M.gguf", 5},

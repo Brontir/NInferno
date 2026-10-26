@@ -252,7 +252,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
         } else if (!d.repo.empty() && fetch != nullptr) {
             const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
             try {
-                for (const auto& q : convert::list_quants(spec, *fetch)) {
+                for (const auto& q : convert::list_quants(spec, *fetch).quants) {
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}

@@ -209,6 +209,14 @@ struct DownloadRequest {
 // converter needs, so true).
 [[nodiscard]] bool include_selects(const FetchOptions& options, const std::string& path);
 
+// A file of a hub repository, as its listing shows it.
+struct RemoteFile {
+    std::string path;
+    std::uint64_t size = 0;
+    std::string sha256;   // LFS files
+    std::string git_sha1; // small files kept in git
+};
+
 // One model a repository offers, as a listing shows it: a GGUF quantization (its split parts
 // together), a safetensors checkpoint (quant ""), an artifact in the engine's own format (.ninferno,
 // run as published), or a sidecar (MTP/DFlash/EAGLE drafter, vision
@@ -219,13 +227,20 @@ struct RepoQuant {
     std::uint64_t bytes = 0;
     int bits            = 0; // from the label (Q4_K_M -> 4, BF16 -> 16); 0 when it says none
     bool drafter        = false;
-    std::vector<std::string> files;
-    std::vector<std::string> sha256; // each file's LFS digest, as files lists them ("": in git)
-    std::vector<std::uint64_t> sizes; // each GGUF file's bytes, as files lists them
+    std::vector<RemoteFile> files;
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;
+
+    [[nodiscard]] std::vector<std::string> paths() const;
+    // Each file's LFS digest, as files lists them ("": a file kept in git).
+    [[nodiscard]] std::vector<std::string> digests() const;
+};
+
+// A repository's models at one commit (list_quants).
+struct RepoListing {
     std::string commit; // the commit the listing was read at ("" unknown)
+    std::vector<RepoQuant> quants;
 };
 
 // The commit `spec`'s revision names on the hub now (one listing request); nullopt under
@@ -248,8 +263,7 @@ struct RepoQuant {
 
 // The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
 // is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
-[[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
-                                                 const FetchOptions& options);
+[[nodiscard]] RepoListing list_quants(const std::string& spec, const FetchOptions& options);
 
 // A model the hub's search found: its id and what the hub says of it.
 struct HubModel {
