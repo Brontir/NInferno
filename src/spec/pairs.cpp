@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -178,13 +179,29 @@ Profile not_current(const MeasuredPair& pair) {
 
 // select() over the pair's measurements: every depth and its load bounds at home, else the
 // portable ones, each round's seconds scaled by `round_costs` (by configuration label: what a round
-// costs on the card asked for over the measuring one).
+// costs on the card asked for over the measuring one). With costs given, a configuration without
+// one is left out: its round's cost here is unknown, and at the measuring card's price it would
+// look cheaper than the ones costed.
 Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options,
                  const RoundCostRatios& round_costs = {}) {
     Profile p = pair.tune;
-    for (auto& m : p.measurements) {
-        if (const auto r = round_costs.find(m.config.label()); r != round_costs.end()) {
-            m.seconds *= r->second;
+    if (!round_costs.empty()) {
+        const auto cost = [&](const SpecConfig& c) {
+            const auto r = round_costs.find(c.label());
+            return r != round_costs.end() ? std::optional<double>{r->second} : std::nullopt;
+        };
+        std::erase_if(p.measurements,
+                      [&](const Measurement& m) { return m.config.enabled() && !cost(m.config); });
+        for (auto& m : p.measurements) {
+            if (m.config.enabled()) { m.seconds *= *cost(m.config); }
+        }
+        if (p.fit_fallback && p.fit_fallback->config.enabled()) {
+            if (const auto r = cost(p.fit_fallback->config)) {
+                p.fit_fallback->tok_s /= *r;
+                p.fit_fallback->floor_tokens_per_round *= *r;
+            } else {
+                p.fit_fallback.reset();
+            }
         }
     }
     if (!home) {

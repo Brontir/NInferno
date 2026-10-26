@@ -131,6 +131,17 @@ int main() {
                    blackwell.non_thinking.speedup() == as_ada.non_thinking.speedup(),
                "an Ada pair on Ampere at Ampere's round costs; on Blackwell (none measured on "
                "both) as measured");
+        // A configuration Ampere never measured has no cost there: left out, not chosen at Ada's.
+        const auto best = as_ada.non_thinking.config.label();
+        auto partial    = ampere;
+        std::erase_if(partial.tune.measurements,
+                      [&](const auto& m) { return m.config.label() == best; });
+        const std::vector<sp::MeasuredPair> lab2 = {ada_q4, partial};
+        const auto uncosted = sp::profile_for_target({&other}, "sm86", {}, &lab2);
+        expect(uncosted.non_thinking.config.label() != best &&
+                   std::none_of(uncosted.measurements.begin(), uncosted.measurements.end(),
+                                [&](const auto& m) { return m.config.label() == best; }),
+               "a configuration without its round's cost on this generation is left out");
     }
     // The identity of weights: sorted digests, so the listing's order does not matter.
     expect(sp::weights_identity({"bb", "aa"}) == "aa,bb", "weights identity is order-free");
