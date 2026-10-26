@@ -291,6 +291,7 @@ std::map<std::string, double> round_costs(const Profile& tune) {
 RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                        std::string_view from, std::string_view to) {
     std::map<std::string, std::vector<double>> ratios;
+    std::set<std::string> from_cards, to_cards; // a generation's constant rests on two of its cards
     for (const auto& a : lab) {
         if (a.generation != from || !pair_current(a)) { continue; }
         const auto at_from = round_costs(a.tune);
@@ -302,11 +303,14 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
             for (const auto& [label, cost] : round_costs(b.tune)) {
                 if (const auto f = at_from.find(label); f != at_from.end() && f->second > 0) {
                     ratios[label].push_back(cost / f->second);
+                    from_cards.insert(a.tune.key.gpu);
+                    to_cards.insert(b.tune.key.gpu);
                 }
             }
         }
     }
     RoundCostRatios out;
+    if (from_cards.size() < 2 || to_cards.size() < 2) { return out; }
     for (auto& [label, each] : ratios) {
         std::sort(each.begin(), each.end());
         const std::size_t n = each.size();

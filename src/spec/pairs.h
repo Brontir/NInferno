@@ -85,7 +85,8 @@ struct MeasuredPair {
 // round's seconds over plain decode's seconds per token, over the corpus sections both measured).
 // A drafter's acceptance is the pair's: its tokens per round match from card to card (Ada and
 // Ampere within 1 %); what a round costs is the card's, the more so the more rows it verifies
-// (choice/DECISIONS 51). Empty when no target was measured on both.
+// (choice/DECISIONS 51). Empty unless two cards of each generation measured a target in common
+// (a generation's constant rests on two of its cards, AGENTS.md).
 using RoundCostRatios = std::map<std::string, double>;
 [[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                                      std::string_view from, std::string_view to);

@@ -115,11 +115,15 @@ int main() {
         for (auto& m : ampere.tune.measurements) {
             if (m.config.enabled()) { m.seconds *= 1.10; }
         }
-        const std::vector<sp::MeasuredPair> lab = {ada_q4, ampere};
+        const auto on   = [](sp::MeasuredPair p, const char* gpu) { p.tune.key.gpu = gpu; return p; };
+        const std::vector<sp::MeasuredPair> lab = {ada_q4, on(ada_q4, "ad102:128sm"), ampere,
+                                                   on(ampere, "ga104:48sm")};
+        const std::vector<sp::MeasuredPair> one_ampere = {ada_q4, on(ada_q4, "ad102:128sm"), ampere};
         const auto costs = sp::generation_round_costs(lab, "sm89", "sm86");
         expect(costs.contains("dflash:7") && std::abs(costs.at("dflash:7") - 1.10) < 1e-9 &&
-                   sp::generation_round_costs(lab, "sm89", "sm120").empty(),
-               "a round's cost on another generation, from a target measured on both");
+                   sp::generation_round_costs(lab, "sm89", "sm120").empty() &&
+                   sp::generation_round_costs(one_ampere, "sm89", "sm86").empty(),
+               "a round's cost on another generation, from a target two cards of each measured");
         auto other   = ada_q4; // a target measured on Ada only
         other.target = "other-weights";
         const auto as_ada    = sp::profile_for_target({&other}, "sm86");
@@ -136,7 +140,8 @@ int main() {
         auto partial    = ampere;
         std::erase_if(partial.tune.measurements,
                       [&](const auto& m) { return m.config.label() == best; });
-        const std::vector<sp::MeasuredPair> lab2 = {ada_q4, partial};
+        const std::vector<sp::MeasuredPair> lab2 = {ada_q4, on(ada_q4, "ad102:128sm"), partial,
+                                                    on(partial, "ga104:48sm")};
         const auto uncosted = sp::profile_for_target({&other}, "sm86", {}, &lab2);
         expect(uncosted.non_thinking.config.label() != best &&
                    std::none_of(uncosted.measurements.begin(), uncosted.measurements.end(),
