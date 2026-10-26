@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 
 namespace ninferno::convert {
 namespace {
@@ -257,6 +258,43 @@ GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
 }
 
 } // namespace
+
+std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& metadata) {
+    // general.source.repo_url is the GGUF specification's source repository (docs/gguf.md, "Source
+    // metadata"), general.source.huggingface.repository the older writers'; general.source.url is
+    // a homepage that may be any page, the last resort.
+    for (const char* key : {"general.base_model.0.repo_url", "general.source.repo_url",
+                            "general.source.huggingface.repository", "general.source.url"}) {
+        const auto it = metadata.find(key);
+        if (it == metadata.end() || !it->is_string()) { continue; }
+        std::string_view text = it->get_ref<const std::string&>();
+        bool hub_address      = false;
+        for (const std::string_view prefix :
+             {"https://huggingface.co/", "http://huggingface.co/", "https://hf.co/", "http://hf.co/",
+              "huggingface.co/", "hf.co/"}) {
+            if (text.starts_with(prefix)) {
+                text.remove_prefix(prefix.size());
+                hub_address = true;
+                break;
+            }
+        }
+        text = text.substr(0, text.find_first_of("?#")); // a query or an anchor is no part of it
+        // org/name only. A hub address's /tree/<rev> or /resolve/... tail is not the repository; a
+        // bare id is org/name and nothing more (a name with dots, "acme.ai/model", is one, while
+        // "github.com/org/name" is another site's address). A scheme left names another site; a
+        // dataset's, a Space's or a collection's address names no model.
+        const auto slash = text.find('/');
+        if (slash == 0 || slash == std::string_view::npos || slash + 1 == text.size() ||
+            text[slash + 1] == '/' || text.find(':') != std::string_view::npos ||
+            (!hub_address && text.find('/', slash + 1) != std::string_view::npos)) {
+            continue;
+        }
+        const std::string_view org = text.substr(0, slash);
+        if (org == "datasets" || org == "spaces" || org == "collections") { continue; }
+        return std::string(text.substr(0, text.find('/', slash + 1)));
+    }
+    return std::nullopt;
+}
 
 GgufFile parse_gguf(const std::byte* data, std::size_t size, const std::string& label) {
     return parse(data, size, size, label);

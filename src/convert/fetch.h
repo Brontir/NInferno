@@ -165,7 +165,7 @@ struct GgufHead {
                                        std::uint64_t bytes, std::size_t part = 0);
 
 // The Hugging Face repository a GGUF file names as its base model
-// (general.base_model.0.repo_url / general.source.huggingface.repository), if any.
+// (gguf_metadata_base_repository of its metadata), if any.
 [[nodiscard]] std::optional<std::string> gguf_base_repository(const std::filesystem::path& gguf);
 
 // One file: `url` (resolved through redirects) into `target`, `size` bytes (0: unknown),

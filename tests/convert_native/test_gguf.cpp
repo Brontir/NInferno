@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -286,7 +287,46 @@ void test_auxiliary_files() {
     }
 }
 
+// The repository a GGUF's metadata names as its source: the first key that names one, org/name.
+void test_base_repository() {
+    using J = nlohmann::json;
+    const auto of = [](const J& md) { return gguf_metadata_base_repository(md); };
+    check(of(J{{"general.base_model.0.repo_url", "https://huggingface.co/Qwen/Qwen3.5-9B"}}) ==
+              std::optional<std::string>("Qwen/Qwen3.5-9B"),
+          "a base model's address");
+    check(of(J{{"general.base_model.0.repo_url", "https://hf.co/org/m/tree/main/"}}) ==
+              std::optional<std::string>("org/m"),
+          "a /tree tail is not the repository");
+    check(of(J{{"general.base_model.0.repo_url", "https://github.com/org/m"},
+               {"general.source.huggingface.repository", "org/src"}}) ==
+              std::optional<std::string>("org/src"),
+          "another site's address names none: the next key");
+    check(of(J{{"general.source.url", "https://huggingface.co/org/s"}}) ==
+              std::optional<std::string>("org/s") &&
+              of(J{{"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+                  std::optional<std::string>("org/r"),
+          "the source address, the specification's source repository");
+    check(of(J{{"general.base_model.0.repo_url", "http://hf.co/org/m?library=gguf#top"}}) ==
+              std::optional<std::string>("org/m"),
+          "a query or an anchor is no part of it");
+    check(!of(J{{"general.base_model.0.repo_url", "https://huggingface.co/datasets/org/d"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "https://huggingface.co/spaces/org/s"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "github.com/org/m"}}),
+          "a dataset, a Space, another host: no model repository");
+    check(of(J{{"general.base_model.0.repo_url", "acme.ai/model"}}) ==
+              std::optional<std::string>("acme.ai/model"),
+          "a bare id whose organization has a dot");
+    check(of(J{{"general.source.url", "https://huggingface.co/blog/foo"},
+               {"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+              std::optional<std::string>("org/r"),
+          "the source repository before the homepage");
+    check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
+              !of(J::object()),
+          "none named");
+}
+
 int main() {
+    test_base_repository();
     test_auxiliary_files();
     test_resources_beside();
     test_metadata_and_tensors();
