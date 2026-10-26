@@ -310,7 +310,7 @@ std::optional<std::uint64_t> checkpoint_converted_bytes(const Json& config, std:
 }
 
 std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                             const PlannedSpeculation& served) {
+                             const PlannedSpeculation& served, const PlanAt& plan_at) {
     const runtime::DryRunPlan& plan = served.plan;
     if (!plan.planned) { return 0; }
     if (own_plan(plan)) { return plan.chosen()->rung.max_context; }
@@ -326,7 +326,7 @@ std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& i
     while (lo < hi) {
         const std::size_t mid            = lo + (hi - lo) / 2;
         const DryRunInputs pinned        = at_context(inputs, probes[mid]);
-        const PlannedSpeculation planned = plan_model(facts, pinned);
+        const PlannedSpeculation planned = plan_at ? plan_at(pinned) : plan_model(facts, pinned);
         if (own_plan(planned.plan)) {
             best = planned.plan.chosen()->rung.max_context;
             lo   = mid + 1;
@@ -374,20 +374,21 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             const DryRunInputs own      = inputs_for(inputs, q);
-            // The plan a start of this quantization serves: with --spec auto, at its configuration
-            // choice's drafter (plan_at_choice), as the plan of that quantization named shows it.
-            const auto served_plan = [&](const DryRunInputs& at) {
+            // The configuration choice a --spec auto start of this quantization serves, and every
+            // plan of the row at its drafter (plan_at_choice), the probes of its own context
+            // among them: as the plan of that quantization named shows it.
+            std::optional<ServedChoice> served;
+            if (own.subject != nullptr && own.ask.automatic) {
+                served = choose_at_weights(facts, own, inputs.pins, q.quant);
+            }
+            const PlanAt served_plan = [&](const DryRunInputs& at) {
                 PlannedSpeculation planned = plan_model(facts, at);
-                if (at.subject != nullptr && at.ask.automatic) {
-                    if (const auto served = choose_at_weights(facts, at, inputs.pins, q.quant)) {
-                        planned = plan_at_choice(facts, at, *served, inputs.pins, std::move(planned));
-                    }
-                }
-                return planned;
+                return served ? plan_at_choice(facts, at, *served, inputs.pins, std::move(planned))
+                              : planned;
             };
             row.planned = served_plan(own);
-            row.fit     = runtime::quant_fit_of(row.planned.plan,
-                                                own_context_of(facts, own, row.planned), ask);
+            row.fit     = runtime::quant_fit_of(
+                row.planned.plan, own_context_of(facts, own, row.planned, served_plan), ask);
             if (!ask.automatic) {
                 row.launch_context = ask.context;
             } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
