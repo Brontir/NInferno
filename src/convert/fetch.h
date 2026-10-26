@@ -197,6 +197,13 @@ struct DownloadRequest {
 // be read.
 [[nodiscard]] std::string file_sha256(const std::filesystem::path& path);
 
+// The seconds a rate-limited answer (HTTP 429) asks a client to wait, by its headers (lowercase
+// names): the largest t= of RateLimit's exhausted quotas (the hub's, after the IETF draft:
+// "api";r=0;t=89, the seconds until its window resets), else Retry-After in seconds; nullopt when
+// neither says.
+[[nodiscard]] std::optional<int>
+rate_limit_reset_seconds(const std::map<std::string, std::string>& headers);
+
 // The quantization label a GGUF file name ends with, as --quant takes it:
 // "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" -> "UD-Q4_K_M", "m-Q6_K-00001-of-00002.gguf" -> "Q6_K";
 // "" when the name ends with none.
