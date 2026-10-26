@@ -203,6 +203,7 @@ struct RepoQuant {
     bool drafter        = false;
     std::vector<std::string> files;
     std::vector<std::string> sha256; // each file's LFS digest, as files lists them ("": in git)
+    std::vector<std::uint64_t> sizes; // each GGUF file's bytes, as files lists them
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;

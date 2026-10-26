@@ -350,6 +350,28 @@ int main(int argc, char** argv) {
         expect(whole.quant == "model" && whole.bytes == 14 && whole.files.size() == 2 &&
                    whole.sha256.size() == 2,
                "an unlabelled split model is one entry of its parts");
+        // Two models one label's entry holds (A-Q4_K_M, B-Q4_K_M): each addressable by its own
+        // name, a width comparing each model's own bytes.
+        std::vector<cv::RepoQuant> two(2);
+        two[0].quant  = "Q4_K_M";
+        two[0].format = "gguf";
+        two[0].files  = {"A-Q4_K_M.gguf", "B-Q4_K_M.gguf"};
+        two[0].sha256 = {std::string(64, 'a'), std::string(64, 'b')};
+        two[0].sizes  = {5, 9};
+        two[0].bytes  = 14;
+        two[1].quant  = "Q4_0";
+        two[1].format = "gguf";
+        two[1].files  = {"A-Q4_0.gguf"};
+        two[1].sizes  = {12};
+        two[1].bytes  = 12;
+        const auto b = cv::listed_quant_for(two, "B-Q4_K_M", "r");
+        expect(b.quant == "B-Q4_K_M" && b.bits == 4 &&
+                   b.files == std::vector<std::string>{"B-Q4_K_M.gguf"} && b.bytes == 9 &&
+                   b.sha256 == std::vector<std::string>{std::string(64, 'b')},
+               "a second model of one label's entry, by its name");
+        expect(cv::listed_quant_for(two, "4bit", "r").files ==
+                   std::vector<std::string>{"A-Q4_0.gguf"},
+               "a width compares each model's own bytes (12 over B's 9, not the label's 14)");
         const std::map<std::string, std::uint64_t> files = {{"m-UD-Q4_K_M.gguf", 10},
                                                              {"m-Q8_0.gguf", 20}};
         expect(cv::gguf_group_for_quant(files, "4bit", "r") == "m-UD-Q4_K_M.gguf",
