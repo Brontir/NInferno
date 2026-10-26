@@ -1231,9 +1231,10 @@ RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::stri
                            return m.entry == one;
                        }) && of.size() == one->files.size();
     if (whole) { return *one; }
-    // The group's files alone, named by the group (what the fetch matches --quant against).
+    // The group's files alone, named by the group, its folder with it (what the fetch matches
+    // --quant against again when it reads the header: one name in two folders stays apart).
     RepoQuant out;
-    out.quant = std::filesystem::path(chosen).filename().string(); // a whole file's ends .gguf
+    out.quant = chosen; // a whole file's ends .gguf
     if (ascii_lower(out.quant).ends_with(".gguf")) { out.quant.resize(out.quant.size() - 5); }
     out.format = "gguf";
     out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf"));

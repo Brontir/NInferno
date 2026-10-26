@@ -372,6 +372,20 @@ int main(int argc, char** argv) {
         expect(cv::listed_quant_for(two, "4bit", "r").files ==
                    std::vector<std::string>{"A-Q4_0.gguf"},
                "a width compares each model's own bytes (12 over B's 9, not the label's 14)");
+        // One name in two folders: the entry keeps the folder, the fetch's second selection (its
+        // header read) takes the same group again.
+        std::vector<cv::RepoQuant> dirs(1);
+        dirs[0].quant  = "Q4_K_M";
+        dirs[0].format = "gguf";
+        dirs[0].files  = {"A/model-Q4_K_M.gguf", "B/model-Q4_K_M.gguf"};
+        dirs[0].sizes  = {5, 9};
+        dirs[0].bytes  = 14;
+        const auto wide = cv::listed_quant_for(dirs, "4bit", "r");
+        const std::map<std::string, std::uint64_t> fetch_groups = {{"A/model-Q4_K_M.gguf", 5},
+                                                                   {"B/model-Q4_K_M.gguf", 9}};
+        expect(wide.quant == "B/model-Q4_K_M" &&
+                   cv::gguf_group_for_quant(fetch_groups, wide.quant, "r") == "B/model-Q4_K_M.gguf",
+               "a folder's model keeps its folder in the name the fetch selects again");
         const std::map<std::string, std::uint64_t> files = {{"m-UD-Q4_K_M.gguf", 10},
                                                              {"m-Q8_0.gguf", 20}};
         expect(cv::gguf_group_for_quant(files, "4bit", "r") == "m-UD-Q4_K_M.gguf",
