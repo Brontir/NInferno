@@ -854,8 +854,9 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
             out["source"]       = "gguf";
             out["file"]         = head.path;
         } else if (weights && hub != "modelscope") {
-            out["architecture"] =
-                kv_model_of_config(convert::fetch_config(repo, fetch)).architecture;
+            out["architecture"] = product::plan_facts_of_config(convert::fetch_config(repo, fetch),
+                                                                0, runtime::WeightBasis::Unknown)
+                                      .model.architecture;
             out["source"] = "config";
             out["file"]   = "config.json";
         }
@@ -1985,7 +1986,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             smallest = bytes;
         }
     }
-    Json out = to_json(KvModel{});
+    Json out = kv_summary(nullptr);
     if (options_.offline) { return out; }
     // A read that failed is tried again after a minute (a network blip is not the model's shape).
     {
@@ -2034,7 +2035,6 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                                  .value("repo_id", repo);
                 }
                 const Json config     = convert::fetch_config(source, fetch);
-                out                   = to_json(kv_model_of_config(config));
                 // The largest listed weights, with their MTP part (a checkpoint's
                 // model_mtp.safetensors: loaded only under MTP), as the server's plan counts them.
                 std::uint64_t weights = 0, mtp = 0;
@@ -2048,6 +2048,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 auto facts =
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes   = mtp;
+                out                     = kv_summary(&facts);
                 facts.shape.base_models = convert::hub_base_models(repo, fetch);
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
@@ -2068,12 +2069,12 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
             const auto file =
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
-            out = to_json(kv_model_of_gguf(file.metadata));
+            auto facts = product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+            out        = kv_summary(&facts);
             {
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
-                    plan_facts_[hub_key(repo, hub)] =
-                        product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+                    plan_facts_[hub_key(repo, hub)] = std::move(facts);
                 }
             }
             read = true;
