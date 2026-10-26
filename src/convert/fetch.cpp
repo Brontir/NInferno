@@ -869,6 +869,20 @@ std::string hub_repo_directory(std::string_view repo) {
     return name;
 }
 
+std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
+                                        const std::string& revision) {
+    const std::string rev = revision.empty() ? std::string("main") : revision;
+    if (rev.size() == 40 && rev.find_first_not_of("0123456789abcdef") == std::string::npos) {
+        return rev;
+    }
+    std::ifstream ref(repo_dir / "refs" / rev);
+    std::string commit;
+    if (!(ref >> commit) || commit.find_first_of("/\\.") != std::string::npos) {
+        return std::nullopt;
+    }
+    return commit;
+}
+
 std::string hub_repo_of_directory(std::string_view directory) {
     if (!directory.starts_with("models--")) { return {}; }
     std::string repo(directory.substr(8));

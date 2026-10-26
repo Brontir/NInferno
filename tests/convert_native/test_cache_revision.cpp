@@ -4,12 +4,15 @@
 // whose drafter is already Q8. A current older artifact is stamped current, so its report is read
 // once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
+#include "convert/acquire.h"
 #include "convert/cache.h"
+#include "convert/fetch.h"
 #include "core/sys.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -103,6 +106,39 @@ int main() {
     fs::remove(dir / "config.json");
     check(source_changed(text, source_stamp(dir, {})), "a configuration file gone is a change");
     fs::remove_all(dir);
+
+    // A local commit: a commit id itself, else the one a ref records (refs/<revision>, "main"
+    // when none is asked); nothing for a missing ref or a recorded path.
+    {
+        using ninferno::convert::local_commit;
+        const fs::path repo = fs::temp_directory_path() / "ninferno_local_commit_test";
+        fs::remove_all(repo);
+        fs::create_directories(repo / "refs");
+        const std::string id(40, 'a');
+        std::ofstream(repo / "refs" / "main") << "c0ffee\n";
+        std::ofstream(repo / "refs" / "bad") << "../x";
+        check(local_commit(repo, "") == std::optional<std::string>("c0ffee") &&
+                  local_commit(repo, "main") == std::optional<std::string>("c0ffee"),
+              "the ref's commit, main by default");
+        check(local_commit(repo, id) == std::optional<std::string>(id), "a commit id names itself");
+        check(!local_commit(repo, "dev") && !local_commit(repo, "bad"),
+              "no ref, or a recorded path: no commit");
+        fs::remove_all(repo);
+    }
+    // A conversion's name: <gguf stem>[.vision].<recipe>.ninferno.
+    {
+        using ninferno::convert::converted_name;
+        const auto text = converted_name("m-UD-Q4_K_M.qwen3_5_bf16.ninferno");
+        const auto vis  = converted_name("dir/m-Q8_0.vision.qwen3_5_q8.ninferno");
+        check(text && text->stem == "m-UD-Q4_K_M" && !text->vision && text->recipe == "qwen3_5_bf16" &&
+                  text->label == "UD-Q4_K_M",
+              "a text conversion's stem, recipe and label");
+        check(vis && vis->stem == "m-Q8_0" && vis->vision && vis->recipe == "qwen3_5_q8" &&
+                  vis->label == "Q8_0",
+              "a --vision conversion");
+        check(!converted_name("m.gguf") && !converted_name("plain.ninferno"),
+              "another name is no conversion's");
+    }
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
 }
