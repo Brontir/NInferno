@@ -50,8 +50,9 @@ struct Sum {
 };
 
 // A pair's measurements by (label, family).
-std::map<std::pair<std::string, std::string>, Sum> sums(const MeasuredPair& pair) {
-    std::map<std::pair<std::string, std::string>, Sum> out;
+using Sums = std::map<std::pair<std::string, std::string>, Sum>;
+Sums sums(const MeasuredPair& pair) {
+    Sums out;
     for (const auto& m : pair.tune.measurements) {
         auto& s = out[{m.config.label(), m.family}];
         s.tokens += double(m.tokens);
@@ -71,8 +72,8 @@ struct Over {
     double acceptance       = 0;
     double floor            = 0; // a round's seconds over plain's seconds per token
 };
-std::optional<Over> over(const std::map<std::pair<std::string, std::string>, Sum>& table,
-                         const std::string& label, const std::vector<std::string>& families) {
+std::optional<Over> over(const Sums& table, const std::string& label,
+                         const std::vector<std::string>& families) {
     double cost = 0, plain_cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
     for (const auto& f : families) {
         const auto m = table.find({label, f});
@@ -300,7 +301,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     const auto enough = [](const std::vector<const MeasuredPair*>& group) {
         std::set<std::string> cards;
         for (const auto* p : group) { cards.insert(p->tune.key.gpu); }
-        return cards.size() >= 2;
+        return cards.size() >= kGroupCards;
     };
     const bool below  = target_bits < 4;
     const auto& same  = below ? low : high;
@@ -310,12 +311,51 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     return {};
 }
 
+namespace {
+
+// A group's pair with its measurements by (label, family).
+struct GroupMember {
+    const MeasuredPair* pair;
+    Sums table;
+};
+
+// A label's gain over plain decode were its drafted tokens accepted at kFineTuneAcceptance of the
+// measured rate (a round's price in plain steps unchanged).
+double gain_at_fine_tune_acceptance(const Over& o) {
+    const double price = o.tokens_per_round / o.speed;
+    return (1.0 + kFineTuneAcceptance * (o.tokens_per_round - 1.0)) / price;
+}
+
+// How a label does over a group: the pairs that measured it over these sections and the mean of
+// their gains at a fine-tune's acceptance; nullopt when fewer than kGroupCards cards measured it.
+struct LabelGain {
+    double gain = 0;
+    std::vector<Over> each;
+};
+std::optional<LabelGain> label_gain(const std::vector<GroupMember>& members, const std::string& label,
+                                    const std::vector<std::string>& families) {
+    LabelGain out;
+    std::set<std::string> cards;
+    for (const auto& m : members) {
+        if (const auto o = over(m.table, label, families)) {
+            out.each.push_back(*o);
+            out.gain += gain_at_fine_tune_acceptance(*o);
+            cards.insert(m.pair->tune.key.gpu);
+        }
+    }
+    if (cards.size() < kGroupCards) { return std::nullopt; }
+    out.gain /= double(out.each.size());
+    return out;
+}
+
+} // namespace
+
 std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
                                          std::string_view kind, const EngineSupport* support) {
     if (group.empty()) { return std::nullopt; }
     const Mode mode = mode_of_kind(kind);
-    std::vector<std::map<std::pair<std::string, std::string>, Sum>> tables;
-    for (const auto* pair : group) { tables.push_back(sums(*pair)); }
+    std::vector<GroupMember> members;
+    for (const auto* pair : group) { members.push_back({pair, sums(*pair)}); }
 
     Profile out;
     out.key.engine = kSpecEngineVersion;
@@ -337,8 +377,8 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         choice         = plain_choice();
         // The labels of this kind up to kPortableDepth any pair measured over these sections.
         std::set<std::string> labels;
-        for (const auto& table : tables) {
-            for (const auto& [key, sum] : table) {
+        for (const auto& m : members) {
+            for (const auto& [key, sum] : m.table) {
                 const auto config = SpecConfig::parse(key.first);
                 if (config.mode == mode && config.k <= kPortableDepth &&
                     (support == nullptr || support->runs(config))) {
@@ -346,47 +386,27 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
                 }
             }
         }
-        // Each label over the pairs that measured it, on two cards or more (a group's choice is a
-        // lab constant): its gain at a fine-tune's acceptance (kFineTuneAcceptance of the drafted
-        // tokens accepted), the mean over those pairs. The label whose mean is highest: the depth
-        // a target nobody measured gains most with even when its acceptance is a fine-tune's
-        // (choice/DECISIONS 49: no plain decode for want of a common label or for the group's
-        // weakest pair).
+        // The label a target nobody measured gains most with even when its acceptance is a
+        // fine-tune's (label_gain): no plain decode for want of a label every pair measured, or
+        // for the group's weakest pair (choice/DECISIONS 49).
         std::string chosen;
-        double chosen_gain = 0;
-        std::vector<Over> chosen_each;
+        LabelGain best;
         for (const auto& label : labels) {
-            std::vector<Over> each;
-            std::set<std::string> cards;
-            for (std::size_t i = 0; i < tables.size(); ++i) {
-                if (const auto o = over(tables[i], label, d.families)) {
-                    each.push_back(*o);
-                    cards.insert(group[i]->tune.key.gpu);
-                }
-            }
-            if (cards.size() < 2) { continue; }
-            double gain = 0;
-            for (const auto& o : each) {
-                const double price = o.tokens_per_round / o.speed; // a round in plain steps
-                gain += (1.0 + kFineTuneAcceptance * (o.tokens_per_round - 1.0)) / price;
-            }
-            gain /= double(each.size());
-            if (gain > chosen_gain) {
-                chosen_gain = gain;
-                chosen      = label;
-                chosen_each = std::move(each);
+            if (auto g = label_gain(members, label, d.families); g && g->gain > best.gain) {
+                chosen = label;
+                best   = std::move(*g);
             }
         }
-        if (chosen.empty() || chosen_gain < kPreliminaryGain) { continue; }
+        if (chosen.empty() || best.gain < kPreliminaryGain) { continue; }
         double tokens = 0, acceptance = 0, floor = 0;
-        for (const auto& o : chosen_each) {
-            tokens += o.tokens_per_round / double(chosen_each.size());
-            acceptance += o.acceptance / double(chosen_each.size());
+        for (const auto& o : best.each) {
+            tokens += o.tokens_per_round / double(best.each.size());
+            acceptance += o.acceptance / double(best.each.size());
             floor = std::max(floor, o.floor);
         }
         choice.config                 = SpecConfig::parse(chosen);
         choice.drafter                = drafter;
-        choice.tok_s                  = chosen_gain; // the gain at a fine-tune's acceptance
+        choice.tok_s                  = best.gain; // over plain decode's 1, at a fine-tune's acceptance
         choice.tokens_per_round       = tokens;
         choice.acceptance             = acceptance;
         choice.floor_tokens_per_round = floor;

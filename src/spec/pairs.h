@@ -22,6 +22,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -146,6 +147,8 @@ struct PairChoice {
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
 // 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
+// A group's choice is a lab constant for targets nobody measured: fitted on this many cards or more.
+inline constexpr std::size_t kGroupCards = 2;
 inline constexpr double kFineTuneAcceptance = 0.535;
 inline constexpr double kPreliminaryGain    = 1.05;
 
