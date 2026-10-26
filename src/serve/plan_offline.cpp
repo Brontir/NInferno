@@ -397,6 +397,13 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .depth_from_profile = options.draft_tokens_from_model};
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
+        // A drafter file given (--drafter) is uploaded beside the artifact.
+        if (!options.speculative.drafter.empty()) {
+            const product::AttachedDrafterMemory drafter = product::supplied_drafter_memory(
+                options.speculative.drafter, model.facts.model.hidden);
+            out.inputs.drafter_bytes = drafter.bytes;
+            out.inputs.drafter_state = drafter.state;
+        }
         return out;
     }
     // A quantization converted here with its drafters is started from that conversion, the
