@@ -300,7 +300,7 @@ private:
     // Artifact path -> (modification time, what its header says).
     std::mutex kinds_mutex_;
     std::map<std::string, std::pair<std::filesystem::file_time_type, ArtifactFacts>> kinds_;
-    std::map<std::string, nlohmann::json> kv_; // repo -> KvModel json
+    std::map<std::string, nlohmann::json> kv_; // repo -> kv_summary
     // hub_key -> the plan facts kv_json read with it (product/plan/plan_facts.h)
     std::map<std::string, product::PlanSourceFacts> plan_facts_;
     // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
