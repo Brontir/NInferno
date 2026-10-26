@@ -2,6 +2,7 @@
 
 #include "convert/drafters.h"
 #include "core/device_class.h"
+#include "product/plan/plan_quants.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
 #include "spec/manifest.h"
@@ -107,12 +108,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
 
     convert::DrafterTarget t;
     t.repo    = target.repo;
-    t.lineage = target.lineage;
-    for (const auto& base : facts.shape.base_models) {
-        if (std::find(t.lineage.begin(), t.lineage.end(), base) == t.lineage.end()) {
-            t.lineage.push_back(base);
-        }
-    }
+    t.lineage = facts.shape.base_models; // a GGUF's general.base_model, a model card's entries
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
     t.geometry     = spec::Geometry{facts.shape.hidden_size, facts.shape.num_hidden_layers,
@@ -186,6 +182,32 @@ SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::Gp
     return out;
 }
 
+PlannedSubjects::PlannedSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
+                         std::filesystem::path spec_profile)
+    : model_(std::move(model)),
+      gpu_(std::move(gpu)),
+      conversion_of_(std::move(conversion_of)),
+      spec_profile_(std::move(spec_profile)) {
+    model_.with_drafters = !model_.repo.empty(); // a hub model's start attaches them, a local one's not
+}
+
+const SpeculationSubject& PlannedSubjects::of(const std::string& quant, const std::string& weights) {
+    if (const auto it = made_.find(quant); it != made_.end()) { return it->second; }
+    PlannedTarget target = model_;
+    target.weights       = weights;
+    target.quant         = quant;
+    const std::optional<std::filesystem::path> converted =
+        conversion_of_ && !quant.empty() ? conversion_of_(quant) : std::nullopt;
+    return made_.emplace(quant, hub_quant_subject(target, gpu_, converted, spec_profile_))
+        .first->second;
+}
+
+std::function<const SpeculationSubject*(const QuantListing&)> PlannedSubjects::lookup() {
+    return [this](const QuantListing& q) -> const SpeculationSubject* {
+        return q.drafter ? nullptr : &of(q.quant, q.weights);
+    };
+}
+
 spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
     DeviceClass d =
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
@@ -208,6 +230,32 @@ bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject
     return ask.per_request;
 }
 
+namespace {
+
+// The backend of a configuration label ("dflash:7", "mtp:5+head"), None for "plain".
+SpeculativeBackend backend_of_label(std::string_view label) {
+    const std::string_view mode = label.substr(0, label.find(':'));
+    return mode == "plain" ? SpeculativeBackend::None : parse_speculative_backend(mode);
+}
+
+} // namespace
+
+bool uses_attached_drafter(const SpeculationSubject& subject, const SpeculationReport& report) {
+    // A drafter file given (--drafter) drafts in their place.
+    if (!report.engine.drafter.empty()) { return false; }
+    std::set<SpeculativeBackend> served = {report.engine.backend};
+    if (report.per_request) {
+        for (const auto* variant : {&report.with_thinking, &report.without_thinking}) {
+            if (*variant) { served.insert(backend_of_label((*variant)->label)); }
+        }
+    }
+    served.erase(SpeculativeBackend::None);
+    return std::any_of(subject.attached_drafters.begin(), subject.attached_drafters.end(),
+                       [&](const spec::DrafterDecl& d) {
+                           return served.contains(backend_of_drafter_kind(d.kind));
+                       });
+}
+
 PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const runtime::PlanDeviceFacts& device,
                                          const EngineOptions& options,
@@ -227,19 +275,11 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         // uploaded beside the target: one named by the options, or, before a conversion names its
         // path (an explicit --spec with --with-drafters), one the drafter plan takes from its own
         // repository for this backend (attached, or embedded as a component).
-        const auto drafts_for = [](const std::string& kind) {
-            if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
-                return SpeculativeBackend::Mtp;
-            }
-            if (kind == "dflash") { return SpeculativeBackend::DFlash; }
-            if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
-            return SpeculativeBackend::None;
-        };
         const bool attached =
             subject != nullptr &&
             std::any_of(subject->attached_drafters.begin(), subject->attached_drafters.end(),
                         [&](const spec::DrafterDecl& d) {
-                            return drafts_for(d.kind) == speculative.backend;
+                            return backend_of_drafter_kind(d.kind) == speculative.backend;
                         });
         if (speculative.backend != SpeculativeBackend::None &&
             (!speculative.drafter.empty() || attached)) {

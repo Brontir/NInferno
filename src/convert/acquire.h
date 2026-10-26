@@ -115,6 +115,17 @@ converted_artifact(const std::filesystem::path& commit_dir, const std::string& q
 cached_conversion_with_drafters(const std::filesystem::path& cache, const std::string& repo,
                                 const std::string& revision, const std::string& quant,
                                 const std::string& recipe = {}, bool vision = false);
+// A conversion's file name in a commit's directory, <gguf stem>[.vision].<recipe>.ninferno:
+// the GGUF's stem, whether it is a --vision conversion, its recipe, and the GGUF's quantization
+// label (gguf_quant_label); nullopt for another name.
+struct ConvertedName {
+    std::string stem;
+    bool vision = false;
+    std::string recipe;
+    std::string label;
+};
+[[nodiscard]] std::optional<ConvertedName> converted_name(const std::filesystem::path& artifact);
+
 [[nodiscard]] bool cached_conversion_has_drafters(const std::filesystem::path& cache,
                                                   const std::string& repo,
                                                   const std::string& revision,

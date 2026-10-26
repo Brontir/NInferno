@@ -2,6 +2,7 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "core/ascii.h"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
+#include <variant>
 
 namespace ninferno::product {
 
@@ -269,6 +271,22 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
     return out;
 }
 
+AttachedDrafterMemory supplied_drafter_memory(const std::filesystem::path& artifact,
+                                              std::uint32_t target_hidden) {
+    const artifact::Reader reader(artifact);
+    const auto& dir = reader.directory();
+    AttachedDrafterMemory out;
+    for (const auto& object : dir.objects) {
+        if (const auto* tensor = std::get_if<artifact::TensorObject>(&object)) {
+            out.bytes += tensor->bytes;
+        }
+    }
+    for (const auto& [name, component] : dir.components) {
+        if (!out.state) { out.state = plan_drafter_state_of_config(component.config, target_hidden); }
+    }
+    return out;
+}
+
 std::optional<std::uint64_t> checkpoint_converted_bytes(const Json& config, std::uint64_t bytes) {
     const Json& text       = config.contains("text_config") && config["text_config"].is_object()
                                  ? config["text_config"]
@@ -348,9 +366,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
         row.candidate.bits_per_weight =
-            shape.model.params > 0
-                ? static_cast<double>(row.weight_bytes) * 8.0 / shape.model.params
-                : 0.0;
+            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes));
         const Unsupported why   = unsupported(q, row.candidate.bits_per_weight, inputs.device);
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;

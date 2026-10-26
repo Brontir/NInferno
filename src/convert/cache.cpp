@@ -63,15 +63,24 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
-bool cache_served(const std::filesystem::path& artifact) {
-    const int revision = cached_revision(artifact);
+namespace {
+
+// Whether an artifact at `revision` is served as it is (cache_current's rule).
+bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
            (revision >= 3 && !unquantized_drafter_attention(artifact));
 }
 
+} // namespace
+
+bool cache_serves(const std::filesystem::path& artifact) {
+    return serves_at(artifact, cached_revision(artifact));
+}
+
 bool cache_current(const std::filesystem::path& artifact) {
-    if (cached_revision(artifact) >= kCacheRevision) { return true; }
-    if (!cache_served(artifact)) { return false; }
+    const int revision = cached_revision(artifact);
+    if (revision >= kCacheRevision) { return true; }
+    if (!serves_at(artifact, revision)) { return false; }
     // Nothing a later revision changed is in it: stamped current, so its report is not read
     // again. The stamp is the small sidecar beside the artifact, replaced atomically; a read-only
     // cache keeps the old stamp (and reads the report next time).
